@@ -44,7 +44,7 @@ POSIX script.
 |---|---|
 | `--dir DIR` | where to install; default `~/mindfork`. The app's data lives in `DIR/data` (portable mode, §2) |
 | `--version vX.Y.Z` | a particular release; default — the latest |
-| `--from DIR` | install from files already on disk (the archive and `sha256sums.txt`) — no network at all |
+| `--from DIR` | install from files already on disk (the archive and `sha256sums.txt`) — no network at all. On a Mac, an archive a browser saved is quarantined, and the script then installs it **without starting it** — macOS would ask about it on the screen — and says how to clear the mark; a `.tar` Safari left in place of the `.tar.gz` is refused, with the `curl` line that fetches the one the checksum covers |
 | `--no-deps` | do not install the system libraries (below); the script then only says what is missing |
 | `--no-link` | do not link the binary into `/usr/local/bin` |
 | `-- ARGS…` | when the install is done, run `mindfork ARGS…` — typically `-- setup …` (§3.3) |

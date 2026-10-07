@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (69)
+## Entries (70)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -81,6 +81,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Release 0.17.0 (prepared)
 - Post-M9: macOS stage 3 — the rented day's tools (done)
 - Post-M9: macOS stage 3 — the rented day (done)
+- Post-M9: `install.sh --from` and a browser's download on a Mac (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -4242,3 +4243,44 @@ left to testers.
 
 **Not done.** Real-keyboard checks (`fn`, Option through hardware) are left to
 testers. The call for testers waits on D2.
+
+### Post-M9: `install.sh --from` and a browser's download on a Mac (done)
+
+**Symptom.** The rented Mac (docs/research/macos.md §14.6, defect D4) found two
+faults in `--from` with what a browser leaves.
+- **Safari unpacks the `.gz` itself**, so `--from ~/Downloads` found no
+  `.tar.gz` and said only that.
+- **A quarantined `.tar.gz` blocked the script.** It installed, printed its
+  quarantine note, and then checked the binary by starting it. On a Mac with a
+  screen that start is Gatekeeper's question, and the script waited on it.
+  Answered with Done, the start was killed, and the script started the binary
+  **again** to learn why: a second dialog, a second wait, then *the installed
+  binary does not start: no output*, exit 1. CI never saw this: its runner has
+  no screen, and its stand-in binary is a script.
+
+**Fix** (`packaging/linux/install.sh`):
+- **A `.tar` of the release's name is refused.** `sha256sums.txt` covers the
+  `.tar.gz`, so the `.tar` cannot be checked, and nothing goes in unchecked.
+  The refusal says the browser unpacked it, and gives the `curl -fLO` line for
+  the `.tar.gz` of that tag, or Safari's setting to turn off.
+- **A quarantined binary is not started.** No check, no `--version`, no
+  hand-over: the files are unpacked and linked, the mark is named with its
+  `xattr -dr` line, and a hand-over (`-- ARGS`) is refused with exit 1. The
+  exception is a mark whose flags carry 0x40, which *Open Anyway* sets
+  (measured: `0081` → `00c1`); that binary starts without a question and runs
+  as any other. The mark stays the user's to clear, as before.
+
+**Tests** (`install_test.sh`, +11 checks, 4 of them on every platform): on a Mac, a quarantined archive
+installs without starting the binary; a hand-over to it is refused and does
+not run; an approved one runs and gets the hand-over. Everywhere, a `.tar` is
+refused with the tag's `curl` line and installs nothing, and the control arm,
+a directory with no archive, says nothing of a browser. 44/44 on the rented
+Mac's macOS 15 (with a screen) and 42/43 in `ubuntu:24.04`, where the one
+failure is the CAP_CHOWN arm, which needs `capsh`, as before. `shellcheck`
+adds no warning.
+
+**Live** on macOS 15 with 0.17.0's real archive, marked as Safari marks it:
+- the new script finished at once with the note, and no dialog appeared;
+- with `-- --version` it refused the hand-over;
+- the control, 0.17.0's own `install.sh`, raised the dialog, waited over three
+  minutes, raised it again after Done, and ended *does not start*, exit 1.

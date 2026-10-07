@@ -32,6 +32,11 @@ split by subsystem.
   refusal was shown as a bare generation error; it now reads as the
   conversation no longer fitting, with the way out (`/compact`, or a new chat)
   and the server's own words, as on every other server.
+- **`install.sh --from` with an archive a browser downloaded on a Mac.** The
+  script used to start the quarantined binary to check it, which put macOS's
+  question on the screen and waited there; it now installs it without starting
+  it and says how to clear the mark. A `.tar` that Safari left in place of the
+  `.tar.gz` is refused with the `curl` line that fetches the checked one.
 
 ## [0.17.0] — 2026-10-06
 

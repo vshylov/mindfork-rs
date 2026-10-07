@@ -187,9 +187,26 @@ tag_in_dir() {
         [ -z "$found" ] || die "--from $1 holds more than one archive; name the release with --version"
         found="$f"
     done
+    [ -n "$found" ] || unpacked_by_browser "$1"
     [ -n "$found" ] || die "--from $1 holds no mindfork-rs-v…-${SUFFIX}.tar.gz"
     found="${found##*/mindfork-rs-}"
     printf '%s' "${found%-"$SUFFIX".tar.gz}"
+}
+
+# Safari's default, *Open "safe" files after downloading*, unpacks the `.gz`
+# itself and leaves `….tar` where the `.tar.gz` was (measured, docs/research/
+# macos.md §14.6). `sha256sums.txt` names the `.tar.gz`, so a `.tar` cannot be
+# checked against it, and it is not installed unchecked: the refusal says why
+# and gives the download that can be.
+unpacked_by_browser() { # the --from directory
+    for f in "$1"/mindfork-rs-v*-"$SUFFIX".tar; do
+        [ -f "$f" ] || continue
+        tag="${f##*/mindfork-rs-}"
+        tag="${tag%-"$SUFFIX".tar}"
+        warn "--from $1 holds ${f##*/}, not the .tar.gz: the browser unpacked the .gz itself, and sha256sums.txt can only check the .tar.gz. Download that one with curl, which a browser does not touch:"
+        warn "    curl -fLO https://github.com/${REPO}/releases/download/${tag}/$(archive_name "$tag")"
+        die "or turn off Safari's \"Open 'safe' files after downloading\" and download it again"
+    done
 }
 
 # Refuses unless `sha256sums.txt` names the archive and the digests agree. The
@@ -239,10 +256,25 @@ unpack() { # archive path, install dir
 # one — so a `--from` of it installs a binary macOS may refuse to start. `curl`
 # sets none, so a download by this script never gets here. The mark is the
 # user's to clear, not ours: it is what macOS asks a person about.
+#
+# Such a binary is not started here either. Its first start is a question
+# macOS puts on the screen, and the start waits on the answer: measured on
+# macOS 26, this script's own check sat on the dialog, and an answer of Done
+# killed it. So the mark is said and the binary is left alone, unless the
+# person has already answered *Open Anyway* — the mark's flags then carry
+# 0x40, and the binary starts as any other.
+quarantined() { # install dir
+    [ "$OS" = macos ] || return 1
+    mark="$(xattr -p com.apple.quarantine "$1/mindfork" 2>/dev/null)" || return 1
+    flags="${mark%%;*}"
+    case "$flags" in
+    *[!0-9a-fA-F]* | "") return 0 ;;
+    esac
+    [ $((0x$flags & 0x40)) = 0 ]
+}
+
 quarantine_note() { # install dir
-    [ "$OS" = macos ] || return 0
-    xattr -p com.apple.quarantine "$1/mindfork" >/dev/null 2>&1 || return 0
-    warn "the archive came through a browser, and macOS quarantined what it unpacked. If macOS refuses to start mindfork, clear the mark:"
+    warn "the archive came through a browser, and macOS quarantined what it unpacked: its first start is a question on the screen, which this script cannot answer, so it was not started. Clear the mark, then start it:"
     warn "    xattr -dr com.apple.quarantine $1"
 }
 
@@ -471,12 +503,18 @@ main() {
         [ -f "$src/$archive" ] || die "$src holds no $archive"
         verify "$src" "$archive"
         unpack "$src/$archive" "$dir"
-        quarantine_note "$dir"
         printf '%s\n' "$version" >"$marker"
         [ -n "$from" ] || rm -rf "$dir/.download"
         say "  unpacked"
     fi
 
+    if quarantined "$dir"; then
+        [ "$no_link" = 1 ] || link_binary "$dir"
+        quarantine_note "$dir"
+        [ $# = 0 ] || die "so 'mindfork $*' was not run either"
+        say "Done, not started. Next: clear the mark as above, then: mindfork"
+        return 0
+    fi
     ensure_starts "$dir" "$no_deps"
     ensure_openmp "$no_deps" "$@"
     [ "$no_link" = 1 ] || link_binary "$dir"

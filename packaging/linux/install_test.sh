@@ -282,10 +282,45 @@ out="$(sh "$S" --from "$WORK/relq" --dir "$WORK/opt-q" --no-link 2>&1)"
 check "a quarantined archive installs" 0 $?
 echo "$out" | grep -q "xattr -dr com.apple.quarantine"
 check "…and says how to clear the mark" 0 $?
+# Its first start would be Gatekeeper's question on the screen, which waits
+# for a person (docs/research/macos.md §14.6): the binary is not run at all.
+echo "$out" | grep -q "mindfork 9.9.9"
+check "…without starting the binary" 1 $?
+if [ -x "$WORK/opt-q/mindfork" ]; then ok=0; else ok=1; fi
+check "…which is in place all the same" 0 $ok
+out="$(sh "$S" --from "$WORK/relq" --dir "$WORK/opt-q2" --no-link -- hello 2>&1)"
+check "a hand-over to a quarantined binary is refused" 1 $?
+echo "$out" | grep -q "'mindfork hello' was not run"
+check "…saying the command did not run" 0 $?
+echo "$out" | grep -q "ARGC:"
+check "…and it did not" 1 $?
+# Open Anyway leaves the mark with the approval bit (0x40): measured, 0081 →
+# 00c1. Such a binary starts without a question, so it is run as any other.
+xattr -w com.apple.quarantine "00c1;66e00000;Safari;" "$WORK/opt-q/mindfork"
+out="$(sh "$S" --from "$WORK/relq" --dir "$WORK/opt-q" --no-link -- hello 2>&1)"
+check "an approved binary runs" 0 $?
+echo "$out" | grep -q "ARGC:1"
+check "…and gets the hand-over" 0 $?
 out="$(sh "$S" --from "$WORK/rel" --dir "$WORK/opt-nq" --no-link 2>&1)"
 echo "$out" | grep -q "quarantine"
 check "control arm: an archive with no mark says nothing of it" 1 $?
 fi
+
+# Safari unpacks the .gz itself and leaves a .tar (docs/research/macos.md
+# §14.6). sha256sums.txt names the .tar.gz, so the .tar is not installed
+# unchecked: the refusal says why and gives the download that can be checked.
+echo "== a .tar a browser unpacked"
+mkdir -p "$WORK/relt" && cp "$WORK/rel/sha256sums.txt" "$WORK/relt/"
+gzip -dc "$WORK/rel/mindfork-rs-v9.9.9-$SUFFIX.tar.gz" >"$WORK/relt/mindfork-rs-v9.9.9-$SUFFIX.tar"
+out="$(sh "$S" --from "$WORK/relt" --dir "$WORK/opt-t" --no-link 2>&1)"
+check "a .tar is refused" 1 $?
+echo "$out" | grep -q "curl -fLO https://github.com/vshylov/mindfork-rs/releases/download/v9.9.9/mindfork-rs-v9.9.9-$SUFFIX.tar.gz"
+check "…naming the .tar.gz to download, by its tag" 0 $?
+if [ -e "$WORK/opt-t/mindfork" ]; then ok=1; else ok=0; fi
+check "…and nothing of it is installed" 0 $ok
+out="$(sh "$S" --from "$WORK/empty" --dir "$WORK/opt-t2" --no-link 2>&1)"
+echo "$out" | grep -q "browser"
+check "control arm: a directory with no archive at all says nothing of a browser" 1 $?
 
 echo "== refusals"
 mkdir -p "$WORK/bad" && cp "$WORK/rel"/* "$WORK/bad/"
