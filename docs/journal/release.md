@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (72)
+## Entries (73)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -84,6 +84,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: `install.sh --from` and a browser's download on a Mac (done)
 - Post-M9: the rented Mac day's last findings — two documents, two tests (done)
 - Release 0.18.0 (prepared)
+- Post-M9: the release notes a local tag check writes are ignored (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -4436,3 +4437,17 @@ Cmd+click does nothing.
 - **Not run**: the released binaries on a Mac or Linux with a screen; the TUI
   on real data, which is the owner's; the Windows installer and the `.deb`,
   `.rpm` and Arch packages, beyond what their jobs install.
+
+### Post-M9: the release notes a local tag check writes are ignored (done)
+
+**Why.** `tools/release_guard.py --tag` writes the release's notes into the
+working directory as `notes.md`, the file `release.yml` hands to `gh release
+create --notes-file`. The release PR runs the same check locally (AGENTS.md
+§6), so every release leaves one behind in the checkout. On 0.17.0 it was
+committed with the release PR and removed by a commit of its own (5722086d).
+On 0.18.0 it sat untracked in the checkout and was taken for someone else's
+file; it held exactly the published notes.
+
+**What.** `/notes.md` in `.gitignore`, with why, and one sentence in the
+guard's docstring. Nothing a workflow does changes: `release.yml` reads the
+file from disk, and `crates-io.yml` still removes it before `cargo publish`.
