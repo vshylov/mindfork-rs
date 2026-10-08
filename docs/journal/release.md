@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (73)
+## Entries (74)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -85,6 +85,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the rented Mac day's last findings — two documents, two tests (done)
 - Release 0.18.0 (prepared)
 - Post-M9: the release notes a local tag check writes are ignored (done)
+- Post-M9: the macOS probe branch, frozen as a tag (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -4451,3 +4452,20 @@ file; it held exactly the published notes.
 **What.** `/notes.md` in `.gitignore`, with why, and one sentence in the
 guard's docstring. Nothing a workflow does changes: `release.yml` reads the
 file from disk, and `crates-io.yml` still removes it before `cargo publish`.
+
+### Post-M9: the macOS probe branch, frozen as a tag (done)
+
+**Why.** `spike/macos-probe` outlived the track it measured: never merged, it
+was still a live branch, and a push to it starts its workflow, which runs a
+managed `llama-server` on macOS runners. Deleted with nothing in its place, the
+measurements in [macos.md](../research/macos.md) §3 and §12 would lose their
+source once the run logs expire and the unreachable commits are collected.
+
+**What.** The probe's tip (ba7bccd3) is frozen under the annotated tag
+`probe/macos-stage0`, as `probe/code-search-stage5` and
+`probe/sandbox-files-stage1` were; the tag names the rounds, their runs and
+the verdict. The branch is deleted. The only file unique to it is
+`macos-probe.yml`: its `tap/` is byte-identical to `vshylov/homebrew-tap`
+today. Neither the tag nor the deletion starts a workflow — `release.yml`
+listens to `v*` and the probe to a push to its branch — and none ran.
+macos.md §3 and §12 point at the tag.
