@@ -4385,3 +4385,54 @@ Cmd+click does nothing.
 
   `llms.txt` is regenerated; `zola check` and `zola build` (0.23.6) are clean,
   and the post heads the blog's index.
+- **The draft, checked before anyone else could see it** (§6 step 5).
+  - The owner merged and set `v0.18.0` on the merge commit `d2fe8b62`, which
+    was `origin/main`.
+  - `release.yml` (run 37720218300) was green in all eight jobs in
+    **13 min 51 s** (0.17.0: 16 min 57 s). macOS took the longest at 11 min
+    58 s, then Windows 11 min 32 s, Linux 7 min 41 s, and the demo 3 min 11 s.
+  - It left a draft that was not a prerelease, with fifteen assets. Every file
+    downloaded hashed to the line `sha256sums.txt` gives it, fourteen of
+    fourteen.
+- **The job's install steps: `passed=46 failed=0` in the macOS build and
+  `passed=47 failed=0` in the publication** (0.17.0: 35 and 43, before
+  `install_test.sh` grew by the D4 scenarios). The released `install.sh`
+  carries D4's change.
+- **The released Windows binary.** The zip's `mindfork.exe` says `mindfork
+  0.18.0`. `console_probe.py --exe` it:
+  - `keys` passed, so the new command works as released;
+  - `full-mode` passed, so the console host keeps 24-bit colour: the
+    256-colour pass is Terminal.app's alone;
+  - `small-window` passed;
+  - `first-run` passed against Ollama 0.35.1 in Docker and LM Studio 1.1.7.
+    Its first try failed because neither stand was running: the scenario needs
+    both up.
+- **The macOS archive** is a Mach-O arm64 executable with its dictionaries.
+  The rented Mac was terminated by then, so it was not run.
+- **Attestations** verify for the three archives, the installer and
+  `install.sh`; a scratch file exits 1. **The six animation files are byte for
+  byte 0.17.0's**: the reel's scripted engine shows nothing this release
+  changed.
+- **Published, and the numbers of it.**
+  - The owner published at 03:24:19Z.
+  - `crates-io.yml` ran 03:24:21Z → 03:27:18Z. `mindfork 0.18.0` was on the
+    registry at 03:27:11Z, 2 min 52 s after the publication.
+  - `Site` started by itself two seconds after `crates.io` completed and
+    deployed at 03:28:00Z — **3 min 41 s after the publication** (0.17.0:
+    3 min 20 s).
+  - From outside:
+    - the post answers 200 at `/blog/mindfork-0-18-0/`, where Zola drops the
+      file name's date;
+    - the home page's and the install page's structured data say
+      `"softwareVersion": "0.18.0"`;
+    - the install page names the Mac mini (M4) with macOS 26 and 15;
+    - the blog's index, `/llms.txt`, the feed and the sitemap list the post;
+    - `releases/latest` resolves to `v0.18.0`, and its `install.sh` hashes to
+      the draft's.
+- **The package managers.** `aur.yml` built and checked `mindfork-rs-bin`
+  0.18.0 and stopped at its notice, because there is no key. At 03:30Z the
+  Homebrew tap and Scoop's bucket still named 0.17.0; both pick a release up
+  on their own schedule within hours.
+- **Not run**: the released binaries on a Mac or Linux with a screen; the TUI
+  on real data, which is the owner's; the Windows installer and the `.deb`,
+  `.rpm` and Arch packages, beyond what their jobs install.
