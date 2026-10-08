@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (94)
+## Entries (95)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -106,6 +106,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: LM Studio, a server the app knows by name (done)
 - Post-M9: the engineless chat offers a local Ollama or LM Studio (done)
 - Post-M9: the engine and the local servers on a real Mac (done)
+- Post-M9: LM Studio's MLX refusal reads as an overflow (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -6553,3 +6554,34 @@ measured both on an M4 (docs/research/macos.md §14.2, §14.5).
     `event: error` — *"The number of tokens to keep from the initial prompt is
     greater than the context length…"*. No overflow marker matches it, so the
     user gets the raw text (defect D3).
+
+### Post-M9: LM Studio's MLX refusal reads as an overflow (done)
+
+**Symptom.** On the rented Mac (docs/research/macos.md §14.2, defect D3) LM
+Studio's **MLX** engine refused one message over its window in its own words,
+not llama.cpp's. The refusal came as a `200` whose stream is
+`event: error` with `{"error":{"message":"The number of tokens to keep from the
+initial prompt is greater than the context length. Try to load the model with a
+larger context length, or provide a shorter input"},"message":"…"}`: no type,
+and the message twice. `wire::parse_stream_error` read it, but no marker of
+`features/compaction.rs` matched, so the user got *Generation error: …* and
+none of the advice. The GGUF build's refusal wraps llama.cpp's
+`exceed_context_size_error` and was always recognised.
+
+**Fix.** One marker, `tokens to keep from the initial prompt is greater than
+the context length`. It is long on purpose: the detector only picks the advice,
+and a false positive would send someone after a compaction that cannot help.
+Tests:
+- the body joins `every_provider_overflow_is_recognized`;
+- `lm_studio_mlx_refusal_is_an_overflow` parses the exact envelope and checks
+  that it is not retried and is an overflow.
+
+**Live** on the host's macOS 15, LM Studio (Bionic) 1.1.7, `gemma-4-e4b-it-mlx`
+loaded at 4096, a fresh data root:
+- the branch's build offered LM Studio, and a pasted ~26 000-character message
+  got *The conversation no longer fits the model's context window. Run
+  /compact … Server reply: The number of tokens to keep…*;
+- the control, 0.17.0 on the same server and message, still showed
+  *Generation error: The number of tokens to keep…*.
+
+**Tests:** +1. **3987 unit tests green, 257 `#[ignore]`**.

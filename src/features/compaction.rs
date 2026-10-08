@@ -318,6 +318,11 @@ const OVERFLOW_MARKERS: &[&str] = &[
     "prompt is too long",
     // Gemini: "The input token count (N) exceeds the maximum number of tokens…".
     "exceeds the maximum number of tokens",
+    // LM Studio's MLX engine, inside a `200` stream (`event: error`) — measured
+    // on a Mac, docs/research/macos.md §14.2: "The number of tokens to keep
+    // from the initial prompt is greater than the context length…". Its
+    // llama.cpp engine wraps llama.cpp's own type, matched above.
+    "tokens to keep from the initial prompt is greater than the context length",
 ];
 
 /// Did this generation fail because the conversation no longer fits the model's
@@ -775,6 +780,10 @@ mod tests {
             "invalid_request_error: prompt is too long: 210000 tokens > 200000 maximum",
             "INVALID_ARGUMENT: The input token count (1200000) exceeds the maximum \
              number of tokens allowed (1048576)",
+            // LM Studio's MLX engine, measured (docs/research/macos.md §14.2).
+            "The number of tokens to keep from the initial prompt is greater than the \
+             context length. Try to load the model with a larger context length, or \
+             provide a shorter input",
         ];
         for body in bodies {
             assert!(is_context_overflow(body), "not recognized: {body}");
