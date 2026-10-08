@@ -33,8 +33,8 @@ pub struct ManagedConfig {
     pub context_size: u32,
     /// The batch (`-b`) the chat server is launched with, `-ub` following it
     /// clamped at [`SERVER_UBATCH`]; `None` — [`CPU_BATCH`] when `gpu_layers`
-    /// is 0, nothing passed otherwise (docs/research/cpu-batch.md §4.1). The
-    /// embedding server ignores it: its batch is the context size.
+    /// is 0 or the host is a Mac, nothing passed otherwise ([`auto_batch`]).
+    /// The embedding server ignores it: its batch is the context size.
     pub batch_size: Option<u32>,
     /// Server slots the app will drive at once (`engine.managed.sessions`).
     /// Above 1 → `-np N --kv-unified`: N slots over the one pool `-c` sizes,
@@ -114,11 +114,17 @@ impl ManagedConfig {
 }
 
 /// Builds `llama-server`'s command-line arguments from the config (a pure function).
-/// The batch the chat server runs at on a CPU-only host when the user typed
-/// none (`-ngl 0`): the knee docs/research/cpu-batch.md §3.1 measured — the
-/// batch a cancel waits for falls from 23 s to 6.5 s, prompt processing slows
-/// by a seventh. A GPU host at its defaults gets no `-b` at all.
+/// The batch the chat server runs at when the user typed none on a CPU-only
+/// host (`-ngl 0`) or on a Mac: the knee docs/research/cpu-batch.md §3.1
+/// measured on the CPU build — the batch a cancel waits for falls from 23 s
+/// to 6.5 s, prompt processing slows by a seventh — and that Metal gets for
+/// nothing (docs/research/macos.md §14.7 D5: 4.35 s → 1.02 s on an M4, the
+/// prompt 1 % slower). Any other GPU host at its defaults gets no `-b` at all.
 pub const CPU_BATCH: u32 = 256;
+/// Whether the engine this binary launches runs on Metal: llama.cpp publishes
+/// only `metal` for macOS on Apple silicon (docs/research/macos.md §14.2), and
+/// a Mac's other builds — Homebrew's — are Metal too.
+const METAL_HOST: bool = cfg!(target_os = "macos");
 /// llama.cpp's default micro-batch (`-ub`); the launcher names it beside `-b`
 /// so the line reads whole, clamped to the batch as the server would clamp it.
 pub const SERVER_UBATCH: u32 = 512;
@@ -135,12 +141,20 @@ pub const PREFILL_HOLD_LIMIT_SECS: u32 = 5;
 /// the per-request overhead does not pass for throughput.
 pub const PREFILL_SAMPLE_MIN: u32 = 256;
 
-/// The batch a managed chat server runs with, from the same two facts
-/// [`build_args`] reads: the typed number, else [`CPU_BATCH`] on a host with
-/// no GPU layers, else the server's default.
+/// The batch Auto passes when none was typed: [`CPU_BATCH`] where the
+/// knee costs next to nothing and saves seconds — the CPU (`gpu_layers` 0)
+/// and Metal — and nothing elsewhere, where a GPU at the server's default
+/// holds a cancelled stream for under a second.
+fn auto_batch(gpu_layers: i32, metal: bool) -> Option<u32> {
+    (gpu_layers == 0 || metal).then_some(CPU_BATCH)
+}
+
+/// The batch a managed chat server runs with, from the same facts
+/// [`build_args`] reads: the typed number, else [`auto_batch`]'s, else the
+/// server's default.
 pub fn launched_batch(batch_size: Option<u32>, gpu_layers: i32) -> u32 {
     batch_size
-        .or((gpu_layers == 0).then_some(CPU_BATCH))
+        .or(auto_batch(gpu_layers, METAL_HOST))
         .unwrap_or(LLAMA_DEFAULT_BATCH)
 }
 
@@ -256,14 +270,13 @@ pub fn build_args(cfg: &ManagedConfig, no_mmap: NoMmapSpelling) -> Vec<String> {
     // server looks at its queue between batches of `-b` prompt tokens, so a
     // stopped or displaced stream holds its slot for one — 23 s at the
     // default on a CPU-only host, 6.5 s at 256. Auto passes `CPU_BATCH` where
-    // the user runs the engine on the CPU (`-ngl 0`); a typed number is passed
-    // as is; a GPU host at its defaults keeps the line byte for byte. `-ub` is
-    // named too, clamped as the server clamps it. The embedding server has a
-    // batch of its own below.
+    // the user runs the engine on the CPU (`-ngl 0`) or on a Mac's Metal
+    // ([`auto_batch`]); a typed number is passed as is; any other GPU host at
+    // its defaults keeps the line byte for byte. `-ub` is named too, clamped
+    // as the server clamps it. The embedding server has a batch of its own
+    // below.
     if !cfg.embeddings
-        && let Some(batch) = cfg
-            .batch_size
-            .or((cfg.gpu_layers == 0).then_some(CPU_BATCH))
+        && let Some(batch) = cfg.batch_size.or(auto_batch(cfg.gpu_layers, METAL_HOST))
     {
         args.push("-b".into());
         args.push(batch.to_string());
@@ -1092,20 +1105,33 @@ mod tests {
     }
 
     /// A GPU host at its defaults keeps its line byte for byte (R2): no
-    /// `-b`, no `-ub`.
+    /// `-b`, no `-ub` — except on a Mac, whose Metal gets the knee
+    /// ([`auto_batch`]).
     #[test]
     fn a_gpu_line_is_byte_for_byte_what_it_was() {
         let args = build_args(&base_cfg(), NoMmapSpelling::LoadMode);
-        assert!(!args.iter().any(|a| a == "-b" || a == "-ub"), "{args:?}");
+        let has_batch = args.iter().any(|a| a == "-b" || a == "-ub");
+        assert_eq!(has_batch, METAL_HOST, "{args:?}");
         let partial = ManagedConfig {
             gpu_layers: 20,
             ..base_cfg()
         };
-        assert!(
-            !build_args(&partial, NoMmapSpelling::LoadMode)
-                .iter()
-                .any(|a| a == "-b")
-        );
+        let partial_batch = build_args(&partial, NoMmapSpelling::LoadMode)
+            .iter()
+            .any(|a| a == "-b");
+        assert_eq!(partial_batch, METAL_HOST);
+    }
+
+    /// Auto's batch: the knee on the CPU and on Metal, where it was measured
+    /// to cost next to nothing (docs/research/macos.md §14.7 D5), and nothing
+    /// on any other GPU.
+    #[test]
+    fn auto_takes_the_knee_on_the_cpu_and_on_metal() {
+        assert_eq!(auto_batch(0, false), Some(CPU_BATCH), "the CPU");
+        assert_eq!(auto_batch(99, true), Some(CPU_BATCH), "Metal");
+        assert_eq!(auto_batch(0, true), Some(CPU_BATCH), "a Mac on its CPU");
+        assert_eq!(auto_batch(99, false), None, "a GPU elsewhere");
+        assert_eq!(auto_batch(20, false), None, "a partial offload");
     }
 
     /// A typed batch is passed as is, whatever `-ngl` says, and the
@@ -1235,9 +1261,18 @@ mod tests {
 
     #[test]
     fn no_batch_flags_for_non_embedding_server() {
-        // The chat server doesn't get the embedder's batch flags.
-        let args = build_args(&base_cfg(), NoMmapSpelling::LoadMode);
-        assert!(!args.contains(&"-ub".to_string()));
+        // The chat server doesn't get the embedder's batch flags (the context
+        // size). On a Mac it gets the knee instead ([`auto_batch`]); elsewhere
+        // nothing.
+        let cfg = base_cfg();
+        let args = build_args(&cfg, NoMmapSpelling::LoadMode);
+        let ub = args
+            .iter()
+            .position(|a| a == "-ub")
+            .map(|i| args[i + 1].clone());
+        let expected = METAL_HOST.then(|| CPU_BATCH.to_string());
+        assert_eq!(ub, expected, "{args:?}");
+        assert_ne!(ub, Some(cfg.context_size.to_string()));
     }
 
     #[test]
@@ -1753,10 +1788,15 @@ mod tests {
         assert_eq!(launched_batch(Some(1024), 99), 1024, "typed wins");
         assert_eq!(launched_batch(Some(1024), 0), 1024);
         assert_eq!(launched_batch(None, 0), CPU_BATCH, "the CPU auto");
+        let gpu = if METAL_HOST {
+            CPU_BATCH
+        } else {
+            LLAMA_DEFAULT_BATCH
+        };
         assert_eq!(
             launched_batch(None, 99),
-            LLAMA_DEFAULT_BATCH,
-            "a GPU host at its defaults runs the server's"
+            gpu,
+            "a GPU host at its defaults runs the server's, Metal the knee"
         );
     }
 

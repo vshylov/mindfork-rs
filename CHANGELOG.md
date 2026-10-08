@@ -21,6 +21,15 @@ split by subsystem.
   the lines show what your terminal sent instead; paste them into a report. It
   was made for checking terminals on a Mac, and works in any terminal.
 
+### Changed
+
+- **On a Mac, the local engine stops a cancelled request four times sooner.**
+  With the Batch field empty, mindfork's own llama-server on a Mac now runs
+  with `-b 256 -ub 256`, as it already did on a CPU-only computer: a request
+  stopped mid-prompt held the engine for about 4 s and now for about 1 s,
+  measured on an M4, for 1 % of prompt speed. The note that used to advise
+  this change after the first turn is gone there.
+
 ### Fixed
 
 - **The full colour mode is readable in Terminal.app before macOS 26.** That

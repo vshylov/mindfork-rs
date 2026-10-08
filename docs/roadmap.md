@@ -490,8 +490,8 @@ effort tiers — have all closed
   Stage 3, a day on a rented Mac (AWS `mac-m4.metal`, macOS 26 and 15), done
   on 2026-10-07 (macos.md §14). **Open:** its three defects (§14.7 — `full` in
   Terminal.app before macOS 26, LM Studio's MLX overflow, `install.sh --from`
-  after a browser) are fixed; D5, the slow-prefill note on Apple silicon, is
-  to be measured, then the call for testers; signing
+  after a browser) are fixed, and a Mac's managed engine takes the
+  knee batch the slow-prefill note advised (D5, measured), then the call for testers; signing
   and notarization on demand (fork F4).
 - **MSI for GPO/Intune** — **on demand**.
 - **GPG signing of the Linux packages** — **idea**

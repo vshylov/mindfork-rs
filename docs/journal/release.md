@@ -4238,7 +4238,7 @@ left to testers.
   `COLORTERM`.
 - **D3:** LM Studio's MLX refusal is not recognised as an overflow.
 - **D4:** `install.sh --from` misses Safari's `.tar` and waits on Gatekeeper.
-- **D5:** the slow-prefill note fires after every turn on an M4.
+- **D5:** the slow-prefill note fires on an M4 once in every server session; fixed by taking its advice by default (§14.8).
 - **D6, D7:** the documents and two tests.
 
 **Not done.** Real-keyboard checks (`fn`, Option through hardware) are left to
