@@ -39,7 +39,11 @@ before the one-shot ones. Its first code track is the animated demo
 ([demo-reel.md](research/demo-reel.md)) — the reel and its renderer, then
 its publication: every release draws it — in English and in Russian — and
 the site and the README play it. The plan also feeds the reputation Windows code
-signing waits on.
+signing waits on. Where it stands on 2026-10-08: the storefront and the first
+try are done as far as they can be (the AUR and winget wait on others), macOS
+included, with 0.18.0. The communities are under way: awesome-ratatui and
+Glama's MCP client list have the submissions, and the one-shot posts are open.
+The first of them carries the call for macOS testers.
 
 The last two code tracks — small windows, and the reasoning effort a model
 does not have — closed on 2026-09-30 and 2026-10-01 and ship together in
@@ -489,14 +493,17 @@ effort tiers — have all closed
   archive, `install.sh` on a Mac, the `vshylov/homebrew-tap` tap) shipped.
   Stage 3, a day on a rented Mac (AWS `mac-m4.metal`, macOS 26 and 15), done
   on 2026-10-07 (macos.md §14); every finding of it is closed (§14.7), and
-  0.18.0 carries the fixes. **Open:** the call for testers (the owner's post);
-  signing and notarization on demand (fork F4).
+  0.18.0 carries the fixes. **Open:** the call for testers — a paragraph of the
+  first wide post ([promotion.md](research/promotion.md) stage 2), not a post of
+  its own: with two users, a call in the repository's Discussions would reach no
+  one (the owner, 2026-10-08); signing and notarization on demand (fork F4).
 - **MSI for GPO/Intune** — **on demand**.
 - **GPG signing of the Linux packages** — **idea**
   ([code-signing.md §6.4](research/code-signing.md), out of scope there).
-- **Auto-update** — **idea**: self-update, musl-static and arm64 builds (the
-  matrix is x86_64 glibc Linux and Windows; `install.sh` refuses anything
-  else), a "new version is available" notice in the TUI. Two things to know
+- **Auto-update** — **idea**: self-update, musl-static and Linux arm64 builds
+  (the matrix is x86_64 glibc Linux, Windows and Apple Silicon macOS;
+  `install.sh` refuses anything else), a "new version is available" notice in
+  the TUI. Two things to know
   first: [PRIVACY.md](../PRIVACY.md) promises no update check and no version
   ping, so a notice changes the policy; and on Linux re-running `install.sh`
   already upgrades in place. Groundwork from

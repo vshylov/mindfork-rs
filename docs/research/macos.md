@@ -2,7 +2,9 @@
 
 Status: **MVP probe GO; every fork as recommended (the owner, 2026-10-04);
 stages 1 and 2 built (§10–§12), shipped in 0.15.0; stage 3, a day on a
-rented Mac, done on 2026-10-07 (§13), measured in §14**. Part of the promotion plan's stage 1, the
+rented Mac, done on 2026-10-07 (§13), measured in §14, fixed in 0.18.0; the
+call for testers goes out with the promotion plan's first wide post (§13.7)**.
+Part of the promotion plan's stage 1, the
 friction of a first try ([promotion.md §5](promotion.md)): until 0.15.0 a Mac
 user had no download at all.
 
@@ -292,7 +294,8 @@ one route that exists today, with every gap in §4.
   26 is the other half. On EC2 the GUI is Screen Sharing over an SSH tunnel.
   Creating the account and the machine is the owner's to do. Fork F6.
 - **Testers** — the first macOS release marked a *preview*, with Mac users
-  asked to report (Discussions; r/LocalLLaMA when the post goes out).
+  asked to report (Discussions; r/LocalLLaMA when the post goes out). Since
+  2026-10-08 the call waits for that post (§13.7).
 
 ### 6.2 What only a Mac with a screen answers
 
@@ -662,6 +665,13 @@ quarantine note.
   with a screen".
 - The call for testers — a Discussions post in the owner's words, after the
   owner's yes; the key echo (F7 a) is what it asks them to run.
+  **Changed on 2026-10-08** (the owner): not a post of its own. The application
+  has two users, both its authors, so a call in its own Discussions would reach
+  no one. It becomes a paragraph of the first wide post — r/LocalLLaMA, Show HN
+  or Habr ([promotion.md](promotion.md) stage 2), where §6.1 expected the
+  testers to come from anyway. The bug template asks what a report needs: the
+  chip and memory, the key echo's lines, and the log, found through `mindfork
+  stats`.
 
 ### 13.8 Forks
 
@@ -940,8 +950,8 @@ ran. Ghostty, from the same cask run, opened at once.
 | D7 | **Tests:** the two image tests look only for English words; two `llama_setup` tests expect a `cpu` build that macOS does not have | low | **fixed**: the image tests read a colour or a shape in either language (`names`; a unit test holds the Mac's exact replies); the two `llama_setup` tests ask for the platform's base build (`metal` on a Mac). Live on Windows: the three image tests on Gemma 4 31B with vision, and both `llama_setup` tests (b11480 `cpu`) |
 | — | The probe: it unlinked a root-owned link without `sudo`, and found no failed names under `--nocapture` | fixed | in this change |
 
-Every finding is closed. The call for testers (§13.7) waits on a release that
-carries the fixes.
+Every finding is closed, and 0.18.0 carries the fixes. The call for testers
+goes out with the first wide post (§13.7).
 
 ### 14.8 D5 measured — the batch a cancel waits for, on Metal
 
