@@ -96,12 +96,17 @@ brew install vshylov/tap/mindfork
 **The archive — `mindfork-rs-v<version>-aarch64-macos.tar.gz`.** Downloaded in a
 browser, macOS quarantines it and everything unpacked from it, and the binary
 is not notarized: clear the mark with `xattr -dr com.apple.quarantine` on the
-unpacked folder before the first run.
+unpacked folder before the first run. Or the long way: the first start is
+refused (*"mindfork" Not Opened* — choose **Done**, not *Move to Trash*), then
+*System Settings → Privacy & Security → Open Anyway*, and **Open Anyway** once
+more at the next start.
 
 Apple Silicon only — an Intel Mac has no build; `cargo install` below makes one.
-Local models run through llama.cpp's Metal build. A **preview**: built and tested
-on GitHub's Apple Silicon runners, not yet on a Mac with a screen, so reports are
-welcome ([the details](https://github.com/vshylov/mindfork-rs/blob/main/docs/install.md#macos-apple-silicon--a-preview)).
+Local models run through llama.cpp's Metal build. In Terminal.app a line break is
+`Ctrl+J`; iTerm2 and Ghostty take `Shift+Enter`. A **preview**: built and tested on
+GitHub's Apple Silicon runners and for a day on a Mac mini (M4) with macOS 26 and
+15, so reports are welcome — `mindfork keys` shows what your terminal sends
+([the details](https://github.com/vshylov/mindfork-rs/blob/main/docs/install.md#macos-apple-silicon--a-preview)).
 
 ## Verify what you downloaded
 

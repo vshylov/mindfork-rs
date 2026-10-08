@@ -14,6 +14,14 @@ split by subsystem.
 
 ## [Unreleased]
 
+## [0.18.0] — 2026-10-08
+
+**A day on a real Mac.** 0.15.0 brought mindfork to macOS, built and tested on
+CI runners with no screen. This release was run for a day on a Mac mini (M4)
+with macOS 26 and 15: the installs, Metal, Ollama and LM Studio, and three
+terminals key by key. What it found is fixed here, and `mindfork keys` turns a
+key that does nothing into a line a report can carry.
+
 ### Added
 
 - **`mindfork keys`** shows each key you press as mindfork receives it, and
@@ -3230,7 +3238,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/vshylov/mindfork-rs/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/vshylov/mindfork-rs/compare/v0.16.1...v0.17.0
 [0.16.1]: https://github.com/vshylov/mindfork-rs/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/vshylov/mindfork-rs/compare/v0.15.0...v0.16.0
