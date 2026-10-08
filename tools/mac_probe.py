@@ -418,7 +418,7 @@ def test_summary(output: str) -> tuple[dict[str, int], list[str]]:
     # `--nocapture` a test's own output sits between its name and `FAILED`, so
     # the `test … FAILED` line does not exist (measured on the day).
     failed = []
-    for block in re.findall(r"^failures:\n((?:\n|    \S+\n)+)", output, flags=re.MULTILINE):
+    for block in re.findall(r"^failures:\n((?:\n| {4}\S+\n)+)", output, flags=re.MULTILINE):
         failed += [name for name in block.split() if name not in failed]
     return totals, failed
 

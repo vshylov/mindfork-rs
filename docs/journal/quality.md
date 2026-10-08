@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (33)
+## Entries (34)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -45,6 +45,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: SonarQube follow-up — the demo reel's two findings (done)
 - Post-M9: SonarQube follow-up — the console probe's two key names (done)
 - Post-M9: SonarQube follow-up — the console probe's ready-chat chip (done)
+- Post-M9: SonarQube follow-up — the Mac probe's four spaces (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -1751,3 +1752,23 @@ structure (AGENTS.md §3).
 - No Rust touched — test totals unchanged; the documentation gates green. No
   CHANGELOG entry: internal tooling (AGENTS.md §4). No live run beyond the
   probe's own: a developer tool, no engine path (AGENTS.md §3).
+
+### Post-M9: SonarQube follow-up — the Mac probe's four spaces (done)
+
+- **One open finding on `main`, the gate green** (read through the Sonar MCP on
+  2026-10-09; branch `refactor/sonar-mac-probe-regex`). `python:S6326`, MAJOR, in
+  `tools/mac_probe.py`'s `test_summary`: the regex that reads the names out of
+  cargo's `failures:` list matched a name's indent as four literal spaces. It
+  arrived with #715, which moved the names there from the `test … FAILED` lines
+  that `--nocapture` breaks, and its PR gate let it through: it judges ratings,
+  not counts ([lessons.md](../lessons.md) §10).
+- **Written as the rule asks**, ` {4}` for the four spaces — the same pattern
+  spelt so its count can be read. No `re.VERBOSE` (the rule's exemption): the
+  pattern is short and has no other spaces to lay out.
+- **Measured, old against new.** The snippet analyzer raises the old line (the
+  control) and is clean on the new one. The probe's `--self-test`, which CI's
+  `lint` job runs, passes on the branch; a mutant with ` {3}` fails its two
+  checks that name the failed tests, so the self-test does pin this pattern.
+- No Rust touched — test totals unchanged; the documentation gates green. No
+  CHANGELOG entry: internal tooling (AGENTS.md §4). No live run: a developer
+  tool's offline parser, no engine path (AGENTS.md §3).
