@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (71)
+## Entries (72)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -83,6 +83,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: macOS stage 3 — the rented day (done)
 - Post-M9: `install.sh --from` and a browser's download on a Mac (done)
 - Post-M9: the rented Mac day's last findings — two documents, two tests (done)
+- Release 0.18.0 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -4334,3 +4335,53 @@ Cmd+click does nothing.
   image you sent."
 
 **Tests:** +1. **3989 unit tests green, 257 `#[ignore]`**.
+
+### Release 0.18.0 (prepared)
+
+- **A release PR** per [AGENTS.md §6](../../AGENTS.md), branch
+  `chore/release-0.18.0`:
+  - `Cargo.toml` `0.17.0 → 0.18.0` (+ one line of `Cargo.lock`), and the
+    site's `app_version`;
+  - `CHANGELOG.md`: `[Unreleased]` → `[0.18.0] — 2026-10-08` under a lead
+    paragraph, "A day on a real Mac", a fresh `[Unreleased]`, and the
+    comparison links;
+  - CLAUDE.md's status heading;
+  - the site's macOS install section and the release's post.
+
+  Since `v0.17.0`: macOS stage 3 — its plan (712), `mindfork keys` (713), the
+  day's tools (714), the day's results (715) and its fixes (716–720) — and the
+  journal of 0.17.0's publication (711).
+- **A MINOR**, by the letter of §6: `mindfork keys` is a feature under *Added*,
+  and a Mac's engine launches with a different batch (*Changed*).
+- **The site's install page** said macOS was "not yet on a Mac with a screen".
+  It now names the day (a Mac mini, M4, macOS 26 and 15), the browser's two
+  *Open Anyway*s, the line break in Terminal.app against iTerm2 and Ghostty,
+  and `mindfork keys`. The README's macOS line keeps "a preview": it is one
+  until testers have run it.
+- **No `Data` rubric, by measurement.** `git diff v0.17.0 -- src/shared/storage
+  src/shared/config.rs src/entities src/features/data_migration.rs
+  src/features/backup.rs` is empty. Neither the colour depth nor the Mac's
+  batch is stored: one is read from the environment at start, the other is
+  Auto's when the field is empty.
+- **The rehearsal, weighed and not proposed.** `git diff v0.17.0 --
+  .github/workflows packaging` names `install.sh` and its scenarios
+  (`install_test.sh`) and two `lint` steps in `ci.yml`. `release.yml` itself is
+  unchanged.
+  - The script's change was checked by `packaging.yml` on its own pull
+    request: five bare images, the macOS runner, and the latest release's
+    download.
+  - It was also run live on a Mac with a screen against the 0.17.0 archive.
+  - `release.yml` runs the scenarios against the release's own binary, and
+    installs the release's archive with the script, before the draft exists.
+
+  The owner may still ask for an `-rc1`.
+- **The post** says what the day found:
+  - what worked: the three installs and their times, Metal's ~400/~30 t/s,
+    Ollama and LM Studio (Bionic) with MLX, the sandbox, notes, Finder,
+    speech, a pasted image, the lock;
+  - the four fixes in a user's words;
+  - the keys terminal by terminal, Ghostty's Cmd+→ with its two remedies;
+  - `mindfork keys` and where its lines go.
+
+  `llms.txt` is regenerated; `zola check` and `zola build` (0.23.6) are clean,
+  and the post heads the blog's index.
