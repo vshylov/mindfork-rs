@@ -516,9 +516,13 @@ things on different screens. The highlights:
 > Cyrillic.
 
 > **On a Mac.** macOS takes `Ctrl+←/→` for switching Spaces, so words are Option+←/→
-> there. Terminal.app breaks a line with `Ctrl+J` (its footer says so); with *Use Option
-> as Meta key* on (Settings → Profiles → Keyboard) `Alt+Enter` and the other `Alt` chords
-> work too. The `F` keys need `fn`.
+> there. Terminal.app breaks a line with `Ctrl+J` (its footer says so) and keeps Home,
+> End and Page Up/Down for its own scrolling — add `Shift`; with *Use Option as Meta key*
+> on (Settings → Profiles → Keyboard) `Alt+Enter` and the other `Alt` chords work too.
+> iTerm2 and Ghostty take `Shift+Enter`. In Ghostty, Cmd+→ arrives as `Ctrl+E`, which
+> deletes the last exchange: turn on *Confirm regenerate / delete* (Settings →
+> Interface), or Ghostty's keys off ([install.md](install.md#macos-apple-silicon--a-preview)).
+> The `F` keys need `fn`.
 
 > **When a key does nothing.** `mindfork keys` shows each key you press as the app
 > receives it, and what the input box does with it; `Ctrl+Q` quits. When a terminal

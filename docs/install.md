@@ -169,8 +169,12 @@ Both routes download with `curl`, so macOS does not quarantine what they
 install. **The archive downloaded in a browser is quarantined** — and so is
 everything unpacked from it — and since the binary is signed only ad hoc, not
 notarized, macOS refuses to start it until the mark is cleared:
-`xattr -dr com.apple.quarantine <the unpacked folder>`, or *System Settings →
-Privacy & Security → Open Anyway*.
+`xattr -dr com.apple.quarantine <the unpacked folder>`. Or the long way, as
+measured on macOS 26: Safari leaves a `.tar` (it unpacks the `.gz` itself), a
+double click unpacks that, and the first start is refused — *"“mindfork” Not
+Opened"*; choose **Done**, not *Move to Trash*. Then *System Settings → Privacy
+& Security → Open Anyway*, start it again, and answer the second question with
+**Open Anyway**.
 
 - **Apple Silicon only.** An Intel Mac has no prebuilt build: the Python
   sandbox's Wasmer has none for it, and llama.cpp's Intel build has no Metal.
@@ -178,11 +182,27 @@ Privacy & Security → Open Anyway*.
 - **Local models run on Metal**: `mindfork llama setup --backend metal
   --set-binary` (§3.1).
 - **The keys**: macOS keeps `Ctrl+←/→` for switching Spaces, so words are
-  Option+←/→; Terminal.app breaks a line with `Ctrl+J`; the `F` keys need `fn`
-  ([the manual](manual.md) §9).
-- **A preview**: built and tested on GitHub's Apple Silicon runners, not yet on
-  a Mac with a screen. What is still to be checked there is listed in
-  [docs/research/macos.md](research/macos.md) §6.2 — reports are welcome. For a
+  Option+←/→; the `F` keys need `fn` ([the manual](manual.md) §9). iTerm2 and
+  Ghostty break a line with `Shift+Enter`. Terminal.app breaks it with
+  `Ctrl+J`, erases a character (not a word) with Option+Backspace, and keeps
+  Home, End and Page Up/Down for its own scrolling: add `Shift` to reach the
+  app.
+- **Ghostty** sends Cmd+→ as `Ctrl+E`, which deletes the last exchange (your
+  message returns to the input), Cmd+← as `Ctrl+A` (select all) and
+  Cmd+Backspace as `Ctrl+U` (write a message as you). Either turn on *Settings
+  → Interface → Confirm regenerate / delete*, or turn those keys off in
+  `~/.config/ghostty/config` — the shell then loses them too:
+
+  ```
+  keybind = super+arrow_left=unbind
+  keybind = super+arrow_right=unbind
+  keybind = super+backspace=unbind
+  ```
+- **Terminal.app before macOS 26** has no 24-bit colour: keep the colour mode
+  at `system`, the default — `full` is unreadable there.
+- **A preview**: built and tested on GitHub's Apple Silicon runners, and on a
+  rented Mac mini (M4) with macOS 26 and 15 on 2026-10-07 — what it found is
+  [docs/research/macos.md](research/macos.md) §14; reports are welcome. For a
   key that does not work, `mindfork keys` prints what your terminal sends; its
   lines are the most useful part of a report.
 

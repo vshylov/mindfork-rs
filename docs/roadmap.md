@@ -487,9 +487,11 @@ effort tiers — have all closed
   Silicon only; stage 1 (stored secrets, the single-instance lock, a symlinked
   binary, the keys, macOS in CI) and stage 2 (the release's `aarch64-macos`
   archive, `install.sh` on a Mac, the `vshylov/homebrew-tap` tap) shipped.
-  **Open: stage 3** — a day on a rented Mac (AWS `mac-m4.metal`), planned in
-  macos.md §13, then the call for testers; signing and notarization on
-  demand (fork F4).
+  Stage 3, a day on a rented Mac (AWS `mac-m4.metal`, macOS 26 and 15), done
+  on 2026-10-07 (macos.md §14). **Open:** its defects (§14.7 — `full` in
+  Terminal.app before macOS 26, LM Studio's MLX overflow, `install.sh --from`
+  after a browser), then the call for testers; signing
+  and notarization on demand (fork F4).
 - **MSI for GPO/Intune** — **on demand**.
 - **GPG signing of the Linux packages** — **idea**
   ([code-signing.md §6.4](research/code-signing.md), out of scope there).

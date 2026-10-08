@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (93)
+## Entries (94)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -105,6 +105,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a prompt the server cut in silence is told (done)
 - Post-M9: LM Studio, a server the app knows by name (done)
 - Post-M9: the engineless chat offers a local Ollama or LM Studio (done)
+- Post-M9: the engine and the local servers on a real Mac (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -6512,3 +6513,43 @@ stacked on the LM Studio stage; the promotion plan's idea for its stage 1.
   - `lmstudio` and `ollama` as the control: green, no list.
 - **Next**: the README's and the site's paragraph in the release PR, shorter
   now — start the server, start mindfork, `Enter`.
+
+### Post-M9: the engine and the local servers on a real Mac (done)
+
+**Why.** Metal had only been smoked on GitHub's paravirtual GPU, and 0.17.0's LM
+Studio work had been measured on its llama.cpp engine only. The rented day
+measured both on an M4 (docs/research/macos.md §14.2, §14.5).
+
+**Measured.**
+- **The managed engine.** `setup --llama metal … --verify` installed llama.cpp
+  b11476 `metal` (11 MB), which saw `MTL0: Apple M4 (18186 MiB)`; the chat
+  server was *ready in 5 s* at 16384. `llama-bench` on Gemma 4 E4B Q4_1 gave
+  pp512 402 t/s and tg128 29.7 t/s. In the chat:
+  - a turn with its thoughts;
+  - `python_exec` in the sandbox;
+  - `note_save`, then `note_recall` in a new chat;
+  - a pasted image described.
+- **The live gate:** 232 of 250. The 18 failures are:
+  - 6 the model's (E4B);
+  - 2 tests that look for English words where the model answered right in
+    Russian;
+  - 5 the slow-prefill note on a host the tests take for fast;
+  - 3 MCP tests without `node`;
+  - 2 `llama_setup` tests that expect a `cpu` build, which macOS/arm64 does not
+    get.
+- **The slow-prefill note fires on an M4** after every turn: 295–374 t/s at the
+  default batch is a 5.5–6.9 s hold against the 5 s limit. Whether -b 256 is
+  the right advice on Apple silicon is defect D5, to measure before changing.
+- **Ollama 0.40.0** (`brew`): `gemma4:e4b` loaded in 11 s at a window of 4096,
+  the same as under 24 GiB of VRAM. The first run offered it, and a turn
+  answered.
+- **LM Studio** is called **Bionic** on a Mac (1.1.7+7); `lms` still says LM
+  Studio.
+  - The GGUF behaves as on Windows: a 400 for one message over the window, a
+    silent cut for a conversation over it.
+  - The **MLX** build reports its window in `/api/v1/models` like llama.cpp's
+    engine, and cuts a conversation the same way (2038 of ~6250).
+  - **Its refusal of one overlong message differs:** a 200 whose stream is
+    `event: error` — *"The number of tokens to keep from the initial prompt is
+    greater than the context length…"*. No overflow marker matches it, so the
+    user gets the raw text (defect D3).

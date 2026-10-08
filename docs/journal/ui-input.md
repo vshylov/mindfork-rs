@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (35)
+## Entries (36)
 
 - Post-M9: fast multiline clipboard paste (done)
 - Post-M9: `↑/↓` navigation by visual row of a wrapped line (done)
@@ -47,6 +47,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: keys a Mac delivers — `Alt` for words, `Ctrl+J` for a line break (done)
 - Post-M9: AltGr text on Windows is typed (done)
 - Post-M9: `mindfork keys` — each key as the app receives it (done)
+- Post-M9: the keys on a real Mac (done)
 
 ### Post-M9: fast multiline clipboard paste (done)
 - **Symptom**: a large clipboard paste lagged in Windows Terminal, and a line break
@@ -1915,3 +1916,36 @@ restore guard.
 **Tests:** +17 unit tests (13 in `app/key_echo.rs`, 2 in `features/cli.rs`,
 2 in `app/runtime`) and the launch-gate test extended. **3979 unit tests green,
 257 `#[ignore]`**; fmt and clippy are clean.
+
+### Post-M9: the keys on a real Mac (done)
+
+**Why.** `shared/keys.rs`'s answers for a Mac were read from documents and runner
+probes, never from a Mac's keyboard. On the rented day (docs/research/macos.md
+§14.3) `mindfork keys` recorded every chord in Terminal.app (macOS 26 and 15),
+iTerm2 3.7.3 and Ghostty 1.3.1. The chords were posted on the Mac through
+System Events, as its own keyboard posts them, because VNC from a PC has no
+Option key.
+
+**What it showed.**
+- **The footer is right in all three:** *Ctrl+J* in Terminal.app, *Shift+Enter*
+  in iTerm2 and Ghostty, which both answer the kitty query.
+- **Terminal.app:**
+  - Shift+Enter and Option+Enter arrive as a bare Enter (a send);
+  - Option+←/→ arrive as Alt+b/f and move by words;
+  - Option+Backspace is a plain Backspace;
+  - Home, End and Page never reach the app; with Shift they arrive without
+    the Shift.
+- **iTerm2:** everything arrives except Shift+Page Up/Down, which it keeps.
+- **Ghostty** sends Option as Alt, so Option+X is Alt+X, not `≈`. It also sends
+  Cmd+→ as **Ctrl+E**, which deletes the last exchange without a question,
+  and Cmd+Backspace as Ctrl+U. Defect D1: the owner kept the keys, since a
+  short message and the deletion matter more than moving in the input box;
+  install.md names the confirmation and Ghostty's `unbind` lines.
+- **The Russian layout:** letters arrive Cyrillic. A Ctrl+letter arrives as
+  the Latin letter in Terminal.app and as the Cyrillic one in iTerm2 and
+  Ghostty, and the app read each by its physical key: the static table holds
+  on a Mac. The spellcheck underlines misspelt Russian.
+- A two-line Cmd+V is one paste everywhere; a PNG on the clipboard pasted with
+  Ctrl+V became an attachment.
+
+No code changed here; the documents changed (install.md, the manual).
