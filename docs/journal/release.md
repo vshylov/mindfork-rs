@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (70)
+## Entries (71)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -82,6 +82,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: macOS stage 3 — the rented day's tools (done)
 - Post-M9: macOS stage 3 — the rented day (done)
 - Post-M9: `install.sh --from` and a browser's download on a Mac (done)
+- Post-M9: the rented Mac day's last findings — two documents, two tests (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -4284,3 +4285,46 @@ adds no warning.
 - with `-- --version` it refused the hand-over;
 - the control, 0.17.0's own `install.sh`, raised the dialog, waited over three
   minutes, raised it again after Done, and ended *does not start*, exit 1.
+
+### Post-M9: the rented Mac day's last findings — two documents, two tests (done)
+
+**Why.** The last two findings of docs/research/macos.md §14.7: what the
+documents still did not say (D6), and four live tests that failed on the Mac
+for reasons of their own (D7).
+
+**D6, the documents.** The stage-3 change had already given install.md and the
+manual Terminal.app's `Shift` for Home/End/Page, Option+Backspace erasing a
+character, and the browser's two *Open Anyway*s. This adds the rest of what
+was measured: in iTerm2 Page Up/Down reach the app while `Shift`+Page scrolls
+iTerm2, and in Terminal.app a link opens with Cmd+double-click, since a single
+Cmd+click does nothing.
+
+**D7, the tests:**
+- **The image tests.** `image_attachment_e2e_live`, `image_url_attachment_e2e_live`
+  and `a_history_image_on_an_engine_without_vision_live` looked for `blue`,
+  `green`, `white` and `square`. On the Mac, Gemma 4 E4B answered right in
+  the default profile's Russian (a blue field, a white square), and the tests
+  failed. They now ask `names(reply, BLUE)` and the like, which accept either
+  language, with Russian stems so every case ending matches. A unit test,
+  `a_reply_names_a_thing_in_either_language`, holds the Mac's exact replies
+  and two that must not match, so the Russian side is checked without a model.
+- **The `llama_setup` tests.** They asked for a `cpu` build, which llama.cpp
+  does not publish for macOS/arm64. `BASE_BACKEND` is `metal` on a Mac and
+  `cpu` elsewhere, and the tests are renamed for what they ask:
+  `live_the_newest_build_still_names_the_base_backend` and
+  `live_install_the_base_backend_into_a_tempdir`.
+
+**Live on Windows:**
+- Both `llama_setup` tests passed: b11480, `cpu` among seven backends, 18 MB
+  installed.
+- The image tests were first run on Gemma 4 E2B with its projector, a smaller
+  model than the Mac's. All three failed before any of these assertions: E2B
+  replied that no image was attached, although the server described the same
+  picture when asked directly. A model too small for the app's prompt, so not
+  a measure of this change.
+- On Gemma 4 31B Q4_0 with its projector all three passed: "The background
+  colour is blue, and there is a white square in the centre.", "White",
+  "Green background, white square.", and the blind engine's "I cannot see the
+  image you sent."
+
+**Tests:** +1. **3989 unit tests green, 257 `#[ignore]`**.
