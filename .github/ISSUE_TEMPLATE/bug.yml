@@ -26,8 +26,9 @@ body:
       label: OS and terminal emulator
       description: >
         Rendering and keyboard behaviour differ a lot between terminals, so the
-        emulator is as useful as the OS.
-      placeholder: "Windows 11 + Windows Terminal · Ubuntu 24.04 + kitty · macOS + iTerm2"
+        emulator is as useful as the OS. On a Mac, the chip and its memory too:
+        they decide which local models fit and how fast they run.
+      placeholder: "Windows 11 + Windows Terminal · Ubuntu 24.04 + kitty · macOS 15.8, M2 16 GB + iTerm2"
     validations:
       required: true
   - type: dropdown
@@ -55,7 +56,10 @@ body:
     id: steps
     attributes:
       label: What you did, and what you expected instead
-      description: Steps to reproduce, then the expectation the app disappointed.
+      description: >
+        Steps to reproduce, then the expectation the app disappointed. For a key
+        that does nothing, run `mindfork keys`, press the key and paste the lines
+        it prints: they show what your terminal sent.
       placeholder: |
         1. …
         2. …
@@ -67,8 +71,11 @@ body:
     attributes:
       label: The relevant part of the log
       description: >
-        Logs are files under `logs/` next to the binary — the interface owns
-        stdout, so nothing useful is printed to the terminal. Paste the lines
-        around the failure; secrets are never written there, but do read what you
-        paste.
+        Logs are files under `logs/` in the data folder, and `mindfork stats`
+        prints that folder on its second line. The portable archive and the
+        install script keep it next to the binary; an installed copy keeps it in
+        the user's folder — with Homebrew, `~/Library/Application
+        Support/mindfork-rs`. The interface owns stdout, so nothing useful is
+        printed to the terminal. Paste the lines around the failure; secrets are
+        never written there, but do read what you paste.
       render: text

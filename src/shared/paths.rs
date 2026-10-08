@@ -42,7 +42,8 @@ pub enum DataLocation {
     #[default]
     Portable,
     /// Data in the user's standard OS folder (Windows
-    /// `%APPDATA%\mindfork-rs`, Linux `~/.local/share/mindfork-rs`).
+    /// `%APPDATA%\mindfork-rs\data`, Linux `~/.local/share/mindfork-rs`, macOS
+    /// `~/Library/Application Support/mindfork-rs`).
     System,
     /// Data in an arbitrary user-specified directory.
     Path { path: String },

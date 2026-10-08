@@ -18,8 +18,11 @@ usually matters as much as the steps:
 - the engine mode (managed / external / which cloud provider) and, for local
   modes, the model you ran;
 - steps to reproduce, and what you expected instead;
-- the relevant part of the log — logs go to files under `logs/` next to the
-  binary (the TUI owns stdout, so nothing useful is printed to the terminal).
+- the relevant part of the log — logs go to files under `logs/` in the data
+  folder, which `mindfork stats` prints on its second line: next to the binary
+  for the portable build, the user's folder for an installed copy
+  ([docs/install.md](docs/install.md) §2.1). The TUI owns stdout, so nothing
+  useful is printed to the terminal.
 
 Security problems are the one exception: please do **not** open a public
 issue — see [SECURITY.md](SECURITY.md).
