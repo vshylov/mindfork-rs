@@ -51,9 +51,11 @@ compile** (§3):
 
 ## 3. The MVP probe — measured
 
-A workflow on the `spike/macos-probe` branch (never merged; `macos-probe.yml`
-there), one job per runner image, every step after the build allowed to fail
-so one run reports everything.
+A workflow on the `spike/macos-probe` branch (never merged; deleted on
+2026-10-09 and frozen under the annotated tag `probe/macos-stage0` — `git show
+probe/macos-stage0:.github/workflows/macos-probe.yml` for the workflow, `git log
+probe/macos-stage0` for its seven commits), one job per runner image, every
+step after the build allowed to fail so one run reports everything.
 
 ### 3.1 Round 1 — `macos-15` (run 37228006192)
 
@@ -476,7 +478,9 @@ section comes with stage 2. What only a Mac answers stays on §6.2's list.
   with no secret: the workflow installs the formula from a tap of its own
   commit, tests it, and only then pushes.
 
-**Measured before any release had it** — a rehearsal on the spike branch:
+**Measured before any release had it** — a rehearsal on the spike branch
+(§3; the tag `probe/macos-stage0` keeps it, and the `tap/` it rendered the
+formula from is the tap repository's first draft, the same files today):
 
 | What | Result (`macos-latest`, macOS 26.6.2; run 37237653131) |
 |---|---|
