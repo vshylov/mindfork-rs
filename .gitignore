@@ -20,6 +20,11 @@ site/static/favicon.ico
 # put a regenerated blob in every dependency bump
 # (docs/research/release-pipeline.md R2).
 /THIRD-PARTY-NOTICES.md
+# The release notes `tools/release_guard.py --tag` writes into the working
+# directory for `gh release create --notes-file` (release.yml). Derived from the
+# CHANGELOG on every run; a tag checked locally leaves one behind, and 0.17.0's
+# release PR committed it by accident.
+/notes.md
 # Editor state. Written by VS Code / Cursor when the SonarQube IDE extension
 # binds the workspace; its `connectionId` names a connection local to one
 # machine, and the only shareable part -- the project key -- is already in

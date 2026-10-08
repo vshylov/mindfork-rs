@@ -33,7 +33,8 @@ one place where finding out costs the most (docs/lessons.md §10 — validate a
 `run:` block by executing it against stubs, not by reading it).
 
 It writes `notes.md` in the working directory — the file
-`gh release create --notes-file` is given.
+`gh release create --notes-file` is given. Git ignores it, so a tag checked
+locally leaves nothing to commit.
 
 Usage:
     python tools/release_guard.py --tag v0.9.9
