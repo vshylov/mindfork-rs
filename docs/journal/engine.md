@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (95)
+## Entries (96)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -107,6 +107,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the engineless chat offers a local Ollama or LM Studio (done)
 - Post-M9: the engine and the local servers on a real Mac (done)
 - Post-M9: LM Studio's MLX refusal reads as an overflow (done)
+- Post-M9: a Mac's managed engine takes the knee batch (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -6538,7 +6539,7 @@ measured both on an M4 (docs/research/macos.md §14.2, §14.5).
   - 3 MCP tests without `node`;
   - 2 `llama_setup` tests that expect a `cpu` build, which macOS/arm64 does not
     get.
-- **The slow-prefill note fires on an M4** after every turn: 295–374 t/s at the
+- **The slow-prefill note fires on an M4** once in every server session: 295–374 t/s at the
   default batch is a 5.5–6.9 s hold against the 5 s limit. Whether -b 256 is
   the right advice on Apple silicon is defect D5, to measure before changing.
 - **Ollama 0.40.0** (`brew`): `gemma4:e4b` loaded in 11 s at a window of 4096,
@@ -6585,3 +6586,49 @@ loaded at 4096, a fresh data root:
   *Generation error: The number of tokens to keep…*.
 
 **Tests:** +1. **3987 unit tests green, 257 `#[ignore]`**.
+
+### Post-M9: a Mac's managed engine takes the knee batch (done)
+
+**Why.** On the rented M4 (docs/research/macos.md §14.7 D5) the slow-prefill
+note came once in every server session: ~380 t/s at the default batch of 2048
+is a hold of over 5 s. It advised `-b 256`, which was measured on the CPU build
+(docs/research/cpu-batch.md §3.1), where it cost 14 % of prompt speed. Whether
+the advice holds on Metal was measured before anything changed.
+
+**Measured** (§14.8). The CPU build's experiment, on Metal, a fresh server per
+arm:
+
+| `-b`/`-ub` | prompt t/s | wait behind a dropped prompt |
+|---|---:|---:|
+| 2048/512 | 382 | 4.35 s |
+| 512/512 | 382 | 1.69 s |
+| 256/256 | 381 | 1.02 s |
+
+`llama-bench` pp2048 gave 391 against 386 t/s. So the knee costs about 1 % on
+Metal and cuts the wait by a factor of four. The owner chose to take the
+advice by default rather than give it.
+
+**What.** `shared/api/managed.rs`:
+- `auto_batch(gpu_layers, metal)` is Auto's one decision: `CPU_BATCH` (256)
+  for `-ngl 0` **or** a Metal host, nothing elsewhere.
+- `METAL_HOST` is `cfg!(target_os = "macos")`: llama.cpp publishes only
+  `metal` for macOS on Apple silicon, and Homebrew's build is Metal too.
+- `build_args` and `launched_batch` (the note's view of the launch line) both
+  read it, so the two cannot drift.
+
+A Mac's line therefore gains `-b 256 -ub 256` when the field is empty. Other
+GPU hosts keep their line byte for byte. A typed batch still wins, and an
+external llama-server still gets the note, which is right for it.
+
+**Tests:** `auto_takes_the_knee_on_the_cpu_and_on_metal` (+1). The byte-for-byte
+GPU test and the launched-batch test now expect the knee where they run on a
+Mac, which CI's macOS job does. **3988 unit tests green, 257 `#[ignore]`**.
+
+**Live** on the host's macOS 15:
+- The branch's `setup --verify` launched `-ngl 99 -c 16384 -b 256 -ub 256`
+  with the field empty, and a ~3700-token turn brought no note.
+- The control, 0.17.0 with the same model and settings, launched without
+  `-b`, and the same turn brought the note at 378 t/s.
+
+The Batch field's description in both locales and spec §3.4 and §11.6 now
+name the Mac.

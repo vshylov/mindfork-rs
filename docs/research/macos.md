@@ -935,10 +935,40 @@ ran. Ghostty, from the same cask run, opened at once.
 | D2 | **`full` is unreadable in Terminal.app before macOS 26** | high | **fixed**: the 256-colour pass of §4.5 (`shared/colour_depth.rs`), chosen where `TERM_PROGRAM=Apple_Terminal` comes without `COLORTERM=truecolor`. Live on this host's macOS 15: the dark canvas drawn as index 233 `(18,18,18)`, the light one as white, no green row; the control (`COLORTERM=truecolor`, so RGB) still white and green |
 | D3 | **LM Studio's MLX refusal is not taken for an overflow.** It arrives as a 200 whose stream is an `event: error` reading *"The number of tokens to keep from the initial prompt is greater than the context length…"*, which no marker of `features/compaction.rs` matches. So the user gets the raw text, not *the conversation no longer fits… /compact*. | medium | **fixed**: a marker in `features/compaction.rs`. Live on this host's macOS 15 with LM Studio (Bionic) and the MLX build at 4096: the note *The conversation no longer fits… /compact…* with the server's reply; the control (0.17.0) still *Generation error: The number of tokens to keep…* |
 | D4 | **`install.sh --from` and a browser download:** a `.tar` is not found, and the start check waits on Gatekeeper | medium | **fixed**: a `.tar` is refused with why and the `curl` line for the `.tar.gz` (a `.tar` cannot be checked against `sha256sums.txt`); a quarantined binary is not started — the mark is said, a hand-over is refused — unless *Open Anyway* already set its 0x40 flag. Live on this host's macOS 15 with 0.17.0's archive: no dialog, at once; the control (0.17.0's script) raised the dialog twice, waited on each, and ended *does not start* |
-| D5 | **The slow-prefill note fires on an M4 with E4B**, after every turn: 295–374 t/s measured by the app (`llama-bench`: 402), so a cancelled request would hold the slot 5.5–6.9 s at the default batch, and the limit is 5 s | question | whether -b 256 is the right advice on Apple silicon — measure before changing |
+| D5 | **The slow-prefill note fires on an M4 with E4B**, once in every server session: 295–374 t/s measured by the app (`llama-bench`: 402), so a cancelled request would hold the slot 5.5–6.9 s at the default batch, and the limit is 5 s | measured | **fixed** (the owner chose it, 2026-10-08): the advice is right on Metal and costs next to nothing (§14.8), so a Mac's managed engine takes `-b 256 -ub 256` when no batch is typed, as a CPU-only host does |
 | D6 | **The documents:** Terminal.app's Home/End/Page need Shift; Option+Backspace is a character there; Shift+Page does not reach the app in iTerm2; URLs open with Cmd+double-click; the browser's road takes two *Open Anyway*s | low | install.md and the manual |
 | D7 | **Tests:** the two image tests look only for English words; two `llama_setup` tests expect a `cpu` build that macOS does not have | low | language-free assertions; the backend list per platform |
 | — | The probe: it unlinked a root-owned link without `sudo`, and found no failed names under `--nocapture` | fixed | in this change |
 
-With D2 fixed, the call for testers (§13.7) waits on a release that carries
-the fix.
+With D2–D5 fixed, the call for testers (§13.7) waits on a release that carries
+the fixes.
+
+### 14.8 D5 measured — the batch a cancel waits for, on Metal
+
+The same experiment as the CPU build's (docs/research/cpu-batch.md §3), on this
+host's macOS 15:
+- llama.cpp b11476 `metal`, Gemma 4 E4B Q4_1, `-ngl 99 -c 16384`;
+- a fresh server for each arm, three runs of each figure, the median shown;
+- every prompt fresh (a random prefix), so no slot cache helps.
+
+**The price** is the cold prefill of a ~4000-token prompt and the server's own
+`prompt_per_second`, the figure the note reads. **The gain** is how long a short
+request waits behind a ~6000-token prompt that was dropped 1 s after it was
+sent, net of the short request alone (0.17 s).
+
+| `-b`/`-ub` | cold ~4000 tokens | prompt t/s | wait behind a dropped prompt |
+|---|---:|---:|---:|
+| 2048/512 (the server's default) | 7.97 s | 382 | **4.35 s** |
+| 512/512 | 7.96 s | 382 | 1.69 s |
+| 256/256 | 8.00 s | 381 | **1.02 s** |
+
+`llama-bench` agrees: pp2048 is 391 t/s at 2048/512 and 386 t/s at 256/256, a
+1.3 % difference. The CPU build paid 14 % for the same knee. So on Metal the
+note's advice saves three seconds a cancel for a percent of prompt speed. The
+fix is to take that advice by default rather than tell it.
+
+**The fix, live.** On the same host the branch's `setup --verify` launched
+`-ngl 99 -c 16384 -b 256 -ub 256` with the Batch field empty, and a turn of
+~3700 prompt tokens brought no note. The control, 0.17.0 with the same model
+and settings, launched without `-b`, and the same turn brought *This server
+processes prompts at 378 tokens/s … about 5 s … Set Batch (-b) to 256*.
