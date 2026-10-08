@@ -1781,6 +1781,7 @@ async fn a_gateways_catalogue_lands_before_the_first_turn_and_governs_continue()
 mod slow_prefill {
     use super::*;
     use crate::shared::api::contract::{Prefill, TokenUsage};
+    use crate::shared::api::managed::LLAMA_DEFAULT_BATCH;
     use crate::shared::config::ServerMode;
     use crate::shared::server::ServerStatus;
 
@@ -1789,6 +1790,16 @@ mod slow_prefill {
         tokens: 1800,
         ms: 20_000,
     };
+
+    /// A managed server at llama.cpp's default batch, typed rather than left
+    /// to Auto: on a Mac an empty field is the knee (`managed::auto_batch`,
+    /// docs/research/macos.md §14.8), and a server at the knee is told
+    /// nothing — these tests would wait for a note that never comes.
+    fn default_batch_cfg() -> AppConfig {
+        let mut config = no_auto_cfg();
+        config.engine.managed.batch_size = Some(LLAMA_DEFAULT_BATCH);
+        config
+    }
 
     fn notices(rx: &mut UnboundedReceiver<AppEvent>) -> Vec<String> {
         let mut out = Vec::new();
@@ -1809,7 +1820,9 @@ mod slow_prefill {
         let (_d, mut orch, mut rx) = bare_orch_rx();
         orch.config.engine.mode = ServerMode::Managed;
         orch.config.engine.managed.gpu_layers = 99;
-        orch.config.engine.managed.batch_size = None;
+        // The server's default, typed: an empty field is the knee on a Mac
+        // (`managed::auto_batch`), where nothing would be said.
+        orch.config.engine.managed.batch_size = Some(LLAMA_DEFAULT_BATCH);
 
         orch.note_slow_prefill(Some(SLOW));
         let notes = notices(&mut rx);
@@ -1933,7 +1946,7 @@ mod slow_prefill {
         let backend = ScriptRecorder::new(vec![call, reply]);
         // The default managed server: its note needs no answer from `/props`,
         // which a scripted backend never gives.
-        let config = no_auto_cfg();
+        let config = default_batch_cfg();
         let tool = Arc::new(crate::app::orchestrator::tests::SampledTool {
             id: "sampled",
             sample: Some(SLOW),
@@ -1991,7 +2004,7 @@ mod slow_prefill {
             ChatChunk::Finished(FinishReason::Stop),
         ])) as Arc<dyn EngineBackend>;
         // The default managed server, for the reason the tool's path above gives.
-        let config = no_auto_cfg();
+        let config = default_batch_cfg();
         let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(Some(backend), config);
         wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
             .await

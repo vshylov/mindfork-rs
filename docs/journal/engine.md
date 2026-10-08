@@ -6624,6 +6624,16 @@ external llama-server still gets the note, which is right for it.
 GPU test and the launched-batch test now expect the knee where they run on a
 Mac, which CI's macOS job does. **3988 unit tests green, 257 `#[ignore]`**.
 
+**What CI caught.** The first macOS run was cancelled after 25 minutes. Three
+`slow_prefill` tests took an empty Batch field for llama.cpp's 2048. On a Mac
+that is now the knee, which is told nothing, so two of them waited for a note
+that never came (no timeout), and the third would have failed. A fourth,
+`no_batch_flags_for_non_embedding_server`, expected no `-ub` at all. The note
+tests now type the server's default (`default_batch_cfg`), and the fourth now
+checks what it meant: the chat server never gets the embedder's batch. Before
+the push the whole suite ran on Windows with `METAL_HOST` forced to `true` —
+3988 green — and again as itself.
+
 **Live** on the host's macOS 15:
 - The branch's `setup --verify` launched `-ngl 99 -c 16384 -b 256 -ub 256`
   with the field empty, and a ~3700-token turn brought no note.

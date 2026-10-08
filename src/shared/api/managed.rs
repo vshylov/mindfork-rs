@@ -1261,9 +1261,18 @@ mod tests {
 
     #[test]
     fn no_batch_flags_for_non_embedding_server() {
-        // The chat server doesn't get the embedder's batch flags.
-        let args = build_args(&base_cfg(), NoMmapSpelling::LoadMode);
-        assert!(!args.contains(&"-ub".to_string()));
+        // The chat server doesn't get the embedder's batch flags (the context
+        // size). On a Mac it gets the knee instead ([`auto_batch`]); elsewhere
+        // nothing.
+        let cfg = base_cfg();
+        let args = build_args(&cfg, NoMmapSpelling::LoadMode);
+        let ub = args
+            .iter()
+            .position(|a| a == "-ub")
+            .map(|i| args[i + 1].clone());
+        let expected = METAL_HOST.then(|| CPU_BATCH.to_string());
+        assert_eq!(ub, expected, "{args:?}");
+        assert_ne!(ub, Some(cfg.context_size.to_string()));
     }
 
     #[test]
