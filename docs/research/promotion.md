@@ -1,6 +1,8 @@
 # Making mindfork findable — the promotion plan
 
-Status: **plan accepted by the owner on 2026-10-03; stage 0 in progress.** A
+Status: **plan accepted by the owner on 2026-10-03; stages 0 and 1 done as far
+as they can be (2026-10-08 — the AUR and winget wait on others), stage 2 under
+way.** A
 living document: an item's status changes here when it closes, and a channel
 tried gets its outcome written next to it. Decisions are in §8.
 
@@ -83,9 +85,9 @@ before stages 0–1 have removed what a first visitor would bounce off.
 
 | Item | Who | Status |
 |---|---|---|
-| Repository topics (`rust`, `tui`, `ratatui`, `llm`, `local-llm`, `llama-cpp`, `ollama`, `mcp`, `rag`, …) | agent, `gh` | approved 2026-10-03 |
-| Discussions enabled | agent, `gh` | approved 2026-10-03 |
-| Social preview = `assets/og-card.png` (1200×630) — no API exists, Settings → General → Social preview | owner, one upload | approved 2026-10-03 |
+| Repository topics (`rust`, `tui`, `ratatui`, `llm`, `local-llm`, `llama-cpp`, `ollama`, `mcp`, `rag`, …) | agent, `gh` | done: 18 topics (checked 2026-10-08) |
+| Discussions enabled | agent, `gh` | done: enabled, no thread yet (checked 2026-10-08) |
+| Social preview = `assets/og-card.png` (1200×630) — no API exists, Settings → General → Social preview | owner, one upload | done: the repository uses a custom image (checked 2026-10-08) |
 | An animated demo, generated from code (§6) | agent, a track | stages 1–3 done ([demo-reel.md](demo-reel.md)): drawn by every release, played by the site from the first release that carries it, and in Russian for Habr |
 | README shortened: hook → animation → install in three lines → features; the long OpenRouter paragraph moves to install.md; the stale test count goes | agent | done 2026-10-05, once 0.15.0 carried the files: the dark GIF from mindfork.io, the still for a reader who asked for less motion; install is one line per system and `mindfork demo` |
 | The differentiator first: the site's hero and the README's first line say "memory and a self-model", not "an AI chat in your terminal" | agent | done 2026-10-05: the README's first line, then the site's hero, its title and the social card |
@@ -97,7 +99,7 @@ before stages 0–1 have removed what a first visitor would bounce off.
 | An Ollama / LM Studio recipe at the top of the README and the site (three lines); idea: the engineless chat offers a server it finds on `localhost:11434` or `:1234` | Ollama done 2026-10-05, run live on 0.35.1: two lines and the window, since Ollama cuts an overlong prompt in silence (install.md §3); the run found the slow-prefill note advising Ollama with llama-server's flags, fixed. LM Studio run live 2026-10-06 on 1.1.7: its window read, its silent cut of a conversation's middle told, the recipe in install.md §3; and the engineless chat now offers what it finds, `/local` on demand ([local-servers.md](local-servers.md)). The README and the site in the release PR |
 | A Scoop manifest (own bucket first) — Scoop does not need a signed binary, so Windows gets a package manager now rather than after signing | done 2026-10-03: `vshylov/scoop-bucket` ([package-managers.md](package-managers.md)) |
 | AUR `mindfork-rs-bin` — the release already builds an Arch package with nfpm | ready, **blocked**: the AUR's registration is closed (2026-10-04), so there is no account to publish from; every release builds and checks it ([package-managers.md](package-managers.md) §4) |
-| macOS (§5) | researched 2026-10-04, MVP probe **GO** on GitHub's Apple Silicon runners — it builds, 3879 of 3892 tests pass, llama.cpp runs with Metal and the Python sandbox starts; the forks wait for the owner ([macos.md](macos.md)) |
+| macOS (§5) | done 2026-10-08: a preview since 0.15.0 — Apple Silicon, the release's archive, `install.sh` and a Homebrew tap; a day on a rented Mac mini (M4) with macOS 26 and 15 on 2026-10-07, every finding fixed in 0.18.0 ([macos.md](macos.md) §14). The testers come with stage 2 (§5) |
 | winget | unchanged: waits for signing |
 
 ### Stage 2 — communities: the repeatable first, the one-shot last
@@ -112,8 +114,17 @@ Repeatable, low-risk — can start as soon as stage 0 is done:
   pull requests for *Project/Tooling Updates*, its editors pick links from
   r/rust (the TWiR README, read 2026-10-03).
 
+Tried so far:
+
+- **awesome-ratatui** — submitted 2026-10-06
+  ([ratatui/awesome-ratatui#488](https://github.com/ratatui/awesome-ratatui/pull/488)),
+  no answer yet.
+- **Glama's MCP client list**, which awesome-mcp-clients names as its most up
+  to date list — submitted 2026-10-06, waiting on its review.
+
 One-shot — only after stages 0–1, with the animation and an honest macOS
-answer in hand:
+answer in hand (both since 2026-10-08). The first of them carries the call for
+macOS testers (§5):
 
 - **r/LocalLLaMA** — exactly the audience: Gemma/Qwen on llama.cpp.
 - **Show HN.**
@@ -128,8 +139,9 @@ Rules for every post:
 - **Written by the owner, in the owner's voice.** TWiR asks for LLM authorship
   to be disclosed; HN and Reddit react badly to text that reads as generated.
   An agent's draft is raw material, not the post.
-- What it is, what is different, the honest limits (no macOS yet), one
-  animation — and the author in the comments for the first hours.
+- What it is, what is different, the honest limits (macOS a preview, Apple
+  Silicon only), one animation — and the author in the comments for the first
+  hours.
 
 ### Stage 3 — a steady flow
 
@@ -160,13 +172,16 @@ testing, none of which needs one on the desk:
 - **CI** — GitHub's Apple Silicon macOS runners, free for a public repository:
   the build, the unit tests, the headless gates (small windows, screenshots),
   `llama setup` and a managed `llama-server` on the CPU with a tiny model.
-  Metal is believed unavailable on those runners — to be verified.
+  Metal was believed unavailable on those runners; it works there, on a
+  paravirtual GPU ([macos.md](macos.md) §3).
 - **A rented Mac for a day** — Apple's licence leases a cloud Mac for 24 hours
   at the least (AWS EC2 Mac, on the account the site already uses; Scaleway;
   MacStadium). One such day before announcing macOS: Terminal.app, iTerm2 and
-  Ghostty, the keys, the clipboard, Metal.
+  Ghostty, the keys, the clipboard, Metal. Done on 2026-10-07, on AWS
+  ([macos.md](macos.md) §14).
 - **Testers** — macOS shipped as a *preview*, with Mac users from
-  r/LocalLLaMA asked to report.
+  r/LocalLLaMA asked to report. Not before that post: the call goes out inside
+  the first one-shot post of stage 2, not on its own (§8, 2026-10-08).
 
 Traps already known:
 
@@ -236,3 +251,10 @@ track's own design document, [demo-reel.md](demo-reel.md)):
   be designed in its own research document (§5).
 - Order: the animation track first, then the README and the site's hero with
   the Ollama recipe, then the macOS research.
+
+**2026-10-08 — the call for macOS testers is not a post of its own.** The
+application has two users, both its authors, so a call in the repository's own
+Discussions would reach no one. It becomes a paragraph of the first one-shot
+post of stage 2, where §5 expected the testers to come from. The bug template
+already asks for what a Mac report needs: the chip and memory, the lines of
+`mindfork keys`, and the log found through `mindfork stats`.
