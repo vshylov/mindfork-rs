@@ -43,6 +43,7 @@ use crate::screens::search::{SearchIntent, SearchScreen};
 use crate::screens::self_model::{SelfModelIntent, SelfModelScreen};
 use crate::screens::settings::{SettingsIntent, SettingsScreen};
 use crate::screens::tasks::{TasksIntent, TasksScreen};
+use crate::shared::paths::Locations;
 use crate::shared::theme::Palette;
 use crate::shared::ui::{self, MinSize, SPINNER_STEP, WayOut, dim_background};
 use crate::widgets::help_dialog::{
@@ -216,13 +217,17 @@ struct HelpOverlay {
     /// The tab restored on the next chat-side open; a non-chat open forces
     /// "Shortcuts" anchored to its section instead (fork F2).
     last_tab: HelpTab,
+    /// The folders the "About" tab names — the real ones, or the demo's
+    /// made-up set (`features::demo::locations`).
+    locations: Locations,
 }
 
 impl HelpOverlay {
-    fn new() -> Self {
+    fn new(locations: Locations) -> Self {
         Self {
             open: None,
             last_tab: DEFAULT_HELP_TAB,
+            locations,
         }
     }
 
@@ -354,6 +359,9 @@ pub(crate) fn enable_key_modes() -> Option<bool> {
 /// (including on panic — `ratatui::init` sets a panic hook). `app` loads the
 /// spellcheck dictionaries itself in the background per settings
 /// (`dict_dir`/`personal`) and reloads them when they change.
+// Eight parameters: the paths arrive one by one, and the demo pairs a made-up
+// `locations` with a real `log_dir`, so the two are not one value.
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     cmd_tx: UnboundedSender<AppCommand>,
     evt_rx: UnboundedReceiver<AppEvent>,
@@ -363,6 +371,8 @@ pub fn run(
     // Named in the message a dead backend ends the session with (D1) — the loop
     // has no `Paths` of its own, and the caller does.
     log_dir: PathBuf,
+    // What the help dialog's "About" tab names (spec §11.7).
+    locations: Locations,
     background_query: Option<crate::shared::osc11::Pending>,
 ) -> Result<()> {
     let mut terminal = ratatui::init();
@@ -417,6 +427,7 @@ pub fn run(
         bundled_dict_dir,
         personal,
         log_dir,
+        locations,
     );
     // Lift the modes on exit (harmless if already off).
     let _ = execute!(
@@ -546,6 +557,7 @@ fn drain_events(rx: &mut UnboundedReceiver<AppEvent>, mut apply: impl FnMut(AppE
     }
 }
 
+#[allow(clippy::too_many_arguments)] // `run`'s paths, passed on by name
 fn run_loop(
     terminal: &mut DefaultTerminal,
     cmd_tx: &UnboundedSender<AppCommand>,
@@ -554,6 +566,7 @@ fn run_loop(
     bundled_dict_dir: Option<PathBuf>,
     personal: PathBuf,
     log_dir: PathBuf,
+    locations: Locations,
 ) -> Result<()> {
     let mut screen = ChatScreen::new();
     // The chat list (Esc) or settings (Ctrl+P) can be open on top of the chat.
@@ -568,7 +581,7 @@ fn run_loop(
     let mut clipboard: Option<arboard::Clipboard> = None;
     let mut spell = SpellLoader::new(dict_dir, bundled_dict_dir, personal);
     // The help dialog, drawn over whatever screen is active (`F1` anywhere).
-    let mut help = HelpOverlay::new();
+    let mut help = HelpOverlay::new(locations);
     let mut quit = false;
     // We repaint ONLY on change (the `dirty` flag), not on every tick.
     // Otherwise `terminal.draw` is called ~20 times/sec and repositions the cursor
@@ -1105,7 +1118,7 @@ fn compose_frame(
     }
     if let Some(state) = help.open.as_mut() {
         dim_background(frame, palette);
-        help_dialog::render_help(frame, state, &HELP_SECTIONS, palette, loc);
+        help_dialog::render_help(frame, state, &HELP_SECTIONS, &help.locations, palette, loc);
     }
     // Last, so it also catches what the overlay's `Clear` reset — and, in the
     // monochrome mode, what the overlay drew.

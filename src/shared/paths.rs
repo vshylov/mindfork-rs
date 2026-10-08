@@ -160,6 +160,26 @@ pub struct Paths {
     /// data root at a provisioned sandbox (docs/history/sandbox-file-exchange.md §11 S13). Only
     /// [`Paths::with_sandbox_dir`], a test helper, sets it.
     sandbox_override: Option<PathBuf>,
+    /// How the data root was chosen — kept for [`Paths::locations`], which
+    /// names it beside the root. [`DataLocation::Portable`] under `with_root`.
+    location: DataLocation,
+}
+
+/// Where the program and its data are, as the help dialog's "About" tab shows
+/// them (spec §11.7): the binary's directory, the data root with the mode that
+/// chose it, and the logs. Computed once at launch ([`Paths::locations`]); the
+/// demo shows a made-up set instead (`features::demo::locations`), so a
+/// screenshot carries no one's real folders.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Locations {
+    /// The binary's directory — `None` when unknown (tests), and then no row.
+    pub program: Option<PathBuf>,
+    /// The data root.
+    pub data: PathBuf,
+    /// How the data root was chosen (`defaults.json`'s `mode`).
+    pub storage: DataLocation,
+    /// The log directory, `logs/` under the data root.
+    pub logs: PathBuf,
 }
 
 impl Paths {
@@ -182,6 +202,7 @@ impl Paths {
             .default_language
             .unwrap_or_else(crate::shared::i18n::detect_os_language);
         paths.exe_dir = Some(exe_dir);
+        paths.location = defaults.location;
         Ok(paths)
     }
 
@@ -255,6 +276,23 @@ impl Paths {
             default_language: Lang::default(),
             exe_dir: None,
             sandbox_override: None,
+            location: DataLocation::default(),
+        }
+    }
+
+    /// The locations the "About" tab shows ([`Locations`]). The data root is
+    /// made absolute: a `path` mode may name a relative directory, which every
+    /// file the app opens resolves against the working directory, and a row
+    /// reading `my-data` would not say which one. Lexical only
+    /// (`std::path::absolute`): no symlink is followed and nothing is touched;
+    /// a root it cannot resolve is shown as given.
+    pub fn locations(&self) -> Locations {
+        let absolute = |path: PathBuf| std::path::absolute(&path).unwrap_or(path);
+        Locations {
+            program: self.exe_dir.clone(),
+            data: absolute(self.root.clone()),
+            storage: self.location.clone(),
+            logs: absolute(self.log_dir()),
         }
     }
 
@@ -511,6 +549,28 @@ mod tests {
     fn root_is_preserved() {
         let p = Paths::with_root("some/root");
         assert_eq!(p.root(), Path::new("some/root"));
+    }
+
+    /// The "About" tab's locations (spec §11.7): a relative root is shown
+    /// absolute — against the working directory, the same base every file the
+    /// app opens under it resolves against — the logs are the root's own
+    /// `logs/`, and a path set with no binary behind it names no program.
+    #[test]
+    fn locations_are_absolute_and_name_the_mode() {
+        let p = Paths::with_root("some/root");
+        let at = p.locations();
+        assert!(
+            at.data.is_absolute(),
+            "a relative root shown as given: {at:?}"
+        );
+        assert_eq!(at.data, std::env::current_dir().unwrap().join("some/root"));
+        assert_eq!(at.logs, at.data.join("logs"));
+        assert_eq!(at.program, None);
+        assert_eq!(at.storage, DataLocation::Portable);
+
+        // An absolute root is kept as it is.
+        let root = std::env::temp_dir().join("mindfork-locations");
+        assert_eq!(Paths::with_root(&root).locations().data, root);
     }
 
     #[test]

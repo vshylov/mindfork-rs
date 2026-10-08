@@ -13,6 +13,7 @@ use ratatui::widgets::{Clear, Paragraph};
 use crate::shared::credits;
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
+use crate::shared::paths::{DataLocation, Locations};
 use crate::shared::theme::Palette;
 use crate::shared::ui::{MinSize, centered_rect, fit_title, legend_width, render_scrollbar};
 use crate::shared::wrap;
@@ -419,11 +420,13 @@ pub fn min_size(loc: &'static Locale) -> MinSize {
 /// lockup, a tab strip, and scrollable content for the active tab with a
 /// scrollbar on the right border. Navigation lives in [`ChatScreen::handle_key`];
 /// `scroll` is clamped here (the popup's height is only known at render time).
-/// See spec §11.7.
+/// `locations` is what the "About" tab names as the program's and the data's
+/// folders — the real ones, or the demo's made-up set. See spec §11.7.
 pub fn render_help(
     frame: &mut Frame,
     help: &mut HelpState,
     sections: &[&HelpSection],
+    locations: &Locations,
     palette: &Palette,
     loc: &'static Locale,
 ) {
@@ -490,7 +493,7 @@ pub fn render_help(
     // Content for the active tab (language-neutral data — license/components —
     // is read straight from `shared::credits`, bypassing locales).
     let content = match help.tab {
-        HelpTab::About => about_lines(palette, loc, inner_w),
+        HelpTab::About => about_lines(locations, palette, loc, inner_w),
         HelpTab::Hotkeys => {
             let (lines, anchor) = hotkeys_tab(sections, help.context, palette, loc, inner_w);
             // A non-chat opener lands with its section's header on top (fork
@@ -607,8 +610,21 @@ fn tab_window(widths: &[usize], active: usize, width: usize) -> (usize, usize) {
 /// Left indent of the tab content (the same column as the lockup).
 const HELP_PAD: &str = "  ";
 
-/// The "About" tab: the name and tagline, then the facts — version, build date
-/// (release builds only), license and build target, the links
+/// The "About" tab: the name, tagline and facts ([`fact_lines`]), then where
+/// the program and its data are ([`location_lines`]).
+fn about_lines(
+    locations: &Locations,
+    palette: &Palette,
+    loc: &'static Locale,
+    width: usize,
+) -> Vec<Line<'static>> {
+    let mut lines = fact_lines(palette, loc, width);
+    lines.extend(location_lines(locations, palette, loc, width));
+    lines
+}
+
+/// The top of the "About" tab: the name and tagline, then the facts — version,
+/// build date (release builds only), license and build target, the links
 /// (site/crate/repository) and the author — as a
 /// leader table, the geometry the "Components" tab already uses
 /// ([`leader_row`]): the label on the left margin, the values in one column
@@ -618,7 +634,7 @@ const HELP_PAD: &str = "  ";
 /// empty — the same complaint the "Components" tab was fixed for, and the same
 /// fix (user's decision, 2026-08-19). Links use the accent color (like
 /// "command keys"), the labels are muted.
-fn about_lines(palette: &Palette, loc: &'static Locale, width: usize) -> Vec<Line<'static>> {
+fn fact_lines(palette: &Palette, loc: &'static Locale, width: usize) -> Vec<Line<'static>> {
     let mut facts = vec![(
         loc.t("ui.about.version"),
         env!("CARGO_PKG_VERSION").to_string(),
@@ -695,6 +711,96 @@ fn about_lines(palette: &Palette, loc: &'static Locale, width: usize) -> Vec<Lin
     for (label, value) in rows {
         lines.push(Line::raw(""));
         lines.push(leader_row(label, vec![value], value_col, palette));
+    }
+    lines
+}
+
+/// The fewest leader dots a [`location_lines`] row is drawn with; a path that
+/// leaves its label fewer goes on a line of its own.
+const MIN_LEADER: usize = 3;
+
+/// The "About" tab's *Locations* (spec §11.7; user's decision 2026-10-09): the
+/// program's folder, the data root with the mode that chose it, and the logs —
+/// the first thing a user who keeps track of their files asks, and on a rented
+/// pod the answer to whether the data is on the volume. Full paths, never
+/// `~`: what is shown is what is pasted into a file manager or a shell.
+///
+/// A leader table of its own under a section header: a path is wider than any
+/// fact above it, and sharing their value column would push every value left.
+/// When a path leaves its label fewer than [`MIN_LEADER`] dots, every path of
+/// the group goes on its own line under its label, whole — wrapped, never
+/// elided, since a cut path is no use to someone about to `cd` into it.
+fn location_lines(
+    locations: &Locations,
+    palette: &Palette,
+    loc: &'static Locale,
+    width: usize,
+) -> Vec<Line<'static>> {
+    let storage = match locations.storage {
+        DataLocation::Portable => "ui.about.storage.portable",
+        DataLocation::System => "ui.about.storage.system",
+        DataLocation::Path { .. } => "ui.about.storage.path",
+    };
+    let mut rows: Vec<(String, String)> = Vec::new();
+    if let Some(program) = &locations.program {
+        rows.push((
+            loc.t("ui.about.program").to_string(),
+            program.display().to_string(),
+        ));
+    }
+    rows.push((
+        loc.tf("ui.about.data", &[("mode", loc.t(storage))]),
+        locations.data.display().to_string(),
+    ));
+    rows.push((
+        loc.t("ui.about.logs").to_string(),
+        locations.logs.display().to_string(),
+    ));
+    let rows: Vec<(String, String)> = rows
+        .into_iter()
+        .map(|(label, path)| (format!("{label}:"), path))
+        .collect();
+
+    let pad = HELP_PAD.chars().count();
+    let path_col = width.saturating_sub(
+        pad + rows
+            .iter()
+            .map(|(_, path)| wrap::str_width(path))
+            .max()
+            .unwrap_or(0),
+    );
+    // `leader_row` puts a space on each side of the dots.
+    let side_by_side = rows
+        .iter()
+        .all(|(label, _)| pad + wrap::str_width(label) + 2 + MIN_LEADER <= path_col);
+
+    let path_style = Style::new().fg(palette.text);
+    let mut lines = vec![
+        Line::raw(""),
+        section_header("ui.about.locations", false, palette, loc, width),
+    ];
+    for (label, path) in rows {
+        lines.push(Line::raw(""));
+        let label = Span::styled(label, palette.muted_style());
+        if side_by_side {
+            lines.push(leader_row(
+                label,
+                vec![Span::styled(path, path_style)],
+                path_col,
+                palette,
+            ));
+            continue;
+        }
+        lines.push(Line::from(vec![Span::raw(HELP_PAD), label]));
+        let indent = HELP_PAD.repeat(2);
+        let chars: Vec<char> = path.chars().collect();
+        let room = width.saturating_sub(indent.chars().count()).max(1);
+        for (start, end) in wrap::wrap_ranges(&chars, room) {
+            lines.push(Line::from(vec![
+                Span::raw(indent.clone()),
+                Span::styled(chars[start..end].iter().collect::<String>(), path_style),
+            ]));
+        }
     }
     lines
 }
@@ -1185,6 +1291,8 @@ fn leader_row(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
 
     /// The width a rendered line occupies in terminal columns.
@@ -1196,6 +1304,25 @@ mod tests {
     /// sectioned "Shortcuts" tab is tested where the real composed list
     /// lives — `app::runtime::tests` (docs/history/help-hotkeys-context.md §6).
     const NO_SECTIONS: &[&HelpSection] = &[];
+
+    /// The "About" tab's locations in these tests: short, and the same string
+    /// on every OS (`Path::display` keeps the separators it is given).
+    fn test_locations() -> Locations {
+        Locations {
+            program: Some(PathBuf::from("/opt/mindfork")),
+            data: PathBuf::from("/opt/mindfork/data"),
+            storage: DataLocation::Portable,
+            logs: PathBuf::from("/opt/mindfork/data/logs"),
+        }
+    }
+
+    /// The text of `lines`, one string per line.
+    fn texts(lines: &[Line<'_>]) -> Vec<String> {
+        lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect()
+    }
 
     /// The gate behind the wrapping in [`key_lines`]: no row of the commands
     /// tab may run past the dialog, in ANY bundled locale. The hazard is
@@ -1333,7 +1460,7 @@ mod tests {
         use ratatui::backend::TestBackend;
         let palette = Palette::default();
         let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
-        term.draw(|f| render_help(f, help, NO_SECTIONS, &palette, loc))
+        term.draw(|f| render_help(f, help, NO_SECTIONS, &test_locations(), &palette, loc))
             .unwrap();
         let buf = term.backend().buffer();
         let mut out = String::new();
@@ -1511,7 +1638,7 @@ mod tests {
         for lang in [crate::shared::i18n::Lang::Ru, crate::shared::i18n::Lang::En] {
             let loc = crate::shared::i18n::locale(lang);
             for w in [HELP_MIN_WIDTH as usize, HELP_MAX_WIDTH as usize] {
-                let lines = about_lines(&palette, loc, w);
+                let lines = fact_lines(&palette, loc, w);
                 for line in &lines {
                     assert!(line_width(line) <= w, "row wider than the dialog: {line:?}");
                 }
@@ -1562,7 +1689,7 @@ mod tests {
         // room for (`LICENSE_ID` is read from the manifest, so a manifest change
         // shows up here rather than silently).
         let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
-        let text: String = about_lines(&palette, loc, HELP_MAX_WIDTH as usize)
+        let text: String = about_lines(&test_locations(), &palette, loc, HELP_MAX_WIDTH as usize)
             .iter()
             .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
             .collect();
@@ -1572,6 +1699,7 @@ mod tests {
             credits::SITE_URL,
             credits::AUTHOR,
             env!("CARGO_PKG_VERSION"),
+            "/opt/mindfork/data/logs",
         ] {
             assert!(text.contains(fact), "the About tab lost {fact:?}");
         }
@@ -1579,6 +1707,155 @@ mod tests {
         if let Some(date) = credits::build_date() {
             assert!(text.contains(date), "the About tab lost the build date");
         }
+    }
+
+    /// The "About" tab's locations (spec §11.7; user's decision 2026-10-09):
+    /// under a header of their own, a leader table of their own — the paths in
+    /// one column, the widest touching the right margin, at least
+    /// [`MIN_LEADER`] dots before each — and the facts' column above left
+    /// where it was. In both bundled locales, at both bounds of the width.
+    #[test]
+    fn about_locations_are_a_leader_table_of_their_own() {
+        let palette = Palette::default();
+        let pad = HELP_PAD.chars().count();
+        for lang in [crate::shared::i18n::Lang::Ru, crate::shared::i18n::Lang::En] {
+            let loc = crate::shared::i18n::locale(lang);
+            for w in [HELP_MIN_WIDTH as usize, HELP_MAX_WIDTH as usize] {
+                let facts = fact_lines(&palette, loc, w);
+                let lines = about_lines(&test_locations(), &palette, loc, w);
+                assert_eq!(lines[..facts.len()], facts[..], "the facts moved");
+                let group = &lines[facts.len()..];
+                for line in group {
+                    assert!(line_width(line) <= w, "row wider than the dialog: {line:?}");
+                }
+                let text = texts(group);
+                assert!(
+                    text[1].contains(loc.t("ui.about.locations")),
+                    "no header: {text:?}"
+                );
+                let rows: Vec<&Line<'static>> =
+                    group.iter().filter(|l| l.spans.len() == 4).collect();
+                assert_eq!(rows.len(), 3, "program, data, logs: {text:?}");
+                let col_of = |line: &Line<'static>| -> usize {
+                    line.spans[..3].iter().map(span_width).sum()
+                };
+                let path_col = col_of(rows[0]);
+                for row in &rows {
+                    assert_eq!(col_of(row), path_col, "the path column drifts: {row:?}");
+                    assert!(
+                        row.spans[2].content.matches('.').count() >= MIN_LEADER,
+                        "a stub of a leader: {row:?}"
+                    );
+                }
+                let widest = rows.iter().map(|r| span_width(&r.spans[3])).max();
+                assert_eq!(
+                    path_col + widest.unwrap(),
+                    w - pad,
+                    "not anchored right at {w}"
+                );
+                let paths: Vec<&str> = rows.iter().map(|r| r.spans[3].content.as_ref()).collect();
+                assert_eq!(
+                    paths,
+                    [
+                        "/opt/mindfork",
+                        "/opt/mindfork/data",
+                        "/opt/mindfork/data/logs"
+                    ]
+                );
+            }
+        }
+        // The labels, with the storage mode in the data row's.
+        let ru = texts(&location_lines(&test_locations(), &palette, ru(), 96)).join(
+            "
+",
+        );
+        for label in [
+            "Расположение",
+            "Программа:",
+            "Данные (портативно):",
+            "Логи:",
+        ] {
+            assert!(ru.contains(label), "missing {label:?}: {ru}");
+        }
+    }
+
+    /// The data row names the mode that chose the root — each of the three
+    /// `defaults.json` can set, in the installer's words — and a path set with
+    /// no binary behind it has no program row.
+    #[test]
+    fn about_locations_name_the_storage_mode() {
+        let palette = Palette::default();
+        let en = crate::shared::i18n::locale(crate::shared::i18n::Lang::En);
+        for (storage, label) in [
+            (DataLocation::Portable, "Data (portable):"),
+            (DataLocation::System, "Data (standard folder):"),
+            (
+                DataLocation::Path {
+                    path: "/srv/mindfork".into(),
+                },
+                "Data (custom folder):",
+            ),
+        ] {
+            let at = Locations {
+                storage,
+                program: None,
+                ..test_locations()
+            };
+            let text = texts(&location_lines(&at, &palette, en, 96)).join(
+                "
+",
+            );
+            assert!(text.contains(label), "missing {label:?}: {text}");
+            assert!(!text.contains("Program"), "a row for no program: {text}");
+        }
+    }
+
+    /// A path too wide to sit beside its label with a leader puts every path
+    /// of the group under its label, and is shown whole: wrapped to the
+    /// dialog, nothing elided, no line past the edge.
+    #[test]
+    fn about_locations_too_wide_go_under_their_labels() {
+        let palette = Palette::default();
+        let deep = format!("/{}", ["a-rather-long-directory-name"; 6].join("/"));
+        let at = Locations {
+            program: Some(PathBuf::from("/opt/mindfork")),
+            data: PathBuf::from(&deep),
+            storage: DataLocation::Path { path: deep.clone() },
+            logs: PathBuf::from(format!("{deep}/logs")),
+        };
+        let w = HELP_MIN_WIDTH as usize;
+        let lines = location_lines(&at, &palette, ru(), w);
+        for line in &lines {
+            assert!(line_width(line) <= w, "row wider than the dialog: {line:?}");
+            assert!(
+                !line.spans.iter().any(|s| s.content.contains("...")),
+                "a leader left in: {line:?}"
+            );
+        }
+        let text = texts(&lines);
+        let label_at = |label: &str| text.iter().position(|l| l == &format!("  {label}"));
+        let program = label_at("Программа:").expect("the program's label alone");
+        let data = label_at("Данные (своя папка):").expect("the data's label alone");
+        let logs = label_at("Логи:").expect("the logs' label alone");
+        // Each label is followed by its path, indented, and whole.
+        let path_after = |from: usize, to: usize| -> String {
+            text[from + 1..to]
+                .iter()
+                .filter(|l| !l.is_empty())
+                .map(|l| l.strip_prefix("    ").expect("an indented path row"))
+                .collect()
+        };
+        assert_eq!(path_after(program, data), "/opt/mindfork");
+        assert_eq!(path_after(data, logs), deep);
+        assert_eq!(path_after(logs, text.len()), format!("{deep}/logs"));
+        assert!(
+            text[data + 1..logs]
+                .iter()
+                .filter(|l| !l.is_empty())
+                .count()
+                > 1,
+            "the deep path was not wrapped: {text:?}"
+        );
     }
 
     /// The "Components" tab is two leader tables (user's decision 2026-08-13 —
@@ -1820,7 +2097,7 @@ mod tests {
         let mut help = HelpState::open(HelpTab::Commands);
         help.scroll = 10_000; // "over-scrolled" — the render clamps it
         let mut term = Terminal::new(TestBackend::new(90, 12)).unwrap();
-        term.draw(|f| render_help(f, &mut help, NO_SECTIONS, &palette, ru()))
+        term.draw(|f| render_help(f, &mut help, NO_SECTIONS, &test_locations(), &palette, ru()))
             .unwrap();
         // The bound is measured at the MINIMUM width — the most wraps the tab
         // can ever have, so an upper estimate whatever width the render used.
@@ -1859,7 +2136,7 @@ mod tests {
         // border + air) — the sectioned key list is taller than any dialog, so
         // the lockup condition is about the dialog's own height.
         let mut term = Terminal::new(TestBackend::new(90, 52)).unwrap();
-        term.draw(|f| render_help(f, &mut help, NO_SECTIONS, &palette, ru()))
+        term.draw(|f| render_help(f, &mut help, NO_SECTIONS, &test_locations(), &palette, ru()))
             .unwrap();
 
         let buf = term.backend().buffer();
@@ -1916,7 +2193,7 @@ mod tests {
         // A dialog height of 13 (11 rows inside) doesn't fit the lockup with
         // breathing room → it isn't drawn, the tabs don't shift down.
         let mut term = Terminal::new(TestBackend::new(90, 13)).unwrap();
-        term.draw(|f| render_help(f, &mut help, NO_SECTIONS, &palette, ru()))
+        term.draw(|f| render_help(f, &mut help, NO_SECTIONS, &test_locations(), &palette, ru()))
             .unwrap();
 
         let buf = term.backend().buffer();
@@ -2062,7 +2339,7 @@ mod tests {
         let palette = Palette::default();
         let mut help = HelpState::open(HelpTab::Legal);
         let mut term = Terminal::new(TestBackend::new(90, 40)).unwrap();
-        term.draw(|f| render_help(f, &mut help, NO_SECTIONS, &palette, ru()))
+        term.draw(|f| render_help(f, &mut help, NO_SECTIONS, &test_locations(), &palette, ru()))
             .unwrap();
 
         let buf = term.backend().buffer();

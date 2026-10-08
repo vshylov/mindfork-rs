@@ -4250,7 +4250,20 @@ binary was built for, so a report names the actual build), the links — the web
 `mindfork.io`, the crate, the repository — and the author; laid out as the same
 **leader table** the "Components" tab uses, one value column anchored against the
 mirrored right margin, because a value column left-aligned one step past the widest
-label left the right ~30 columns of a wide dialog empty),
+label left the right ~30 columns of a wide dialog empty; and under the facts a
+**Locations** group — the program's folder, the data root with the mode that chose it
+(portable, the standard folder, a custom folder: `defaults.json`'s `mode`, in the
+installer's words) and its `logs/` — what a user who keeps track of their files asks
+first, and on a rented pod whether the data is on the volume. Full paths, never `~`: the
+row is pasted into a file manager or a shell; a relative custom root is shown absolute,
+against the working directory every file under it resolves against. A leader table of its
+own under a section header, since a path is wider than any fact and sharing their column
+would push every value left; a path that leaves its label fewer than three dots puts every
+path of the group on its own line under its label, wrapped and never elided — a cut path is
+no use to someone about to `cd` into it. The demo — `mindfork demo` and the generated
+captures — shows a **made-up** set instead, an installed copy's folders on that platform for
+a user called `demo`: its real root is a throwaway folder under the real user's name, and a
+screenshot of the tab is meant to carry neither; user's decision 2026-10-09),
 **"Hotkeys"** (this table, presented as per-screen sections — below), **"Commands"** (input-box commands `/rag …`/
 `/tts …` — kept out of the keybindings list so it doesn't clutter it), **"License"** (the MIT text),
 **"Legal"** (two documents, one after the other, separated by a rule: `DISCLAIMER.md` — what the

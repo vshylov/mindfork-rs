@@ -1193,7 +1193,7 @@ impl Harness {
         Self {
             screen: ChatScreen::new(),
             active: ActiveScreen::Chat,
-            help: HelpOverlay::new(),
+            help: HelpOverlay::new(crate::features::demo::locations()),
             back: None,
             clip: None,
             cmd_tx,
@@ -1803,8 +1803,17 @@ fn a_non_chat_open_lands_on_its_section() {
     let mut state = HelpState::open_at(HelpContext::Settings);
     let render = |state: &mut HelpState| -> String {
         let mut term = Terminal::new(TestBackend::new(90, 40)).unwrap();
-        term.draw(|f| render_help(f, state, &HELP_SECTIONS, &palette, loc))
-            .unwrap();
+        term.draw(|f| {
+            render_help(
+                f,
+                state,
+                &HELP_SECTIONS,
+                &crate::features::demo::locations(),
+                &palette,
+                loc,
+            )
+        })
+        .unwrap();
         let buf = term.backend().buffer();
         let mut out = String::new();
         for y in buf.area.top()..buf.area.bottom() {
@@ -2400,8 +2409,17 @@ fn the_help_looks_up_no_missing_key() {
         for tab in HelpTab::ALL {
             let mut state = HelpState::open(tab);
             let mut term = Terminal::new(TestBackend::new(120, 60)).unwrap();
-            term.draw(|f| render_help(f, &mut state, &HELP_SECTIONS, &palette, loc))
-                .unwrap();
+            term.draw(|f| {
+                render_help(
+                    f,
+                    &mut state,
+                    &HELP_SECTIONS,
+                    &crate::features::demo::locations(),
+                    &palette,
+                    loc,
+                )
+            })
+            .unwrap();
             assert_eq!(
                 crate::shared::i18n::take_missed_keys(),
                 Vec::<String>::new(),
@@ -2523,7 +2541,7 @@ fn composed_at(
     } else {
         ActiveScreen::Chat
     };
-    let mut help = HelpOverlay::new();
+    let mut help = HelpOverlay::new(crate::features::demo::locations());
     if help_open {
         help.open_for(help_context(&active));
     }
