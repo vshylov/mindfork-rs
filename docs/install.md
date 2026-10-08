@@ -323,8 +323,10 @@ executable** (the file itself always lives next to the binary, **not** inside
 ```
 
 - **`mode`** — storage mode: **`system`** → Windows `%APPDATA%\mindfork-rs\data`,
-  Linux `~/.local/share/mindfork-rs`; **`path`** → the given directory (created if
-  needed; **without** a `data/` subfolder).
+  Linux `~/.local/share/mindfork-rs`, macOS `~/Library/Application
+  Support/mindfork-rs`; **`path`** → the given directory (created if
+  needed; **without** a `data/` subfolder). `mindfork stats` prints the data
+  root a binary uses on its second line, and creates nothing.
 - **`default_language`** — the **agent-scaffold language** (prompts, self-model
   scaffold, tool results) the first profile and new profiles are created with, **and**
   the interface language on a fresh install: `ru` or `en`. This is **not** the

@@ -1,6 +1,7 @@
 //! Logging to a file (stdout is taken by the TUI). See spec §2.2 and plan M0.
 //!
-//! Logs are written to `logs/mindfork.log` next to the binary, with daily
+//! Logs are written to `logs/mindfork.log` in the data root
+//! ([`Paths::log_dir`]; next to the binary only in portable mode), with daily
 //! rotation. The level is set via the `MINDFORK_LOG` env variable (format:
 //! `tracing_subscriber::EnvFilter`, e.g. `mindfork=debug` — the filter's target
 //! is the crate name, which is also the package name).

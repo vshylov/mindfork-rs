@@ -640,8 +640,10 @@ where the engine supports that.
 **The interface is still there but nothing answers.** That is a failed
 background task; the app ends the session with a line naming the log file rather
 than leaving you with a live interface and a dead core. The logs are under
-`logs/` next to the binary — the interface owns stdout, so nothing useful is ever
-printed to the terminal.
+`logs/` in the data folder, which `mindfork stats` prints on its second line —
+next to the binary for the portable build, the user's folder for an installed
+copy. The interface owns stdout, so nothing useful is ever printed to the
+terminal.
 
 **Keys that do not arrive.** A terminal embedded in a host may keep them: VS
 Code's takes `Ctrl+P`, `Ctrl+E`, `Ctrl+F`, `F1`, `F3` and `F5`; a browser tab
