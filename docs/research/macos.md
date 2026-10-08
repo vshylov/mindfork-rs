@@ -173,9 +173,10 @@ Fork F5.
 
 The themes are 24-bit RGB with no colour-depth detection (`shared/theme.rs`;
 the colour passes are `full` and `mono`). **Terminal.app has 24-bit colour only
-since macOS 26**; before it, `full` is unreadable (measured, §14.4). The
-remedy is a third pass that maps each RGB colour to the nearest of the 256,
-taken where `TERM_PROGRAM=Apple_Terminal` comes without `COLORTERM=truecolor`.
+since macOS 26**; before it, `full` was unreadable (measured, §14.4). A last
+pass of the finished frame now maps each RGB colour to the nearest of the 256
+where `TERM_PROGRAM=Apple_Terminal` comes without `COLORTERM=truecolor`
+(`shared/colour_depth.rs`, §14.7 D2).
 iTerm2, Ghostty, WezTerm and kitty have had 24-bit colour for years.
 
 ### 4.6 Smaller things
@@ -931,7 +932,7 @@ ran. Ghostty, from the same cask run, opened at once.
 | | Defect | Weight | Next |
 |---|---|---|---|
 | D1 | **Ghostty sends Cmd+→ as Ctrl+E, which deletes the last exchange without a question** (the confirmation is off by default). Its macOS-only *natural text editing* binds also send Cmd+← as Ctrl+A (select all) and Cmd+Backspace as Ctrl+U (writes a message as the user); over SSH they reach any build. Measured on the demo: one keypress, and the answer was gone from the feed — the user's message returns to the input, and the reply stays in the chat file (spec §11.7). | medium | **documented, the keys kept** (the owner, 2026-10-08): a short message and the deletion matter more than moving in the input box. install.md names the confirmation and Ghostty's three `unbind` lines |
-| D2 | **`full` is unreadable in Terminal.app before macOS 26** | high | the 256-colour pass of §4.5, chosen where `TERM_PROGRAM=Apple_Terminal` comes without `COLORTERM=truecolor` |
+| D2 | **`full` is unreadable in Terminal.app before macOS 26** | high | **fixed**: the 256-colour pass of §4.5 (`shared/colour_depth.rs`), chosen where `TERM_PROGRAM=Apple_Terminal` comes without `COLORTERM=truecolor`. Live on this host's macOS 15: the dark canvas drawn as index 233 `(18,18,18)`, the light one as white, no green row; the control (`COLORTERM=truecolor`, so RGB) still white and green |
 | D3 | **LM Studio's MLX refusal is not taken for an overflow.** It arrives as a 200 whose stream is an `event: error` reading *"The number of tokens to keep from the initial prompt is greater than the context length…"*, which no marker of `features/compaction.rs` matches. So the user gets the raw text, not *the conversation no longer fits… /compact*. | medium | a marker, and its unit test |
 | D4 | **`install.sh --from` and a browser download:** a `.tar` is not found, and the start check waits on Gatekeeper | medium | take a `.tar`; skip the start check, or name the remedy, while the mark is on |
 | D5 | **The slow-prefill note fires on an M4 with E4B**, after every turn: 295–374 t/s measured by the app (`llama-bench`: 402), so a cancelled request would hold the slot 5.5–6.9 s at the default batch, and the limit is 5 s | question | whether -b 256 is the right advice on Apple silicon — measure before changing |
@@ -939,5 +940,5 @@ ran. Ghostty, from the same cask run, opened at once.
 | D7 | **Tests:** the two image tests look only for English words; two `llama_setup` tests expect a `cpu` build that macOS does not have | low | language-free assertions; the backend list per platform |
 | — | The probe: it unlinked a root-owned link without `sudo`, and found no failed names under `--nocapture` | fixed | in this change |
 
-The call for testers (§13.7) waits on D2: a tester in Terminal.app on macOS
-15 would meet it first.
+With D2 fixed, the call for testers (§13.7) waits on a release that carries
+the fix.

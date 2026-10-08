@@ -13,6 +13,7 @@ use ratatui::widgets::{
     ScrollbarState, Wrap,
 };
 
+use crate::shared::colour_depth::{self, ColourDepth};
 use crate::shared::i18n::Locale;
 use crate::shared::theme::{MONO_MARK, Palette};
 
@@ -117,6 +118,11 @@ pub fn strip_styles(buf: &mut Buffer, palette: &Palette) {
 pub fn finish_frame(buf: &mut Buffer, palette: &Palette) {
     paint_canvas(buf, palette);
     strip_styles(buf, palette);
+    // Last: a terminal without 24-bit colour gets every colour the passes
+    // above left, as its nearest of the 256 (spec §11.6, *Colour depth*).
+    if ColourDepth::current() == ColourDepth::Ansi256 {
+        colour_depth::reduce(buf);
+    }
 }
 
 /// Gives a list the marker of its selected row where the mode needs one
@@ -156,8 +162,18 @@ pub const RESET_STYLE: &str = "\x1b[0m";
 /// Built here and written by the caller, like `shared/osc52.rs`: that is what
 /// lets a test assert the exact bytes.
 pub fn set_background(canvas: Color) -> String {
-    match canvas {
-        Color::Rgb(r, g, b) => format!("\x1b[48;2;{r};{g};{b}m"),
+    background_for(canvas, ColourDepth::current())
+}
+
+/// [`set_background`] at a given colour depth: a terminal without 24-bit
+/// colour gets the canvas as its nearest of the 256, as the frame's cells get
+/// it ([`finish_frame`]), so the erase and the cells agree.
+fn background_for(canvas: Color, depth: ColourDepth) -> String {
+    match (canvas, depth) {
+        (Color::Rgb(r, g, b), ColourDepth::TrueColour) => format!("\x1b[48;2;{r};{g};{b}m"),
+        (Color::Rgb(r, g, b), ColourDepth::Ansi256) => {
+            format!("\x1b[48;5;{}m", colour_depth::nearest_256(r, g, b))
+        }
         // A canvas is absolute or absent (`Palette::canvas`); anything else
         // has no business being painted, and saying nothing is the safe half.
         _ => String::new(),
@@ -1948,6 +1964,22 @@ pub(crate) mod tests {
         // A named colour is not a canvas: nothing is written rather than a
         // shade the terminal would pick.
         assert_eq!(set_background(Color::Blue), "");
+    }
+
+    #[test]
+    fn a_terminal_of_256_colours_is_erased_with_the_canvas_it_draws() {
+        // Terminal.app before macOS 26 misreads `48;2` (docs/research/macos.md
+        // §14.4): the canvas goes out as the same index the cells get.
+        let canvas = crate::shared::theme::CANVAS_DARK;
+        assert_eq!(
+            background_for(canvas, ColourDepth::Ansi256),
+            "\x1b[48;5;233m"
+        );
+        assert_eq!(background_for(Color::Reset, ColourDepth::Ansi256), "");
+        let mut buf = Buffer::empty(Rect::new(0, 0, 1, 1));
+        buf[(0, 0)].set_bg(canvas);
+        colour_depth::reduce(&mut buf);
+        assert_eq!(buf[(0, 0)].bg, Color::Indexed(233));
     }
 
     const FRAMES: &[char] = &['a', 'b', 'c'];

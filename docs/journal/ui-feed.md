@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (49)
+## Entries (50)
 
 - Post-M9: mouse-wheel feed scrolling (done)
 - Post-M9: own markdown renderer (tables + LaTeX + theme) (done)
@@ -61,6 +61,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a window too small for the frame says so (done)
 - Post-M9: the chat sheds its chrome one piece at a time (done)
 - Post-M9: the colour modes on a real Mac (done)
+- Post-M9: Terminal.app before macOS 26 gets its 256 colours (done)
 
 ### Post-M9: mouse-wheel feed scrolling (done)
 - **The mouse wheel scrolls the feed** on par with `PageUp/PageDown`. `ratatui::init()`
@@ -3038,3 +3039,41 @@ kept for its last hour (§14.4).
 **Next.** Defect D2: the 256-colour pass §4.5 named, taken where
 `TERM_PROGRAM=Apple_Terminal` comes without `COLORTERM=truecolor`. Until then
 install.md says to keep `system` there.
+
+### Post-M9: Terminal.app before macOS 26 gets its 256 colours (done)
+
+**Symptom.** On the rented Mac (docs/research/macos.md §14.4, defect D2),
+Terminal 455.1 on macOS 15 drew the `full` mode unreadable. The canvas was never
+painted, the dark theme's light text sat on white, and the bottom row came out
+bright green `(0,162,10)`: an RGB sequence's numbers read as plain attributes.
+That Terminal sets no `COLORTERM`; Terminal on macOS 26 sets `truecolor`.
+
+**Fix.** `shared/colour_depth.rs`:
+- `ColourDepth::for_environment` names `Ansi256` for `TERM_PROGRAM=Apple_Terminal`
+  without `COLORTERM=truecolor`/`24bit`, and `TrueColour` everywhere else. It
+  is read once in `main` and set process-wide, like `NO_COLOR`'s mode.
+- `nearest_256` picks the nearer of the 6×6×6 cube's colour and the grey ramp's.
+  The first 16 are never chosen, since a terminal's theme redefines them.
+- `reduce` is the last pass of `ui::finish_frame`, after the canvas and the
+  monochrome strip, so every mode and theme and every colour a widget, the logo
+  or highlighted code brought goes out as an index.
+- `ui::set_background` sends the canvas erase as `48;5;n`, so the cells a frame
+  never writes agree with the ones it does.
+
+**Decisions.**
+- **A narrow rule.** "No `COLORTERM`, no RGB" would take colour from terminals
+  that draw RGB without saying so, Windows' console host among them.
+  `COLORTERM=truecolor` turns the pass off.
+- **A pass, not a palette.** The themes stay RGB, and nothing is stored.
+- **What is not covered.** Over SSH, `TERM_PROGRAM` does not travel, so a
+  remote mindfork in an old Terminal.app still sends RGB.
+
+**Live** on the host's macOS 15 (Terminal 455.1), the branch's build:
+- The demo's `full` dark: canvas `(18,18,18)` (index 233), the footer
+  `(31,31,31)`, the table headers coloured, no green row.
+- `full` light: canvas white, headers purple.
+- **Control:** the same build with `COLORTERM=truecolor` (so RGB) gave back
+  the defect: canvas `(255,255,255)`, footer `(0,162,10)`.
+
+**Tests:** +7 (6 in `colour_depth`, 1 in `ui`). **3986 unit tests green, 257
+`#[ignore]`**; fmt and clippy are clean.

@@ -942,6 +942,10 @@ src/
    │                       process-wide Registry read once at startup (init);
    │                       tests bring their own through with_registry, a
    │                       thread-local override (spec §11.6)
+   ├─ colour_depth.rs      how many colours the terminal draws: Terminal.app without
+   │                       COLORTERM=truecolor gets the 256 — a last pass of
+   │                       ui::finish_frame maps every RGB colour to its nearest
+   │                       (cube or grey ramp), read once at startup (spec §11.6)
    ├─ osc11.rs             asking the terminal for its background (OSC 11), so Auto
    │                       can follow it: pure parse/luminance + a two-phase IO half
    │                       (begin in main.rs before Storage::open, harvest in

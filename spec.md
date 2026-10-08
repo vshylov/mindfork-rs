@@ -3982,6 +3982,22 @@ written. The row stores the environment's mode as absence, so `Del` on it goes
 back to following the environment. The variable is read once, at start-up
 (`config::set_environment_mode`).
 
+*Colour depth* (`shared/colour_depth.rs`). The themes are 24-bit RGB, and a
+terminal without 24-bit colour misreads an RGB sequence rather than drawing a
+nearby colour: Terminal.app before macOS 26 (Terminal 455.1 on macOS 15) never
+painted the `full` canvas, left its light text on white and coloured a row
+bright green (docs/research/macos.md §14.4). Where `TERM_PROGRAM` is
+`Apple_Terminal` and `COLORTERM` is neither `truecolor` nor `24bit`, the last
+pass of `ui::finish_frame` gives every RGB colour of the finished frame —
+foreground, background, underline — as the nearest of the xterm palette's 256
+(the 6×6×6 cube or the grey ramp; the first 16 are never chosen, a terminal's
+theme redefines them), and the canvas erase uses the same index. Every mode and
+theme applies; nothing is stored. The rule is narrow on purpose: Terminal on
+macOS 26 sets `truecolor`, and a general "no `COLORTERM`, no RGB" would take
+colour from terminals that draw RGB without saying so, Windows' console host
+among them. Read once, at start-up (`colour_depth::set`); `COLORTERM=truecolor`
+in the environment turns it off.
+
 *A limit.* A search matches the **rendered** text (§11.3), and in this mode the
 rendered text holds the markers: a query that spans a marker — a word whose
 second half is bold — finds nothing in the feed.
