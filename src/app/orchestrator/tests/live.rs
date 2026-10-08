@@ -739,6 +739,37 @@ pub(super) async fn cut_then_continue(
     }
 }
 
+/// Whether a reply names a thing in either of the app's languages. The
+/// default profile's scaffold is Russian, and a small model answers in it —
+/// rightly: on the rented Mac (docs/research/macos.md §14.2, defect D7) Gemma 4
+/// E4B said the background was blue and the square green in Russian, and the
+/// tests that looked for `blue` and `green` failed on a correct answer. The
+/// Russian entries are stems, so every case ending matches.
+fn names(reply: &str, words: &[&str]) -> bool {
+    let reply = reply.to_lowercase();
+    words.iter().any(|w| reply.contains(w))
+}
+
+const BLUE: &[&str] = &["blue", "син"];
+const GREEN: &[&str] = &["green", "зелен", "зелён"];
+const WHITE: &[&str] = &["white", "бел"];
+const SQUARE: &[&str] = &["square", "квадрат"];
+
+/// The replies the rented Mac's E4B gave — right answers the English-only
+/// assertions refused (docs/research/macos.md §14.2) — and the English ones,
+/// read the same way. Not a live test: the words are fixed here.
+#[test]
+fn a_reply_names_a_thing_in_either_language() {
+    let mac_first = "синий фон, белый квадрат.";
+    assert!(names(mac_first, BLUE) && names(mac_first, SQUARE));
+    let mac_url = "Фон — зеленый, в центре — квадрат.";
+    assert!(names(mac_url, GREEN) && names(mac_url, SQUARE));
+    assert!(names("Белого цвета.", WHITE), "a case ending");
+    assert!(names("A Blue background with a white Square.", BLUE));
+    assert!(!names("Please upload the image.", BLUE), "no colour named");
+    assert!(!names("Красный круг.", SQUARE), "another shape");
+}
+
 /// Live e2e for image attachments (spec §9.10): an image staged with `/image attach`
 /// reaches a vision-capable model, and **is still seen a turn later**, replayed out of
 /// history rather than re-staged.
@@ -795,17 +826,16 @@ async fn image_attachment_e2e_live() {
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 
-    let first = first.to_lowercase();
     assert!(
-        first.contains("blue"),
+        names(&first, BLUE),
         "the model must see the background colour, got: {first}"
     );
     assert!(
-        first.contains("square"),
+        names(&first, SQUARE),
         "the model must see the centred shape, got: {first}"
     );
     assert!(
-        second.to_lowercase().contains("white"),
+        names(&second, WHITE),
         "the image must still be visible a turn later, replayed from history, got: {second}"
     );
 }
@@ -1033,7 +1063,7 @@ async fn a_history_image_on_an_engine_without_vision_live() {
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
     assert!(
-        first.to_lowercase().contains("blue"),
+        names(&first, BLUE),
         "the vision engine must see the image before the switch: {first}"
     );
 
@@ -4729,18 +4759,16 @@ async fn image_url_attachment_e2e_live() {
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 
-    let reply = reply.to_lowercase();
     assert!(
-        reply.contains("green"),
+        names(&reply, GREEN),
         "the downloaded image's background colour, got: {reply}"
     );
     assert!(
-        reply.contains("square"),
+        names(&reply, SQUARE),
         "the downloaded image's centred shape, got: {reply}"
     );
-    let control = control.to_lowercase();
     assert!(
-        !(control.contains("green") && control.contains("square")),
+        !(names(&control, GREEN) && names(&control, SQUARE)),
         "the control answered without seeing anything — the fixture is guessable, so the \
          green arm above proves nothing: {control}"
     );

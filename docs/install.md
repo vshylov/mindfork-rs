@@ -186,7 +186,9 @@ Opened"*; choose **Done**, not *Move to Trash*. Then *System Settings → Privac
   Ghostty break a line with `Shift+Enter`. Terminal.app breaks it with
   `Ctrl+J`, erases a character (not a word) with Option+Backspace, and keeps
   Home, End and Page Up/Down for its own scrolling: add `Shift` to reach the
-  app.
+  app. iTerm2 is the other way round: Page Up/Down reach the app, and with
+  `Shift` they scroll iTerm2. In Terminal.app a link in the conversation opens
+  with Cmd+double-click — a single Cmd+click does nothing.
 - **Ghostty** sends Cmd+→ as `Ctrl+E`, which deletes the last exchange (your
   message returns to the input), Cmd+← as `Ctrl+A` (select all) and
   Cmd+Backspace as `Ctrl+U` (write a message as you). Either turn on *Settings
