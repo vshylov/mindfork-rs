@@ -4312,7 +4312,13 @@ Cmd+click does nothing.
   does not publish for macOS/arm64. `BASE_BACKEND` is `metal` on a Mac and
   `cpu` elsewhere, and the tests are renamed for what they ask:
   `live_the_newest_build_still_names_the_base_backend` and
-  `live_install_the_base_backend_into_a_tempdir`.
+  `live_install_the_base_backend_into_a_tempdir`. They moved to
+  `src/features/llama_setup/tests/live.rs` as well. The PR's first Sonar run
+  failed new-code coverage at 0 %: their edited lines sat in the inline
+  `mod tests`, and CI never runs a test marked `#[ignore]`. `cargo llvm-cov`
+  leaves files under a `tests/` directory out of its report, as it does the
+  orchestrator's `tests/live.rs` (checked: the report names only
+  `llama_setup.rs`).
 
 **Live on Windows:**
 - Both `llama_setup` tests passed: b11480, `cpu` among seven backends, 18 MB
