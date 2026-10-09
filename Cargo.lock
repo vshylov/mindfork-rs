@@ -2132,7 +2132,7 @@ dependencies = [
 
 [[package]]
 name = "mindfork"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "ansi-to-tui",
  "anyhow",

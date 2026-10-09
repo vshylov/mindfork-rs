@@ -150,11 +150,11 @@ a checkout with a recent stable Rust. On a rented GPU box or in a container, the
   (a theme of your own is a file of one colour or of twenty), or no colours at
   all (`NO_COLOR` is honoured) — and an interface in English or Russian.
 - **Private by construction.** No telemetry, no update check, no account.
-  Everything lives in one data folder on your disk: in your user profile when a
-  package or the installer put the app there, beside the binary for the portable
-  build — take the folder, or the USB stick it is on, and it comes with you. API
-  keys are encrypted and bound to the machine; backups are a zip with optional
-  AES-256.
+  Everything lives in one data folder on your disk, which `F1` → About names: in
+  your user profile when a package or the installer put the app there, beside the
+  binary for the portable build — take the folder, or the USB stick it is on,
+  and it comes with you. API keys are encrypted and bound to the machine;
+  backups are a zip with optional AES-256.
 
 The longer version, with the reasoning: [the manual](docs/manual.md) and the
 articles at [mindfork.io](https://mindfork.io/articles/).
