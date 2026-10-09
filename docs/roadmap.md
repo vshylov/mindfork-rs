@@ -202,6 +202,13 @@ effort tiers — have all closed
   llama.cpp's own. (The estimate's blind spot for `req.tools`, once listed
   here, was found and fixed on 2026-09-09 —
   [roll-usage-calibration.md §2.1](research/roll-usage-calibration.md).)
+- **The prompt estimate on gpt-oss** — **on demand**. The estimate counts the tool
+  schemas as the JSON the request carries; gpt-oss's harmony template renders them
+  far more compactly, so a prose turn with 24 tools counts 0.57 of its estimate
+  (Gemma and Qwen: 0.75–1.25) — the safe side, a compaction that comes early.
+  `prompt_estimate_e2e_live` stays red on that model until the estimate knows the
+  template (*user's decision, 2026-10-10*;
+  [e2e-gpt-oss-120b.md](research/e2e-gpt-oss-120b.md) §11).
 
 ### Tools and MCP
 
@@ -545,11 +552,6 @@ effort tiers — have all closed
   their own credentials, which no workflow holds; the Python-sandbox and
   managed-server smokes need local assets and a child process of our own, so
   they cannot run remotely at all.
-- **Remote gate: a fallback for gpt-oss-120b** — **on demand**. An endpoint HF
-  cannot start is created again down its model's fallback cards (Gemma, Qwen: the
-  A100); `gpt-oss-120b` has none, because the A100 that would hold its 63 GB is
-  unmeasured (MXFP4 is dequantized there), so a refused H200 is only retried.
-  [e2e-gate-budget.md](research/e2e-gate-budget.md) §10.
 - **Remote gate: chat-free runs** — **on demand**. `run` always creates the
   L40S chat endpoint, even for a filter that only exercises the embedders
   (~$0.10 wasted per such iteration); the probe has `--embed-only`, the runner

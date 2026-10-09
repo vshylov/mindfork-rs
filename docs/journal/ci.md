@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (22)
+## Entries (23)
 
 - Post-M9: cutting GitHub Actions minutes (done)
 - Post-M9: skipping the test job for docs-only pull requests (done)
@@ -35,6 +35,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the live gate dealt across shards (done)
 - Post-M9: the gate's embedders batch a whole chunk (done)
 - Post-M9: an endpoint HF cannot start is created again, on the fallback card (done)
+- Post-M9: gpt-oss-120b moves to an RTX PRO 6000, with two clouds behind it (done)
 ### Post-M9: cutting GitHub Actions minutes (done)
 - **Trigger**: the `v0.9.4` release run was refused by GitHub with *"The job was
   not started because recent account payments have failed or your spending limit
@@ -1561,3 +1562,34 @@ owner's decision (2026-10-10): retry automatically, falling back to the A100.
 - **Live — GO** (run 37997306401, the whole suite): three L40S failed to start and came up
   on an A100 20–30 s after the recreate; the fourth L40S, scheduled in 585 s, was waited for.
   **251 of 251 green in one dispatch** — the first full run green end to end, no rerun by hand.
+
+### Post-M9: gpt-oss-120b moves to an RTX PRO 6000, with two clouds behind it (done)
+
+On 2026-10-10 HF's catalogue listed `aws/us-west-2` as `not_available` and its H200 as
+`deprecated`, and a create there was a `400`: every `gpt-oss-120b` dispatch would have
+failed before its first smoke. Asked to give the model a fallback, the gate needed a card
+first. [docs/research/e2e-gpt-oss-120b.md](../research/e2e-gpt-oss-120b.md) §11.
+
+- **Measured** — the gate's own payload on three cards at once (≈$0.60): the RTX PRO 6000
+  (aws `us-east-2`, $2.75/h, quota 4) healthy in 39 s, 206 tokens/s, 8012 on a 6316-token
+  prompt; the H200 on gcp (`us-south1`, $5.00/h, quota 2) 204 and 4288; the A100 (aws
+  `us-east-1`, $2.50/h) 124 and 1875, whole on the GPU. The image runs on Blackwell.
+- **The owner's decisions (F7, F8)**: the RTX PRO 6000 is the model's card; its ladder
+  RTX → A100 → H200 on gcp → RTX, a second cloud behind the first.
+- **A card implies a vendor as well as a region** (`INSTANCE_PLACES`, `card_place`);
+  `--vendor` defaults to the card's own; a model record no longer names a region; the
+  embedders stay in `aws/us-east-1`. The plan, a recreate and the summary name the place.
+- **The catalogue is read before anything is created**: a card on any ladder that is
+  absent from `GET /v2/provider`, or whose card or region is not `available`, is a
+  `::warning::` — it would have said `deprecated` a day before the `400`.
+- **`--self-test`**: the ladders with their places, a place named by hand, the embedders'
+  place, five catalogue cases, and that the workflow offers every card a model may run on
+  (red until `nvidia-rtx-pro-6000` was added). Nine mutants caught.
+- **Live — GO for the cards** (run 38003173860, four shards): every RTX came up on the
+  first rung, jobs of 8–11 minutes, ≈$1.70 a dispatch; the H200 on gcp reached from CI
+  (run 38003182874). **245 of 251 green**; the six reds are not the card's — two image
+  smokes matched `can't` against a typographic `can’t`, two parallel-call smokes ask for
+  two calls in one reply where gpt-oss makes one (`<|call|>` ends a reply), the prompt
+  estimate counts the harmony template's tools at 0.57, and §10.2's `fetch_url` flake.
+  Decided (F9–F11): fold the apostrophe, declare one call per reply and skip those two by
+  name, leave the estimate red on the roadmap — the first two in a follow-up PR.

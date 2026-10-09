@@ -6,6 +6,8 @@ decision, 2026-08-29*); merged as
 found **117 passed, 11 failed, none of them a product defect** (§10), ten of
 which were repaired and re-verified live; the CI dispatch that followed the merge
 is **124 passed, 1 failed**, and that one failure is not this track's (§10.3).
+**Since 2026-10-10** the model runs on an RTX PRO 6000, with an A100 and an H200
+on gcp behind it: HF withdrew the H200's AWS region (§11, forks F7–F8).
 **Date:** 2026-08-29.
 **Extends:** [docs/history/remote-e2e-hf.md](../history/remote-e2e-hf.md) (the
 gate itself, stages 0–3) and
@@ -81,7 +83,8 @@ The 1010 GB is not trivia — see U1.
 ## 3. Hardware: on this platform the H100 is the wrong ask
 
 The provider catalogue and this account's quotas, read 2026-08-29
-(`GET /v2/provider`, `GET /v2/provider/quotas/vshylov`). Everything that can
+(`GET /v2/provider`, `GET /v2/provider/quotas/vshylov`); the catalogue of
+2026-10-10, where the H200 has moved to gcp, is in §11. Everything that could
 hold 63.4 GB of weights:
 
 | Vendor / region | Instance | GPU RAM | $/hr | Account quota |
@@ -305,7 +308,8 @@ that could explain a red run. (b) A100 80 GB at $2.50/hr and (c) RTX PRO 6000
 96 GB at $2.75/hr stay on the table as the cost optimization to attempt *after*
 a green run exists to compare against — each adds an unmeasured variable to a
 run whose purpose is to find variables elsewhere. Not an option:
-`nvidia-h100` — quota 0 on this account, and $10/hr.
+`nvidia-h100` — quota 0 on this account, and $10/hr. *Superseded 2026-10-10 by
+F7–F8 (§11): the H200's region was withdrawn, and (c) is the card now.*
 
 **F3 — the three vision smokes on a text-only stack → (a) a declaration.**
 `MINDFORK_LIVE_TEXT_ONLY=1` makes exactly those three skip, printed by the
@@ -332,7 +336,8 @@ two when a change warrants it, and expected to stay green.
 Per full run, at the resolved options: H200 $5.00/hr × ~25 min ≈ **$2.10**, plus
 two T4 embedders (~$0.50/hr each × ~25 min) ≈ **$0.40** → **≈ $2.50**, against
 ≈$1.00 for a Gemma/Qwen dispatch. Stage 0 and the verification run cost ≈$0.42 in total. On an A100 the
-same run would be ≈$1.50.
+same run would be ≈$1.50. *Since 2026-10-10, on the RTX PRO 6000 and four shards,
+a dispatch is ≈$1.70 for a suite twice as long (§11).*
 
 The leak ceiling is unchanged and is the reason this stays on this platform: a
 run that dies without cleaning up leaves endpoints idle, HF scales them to zero
@@ -448,3 +453,131 @@ broken one. **Out of this track's scope, and worth its own.**
 The count also differs from the local run for a boring reason: Linux compiles
 nine fewer tests than Windows (the real-clipboard round trip among them), so the
 live set is 125 there against 128 here.
+
+## 11. The H200's region withdrawn: the card moves (2026-10-10)
+
+On 2026-10-09 HF's provider catalogue already listed the H200 in `aws/us-west-2`
+as `deprecated` ([e2e-gate-budget.md](e2e-gate-budget.md) §3); on 2026-10-10 the
+region itself was `not_available`, and a create there was refused —
+`400 Compute instance is not currently available`. Every `gpt-oss-120b` dispatch
+would have failed before its first smoke: the capacity ladder
+([e2e-gate-budget.md](e2e-gate-budget.md) §10) had no fallback for this model, so
+a refused H200 was retried on the same H200.
+
+The catalogue and this account's quotas that day (`GET /v2/provider`,
+`GET /v2/provider/quotas/vshylov`) — one card that holds 63.4 GB, at most $5/h:
+
+| Vendor / region | Instance x1 | GPU RAM | $/h | Catalogue | Quota |
+|---|---|---|---|---|---|
+| aws us-east-1 | `nvidia-a100` | 80 GB | 2.50 | available | 4 |
+| aws us-east-2 | `nvidia-rtx-pro-6000` | 96 GB | 2.75 | available | 4 |
+| aws us-west-2 | `nvidia-h200` | 141 GB | 5.00 | card `deprecated`, region `not_available` | 2 |
+| gcp us-south1 | `nvidia-h200` | 141 GB | 5.00 | available | 2 |
+| gcp us-east4 | `nvidia-a100` | 80 GB | 3.60 | available | 2 |
+
+gcp's H100 is still $10.00/h with a quota of 0 (§3).
+
+**Measured** — the gate's own payload (`chat_payload`: the split Q8_0,
+`variant Q8_0/*`, `nGpuLayers 9999`, `ctxSize 16384`; the image's llama.cpp
+b11515), on three cards at once, ≈$0.60, every endpoint deleted and the deletion
+verified:
+
+| Card | Place | Create → `running` | → `/health` | First request | Generation (600 tokens) | Prompt (6316 tokens) |
+|---|---|---|---|---|---|---|
+| RTX PRO 6000 | aws us-east-2 | 33 s | 39 s | 0.7 s | **206 t/s** | **8012 t/s** |
+| H200 | gcp us-south1 | 84 s | 123 s | 35 s | 204 t/s | 4288 t/s |
+| A100 | aws us-east-1 | 43 s | 97 s | 53 s | 124 t/s | 1875 t/s |
+| H200 | aws us-west-2 | refused, `400` | — | — | — | — |
+
+- **§3's two caveats are answered.** The image carries kernels for Blackwell
+  (sm_120); and the A100 runs the model whole on the GPU — 124 tokens/s, where an
+  offload to the CPU would be a fraction of that.
+- **The first request** on the A100 and the H200 spent 35–53 s processing a
+  61-token prompt; the second and later ones did not, and the RTX had none. A
+  one-time cost per endpoint, and the shape upstream's CUDA architecture list
+  predicts ([cloud-provisioning.md](cloud-provisioning.md) §3.1): 8.6, 8.9 and
+  12.0 compiled in, 8.0 (A100) and 9.0 (H200) left to the driver's JIT compile of
+  the PTX on first use — consistent with it, not traced to it.
+- **The RTX PRO 6000 is the H200's equal at generation and twice it at prompt
+  processing, at a little over half the price**, and its quota (4) holds the four
+  shards a dispatch deals by default, where the H200's (2 per cloud) holds two.
+
+**F7 — the model's own card → (a) the RTX PRO 6000**, aws us-east-2 (*user's
+decision, 2026-10-10*). (b) The H200 on gcp — the card the model was first
+measured on, twice the price, and two of four shards refused at create by the
+quota. (c) The A100 — 1.6× slower at generation, and its quota is the one the
+Gemma and Qwen ladders fall back to.
+
+**F8 — its fallbacks → (a) the A100, then the H200 on gcp** (*user's decision,
+2026-10-10*): RTX PRO 6000 → A100 → H200 → RTX PRO 6000. The H200 is a second
+cloud, so one wave of AWS refusals does not empty the ladder; it costs nothing
+unless it is reached, and four failed starts are ~12 minutes before the first
+smoke. (b) The A100 alone, as the other two models.
+
+**Built:**
+
+- **A card implies a vendor as well as a region**: `INSTANCE_PLACES` (card →
+  vendor, region) replaces `INSTANCE_REGIONS`, read through `card_place`; the
+  H200 is `gcp/us-south1`, the RTX PRO 6000 `aws/us-east-2`, every other card
+  `aws/us-east-1`. A rung of the ladder carries its card's place, so a fallback
+  lands where its card exists; `--vendor` now defaults to the card's own, and
+  `--vendor`/`--region` still override, each on its own. A model record no
+  longer names a region. The embedders stay on their T4s in `aws/us-east-1`.
+- **The record**: `instance: nvidia-rtx-pro-6000`, `fallback: [nvidia-a100,
+  nvidia-h200]`.
+- **The catalogue is read before anything is created**: each card on every
+  ladder is looked up in `GET /v2/provider` by vendor, region, card and size,
+  and one that is absent, or whose card or region is not `available`, is a
+  warning — a `::warning::` annotation in CI. It would have said `deprecated` on
+  2026-10-09, a day before the 400.
+- The plan, a recreate and the summary name each card's place; the workflow
+  offers `nvidia-rtx-pro-6000` as a choice.
+- **`--self-test`**: seven ladders with their places (a place named by hand kept
+  on every rung), the embedders' place on each model, the catalogue warnings
+  (healthy, a size it does not list, a deprecated card, a region not available,
+  the H200 found only where it used to be), and that the workflow offers every
+  card a model may run on — which was red until it did. Ten mutants: nine caught
+  by the arms (a card's place ignored, the caller's ignored, the H200 back in
+  `us-west-2`, no fallback, embedders on the chat's place, a moved rung keeping
+  the first place, no de-duplication, a region's status ignored, a card matched
+  in any place); the tenth, the workflow check switched off, cannot fail against
+  a workflow that is right, and its own red is the evidence.
+
+**Outcome — GO for the cards** (run
+[38003173860](https://github.com/vshylov/mindfork-rs/actions/runs/38003173860),
+the whole suite, four shards, 2026-10-10): every shard's RTX PRO 6000 came up on
+the first rung, the catalogue warned about nothing, and the endpoints were ready in
+186–382 s (the T4 embedders the slower half). Suites of 211–280 s, jobs of 8–11
+minutes, chat endpoints alive 5–8 minutes each — **≈$1.70 a dispatch**, against
+≈$4 for Gemma's. All twelve endpoints deleted, the namespace empty. The H200 on
+gcp was dispatched from CI on its own
+([38003182874](https://github.com/vshylov/mindfork-rs/actions/runs/38003182874),
+`chat_instance: nvidia-h200`, `filter: tool_call`): a runner reaches an endpoint
+on another cloud, three smokes green.
+
+**245 of 251 smokes green; none of the six reds is the card's.** The model had not
+been dispatched since 2026-08-30, and the suite has doubled since; five of the six
+are smokes written in September, never run on this model:
+
+| Smokes | What it is |
+|---|---|
+| `a_withheld_tool_image_is_not_described_live`, `a_withheld_chart_is_not_described_live` | The model says what the smoke asks for — "I can’t see the image" — with a **typographic apostrophe** (U+2019), where the check looks for `can't see`; the second answer also said "not able to view". A test defect, of the family §10.1's U+2011 hyphen belongs to. |
+| `parallel_subagents_e2e_live`, `concurrent_tools_e2e_live` | Both ask for two tool calls **in one reply**, to test the round's parallel group (ADR 0012). gpt-oss made the two calls in two replies: `<|call|>` ends its generation, so a reply carries one call ([discussion](https://huggingface.co/openai/gpt-oss-120b/discussions/151)). Correct answers both times; a capability the model does not have. |
+| `prompt_estimate_e2e_live` | A prose turn's exact count over the estimate is **0.57**, outside the 0.75–1.25 the smoke holds a turn to: the harmony template renders the 24 tool schemas far more compactly than the JSON the estimate counts. A real inaccuracy of the app on this model, on the safe side — it compacts early. |
+| `fetch_url_address_policy_e2e_live` | §10.2's known flake: the model declined to fetch. Left alone by the earlier decision. |
+
+**F9 — the typographic apostrophe → (a) fold it** before the wording is matched,
+and accept "not able to" beside "unable to" (*user's decision, 2026-10-10*); the
+other side of the check — no colour, no legend claimed — stays as strict.
+
+**F10 — one call per reply → (a) a declaration**, as F3 is for the vision smokes:
+the model record says so, the runner sets an environment variable derived from
+it, and the two smokes skip by name, saying why (*user's decision, 2026-10-10*).
+(b) Two permanent reds on every dispatch of this model.
+
+**F11 — the estimate → (a) left red, and on the roadmap** (*user's decision,
+2026-10-10*): an honest red for an inaccuracy that is the app's, until the
+estimate knows the template's rendering of the tools. (b) A declared skip would
+hide it; (c) calibrating it now is a track of its own.
+
+F9 and F10 are built in a follow-up pull request, re-dispatched there.

@@ -2384,7 +2384,7 @@ The chat endpoint runs **one model per run**, chosen with `--chat-model`:
 |---|---|---|
 | `gemma-4-31b` | the default, and what the memory thresholds were calibrated against | L40S 48 GB, us-east-1 |
 | `qwen-3.6-27b` | a second model family, so a Gemma-shaped assumption is caught here | L40S 48 GB, us-east-1 |
-| `gpt-oss-120b` | weights **split across two files** (63.39 GB, Q8_0), OpenAI open-weights, text-only | H200 141 GB, us-west-2 |
+| `gpt-oss-120b` | weights **split across two files** (63.39 GB, Q8_0), OpenAI open-weights, text-only | RTX PRO 6000 96 GB, us-east-2 |
 
 The name is one decision — it carries the repository, the weights, the vision
 projector, the download filter and the hardware together, so an impossible
@@ -2406,7 +2406,7 @@ $env:HF_TOKEN = "hf_..."          # fine-grained, Inference Endpoints
 python tools/e2e_hf.py run        # create, run the suite, delete
 python tools/e2e_hf.py run --dry-run          # payloads only, spends nothing
 python tools/e2e_hf.py run --chat-model qwen-3.6-27b   # the other model family
-python tools/e2e_hf.py run --chat-model gpt-oss-120b   # split weights, H200, text-only
+python tools/e2e_hf.py run --chat-model gpt-oss-120b   # split weights, RTX PRO 6000, text-only
 python tools/e2e_hf.py run --filter e2e_live  # a subset
 python tools/e2e_hf.py run --shard 2/4        # every fourth smoke, on endpoints of its own
 python tools/e2e_hf.py run --no-alt-embed     # skip the second embedding model
@@ -2426,14 +2426,15 @@ payment method on the account, or an org token pending approval).
 card, ≈ $4 (L40S $1.80/hr + two T4s at $0.50/hr, billed by the minute; measured
 2026-10-09) — so CI deals it across shards, each a job with three endpoints of its
 own, and four shards cost about one run plus three deploys. A `gpt-oss-120b` run
-costs about three times as much, because the H200 that holds it is $5.00/hr. The endpoints are deleted from `finally`, from
+is ≈ $1.70: it is a fast model, its four jobs take 8–11 minutes, and the RTX PRO 6000
+that holds it is $2.75/hr (measured 2026-10-10). The endpoints are deleted from `finally`, from
 `atexit` and from the SIGINT/SIGTERM handler, and the deletion is **verified** —
 a failed delete exits non-zero even when the tests passed. In CI the runner is
 `exec`ed, so a cancelled job's signal reaches it, and the job's last step runs
 `delete-run` whatever happened: the names are derived from the run id, so it
 needs nothing from a runner that died. If both fail, the endpoints scale to zero
 after their idle window (15 min, so ≈ $0.57 worst case) and the sweeper removes
-them, which also reclaims endpoint quota (≈$1.25 on an H200). Use `--keep` only
+them, which also reclaims endpoint quota (≈$0.69 on the RTX PRO 6000). Use `--keep` only
 when debugging, and delete afterwards — by name, or the whole run with
 `delete-run`.
 
@@ -2442,11 +2443,15 @@ test-filter, model, GPU and shard-count inputs (four shards by default, each job
 under a 60-minute ceiling); it needs the `HF_TOKEN` repository secret. HF does not
 always have the card: an endpoint that *fails to start* — or whose create is
 refused — is deleted and created again on the model's fallback card (Gemma and Qwen:
-an L40S, then an A100, then the L40S once more; a card named with `--chat-instance`
-is retried, never swapped), and the summary says which card the run got. A shard
+an L40S, then an A100, then the L40S once more; `gpt-oss-120b`: the RTX PRO 6000, an
+A100, an H200 on gcp, the RTX once more; a card named with `--chat-instance` is
+retried, never swapped), and the summary says which card the run got. A card on that
+ladder which HF's catalogue no longer lists as available is a warning on the run's
+page before anything is created. A shard
 that still fails deletes what it created and fails alone, and `gh run rerun <run-id>
 --failed` runs just that shard again
-([docs/research/e2e-gate-budget.md](research/e2e-gate-budget.md) §8, §10). **Live e2e
+([docs/research/e2e-gate-budget.md](research/e2e-gate-budget.md) §8, §10;
+[e2e-gpt-oss-120b.md](research/e2e-gpt-oss-120b.md) §11). **Live e2e
 sweeper** runs every six hours as the backstop (hourly until 2026-08-21; the cadence
 bounds how long an orphan holds endpoint quota, not money). Design and decisions:
 [docs/history/remote-e2e-hf.md](history/remote-e2e-hf.md),
