@@ -6656,17 +6656,22 @@ failure in the forty CI runs since the test landed (2026-10-02).
 
 - **Both controls on a freed port** — that test's and the second half of
   `the_ledger_refuses_a_port_a_stranger_holds` (after the drop the launch must reach
-  `spawn`) — now repeat take → drop → check with a fresh port, at most
-  `FREED_PORT_ATTEMPTS` (5) times. The held half is asserted on every attempt, never
-  retried; five freed ports read as taken running is a failure, not luck.
-- **Checked**: `port_taken` mutated to always `true` fails both tests on the fifth attempt,
-  always `false` fails them on the held half; a stranger bound on the freed port on the
-  first attempt (a one-off experiment) makes the test take the next port and pass.
+  `spawn`) — run through `on_freed_ports`, which repeats take → drop → check with a fresh
+  port, at most `FREED_PORT_ATTEMPTS` (5) times. The held half asserts inside the attempt
+  and is never retried; five freed ports read as taken running is a failure, not luck.
+- **The retry has tests of its own**: a stranger really bound on the freed port in the
+  first attempt costs a fresh port, and a port taken every time panics after five. That was
+  first a one-off experiment; the coverage gate made it permanent — the inline retry loops
+  left their `continue` and closing `panic!` unexecuted in a green run, and an inline
+  `mod tests` in `managed.rs` counts as production code to the report (lessons §10), so
+  the pull request's new code read 63.6 % covered against the gate's 80.
+- **Checked**: `port_taken` mutated to always `true` or always `false` turns the three tests
+  that rest on it red; the policy's own `should_panic` test does not rest on it.
 - **Left alone, deliberately**: the "dead URL" helpers that drop a listener to get a port
   nothing answers on (`http.rs`, `local_servers.rs`, `openai/client.rs`, `net.rs`,
   `supervisor.rs`) have the same window in principle — a stranger on the port would answer
   where a refusal is expected. None has failed; the sound fix there is a socket bound and not
   listening, which holds the port and refuses connects, and is its own change.
 
-No live run: unit tests only. **Gates**: fmt / clippy / test green — 3999 unit tests, 258
-`#[ignore]`, unchanged.
+No live run: unit tests only. **Gates**: fmt / clippy / test green — **4001 unit tests,
+258 `#[ignore]`** (+2).
