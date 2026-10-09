@@ -659,6 +659,18 @@ LIVE_WORKFLOW = os.path.join(ROOT, ".github", "workflows", "e2e-live.yml")
 SWEEPER_WORKFLOW = os.path.join(ROOT, ".github", "workflows", "e2e-sweeper.yml")
 
 
+def _name_failures(name, ident):
+    """What is wrong with one endpoint name made for the run `ident`."""
+    out = []
+    # Truncation would cut the run id off the end, and the id is what an orphan
+    # is identified by — in the log and by `delete-run`.
+    if not name.endswith(ident) or len(name) > hf.NAME_MAX:
+        out.append(f"names: {name!r} does not end in {ident!r} within {hf.NAME_MAX}")
+    if hf.safe_name(name) != name or not name.startswith(SWEEP_PREFIX):
+        out.append(f"names: {name!r} is not a stable {SWEEP_PREFIX}* name")
+    return out
+
+
 def _check_names(failures):
     # A CI id with a two-digit attempt and the local timestamp form, each also as
     # the highest shard: the longest names the gate can make.
@@ -669,12 +681,7 @@ def _check_names(failures):
             if len(set(names)) != 3:
                 failures.append(f"names: {key} {ident} gives duplicates {names}")
             for name in names:
-                # Truncation would cut the run id off the end, and the id is what
-                # an orphan is identified by — in the log and by `delete-run`.
-                if not name.endswith(ident) or len(name) > hf.NAME_MAX:
-                    failures.append(f"names: {name!r} does not end in {ident!r} within {hf.NAME_MAX}")
-                if hf.safe_name(name) != name or not name.startswith(SWEEP_PREFIX):
-                    failures.append(f"names: {name!r} is not a stable {SWEEP_PREFIX}* name")
+                failures.extend(_name_failures(name, ident))
 
 
 def _check_run_endpoints(failures):
@@ -773,7 +780,7 @@ def _check_workflows(failures):
     sweeper = _read(SWEEPER_WORKFLOW, failures)
     # The job's ceiling must stay under the sweeper's threshold, or the sweeper
     # could delete the endpoints of a run that is still using them.
-    ceilings = [int(m) for m in re.findall(r"^    timeout-minutes: (\d+)", live, re.M)]
+    ceilings = [int(m) for m in re.findall(r"^ {4}timeout-minutes: (\d+)", live, re.M)]
     if not ceilings or max(ceilings) >= SWEEP_MAX_AGE_MIN:
         failures.append(f"workflow: job timeout {ceilings} is not below the sweep age {SWEEP_MAX_AGE_MIN}")
     if f'default: "{SWEEP_MAX_AGE_MIN}"' not in sweeper or f"${{MAX_AGE:-{SWEEP_MAX_AGE_MIN}}}" not in sweeper:
@@ -782,7 +789,7 @@ def _check_workflows(failures):
     # of it (CI run 37947267239).
     if not re.search(r'^\s*exec python3 tools/e2e_hf\.py "\$\{args\[@\]\}"\s*$', live, re.M):
         failures.append("workflow: the runner is not exec'd, so a cancellation never reaches it")
-    steps = re.split(r"^      - ", live, flags=re.M)
+    steps = re.split(r"^ {6}- ", live, flags=re.M)
     backstop = [s for s in steps if "tools/e2e_hf.py delete-run" in s]
     if len(backstop) != 1 or "if: always()" not in backstop[0]:
         failures.append("workflow: no `if: always()` step runs `delete-run`")
