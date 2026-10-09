@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (19)
+## Entries (20)
 
 - Post-M9: cutting GitHub Actions minutes (done)
 - Post-M9: skipping the test job for docs-only pull requests (done)
@@ -32,6 +32,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the workflows before strangers can open a pull request (done)
 - Post-M9: one context the branch ruleset can require (done)
 - Post-M9: a cancelled live job deletes its endpoints (done)
+- Post-M9: the live gate dealt across shards (done)
 ### Post-M9: cutting GitHub Actions minutes (done)
 - **Trigger**: the `v0.9.4` release run was refused by GitHub with *"The job was
   not started because recent account payments have failed or your spending limit
@@ -1480,3 +1481,37 @@ entry is its stage 1.
   within the second, all three deleted and verified 3 s later, the backstop found none,
   and `python3` was gone from the job's orphans. Unit tests unchanged: 3994 green, 257
   `#[ignore]`.
+
+### Post-M9: the live gate dealt across shards (done)
+
+Stage 2 of [docs/research/e2e-gate-budget.md](../research/e2e-gate-budget.md) (§8): the
+suite had outgrown one job, and the owner chose parallel shards on the same L40S over a
+faster card or a higher ceiling (2026-10-09).
+
+- **`e2e_hf.py run --shard I/N`**: the build, then `cargo test -- --ignored --list`, then
+  every N-th smoke from the I-th, run by `--exact` name as an argv list (`cmd.exe` stops
+  at 8191 characters). Round-robin, so no timing file to keep. A shard is a run of its
+  own — its endpoints are `…-s<i>`, its backstop (`delete-run --shard`) cannot touch a
+  sibling's — and `1/1` keeps the unsharded names. The workflow: a `shards` input
+  (default 4), a matrix with `fail-fast: false`.
+- **A rebuild left the billed window**: on a fresh runner the second cargo command
+  re-runs `build.rs` and recompiles once (the dictionaries directory is new); that was
+  the suite, ~70 s with three endpoints up, and is now the listing, before the create.
+- **Run 1, L40S** (37965082594): one shard came up and ran 63 smokes green in 800 s;
+  three **failed to start**, twice (`gh run rerun --failed`). 8 of 13 L40S creates in
+  `us-east-1` failed that evening; every shard cleaned up after itself.
+- **Run 2, A100** (37970393128) — **the first full run of the suite**: 250 smokes,
+  **248 green**, endpoints ready in 10–18 minutes, the slowest job 41:47 of 45. The suite
+  is **72 minutes**, the steering probe alone ~12 of them on Gemma 4. The A100 was ×1.08
+  the L40S on the same 63 smokes, not the ×1.7 estimated, at $2.50/h against $1.80.
+- **Two reds**: `fetched_page_is_searched_in_its_birth_turn_e2e_live` — the model's
+  judgment, red on both full runs on Gemma 4 31B, left for its own look; and
+  `the_model_catalogue_reaches_the_ui_e2e_live`, a `401` because the smoke gave
+  `ListModels` the URL without the key — fixed in the smoke (`api_key_env`), checked
+  against a local server with `--api-key`: 401 before, green after.
+- **The job ceiling 45 → 60**: up to ~28 minutes of suite per shard plus ~5 of build
+  and 2–18 of HF's scheduling did not fit 45. 60 stays 30 below the sweeper's 90, which
+  `--self-test` checks; growth of the suite is met by N, not by this number.
+
+**Gates**: `--self-test` with the shard arms (five mutants caught); unit tests unchanged
+by this stage; the live outcome above.
