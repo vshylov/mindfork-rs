@@ -2920,6 +2920,57 @@ mod ignored_smoke {
         }
     }
 
+    /// The model says outright that it cannot see what it was asked about — the half of
+    /// the two withheld-image smokes that a decline has to pass.
+    ///
+    /// Matched with the **apostrophes folded** to ASCII: on `gpt-oss-120b` both smokes
+    /// went red while the model declined exactly as asked — "I can’t see the image", with
+    /// U+2019 (2026-10-10, docs/research/e2e-gpt-oss-120b.md §11, fork F9). Which
+    /// apostrophe a model types is typography, as the dash is in the orchestrator's
+    /// `mentions_code`; the phrases stay the criterion, and one list serves both smokes,
+    /// so a decline one of them reads the other reads too.
+    fn says_it_cannot_see(answer: &str) -> bool {
+        let low: String = answer
+            .to_lowercase()
+            .chars()
+            .map(|c| match c {
+                // The right and left single quotation marks, the modifier-letter apostrophe.
+                '\u{2019}' | '\u{2018}' | '\u{02BC}' => '\'',
+                other => other,
+            })
+            .collect();
+        [
+            "cannot see",
+            "can't see",
+            "cannot tell",
+            "can't tell",
+            "unable to",
+            "not able to",
+        ]
+        .iter()
+        .any(|phrase| low.contains(phrase))
+    }
+
+    #[test]
+    fn a_decline_is_read_whichever_apostrophe_the_model_typed() {
+        // The two answers gpt-oss-120b gave on 2026-10-10.
+        assert!(says_it_cannot_see(
+            "I can\u{2019}t see the image, but based on the saved chart file you can open it"
+        ));
+        assert!(says_it_cannot_see(
+            "I\u{2019}m not able to view the screenshot, so I can\u{2019}t tell you the colour."
+        ));
+        assert!(says_it_cannot_see("I cannot see it."));
+        assert!(says_it_cannot_see("I'm unable to view images here."));
+        // An answer that claims to know is not a decline, in any typography.
+        assert!(!says_it_cannot_see(
+            "The background is blue, with a white square."
+        ));
+        assert!(!says_it_cannot_see(
+            "I can\u{2019}t wait to say it: the legend sits top left."
+        ));
+    }
+
     /// The blind arm once more, this time carrying the sentence the MCP adapter appends
     /// when `tools.mcp_images` withheld the image (`tool.mcp.images_off`).
     ///
@@ -2975,7 +3026,7 @@ mod ignored_smoke {
             "a withheld image must not be described: {answer:?}"
         );
         assert!(
-            low.contains("cannot see") || low.contains("can't see") || low.contains("unable to"),
+            says_it_cannot_see(&answer),
             "the model has to say it cannot see the image: {answer:?}"
         );
     }
@@ -3040,12 +3091,8 @@ mod ignored_smoke {
             // It went back to the tool instead of answering — it did not invent anything.
             return;
         }
-        let low = answer.to_lowercase();
         assert!(
-            low.contains("cannot see")
-                || low.contains("can't see")
-                || low.contains("cannot tell")
-                || low.contains("unable to"),
+            says_it_cannot_see(&answer),
             "a chart it was never shown must not be answered for: {answer:?}"
         );
     }

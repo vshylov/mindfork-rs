@@ -108,6 +108,11 @@ CHAT_MODELS = {
         # 2): a second cloud, so one wave of AWS refusals does not empty the
         # ladder. Both were brought up on this model, research §11.
         "fallback": ["nvidia-a100", "nvidia-h200"],
+        # The harmony template ends a reply at `<|call|>`: two tool calls are two
+        # replies, never one. Declared to the suite (`one_call_per_reply`), so the
+        # two smokes that ask for a pair in one reply skip by name instead of
+        # failing on a capability the model does not have (research §11, F10).
+        "one_call_per_reply": True,
     },
 }
 # Gemma stays the default: the memory gates' similarity thresholds are calibrated
@@ -330,6 +335,18 @@ def text_only(args):
     point (docs/lessons.md §9).
     """
     return chat_model(args)["mmproj"] is None
+
+
+def one_call_per_reply(args):
+    """The selected model makes **one tool call per reply** — a property of its
+    template, recorded with it.
+
+    Declared to the suite as `MINDFORK_LIVE_ONE_CALL_PER_REPLY=1`, which turns
+    the parallel-group and concurrent-segment smokes into skips: both ask for two
+    calls in one reply, and `gpt-oss-120b` makes them in two
+    (docs/research/e2e-gpt-oss-120b.md §11, fork F10).
+    """
+    return bool(chat_model(args).get("one_call_per_reply"))
 
 
 def split_model(args):
