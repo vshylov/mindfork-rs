@@ -4516,3 +4516,66 @@ macos.md §3 and §12 point at the tag.
   warnings`, `fmt`, every Python gate of the Lints job, and `release_guard.py
   --tag v0.18.1` accepting the tag — its notes the `[0.18.1]` section, 11 lines
   (the `notes.md` it writes is ignored since 725, and was removed).
+- **The draft, checked before anyone else could see it** (§6 step 5).
+  - The owner merged and set `v0.18.1` on the merge commit `3788f501`, which
+    was `origin/main`.
+  - `release.yml` (run 37866304559) was green in all eight jobs in
+    **15 min 36 s** (0.18.0: 13 min 51 s). Windows took the longest at 14 min
+    21 s, then macOS 13 min 41 s, Linux 5 min 53 s, and the demo 4 min 15 s.
+  - It left a draft that was not a prerelease, with fifteen assets. Every file
+    downloaded hashed to the line `sha256sums.txt` gives it, fourteen of
+    fourteen. Its notes were the `[0.18.1]` section and the footer, 16 lines.
+- **The job's install steps: `passed=46 failed=0` in the macOS build and
+  `passed=47 failed=0` in the publication**, and `installed: mindfork 0.18.1
+  (expected: mindfork 0.18.1)`. `install.sh` is 0.18.0's file, byte for byte.
+- **The released Windows binary** — the release's own subject. The zip's
+  `mindfork.exe` says `mindfork 0.18.1`. A scratch script over
+  `console_probe`'s `Session` (110×52) opened `F1`, went one tab left to
+  *About*, and read *Locations* in three runs, none touching the real data —
+  16 checks of 16:
+  - a portable copy in a temporary folder: *Program*, *Data (portable)* and
+    *Logs* beside their labels with leaders, full paths, no `~`, the data root
+    the program's `data\` and the logs under it;
+  - a copy whose `defaults.json` names `"path": "my-data"`: *Data (custom
+    folder)*, the root absolute against the working directory, and the paths,
+    too wide for their labels, each on a line under its label;
+  - `mindfork demo`: `C:\Users\demo\AppData\Local\Programs\mindfork-rs` and
+    *Data (standard folder)* in `…\Roaming\mindfork-rs\data` — neither this
+    machine's home nor the demo's scratch root on the screen.
+
+  Every run exited with code 0. `console_probe.py --exe` passed `small-window`,
+  `full-mode` and `keys`.
+- **The macOS archive** is a Mach-O arm64 executable with its dictionaries,
+  its `THIRD-PARTY-NOTICES.md` naming objc2 and coreaudio-rs (twelve lines).
+  Not run: there is no Mac here.
+- **Attestations** verify for the three archives, the installer and
+  `install.sh`; a scratch file exits 1. **The six animation files are byte for
+  byte 0.18.0's**: the reel never opens the help dialog.
+- **Published, and the numbers of it.**
+  - The owner published at 01:10:00Z (immutable), 9 min 52 s after the draft
+    appeared.
+  - `crates-io.yml` ran 01:10:02Z → 01:12:46Z. `mindfork 0.18.1` was on the
+    registry at 01:12:41Z (4 475 385 bytes), 2 min 41 s after the
+    publication.
+  - `Site` started by itself two seconds after `crates.io` completed and
+    deployed at 01:13:27Z — **3 min 27 s after the publication** (0.18.0:
+    3 min 41 s). The hold on the merge had shown as before: "Is this version
+    out?" green, the build and the deploy skipped.
+  - From outside:
+    - the post answers 200 at `/blog/mindfork-0-18-1/`;
+    - the home page's and the install page's structured data say
+      `"softwareVersion": "0.18.1"`;
+    - the install page names *Locations*;
+    - the blog's index, `/llms.txt`, the feed and the sitemap list the post;
+    - `releases/latest` resolves to `v0.18.1`, and its `install.sh` hashes to
+      the draft's.
+- **The package managers.** `aur.yml` built and checked `mindfork-rs-bin`
+  0.18.1 and stopped at its notice, because there is no key. Scoop's
+  Excavator (01:12:03Z) and the tap's formula bump (01:14:04Z) both ran on
+  their schedules within minutes of the publication, so the bucket named
+  0.18.1 at 01:12:43Z and the formula at 01:14:15Z. That was the schedules
+  falling right, not a new path: 0.16.0's Scoop took 2 h 46 min.
+- **Not run**: the released binaries on a Mac or Linux with a screen; the TUI
+  on real data, which is the owner's; `first-run`, which needs the Ollama and
+  LM Studio stands up; the Windows installer and the `.deb`, `.rpm` and Arch
+  packages, beyond what their jobs install.
