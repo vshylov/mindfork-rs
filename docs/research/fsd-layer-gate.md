@@ -42,7 +42,7 @@ sub-agent transcript in the chat list) and the rest followed it by copying the
 neighbour, as the eight scroll states once did
 ([docs/lessons.md](../lessons.md) §5). By the tasks-screen track the leak was
 being cited as a given — *"The chat screen already imports `app::events`"*
-([tasks-stop-command.md](tasks-stop-command.md) §4) — which is what a convention
+([tasks-stop-command.md](tasks-stop-command.md) §3.2) — which is what a convention
 with no gate looks like after seven weeks. The correct shape was already in the
 tree the whole time: `RagProgress` (`features/rag_ingest.rs`), `ToolDecision`
 (`features/tools/confirm.rs` — "an FSD correction caught mid-implementation",
@@ -55,7 +55,7 @@ writes the domain types and `shared/api` serializes the sampling config, while
 the domain types take their settings and locale from `shared/config` and
 `shared/i18n`. This is spec §4's own note — the engine and storage are backend
 cores living in `shared`, a *deliberate adaptation* of FSD — and it has been the
-shape since M1. Nothing is wrong with the code here; the sentence "strictly
+shape since M2 (2026-06-14, `75eeffcb`). Nothing is wrong with the code here; the sentence "strictly
 downward" is wrong about the bottom of the chain.
 
 **Nothing enforces any of it**: no test, no `tools/*.py` gate, no CI step
@@ -198,8 +198,25 @@ about values rather than shapes — that the orchestrator is the sole owner of
 - `docs/journal/quality.md`: the entry; `docs/lessons.md` §3: the lesson — a
   documented *never* with no gate had drifted by the time anyone read it.
 
-## 5. Outcome
+## 5. Outcome (2026-10-09)
 
-Filled in by the run — see the journal entry
-([journal/quality.md](../journal/quality.md), *the FSD layer rule gets a gate,
-and the eleven types that broke it move down*).
+- **The move is pure**: `cargo test` reports the same 3994 passed and 257
+  ignored as `main`; clippy with warnings as errors and `cargo fmt --check` are
+  green; `cargo doc --no-deps` resolves the moved doc links with no new warning.
+  Outside the three `entities` files and `app/events.rs` — whose re-exports keep
+  every `crate::app::events::X` in `app/` compiling — only `screens/` paths
+  changed.
+- **The gate**, on the moved tree: 340 files, 71 of them test files, 1 376
+  cross-layer paths, every one downward, in 2.9 s. On `main` at `f5599770`:
+  exactly the five production lines of §1. Its `--self-test`: 27 arms, both
+  directions. Thirteen plants in a scratch copy of the moved tree — an upward
+  `use` at the top of a file in each of the five layers, a type named in a
+  signature, the same `use` inside a screen's test module, a line and a block
+  comment, `shared → entities` — red and green exactly as §4.2 says.
+- **The Sonar snippet analyzer** on the script before the push: two MINOR
+  `python:S7519` (a dict comprehension that is `dict.fromkeys`), fixed; nothing
+  else — the two largest functions had been split in advance, since the quality
+  gate reads cognitive complexity.
+- Documents updated as §4.3 lists; the journal entry is in
+  [journal/quality.md](../journal/quality.md) (*the FSD layer rule gets a gate,
+  and the eleven types that broke it move down*).

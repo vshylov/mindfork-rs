@@ -244,7 +244,7 @@ src/
 
 The diagram is the shape, not the inventory: the full module map with its invariants is [docs/architecture.md](docs/architecture.md) §3.
 
-FSD dependency rule: `app → screens → widgets → features → entities → shared`. A layer never imports "sideways" or "upward". Cross-cutting infrastructure (the engine, storage) lives in `shared` and is exposed to the orchestrator/features via traits.
+FSD dependency rule: `app → screens → widgets → features`, and under them the bottom pair `entities` and `shared`, which see each other (the storage and the engine's wire read and write the domain types; the domain types take their settings and locale from `shared`). A layer never imports a layer above it. The rule is gated in CI — `tools/layer_check.py`, test code and comments exempt ([docs/research/fsd-layer-gate.md](docs/research/fsd-layer-gate.md)). Cross-cutting infrastructure (the engine, storage) lives in `shared` and is exposed to the orchestrator/features via traits.
 
 > Note: the "engine" and "storage" are backend cores living in `shared/api` and `shared/storage`. Pure FSD doesn't have such layers; this is a deliberate adaptation here. If desired, they can easily be split out into separate workspace crates (`mindfork-engine`, `mindfork-storage`, `mindfork-spell`) — the boundaries allow it.
 

@@ -109,8 +109,11 @@ additions:
   see CLAUDE.md §Commands) and record the **model/stack and outcome** in the
   journal entry ("Smoke — GO" pattern). A pure UI/refactor doesn't need a live
   run — say so explicitly.
-- **FSD**: dependencies strictly downward (`app → screens → widgets →
-  features → entities → shared`); `screens`/`widgets` don't import `app`.
+- **FSD**: dependencies downward only (`app → screens → widgets → features`,
+  then the bottom pair `entities`/`shared`, which see each other);
+  `screens`/`widgets` don't import `app`. Gated — `python tools/layer_check.py`
+  (CI's `lint`): a type a screen needs from the orchestrator is defined below
+  both and re-exported by `app/events.rs` (architecture.md §2).
 - New config/entity fields — `#[serde(default)]` (old JSON reads without
   migration); SQLite schema — `CREATE TABLE IF NOT EXISTS`.
 - Comments and docs — **in English**; reference spec/architecture sections. So

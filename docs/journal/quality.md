@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (34)
+## Entries (35)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -46,6 +46,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: SonarQube follow-up — the console probe's two key names (done)
 - Post-M9: SonarQube follow-up — the console probe's ready-chat chip (done)
 - Post-M9: SonarQube follow-up — the Mac probe's four spaces (done)
+- Post-M9: the FSD layer rule gets a gate, and the eleven types that broke it move down (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -1772,3 +1773,73 @@ structure (AGENTS.md §3).
 - No Rust touched — test totals unchanged; the documentation gates green. No
   CHANGELOG entry: internal tooling (AGENTS.md §4). No live run: a developer
   tool's offline parser, no engine path (AGENTS.md §3).
+
+### Post-M9: the FSD layer rule gets a gate, and the eleven types that broke it move down (done)
+
+- **The claim, measured** (branch `refactor/fsd-layer-gate`; design and forks in
+  [research/fsd-layer-gate.md](../research/fsd-layer-gate.md)). architecture.md §2
+  calls `screens`/`widgets` never importing `app` *the key FSD invariant in the
+  code*; on `main` at `f5599770` the chat and tasks screens named
+  `crate::app::events` in five production lines — `tasks.rs:27`, `chat/mod.rs:23`
+  and `:1065`, `chat/feed.rs:494` and `:504` — plus twenty-one in their tests.
+  Eleven types leaked (`AppTask`, `BackgroundKind`, `RunProgressKind`, `TaskList`,
+  `TaskRun`, `TASK_LANDED_CAP`, `SubagentProgress`, `ChildView`, `LiveTurn`,
+  `LivePartial`, `LiveTool`): the first with the sub-agent transcript in the chat
+  list on 2026-08-23 (`80797130`), every later one by copying the neighbour, and by
+  the tasks-screen track the leak was being cited as a given ("the chat screen
+  already imports `app::events`", research/tasks-stop-command.md §3.2). Never
+  `AppCommand`, `AppEvent` or the orchestrator. The other sentence of the rule was
+  wrong the other way: `shared` has read and written the domain types since M2
+  (storage, every provider's wire, `config.rs` — 45 sites in 31 files) and
+  `entities` takes its settings and locale from `shared` (18 sites), so the bottom
+  of the chain is a pair, not an arrow — spec §4's own note. Nothing enforced
+  either half: no test, no `tools/` gate, no CI step.
+- **The move, not the amendment** (fork F1; the owner's rule: (a)+(c) if purely
+  mechanical). The eleven are plain data — `uuid`, `chrono`,
+  `entities::message::MessageRole`, `entities::subagent::{RunKind, RunOutcome}` and
+  nothing of `app` — and `app/events.rs` already re-exports six payload types
+  defined below it (`RagProgress`, `ToolDecision`, `FeedFocus`, `FileProgress`,
+  `ImageProgress`, `ServerStatus`). So they moved verbatim, by subject:
+  `entities/task.rs` (the app's silent tasks and the tasks screen's snapshot),
+  `entities/subagent.rs` (a run's position and a transcript's view, beside the
+  run's record) and `entities/live_turn.rs` (the generation in flight on an
+  activated conversation); `app/events.rs` re-exports them, so `app/` is untouched
+  and only the screens' paths changed. The move also mended `AppEvent`'s doc
+  comment, which the inserted structs had cut in two. The `shared ⇄ entities` half
+  is documented, not moved: making that arrow true is the workspace-crate question
+  spec §4 defers (F3).
+- **The gate** — `tools/layer_check.py`, CI's `lint` job, no toolchain: a
+  production line in layer *L* may name `crate::M::` only when *M* is *L* or below
+  it, `entities` and `shared` may name each other, `main.rs` names anything; any
+  path counts, not only `use` lines (one leak was a type in a signature). Comments
+  are prose. Test code is exempt **by shape** — a `#[cfg(test)]` item (a block, a
+  `fn`, a `use`, a `mod x;` with the file it names and whatever that declares),
+  `#![cfg(test)]`, a `tests/` directory — never by a file-name pattern or an
+  allowlist, because the client's tests assert its errors against
+  `features::compaction::is_context_overflow`, the cross-layer contract itself. A
+  block's extent is counted on a copy of the source with comments and string,
+  raw-string and char literals blanked, so a `}` in a fixture cannot end it early.
+  It fails rather than passes on a missing subject: no sources, a layer directory
+  gone, a directory the table does not name, or a scan that saw no cross-layer path
+  at all.
+- **Verified in both directions** ([lessons.md](../lessons.md) §2), three ways.
+  Its `--self-test`, which CI runs: 27 arms over fixture trees — each upward
+  direction red; a leak in a comment, in a test block, in a `#[cfg(test)]` file,
+  after a `}` inside a string, green or red as it should be; the bottom pair
+  green; each missing-subject arm red. A red arm must raise **exactly one**
+  violation, so a leak inside a test block beside one after it cannot pass as the
+  latter. Against `main` at `f5599770` it reports exactly the five production lines
+  above. And against thirteen plants in a scratch copy of the moved tree: an
+  upward `use` at the top of a file in `screens`, `widgets`, `features`,
+  `entities` and `shared` each red, a type named in a signature red, the same
+  `use` inside the screen's test module green, a line or block comment green,
+  `shared → entities` green (one more path, downward). The tree: 340 files, 71 of
+  them test files, 1 376 cross-layer paths, every one downward.
+- **Documents**: architecture.md §2 (the chain with its bottom pair and the gate;
+  the diagram's `shared → entities` edge; the re-export convention spelt out) and
+  §3's map (two new files, and the entity files the map had never listed);
+  spec §4; AGENTS.md §3; CLAUDE.md; lessons.md §3. No CHANGELOG entry: internal
+  structure (AGENTS.md §4). No live run: a mechanical move and a gate over the
+  repository's own structure (AGENTS.md §3). **3994 unit tests green, 257
+  `#[ignore]` — unchanged**, which is what a pure move has to show; rustdoc
+  resolves the moved doc links (`cargo doc --no-deps`, no new warning).
