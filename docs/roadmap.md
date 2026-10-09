@@ -205,11 +205,6 @@ effort tiers — have all closed
 
 ### Tools and MCP
 
-- **`run_dialogue` is called again after a dialogue has landed** — **next**.
-  On the live gate (2026-10-09, Gemma 4 31B) the parent turn called it nine
-  times in a row and ended on a raw `<|tool_call>` in its text; the smoke stayed
-  green because its first dialogue had landed, and spent 643 s.
-  [e2e-gate-budget.md](research/e2e-gate-budget.md) §1, stage 3.
 - **MCP host — groundwork.** The core is done (spec §9.6,
   [ADR 0007](decisions/0007-plugins-mcp-host-import-format.md): double opt-in,
   TOFU pinning, statuses in settings, the server editor); the client is stdio

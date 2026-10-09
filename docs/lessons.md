@@ -2453,6 +2453,15 @@ assertion depend on a split the provider makes: pick the model whose split was
 measured, and say in the smoke why.
 — *OpenRouter as a provider of its own — stage 1*.
 
+**Taking the tools out of a request does not tell the model they are gone.** The round
+limit's final round re-sent the request that had just produced a call, minus its tool
+list, and Gemma 4 answered the same prompt with the same call — written out as text,
+which became the user's reply, three times of three. A request's tools are rendered into
+the prompt the model reads, but their absence is not news to it; say it in the
+conversation, where the model is looking, and in the user's language, or the note's
+language becomes the reply's.
+— *a dialogue staged once, and a round limit that ends in prose*.
+
 ## 10. CI and infrastructure
 
 
