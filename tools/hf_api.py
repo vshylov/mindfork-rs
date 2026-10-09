@@ -422,6 +422,15 @@ def embed_payload(name, args, repo=None, gguf=None):
     `n_ctx_train` is only 514, but llama.cpp accepts a larger context (the local
     stand runs it on the default 4096), and what actually breaks embeddings is
     too *small* a physical batch, not too large a context.
+
+    So the batch is raised to the context, as the managed launcher does
+    (`-ub`/`-b`, src/shared/api/managed.rs), through the variables
+    `llama-server` reads them from. An embedding model is non-causal: a chunk
+    goes in one physical batch, and the image's default of 512 refused a
+    560-token chunk of spec.md — the whole page went unindexed, and
+    `fetched_page_is_searched_in_its_birth_turn_e2e_live` was red on every full
+    run of the gate for a reason that was never the model's
+    (docs/research/e2e-gate-budget.md §9).
     """
     # Falling back to the flag, not to the constant: `--embed-gguf` must keep
     # working for the primary embedder.
@@ -453,6 +462,10 @@ def embed_payload(name, args, repo=None, gguf=None):
                     "mode": "embeddings",
                     "url": args.image,
                 }
+            },
+            "env": {
+                "LLAMA_ARG_UBATCH": str(args.embed_ctx),
+                "LLAMA_ARG_BATCH": str(args.embed_ctx),
             },
         },
     }

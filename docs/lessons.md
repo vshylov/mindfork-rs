@@ -2747,3 +2747,14 @@ its own endpoints, the matrix does not cancel siblings on a red, and `gh run rer
 --failed` runs only the refused parts. A ceiling sized for the suite alone was the other
 casualty: readiness measured 2–18 minutes, and a job's budget has to hold that too.
 — *the live gate dealt across shards*.
+
+**A fix to one stand is not a fix to the others — and a smoke red on one stand only is
+the stands' difference until shown otherwise.** The birth-turn smoke's 560-token chunk was
+refused by an embedder on llama.cpp's default 512 physical batch; the track fixed its
+local stand (`-ub 8192 -b 8192`) and wrote it down. The rented gate's embedder kept the
+default, and the smoke was red there on every full run — three times read as the model's
+judgment, while the model was searching, being told *no index*, and answering right by
+reading. The embedder's log said it in one line. When a stand is fixed, find every other
+place the same server is configured (the managed launcher, the local recipe, the rented
+payload) and carry the fix — or a check — to each.
+— *the gate's embedders batch a whole chunk*.

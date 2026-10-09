@@ -551,9 +551,6 @@ effort tiers — have all closed
   and is rerun alone (`gh run rerun --failed`); an automatic second attempt, or a
   fallback card (the A100 came up that evening, at ×1.08 the speed and $2.50/h),
   is not built. [e2e-gate-budget.md](research/e2e-gate-budget.md) §8.
-- **`fetched_page_is_searched_in_its_birth_turn_e2e_live` on Gemma 4 31B** —
-  **next**. Red on both full gate runs of 2026-10-09: the model summarised the
-  fetched page instead of searching it. The track measured 6/6 on its own stand.
 - **Remote gate: chat-free runs** — **on demand**. `run` always creates the
   L40S chat endpoint, even for a filter that only exercises the embedders
   (~$0.10 wasted per such iteration); the probe has `--embed-only`, the runner

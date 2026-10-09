@@ -269,3 +269,30 @@ suite**: 250 smokes, **248 green**. All four A100s came up, in 611–1099 s; sui
   2–18 minutes, 45 holds the suite but not a slow schedule on top of it. 60 keeps 30
   minutes below the sweeper's 90 (`--self-test` checks the order). This is headroom
   for HF's scheduling, not room for the suite to grow — that is what N is for.
+
+## 9. The birth-turn smoke was red on the gate's embedder, not on the model
+
+`fetched_page_is_searched_in_its_birth_turn_e2e_live` was red on all three full
+runs of 2026-10-09 on Gemma 4 31B, and read as the model's judgment. It was not.
+The trail of the third run: `fetch_url`, then **one** `attachment_search` that
+answered *the page has no search index*, then six `attachment_read`s — and a
+right answer, 4000 and 1200. The model did what the texts told it; the index was
+never built.
+
+The gate's embedder said why. Its log at start: `embeddings enabled with n_batch
+(2048) > n_ubatch (512)`, `setting n_batch = n_ubatch = 512`; and during the
+smoke of the first run: `input (560 tokens) is too large to process. increase
+the physical batch size (current batch size: 512)`. An embedding model takes a
+chunk in one physical batch, the HF image leaves llama.cpp's default of 512, and
+one chunk of spec.md is 560 tokens — so the page went unindexed whole. The
+birth-turn track had met **the same 560-token chunk** on its local stand and
+fixed the stand (`-ub 8192 -b 8192`, the managed launcher's flags;
+docs/journal/rag.md); the gate's payload never got it.
+
+**Fix**: both embedder payloads carry `LLAMA_ARG_UBATCH` and `LLAMA_ARG_BATCH`
+equal to their context — the variables `llama-server` reads `-ub`/`-b` from, the
+way the chat endpoint already gets `LLAMA_ARG_JINJA`. `--self-test` checks both
+embedders (red on main's payload, green after). **Live — GO** (run
+[37987016070](https://github.com/vshylov/mindfork-rs/actions/runs/37987016070),
+the smoke alone): the embedder's log no longer lowers the batch; one search,
+*4 fragments found*, **0** page reads, the right answer, 102 s.
