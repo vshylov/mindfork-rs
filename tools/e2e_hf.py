@@ -32,14 +32,18 @@ which is the failure mode a gate exists to prevent. `--no-alt-embed` opts out.
     python tools/e2e_hf.py run --filter e2e_live --no-prebuild
     python tools/e2e_hf.py run --reuse-chat e2e-chat-0728-2010   # iterate, no deploy
     python tools/e2e_hf.py sweep --dry-run      # what the sweeper would delete
+    python tools/e2e_hf.py delete-run --run-id 0728-2010   # a run's endpoints, by name
     python tools/e2e_hf.py list
+    python tools/e2e_hf.py --self-test          # the offline arms, no token needed
 
 Three properties are load-bearing, in this order:
 
 1. **The endpoints are deleted, and the deletion is verified.** Cleanup runs
    from `finally`, `atexit` and SIGINT/SIGTERM, and a failed delete exits 3 —
    *even when the tests passed*. A leaked endpoint is a failure; a red suite is
-   just a result.
+   just a result. In CI the runner is `exec`ed, so the cancellation's signal
+   reaches it, and a step of its own then runs `delete-run` whatever happened:
+   the handlers only help a process that is alive to run them.
 2. **The names are deterministic and printed before the create call**, so an
    orphan is identifiable from the log even if the response is lost.
 3. **The tests are compiled before the GPU is created** (`cargo test --no-run`),
@@ -241,18 +245,55 @@ def bring_up(kind, name, args):
     return url
 
 
+def run_names(ident, tag):
+    """(chat, embed, alt): the endpoint names a run with this identity creates.
+
+    One function for the create and for every delete after it — the runner's own
+    and the workflow's backstop step — so the two cannot drift apart. The model's
+    tag goes into the chat name, so a listing, the sweeper's log and an orphan hunt
+    all say *which* model the endpoint is holding. Kept short because `safe_name`
+    truncates at 32 and the CI run id spends ~14.
+    """
+    return (
+        hf.safe_name(f"e2e-chat-{tag}-{ident}"),
+        hf.safe_name(f"e2e-embed-{ident}"),
+        hf.safe_name(f"e2e-alt-{ident}"),
+    )
+
+
+def run_names_any_model(ident):
+    """Every name the run `ident` could have created, whichever model it rented:
+    the backstop is told the run, not the model, and must not miss one."""
+    names = []
+    for model in hf.CHAT_MODELS.values():
+        for name in run_names(ident, model["tag"]):
+            if name not in names:
+                names.append(name)
+    return names
+
+
+def run_endpoints(ident, listed):
+    """Which of the `listed` endpoint names belong to the run `ident`.
+
+    Exact names only, never a prefix or a pattern: a backstop that deletes by
+    pattern is one typo away from deleting a GPU another run is using, and run
+    ids nest: `37947267239-1` is a prefix of `37947267239-11` and a suffix of
+    `137947267239-1`.
+    """
+    ours = set(run_names_any_model(ident))
+    return [name for name in listed if name in ours]
+
+
 class Plan:
     """The run's endpoint names and which of them are wanted."""
 
     def __init__(self, args):
         self.ident = args.run_id or run_id()
         self.model = hf.chat_model(args)
-        # The model's tag goes into the name, so a listing, the sweeper's log and
-        # an orphan hunt all say *which* model the endpoint is holding. Kept short
-        # because `safe_name` truncates at 32 and the CI run id spends ~13.
-        self.chat_name = args.reuse_chat or hf.safe_name(f"e2e-chat-{self.model['tag']}-{self.ident}")
-        self.embed_name = args.reuse_embed or hf.safe_name(f"e2e-embed-{self.ident}")
-        self.alt_name = args.reuse_alt_embed or hf.safe_name(f"e2e-alt-{self.ident}")
+        chat, embed, alt = run_names(self.ident, self.model["tag"])
+        self.chat_name = args.reuse_chat or chat
+        self.embed_name = args.reuse_embed or embed
+        self.alt_name = args.reuse_alt_embed or alt
         self.want_embed = not args.no_embed
         # The alternate embedder is a *second* model, so it needs the first one
         # to compare against — every smoke that reads MINDFORK_EMBED_URL_ALT
@@ -421,9 +462,10 @@ def sweep_verdict(item, prefix, now, limit):
 def cmd_sweep(args):
     """Delete orphaned `e2e-*` endpoints older than the age limit.
 
-    This catches the one leak the runner's own `finally` cannot: a create that
-    succeeded while its response was lost, so nothing ever knew the name. It
-    also reclaims endpoint *quota*, which scale-to-zero does not
+    This catches what neither the runner's own cleanup nor the workflow's
+    `delete-run` step could: an endpoint left while the API was unreachable, a
+    runner machine lost with its job, a local run killed outright. It also
+    reclaims endpoint *quota*, which scale-to-zero does not
     (docs/history/remote-e2e-hf.md §6).
     """
     items = hf.list_endpoints()
@@ -462,8 +504,163 @@ def cmd_sweep(args):
     return hf.EXIT_OK
 
 
+def cmd_delete_run(args):
+    """Delete what the run `--run-id` created, by name — the workflow's backstop.
+
+    The runner deletes its own endpoints from `finally`, `atexit` and its signal
+    handler, but only while it is alive to. CI run 37947267239 hit the job's
+    timeout, and the runner never heard of it: GitHub signals the step's shell,
+    not the shell's children, so the Python process was killed as an orphan at
+    the end of the job with all three endpoints still running. This runs as a
+    step of its own, `if: always()`, and needs nothing from the step before it
+    but the run id: the names are derived from it exactly as the create derived
+    them (`run_names`), and only those names are touched.
+
+    The deletion is the runner's own: the names are adopted into `hf.CREATED`
+    and `hf.cleanup` sends every DELETE before verifying any, and exits 3 if one
+    is not proven gone. Then it lists what is left in the namespace — the
+    evidence the step used to be limited to.
+    """
+    ident = args.run_id.strip()
+    if not ident:
+        hf.die(hf.EXIT_USAGE, "delete-run needs a non-empty --run-id")
+    items = hf.list_endpoints()
+    if items is None:
+        # Blind, then: ask for every name the run could have used. A DELETE of a
+        # name that does not exist is a 404, and a 404 is the proof we want.
+        print("  cannot list the endpoints — deleting every name this run could have used")
+        doomed = run_names_any_model(ident)
+    else:
+        doomed = run_endpoints(ident, [item.get("name", "") for item in items])
+    print(f"delete-run {ident}: {len(doomed)} endpoint(s) of this run still exist", flush=True)
+    hf.CREATED.extend(doomed)
+    hf.cleanup()
+    print("\nleft in the namespace:")
+    return hf.cmd_list(args)
+
+
+# --------------------------------------------------------------------------
+# Self-test: the arms that decide without the network
+# --------------------------------------------------------------------------
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+LIVE_WORKFLOW = os.path.join(ROOT, ".github", "workflows", "e2e-live.yml")
+SWEEPER_WORKFLOW = os.path.join(ROOT, ".github", "workflows", "e2e-sweeper.yml")
+
+
+def _name_failures(name, ident):
+    """What is wrong with one endpoint name made for the run `ident`."""
+    out = []
+    # Truncation would cut the run id off the end, and the id is what an orphan
+    # is identified by — in the log and by `delete-run`.
+    if not name.endswith(ident) or len(name) > hf.NAME_MAX:
+        out.append(f"names: {name!r} does not end in {ident!r} within {hf.NAME_MAX}")
+    if hf.safe_name(name) != name or not name.startswith(SWEEP_PREFIX):
+        out.append(f"names: {name!r} is not a stable {SWEEP_PREFIX}* name")
+    return out
+
+
+def _check_names(failures):
+    # A CI id with a two-digit attempt, and the local timestamp form.
+    for ident in ("99999999999-12", "1009-143015"):
+        for key, model in hf.CHAT_MODELS.items():
+            names = run_names(ident, model["tag"])
+            if len(set(names)) != 3:
+                failures.append(f"names: {key} {ident} gives duplicates {names}")
+            for name in names:
+                failures.extend(_name_failures(name, ident))
+
+
+def _check_run_endpoints(failures):
+    ident = "37947267239-1"
+    listed = [
+        "e2e-chat-gemma-37947267239-1",
+        "e2e-embed-37947267239-1",
+        "e2e-alt-37947267239-1",
+        "e2e-chat-oss-37947267239-1",  # the same run under another model is still ours
+        "e2e-embed-37947267239-11",  # a later attempt
+        "e2e-embed-137947267239-1",  # another run whose id ends in ours
+        "e2e-chat-qwen-37947267239-2",
+        "e2e-alt-37947267239-1-old",
+        "my-own-endpoint",
+    ]
+    got = run_endpoints(ident, listed)
+    want = listed[:4]
+    if got != want:
+        failures.append(f"delete-run: chose {got}, want {want}")
+    if run_endpoints(ident, ["e2e-embed-37947267239", "e2e-chat-gemma-7947267239-1"]):
+        failures.append("delete-run: chose a name that only resembles the run's")
+
+
+def _check_sweep(failures):
+    now = dt.datetime(2026, 10, 9, 18, 17, tzinfo=dt.timezone.utc)
+    limit = dt.timedelta(minutes=SWEEP_MAX_AGE_MIN)
+    cases = [
+        ({"name": "my-own", "status": {"createdAt": "2026-10-01T00:00:00Z"}}, "skip"),
+        ({"name": "e2e-x", "status": {"createdAt": "yesterday"}}, "unknown"),
+        ({"name": "e2e-x", "status": {}}, "unknown"),
+        ({"name": "e2e-x", "status": {"createdAt": "2026-10-09T17:47:00.123Z"}}, "keep"),
+        # Nine fractional digits and an explicit offset: the parser once ate the
+        # offset's digits along with the fraction (docs/lessons.md).
+        ({"name": "e2e-x", "status": {"createdAt": "2026-10-09T14:54:24.682123456+00:00"}}, "delete"),
+        ({"name": "e2e-x", "status": {"createdAt": "2026-10-09T16:30:00Z"}}, "delete"),
+    ]
+    for item, want in cases:
+        got = sweep_verdict(item, SWEEP_PREFIX, now, limit)[0]
+        if got != want:
+            failures.append(f"sweep: {item} -> {got}, want {want}")
+
+
+def _read(path, failures):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+    except OSError as e:
+        failures.append(f"workflow: cannot read {path}: {e}")
+        return ""
+
+
+def _check_workflows(failures):
+    """The two facts the gate's safety rests on live in YAML, out of reach of
+    any test: they are checked here, as text."""
+    live = _read(LIVE_WORKFLOW, failures)
+    sweeper = _read(SWEEPER_WORKFLOW, failures)
+    # The job's ceiling must stay under the sweeper's threshold, or the sweeper
+    # could delete the endpoints of a run that is still using them.
+    ceilings = [int(m) for m in re.findall(r"^ {4}timeout-minutes: (\d+)", live, re.M)]
+    if not ceilings or max(ceilings) >= SWEEP_MAX_AGE_MIN:
+        failures.append(f"workflow: job timeout {ceilings} is not below the sweep age {SWEEP_MAX_AGE_MIN}")
+    if f'default: "{SWEEP_MAX_AGE_MIN}"' not in sweeper or f"${{MAX_AGE:-{SWEEP_MAX_AGE_MIN}}}" not in sweeper:
+        failures.append(f"workflow: the sweeper's default age is not {SWEEP_MAX_AGE_MIN}")
+    # `exec`, or the cancellation signals the shell and the runner never hears
+    # of it (CI run 37947267239).
+    if not re.search(r'^\s*exec python3 tools/e2e_hf\.py "\$\{args\[@\]\}"\s*$', live, re.M):
+        failures.append("workflow: the runner is not exec'd, so a cancellation never reaches it")
+    steps = re.split(r"^ {6}- ", live, flags=re.M)
+    backstop = [s for s in steps if "tools/e2e_hf.py delete-run" in s]
+    if len(backstop) != 1 or "if: always()" not in backstop[0]:
+        failures.append("workflow: no `if: always()` step runs `delete-run`")
+
+
+def self_test():
+    """Drive the arms that decide offline, so a dispatch never discovers one with
+    a GPU billing."""
+    failures = []
+    _check_names(failures)
+    _check_run_endpoints(failures)
+    _check_sweep(failures)
+    _check_workflows(failures)
+    for line in failures:
+        print(f"self-test: {line}", file=sys.stderr)
+    print(f"e2e_hf --self-test: {len(failures)} failure(s)")
+    return 1 if failures else 0
+
+
 # --------------------------------------------------------------------------
 def main():
+    # Before the parser and `hf.init`: the self-test needs neither a token nor
+    # the network, which is what lets CI's lint job run it.
+    if sys.argv[1:] == ["--self-test"]:
+        return self_test()
     parser = hf.run_parser(__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -497,6 +694,10 @@ def main():
     p.add_argument("--prefix", default=SWEEP_PREFIX)
     p.add_argument("--dry-run", action="store_true")
     p.set_defaults(fn=cmd_sweep)
+
+    p = sub.add_parser("delete-run", help="delete the endpoints one run created, by their names")
+    p.add_argument("--run-id", required=True, help="the run's identity, as `run --run-id` was given it")
+    p.set_defaults(fn=cmd_delete_run)
 
     hf.add_shared_commands(sub)
 

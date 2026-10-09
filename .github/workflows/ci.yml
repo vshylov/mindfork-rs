@@ -221,6 +221,13 @@ jobs:
         run: python3 tools/tts_stub.py --self-test
       - name: The Mac probe's own arms
         run: python3 tools/mac_probe.py --self-test
+      # The live gate's runner (e2e-live.yml): the endpoint names, the choice
+      # `delete-run` makes of what to delete, the sweeper's verdicts, and the
+      # two facts in the gate's YAML its safety rests on — the runner `exec`ed
+      # and the job's ceiling under the sweeper's age. The gate itself runs
+      # rarely and on rented GPUs, which is the wrong place to find either.
+      - name: The live gate runner's own arms
+        run: python3 tools/e2e_hf.py --self-test
       - name: Install the toolchain (from rust-toolchain.toml)
         run: rustup show
       # A cache belongs to the branch that wrote it, so with the default

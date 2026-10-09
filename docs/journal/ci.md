@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (18)
+## Entries (19)
 
 - Post-M9: cutting GitHub Actions minutes (done)
 - Post-M9: skipping the test job for docs-only pull requests (done)
@@ -31,6 +31,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 
 - Post-M9: the workflows before strangers can open a pull request (done)
 - Post-M9: one context the branch ruleset can require (done)
+- Post-M9: a cancelled live job deletes its endpoints (done)
 ### Post-M9: cutting GitHub Actions minutes (done)
 - **Trigger**: the `v0.9.4` release run was refused by GitHub with *"The job was
   not started because recent account payments have failed or your spending limit
@@ -1447,3 +1448,35 @@ name, which satisfied its requirement — the difference is the matrix, not the 
   four names appeared" had touched `Cargo.toml`, which the `changes` allowlist
   deliberately excludes — so its matrix had expanded and the guard under test never
   ran.
+
+### Post-M9: a cancelled live job deletes its endpoints (done)
+
+The owner's full dispatch of the live gate on 2026-10-09 (run 37947267239, Gemma 4 31B on
+an L40S) hit the job's 45-minute ceiling with 79 of 250 smokes finished — and the last
+step showed all three endpoints still running after the cancellation. Measurements, forks
+and the decision: [docs/research/e2e-gate-budget.md](../research/e2e-gate-budget.md); this
+entry is its stage 1.
+
+- **Why the cleanup never ran**: GitHub signals the step's own process on a cancellation,
+  and that process was the step's `bash`. The Python runner under it — which deletes its
+  endpoints from a SIGINT/SIGTERM handler — was never signalled, and the job's teardown
+  killed it as an orphan. The July drill had signalled the runner directly (SIGBREAK on a
+  dev box), a path no CI cancellation takes; the endpoints idled out after 15 minutes
+  (≈ $0.70) and were deleted by hand.
+- **Two layers that fail independently**: the step `exec`s the runner, so the signal is
+  its own; and the last step, `if: always()`, runs `e2e_hf.py delete-run --run-id` instead
+  of only listing. It derives the names from the run id with the function the create uses
+  (`run_names`, for every model's tag), matches them **exactly** against the listing —
+  run ids nest — and hands them to the runner's own verified cleanup (exit 3 on a failed
+  delete); a failed listing deletes every candidate blind, a 404 being proof enough.
+- **`e2e_hf.py --self-test`**, in the `lint` job without a token: the names keep the run
+  id inside the 32-character limit, `delete-run` never picks a nesting id or a
+  look-alike, the sweeper's verdicts, and two facts that live in YAML — the `exec`, and
+  the job's ceiling under the sweeper's 90 minutes. Red on `main` before the change, green
+  after; five mutants caught.
+- **Live — GO**: `delete-run` against a real run's three endpoints (one of them `failed`)
+  and against one — deleted, verified, namespace empty. The drill through CI (run
+  37963066790, cancelled two minutes into the suite): `[signal 2] cleaning up before exit`
+  within the second, all three deleted and verified 3 s later, the backstop found none,
+  and `python3` was gone from the job's orphans. Unit tests unchanged: 3994 green, 257
+  `#[ignore]`.

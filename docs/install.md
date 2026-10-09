@@ -2411,6 +2411,7 @@ python tools/e2e_hf.py run --filter e2e_live  # a subset
 python tools/e2e_hf.py run --no-alt-embed     # skip the second embedding model
 python tools/e2e_hf.py list                   # what is running right now
 python tools/e2e_hf.py sweep --dry-run        # what the sweeper would remove
+python tools/e2e_hf.py delete-run --run-id 1009-1944   # one run's endpoints, by name
 ```
 
 The token needs **two** boxes ticked under User Permissions → Inference:
@@ -2424,11 +2425,14 @@ payment method on the account, or an org token pending approval).
 T4s at $0.50/hr, billed by the minute); on `gpt-oss-120b` it is ~$2.50, because
 the H200 that holds it is $5.00/hr. The endpoints are deleted from `finally`, from
 `atexit` and from the SIGINT/SIGTERM handler, and the deletion is **verified** —
-a failed delete exits non-zero even when the tests passed. If the process is
-killed outright, the endpoints scale to zero after their idle window (15 min, so
-≈ $0.57 worst case) and the sweeper removes them, which also reclaims
-endpoint quota (≈$1.25 on an H200). Use `--keep` only when debugging, and
-delete by hand afterwards.
+a failed delete exits non-zero even when the tests passed. In CI the runner is
+`exec`ed, so a cancelled job's signal reaches it, and the job's last step runs
+`delete-run` whatever happened: the names are derived from the run id, so it
+needs nothing from a runner that died. If both fail, the endpoints scale to zero
+after their idle window (15 min, so ≈ $0.57 worst case) and the sweeper removes
+them, which also reclaims endpoint quota (≈$1.25 on an H200). Use `--keep` only
+when debugging, and delete afterwards — by name, or the whole run with
+`delete-run`.
 
 In CI: **Live e2e (HF Inference Endpoints)** — `workflow_dispatch` only, with
 test-filter, model and GPU inputs; it needs the `HF_TOKEN` repository secret. **Live e2e
