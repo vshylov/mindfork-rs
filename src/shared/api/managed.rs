@@ -2270,13 +2270,62 @@ mod tests {
         (cfg, held)
     }
 
+    /// How many fresh ports a control on a *freed* port may go through.
+    const FREED_PORT_ATTEMPTS: usize = 5;
+
+    /// Runs `attempt` — take a port, check it held, let it go, check it freed —
+    /// on fresh ports until one reports its freed half as seen (`true`).
+    ///
+    /// Between dropping a listener and binding its port again, another test of
+    /// this binary can be handed the same number: macOS picks ephemeral ports
+    /// at random, and CI run 37987761276 lost `a_port_someone_listens_on_is_taken`
+    /// to that, once in forty runs. So the freed half may be tried again on a
+    /// fresh port — the held half asserts inside `attempt` and is never retried —
+    /// and a port that reads taken [`FREED_PORT_ATTEMPTS`] times running is a
+    /// failure, not bad luck.
+    fn on_freed_ports(what: &str, mut attempt: impl FnMut() -> bool) {
+        for _ in 0..FREED_PORT_ATTEMPTS {
+            if attempt() {
+                return;
+            }
+        }
+        panic!("the control: {what} {FREED_PORT_ATTEMPTS} times running");
+    }
+
+    /// The retry the controls below rest on, without luck: a stranger bound on
+    /// the freed port costs a fresh port, not the test…
+    #[test]
+    fn a_stranger_on_the_freed_port_costs_a_fresh_one() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut attempts = 0;
+        on_freed_ports("a freed port read as taken", || {
+            attempts += 1;
+            let (cfg, held) = on_a_taken_port(dir.path());
+            drop(held);
+            // `ok()`: if someone else got there first, the port is taken all the same.
+            let _stranger =
+                (attempts == 1).then(|| std::net::TcpListener::bind(("127.0.0.1", cfg.port)).ok());
+            !port_taken(&cfg)
+        });
+        assert!(attempts >= 2, "the first freed port had a stranger on it");
+    }
+
+    /// …and one taken every time is still a failure.
+    #[test]
+    #[should_panic(expected = "the control: a freed port read as taken 5 times running")]
+    fn a_freed_port_taken_every_time_fails() {
+        on_freed_ports("a freed port read as taken", || false);
+    }
+
     #[test]
     fn a_port_someone_listens_on_is_taken() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let (cfg, held) = on_a_taken_port(dir.path());
-        assert!(port_taken(&cfg));
-        drop(held);
-        assert!(!port_taken(&cfg), "the control: a free port is not taken");
+        on_freed_ports("a freed port read as taken", || {
+            let (cfg, held) = on_a_taken_port(dir.path());
+            assert!(port_taken(&cfg));
+            drop(held);
+            !port_taken(&cfg)
+        });
     }
 
     /// A stranger on the port: the launch is refused before anything is
@@ -2285,26 +2334,33 @@ mod tests {
     #[test]
     fn the_ledger_refuses_a_port_a_stranger_holds() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let (cfg, held) = on_a_taken_port(dir.path());
-        let ledger = PortLedger::default();
-        let err = match ledger.launch(&cfg, ru()) {
-            Err(e) => e.to_string(),
-            Ok(_) => panic!("a taken port must be refused"),
-        };
-        assert_eq!(err, port_busy_message(&cfg, ru()));
-        assert!(
-            err.contains(&cfg.port.to_string())
-                && err.contains("Эмбеддинги")
-                && err.contains("Порт"),
-            "{err}"
-        );
+        on_freed_ports("a freed port was refused", || {
+            let (cfg, held) = on_a_taken_port(dir.path());
+            let ledger = PortLedger::default();
+            let err = match ledger.launch(&cfg, ru()) {
+                Err(e) => e.to_string(),
+                Ok(_) => panic!("a taken port must be refused"),
+            };
+            assert_eq!(err, port_busy_message(&cfg, ru()));
+            assert!(
+                err.contains(&cfg.port.to_string())
+                    && err.contains("Эмбеддинги")
+                    && err.contains("Порт"),
+                "{err}"
+            );
 
-        drop(held);
-        let err = match ledger.launch(&cfg, ru()) {
-            Err(e) => e.to_string(),
-            Ok(_) => panic!("the binary does not exist"),
-        };
-        assert_eq!(err, expect_spawn(dir.path()));
+            drop(held);
+            let err = match ledger.launch(&cfg, ru()) {
+                Err(e) => e.to_string(),
+                Ok(_) => panic!("the binary does not exist"),
+            };
+            // Refused again: another test was handed the freed port.
+            let freed = err != port_busy_message(&cfg, ru());
+            if freed {
+                assert_eq!(err, expect_spawn(dir.path()));
+            }
+            freed
+        });
     }
 
     /// The preflight is said before the port: a model that is not there is the
