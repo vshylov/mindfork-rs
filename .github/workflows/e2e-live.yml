@@ -2,11 +2,17 @@
 # rented for the duration of the run as an HF Inference Endpoint.
 #
 # `workflow_dispatch` only, deliberately (research R5a): a live run is a
-# considered act (AGENTS.md §3), it costs about $1 and ~25 minutes, and some of
-# the smokes touch the real internet, so running it on every push would buy
+# considered act (AGENTS.md §3), it costs about $3 for the whole suite, and some
+# of the smokes touch the real internet, so running it on every push would buy
 # flakes rather than signal. It is also, by that same trigger, restricted to
 # people with write access — which is why HF_TOKEN is a plain repository secret
 # rather than an environment with reviewers (R8).
+#
+# The suite is **sharded** (docs/research/e2e-gate-budget.md): 250 smokes, up
+# from 66 in July, are 50–60 minutes on one L40S, and the job's ceiling cannot
+# rise without crowding the sweeper's threshold. Each shard is a job of its own
+# with endpoints of its own; billing is per minute, so N shards cost about one
+# run plus N-1 deploys, and finish in about 1/N of the time.
 #
 # Everything except the trigger lives in tools/e2e_hf.py, so the same command
 # runs here and on a developer's machine. See docs/history/remote-e2e-hf.md §6.
@@ -20,9 +26,7 @@ on:
         required: false
         default: ""
       # One dispatch, one model (docs/history/e2e-second-chat-model.md, fork
-      # F2): both families in one job would run the suite twice, ~50 min against the
-      # 45-minute timeout below — which cannot rise without crowding the
-      # sweeper's 90-minute threshold.
+      # F2): both families in one dispatch would run the suite twice.
       #
       # `gpt-oss-120b` is the third: a **split** model (two files, 63.39 GB), an
       # OpenAI open-weights model (the harmony template), and the only text-only
@@ -46,6 +50,20 @@ on:
         default: model-default
         type: choice
         options: [model-default, nvidia-l40s, nvidia-a10g, nvidia-l4, nvidia-a100, nvidia-h200]
+      # Four by default. Measured on run 37970393128, the first to finish the
+      # whole suite: 72 minutes of smokes, and the heaviest of four round-robin
+      # shards ~28 of them (the steering probe alone is 12). Each shard holds an
+      # L40S and two T4s (quota: 16 and 30), and more shards at once meet more of
+      # HF's capacity refusals — 8 of 13 L40S creates failed to start that
+      # evening. `1` is the whole suite in one job, as before; a filtered run is
+      # sharded too, so pick `1` for a handful of smokes. A shard that fails is
+      # rerun alone: `gh run rerun <id> --failed`.
+      shards:
+        description: "Parallel jobs the suite is dealt across, each with endpoints of its own"
+        required: false
+        default: "4"
+        type: choice
+        options: ["4", "1", "2", "3", "5", "6"]
       no_embed:
         description: "Skip the embedding endpoints (the memory smokes then skip too)"
         required: false
@@ -58,7 +76,8 @@ on:
         type: boolean
 
 # One live run at a time — but never cancel one in flight: a cancelled run is a
-# wasted deploy, and the endpoints it is holding are real money.
+# wasted deploy, and the endpoints it is holding are real money. The shards of
+# one run are jobs of that run, so they run side by side.
 concurrency:
   group: e2e-live
   cancel-in-progress: false
@@ -68,17 +87,26 @@ env:
 
 jobs:
   live:
-    name: Live smokes
+    name: Live smokes (${{ matrix.shard }}/${{ inputs.shards }})
     runs-on: ubuntu-latest
-    # Budget: build (a few minutes cold, seconds cached), ~1-2 min deploy,
-    # ~17 min suite. The number itself is load-bearing in one direction: it must
-    # stay **below the sweeper's 90-minute threshold**, or the sweeper could
-    # delete the endpoints of a run that is still using them
-    # (`tools/e2e_hf.py --self-test` checks it). On timeout the job is cancelled:
-    # the runner — `exec`ed below, so the signal is its own — deletes its
-    # endpoints, and the backstop step at the end deletes whatever it did not.
-    # The 15-minute scale-to-zero window bounds the cost if even both fail.
-    timeout-minutes: 45
+    strategy:
+      # A red shard must not cancel its siblings: each holds endpoints of its
+      # own and reports on smokes no other shard runs.
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(format('[{0}]', inputs.shards == '1' && '1' || inputs.shards == '2' && '1,2' || inputs.shards == '3' && '1,2,3' || inputs.shards == '5' && '1,2,3,4,5' || inputs.shards == '6' && '1,2,3,4,5,6' || '1,2,3,4')) }}
+    # Budget per shard, measured on 2026-10-09: build and test list ~5 min,
+    # endpoints ready in 2–18 min (HF schedules the cards as it can), and the
+    # shard's part of a ~70-minute suite — up to ~28 min. 45 held the suite but
+    # not a slow schedule on top of it, hence 60. The number itself is
+    # load-bearing in one direction: it must stay **below the sweeper's
+    # 90-minute threshold**, or the sweeper could delete the endpoints
+    # of a run that is still using them (`tools/e2e_hf.py --self-test` checks
+    # it). On timeout the job is cancelled: the runner — `exec`ed below, so the
+    # signal is its own — deletes its endpoints, and the backstop step at the end
+    # deletes whatever it did not. The 15-minute scale-to-zero window bounds the
+    # cost if even both fail.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -112,6 +140,9 @@ jobs:
       # and the Python runner under it never heard of it. CI run 37947267239 hit
       # the timeout, bash died, and the runner was killed as an orphan at the end
       # of the job with all three endpoints still running.
+      #
+      # The shard is always passed: `1/1` is the whole suite under the names an
+      # unsharded run has always had.
       - name: Run the suite against fresh endpoints
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -120,8 +151,10 @@ jobs:
           CHAT_MODEL: ${{ inputs.model }}
           NO_EMBED: ${{ inputs.no_embed }}
           NO_ALT_EMBED: ${{ inputs.no_alt_embed }}
+          SHARD: ${{ matrix.shard }}
+          SHARDS: ${{ inputs.shards }}
         run: |
-          args=(run --run-id "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}")
+          args=(run --run-id "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --shard "${SHARD}/${SHARDS}")
           # Unset means "the model's own", which is also what picks its region.
           if [ -n "$CHAT_INSTANCE" ] && [ "$CHAT_INSTANCE" != "model-default" ]; then
             args+=(--chat-instance "$CHAT_INSTANCE")
@@ -134,14 +167,17 @@ jobs:
 
       # The backstop. The runner deletes its own endpoints from `finally`,
       # `atexit` and its signal handler — while it is alive to. This step needs
-      # nothing from the one before but the run id: the names are derived from
-      # it exactly as the create derived them, only those names are deleted, and
+      # nothing from the one before but the run id and the shard: the names are
+      # derived from them exactly as the create derived them, only those names
+      # are deleted — never a sibling shard's, which may still be running — and
       # the deletion is verified (exit 3 if not). It then lists what is left in
       # the namespace — all this step did until CI run 37947267239 showed three
       # endpoints still running here and nothing deleting them.
-      - name: Delete this run's endpoints (backstop)
+      - name: Delete this shard's endpoints (backstop)
         if: always()
         timeout-minutes: 5
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: python3 tools/e2e_hf.py delete-run --run-id "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          SHARD: ${{ matrix.shard }}
+          SHARDS: ${{ inputs.shards }}
+        run: python3 tools/e2e_hf.py delete-run --run-id "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --shard "${SHARD}/${SHARDS}"

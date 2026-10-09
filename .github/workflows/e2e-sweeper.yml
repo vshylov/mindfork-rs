@@ -33,7 +33,7 @@ on:
   workflow_dispatch:
     inputs:
       max_age_minutes:
-        description: "Delete e2e-* endpoints older than this (must stay above the live job's 45 min timeout)"
+        description: "Delete e2e-* endpoints older than this (must stay above the live job's 60 min timeout)"
         required: false
         default: "90"
       dry_run:

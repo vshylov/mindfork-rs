@@ -2737,3 +2737,13 @@ its own; and give the cleanup that matters an `if: always()` step of its own tha
 nothing from the dead one but an identity it can derive names from. Then drill it the way
 it will happen — a `gh run cancel` against a dispatched run, under $0.20 here.
 — *a cancelled live job deletes its endpoints*.
+
+**Splitting a rented job multiplies the provider's refusals — make each part fail alone.**
+Four shards of the live gate asked HF for four L40S at once; three were refused
+(`Endpoint failed to start`), and the rerun's three again, while one alone had come up
+minutes earlier — 8 of 13 creates that evening, in the card's only region. The catalogue
+said `available` throughout. What made it cheap: each shard creates, names and deletes
+its own endpoints, the matrix does not cancel siblings on a red, and `gh run rerun
+--failed` runs only the refused parts. A ceiling sized for the suite alone was the other
+casualty: readiness measured 2–18 minutes, and a job's budget has to hold that too.
+— *the live gate dealt across shards*.

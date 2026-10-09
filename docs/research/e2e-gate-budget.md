@@ -2,7 +2,8 @@
 
 **Status:** decided 2026-10-09 (the owner's decision, §4). Stage 1 —
 `fix/e2e-cancel-cleanup`; stage 2 — sharding; stage 3 — the dialogue loop
-(`fix/run-dialogue-repeat`, §7).
+(`fix/run-dialogue-repeat`, §7). Stage 2 measured the whole suite for the first
+time (§8): 72 minutes of smokes, and HF's capacity, not the suite, as the risk.
 
 The remote live gate ([docs/history/remote-e2e-hf.md](../history/remote-e2e-hf.md))
 rents a llama.cpp server and two embedders as HF Inference Endpoints and runs
@@ -119,7 +120,7 @@ three leftover endpoints of run 37947267239 were deleted the same day.
 ## 5. Stages
 
 1. **The cleanup survives a cancelled job** (`fix/e2e-cancel-cleanup`) — §6.
-2. **Shards** (`--shard i/N`, the workflow matrix) — designed in its own PR.
+2. **Shards** (`feat/e2e-gate-shards`, `--shard i/N`, the workflow matrix) — §8.
 3. **The dialogue loop** (`fix/run-dialogue-repeat`) — why the parent calls
    `run_dialogue` again after a landed dialogue, and the raw tool call it ends
    with — §7.
@@ -210,3 +211,61 @@ Unit tests: the route named only with `chat_read`, the repeat answered without
 a scene, a refused scene refused as itself, the final request's note on the
 last tool result and nowhere in the chat, and where the note goes for each
 shape of history — each red against a mutant of its fix.
+
+## 8. Stage 2 — shards: design and outcome
+
+- **`e2e_hf.py run --shard I/N`.** After the build, `cargo test -- --ignored --list`
+  names the smokes the filter selects; the shard takes every N-th from the I-th, in
+  libtest's order, prints them, and runs them with `--exact` — as an argv list, since
+  a shard's names run to ~5 KB and `cmd.exe`, which `shell=True` means on Windows,
+  stops at 8191 characters. Round-robin rather than a balance by measured durations:
+  no timing file to keep current, and the alphabetical order deals the contiguous
+  block of orchestrator smokes evenly. A shard that holds nothing rents nothing.
+- **A shard is a run of its own**: its endpoint names carry `-s<i>` (one digit keeps a
+  CI name within 32 characters), so neither its cleanup nor its backstop
+  (`delete-run --shard`) can touch a sibling that is still running. `1/1` is the
+  whole suite under the names an unsharded run always had, so the workflow passes a
+  shard always.
+- **The workflow**: a `shards` input (default 4), a matrix with `fail-fast: false`,
+  the shard passed to the run and to its backstop alike — `--self-test` checks both,
+  and that a shard's backstop spares its siblings' names.
+- **A rebuild moved out of the billed window, for free.** On a fresh runner the
+  first build creates `target/debug/data/dictionaries`, and the next cargo command
+  re-runs `build.rs` and recompiles the crate once (build.rs says why). That second
+  command used to be the suite — ~70 s with three endpoints billing; it is now the
+  test listing, before the create.
+
+**Outcome, run 1** ([37965082594](https://github.com/vshylov/mindfork-rs/actions/runs/37965082594),
+L40S, four shards): the one shard whose L40S came up ran 63 smokes green in 800 s; the
+other three **failed to start** (`Endpoint failed to start`, 110–142 s after the
+create), and so did all three again on `gh run rerun --failed` (326–398 s). Every
+shard deleted its endpoints and its backstop found none left. That evening 8 of 13
+L40S creates in `us-east-1` — the only region that has the card — failed to start,
+and one more took ten minutes to schedule; shards multiply that exposure, which is
+why a failed shard is rerun alone.
+
+**Outcome, run 2** ([37970393128](https://github.com/vshylov/mindfork-rs/actions/runs/37970393128),
+`chat_instance: nvidia-a100`, four shards) — **the first run to finish the whole
+suite**: 250 smokes, **248 green**. All four A100s came up, in 611–1099 s; suites of
+670, 739, 1352 and 1550 s; the slowest job 41 min 47 s of its 45. Measured there:
+
+- **The suite is 72 minutes** on one card, ~71 on an L40S once stage 3 lands — more
+  than §1's 50–60, because the model-behaviour probes it could not reach are heavy on
+  Gemma 4: `dialogue_probe_steering_live` alone is ~12 minutes (5 scenes; 63 s on
+  gpt-oss in August). They stay on the gate by an earlier decision (roadmap,
+  *Model-compliance probes vs the live gate*).
+- **The A100 is not the faster card here**: the same 63 smokes took 739 s on it and
+  800 s on the L40S — ×1.08, not the ×1.7 §3 estimated from memory bandwidth — at
+  $2.50/h against $1.80. Its value that evening was that it came up.
+- **The two reds**: `fetched_page_is_searched_in_its_birth_turn_e2e_live`, red on
+  both full runs on Gemma 4 31B (the model summarised the page instead of searching
+  it) — left for its own look; and `the_model_catalogue_reaches_the_ui_e2e_live`,
+  `Refused(401)`: the smoke handed `ListModels` a config with the URL and no key, and
+  the gate's server is authenticated. Fixed in the smoke — the key by its variable's
+  name, the way a user gives it — and checked against a local server started with
+  `--api-key`: 401 without the fix, green with it.
+- **The ceiling, 45 → 60.** Round-robin over four shards puts up to ~28 minutes of
+  suite in one job; with ~5 minutes of build and listing and readiness measured at
+  2–18 minutes, 45 holds the suite but not a slow schedule on top of it. 60 keeps 30
+  minutes below the sweeper's 90 (`--self-test` checks the order). This is headroom
+  for HF's scheduling, not room for the suite to grow — that is what N is for.

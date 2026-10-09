@@ -195,6 +195,13 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **The live gate, sharded; a cancelled job deletes its GPUs** (2026-10-09): the whole
+  suite is 72 min of smokes, dealt across four parallel jobs (`e2e_hf.py --shard`), each
+  with endpoints of its own, under a 60-min ceiling; a cancellation now reaches the runner
+  (`exec`) and a backstop step deletes by name. Its first full run found a dialogue staged
+  nine times and a round limit answered with a raw tool call — fixed. HF's L40S capacity
+  is the open risk ([docs/research/e2e-gate-budget.md](docs/research/e2e-gate-budget.md),
+  [docs/journal/ci.md](docs/journal/ci.md)).
 - **The FSD layer rule is gated** (2026-10-09): `screens` had imported eleven event
   payload types from `app::events` since 2026-08-23 — moved to
   `entities/{task,subagent,live_turn}.rs`, re-exported by `app/events.rs`;
@@ -357,22 +364,6 @@ being recent is dropped, not shortened.
   *diverged*, never as "newer there"; equal fingerprints mean an identical comparison.
   Live **GO**, both stages ([docs/history/data-stats.md](docs/history/data-stats.md), spec §12.4,
   [docs/journal/storage.md](docs/journal/storage.md)).
-- **The model row asks the provider** (stage 4b, the last of stage 4). The settings
-  hint recommended `gpt-4o` and `claude-opus-4-8` — a hint that names a model ages, so
-  `Enter` on a model row now asks the provider what it serves and offers the list,
-  filtered as you type, with **"type a name by hand" as its first row** so no failure
-  traps the user. The first question the UI has ever asked the network
-  (`AppCommand::ListModels`, carrying the slot and no key); measured, the four
-  catalogues agree on nothing — OpenAI lists **132** entries with **no** capability
-  field (chat mixed with `whisper-1` and `sora-2`) and 56 `shutdown_date`s, Gemini
-  publishes `supportedGenerationMethods` under a `models/` prefix and pages at 50 of
-  58, Anthropic lists 11 chat models and no embedder, and xAI's chat half is
-  `/v1/language-models`, not `/v1/models`. So the list narrows on the **provider's**
-  claim where there is one and shows everything where there is none — never ours, which
-  would age the same way. Live **GO** on all five catalogues
-  ([docs/research/model-picker.md](docs/research/model-picker.md),
-  [docs/journal/ui-screens.md](docs/journal/ui-screens.md),
-  [docs/journal/engine.md](docs/journal/engine.md)).
 - **Robustness and the shipped defaults** (stage 4a; the model picker is 4b). A panic in
   the orchestrator left a live interface with nothing behind it — the loop now tells a
   closed channel from an empty one and ends the session saying where the log is; a managed

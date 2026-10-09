@@ -545,11 +545,15 @@ effort tiers — have all closed
   their own credentials, which no workflow holds; the Python-sandbox and
   managed-server smokes need local assets and a child process of our own, so
   they cannot run remotely at all.
-- **The remote gate no longer fits its job** — **in progress**. The full suite
-  is 50–60 minutes on Gemma 4 / L40S against the job's 45-minute ceiling (250
-  smokes, up from 66 in July); it is being sharded across parallel jobs. A
-  cancelled job now deletes its endpoints (stage 1).
-  [e2e-gate-budget.md](research/e2e-gate-budget.md).
+- **Remote gate: HF's capacity** — **on demand**. The suite is sharded (four
+  jobs, 72 minutes of smokes), and on 2026-10-09 8 of 13 L40S creates in
+  `us-east-1` — the card's only region — failed to start. A failed shard cleans up
+  and is rerun alone (`gh run rerun --failed`); an automatic second attempt, or a
+  fallback card (the A100 came up that evening, at ×1.08 the speed and $2.50/h),
+  is not built. [e2e-gate-budget.md](research/e2e-gate-budget.md) §8.
+- **`fetched_page_is_searched_in_its_birth_turn_e2e_live` on Gemma 4 31B** —
+  **next**. Red on both full gate runs of 2026-10-09: the model summarised the
+  fetched page instead of searching it. The track measured 6/6 on its own stand.
 - **Remote gate: chat-free runs** — **on demand**. `run` always creates the
   L40S chat endpoint, even for a filter that only exercises the embedders
   (~$0.10 wasted per such iteration); the probe has `--embed-only`, the runner
