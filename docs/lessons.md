@@ -649,6 +649,14 @@ it and write that back; and check every anchor of the whole plan before the firs
 mutant, so that one the formatter has since re-wrapped costs nothing.
 — *colour modes — the monochrome mode*.
 
+**A port a test lets go of is the next bind's to take.** On macOS ephemeral ports are
+picked at random, so in a test binary full of stub servers the number a test just dropped
+can be handed to another test before the first one binds it again — a control "the freed
+port is free" failed that way once in forty CI runs, and never on Windows, which hands
+ports out in sequence. A control on a freed port retries with a fresh one (bounded, and
+only the freed half); a "dead URL" made by dropping a listener has the same window.
+— *the port tests' control survives a stranger on the freed port*.
+
 ## 3. Measure; do not assume
 
 **Write the user's document from the code, and treat a sentence that cannot be

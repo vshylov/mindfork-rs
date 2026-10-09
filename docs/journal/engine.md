@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (96)
+## Entries (97)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -108,6 +108,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the engine and the local servers on a real Mac (done)
 - Post-M9: LM Studio's MLX refusal reads as an overflow (done)
 - Post-M9: a Mac's managed engine takes the knee batch (done)
+- Post-M9: the port tests' control survives a stranger on the freed port (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -6642,3 +6643,30 @@ the push the whole suite ran on Windows with `METAL_HOST` forced to `true` —
 
 The Batch field's description in both locales and spec §3.4 and §11.6 now
 name the Mac.
+
+### Post-M9: the port tests' control survives a stranger on the freed port (done)
+
+`a_port_someone_listens_on_is_taken` failed once on macOS (CI run 37987761276, on a pull
+request that changed no Rust): *the control: a free port is not taken*. The test binds
+`127.0.0.1:0`, checks `port_taken`, drops the listener and checks again — and between the
+drop and the check another test of the same binary can be handed the freed number. macOS
+picks ephemeral ports at random; Windows hands them out in sequence, which is why 20 000
+iterations under eight threads binding and dropping ports read 0 failures locally. First
+failure in the forty CI runs since the test landed (2026-10-02).
+
+- **Both controls on a freed port** — that test's and the second half of
+  `the_ledger_refuses_a_port_a_stranger_holds` (after the drop the launch must reach
+  `spawn`) — now repeat take → drop → check with a fresh port, at most
+  `FREED_PORT_ATTEMPTS` (5) times. The held half is asserted on every attempt, never
+  retried; five freed ports read as taken running is a failure, not luck.
+- **Checked**: `port_taken` mutated to always `true` fails both tests on the fifth attempt,
+  always `false` fails them on the held half; a stranger bound on the freed port on the
+  first attempt (a one-off experiment) makes the test take the next port and pass.
+- **Left alone, deliberately**: the "dead URL" helpers that drop a listener to get a port
+  nothing answers on (`http.rs`, `local_servers.rs`, `openai/client.rs`, `net.rs`,
+  `supervisor.rs`) have the same window in principle — a stranger on the port would answer
+  where a refusal is expected. None has failed; the sound fix there is a socket bound and not
+  listening, which holds the port and refuses connects, and is its own change.
+
+No live run: unit tests only. **Gates**: fmt / clippy / test green — 3999 unit tests, 258
+`#[ignore]`, unchanged.
