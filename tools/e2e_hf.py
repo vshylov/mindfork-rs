@@ -748,6 +748,19 @@ def _check_shard_deal(failures):
         failures.append(f"shard: the suite's argv is {command}, want {want}")
 
 
+def _check_embed_batch(failures):
+    """Both embedders take a chunk as long as their context in one batch: the
+    image's default of 512 left spec.md unindexed on every full run."""
+    parser = argparse.ArgumentParser()
+    hf.add_endpoint_args(parser)
+    args = parser.parse_args([])
+    for payload in (hf.embed_payload("e2e-embed-x", args), alt_payload("e2e-alt-x", args)):
+        ctx = str(payload["model"]["image"]["llamacpp"]["ctxSize"])
+        env = payload["model"].get("env") or {}
+        if env.get("LLAMA_ARG_UBATCH") != ctx or env.get("LLAMA_ARG_BATCH") != ctx:
+            failures.append(f"embed: {payload['model']['repository']} batches {env}, want the context {ctx}")
+
+
 def _check_sweep(failures):
     now = dt.datetime(2026, 10, 9, 18, 17, tzinfo=dt.timezone.utc)
     limit = dt.timedelta(minutes=SWEEP_MAX_AGE_MIN)
@@ -815,6 +828,7 @@ def self_test():
     _check_run_endpoints(failures)
     _check_shard_parsing(failures)
     _check_shard_deal(failures)
+    _check_embed_batch(failures)
     _check_sweep(failures)
     _check_workflows(failures)
     for line in failures:
