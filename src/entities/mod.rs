@@ -3,6 +3,7 @@
 pub mod attachment;
 pub mod chat;
 pub mod chat_file;
+pub mod live_turn;
 pub mod message;
 pub mod message_image;
 pub mod note;
@@ -11,4 +12,5 @@ pub mod rag;
 pub mod sampling;
 pub mod self_model;
 pub mod subagent;
+pub mod task;
 pub mod workspace;

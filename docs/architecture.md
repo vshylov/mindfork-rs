@@ -91,9 +91,18 @@ flowchart TB
 
 ## 2. FSD layers
 
-Dependencies point **strictly downward**: `app → screens → widgets → features →
-entities → shared`. A layer never imports "sideways" or "upward". Cross-cutting
-infrastructure (engine, storage) lives in `shared` behind traits.
+Dependencies point **downward**: `app → screens → widgets → features`, and under
+them the bottom pair `entities` and `shared`, which see each other — the one
+place the chain is not an arrow. A layer never imports a layer above it;
+`main.rs` is the crate root, above them all. Cross-cutting infrastructure
+(engine, storage) lives in `shared` behind traits, and that is why the pair
+exists: `shared/storage` reads and writes the domain types (`Chat`, `Profile`,
+`Note`, `RagDocument`, `SelfModel`), `shared/api` serializes `SamplingConfig` on
+every provider's wire, and the domain types take their settings and locale from
+`shared/config` and `shared/i18n` (spec §4's deliberate adaptation, so since
+M2). **The rule is gated**: `tools/layer_check.py` (CI's `lint` job) fails on a
+production line that names a layer above its own; test code and comments are
+exempt ([research/fsd-layer-gate.md](research/fsd-layer-gate.md)).
 
 ```mermaid
 flowchart TD
@@ -119,6 +128,7 @@ flowchart TD
     features --> entities
     features --> shared
     entities --> shared
+    shared --> entities
 ```
 
 **Key FSD invariant in the code:** `screens`/`widgets` **never import `app`**.
@@ -128,6 +138,16 @@ screen a `ChatListAction`), and `app/runtime.rs` translates it into an
 `AppCommand`. Likewise, a screen never performs terminal side effects (mouse
 capture, clipboard writes) itself — it signals an intent, and `runtime` executes
 it.
+
+What a screen receives from the orchestrator is a type defined **below both**:
+plain data in `entities` (`TaskList`, `SubagentProgress`, `ChildView`, `LiveTurn`
+— `entities/{task,subagent,live_turn}.rs`), a scenario's own progress in
+`features` (`RagProgress`, `FileProgress`, `ToolDecision`), a server's status in
+`shared`. `app/events.rs` re-exports each beside the event that carries it, so
+the orchestrator imports one module and the screen never names `app`. The eleven
+now in `entities` were defined in `app/events.rs` and imported from there by the
+chat and tasks screens for seven weeks before the gate existed — the shape of
+leak the gate is for ([research/fsd-layer-gate.md](research/fsd-layer-gate.md) §1).
 
 **The loop ends when its event channel does.** Draining is
 `drain_events` (`app/runtime/mod.rs`), which distinguishes an empty queue from a
@@ -291,7 +311,8 @@ src/
 │  │                        #[ignore], docs/install.md §7.1)
 │  ├─ gen_state.rs          GenState: pure Idle/Generating/Cancelling state machine
 │  │                        (begin/request_cancel/finish transitions, no I/O)
-│  ├─ events.rs             AppCommand (UI→orchestrator) and AppEvent (orchestrator→UI)
+│  ├─ events.rs             AppCommand (UI→orchestrator) and AppEvent (orchestrator→UI); the
+│  │                        payload types a screen draws are defined below and re-exported here (§2)
 │  ├─ key_echo.rs           `mindfork keys`: each key as the app receives it — the
 │  │                        runtime's own key modes and batches (enable_key_modes,
 │  │                        read_batch, chunk_batch), an InputBox sketch per key; no
@@ -648,6 +669,8 @@ src/
 │  │                        data/files/<chat-id>/): a call's output, one adopted at
 │  │                        startup, or an original /file attach kept; the name
 │  │                        sanitizer and versioning
+│  ├─ live_turn.rs          LiveTurn/LivePartial/LiveTool — the generation in flight on a
+│  │                        conversation being activated: what ChatActivated seeds the feed with
 │  ├─ message.rs            Message, MessageRole, ToolCallRecord, MessageMetadata
 │  ├─ message_image.rs      MessageImage/ImageInfo — an image carried BY A MESSAGE
 │  │                        (base64 payload in the chat file, patch-formula estimate);
@@ -655,7 +678,14 @@ src/
 │  ├─ profile.rs            Profile, ProfileSummary, ToolId
 │  ├─ note.rs               Note
 │  ├─ rag.rs                RagDocument / RagHit
-│  └─ sampling.rs           SamplingConfig, ReasoningEffort, resolve (three-tier priority)
+│  ├─ sampling.rs           SamplingConfig, ReasoningEffort, resolve (three-tier priority)
+│  ├─ self_model.rs         SelfModel — the per-profile self-model (§9)
+│  ├─ subagent.rs           SubagentRun/RunKind/RunOutcome — a run's record on its parent chat;
+│  │                        RunProgressKind/SubagentProgress (its position — the status-bar
+│  │                        chip) and ChildView (a transcript's view) — what the screens are told
+│  ├─ task.rs               BackgroundKind/AppTask/TaskRun/TaskList — the app's silent tasks and
+│  │                        the tasks screen's snapshot (spec §11.10)
+│  └─ workspace.rs          the code workspace attached to a chat (spec §9.12)
 │
 └─ shared/                  infrastructure and utilities (FSD "shared")
    ├─ api/                  inference engine layer (contract + per-family implementations, ADR 0004)

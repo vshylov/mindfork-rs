@@ -5,6 +5,11 @@
 //! the parent by construction: it has no file, no profile, no hidden flag, and
 //! it leaves the list exactly when the exchange that spawned it is taken back
 //! or regenerated, because it travels with that exchange's messages.
+//!
+//! Also here: what the screens are told about a run — its position while
+//! it is out ([`SubagentProgress`], the status-bar chip) and, on its
+//! transcript, whose it is ([`ChildView`]). Plain data `app::events`
+//! re-exports (docs/architecture.md §2, docs/research/fsd-layer-gate.md).
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -164,6 +169,44 @@ impl SubagentRun {
             .find(|m| m.role == MessageRole::Assistant && !m.text.trim().is_empty())
             .map(|m| m.text.as_str())
     }
+}
+
+/// Which kind of nested run the chip describes — the screen words each in the
+/// interface language ([`SubagentProgress`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunProgressKind {
+    /// A `call_subagent` run: `round` is its tool round, `tool` the tool it
+    /// is inside, if any (spec §9.3.2).
+    Subagent,
+    /// A dialogue's participant line being written: `round` is the line
+    /// number (spec §9.13).
+    DialogueLine,
+    /// A dialogue's director checkpoint — the scene is being judged.
+    DialogueDirector,
+}
+
+/// One nested run's position, for the status-bar chip
+/// ([`AppEvent::SubagentProgress`](crate::app::events::AppEvent)): the persona's name (the `name` argument,
+/// else the run's title), the round/line it is on, and the tool it is inside,
+/// if any. Raw data — the screen words it in the interface language.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubagentProgress {
+    pub name: String,
+    pub round: u32,
+    pub tool: Option<String>,
+    pub kind: RunProgressKind,
+}
+
+/// What the chat screen needs to know about a sub-agent transcript it shows
+/// (spec §11.2, docs/research/subagent-chats.md §3.8): whose it is, and the
+/// persona to draw as its first bubble.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChildView {
+    /// The chat whose call made the transcript.
+    pub parent: Uuid,
+    pub parent_title: String,
+    /// The sub-agent's system message — the persona the parent composed.
+    pub system_message: String,
 }
 
 #[cfg(test)]

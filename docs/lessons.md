@@ -1150,6 +1150,19 @@ program runs has to ask the exit status first and treat the text as what the
 program said, not as proof it spoke.
 — *llama.cpp on a bare image*.
 
+**A documented *never* with no gate has drifted by the time anyone reads it.**
+architecture.md §2 called `screens` never importing `app` *the key FSD invariant
+in the code*, and the first survey of the tree found the chat and tasks screens
+importing eleven event payload types from `app::events` — the first on
+2026-08-23, every later one written by an agent with the rule in its context,
+copying the neighbour that had it; by the tasks-screen track a research doc
+cited the leak as a given. The other half of the same sentence, `entities →
+shared` as a one-way arrow, had been wrong the other way since M2. Before
+building on an invariant the documents state, grep for it; and when it holds,
+gate it in `lint` the way `list_scroll_check.py` holds the scroll rule — a
+convention is what let both spread (`tools/layer_check.py`).
+— *the FSD layer rule gets a gate*.
+
 ## 4. The recurring defect class: a message must close the door
 
 **Never let a message describe a situation without saying what is and is not possible

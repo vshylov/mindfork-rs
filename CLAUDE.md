@@ -29,7 +29,7 @@ Two rules that follow from that:
   and from the code. Loading either whole spends context on twelve chapters to
   use one.
 - **The engineering journal is per area.** What was done, why, what was measured
-  and what was rejected lives in `docs/journal/<area>.md` — 571 entries, split by
+  and what was rejected lives in `docs/journal/<area>.md` — 618 entries, split by
   subsystem. Read the file for the area you are touching; grep across them when
   hunting a specific past decision.
 
@@ -98,9 +98,10 @@ in a round.
 - **Unidirectional UI↔orchestrator flow**: `AppCommand` up, `AppEvent` down;
   `generation_id` drops stale chunks; state machine `Idle/Generating/Cancelling`.
 
-## Structure (FSD, dependencies strictly downward)
+## Structure (FSD, dependencies downward only)
 
-`app → screens → widgets → features → entities → shared`. A binary crate.
+`app → screens → widgets → features → {entities ⇄ shared}` — the bottom pair see
+each other; gated by `tools/layer_check.py`. A binary crate.
 
 - `src/app/` — orchestrator, events, TUI loop, tokio↔UI bridge.
 - `src/entities/` — domain types (`chat`, `message`, `profile`, `note`, `rag`,
@@ -146,6 +147,7 @@ python tools/cyrillic_scan.py      # source-language gate
 python tools/link_check.py         # relative-link gate
 python tools/doc_index_check.py    # documentation-structure gate
 python tools/list_scroll_check.py  # one implementation of a list's scroll state
+python tools/layer_check.py        # FSD: a layer names only the layers below it
 python tools/wizard_rtf.py         # regenerate the Windows installer's disclaimer page
 python tools/wizard_rtf.py --check # ...and the gate that it matches DISCLAIMER.md
 python tools/site_legal_pages.py    # regenerate the site's privacy page from PRIVACY.md
@@ -193,6 +195,13 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **The FSD layer rule is gated** (2026-10-09): `screens` had imported eleven event
+  payload types from `app::events` since 2026-08-23 — moved to
+  `entities/{task,subagent,live_turn}.rs`, re-exported by `app/events.rs`;
+  `tools/layer_check.py` (`lint`) fails a production line naming a layer above its
+  own, test code and comments exempt, the bottom pair `entities`/`shared` mutual;
+  27 self-test arms ([docs/research/fsd-layer-gate.md](docs/research/fsd-layer-gate.md),
+  [docs/journal/quality.md](docs/journal/quality.md)).
 - **LM Studio and local servers** (2026-10-06): LM Studio's window is read and its
   silent cut of a conversation's middle told, each note in its server's words; an
   engineless chat offers a local Ollama or LM Studio, `/local` on demand
@@ -387,17 +396,6 @@ being recent is dropped, not shortened.
   Sonar no longer fails a fork's or Dependabot's pull request
   ([docs/research/release-pipeline.md](docs/research/release-pipeline.md),
   [docs/journal/release.md](docs/journal/release.md), [docs/journal/ci.md](docs/journal/ci.md)).
-- **Safe defaults — what an enabled tool may reach** (stages 2a and 2b, each live
-  **GO**). 2a: an empty `fs_root` refuses (it meant the whole disk), no file or code tool
-  reaches the data root or the binary's directory (`tools/reach.rs`), a dangling link no
-  longer writes through the root check, `.git/` is not written, and a background run under
-  confirmation gets no dangerous tools. 2b: the sandbox's network is public-only —
-  wasmer's own rule list, generated from `net.rs`'s ranges, measured to leave the host's
-  loopback and LAN reachable before — the local interpreter and workspace commands start
-  without the environment's keys (`shared/child_env.rs`), a fetched page is read under a
-  32 MB ceiling, and on unix the data root is `0700` with `0600` files
-  ([docs/research/safe-defaults.md](docs/research/safe-defaults.md),
-  [docs/journal/tools.md](docs/journal/tools.md)).
 - **A headless launch (no TTY) exits with code 2** and a one-line reason — the
   TUI cannot be run from an agent's shell; how it *looks* needs a real terminal
   and a person. What a console *holds* can be measured on Windows:
