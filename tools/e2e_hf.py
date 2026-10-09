@@ -30,6 +30,7 @@ which is the failure mode a gate exists to prevent. `--no-alt-embed` opts out.
     python tools/e2e_hf.py run --chat-model gpt-oss-120b   # split weights, H200, text-only
     python tools/e2e_hf.py run --dry-run        # payloads only, spends nothing
     python tools/e2e_hf.py run --filter e2e_live --no-prebuild
+    python tools/e2e_hf.py run --shard 2/3      # every third smoke, endpoints of its own
     python tools/e2e_hf.py run --reuse-chat e2e-chat-0728-2010   # iterate, no deploy
     python tools/e2e_hf.py sweep --dry-run      # what the sweeper would delete
     python tools/e2e_hf.py delete-run --run-id 0728-2010   # a run's endpoints, by name
@@ -56,9 +57,11 @@ Exit codes: 0 ok · 1 usage/config · 2 the suite or a readiness check failed ·
 
 from __future__ import annotations
 
+import argparse
 import datetime as dt
 import os
 import re
+import shlex
 import subprocess
 import sys
 import threading
@@ -87,11 +90,85 @@ def run_id():
     return time.strftime("%m%d-%H%M%S")
 
 
-def cargo_command(args):
+def cargo_command(args, names=None):
+    """The suite's command: a string for the shell, or — for a shard — an argv
+    list that names its tests exactly. A list, because a shard's names run to
+    kilobytes and `cmd.exe`, which `shell=True` means on Windows, stops at 8191
+    characters."""
     if args.command:
         return args.command
+    if names is not None:
+        return ["cargo", "test", "--", *shlex.split(args.test_args), "--exact", *names]
     filt = f" {args.filter}" if args.filter else ""
     return f"cargo test{filt} -- {args.test_args}"
+
+
+def show_command(command):
+    """A command as the log shows it: a shard's names are listed on their own."""
+    if isinstance(command, str):
+        return command
+    head = command[: command.index("--exact") + 1]
+    return f"{' '.join(head)} <{len(command) - len(head)} names, listed above>"
+
+
+# A shard's number goes into the endpoint names as `-s<i>`, and one digit is
+# what keeps a CI name — `e2e-chat-gemma-<11-digit run>-<attempt>-s<i>` — within
+# the API's 32 characters (`--self-test` checks it).
+SHARD_MAX = 9
+
+
+def parse_shard(text):
+    """`i/N` -> (i, N), 1 <= i <= N <= SHARD_MAX. An argparse `type`."""
+    m = re.fullmatch(r"(\d+)/(\d+)", text.strip())
+    if not m:
+        raise argparse.ArgumentTypeError(f"{text!r} is not i/N, e.g. 2/3")
+    i, n = int(m.group(1)), int(m.group(2))
+    if not 1 <= i <= n <= SHARD_MAX:
+        raise argparse.ArgumentTypeError(f"{text!r}: need 1 <= i <= N <= {SHARD_MAX}")
+    return i, n
+
+
+def sharded(shard):
+    """`1/1` is the whole suite, exactly as no `--shard` at all — so the workflow
+    can always pass one, and a single-job dispatch keeps the names it had."""
+    return shard is not None and shard[1] > 1
+
+
+def run_ident(run, shard):
+    """The identity a run's endpoint names carry. A shard is a run of its own:
+    two shards of one dispatch never share an endpoint, and neither's cleanup —
+    nor its backstop step — can delete the other's."""
+    return f"{run}-s{shard[0]}" if sharded(shard) else run
+
+
+def parse_test_list(text):
+    """The names in `cargo test -- --ignored --list` output (`<name>: test`)."""
+    return [line[: -len(": test")] for line in text.splitlines() if line.endswith(": test")]
+
+
+def shard_of(names, shard):
+    """Every N-th smoke, starting at the i-th, in the listed (libtest) order.
+
+    Round-robin rather than balanced by measured durations: it needs no timing
+    file to keep current, and the order is alphabetical by module path, so the
+    heavy orchestrator smokes — one contiguous block — are dealt evenly across
+    the shards. Each shard keeps libtest's relative order.
+    """
+    i, n = shard
+    return names[i - 1 :: n]
+
+
+def list_tests(args):
+    """The `#[ignore]` smokes `--filter` selects, or None if the listing failed.
+    Runs before any endpoint exists, so a shard learns what it holds for free."""
+    filt = [args.filter] if args.filter else []
+    command = ["cargo", "test", *filt, "--", "--ignored", "--list"]
+    print(f"\n=== list ===\n  $ {' '.join(command)}", flush=True)
+    out = subprocess.run(command, stdout=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+    if out.returncode != 0:
+        print(f"  list exit={out.returncode}", flush=True)
+        return None
+    return parse_test_list(out.stdout)
 
 
 def prebuild(args):
@@ -159,10 +236,10 @@ def run_suite(
         print("  MINDFORK_LIVE_TEXT_ONLY=1 (no projector exists for this model: the 3 vision smokes will SKIP)")
     if split_model:
         print("  MINDFORK_LIVE_SPLIT_MODEL=1 (the weights are split across files)")
-    print(f"  $ {command}\n", flush=True)
+    print(f"  $ {show_command(command)}\n", flush=True)
     started = time.time()
     with KeepAlive(chat_url, [embed_url, alt_embed_url], every=keepalive_every):
-        code = subprocess.run(command, shell=True, env=env).returncode
+        code = subprocess.run(command, shell=isinstance(command, str), env=env).returncode
     elapsed = time.time() - started
     print(f"  suite exit={code} after {elapsed:.0f}s", flush=True)
     return code, elapsed
@@ -288,7 +365,8 @@ class Plan:
     """The run's endpoint names and which of them are wanted."""
 
     def __init__(self, args):
-        self.ident = args.run_id or run_id()
+        self.shard = getattr(args, "shard", None)
+        self.ident = run_ident(args.run_id or run_id(), self.shard)
         self.model = hf.chat_model(args)
         chat, embed, alt = run_names(self.ident, self.model["tag"])
         self.chat_name = args.reuse_chat or chat
@@ -327,7 +405,15 @@ def print_plan(plan, args):
         print(f"  embed endpoint: {plan.embed_name}{'  (reused)' if args.reuse_embed else ''}")
     if plan.want_alt:
         print(f"  alt   endpoint: {plan.alt_name}{'  (reused)' if args.reuse_alt_embed else ''}")
-    print(f"  command: {cargo_command(args)}", flush=True)
+    if sharded(plan.shard):
+        print(f"  shard:          {plan.shard[0]}/{plan.shard[1]} of the smokes `--filter` selects")
+    print(f"  command: {show_plan_command(plan, args)}", flush=True)
+
+
+def show_plan_command(plan, args):
+    if sharded(plan.shard) and not args.command:
+        return f"cargo test -- {args.test_args} --exact <this shard's names, listed after the build>"
+    return cargo_command(args)
 
 
 def dry_run(plan, args):
@@ -336,7 +422,7 @@ def dry_run(plan, args):
         hf.create(hf.apply_overrides(hf.embed_payload(plan.embed_name, args), args.set), True)
     if plan.want_alt:
         hf.create(hf.apply_overrides(alt_payload(plan.alt_name, args), args.set), True)
-    print(f"\n--dry-run: nothing created. Would run:\n  $ {cargo_command(args)}")
+    print(f"\n--dry-run: nothing created. Would run:\n  $ {show_plan_command(plan, args)}")
     return hf.EXIT_OK
 
 
@@ -375,6 +461,19 @@ def bring_up_all(plan, args):
     return chat_url, embed_url, alt_embed_url
 
 
+def choose_shard(args, shard):
+    """This shard's smokes, printed — the log is the only place that says which
+    shard ran what — or None when the listing failed."""
+    listed = list_tests(args)
+    if listed is None:
+        return None
+    names = shard_of(listed, shard)
+    print(f"  {len(listed)} smoke(s) listed; shard {shard[0]}/{shard[1]} runs {len(names)}:", flush=True)
+    for name in names:
+        print(f"    {name}")
+    return names
+
+
 def cmd_run(args):
     started = time.time()
     plan = Plan(args)
@@ -387,6 +486,16 @@ def cmd_run(args):
         print("\nprebuild failed — no endpoint was created, nothing was billed.")
         return hf.EXIT_FAILED
 
+    names = None
+    if sharded(plan.shard) and not args.command:
+        names = choose_shard(args, plan.shard)
+        if names is None:
+            print("\nthe test list failed — no endpoint was created, nothing was billed.")
+            return hf.EXIT_FAILED
+        if not names:
+            print(f"\nshard {plan.shard[0]}/{plan.shard[1]} holds no smokes — nothing to rent.")
+            return hf.EXIT_OK
+
     if not create_endpoints(plan, args):
         return hf.EXIT_FAILED
     urls = bring_up_all(plan, args)
@@ -397,7 +506,7 @@ def cmd_run(args):
     print(f"\n  endpoints ready after {ready - started:.0f}s", flush=True)
 
     code, suite_time = run_suite(
-        cargo_command(args),
+        cargo_command(args, names),
         chat_url,
         embed_url,
         alt_embed_url,
@@ -521,9 +630,11 @@ def cmd_delete_run(args):
     is not proven gone. Then it lists what is left in the namespace — the
     evidence the step used to be limited to.
     """
-    ident = args.run_id.strip()
-    if not ident:
+    if not args.run_id.strip():
         hf.die(hf.EXIT_USAGE, "delete-run needs a non-empty --run-id")
+    # A shard's backstop deletes that shard's endpoints and no other's: its
+    # siblings may still be running their suites.
+    ident = run_ident(args.run_id.strip(), args.shard)
     items = hf.list_endpoints()
     if items is None:
         # Blind, then: ask for every name the run could have used. A DELETE of a
@@ -548,8 +659,10 @@ SWEEPER_WORKFLOW = os.path.join(ROOT, ".github", "workflows", "e2e-sweeper.yml")
 
 
 def _check_names(failures):
-    # A CI id with a two-digit attempt, and the local timestamp form.
-    for ident in ("99999999999-12", "1009-143015"):
+    # A CI id with a two-digit attempt and the local timestamp form, each also as
+    # the highest shard: the longest names the gate can make.
+    top = (SHARD_MAX, SHARD_MAX)
+    for ident in ("99999999999-12", "1009-143015", run_ident("99999999999-12", top), run_ident("1009-143015", top)):
         for key, model in hf.CHAT_MODELS.items():
             names = run_names(ident, model["tag"])
             if len(set(names)) != 3:
@@ -582,6 +695,46 @@ def _check_run_endpoints(failures):
         failures.append(f"delete-run: chose {got}, want {want}")
     if run_endpoints(ident, ["e2e-embed-37947267239", "e2e-chat-gemma-7947267239-1"]):
         failures.append("delete-run: chose a name that only resembles the run's")
+    # A shard's backstop runs while its siblings may still be using theirs.
+    family = [run_names(run_ident(ident, s), "gemma") for s in (None, (1, 3), (2, 3), (3, 3))]
+    listed = [name for names in family for name in names]
+    got = run_endpoints(run_ident(ident, (2, 3)), listed)
+    if got != list(family[2]):
+        failures.append(f"delete-run --shard 2/3: chose {got}, want {list(family[2])}")
+
+
+def _check_shards(failures):
+    for text, want in (("2/3", (2, 3)), (" 1/1 ", (1, 1)), (f"{SHARD_MAX}/{SHARD_MAX}", (SHARD_MAX, SHARD_MAX))):
+        try:
+            if parse_shard(text) != want:
+                failures.append(f"shard: {text!r} -> {parse_shard(text)}, want {want}")
+        except argparse.ArgumentTypeError as e:
+            failures.append(f"shard: {text!r} refused: {e}")
+    for text in ("0/3", "4/3", "3", f"1/{SHARD_MAX + 1}", "a/b", "2/3/4", "-1/3"):
+        try:
+            parse_shard(text)
+            failures.append(f"shard: {text!r} accepted")
+        except argparse.ArgumentTypeError:
+            pass
+    if run_ident("r", None) != "r" or run_ident("r", (1, 1)) != "r" or run_ident("r", (2, 3)) != "r-s2":
+        failures.append("shard: 1/1 must keep the unsharded names, 2/3 must add -s2")
+    # Every smoke in exactly one shard, the shards within one of each other in
+    # size, each in libtest's order — for every N, over a list that does not
+    # divide evenly.
+    names = [f"m{i // 70}::t{i:03}" for i in range(250)]
+    for n in range(1, SHARD_MAX + 1):
+        parts = [shard_of(names, (i, n)) for i in range(1, n + 1)]
+        flat = sorted(x for part in parts for x in part)
+        sizes = [len(part) for part in parts]
+        if flat != names or max(sizes) - min(sizes) > 1 or any(part != sorted(part) for part in parts):
+            failures.append(f"shard: N={n} does not deal {len(names)} smokes once each, evenly, in order")
+    listing = "a::b::one: test\nall_the_rest: test\nc::bench_x: benchmark\n\n2 tests, 1 benchmark\n"
+    if parse_test_list(listing) != ["a::b::one", "all_the_rest"]:
+        failures.append(f"shard: the --list parse gave {parse_test_list(listing)}")
+    command = cargo_command(argparse.Namespace(command="", test_args=DEFAULT_TEST_ARGS, filter="x"), ["a::b", "c"])
+    want = ["cargo", "test", "--", "--ignored", "--nocapture", "--test-threads=1", "--exact", "a::b", "c"]
+    if command != want:
+        failures.append(f"shard: the suite's argv is {command}, want {want}")
 
 
 def _check_sweep(failures):
@@ -632,6 +785,15 @@ def _check_workflows(failures):
     backstop = [s for s in steps if "tools/e2e_hf.py delete-run" in s]
     if len(backstop) != 1 or "if: always()" not in backstop[0]:
         failures.append("workflow: no `if: always()` step runs `delete-run`")
+    # The shards: the run and its backstop must name the same shard, or the
+    # backstop derives the unsharded names and deletes nothing — in silence.
+    shard_arg = '--shard "${SHARD}/${SHARDS}"'
+    runner = [s for s in steps if "exec python3 tools/e2e_hf.py" in s]
+    if not runner or shard_arg not in runner[0] or not backstop or shard_arg not in backstop[0]:
+        failures.append(f"workflow: the run and its backstop do not both pass {shard_arg}")
+    # One shard's red must not cancel the others: they hold endpoints of their own.
+    if "fail-fast: false" not in live:
+        failures.append("workflow: the shard matrix does not set fail-fast: false")
 
 
 def self_test():
@@ -640,6 +802,7 @@ def self_test():
     failures = []
     _check_names(failures)
     _check_run_endpoints(failures)
+    _check_shards(failures)
     _check_sweep(failures)
     _check_workflows(failures)
     for line in failures:
@@ -664,6 +827,13 @@ def main():
     p.add_argument("--test-args", default=DEFAULT_TEST_ARGS, help="args after `--` (single-threaded is required)")
     p.add_argument("--command", default="", help="run this instead of the composed cargo command")
     p.add_argument("--no-prebuild", action="store_true", help="do not `cargo test --no-run` before deploying")
+    p.add_argument(
+        "--shard",
+        type=parse_shard,
+        default=None,
+        metavar="I/N",
+        help="run every N-th smoke from the I-th, on endpoints of this shard's own (1/1 = all)",
+    )
     p.add_argument("--no-embed", action="store_true", help="chat endpoint only (memory smokes then skip)")
     p.add_argument(
         "--no-alt-embed",
@@ -690,6 +860,7 @@ def main():
 
     p = sub.add_parser("delete-run", help="delete the endpoints one run created, by their names")
     p.add_argument("--run-id", required=True, help="the run's identity, as `run --run-id` was given it")
+    p.add_argument("--shard", type=parse_shard, default=None, metavar="I/N", help="as `run --shard` was given it")
     p.set_defaults(fn=cmd_delete_run)
 
     hf.add_shared_commands(sub)
