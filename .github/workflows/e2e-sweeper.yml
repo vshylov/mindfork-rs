@@ -1,9 +1,11 @@
 # Backstop for the live e2e gate: delete orphaned `e2e-*` Inference Endpoints.
 #
 # The runner (tools/e2e_hf.py) deletes its own endpoints from `finally`, from
-# `atexit` and from its SIGINT/SIGTERM handler, and verifies the deletion. This
-# workflow catches the one leak that cannot: a create that succeeded while its
-# response was lost, so no name was ever recorded on the runner's side.
+# `atexit` and from its SIGINT/SIGTERM handler, and verifies the deletion; the
+# live workflow's last step then deletes the run's endpoints by name whatever
+# became of the runner (`delete-run`). This workflow catches what neither could:
+# an endpoint left while the API was unreachable, a runner machine lost with its
+# job, a local run killed outright.
 #
 # HF's auto scale-to-zero already bounds the *money* at one idle window; the
 # sweeper bounds the *time* and reclaims endpoint quota, which scale-to-zero

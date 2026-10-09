@@ -73,9 +73,11 @@ jobs:
     # Budget: build (a few minutes cold, seconds cached), ~1-2 min deploy,
     # ~17 min suite. The number itself is load-bearing in one direction: it must
     # stay **below the sweeper's 90-minute threshold**, or the sweeper could
-    # delete the endpoints of a run that is still using them. On timeout the job
-    # is signalled, so the runner still deletes its own endpoints; the 15-minute
-    # scale-to-zero window is what bounds the cost if even that fails.
+    # delete the endpoints of a run that is still using them
+    # (`tools/e2e_hf.py --self-test` checks it). On timeout the job is cancelled:
+    # the runner — `exec`ed below, so the signal is its own — deletes its
+    # endpoints, and the backstop step at the end deletes whatever it did not.
+    # The 15-minute scale-to-zero window bounds the cost if even both fail.
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -104,6 +106,12 @@ jobs:
       # `${{ inputs.filter }}` inside a `run:` is a shell-injection shape, and
       # "only people with write access can dispatch it" is not the layer that
       # should be holding that.
+      #
+      # The runner is `exec`ed. A cancellation — a timeout is one — signals the
+      # step's own process and no other: before the `exec`, that was this bash,
+      # and the Python runner under it never heard of it. CI run 37947267239 hit
+      # the timeout, bash died, and the runner was killed as an orphan at the end
+      # of the job with all three endpoints still running.
       - name: Run the suite against fresh endpoints
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -122,14 +130,18 @@ jobs:
           if [ -n "$FILTER" ]; then args+=(--filter "$FILTER"); fi
           if [ "$NO_EMBED" = "true" ]; then args+=(--no-embed); fi
           if [ "$NO_ALT_EMBED" = "true" ]; then args+=(--no-alt-embed); fi
-          python3 tools/e2e_hf.py "${args[@]}"
+          exec python3 tools/e2e_hf.py "${args[@]}"
 
-      # Evidence, not cleanup: the runner deletes its own endpoints from
-      # `finally` and from its SIGTERM handler. This prints what actually
-      # survived — including after a cancellation, which is the case worth
-      # seeing. Anything left here is the sweeper's job.
-      - name: Endpoints still alive
+      # The backstop. The runner deletes its own endpoints from `finally`,
+      # `atexit` and its signal handler — while it is alive to. This step needs
+      # nothing from the one before but the run id: the names are derived from
+      # it exactly as the create derived them, only those names are deleted, and
+      # the deletion is verified (exit 3 if not). It then lists what is left in
+      # the namespace — all this step did until CI run 37947267239 showed three
+      # endpoints still running here and nothing deleting them.
+      - name: Delete this run's endpoints (backstop)
         if: always()
+        timeout-minutes: 5
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: python3 tools/e2e_hf.py list
+        run: python3 tools/e2e_hf.py delete-run --run-id "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
