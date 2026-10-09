@@ -146,6 +146,19 @@ jobs:
       # Needs no toolchain, so it runs here.
       - name: A list's scroll state has one implementation
         run: python3 tools/list_scroll_check.py --list
+      # architecture.md §2 calls one dependency direction the key FSD invariant —
+      # `screens`/`widgets` never import `app` — and nothing checked it: by
+      # 2026-10-09 the chat and tasks screens imported eleven event payload types
+      # from `app::events`, each written by copying the neighbour that had it,
+      # for seven weeks. The types moved down; this keeps every layer naming only
+      # the layers below it (the bottom pair, `entities` and `shared`, see each
+      # other; test code and comments are exempt). Needs no toolchain, so it runs
+      # here, and its own arms — a planted leak in each direction — run against
+      # fixtures (docs/research/fsd-layer-gate.md).
+      - name: FSD layers import downward only
+        run: python3 tools/layer_check.py --list
+      - name: The layer gate's own arms
+        run: python3 tools/layer_check.py --self-test
       # The Windows installer shows DISCLAIMER.md on a wizard page, and Inno Setup
       # renders only text or RTF — so that page reads a generated copy of the file.
       # Left ungated, an edit to the disclaimer would leave the installer presenting
