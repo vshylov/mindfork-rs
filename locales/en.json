@@ -12,7 +12,8 @@
   "prompt.attachments.end_excerpt": "{open} to read the rest of {name}, call attachment_read(name, page) for pages 1..{pages}; this file is not reachable through any other tool {close}",
   "prompt.attachments.end_excerpt_search": "{open} to find a place in {name} by meaning, call attachment_search(query); to read a specific page, attachment_read(name, page) for pages 1..{pages}; this file is not reachable through any other tool {close}",
   "prompt.attachments.end": "{open} end: {name} {close}",
-  "prompt.images.label": "Image #{n} — \"{name}\":",
+  "prompt.round_limit_final": "[The round limit ({max_rounds}) is reached and this turn has no tools left: do not call one, and do not write a call out as text. Answer the user now, in the language of their message, from what the rounds above returned, and say what is left undone.]",
+  "prompt.images.label":"Image #{n} — \"{name}\":",
   "prompt.images.withheld": "[{image} is not included: the current model does not accept images. You have not seen it — do not describe what it shows; say that you cannot see it.]",
   "prompt.images.withheld_unnamed": "An image",
   "prompt.title.system": [
@@ -641,6 +642,8 @@
   "tool.run_dialogue.director_label": "the director",
   "tool.run_dialogue.result.summary": "Summary: {summary}",
   "tool.run_dialogue.result.transcript": "Transcript: {address}",
+  "tool.run_dialogue.result.already_staged": "This scene was already staged in this turn with these same arguments, and its ending is in that call's result above; it was not staged again. Answer the user from that ending — or, if they asked for a different scene, change the scene, the direction or the personas.",
+  "tool.run_dialogue.result.transcript_unreadable":"Transcript: {address}. The scene is over and its lines are kept there for the user to read. No tool you have reads them, and staging the scene again would not show them to you either: answer the user from the ending above.",
   "tool.run_dialogue.verdict.continue": "Let the dialogue proceed to the next line.",
   "tool.run_dialogue.verdict.stop": "End the dialogue: the ending your direction describes has been reached, or the scene cannot get there.",
   "tool.run_dialogue.verdict.stop_reason": "Why the dialogue is over.",

@@ -5774,6 +5774,42 @@ async fn continue_e2e_live() {
     );
 }
 
+/// The round limit's final round is answered in prose (spec §6.3). It sends
+/// the request that just produced a call, less the tool list — and on the live
+/// gate Gemma 4 answered exactly that with the next call written out as text,
+/// which became the user's reply (docs/research/e2e-gate-budget.md §7). One
+/// round allowed, an ask that needs two: the second call is refused and the
+/// final round must say so in words.
+#[tokio::test]
+#[ignore = "requires a live chat server (MINDFORK_ENGINE_URL)"]
+async fn the_round_limit_ends_in_prose_e2e_live() {
+    let config = AppConfig {
+        max_tool_rounds: 1,
+        ..AppConfig::default()
+    };
+    let Some((_dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live_cfg(config) else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    narrow_profile_to(&cmd_tx, &mut evt_rx, vec!["get_sampling".into()]).await;
+    let ask = "Check the current sampling settings with get_sampling. Then call \
+        get_sampling a second time, in a separate step, to make sure nothing \
+        changed, and only then tell me the temperature.";
+    let (reply, calls) = run_turn_capture(&cmd_tx, &mut evt_rx, ask).await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    eprintln!("calls: {}; reply: {reply}", calls.len());
+    assert!(
+        !calls.is_empty(),
+        "the model never called get_sampling, so the limit was never reached"
+    );
+    assert!(!reply.trim().is_empty(), "the final round said nothing");
+    assert!(
+        !reply.contains("tool_call") && !reply.contains("call:get_sampling"),
+        "the final round wrote a tool call out as text: {reply}"
+    );
+}
+
 /// `run_dialogue` stage-1 go/no-go (spec §9.13,
 /// docs/research/two-agent-dialogue.md §6): asked for a short finite scene,
 /// the model stages it through the tool — the probe's café fixture graduated
@@ -5798,21 +5834,40 @@ async fn dialogue_e2e_live() {
         asking to fix it). Tell each persona to reply with one spoken line \
         only, no narration. Direct it yourself and stop once the mix-up is \
         resolved and they part on good terms; cap it at 10 lines.";
-    let (reply, calls) = run_turn_capture(&cmd_tx, &mut evt_rx, ask).await;
+    let (reply, calls) = run_turn_capture_args(&cmd_tx, &mut evt_rx, ask).await;
     eprintln!(
         "parent reply: {}",
         reply.chars().take(300).collect::<String>()
     );
+    let staged = calls.iter().filter(|(n, _, _)| n == "run_dialogue").count();
+    eprintln!("run_dialogue calls: {staged}");
     // The tool was actually exercised (lessons §2 — a run that never calls it
     // measures nothing).
     assert!(
-        calls.iter().any(|(n, _)| n == "run_dialogue"),
+        staged > 0,
         "the model never called run_dialogue; calls: {calls:?}"
+    );
+    // The reply is prose, not the next call written out: on 2026-10-09 this
+    // smoke staged the same scene nine times on Gemma 4 and ended on a raw
+    // `<|tool_call>call:run_dialogue{…`, green all the while
+    // (docs/research/e2e-gate-budget.md §7).
+    assert!(
+        !reply.contains("tool_call") && !reply.contains("call:run_dialogue"),
+        "the reply is a tool call written as text: {reply}"
     );
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 
     let chat = super::subagent::load(dir.path(), chat_id);
+    // One scene was asked for and one ran: a repeat with the same arguments is
+    // answered without a second scene, whatever the model makes of the result.
+    let runs = chat
+        .messages
+        .iter()
+        .flat_map(|m| m.tool_calls.iter())
+        .filter(|r| r.name == "run_dialogue" && r.subagent.is_some())
+        .count();
+    assert_eq!(runs, 1, "{runs} scenes ran for one asked for");
     let record = chat
         .messages
         .iter()

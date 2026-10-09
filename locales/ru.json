@@ -12,7 +12,8 @@
   "prompt.attachments.end_excerpt": "{open} чтобы прочитать остальное {name}, вызывай attachment_read(name, page) для страниц 1..{pages}; другими инструментами этот файл недоступен {close}",
   "prompt.attachments.end_excerpt_search": "{open} чтобы найти нужное место в {name} по смыслу, вызывай attachment_search(query); чтобы прочитать конкретную страницу — attachment_read(name, page) для страниц 1..{pages}; другими инструментами этот файл недоступен {close}",
   "prompt.attachments.end": "{open} конец: {name} {close}",
-  "prompt.images.label": "Изображение №{n} — «{name}»:",
+  "prompt.round_limit_final": "[Достигнут лимит раундов ({max_rounds}), инструментов в этом ходе больше нет: не вызывай их и не выписывай вызов текстом. Ответь пользователю сейчас, на языке его сообщения, по тому, что вернули раунды выше, и скажи, что осталось несделанным.]",
+  "prompt.images.label":"Изображение №{n} — «{name}»:",
   "prompt.images.withheld": "[{image} не передано: текущая модель не принимает изображения. Ты его не видел — не описывай, что на нём; скажи, что не можешь его увидеть.]",
   "prompt.images.withheld_unnamed": "Изображение",
   "prompt.title.system": [
@@ -642,6 +643,8 @@
   "tool.run_dialogue.director_label": "режиссёра",
   "tool.run_dialogue.result.summary": "Итог: {summary}",
   "tool.run_dialogue.result.transcript": "Транскрипт: {address}",
+  "tool.run_dialogue.result.already_staged": "Эта сцена уже поставлена в этом ходе с теми же аргументами, и её итог — в результате того вызова выше; повторно она не ставилась. Ответь пользователю по этому итогу, а если он просил другую сцену — измени сцену, режиссуру или персонажей.",
+  "tool.run_dialogue.result.transcript_unreadable":"Транскрипт: {address}. Сцена окончена, её реплики хранятся там, и пользователь может их прочитать. Ни один твой инструмент их не читает, и повторная постановка сцены тоже не покажет их тебе: отвечай пользователю по итогу выше.",
   "tool.run_dialogue.verdict.continue": "Продолжить диалог следующей репликой.",
   "tool.run_dialogue.verdict.stop": "Завершить диалог: финал из твоего брифа достигнут, либо сцене до него не дойти.",
   "tool.run_dialogue.verdict.stop_reason": "Почему диалог окончен.",

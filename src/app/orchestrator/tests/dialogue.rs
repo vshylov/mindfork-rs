@@ -7,6 +7,7 @@
 use super::subagent::{Script, call, load, reopen, run_turn, text};
 use super::*;
 use crate::entities::subagent::{RunKind, RunOutcome};
+use crate::features::profiles::ProfileEdit;
 use crate::shared::api::contract::ToolCallDelta;
 
 /// A checkpoint reply carrying one or more verdict calls.
@@ -517,4 +518,182 @@ async fn transcript_opens_with_participant_names_and_composed_persona() {
     assert_eq!(names.user, "Jonas");
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
+}
+
+/// [`run_turn`] on a profile narrowed to `tools` — the set the turn offers.
+async fn run_turn_with_tools(
+    scripts: Vec<Script>,
+    tools: Vec<crate::entities::profile::ToolId>,
+) -> (
+    tempfile::TempDir,
+    Arc<super::subagent::ScriptRecorder>,
+    Uuid,
+) {
+    let backend = super::subagent::ScriptRecorder::new(scripts);
+    let (dir, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(
+        Some(backend.clone() as Arc<dyn EngineBackend>),
+        no_auto_cfg(),
+    );
+    let profile = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ProfileList(_)))
+        .await
+        .and_then(|e| match e {
+            AppEvent::ProfileList(ps) => ps.first().map(|p| p.id),
+            _ => None,
+        })
+        .unwrap();
+    let chat_id = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .and_then(|e| match e {
+            AppEvent::ChatActivated { id, .. } => Some(id),
+            _ => None,
+        })
+        .unwrap();
+    cmd_tx
+        .send(AppCommand::UpdateProfile {
+            id: profile,
+            edit: Box::new(ProfileEdit {
+                enabled_tools: Some(tools),
+                ..Default::default()
+            }),
+        })
+        .unwrap();
+    cmd_tx
+        .send(AppCommand::SendMessage("stage it".into()))
+        .unwrap();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+        .await
+        .unwrap();
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    (dir, backend, chat_id)
+}
+
+/// A two-line scene with no checkpoint: the cap ends it, which is enough to
+/// land a run and produce a result.
+const SHORT: &str = r#"{"a":{"system_message":"x"},"b":{"system_message":"y"},
+    "opening":{"text":"go"},"max_messages":2,"moderate_every":2}"#;
+
+fn dialogue_results(chat: &Chat) -> Vec<&crate::entities::message::ToolCallRecord> {
+    chat.messages
+        .iter()
+        .flat_map(|m| m.tool_calls.iter())
+        .filter(|r| r.name == "run_dialogue")
+        .collect()
+}
+
+/// The address is offered as a route only where the turn holds the tool that
+/// reads it. Without `chat_read`, Gemma 4 took "the scene ended" plus an
+/// address it could not open as a reason to stage the identical scene again,
+/// eight and nine times (docs/research/e2e-gate-budget.md §7): the result says
+/// instead that the lines stay with the user and that staging again would not
+/// hand them over.
+#[tokio::test]
+async fn the_transcript_is_offered_as_a_route_only_with_chat_read() {
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::default());
+    for (tools, readable) in [
+        (vec!["run_dialogue".into()], false),
+        (vec!["run_dialogue".into(), "chat_read".into()], true),
+    ] {
+        let (dir, backend, chat_id) = run_turn_with_tools(
+            vec![
+                call("c1", "run_dialogue", SHORT),
+                text("line one"),
+                text("line two"),
+                text("done"),
+            ],
+            tools,
+        )
+        .await;
+        let offered: Vec<String> = backend.requests()[0]
+            .tools
+            .iter()
+            .map(|t| t.name.to_string())
+            .collect();
+        assert_eq!(
+            offered.iter().any(|t| t == "chat_read"),
+            readable,
+            "{offered:?}"
+        );
+        let chat = load(dir.path(), chat_id);
+        let record = dialogue_results(&chat)[0];
+        let run = record.subagent.as_deref().expect("the scene ran");
+        let key = if readable {
+            "tool.run_dialogue.result.transcript"
+        } else {
+            "tool.run_dialogue.result.transcript_unreadable"
+        };
+        let want = loc.tf(
+            key,
+            &[("address", &crate::features::chat_links::uri(run.id))],
+        );
+        let result = record.result.as_deref().unwrap();
+        assert!(
+            result.ends_with(&want),
+            "chat_read offered: {readable}; {result}"
+        );
+    }
+}
+
+/// An identical scene is not staged a second time in one turn: the repeat
+/// costs one cheap round and is answered with what to do instead, and the
+/// engine sees no second scene. A *different* scene still runs.
+#[tokio::test]
+async fn an_identical_scene_is_not_staged_twice_in_a_turn() {
+    let other = SHORT.replace("\"go\"", "\"again, differently\"");
+    let (dir, backend, chat_id) = run_turn_with_tools(
+        vec![
+            call("c1", "run_dialogue", SHORT),
+            text("line one"),
+            text("line two"),
+            call("c2", "run_dialogue", SHORT),
+            call("c3", "run_dialogue", &other),
+            text("line three"),
+            text("line four"),
+            text("done"),
+        ],
+        vec!["run_dialogue".into()],
+    )
+    .await;
+    let chat = load(dir.path(), chat_id);
+    let records = dialogue_results(&chat);
+    assert_eq!(records.len(), 3);
+    assert!(records[0].subagent.is_some(), "the first scene ran");
+    assert!(records[1].subagent.is_none(), "the repeat did not run");
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::default());
+    assert_eq!(
+        records[1].result.as_deref(),
+        Some(loc.t("tool.run_dialogue.result.already_staged"))
+    );
+    assert!(
+        records[2].subagent.is_some(),
+        "a different scene still runs"
+    );
+    // Parent, two lines, parent (the refused repeat), parent, two lines, parent.
+    assert_eq!(backend.requests().len(), 8);
+    assert!(chat.messages.iter().any(|m| m.text == "done"));
+}
+
+/// A malformed scene is refused as malformed every time — "already staged" is
+/// for a scene that ran.
+#[tokio::test]
+async fn a_refused_scene_repeated_is_refused_again_as_itself() {
+    let bad = r#"{"a":{"system_message":""},"b":{"system_message":"y"},"opening":{"text":"go"}}"#;
+    let (dir, _backend, chat_id) = run_turn_with_tools(
+        vec![
+            call("c1", "run_dialogue", bad),
+            call("c2", "run_dialogue", bad),
+            text("done"),
+        ],
+        vec!["run_dialogue".into()],
+    )
+    .await;
+    let chat = load(dir.path(), chat_id);
+    let records = dialogue_results(&chat);
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0].result, records[1].result);
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::default());
+    assert_ne!(
+        records[1].result.as_deref(),
+        Some(loc.t("tool.run_dialogue.result.already_staged"))
+    );
 }

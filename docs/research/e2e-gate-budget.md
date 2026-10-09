@@ -1,7 +1,8 @@
 # The live gate outgrew its 45 minutes — and a cancelled run kept its GPUs
 
 **Status:** decided 2026-10-09 (the owner's decision, §4). Stage 1 —
-`fix/e2e-cancel-cleanup`; stage 2 — sharding; stage 3 — the dialogue loop.
+`fix/e2e-cancel-cleanup`; stage 2 — sharding; stage 3 — the dialogue loop
+(`fix/run-dialogue-repeat`, §7).
 
 The remote live gate ([docs/history/remote-e2e-hf.md](../history/remote-e2e-hf.md))
 rents a llama.cpp server and two embedders as HF Inference Endpoints and runs
@@ -119,8 +120,9 @@ three leftover endpoints of run 37947267239 were deleted the same day.
 
 1. **The cleanup survives a cancelled job** (`fix/e2e-cancel-cleanup`) — §6.
 2. **Shards** (`--shard i/N`, the workflow matrix) — designed in its own PR.
-3. **The dialogue loop** — why the parent calls `run_dialogue` again after a
-   landed dialogue, and the raw tool call it ends with.
+3. **The dialogue loop** (`fix/run-dialogue-repeat`) — why the parent calls
+   `run_dialogue` again after a landed dialogue, and the raw tool call it ends
+   with — §7.
 
 ## 6. Stage 1 — design and outcome
 
@@ -161,3 +163,50 @@ Seen on the way, for stage 2: on the evening of 2026-10-09 one L40S create
 failed to start (`Endpoint failed to start`, 135 s) and the next took **604 s**
 to be scheduled, its server then loading in 4 s — HF's capacity, not the image.
 Shards multiply that exposure, so a shard whose endpoint fails must fail alone.
+
+## 7. Stage 3 — the dialogue loop: two defects
+
+Reproduced on the gate's own weights (`gemma-4-31B_q4_0-it.gguf` + its
+projector, `llama-server -c 16384 -np 1 --jinja`, an RTX 4090):
+`dialogue_e2e_live` made **eight** `run_dialogue` calls with identical
+arguments in 528 s and ended on the same raw `<|tool_call>call:run_dialogue{…`.
+Every call's scene had landed; every result said so.
+
+**D1 — the result pointed at a door the turn had no key for.** It ends with
+the transcript's `chat://` address, "read back with `chat_read`" (spec §9.13) —
+and the smoke narrows the profile to `run_dialogue` alone, so no `chat_read`.
+The control: the same smoke with `chat_read` added made **one** call in 64 s
+and answered. The address is now named as a route only where the staging turn
+offers `chat_read`; otherwise the result says the lines stay in the scene's
+chat for the user, no tool of the caller's reads them, and staging the scene
+again would not hand them over (lessons §4: only advertise what exists). That
+took the smoke to 1 and 3 calls in two runs — better, not deterministic.
+
+So **an identical scene is not staged twice in one turn**: a call whose
+arguments equal those of a scene that already ran in the turn gets a result
+saying so — where its ending is, what to change for a different scene — and no
+scene. Only a scene that ran counts, so a malformed call repeated is refused as
+itself. Three runs after: exactly one scene each, 1, 2 and 6 calls, 57–148 s —
+the repeats are one round each now, not six requests and a minute of GPU.
+
+**D2 — the round limit's final round wrote a call out as text.** When the
+limit fires, the loop discards the round's calls and re-sends the request
+that produced them, less the tool list. Nothing told the model the tools were
+gone, and Gemma 4 answered the same request with the same call — as text,
+which was the user's reply. A new smoke, `the_round_limit_ends_in_prose_e2e_live`
+(one round allowed, an ask that needs two): **3 of 3** replies were
+`<|tool_call>call:get_sampling{}<tool_call|>` without a note. The final round's
+last tool result now carries one, on the wire only: no tools are left, do not
+call or write one out, answer from what the rounds returned, in the language of
+the user's message. On the last turn rather than as a `user` turn of its own,
+because a template that enforces alternation refuses a user turn after the
+tool results. **3 of 3** in prose after; the first version of the note, without
+the language clause, was answered in the profile's language two times of three
+(the harness's profile is Russian, the ask English), and the clause fixed that,
+3 of 3.
+
+`background_dialogue_e2e_live`, 137 s on the gate, took 79 s locally after.
+Unit tests: the route named only with `chat_read`, the repeat answered without
+a scene, a refused scene refused as itself, the final request's note on the
+last tool result and nowhere in the chat, and where the note goes for each
+shape of history — each red against a mutant of its fix.

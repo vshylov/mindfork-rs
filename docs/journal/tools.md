@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (86)
+## Entries (87)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -98,6 +98,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a streamed MP3, and a decoder that trusted its first frame (done)
 - Post-M9: `youtube_watch` with a provider that reads the whole video (done)
 - Post-M9: `youtube_watch` on a Gemini model without the `minimal` thinking level (done)
+- Post-M9: a dialogue staged once, and a round limit that ends in prose (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -5704,3 +5705,42 @@ closed.
 
 **Gates**: fmt / clippy / test green — **3829 unit tests, 248 `#[ignore]`**
 (+5 unit tests, +2 live smokes).
+
+### Post-M9: a dialogue staged once, and a round limit that ends in prose (done)
+
+Found by the owner's full dispatch of the live gate on 2026-10-09 (run 37947267239,
+Gemma 4 31B on an L40S): `dialogue_e2e_live` took **643 s** — more than a quarter of
+the suite's finished part — because the parent staged the same scene **nine** times and
+ended on a raw `<|tool_call>call:run_dialogue{…` as its reply. The smoke stayed green:
+its first dialogue had landed. Measurements and design:
+[docs/research/e2e-gate-budget.md](../research/e2e-gate-budget.md) §7.
+
+- **Reproduced locally on the gate's own weights** (RTX 4090, `-c 16384 -np 1`): eight
+  identical calls, 528 s. With `chat_read` added to the smoke's narrowed profile: one
+  call, 64 s. The result's `chat://` address was a route only for a turn holding
+  `chat_read` — lessons §4's "only advertise what exists", a sixth instance.
+- **The result** names the address as a route only where `chat_read` is offered
+  (`DialogueCtx::transcript_readable`, captured at the call, background scenes too);
+  otherwise it says the lines stay with the user and staging again would not hand them
+  over. 8–9 calls became 1 and 3.
+- **One scene per arguments per turn**: a call identical to one whose scene ran in the
+  turn is answered without a scene (`TurnLoop::staged`). A malformed call is not
+  recorded, so its repeat is refused as itself. After: exactly one scene in each of
+  three runs, 57–148 s.
+- **The round limit's final round** re-sent the request that had just produced a call,
+  less the tool list, and Gemma 4 wrote the call out as text — **3 of 3** on a new smoke,
+  `the_round_limit_ends_in_prose_e2e_live`. The last tool result now carries a note, on
+  the wire only (`note_on_last`): no tools are left, answer in the user's language. A
+  `user` turn of its own after the tool results would break a template that enforces
+  alternation. **3 of 3** in prose after; the language clause was added when the first
+  version was answered in the (Russian) profile's language two times of three.
+- **Smoke — GO** on Gemma 4 31B Q4_0 (local `llama-server`, the gate's GGUF):
+  `dialogue_e2e_live` ×3 (now asserting one scene and a reply that is not a call),
+  `background_dialogue_e2e_live` (79 s, was 137 s on the gate),
+  `the_round_limit_ends_in_prose_e2e_live` ×3, and its control arm red ×3.
+
+**Docs.** spec §6.3 (the final round), §9.13 (the result, one scene per arguments);
+CHANGELOG (Fixed); the research §7; lessons §9.
+
+**Gates**: fmt / clippy / test green — **3999 unit tests, 258 `#[ignore]`** (+5 unit
+tests, +1 live smoke).

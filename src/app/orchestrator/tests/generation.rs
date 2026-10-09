@@ -681,6 +681,107 @@ async fn round_limit_forces_final_synthesis_without_tools() {
     assert_eq!(last.text, "Итог по собранному материалу.");
 }
 
+/// The final round says what it took away. Its request is the one that just
+/// produced a call, less the tool list, and Gemma 4 answered that with the
+/// same call written out as text — a raw `<|tool_call>` as the user's reply
+/// (docs/research/e2e-gate-budget.md §7). The note rides on the last tool
+/// result, on the wire only: the stored chat never carries it.
+#[tokio::test]
+async fn the_final_round_tells_the_model_the_tools_are_gone() {
+    use super::subagent::{ScriptRecorder, call, text};
+    let backend = ScriptRecorder::new(vec![
+        call("c1", "get_sampling", "{}"),
+        call("c2", "get_sampling", "{}"),
+        text("Summary."),
+    ]);
+    let config = AppConfig {
+        max_tool_rounds: 1,
+        ..no_auto_cfg()
+    };
+    let (dir, cmd_tx, mut evt_rx, handle) =
+        spawn_orch_cfg(Some(backend.clone() as Arc<dyn EngineBackend>), config);
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    cmd_tx
+        .send(AppCommand::SendMessage("gather and sum up".into()))
+        .unwrap();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+        .await
+        .unwrap();
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::default());
+    let note = loc.tf("prompt.round_limit_final", &[("max_rounds", "1")]);
+    let reqs = backend.requests();
+    assert_eq!(
+        reqs.len(),
+        3,
+        "round 1, the refused round 2, the final round"
+    );
+    // The refused round's request carried the tools and no note…
+    assert!(!reqs[1].tools.is_empty());
+    assert!(!reqs[1].messages.last().unwrap().content.contains(&note));
+    // …the final one has neither tools nor silence about it.
+    let fin = &reqs[2];
+    assert!(fin.tools.is_empty());
+    let last = fin.messages.last().unwrap();
+    assert_eq!(last.role, crate::shared::api::contract::ApiRole::Tool);
+    assert!(last.content.ends_with(&note), "{}", last.content);
+    assert_eq!(
+        fin.messages.len(),
+        reqs[1].messages.len(),
+        "no turn of its own"
+    );
+
+    let chat = Storage::open(Paths::with_root(dir.path()))
+        .unwrap()
+        .json()
+        .load_chats()
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    assert!(
+        chat.messages.iter().all(|m| !m.text.contains(&note)),
+        "the note is the wire's, not the chat's"
+    );
+    assert_eq!(chat.messages.last().unwrap().text, "Summary.");
+}
+
+/// Where the note goes: onto a trailing `tool` or `user` turn, never as a
+/// `user` turn after one — a template that enforces alternation refuses that —
+/// and as a turn of its own only when the history ends otherwise.
+#[test]
+fn the_final_note_joins_the_last_turn_it_can() {
+    use crate::app::orchestrator::generation::note_on_last;
+    use crate::shared::api::contract::{ApiMessage, ApiRole};
+    let mut tool = vec![ApiMessage::user("q"), ApiMessage::tool("c1", "result")];
+    note_on_last(&mut tool, "NOTE");
+    assert_eq!(tool.len(), 2);
+    assert_eq!(tool[1].content, "result\n\nNOTE");
+
+    let mut user = vec![ApiMessage::user("q")];
+    note_on_last(&mut user, "NOTE");
+    assert_eq!(user.len(), 1);
+    assert_eq!(user[0].content, "q\n\nNOTE");
+
+    let mut empty_tool = vec![ApiMessage::tool("c1", "")];
+    note_on_last(&mut empty_tool, "NOTE");
+    assert_eq!(empty_tool[0].content, "NOTE");
+
+    let mut assistant = vec![ApiMessage::user("q"), ApiMessage::assistant("a")];
+    note_on_last(&mut assistant, "NOTE");
+    assert_eq!(assistant.len(), 3);
+    assert_eq!(assistant[2].role, ApiRole::User);
+    assert_eq!(assistant[2].content, "NOTE");
+
+    let mut none = Vec::new();
+    note_on_last(&mut none, "NOTE");
+    assert_eq!(none.len(), 1);
+}
+
 #[tokio::test]
 async fn followup_tool_makes_two_assistant_messages() {
     use crate::shared::api::contract::ToolCallDelta;

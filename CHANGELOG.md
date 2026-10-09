@@ -14,6 +14,19 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A turn that runs out of tool rounds ends in an answer, not in code.** When
+  the round limit was reached, some local models — Gemma 4 among them — wrote
+  their next tool call out as text, and that raw `<|tool_call>…` was the reply.
+  The last round now tells the model the tools are gone, and it answers in
+  words, in your language.
+- **A staged dialogue runs once.** Without the chat-reading tool in the profile,
+  a model could stage the same scene again and again — nine times in one turn —
+  looking for lines it had no way to read. The result now says where the scene's
+  lines are and that staging it again would not show them, and the same scene is
+  not staged twice in a turn.
+
 ## [0.18.1] — 2026-10-09
 
 **Where everything is.** `F1` → About now names the folders mindfork uses —
