@@ -2440,9 +2440,13 @@ when debugging, and delete afterwards — by name, or the whole run with
 In CI: **Live e2e (HF Inference Endpoints)** — `workflow_dispatch` only, with
 test-filter, model, GPU and shard-count inputs (four shards by default, each job
 under a 60-minute ceiling); it needs the `HF_TOKEN` repository secret. HF does not
-always have the card: a shard whose endpoint *fails to start* deletes what it
-created and fails alone, and `gh run rerun <run-id> --failed` runs just that shard
-again ([docs/research/e2e-gate-budget.md](research/e2e-gate-budget.md) §8). **Live e2e
+always have the card: an endpoint that *fails to start* — or whose create is
+refused — is deleted and created again on the model's fallback card (Gemma and Qwen:
+an L40S, then an A100, then the L40S once more; a card named with `--chat-instance`
+is retried, never swapped), and the summary says which card the run got. A shard
+that still fails deletes what it created and fails alone, and `gh run rerun <run-id>
+--failed` runs just that shard again
+([docs/research/e2e-gate-budget.md](research/e2e-gate-budget.md) §8, §10). **Live e2e
 sweeper** runs every six hours as the backstop (hourly until 2026-08-21; the cadence
 bounds how long an orphan holds endpoint quota, not money). Design and decisions:
 [docs/history/remote-e2e-hf.md](history/remote-e2e-hf.md),

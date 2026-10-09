@@ -296,3 +296,40 @@ embedders (red on main's payload, green after). **Live — GO** (run
 [37987016070](https://github.com/vshylov/mindfork-rs/actions/runs/37987016070),
 the smoke alone): the embedder's log no longer lowers the batch; one search,
 *4 fragments found*, **0** page reads, the right answer, 102 s.
+
+## 10. HF's capacity: an endpoint that does not start is created again, elsewhere
+
+By the evening of 2026-10-09, **15 of 25** L40S creates in `us-east-1` — the only
+region that has the card — had ended `Endpoint failed to start`, two to seven
+minutes after the create; every A100 asked for came up. Each such shard failed and
+was rerun by hand. **User's decision, 2026-10-10:** an automatic retry, falling
+back to the A100.
+
+- **The ladder** (`chat_rungs`): the model's own card, its record's `fallback`
+  cards, its own card once more — HF's refusals come in waves, and the last rung
+  is for one that has passed. Gemma and Qwen fall back to the A100 (×1.08 the
+  L40S on the gate's smokes, $2.50/h against $1.80, §8); `gpt-oss-120b` has no
+  fallback, because the A100 that would hold its 63 GB is unmeasured. A card
+  named with `--chat-instance` is a measurement of that card: tried twice, never
+  swapped. The embedders are tried twice on their T4.
+- **What is retried**: an endpoint that ends `failed`/`updateFailed`, and a create
+  that is refused (a quota, a full region). **What is not**: a long schedule —
+  `initializing` for ten minutes was followed by `running` more than once — and a
+  server that came up and never answered `/health`; no other card cures either.
+- **How**: the endpoint is deleted, the deletion proven, and it is created again
+  **under the same name**, so the runner's cleanup, the workflow's `delete-run`
+  and the sweeper know it without a change. The plan prints the ladder, the
+  summary the card the run got.
+- **`--self-test`**: the ladder for each model and for a named card, each rung's
+  payload asking for its card in its card's region, and the walk against scripted
+  HF calls — started at once; failed, then the A100; refused at create; a long
+  schedule and an unhealthy server not retried; every rung failed; a name not
+  proven gone not created again. Seven mutants caught.
+
+**Outcome — GO** (run [37997306401](https://github.com/vshylov/mindfork-rs/actions/runs/37997306401),
+the whole suite, four shards): three of the four L40S failed to start (142–172 s);
+each was deleted and created again on an A100, `running` 20–30 s later. The
+fourth L40S took 585 s to schedule and was rightly waited for. **251 of 251
+smokes green**, in one dispatch, with no rerun by hand — the first full run of the
+suite that is green end to end; jobs of 18, 20, 31 and 30 minutes against 60;
+every shard's backstop found nothing left.
