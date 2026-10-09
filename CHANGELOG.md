@@ -14,6 +14,14 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Added
+
+- **`F1` → About shows where everything is:** the program's folder, the data
+  folder and how it was chosen (portable, the standard folder or a folder of
+  your own), and the logs. The paths are full, ready to paste into a file
+  manager or a shell. `mindfork demo` shows made-up folders instead, so a
+  screenshot of it carries none of yours.
+
 ## [0.18.0] — 2026-10-08
 
 **A day on a real Mac.** 0.15.0 brought mindfork to macOS, built and tested on

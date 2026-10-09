@@ -116,7 +116,7 @@ impl Rig {
         Self {
             screen,
             active: ActiveScreen::Chat,
-            help: HelpOverlay::new(),
+            help: HelpOverlay::new(crate::features::demo::locations()),
         }
     }
 

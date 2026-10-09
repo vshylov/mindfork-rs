@@ -432,7 +432,9 @@ src/
 │  │                        (credits::license_text), the disclaimer through
 │  │                        shared::markdown (ADR 0003); a tab strip narrower
 │  │                        than its tabs shows a window around the active one
-│  │                        (tab_window)
+│  │                        (tab_window); "About" ends with the Locations group
+│  │                        (location_lines) from the paths::Locations the
+│  │                        runtime's HelpOverlay holds — the demo's made up
 │  ├─ status_bar.rs         model/tokens/profile/server status/mouse mode. The hint
 │  │                        block's geometry is shared::ui's; what is local is the
 │  │                        capped, shedding column choice the status pill's
@@ -1032,7 +1034,8 @@ src/
    │                       HKDF(machine-id)+ChaCha20-Poly1305 (Linux). See §12
    ├─ paths.rs             data location (defaults.json) + scaffold/interface language
    │                       (Option<Lang>: explicit or from the OS locale) + dictionary fallback next to the binary;
-   │                       ensure_dirs() also seeds a missing dictionaries/ with a localized README (spec §11.5)
+   │                       ensure_dirs() also seeds a missing dictionaries/ with a localized README (spec §11.5);
+   │                       locations() — the program/data/logs folders the "About" tab names (spec §11.7)
    ├─ instance.rs          single-instance
    └─ logging.rs           tracing to a file (stdout is used by the TUI)
 ```

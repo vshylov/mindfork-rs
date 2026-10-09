@@ -188,7 +188,7 @@ impl Director {
             screen,
             active: ActiveScreen::Chat,
             back: None,
-            help: HelpOverlay::new(),
+            help: HelpOverlay::new(crate::features::demo::locations()),
             clipboard: None,
             cmd_tx,
             cmd_rx,

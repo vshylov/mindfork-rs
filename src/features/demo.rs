@@ -8,6 +8,8 @@
 //! frame is byte-stable across runs (the drift gate depends on it) and so
 //! [`provision`] is idempotent.
 
+use std::path::PathBuf;
+
 use chrono::{DateTime, TimeZone, Utc};
 use uuid::Uuid;
 
@@ -23,6 +25,7 @@ use crate::features::tools::default_tool_ids;
 use crate::shared::api::contract::{ChatChunk, FinishReason, TokenUsage};
 use crate::shared::config::{AppConfig, ServerMode};
 use crate::shared::i18n::Lang;
+use crate::shared::paths::{DataLocation, Locations};
 use crate::shared::storage::Storage;
 
 /// The showcase in Russian, for the animated demo's Russian reel — the same
@@ -748,9 +751,63 @@ pub fn provision(storage: &Storage) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The locations the demo's "About" tab shows (spec §11.7) — made up, in the
+/// shape an installed copy has on this platform (the Windows installer, the
+/// Linux packages, the Homebrew formula; all three keep the data in the
+/// user's standard folder), for a user called `demo`. The demo's real root is
+/// a throwaway folder in the OS temp directory, under the real user's name,
+/// and a screenshot of the tab is meant to carry neither.
+pub fn locations() -> Locations {
+    let (program, data) = if cfg!(windows) {
+        (
+            r"C:\Users\demo\AppData\Local\Programs\mindfork-rs".to_string(),
+            r"C:\Users\demo\AppData\Roaming\mindfork-rs\data",
+        )
+    } else if cfg!(target_os = "macos") {
+        (
+            format!(
+                "/opt/homebrew/Cellar/mindfork/{}/libexec",
+                env!("CARGO_PKG_VERSION")
+            ),
+            "/Users/demo/Library/Application Support/mindfork-rs",
+        )
+    } else {
+        (
+            "/usr/lib/mindfork-rs".to_string(),
+            "/home/demo/.local/share/mindfork-rs",
+        )
+    };
+    let data = PathBuf::from(data);
+    Locations {
+        program: Some(PathBuf::from(program)),
+        logs: data.join("logs"),
+        data,
+        storage: DataLocation::System,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The demo's "About" tab names made-up folders (spec §11.7): absolute
+    /// paths of an installed copy, none of them under this machine's home or
+    /// temp directory — the demo's real root is in the latter.
+    #[test]
+    fn demo_locations_are_made_up() {
+        let at = locations();
+        let temp = std::env::temp_dir();
+        let home = directories::BaseDirs::new().map(|dirs| dirs.home_dir().to_path_buf());
+        for path in [at.program.clone().expect("a program row"), at.data.clone()] {
+            assert!(path.is_absolute(), "not absolute here: {path:?}");
+            assert!(!path.starts_with(&temp), "a real temp folder: {path:?}");
+            if let Some(home) = &home {
+                assert!(!path.starts_with(home), "a real home folder: {path:?}");
+            }
+        }
+        assert_eq!(at.logs, at.data.join("logs"));
+        assert_eq!(at.storage, DataLocation::System);
+    }
 
     /// The fixture is frozen: same ids, same timestamps, same text on every
     /// call — the property every capture and the drift gate stand on.

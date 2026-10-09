@@ -26,8 +26,9 @@ use crate::features::backup::{self, RestoreOutcome};
 use crate::features::cli::{self, CliCommand};
 use crate::shared::config::{AppConfig, ServerMode};
 use crate::shared::i18n::{self, Lang, Locale};
+use crate::shared::paths::{Locations, Paths};
 use crate::shared::storage::{JsonStore, Storage};
-use crate::shared::{instance, logging, paths::Paths};
+use crate::shared::{instance, logging};
 
 fn main() -> ExitCode {
     // The "peek" phase: determine the data root and CLI language **before** parsing
@@ -275,7 +276,13 @@ fn run_tui(paths: &Paths, loc: &Locale) -> anyhow::Result<ExitCode> {
     // The error is an already-localized message (features/data_migration). See release-engineering.md §3.4.
     features::data_migration::run(paths, loc)?;
 
-    launch_tui(paths, Arc::new(LlamaSupervisor::new(paths)), true, loc)
+    launch_tui(
+        paths,
+        Arc::new(LlamaSupervisor::new(paths)),
+        true,
+        paths.locations(),
+        loc,
+    )
 }
 
 /// `mindfork demo` — the real TUI on a throwaway root with a scripted engine
@@ -317,7 +324,15 @@ fn run_demo(loc: &Locale, locale_warnings: &[String]) -> anyhow::Result<ExitCode
         features::demo::demo_replies(),
         DEMO_STREAM_DELAY_MS,
     ));
-    let result = launch_tui(&paths, Arc::new(DemoSupervisor::new(backend)), false, loc);
+    // The "About" tab names made-up folders, not this throwaway root in the
+    // user's temp directory (spec §11.7).
+    let result = launch_tui(
+        &paths,
+        Arc::new(DemoSupervisor::new(backend)),
+        false,
+        features::demo::locations(),
+        loc,
+    );
     // Leave nothing behind: the promise is "your machine, untouched".
     let _ = std::fs::remove_dir_all(&root);
     result
@@ -330,11 +345,12 @@ const DEMO_STREAM_DELAY_MS: u64 = 18;
 /// The shared TUI launch: tokio runtime, storage, orchestrator, UI loop,
 /// shutdown. [`run_tui`] wraps it with the single-instance guard and data
 /// migration; [`run_demo`] boots it on a throwaway root with the scripted
-/// supervisor and `apply_env: false`.
+/// supervisor, `apply_env: false` and made-up `locations`.
 fn launch_tui(
     paths: &Paths,
     supervisor: Arc<dyn ServerSupervisor>,
     apply_env: bool,
+    locations: Locations,
     loc: &Locale,
 ) -> anyhow::Result<ExitCode> {
     // Ask the terminal for its background **first**, and collect the answer
@@ -418,6 +434,7 @@ fn launch_tui(
         bundled_dict_dir,
         personal,
         paths.log_dir(),
+        locations,
         background_query,
     );
 

@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (73)
+## Entries (74)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -85,6 +85,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a screen's footer takes a third of the window at most (done)
 - Post-M9: titles and tabs a narrow window used to cut (done)
 - Post-M9: no cursor blinks through the help (done)
+- Post-M9: the About tab says where everything is (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -3878,3 +3879,68 @@ machine-wide, held by that session (exit code 2, as designed). It exercises the 
 of a saved draft, which no frame with the help closed changes.
 
 **Tests**: 3789 green, 236 ignored (+1).
+
+### Post-M9: the About tab says where everything is (done)
+
+The "About" tab of the help dialog (`F1`) ended with the author and left the bottom half of
+a tall dialog empty. The user asked whether the program's and the data's folders belong
+there, for users who keep their files under control (branch `feat/about-locations`). They
+do, and the strongest case is a rented pod — this project's audience: whether the data is on
+the volume or on a container disk that is wiped at every stop is one look at the data row.
+Until now the interface named no folder at all; only `mindfork stats` printed the data root,
+and the logs' path appeared only in error messages.
+
+**What the tab shows** (user's decisions 2026-10-09, on a proposal): a *Locations* group
+under the facts, three rows — **Program** (the binary's folder; on unix the real one past a
+symlink, which `Paths` already keeps), **Data (mode)** — the root, and in the label the
+`defaults.json` mode that chose it, in the Windows installer's words (portable / standard
+folder / custom folder) so the value stays a bare, copyable path — and **Logs**. Not shown:
+`sandbox/`, `llama/`, `cuda-cache/`, `backups/`, `themes/`, `dictionaries/` — they are all
+under the root and listed in install.md §2, and ten paths would be a `tree`. No "open the
+folder" key: on a pod over SSH there is nothing to open it with. In Russian the logs row
+uses the everyday word for logs, not the formal "journals" of the proposal (the user's
+wording).
+
+**The forks.** (1) Geometry: the facts' value column is anchored so the widest value touches
+the right margin; a path is wider than any fact, and sharing that column would push every
+value left — so the group is a leader table of its own under a section header, and when a
+path leaves its label fewer than three dots (`MIN_LEADER`) every path of the group goes on
+its own line under its label, wrapped by `wrap_ranges` and never elided. (2) Full paths,
+never `~`: Explorer and `cmd` do not expand it, and a power user wants the exact path; the
+user name does reach a screenshot of the tab. (3) Layers: the widget computes nothing —
+`Paths::locations()` (a new `Locations` type in `shared::paths`; `Paths` now keeps the
+`DataLocation` that `resolve` used to drop) is made in `main`, handed to `runtime::run`,
+held by the runtime's `HelpOverlay` and passed to `render_help`. The user added a
+precaution: **the demo shows mock paths**. `features::demo::locations()` is an installed
+copy's folders on the platform — the Windows installer's, the Linux packages', the Homebrew
+formula's — for a user called `demo`; `mindfork demo` (whose real root is a throwaway folder
+in the temp directory, under the real user's name), the animated reel's rig and the runtime
+tests all take it. The stills do not open the dialog, so no committed dump moved.
+
+A relative custom root (`"mode": "path", "path": "my-data"`) is shown absolute: every file
+the app opens under it resolves against the working directory, and a row reading `my-data`
+would not say which one. `std::path::absolute` is lexical — no symlink followed, nothing
+touched, no verbatim `\\?\` prefix on Windows.
+
+`runtime::run` and `run_loop` reached eight parameters and carry the project's usual
+`#[allow(clippy::too_many_arguments)]` with a reason: the demo gives them a made-up
+`locations` beside a real `log_dir`, so the two cannot be one value.
+
+**Tests**: the facts' leader-table test now reads `fact_lines` alone (it counted every
+four-span row, and the location rows are four spans too); new — the locations as their own
+leader table at both bounds of the width in both locales, with the facts unchanged above
+them; the three modes' labels and no program row without a binary; a 174-column path going
+under its label, whole and wrapped, no line past the edge; `Paths::locations` absolute and
+naming the mode; the demo's set absolute and under neither this machine's home nor its temp
+directory. **Mutation**: forcing the side-by-side layout and swapping two modes' labels —
+both killed.
+
+**Live run — GO** on the inbox console host of Windows 11 Pro 26200 (`console_probe`'s
+`Session`, a 110×52 console): `mindfork demo` shows `C:\Users\demo\AppData\…` with
+*Data (standard folder)*; a portable copy in a scratch folder, in Russian, shows the three
+rows in one column, the data row labelled portable; a copy whose `defaults.json`
+names `my-data` shows the root absolute against its working directory, and its 70-column
+paths, too wide for the labels, each under its label. All three exited with code 0. A pure
+UI change otherwise — no engine, memory or tool path is touched.
+
+**Tests**: 3994 green, 257 ignored (+5).
