@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (21)
+## Entries (22)
 
 - Post-M9: cutting GitHub Actions minutes (done)
 - Post-M9: skipping the test job for docs-only pull requests (done)
@@ -34,6 +34,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: a cancelled live job deletes its endpoints (done)
 - Post-M9: the live gate dealt across shards (done)
 - Post-M9: the gate's embedders batch a whole chunk (done)
+- Post-M9: an endpoint HF cannot start is created again, on the fallback card (done)
 ### Post-M9: cutting GitHub Actions minutes (done)
 - **Trigger**: the `v0.9.4` release run was refused by GitHub with *"The job was
   not started because recent account payments have failed or your spending limit
@@ -1536,3 +1537,27 @@ during the smoke: one chunk of spec.md, and the page went unindexed whole.
 - **Live — GO** (run 37987016070, the smoke alone): the embedder's log no longer lowers the
   batch; one search, *4 fragments found*, 0 page reads, 4000 and 1200, 102 s (was 115–119 s
   and six reads, red). [docs/research/e2e-gate-budget.md](../research/e2e-gate-budget.md) §9.
+
+### Post-M9: an endpoint HF cannot start is created again, on the fallback card (done)
+
+By the evening of 2026-10-09, 15 of 25 L40S creates in `us-east-1` had ended `Endpoint
+failed to start` and every A100 had come up; each refused shard was rerun by hand. The
+owner's decision (2026-10-10): retry automatically, falling back to the A100.
+[docs/research/e2e-gate-budget.md](../research/e2e-gate-budget.md) §10.
+
+- **A ladder per endpoint** (`chat_rungs`, `embed_rungs`): the model's card, its record's
+  new `fallback` cards (Gemma, Qwen: `nvidia-a100`; `gpt-oss-120b`: none, unmeasured), its
+  own card once more; a card named with `--chat-instance` is tried twice and never swapped;
+  an embedder, its T4 twice.
+- **Retried**: `failed`/`updateFailed`, and a refused create (`create_endpoints` no longer
+  ends the run on one — it is the ladder's first rung spent). **Not retried**: a long
+  schedule, and a server that never answers `/health`. The endpoint is deleted, proven gone
+  and created again under the **same name**, so cleanup, `delete-run` and the sweeper are
+  unchanged; `hf.create` records a name once.
+- **`--self-test`**: the ladders, each rung's payload card and region, and the walk against
+  scripted HF calls in seven scenarios; seven mutants caught (a long schedule retried,
+  recreating without deleting, or a name not proven gone, an unhealthy server accepted, no
+  fallback, a named card swapped, a moved rung still asking for the first card).
+- **Live — GO** (run 37997306401, the whole suite): three L40S failed to start and came up
+  on an A100 20–30 s after the recreate; the fourth L40S, scheduled in 585 s, was waited for.
+  **251 of 251 green in one dispatch** — the first full run green end to end, no rerun by hand.

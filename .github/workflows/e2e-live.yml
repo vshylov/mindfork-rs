@@ -41,9 +41,11 @@ on:
         type: choice
         options: [gemma-4-31b, qwen-3.6-27b, gpt-oss-120b]
       # `model-default` is the normal answer: the model record names the card that
-      # fits it, and the region follows the card. Overriding it is for measuring a
-      # cheaper instance, not for routine use — a 63 GB model on a 48 GB L40S
-      # fails after the deploy, not before it.
+      # fits it, and the region follows the card — and the card to move to when HF
+      # cannot start it (Gemma and Qwen: an L40S, then an A100, then the L40S once
+      # more). Overriding it is for measuring a card, not for routine use, and a
+      # card named here is never swapped: it is tried twice. A 63 GB model on a
+      # 48 GB L40S fails after the deploy, not before it.
       chat_instance:
         description: "GPU for the chat endpoint (model-default = the model's own)"
         required: false
@@ -55,9 +57,11 @@ on:
       # shards ~28 of them (the steering probe alone is 12). Each shard holds an
       # L40S and two T4s (quota: 16 and 30), and more shards at once meet more of
       # HF's capacity refusals — 8 of 13 L40S creates failed to start that
-      # evening. `1` is the whole suite in one job, as before; a filtered run is
-      # sharded too, so pick `1` for a handful of smokes. A shard that fails is
-      # rerun alone: `gh run rerun <id> --failed`.
+      # evening. A shard whose card HF cannot start moves down its model's
+      # fallback cards by itself (e2e_hf.py `chat_rungs`); one that still fails is
+      # rerun alone: `gh run rerun <id> --failed`. `1` is the whole suite in one
+      # job, as before; a filtered run is sharded too, so pick `1` for a handful of
+      # smokes.
       shards:
         description: "Parallel jobs the suite is dealt across, each with endpoints of its own"
         required: false

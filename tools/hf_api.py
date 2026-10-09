@@ -60,6 +60,11 @@ CHAT_MODELS = {
         "mmproj": "gemma-4-31B-it-mmproj.gguf",  # 1.20 GB
         "instance": "nvidia-l40s",  # 48 GB
         "region": "us-east-1",
+        # The card a run moves to when HF cannot start the L40S — 15 of 25 creates
+        # failed to start on 2026-10-09, and every A100 asked for that day came up.
+        # ×1.08 the L40S on the gate's smokes, at $2.50/h against $1.80
+        # (docs/research/e2e-gate-budget.md §8, §10).
+        "fallback": ["nvidia-a100"],
     },
     "qwen-3.6-27b": {
         "tag": "qwen",
@@ -68,6 +73,7 @@ CHAT_MODELS = {
         "mmproj": "mmproj-Qwen3.6-27B-Q8_0.gguf",  # 0.63 GB
         "instance": "nvidia-l40s",
         "region": "us-east-1",
+        "fallback": ["nvidia-a100"],  # as Gemma's: 19.7 GB fits its 80 GB
     },
     # The third model is not a third flavour of the first two: it is split
     # across two files, it is an OpenAI open-weights model (the harmony
@@ -98,6 +104,9 @@ CHAT_MODELS = {
         # runs part of the model on the CPU (research §4, U6). The two smaller
         # models keep the default they were measured on.
         "gpu_layers": 9999,
+        # No fallback card: the A100 that would hold it is unmeasured for this
+        # model (it dequantizes MXFP4; research §3), so a refused H200 is retried
+        # on an H200.
     },
 }
 # Gemma stays the default: the memory gates' similarity thresholds are calibrated
@@ -551,8 +560,10 @@ def create(payload, dry_run=False):
     if dry_run:
         print("  --dry-run: not sent")
         return None
-    # Record BEFORE the call: a lost response must still leave a trail.
-    CREATED.append(name)
+    # Record BEFORE the call: a lost response must still leave a trail. Once: a
+    # name recreated on another card (e2e_hf.bring_up) is still one endpoint.
+    if name not in CREATED:
+        CREATED.append(name)
     status, body = http("POST", f"{API}/{NAMESPACE}", payload)
     show(status, body)
     if not ok(status):

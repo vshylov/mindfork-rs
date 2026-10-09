@@ -199,8 +199,9 @@ being recent is dropped, not shortened.
   suite is 72 min of smokes, dealt across four parallel jobs (`e2e_hf.py --shard`), each
   with endpoints of its own, under a 60-min ceiling; a cancellation now reaches the runner
   (`exec`) and a backstop step deletes by name. Its first full run found a dialogue staged
-  nine times and a round limit answered with a raw tool call — fixed. HF's L40S capacity
-  is the open risk ([docs/research/e2e-gate-budget.md](docs/research/e2e-gate-budget.md),
+  nine times and a round limit answered with a raw tool call — fixed. An L40S HF cannot
+  start is created again on an A100; 251/251 green in one dispatch
+  ([docs/research/e2e-gate-budget.md](docs/research/e2e-gate-budget.md),
   [docs/journal/ci.md](docs/journal/ci.md)).
 - **The FSD layer rule is gated** (2026-10-09): `screens` had imported eleven event
   payload types from `app::events` since 2026-08-23 — moved to
