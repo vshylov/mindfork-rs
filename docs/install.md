@@ -2397,9 +2397,12 @@ declaration rather than by exception. It has no projector *in existence*, so the
 runner sets `MINDFORK_LIVE_TEXT_ONLY=1` and those three skip, saying so in the
 log; and its weights are split, so it sets `MINDFORK_LIVE_SPLIT_MODEL=1`, which
 turns on the smoke that checks a part number (`-00001-of-00002`) never reaches a
-chat header. Both are **derived from the model that was deployed**, never passed
-as flags, so neither can disagree with the stack. `--no-mmproj` deliberately
-does not set the first: that flag exists to deploy a *sighted* model blind.
+chat header. Its template ends a reply at a tool call, so it also sets
+`MINDFORK_LIVE_ONE_CALL_PER_REPLY=1`, and the two smokes that ask for two calls in
+one reply (the parallel sub-agent group, the concurrent segment) skip by name.
+All three are **derived from the model that was deployed**, never passed as flags,
+so none can disagree with the stack. `--no-mmproj` deliberately does not set the
+first: that flag exists to deploy a *sighted* model blind.
 
 ```powershell
 $env:HF_TOKEN = "hf_..."          # fine-grained, Inference Endpoints

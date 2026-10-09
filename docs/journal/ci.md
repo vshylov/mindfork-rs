@@ -1593,3 +1593,10 @@ first. [docs/research/e2e-gpt-oss-120b.md](../research/e2e-gpt-oss-120b.md) §11
   estimate counts the harmony template's tools at 0.57, and §10.2's `fetch_url` flake.
   Decided (F9–F11): fold the apostrophe, declare one call per reply and skip those two by
   name, leave the estimate red on the roadmap — the first two in a follow-up PR.
+- **The follow-up — F9, F10**: `says_it_cannot_see` (U+2019/U+2018/U+02BC folded, one list
+  of phrases for both image smokes, a unit test with gpt-oss's two answers, red without
+  the fold); the record's `one_call_per_reply` → `MINDFORK_LIVE_ONE_CALL_PER_REPLY=1` →
+  both parallel-call smokes skip by name; `--self-test` holds what each model declares.
+  Live **GO**: the four smokes on an RTX PRO 6000 — the two image smokes green on answers
+  typed with U+2019 again, the two parallel-call smokes skipped. `docs/lessons.md`'s
+  typography lesson now names the apostrophe.
