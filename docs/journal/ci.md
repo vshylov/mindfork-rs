@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (20)
+## Entries (21)
 
 - Post-M9: cutting GitHub Actions minutes (done)
 - Post-M9: skipping the test job for docs-only pull requests (done)
@@ -33,6 +33,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: one context the branch ruleset can require (done)
 - Post-M9: a cancelled live job deletes its endpoints (done)
 - Post-M9: the live gate dealt across shards (done)
+- Post-M9: the gate's embedders batch a whole chunk (done)
 ### Post-M9: cutting GitHub Actions minutes (done)
 - **Trigger**: the `v0.9.4` release run was refused by GitHub with *"The job was
   not started because recent account payments have failed or your spending limit
@@ -1515,3 +1516,23 @@ faster card or a higher ceiling (2026-10-09).
 
 **Gates**: `--self-test` with the shard arms (five mutants caught); unit tests unchanged
 by this stage; the live outcome above.
+
+### Post-M9: the gate's embedders batch a whole chunk (done)
+
+`fetched_page_is_searched_in_its_birth_turn_e2e_live` was red on all three full runs of
+the gate on 2026-10-09 (Gemma 4 31B) and looked like the model's judgment. The trail said
+otherwise: one `attachment_search` answering *no search index*, six page reads, a right
+answer. The HF embedder's log named the cause — llama.cpp's default physical batch, 512
+(`setting n_batch = n_ubatch = 512`), and `input (560 tokens) is too large to process`
+during the smoke: one chunk of spec.md, and the page went unindexed whole.
+
+- **The same 560-token chunk** had cost the birth-turn track a red run on its local stand
+  (docs/journal/rag.md), fixed there with the managed launcher's `-ub 8192 -b 8192`; the
+  gate's embedder payload never got it, so the smoke had never been green on the gate.
+- **Fix**: both embedders' payloads set `LLAMA_ARG_UBATCH` and `LLAMA_ARG_BATCH` to their
+  context (`tools/hf_api.py`), the variables `llama-server` reads `-ub`/`-b` from.
+  `e2e_hf.py --self-test` checks the primary and the alternate embedder — red on main's
+  payload, green after.
+- **Live — GO** (run 37987016070, the smoke alone): the embedder's log no longer lowers the
+  batch; one search, *4 fragments found*, 0 page reads, 4000 and 1200, 102 s (was 115–119 s
+  and six reads, red). [docs/research/e2e-gate-budget.md](../research/e2e-gate-budget.md) §9.
