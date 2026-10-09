@@ -2716,3 +2716,15 @@ absolute URL wherever the markup needs one that crates.io will not fix, and reme
 the rendering is a **snapshot taken at publish time** — a README fix reaches the registry
 only with the next published version, however long that is.
 — *the README's screenshots are the dark ones*.
+
+**A signal handler guards only the process the signal reaches — so drill through the real
+event.** GitHub cancels a step, and a job's timeout is a cancellation, by signalling the
+step's own process and nothing below it. The live gate's runner sat under the step's
+`bash`, so its SIGINT handler, the code that deletes the rented GPUs, never ran, and three
+endpoints outlived the job; the runner itself was killed as an orphan at the job's end.
+The drill that had proved the handler signalled the runner directly on a dev box, a path a
+CI cancellation never takes. Two habits: `exec` the long-lived process, so the signal is
+its own; and give the cleanup that matters an `if: always()` step of its own that needs
+nothing from the dead one but an identity it can derive names from. Then drill it the way
+it will happen — a `gh run cancel` against a dispatched run, under $0.20 here.
+— *a cancelled live job deletes its endpoints*.
