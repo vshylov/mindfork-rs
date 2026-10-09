@@ -312,15 +312,85 @@ def alt_payload(name, args):
     return hf.embed_payload(name, args, repo=hf.ALT_EMBED_REPO, gguf=hf.ALT_EMBED_GGUF)
 
 
-def bring_up(kind, name, args):
-    """Wait for one endpoint (created or reused) and return its URL once it answers."""
-    url = hf.wait_running(name, args.timeout)
-    if not url:
-        return None
-    if not hf.wait_healthy(url, timeout=args.health_timeout):
-        print(f"  -> {kind} endpoint never became healthy")
-        return None
-    return url
+# Seconds between deleting an endpoint HF could not start and creating it
+# again. The deletion is verified first; this is only manners towards the API.
+RETRY_PAUSE_S = 20
+
+# The states after which an endpoint is created again: HF could not start it.
+# A long schedule is not one of them — `initializing` for ten minutes and more
+# was followed by `running` several times on 2026-10-09 — and neither is a
+# server that came up and never answered `/health`, which no card would cure.
+FAILED_TO_START = ("failed", "updateFailed")
+
+
+class Rung:
+    """One attempt at an endpoint: the card it asks for, and its payload."""
+
+    def __init__(self, card, make):
+        self.card = card
+        self.make = make  # name -> create payload
+
+
+def chat_rungs(args):
+    """The cards the chat endpoint is tried on, in order.
+
+    The model's own card, then its record's fallback cards, then its own card
+    once more — HF's refusals come in waves, and the wave may have passed. A card
+    named by hand (`--chat-instance`) is a measurement of that card: it is tried
+    twice and never swapped. A model with no fallback is tried twice on its own.
+    """
+
+    def payload_on(card_args):
+        return lambda name: hf.apply_overrides(hf.chat_payload(name, card_args), args.set)
+
+    first = Rung(hf.chat_instance(args), payload_on(args))
+    fallbacks = [] if args.chat_instance else hf.chat_model(args).get("fallback") or []
+    rungs = [first]
+    for card in fallbacks:
+        moved = argparse.Namespace(**vars(args))
+        moved.chat_instance = card
+        rungs.append(Rung(card, payload_on(moved)))
+    return rungs + [first]
+
+
+def embed_rungs(args, payload):
+    """An embedder's attempts: its own card, twice — a T4 has no fallback."""
+    first = Rung(args.embed_instance, lambda name: hf.apply_overrides(payload(name, args), args.set))
+    return [first, first]
+
+
+def bring_up(kind, name, args, rungs=None, created=True, pause=RETRY_PAUSE_S):
+    """Wait for one endpoint and return `(url, card)` once it answers, or None.
+
+    An endpoint of ours that HF fails to start, or refuses to create (a quota,
+    a full region), is deleted, proven gone, and created again under the same
+    name on the next rung — the same name, so the runner's cleanup, the
+    workflow's `delete-run` and the sweeper all still know it. `created` says
+    whether the first rung's create (made by `create_endpoints`, before any
+    wait, so the three overlap) went through. A reused endpoint has no rungs:
+    it is waited for and nothing more.
+    """
+    rungs = rungs or [None]
+    for i, rung in enumerate(rungs):
+        if i > 0:
+            print(f"\n  -> {kind}: creating it again on {rung.card} (attempt {i + 1} of {len(rungs)})", flush=True)
+            if not hf.delete_one(name):
+                return None
+            time.sleep(pause)
+            created = hf.create(rung.make(name)) is not None
+        if not created:
+            continue
+        url = hf.wait_running(name, args.timeout)
+        if url:
+            if not hf.wait_healthy(url, timeout=args.health_timeout):
+                print(f"  -> {kind} endpoint never became healthy")
+                return None
+            return url, rung.card if rung else None
+        state = hf.endpoint_state(name)[0]
+        if state not in FAILED_TO_START:
+            return None
+    print(f"  -> {kind}: no card started it in {len(rungs)} attempt(s)")
+    return None
 
 
 def run_names(ident, tag):
@@ -401,6 +471,9 @@ def print_plan(plan, args):
         # every quantization it is the difference between 63 GB and 1010 GB.
         print(f"                  variant {variant}")
     print(f"  chat  hardware: {hf.chat_instance(args)} {args.instance_size} @ {args.vendor}/{hf.chat_region(args)}")
+    if not args.reuse_chat:
+        # The trail an orphan hunt needs: which cards the name may be found on.
+        print(f"  chat  attempts: {' -> '.join(r.card for r in chat_rungs(args))}  (when one fails to start)")
     print(f"  chat  endpoint: {plan.chat_name}{'  (reused)' if args.reuse_chat else ''}")
     if plan.want_embed:
         print(f"  embed endpoint: {plan.embed_name}{'  (reused)' if args.reuse_embed else ''}")
@@ -427,39 +500,39 @@ def dry_run(plan, args):
     return hf.EXIT_OK
 
 
-def create_endpoints(plan, args):
-    """Create what is not reused, all before waiting for any: deploy is ~21 s
-    (chat) and ~84 s (embed), and they overlap. False when a create failed."""
-    if not args.reuse_chat:
-        payload = hf.apply_overrides(hf.chat_payload(plan.chat_name, args), args.set)
-        if hf.create(payload) is None:
-            return False
-    if plan.want_embed and not args.reuse_embed:
-        payload = hf.apply_overrides(hf.embed_payload(plan.embed_name, args), args.set)
-        if hf.create(payload) is None:
-            return False
-    if plan.want_alt and not args.reuse_alt_embed:
-        if hf.create(hf.apply_overrides(alt_payload(plan.alt_name, args), args.set)) is None:
-            return False
-    return True
-
-
-def bring_up_all(plan, args):
-    """(chat_url, embed_url, alt_embed_url), or None when any endpoint failed."""
-    chat_url = bring_up("chat", plan.chat_name, args)
-    if not chat_url:
-        return None
-    embed_url = None
+def endpoint_specs(plan, args):
+    """(kind, name, rungs) for each endpoint the run wants; `rungs` is None for a
+    reused one, which is neither created nor created again."""
+    specs = [("chat", plan.chat_name, None if args.reuse_chat else chat_rungs(args))]
     if plan.want_embed:
-        embed_url = bring_up("embed", plan.embed_name, args)
-        if not embed_url:
-            return None
-    alt_embed_url = None
+        rungs = None if args.reuse_embed else embed_rungs(args, hf.embed_payload)
+        specs.append(("embed", plan.embed_name, rungs))
     if plan.want_alt:
-        alt_embed_url = bring_up("alt embed", plan.alt_name, args)
-        if not alt_embed_url:
+        rungs = None if args.reuse_alt_embed else embed_rungs(args, alt_payload)
+        specs.append(("alt embed", plan.alt_name, rungs))
+    return specs
+
+
+def create_endpoints(specs):
+    """Create every endpoint's first rung before waiting for any: deploy is ~21 s
+    (chat) and ~84 s (embed), and they overlap. Returns, per name, whether the
+    create went through — a refused one is not the end of the run, it is the
+    first rung of its ladder spent (see `bring_up`)."""
+    return {
+        name: rungs is None or hf.create(rungs[0].make(name)) is not None
+        for _kind, name, rungs in specs
+    }
+
+
+def bring_up_all(specs, created, args):
+    """{kind: (url, card)} for every endpoint, or None when one could not be had."""
+    up = {}
+    for kind, name, rungs in specs:
+        got = bring_up(kind, name, args, rungs, created[name])
+        if got is None:
             return None
-    return chat_url, embed_url, alt_embed_url
+        up[kind] = got
+    return up
 
 
 def choose_shard(args, shard):
@@ -497,12 +570,13 @@ def cmd_run(args):
             print(f"\nshard {plan.shard[0]}/{plan.shard[1]} holds no smokes — nothing to rent.")
             return hf.EXIT_OK
 
-    if not create_endpoints(plan, args):
+    specs = endpoint_specs(plan, args)
+    up = bring_up_all(specs, create_endpoints(specs), args)
+    if up is None:
         return hf.EXIT_FAILED
-    urls = bring_up_all(plan, args)
-    if urls is None:
-        return hf.EXIT_FAILED
-    chat_url, embed_url, alt_embed_url = urls
+    chat_url, chat_card = up["chat"]
+    embed_url = up.get("embed", (None, None))[0]
+    alt_embed_url = up.get("alt embed", (None, None))[0]
     ready = time.time()
     print(f"\n  endpoints ready after {ready - started:.0f}s", flush=True)
 
@@ -517,7 +591,9 @@ def cmd_run(args):
     )
 
     print("\n=== summary ===")
-    print(f"  chat  {plan.chat_name}  {chat_url}")
+    on = f"  on {chat_card}" if chat_card else ""
+    moved = "  (a fallback: the model's own card did not start)" if chat_card and chat_card != hf.chat_instance(args) else ""
+    print(f"  chat  {plan.chat_name}  {chat_url}{on}{moved}")
     print(f"  embed {plan.embed_name}  {embed_url or '(none)'}")
     print(f"  alt   {plan.alt_name}  {alt_embed_url or '(none)'}")
     print(f"  ready in {ready - started:.0f}s, suite {suite_time:.0f}s, total {time.time() - started:.0f}s")
@@ -761,6 +837,132 @@ def _check_embed_batch(failures):
             failures.append(f"embed: {payload['model']['repository']} batches {env}, want the context {ctx}")
 
 
+def _run_args(*argv):
+    return build_parser().parse_args(["run", *argv])
+
+
+def _check_rungs(failures):
+    """Which cards each endpoint is tried on, and that a moved rung's payload
+    really asks for its card — in the region that card lives in."""
+    cases = [
+        ((), ["nvidia-l40s", "nvidia-a100", "nvidia-l40s"]),
+        (("--chat-model", "qwen-3.6-27b"), ["nvidia-l40s", "nvidia-a100", "nvidia-l40s"]),
+        (("--chat-model", "gpt-oss-120b"), ["nvidia-h200", "nvidia-h200"]),
+        (("--chat-instance", "nvidia-a100"), ["nvidia-a100", "nvidia-a100"]),
+    ]
+    for argv, want in cases:
+        args = _run_args(*argv)
+        rungs = chat_rungs(args)
+        if [r.card for r in rungs] != want:
+            failures.append(f"rungs: {argv or 'default'} -> {[r.card for r in rungs]}, want {want}")
+            continue
+        for rung in rungs:
+            payload = rung.make("e2e-chat-x")
+            got = payload["compute"]["instanceType"]
+            region = payload["provider"]["region"]
+            if got != rung.card or region != hf.INSTANCE_REGIONS.get(got, hf.chat_region(args)):
+                failures.append(f"rungs: {argv or 'default'} rung {rung.card} asks for {got} in {region}")
+    embed = [r.card for r in embed_rungs(_run_args(), hf.embed_payload)]
+    if embed != ["nvidia-t4", "nvidia-t4"]:
+        failures.append(f"rungs: the embedder is tried on {embed}")
+
+
+class _FakeHf:
+    """The calls `bring_up` makes, scripted: `states` is what each wait sees
+    (a URL, or the state the endpoint is left in), `healthy` what /health says."""
+
+    def __init__(self, states, healthy=True, creates=True, deletes=True):
+        self.states = list(states)
+        self.healthy = healthy
+        self.creates = creates
+        self.deletes = deletes
+        self.calls = []
+        self.left = None
+
+    def create(self, payload, dry_run=False):
+        self.calls.append(("create", payload["compute"]["instanceType"]))
+        return {} if self.creates else None
+
+    def delete_one(self, name):
+        self.calls.append(("delete", name))
+        return self.deletes
+
+    def wait_running(self, name, timeout, poll=10):
+        # Past the script, still starting: a wait nobody planned for shows up as
+        # a wrong result, not as a crash of the self-test.
+        state = self.states.pop(0) if self.states else "initializing"
+        if state.startswith("https://"):
+            return state
+        self.left = state
+        return None
+
+    def endpoint_state(self, name):
+        return self.left, None, ""
+
+    def wait_healthy(self, url, timeout=900, poll=5):
+        return self.healthy
+
+
+def _bring_up_with(fake, created=True):
+    """`bring_up` of the default chat ladder against `fake`, quietly."""
+    names = ("create", "delete_one", "wait_running", "endpoint_state", "wait_healthy")
+    saved = {n: getattr(hf, n) for n in names}
+    stdout, sys.stdout = sys.stdout, open(os.devnull, "w", encoding="utf-8")
+    try:
+        for n in names:
+            setattr(hf, n, getattr(fake, n))
+        args = _run_args()
+        return bring_up("chat", "e2e-chat-x", args, chat_rungs(args), created, pause=0)
+    finally:
+        sys.stdout.close()
+        sys.stdout = stdout
+        for n, f in saved.items():
+            setattr(hf, n, f)
+
+
+def _check_bring_up(failures):
+    """The ladder walked: what is retried, on which card, and what is not."""
+    url = "https://e2e.example"
+    cases = [
+        # (what, fake, created, want result, want calls)
+        ("started at once", _FakeHf([url]), True, (url, "nvidia-l40s"), []),
+        (
+            "failed to start -> the fallback card",
+            _FakeHf(["failed", url]),
+            True,
+            (url, "nvidia-a100"),
+            [("delete", "e2e-chat-x"), ("create", "nvidia-a100")],
+        ),
+        (
+            "refused at create -> the fallback card",
+            _FakeHf([url]),
+            False,
+            (url, "nvidia-a100"),
+            [("delete", "e2e-chat-x"), ("create", "nvidia-a100")],
+        ),
+        ("a long schedule is not retried", _FakeHf(["initializing"]), True, None, []),
+        ("a server that never answers is not retried", _FakeHf([url], healthy=False), True, None, []),
+        (
+            "every rung failed",
+            _FakeHf(["failed", "updateFailed", "failed"]),
+            True,
+            None,
+            [("delete", "e2e-chat-x"), ("create", "nvidia-a100"), ("delete", "e2e-chat-x"), ("create", "nvidia-l40s")],
+        ),
+        (
+            "a name not proven gone is not created again",
+            _FakeHf(["failed"], deletes=False),
+            True,
+            None,
+            [("delete", "e2e-chat-x")],
+        ),
+    ]
+    for what, fake, created, want, calls in cases:
+        got = _bring_up_with(fake, created)
+        if got != want or fake.calls != calls:
+            failures.append(f"bring_up: {what}: got {got} after {fake.calls}, want {want} after {calls}")
+
+
 def _check_sweep(failures):
     now = dt.datetime(2026, 10, 9, 18, 17, tzinfo=dt.timezone.utc)
     limit = dt.timedelta(minutes=SWEEP_MAX_AGE_MIN)
@@ -829,6 +1031,8 @@ def self_test():
     _check_shard_parsing(failures)
     _check_shard_deal(failures)
     _check_embed_batch(failures)
+    _check_rungs(failures)
+    _check_bring_up(failures)
     _check_sweep(failures)
     _check_workflows(failures)
     for line in failures:
@@ -843,6 +1047,16 @@ def main():
     # the network, which is what lets CI's lint job run it.
     if sys.argv[1:] == ["--self-test"]:
         return self_test()
+    args = build_parser().parse_args()
+    hf.init(args.namespace, keep=getattr(args, "keep", False))
+    try:
+        return args.fn(args)
+    finally:
+        hf.cleanup()
+
+
+def build_parser():
+    """The command line — one place, so the self-test parses what a run parses."""
     parser = hf.run_parser(__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -890,13 +1104,7 @@ def main():
     p.set_defaults(fn=cmd_delete_run)
 
     hf.add_shared_commands(sub)
-
-    args = parser.parse_args()
-    hf.init(args.namespace, keep=getattr(args, "keep", False))
-    try:
-        return args.fn(args)
-    finally:
-        hf.cleanup()
+    return parser
 
 
 if __name__ == "__main__":
