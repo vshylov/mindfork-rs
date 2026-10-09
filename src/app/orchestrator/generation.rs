@@ -1709,6 +1709,7 @@ fn spawn_generation(spawn: GenSpawn) {
             persona: None,
             echo_seed: continuation.as_ref().map(|c| c.text.clone()),
             anchor,
+            staged: Vec::new(),
         };
         let reason = turn.run().await;
 
@@ -1923,6 +1924,10 @@ struct TurnLoop<'a> {
     /// previous turn on the turn's own loop; written by [`Self::stream`]; `None`
     /// off an external server.
     anchor: Option<super::prompt_cut::PromptAnchor>,
+    /// The arguments of every scene this loop has staged with `run_dialogue`
+    /// and seen land: an identical one is not staged a second time in a turn
+    /// (see [`TurnLoop::run_dialogue`]).
+    staged: Vec<serde_json::Value>,
 }
 
 /// The limits of one sub-agent run, snapshotted from `config.tools` with the
@@ -2377,6 +2382,18 @@ impl TurnLoop<'_> {
         ));
         self.ended_by_limit = Some(limit);
         self.request.tools.clear();
+        // Taking the tools away does not tell the model. This request is the
+        // one that just produced a call, less the tool list, and Gemma 4
+        // answered it with the same call written out as text — a raw
+        // `<|tool_call>call:run_dialogue{…` as the user's reply, on the live
+        // gate and again locally (docs/research/e2e-gate-budget.md §7).
+        note_on_last(
+            &mut self.request.messages,
+            &self.ctx.loc.tf(
+                "prompt.round_limit_final",
+                &[("max_rounds", &n.to_string())],
+            ),
+        );
         // The final round's token counter is emitted by `stream_round` itself
         // (from `base = total_*`); after that the turn ends, no need to accumulate.
         let final_out = self.stream().await;
@@ -3223,6 +3240,7 @@ impl TurnLoop<'_> {
             cancel: CancellationToken::new(),
             loc,
             args: parsed,
+            transcript_readable: self.offers(crate::features::tools::chats::CHAT_READ_ID),
         };
         let placeholder = spec.placeholder();
         let text = loc.tf(
@@ -3442,6 +3460,8 @@ pub(super) struct DialogueSpec {
     sampling: SamplingConfig,
     cancel: CancellationToken,
     loc: &'static crate::shared::i18n::Locale,
+    /// [`DialogueCtx::transcript_readable`], as the staging turn offered it.
+    transcript_readable: bool,
 }
 
 impl BackgroundStart {
@@ -3741,6 +3761,7 @@ pub(super) fn spawn_background_run(
                     sampling,
                     cancel,
                     loc,
+                    transcript_readable,
                 } = *spec;
                 let result = DialogueCtx {
                     shared: &shared,
@@ -3751,6 +3772,7 @@ pub(super) fn spawn_background_run(
                     cancel,
                     depth: 0,
                     run_id,
+                    transcript_readable,
                 }
                 .run_parsed(args)
                 .await;
@@ -3851,6 +3873,7 @@ async fn run_child(
         // Its first request extends nothing the server has measured: its own
         // text bounds it, its later rounds the round before.
         anchor: None,
+        staged: Vec::new(),
     };
     // Boxed: `run` → `tool_round` → here → `run` is a recursive async chain,
     // and the compiler needs one indirection in it.
@@ -4017,6 +4040,26 @@ struct DialogueState {
     reasoning: u32,
 }
 
+/// Appends `note` to the request's last message — the round limit's final
+/// round says there are no tools left ([`TurnLoop::final_round`]).
+///
+/// On the wire only, and onto the last message rather than as a turn of its
+/// own: that message is the last round's `tool` result (or a `user` turn), and
+/// a separate `user` turn after the tool results would break a template that
+/// enforces alternation, as Gemma 3's does. The stored chat never sees it.
+pub(super) fn note_on_last(messages: &mut Vec<ApiMessage>, note: &str) {
+    use crate::shared::api::contract::ApiRole;
+    match messages.last_mut() {
+        Some(last) if matches!(last.role, ApiRole::Tool | ApiRole::User) => {
+            if !last.content.is_empty() {
+                last.content.push_str("\n\n");
+            }
+            last.content.push_str(note);
+        }
+        _ => messages.push(ApiMessage::user(note)),
+    }
+}
+
 /// The director's conversation brief (fork F6): the chat's rolling summary
 /// when one is in force, then the tail of the parent request's own
 /// conversation — most recent turns within a fixed budget. Empty on a chat
@@ -4101,6 +4144,10 @@ struct DialogueCtx<'a> {
     /// line can name the transcript's address before the scene begins
     /// (docs/research/background-dialogues.md §4.2).
     run_id: Uuid,
+    /// Whether the caller can read the transcript back — `chat_read` is among
+    /// the tools of the request that staged the scene. The result names the
+    /// address as a route only where it is one (docs/lessons.md §4).
+    transcript_readable: bool,
 }
 
 impl TurnLoop<'_> {
@@ -4108,7 +4155,22 @@ impl TurnLoop<'_> {
     /// on behalf of the turn: names what the scene needs from this loop and
     /// hands it to [`DialogueCtx::run`], which is the driver.
     async fn run_dialogue(&mut self, args: &serde_json::Value) -> CallResult {
-        DialogueCtx {
+        // An identical scene is not staged twice in one turn. A scene is six
+        // requests or more, and a model that does not take the ending as an
+        // answer stages the same one again: Gemma 4, eight and nine times to
+        // the round limit before the result named what it could not reach,
+        // and still three times in one of two runs after
+        // (docs/research/e2e-gate-budget.md §7). A repeat costs one cheap round
+        // now, whatever the model makes of the words.
+        if self.staged.contains(args) {
+            return self
+                .ctx
+                .loc
+                .t("tool.run_dialogue.result.already_staged")
+                .to_string()
+                .into();
+        }
+        let result = DialogueCtx {
             shared: self.shared,
             loc: self.ctx.loc,
             sampling: self.ctx.effective_sampling.clone(),
@@ -4121,9 +4183,22 @@ impl TurnLoop<'_> {
             cancel: self.cancel.child_token(),
             depth: self.depth,
             run_id: Uuid::new_v4(),
+            transcript_readable: self.offers(crate::features::tools::chats::CHAT_READ_ID),
         }
         .run(args)
-        .await
+        .await;
+        // Only a scene that ran counts: a malformed call repeated gets its own
+        // refusal again, not "already staged".
+        if result.subagent.is_some() {
+            self.staged.push(args.clone());
+        }
+        result
+    }
+
+    /// Whether this turn's request offers the tool `id` — the set the model
+    /// can actually call, after the profile, the switches and the withheld.
+    fn offers(&self, id: &str) -> bool {
+        self.request.tools.iter().any(|t| t.name == id)
     }
 }
 
@@ -4391,9 +4466,20 @@ impl DialogueCtx<'_> {
                 &[("secs", &limits.dialogue_run_timeout.as_secs().to_string())],
             ),
         };
+        // The address is a route only for a caller holding `chat_read`. To one
+        // without it, it is a door with no key — and Gemma 4, told only that
+        // the scene had ended, staged the identical scene again and again until
+        // the round limit: nine times on the live gate, eight on a local run of
+        // the same weights (docs/research/e2e-gate-budget.md §7). So it is told
+        // what is true instead: the lines stay with the user, and staging the
+        // scene again would not hand them over either.
         status.push_str("\n\n");
         status.push_str(&loc.tf(
-            "tool.run_dialogue.result.transcript",
+            if self.transcript_readable {
+                "tool.run_dialogue.result.transcript"
+            } else {
+                "tool.run_dialogue.result.transcript_unreadable"
+            },
             &[("address", &crate::features::chat_links::uri(run.id))],
         ));
         CallResult {
