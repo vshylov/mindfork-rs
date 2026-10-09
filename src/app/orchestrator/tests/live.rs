@@ -6098,7 +6098,7 @@ async fn background_dialogue_e2e_live() {
 async fn parallel_subagents_e2e_live() {
     if live_one_call_per_reply() {
         eprintln!(
-            "skip: MINDFORK_LIVE_ONE_CALL_PER_REPLY — this model makes one tool call per reply,              and the smoke needs two in one"
+            "skip: MINDFORK_LIVE_ONE_CALL_PER_REPLY — one tool call per reply, and this smoke needs two"
         );
         return;
     }
@@ -6275,7 +6275,7 @@ async fn parallel_subagents_e2e_live() {
 async fn concurrent_tools_e2e_live() {
     if live_one_call_per_reply() {
         eprintln!(
-            "skip: MINDFORK_LIVE_ONE_CALL_PER_REPLY — this model makes one tool call per reply,              and the smoke needs two in one"
+            "skip: MINDFORK_LIVE_ONE_CALL_PER_REPLY — one tool call per reply, and this smoke needs two"
         );
         return;
     }
