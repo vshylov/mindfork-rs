@@ -309,7 +309,10 @@ back to the A100.
   cards, its own card once more — HF's refusals come in waves, and the last rung
   is for one that has passed. Gemma and Qwen fall back to the A100 (×1.08 the
   L40S on the gate's smokes, $2.50/h against $1.80, §8); `gpt-oss-120b` has no
-  fallback, because the A100 that would hold its 63 GB is unmeasured. A card
+  fallback, because the A100 that would hold its 63 GB is unmeasured — measured
+  the next day, when HF withdrew its H200's region: it runs on an RTX PRO 6000
+  now, with the A100 and an H200 on gcp behind it
+  ([e2e-gpt-oss-120b.md](e2e-gpt-oss-120b.md) §11). A card
   named with `--chat-instance` is a measurement of that card: tried twice, never
   swapped. The embedders are tried twice on their T4.
 - **What is retried**: an endpoint that ends `failed`/`updateFailed`, and a create
