@@ -205,6 +205,10 @@ for your machine, verified against the checksum the release publishes.
   every engine setting, where the data lives, the Python sandbox, MCP servers,
   speech, backups.
 
+Where the data went depends on the route — beside the binary, or in your user
+folder. Inside the app, `F1` → **About** → *Locations* says which, with the full
+paths of the program, its data and its logs.
+
 mindfork is a terminal application: it needs a **real terminal**. Started with
 its output redirected or with no console at all, it says so and exits rather than
 pretending to run.

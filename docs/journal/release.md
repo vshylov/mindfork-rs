@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (74)
+## Entries (75)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -86,6 +86,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Release 0.18.0 (prepared)
 - Post-M9: the release notes a local tag check writes are ignored (done)
 - Post-M9: the macOS probe branch, frozen as a tag (done)
+- Release 0.18.1 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -4469,3 +4470,49 @@ the verdict. The branch is deleted. The only file unique to it is
 today. Neither the tag nor the deletion starts a workflow — `release.yml`
 listens to `v*` and the probe to a push to its branch — and none ran.
 macos.md §3 and §12 point at the tag.
+
+### Release 0.18.1 (prepared)
+
+- **A release PR** per [AGENTS.md §6](../../AGENTS.md), branch
+  `chore/release-0.18.1`:
+  - `Cargo.toml` `0.18.0 → 0.18.1` (+ one line of `Cargo.lock`), and the
+    site's `app_version`;
+  - `CHANGELOG.md`: `[Unreleased]` → `[0.18.1] — 2026-10-09` under a lead
+    paragraph, "Where everything is", a fresh `[Unreleased]`, and the
+    comparison links;
+  - CLAUDE.md's status heading;
+  - a line in the README, a paragraph on the site's install page, and the
+    release's post.
+
+  Since `v0.18.0`: the About tab's *Locations* (728), and PRs with no effect
+  in the app — the journal of 0.18.0's publication (722), the bug template's
+  logs and a Mac's chip (723), the deferred call for testers (724), the
+  ignored `notes.md` (725), the probe branch frozen as a tag (726) and a Sonar
+  cleanup of `mac_probe.py` (727).
+- **A PATCH, as the owner asked, with an item under *Added*.** By the letter
+  of §6 a feature is a MINOR; 0.16.1 is the latest of the precedents recorded
+  there, and this one is of the same size: one item, nothing stored, no engine,
+  memory or tool path touched. Recorded so that the number is not later read
+  as an oversight.
+- **The site's install page** named no way to find the data folder but
+  `install.md`. Its *First run* now says that where the data went depends on
+  the route, and that `F1` → **About** → *Locations* says which. The README,
+  the crate's page, says where the data folder is by route and now that `F1` →
+  About names it; both wait for the release because they describe the released
+  version.
+- **No `Data` rubric, by measurement.** `git diff v0.18.0 -- src/shared/storage
+  src/shared/config.rs src/entities src/features/data_migration.rs
+  src/features/backup.rs` is empty. `Paths` keeps the `DataLocation` it used
+  to drop, in memory; nothing new is written.
+- **No rehearsal.** `git diff v0.18.0 -- .github/workflows packaging` is empty.
+- **The post** says what the group shows, row by row, which route puts the
+  data where (the portable archives, the script and `cargo install` beside the
+  binary; the packages, Homebrew and Scoop in the user folder; the installer
+  asks — install.md §1), the rented box's question, and the demo's made-up
+  folders. `llms.txt` is regenerated; `zola check --skip-external-links` and
+  `zola build` (0.23.6) are clean, the post heads the blog's index, and the
+  home page's and install page's structured data say `0.18.1`.
+- **Gates** on Windows: **3994 unit tests, 257 `#[ignore]`**, `clippy -D
+  warnings`, `fmt`, every Python gate of the Lints job, and `release_guard.py
+  --tag v0.18.1` accepting the tag — its notes the `[0.18.1]` section, 11 lines
+  (the `notes.md` it writes is ignored since 725, and was removed).

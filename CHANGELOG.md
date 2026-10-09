@@ -14,6 +14,12 @@ split by subsystem.
 
 ## [Unreleased]
 
+## [0.18.1] — 2026-10-09
+
+**Where everything is.** `F1` → About now names the folders mindfork uses —
+the program's, the data's and the logs' — with the full paths, so a log to
+attach to a report or a data folder to back up is one look away.
+
 ### Added
 
 - **`F1` → About shows where everything is:** the program's folder, the data
@@ -3246,7 +3252,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.18.1...HEAD
+[0.18.1]: https://github.com/vshylov/mindfork-rs/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/vshylov/mindfork-rs/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/vshylov/mindfork-rs/compare/v0.16.1...v0.17.0
 [0.16.1]: https://github.com/vshylov/mindfork-rs/compare/v0.16.0...v0.16.1
