@@ -711,7 +711,7 @@ def _check_run_endpoints(failures):
         failures.append(f"delete-run --shard 2/3: chose {got}, want {list(family[2])}")
 
 
-def _check_shards(failures):
+def _check_shard_parsing(failures):
     for text, want in (("2/3", (2, 3)), (" 1/1 ", (1, 1)), (f"{SHARD_MAX}/{SHARD_MAX}", (SHARD_MAX, SHARD_MAX))):
         try:
             if parse_shard(text) != want:
@@ -726,6 +726,9 @@ def _check_shards(failures):
             pass
     if run_ident("r", None) != "r" or run_ident("r", (1, 1)) != "r" or run_ident("r", (2, 3)) != "r-s2":
         failures.append("shard: 1/1 must keep the unsharded names, 2/3 must add -s2")
+
+
+def _check_shard_deal(failures):
     # Every smoke in exactly one shard, the shards within one of each other in
     # size, each in libtest's order — for every N, over a list that does not
     # divide evenly.
@@ -736,11 +739,11 @@ def _check_shards(failures):
         sizes = [len(part) for part in parts]
         if flat != names or max(sizes) - min(sizes) > 1 or any(part != sorted(part) for part in parts):
             failures.append(f"shard: N={n} does not deal {len(names)} smokes once each, evenly, in order")
-    listing = "a::b::one: test\nall_the_rest: test\nc::bench_x: benchmark\n\n2 tests, 1 benchmark\n"
-    if parse_test_list(listing) != ["a::b::one", "all_the_rest"]:
+    listing = "mod::smoke_one: test\nall_the_rest: test\nmod::bench_x: benchmark\n\n2 tests, 1 benchmark\n"
+    if parse_test_list(listing) != ["mod::smoke_one", "all_the_rest"]:
         failures.append(f"shard: the --list parse gave {parse_test_list(listing)}")
-    command = cargo_command(argparse.Namespace(command="", test_args=DEFAULT_TEST_ARGS, filter="x"), ["a::b", "c"])
-    want = ["cargo", "test", "--", "--ignored", "--nocapture", "--test-threads=1", "--exact", "a::b", "c"]
+    command = cargo_command(argparse.Namespace(command="", test_args=DEFAULT_TEST_ARGS, filter="x"), ["mod::one", "two"])
+    want = ["cargo", "test", "--", "--ignored", "--nocapture", "--test-threads=1", "--exact", "mod::one", "two"]
     if command != want:
         failures.append(f"shard: the suite's argv is {command}, want {want}")
 
@@ -810,7 +813,8 @@ def self_test():
     failures = []
     _check_names(failures)
     _check_run_endpoints(failures)
-    _check_shards(failures)
+    _check_shard_parsing(failures)
+    _check_shard_deal(failures)
     _check_sweep(failures)
     _check_workflows(failures)
     for line in failures:
