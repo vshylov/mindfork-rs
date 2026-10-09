@@ -30,10 +30,10 @@ on:
       #
       # `gpt-oss-120b` is the third: a **split** model (two files, 63.39 GB), an
       # OpenAI open-weights model (the harmony template), and the only text-only
-      # one — so it brings its own GPU (H200 141 GB, us-west-2), its own download
+      # one — so it brings its own GPU (RTX PRO 6000 96 GB, aws us-east-2; until
+      # 2026-10-10 an H200 in a region HF has since withdrawn), its own download
       # filter and a declared skip for the three vision smokes, all from its
-      # record in tools/hf_api.py. It costs about three times a Gemma dispatch;
-      # docs/research/e2e-gpt-oss-120b.md.
+      # record in tools/hf_api.py; docs/research/e2e-gpt-oss-120b.md §11.
       model:
         description: "Chat model to rent for this run"
         required: false
@@ -43,15 +43,17 @@ on:
       # `model-default` is the normal answer: the model record names the card that
       # fits it, and the region follows the card — and the card to move to when HF
       # cannot start it (Gemma and Qwen: an L40S, then an A100, then the L40S once
+      # more; gpt-oss: the RTX PRO 6000, an A100, an H200 on gcp, the RTX once
       # more). Overriding it is for measuring a card, not for routine use, and a
       # card named here is never swapped: it is tried twice. A 63 GB model on a
-      # 48 GB L40S fails after the deploy, not before it.
+      # 48 GB L40S fails after the deploy, not before it. Every card a model may
+      # run on is offered here (`e2e_hf.py --self-test` holds it to that).
       chat_instance:
         description: "GPU for the chat endpoint (model-default = the model's own)"
         required: false
         default: model-default
         type: choice
-        options: [model-default, nvidia-l40s, nvidia-a10g, nvidia-l4, nvidia-a100, nvidia-h200]
+        options: [model-default, nvidia-l40s, nvidia-a10g, nvidia-l4, nvidia-a100, nvidia-rtx-pro-6000, nvidia-h200]
       # Four by default. Measured on run 37970393128, the first to finish the
       # whole suite: 72 minutes of smokes, and the heaviest of four round-robin
       # shards ~28 of them (the steering probe alone is 12). Each shard holds an

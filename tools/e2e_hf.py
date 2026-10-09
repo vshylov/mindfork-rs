@@ -324,11 +324,16 @@ FAILED_TO_START = ("failed", "updateFailed")
 
 
 class Rung:
-    """One attempt at an endpoint: the card it asks for, and its payload."""
+    """One attempt at an endpoint: the card it asks for, where that card lives,
+    and its payload."""
 
-    def __init__(self, card, make):
+    def __init__(self, card, place, make):
         self.card = card
+        self.place = place  # (vendor, region)
         self.make = make  # name -> create payload
+
+    def label(self):
+        return f"{self.card} @ {'/'.join(self.place)}"
 
 
 def chat_rungs(args):
@@ -340,23 +345,64 @@ def chat_rungs(args):
     twice and never swapped. A model with no fallback is tried twice on its own.
     """
 
-    def payload_on(card_args):
-        return lambda name: hf.apply_overrides(hf.chat_payload(name, card_args), args.set)
+    def rung_on(card_args):
+        def make(name):
+            return hf.apply_overrides(hf.chat_payload(name, card_args), args.set)
 
-    first = Rung(hf.chat_instance(args), payload_on(args))
+        return Rung(hf.chat_instance(card_args), hf.chat_place(card_args), make)
+
+    first = rung_on(args)
     fallbacks = [] if args.chat_instance else hf.chat_model(args).get("fallback") or []
     rungs = [first]
     for card in fallbacks:
         moved = argparse.Namespace(**vars(args))
         moved.chat_instance = card
-        rungs.append(Rung(card, payload_on(moved)))
+        rungs.append(rung_on(moved))
     return rungs + [first]
 
 
 def embed_rungs(args, payload):
     """An embedder's attempts: its own card, twice — a T4 has no fallback."""
-    first = Rung(args.embed_instance, lambda name: hf.apply_overrides(payload(name, args), args.set))
+    place = hf.card_place(args, args.embed_instance)
+    first = Rung(args.embed_instance, place, lambda name: hf.apply_overrides(payload(name, args), args.set))
     return [first, first]
+
+
+def catalogue_warnings(catalogue, rungs, size):
+    """What HF's provider catalogue says against the cards a run may ask for:
+    one line per card that is not plainly `available` there.
+
+    The H200 this gate ran `gpt-oss-120b` on was already `deprecated` there on
+    2026-10-09; the next day its region was `not_available` and a create a 400
+    (research e2e-gpt-oss-120b.md §11). The ladder survives one dead card, but
+    only a warning says the ladder has started to shrink.
+    """
+    places = {}
+    for vendor in (catalogue or {}).get("vendors") or []:
+        for region in vendor.get("regions") or []:
+            for compute in region.get("computes") or []:
+                key = (vendor.get("name"), region.get("name"), compute.get("instanceType"), compute.get("instanceSize"))
+                places[key] = (region.get("status"), compute.get("status"))
+    warnings = []
+    for label, (vendor, region), card in dict.fromkeys((r.label(), r.place, r.card) for r in rungs):
+        found = places.get((vendor, region, card, size))
+        if found is None:
+            warnings.append(f"{label} {size} is not in HF's catalogue")
+        elif found != ("available", "available"):
+            warnings.append(f"{label} {size}: region {found[0]}, card {found[1]} in HF's catalogue")
+    return warnings
+
+
+def warn_catalogue(rungs, size):
+    """Print `catalogue_warnings` — in CI as annotations, which the run's page
+    shows; a catalogue that cannot be read is said, never fatal."""
+    status, catalogue = hf.http("GET", hf.PROVIDER_URLS[0])
+    if not hf.ok(status) or not isinstance(catalogue, dict):
+        print(f"  (HF's catalogue unreadable: HTTP {status}; the cards are not checked)")
+        return
+    prefix = "::warning::" if os.environ.get("GITHUB_ACTIONS") == "true" else "  WARNING: "
+    for line in catalogue_warnings(catalogue, rungs, size):
+        print(f"{prefix}{line}", flush=True)
 
 
 def bring_up(kind, name, args, rungs=None, created=True, pause=RETRY_PAUSE_S):
@@ -373,7 +419,7 @@ def bring_up(kind, name, args, rungs=None, created=True, pause=RETRY_PAUSE_S):
     rungs = rungs or [None]
     for i, rung in enumerate(rungs):
         if i > 0:
-            print(f"\n  -> {kind}: creating it again on {rung.card} (attempt {i + 1} of {len(rungs)})", flush=True)
+            print(f"\n  -> {kind}: creating it again on {rung.label()} (attempt {i + 1} of {len(rungs)})", flush=True)
             if not hf.delete_one(name):
                 return None
             time.sleep(pause)
@@ -470,10 +516,10 @@ def print_plan(plan, args):
         # Which .gguf files the endpoint pulls at all. On a repository that holds
         # every quantization it is the difference between 63 GB and 1010 GB.
         print(f"                  variant {variant}")
-    print(f"  chat  hardware: {hf.chat_instance(args)} {args.instance_size} @ {args.vendor}/{hf.chat_region(args)}")
+    print(f"  chat  hardware: {hf.chat_instance(args)} {args.instance_size} @ {'/'.join(hf.chat_place(args))}")
     if not args.reuse_chat:
         # The trail an orphan hunt needs: which cards the name may be found on.
-        print(f"  chat  attempts: {' -> '.join(r.card for r in chat_rungs(args))}  (when one fails to start)")
+        print(f"  chat  attempts: {' -> '.join(r.label() for r in chat_rungs(args))}  (when one fails to start)")
     print(f"  chat  endpoint: {plan.chat_name}{'  (reused)' if args.reuse_chat else ''}")
     if plan.want_embed:
         print(f"  embed endpoint: {plan.embed_name}{'  (reused)' if args.reuse_embed else ''}")
@@ -552,6 +598,8 @@ def cmd_run(args):
     started = time.time()
     plan = Plan(args)
     print_plan(plan, args)
+    specs = endpoint_specs(plan, args)
+    warn_catalogue([r for _kind, _name, rungs in specs for r in rungs or []], args.instance_size)
 
     if args.dry_run:
         return dry_run(plan, args)
@@ -570,7 +618,6 @@ def cmd_run(args):
             print(f"\nshard {plan.shard[0]}/{plan.shard[1]} holds no smokes — nothing to rent.")
             return hf.EXIT_OK
 
-    specs = endpoint_specs(plan, args)
     up = bring_up_all(specs, create_endpoints(specs), args)
     if up is None:
         return hf.EXIT_FAILED
@@ -591,7 +638,7 @@ def cmd_run(args):
     )
 
     print("\n=== summary ===")
-    on = f"  on {chat_card}" if chat_card else ""
+    on = f"  on {chat_card} @ {'/'.join(hf.card_place(args, chat_card))}" if chat_card else ""
     moved = "  (a fallback: the model's own card did not start)" if chat_card and chat_card != hf.chat_instance(args) else ""
     print(f"  chat  {plan.chat_name}  {chat_url}{on}{moved}")
     print(f"  embed {plan.embed_name}  {embed_url or '(none)'}")
@@ -842,29 +889,75 @@ def _run_args(*argv):
 
 
 def _check_rungs(failures):
-    """Which cards each endpoint is tried on, and that a moved rung's payload
-    really asks for its card — in the region that card lives in."""
+    """Which cards each endpoint is tried on, and that every rung's payload
+    really asks for its card — in the place that card lives in."""
+    rtx, a100, h200, l40s = "nvidia-rtx-pro-6000", "nvidia-a100", "nvidia-h200", "nvidia-l40s"
+    east1, east2, gcp = ("aws", "us-east-1"), ("aws", "us-east-2"), ("gcp", "us-south1")
     cases = [
-        ((), ["nvidia-l40s", "nvidia-a100", "nvidia-l40s"]),
-        (("--chat-model", "qwen-3.6-27b"), ["nvidia-l40s", "nvidia-a100", "nvidia-l40s"]),
-        (("--chat-model", "gpt-oss-120b"), ["nvidia-h200", "nvidia-h200"]),
-        (("--chat-instance", "nvidia-a100"), ["nvidia-a100", "nvidia-a100"]),
+        ((), [(l40s, east1), (a100, east1), (l40s, east1)]),
+        (("--chat-model", "qwen-3.6-27b"), [(l40s, east1), (a100, east1), (l40s, east1)]),
+        (("--chat-model", "gpt-oss-120b"), [(rtx, east2), (a100, east1), (h200, gcp), (rtx, east2)]),
+        (("--chat-instance", a100), [(a100, east1), (a100, east1)]),
+        (("--chat-model", "gpt-oss-120b", "--chat-instance", h200), [(h200, gcp), (h200, gcp)]),
+        # A place named by hand is a measurement of that place: every rung keeps it.
+        (("--region", "us-east-1"), [(l40s, east1), (a100, east1), (l40s, east1)]),
+        (("--chat-model", "gpt-oss-120b", "--vendor", "aws", "--region", "us-east-1"), [(rtx, east1), (a100, east1), (h200, east1), (rtx, east1)]),
     ]
     for argv, want in cases:
         args = _run_args(*argv)
         rungs = chat_rungs(args)
-        if [r.card for r in rungs] != want:
-            failures.append(f"rungs: {argv or 'default'} -> {[r.card for r in rungs]}, want {want}")
+        if [(r.card, r.place) for r in rungs] != want:
+            failures.append(f"rungs: {argv or 'default'} -> {[r.label() for r in rungs]}, want {want}")
             continue
         for rung in rungs:
             payload = rung.make("e2e-chat-x")
-            got = payload["compute"]["instanceType"]
-            region = payload["provider"]["region"]
-            if got != rung.card or region != hf.INSTANCE_REGIONS.get(got, hf.chat_region(args)):
-                failures.append(f"rungs: {argv or 'default'} rung {rung.card} asks for {got} in {region}")
-    embed = [r.card for r in embed_rungs(_run_args(), hf.embed_payload)]
-    if embed != ["nvidia-t4", "nvidia-t4"]:
-        failures.append(f"rungs: the embedder is tried on {embed}")
+            asked = (payload["compute"]["instanceType"], (payload["provider"]["vendor"], payload["provider"]["region"]))
+            if asked != (rung.card, rung.place):
+                failures.append(f"rungs: {argv or 'default'} rung {rung.label()} asks for {asked}")
+    # The embedders stay on their T4 in aws us-east-1 whichever model the chat is.
+    for argv in ((), ("--chat-model", "gpt-oss-120b")):
+        args = _run_args(*argv)
+        embed = [(r.card, r.place) for r in embed_rungs(args, hf.embed_payload)]
+        payload = hf.embed_payload("e2e-embed-x", args)
+        asked = (payload["compute"]["instanceType"], (payload["provider"]["vendor"], payload["provider"]["region"]))
+        if embed != [("nvidia-t4", east1)] * 2 or asked != ("nvidia-t4", east1):
+            failures.append(f"rungs: {argv or 'default'} embedder tried on {embed}, its payload asks for {asked}")
+
+
+def _catalogue(*computes):
+    """A provider catalogue in HF's shape: (vendor, region, region status,
+    instanceType, compute status) per x1 compute."""
+    vendors = {}
+    for vendor, region, region_status, card, status in computes:
+        regions = vendors.setdefault(vendor, {})
+        entry = regions.setdefault(region, {"name": region, "status": region_status, "computes": []})
+        entry["computes"].append({"instanceType": card, "instanceSize": "x1", "status": status})
+    return {"vendors": [{"name": v, "regions": list(r.values())} for v, r in vendors.items()]}
+
+
+def _check_catalogue(failures):
+    """A card the ladder may ask for is warned about unless the catalogue lists
+    it, in its place, plainly available — once per card, not once per rung."""
+    rungs = chat_rungs(_run_args("--chat-model", "gpt-oss-120b"))
+    healthy = _catalogue(
+        ("aws", "us-east-2", "available", "nvidia-rtx-pro-6000", "available"),
+        ("aws", "us-east-1", "available", "nvidia-a100", "available"),
+        ("gcp", "us-south1", "available", "nvidia-h200", "available"),
+    )
+    if catalogue_warnings(healthy, rungs, "x1"):
+        failures.append(f"catalogue: warned on a healthy one: {catalogue_warnings(healthy, rungs, 'x1')}")
+    if len(catalogue_warnings(healthy, rungs, "x2")) != 3:
+        failures.append("catalogue: a size the catalogue does not list is not warned about")
+    sick = _catalogue(
+        ("aws", "us-east-2", "available", "nvidia-rtx-pro-6000", "deprecated"),
+        ("aws", "us-east-1", "not_available", "nvidia-a100", "available"),
+        # The H200 in the place it *used* to be: not where the ladder asks for it.
+        ("aws", "us-west-2", "available", "nvidia-h200", "available"),
+    )
+    got = catalogue_warnings(sick, rungs, "x1")
+    want = ["nvidia-rtx-pro-6000 @ aws/us-east-2", "nvidia-a100 @ aws/us-east-1", "nvidia-h200 @ gcp/us-south1"]
+    if [w.split(" x1")[0] for w in got] != want:
+        failures.append(f"catalogue: {got}, want one warning each for {want}")
 
 
 class _FakeHf:
@@ -1020,6 +1113,12 @@ def _check_workflows(failures):
     # One shard's red must not cancel the others: they hold endpoints of their own.
     if "fail-fast: false" not in live:
         failures.append("workflow: the shard matrix does not set fail-fast: false")
+    # Every card a model may run on can be named by hand, to measure it alone.
+    offered = re.search(r"^ {6}chat_instance:.*?^ {8}options: \[([^\]]*)\]", live, re.M | re.S)
+    offered = {c.strip() for c in offered.group(1).split(",")} if offered else set()
+    cards = {c for m in hf.CHAT_MODELS.values() for c in [m["instance"], *(m.get("fallback") or [])]}
+    if not cards <= offered:
+        failures.append(f"workflow: chat_instance does not offer {sorted(cards - offered)}")
 
 
 def self_test():
@@ -1032,6 +1131,7 @@ def self_test():
     _check_shard_deal(failures)
     _check_embed_batch(failures)
     _check_rungs(failures)
+    _check_catalogue(failures)
     _check_bring_up(failures)
     _check_sweep(failures)
     _check_workflows(failures)

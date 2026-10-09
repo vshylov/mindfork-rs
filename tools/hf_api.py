@@ -58,8 +58,7 @@ CHAT_MODELS = {
         "repo": "google/gemma-4-31B-it-qat-q4_0-gguf",
         "gguf": "gemma-4-31B_q4_0-it.gguf",  # 17.65 GB
         "mmproj": "gemma-4-31B-it-mmproj.gguf",  # 1.20 GB
-        "instance": "nvidia-l40s",  # 48 GB
-        "region": "us-east-1",
+        "instance": "nvidia-l40s",  # 48 GB, aws us-east-1 (where a card lives: INSTANCE_PLACES)
         # The card a run moves to when HF cannot start the L40S — 15 of 25 creates
         # failed to start on 2026-10-09, and every A100 asked for that day came up.
         # ×1.08 the L40S on the gate's smokes, at $2.50/h against $1.80
@@ -72,7 +71,6 @@ CHAT_MODELS = {
         "gguf": "Qwen3.6-27B-Q4_K_M.gguf",  # 19.10 GB
         "mmproj": "mmproj-Qwen3.6-27B-Q8_0.gguf",  # 0.63 GB
         "instance": "nvidia-l40s",
-        "region": "us-east-1",
         "fallback": ["nvidia-a100"],  # as Gemma's: 19.7 GB fits its 80 GB
     },
     # The third model is not a third flavour of the first two: it is split
@@ -94,19 +92,22 @@ CHAT_MODELS = {
         # not on disk ("No such file or directory" at load). Undocumented on
         # HF's docs page; it is in the endpoints OpenAPI schema.
         "variant": "Q8_0/*",
-        # 141 GB, aws us-west-2, $5.00/hr. The H100 is *not* the cheap option
-        # here: it exists only on gcp at $10.00/hr and this account's quota for
-        # it is 0 (research §3).
-        "instance": "nvidia-h200",
-        "region": "us-west-2",
+        # 96 GB, aws us-east-2, $2.75/hr. Until 2026-10-10 this was an H200 in
+        # aws us-west-2, a region HF has since withdrawn (a create is a 400).
+        # Measured on this model that day (research §11): as fast as the H200 at
+        # generation (206 tokens/s against 204), twice it at prompt processing,
+        # at about half the price — and a quota of 4, one per shard, where the
+        # H200's is 2.
+        "instance": "nvidia-rtx-pro-6000",
         # Pinned rather than left to `--fit`, which the image runs by default:
         # on a 63 GB model an automatic partial offload does not fail, it just
         # runs part of the model on the CPU (research §4, U6). The two smaller
         # models keep the default they were measured on.
         "gpu_layers": 9999,
-        # No fallback card: the A100 that would hold it is unmeasured for this
-        # model (it dequantizes MXFP4; research §3), so a refused H200 is retried
-        # on an H200.
+        # The A100 (80 GB, 124 tokens/s) and then the H200 on gcp (141 GB, quota
+        # 2): a second cloud, so one wave of AWS refusals does not empty the
+        # ladder. Both were brought up on this model, research §11.
+        "fallback": ["nvidia-a100", "nvidia-h200"],
     },
 }
 # Gemma stays the default: the memory gates' similarity thresholds are calibrated
@@ -114,17 +115,21 @@ CHAT_MODELS = {
 # (fork F3). A second family is a dimension, not a new baseline.
 DEFAULT_CHAT_MODEL = "gemma-4-31b"
 
-# Where an endpoint goes when neither the caller nor the model says otherwise.
+# Where an endpoint goes when neither the caller nor its card says otherwise.
+DEFAULT_VENDOR = "aws"
 DEFAULT_REGION = "us-east-1"
 
-# Where a GPU that is *not* in the default region actually exists (GET
-# /v2/provider, 2026-08-29). An instance implies its region: asking for an H200
-# in us-east-1 is not a choice, it is a failed deploy, and the catalogue is the
-# only thing that knows which is which. Listed here so that `--chat-instance`
-# alone stays a safe thing to pass.
-INSTANCE_REGIONS = {
-    "nvidia-h200": "us-west-2",
-    "nvidia-rtx-pro-6000": "us-east-2",
+# Where a GPU that is *not* on aws us-east-1 is rented: (vendor, region), read
+# from GET /v2/provider (2026-10-10). A card implies its place: asking for an
+# H200 in us-east-1 is not a choice, it is a failed deploy, and the catalogue is
+# the only thing that knows which is which. Listed here so that `--chat-instance`
+# alone stays a safe thing to pass — and so that a fallback card lands where it
+# exists. The H200 moved clouds: aws us-west-2 is `not_available` and its H200
+# `deprecated` (seen so on 2026-10-09); gcp has it, at the same price (research
+# e2e-gpt-oss-120b.md §11).
+INSTANCE_PLACES = {
+    "nvidia-h200": ("gcp", "us-south1"),
+    "nvidia-rtx-pro-6000": ("aws", "us-east-2"),
 }
 
 EMBED_REPO = "ggml-org/bge-m3-Q8_0-GGUF"  # the exact model the gates were calibrated on
@@ -295,19 +300,22 @@ def chat_instance(args):
     return args.chat_instance or chat_model(args)["instance"]
 
 
-def chat_region(args):
-    """The region for the chat endpoint: the caller's, else the one implied by an
-    explicitly named instance, else the model's own, else the default.
+def card_place(args, card):
+    """(vendor, region) for an endpoint on `card`: the caller's, else the card's.
 
-    The middle case is the one that matters: a caller who overrides the instance
-    is not thereby asking for the model's region, and an H200 does not exist in
-    us-east-1.
+    The place follows the card, not the model: a run that moves to a fallback
+    card moves to where that card exists (an H200 is on gcp, an RTX PRO 6000 in
+    us-east-2), and a caller who names an instance is not thereby asking for the
+    model's place. `--vendor` and `--region` still win — each on its own — for
+    a caller measuring a place by hand.
     """
-    if args.region:
-        return args.region
-    if args.chat_instance:
-        return INSTANCE_REGIONS.get(args.chat_instance, DEFAULT_REGION)
-    return chat_model(args).get("region") or DEFAULT_REGION
+    vendor, region = INSTANCE_PLACES.get(card, (DEFAULT_VENDOR, DEFAULT_REGION))
+    return args.vendor or vendor, args.region or region
+
+
+def chat_place(args):
+    """(vendor, region) for the chat endpoint: where its card lives."""
+    return card_place(args, chat_instance(args))
 
 
 def text_only(args):
@@ -361,14 +369,15 @@ def chat_payload(name, args):
     """
     model = chat_model(args)
     mmproj = None if args.no_mmproj else (args.mmproj or model["mmproj"])
+    vendor, region = chat_place(args)
     payload = {
         "name": name,
         "type": args.endpoint_type,
-        # The model's own region, unless the caller named one. A 63 GB model
-        # lives where the card that holds it lives (H200: us-west-2), and the
-        # embedders stay wherever `--region` puts them — three endpoints in two
-        # regions is latency, not correctness.
-        "provider": {"vendor": args.vendor, "region": chat_region(args)},
+        # Where the card lives, unless the caller named a place. A 63 GB model
+        # lives where the card that holds it lives (RTX PRO 6000: us-east-2; an
+        # H200: gcp), and the embedders stay on their T4s in aws us-east-1 —
+        # three endpoints in two places is latency, not correctness.
+        "provider": {"vendor": vendor, "region": region},
         "compute": {
             "accelerator": "gpu",
             "instanceType": chat_instance(args),
@@ -445,10 +454,11 @@ def embed_payload(name, args, repo=None, gguf=None):
     # working for the primary embedder.
     repo = repo or EMBED_REPO
     gguf = gguf or args.embed_gguf
+    vendor, region = card_place(args, args.embed_instance)
     return {
         "name": name,
         "type": args.endpoint_type,
-        "provider": {"vendor": args.vendor, "region": args.region or DEFAULT_REGION},
+        "provider": {"vendor": vendor, "region": region},
         "compute": {
             "accelerator": "gpu",
             "instanceType": args.embed_instance,
@@ -499,8 +509,8 @@ def apply_overrides(payload, sets):
 def add_endpoint_args(parser):
     """The flags that describe *what to deploy* — shared so the two scripts
     cannot deploy subtly different endpoints."""
-    parser.add_argument("--vendor", default="aws")
-    parser.add_argument("--region", default="", help=f"default: the chat model's own, else {DEFAULT_REGION}")
+    parser.add_argument("--vendor", default="", help=f"default: the card's own, else {DEFAULT_VENDOR}")
+    parser.add_argument("--region", default="", help=f"default: the card's own, else {DEFAULT_REGION}")
     parser.add_argument("--chat-instance", default="", help="default: the model's own; `hf_probe.py hardware` lists them")
     parser.add_argument("--embed-instance", default="nvidia-t4")
     parser.add_argument("--instance-size", default="x1")
