@@ -50,13 +50,14 @@ on:
         default: model-default
         type: choice
         options: [model-default, nvidia-l40s, nvidia-a10g, nvidia-l4, nvidia-a100, nvidia-h200]
-      # Four by default: estimated from run 37947267239, the heaviest of four
-      # round-robin shards is ~24 minutes of suite (one dialogue smoke alone was
-      # 643 s), which leaves room under the 45-minute ceiling for a cold build and
-      # an L40S that takes ten minutes to schedule — both measured on 2026-10-09.
-      # Each shard holds an L40S and two T4s (quota: 16 and 30). `1` is the whole
-      # suite in one job, as before; a filtered run is sharded too, so pick `1`
-      # for a handful of smokes.
+      # Four by default. Measured on run 37970393128, the first to finish the
+      # whole suite: 72 minutes of smokes, and the heaviest of four round-robin
+      # shards ~28 of them (the steering probe alone is 12). Each shard holds an
+      # L40S and two T4s (quota: 16 and 30), and more shards at once meet more of
+      # HF's capacity refusals — 8 of 13 L40S creates failed to start that
+      # evening. `1` is the whole suite in one job, as before; a filtered run is
+      # sharded too, so pick `1` for a handful of smokes. A shard that fails is
+      # rerun alone: `gh run rerun <id> --failed`.
       shards:
         description: "Parallel jobs the suite is dealt across, each with endpoints of its own"
         required: false
@@ -94,16 +95,18 @@ jobs:
       fail-fast: false
       matrix:
         shard: ${{ fromJSON(format('[{0}]', inputs.shards == '1' && '1' || inputs.shards == '2' && '1,2' || inputs.shards == '3' && '1,2,3' || inputs.shards == '5' && '1,2,3,4,5' || inputs.shards == '6' && '1,2,3,4,5,6' || '1,2,3,4')) }}
-    # Budget per shard: build (~3 min cold), deploy (~2 min, ten when an L40S is
-    # slow to schedule), and the shard's part of a 50–60 minute suite. The number
-    # itself is load-bearing in one direction: it must stay **below the
-    # sweeper's 90-minute threshold**, or the sweeper could delete the endpoints
+    # Budget per shard, measured on 2026-10-09: build and test list ~5 min,
+    # endpoints ready in 2–18 min (HF schedules the cards as it can), and the
+    # shard's part of a ~70-minute suite — up to ~28 min. 45 held the suite but
+    # not a slow schedule on top of it, hence 60. The number itself is
+    # load-bearing in one direction: it must stay **below the sweeper's
+    # 90-minute threshold**, or the sweeper could delete the endpoints
     # of a run that is still using them (`tools/e2e_hf.py --self-test` checks
     # it). On timeout the job is cancelled: the runner — `exec`ed below, so the
     # signal is its own — deletes its endpoints, and the backstop step at the end
     # deletes whatever it did not. The 15-minute scale-to-zero window bounds the
     # cost if even both fail.
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 

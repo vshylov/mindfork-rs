@@ -16,9 +16,9 @@ suite against them, and deletes them, verifying the deletion.
 
 The chat model is **one dispatch, one model** (`--chat-model`, default
 gemma-4-31b; docs/history/e2e-second-chat-model.md fork F2). Running both
-families in one go would run the suite twice, at ~50 minutes against a 45-minute
-workflow timeout that cannot rise without crowding the sweeper's 90-minute
-threshold.
+families in one go would run the suite twice — and one family's suite is already
+~70 minutes, which is why the workflow deals it across shards (`--shard`), each a
+job under a ceiling that must stay below the sweeper's 90-minute threshold.
 
 The alternate embedder is on by default and costs ~$0.13 of the ~$1 run. That
 is the point: without it four memory-critical smokes skip *while reporting ok*,
@@ -72,9 +72,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import hf_api as hf  # noqa: E402
 
 # The sweeper deletes `e2e-*` endpoints older than this. It MUST stay above the
-# workflow's `timeout-minutes` (45), or the sweeper would delete the endpoints of
+# workflow's `timeout-minutes` (60), or the sweeper would delete the endpoints of
 # a run that is still using them — turning a backstop into a saboteur. 90 leaves
-# 45 minutes of headroom over a job that cannot outlive its own timeout.
+# 30 minutes of headroom over a job that cannot outlive its own timeout
+# (`--self-test` checks the order).
 SWEEP_MAX_AGE_MIN = 90
 SWEEP_PREFIX = "e2e-"
 

@@ -8406,6 +8406,13 @@ async fn the_model_catalogue_reaches_the_ui_e2e_live() {
     let mut cfg = no_auto_cfg();
     cfg.engine.mode = crate::shared::config::ServerMode::External;
     cfg.engine.external.url = Some(url.clone());
+    // The key the way a user gives it, by the variable's name: `ListModels`
+    // reads the slot's own settings, not the harness's client, and without
+    // this an authenticated server — the remote gate's — answers 401
+    // (docs/research/e2e-gate-budget.md §8).
+    if std::env::var("MINDFORK_ENGINE_KEY").is_ok_and(|k| !k.is_empty()) {
+        cfg.engine.external.api_key_env = Some("MINDFORK_ENGINE_KEY".into());
+    }
     let Some((_dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live_cfg(cfg) else {
         eprintln!("skip: MINDFORK_ENGINE_URL not set");
         return;
