@@ -3251,7 +3251,7 @@ fn a_started_call_is_a_running_card_completed_in_place() {
 /// that turn clears the chip without touching the feed.
 #[test]
 fn a_running_transcript_grows_by_rounds_and_keeps_the_chip_but_not_the_stream() {
-    use crate::app::events::{ChildView, SubagentProgress};
+    use crate::entities::subagent::{ChildView, SubagentProgress};
     let mut s = ChatScreen::new();
     let run_id = Uuid::new_v4();
     let generation = Uuid::new_v4();
@@ -3270,11 +3270,11 @@ fn a_running_transcript_grows_by_rounds_and_keeps_the_chip_but_not_the_stream() 
         None,
         None,
     );
-    s.set_live_turn(Some(Box::new(crate::app::events::LiveTurn {
+    s.set_live_turn(Some(Box::new(crate::entities::live_turn::LiveTurn {
         role: MessageRole::Assistant,
         turn: generation,
         stream,
-        partial: Some(crate::app::events::LivePartial {
+        partial: Some(crate::entities::live_turn::LivePartial {
             text: "начало".into(),
             thoughts: String::new(),
             tools: Vec::new(),
@@ -3292,7 +3292,7 @@ fn a_running_transcript_grows_by_rounds_and_keeps_the_chip_but_not_the_stream() 
         generation,
         Uuid::new_v4(),
         Some(SubagentProgress {
-            kind: crate::app::events::RunProgressKind::Subagent,
+            kind: crate::entities::subagent::RunProgressKind::Subagent,
             name: "Критик".into(),
             round: 2,
             tool: None,
@@ -3337,7 +3337,7 @@ fn a_running_transcript_grows_by_rounds_and_keeps_the_chip_but_not_the_stream() 
 /// `TranscriptLine` retargets the stream, and a stale generation is ignored.
 #[test]
 fn a_dialogue_line_streams_on_its_speakers_side() {
-    use crate::app::events::ChildView;
+    use crate::entities::subagent::ChildView;
     let mut s = ChatScreen::new();
     let run_id = Uuid::new_v4();
     let stream = Uuid::new_v4();
@@ -3357,11 +3357,11 @@ fn a_dialogue_line_streams_on_its_speakers_side() {
     );
     // Opened mid-line: participant b is speaking — the seeded partial is a
     // **user-side** streaming bubble.
-    s.set_live_turn(Some(Box::new(crate::app::events::LiveTurn {
+    s.set_live_turn(Some(Box::new(crate::entities::live_turn::LiveTurn {
         turn: Uuid::new_v4(),
         stream,
         role: MessageRole::User,
-        partial: Some(crate::app::events::LivePartial {
+        partial: Some(crate::entities::live_turn::LivePartial {
             text: "hmm".into(),
             thoughts: String::new(),
             tools: Vec::new(),
@@ -3398,7 +3398,7 @@ fn a_dialogue_line_streams_on_its_speakers_side() {
 /// top, the discarded line is gone — and a foreign id is ignored.
 #[test]
 fn reset_transcript_replaces_the_feed_in_place() {
-    use crate::app::events::ChildView;
+    use crate::entities::subagent::ChildView;
     let mut s = ChatScreen::new();
     let run_id = Uuid::new_v4();
     s.set_child_view(Some(ChildView {
@@ -3435,7 +3435,7 @@ fn reset_transcript_replaces_the_feed_in_place() {
 /// director judging the scene — keyed by the progress kind.
 #[test]
 fn the_dialogue_chip_names_the_line_and_the_director() {
-    use crate::app::events::{RunProgressKind, SubagentProgress};
+    use crate::entities::subagent::{RunProgressKind, SubagentProgress};
     let mut s = ChatScreen::new();
     let generation = gen_id();
     s.begin_generation(generation, None);
@@ -3488,21 +3488,21 @@ fn returning_to_the_running_chat_resumes_its_generation() {
         None,
         None,
     );
-    s.set_live_turn(Some(Box::new(crate::app::events::LiveTurn {
+    s.set_live_turn(Some(Box::new(crate::entities::live_turn::LiveTurn {
         role: MessageRole::Assistant,
         turn: generation,
         stream: generation,
-        partial: Some(crate::app::events::LivePartial {
+        partial: Some(crate::entities::live_turn::LivePartial {
             text: "Смотрю".into(),
             thoughts: "план".into(),
             tools: vec![
-                crate::app::events::LiveTool {
+                crate::entities::live_turn::LiveTool {
                     call_id: "c1".into(),
                     name: "web_search".into(),
                     arguments: "{}".into(),
                     result: Some(("ок".into(), 0)),
                 },
-                crate::app::events::LiveTool {
+                crate::entities::live_turn::LiveTool {
                     call_id: "c2".into(),
                     name: "call_subagent".into(),
                     arguments: "{}".into(),
@@ -3545,14 +3545,14 @@ fn returning_to_the_running_chat_resumes_its_generation() {
 /// the run's end and by the turn's end, and dropped for a stale generation.
 #[test]
 fn the_subagent_chip_follows_the_run_and_cannot_outlive_the_turn() {
-    use crate::app::events::SubagentProgress;
+    use crate::entities::subagent::SubagentProgress;
     let mut s = ChatScreen::new();
     let gen_id = Uuid::new_v4();
     let run = Uuid::new_v4();
     s.begin_generation(gen_id, None);
     let at = |round: u32, tool: Option<&str>| {
         Some(SubagentProgress {
-            kind: crate::app::events::RunProgressKind::Subagent,
+            kind: crate::entities::subagent::RunProgressKind::Subagent,
             name: "Критик".into(),
             round,
             tool: tool.map(str::to_string),
@@ -4670,8 +4670,8 @@ fn confirm_popup_text(s: &mut ChatScreen) -> String {
 /// `chat://` address resolves.
 mod read_only_transcript {
     use super::*;
-    use crate::app::events::ChildView;
     use crate::entities::chat::{ChatSummary, ChildSummary};
+    use crate::entities::subagent::ChildView;
 
     fn transcript() -> Cmd {
         let mut c = Cmd::new();
@@ -4815,8 +4815,9 @@ mod read_only_transcript {
 /// hint exist only while the run streams.
 mod background_transcript {
     use super::*;
-    use crate::app::events::{ChildView, LivePartial, LiveTurn};
     use crate::entities::chat::ChildSummary;
+    use crate::entities::live_turn::{LivePartial, LiveTurn};
+    use crate::entities::subagent::ChildView;
 
     const RUN: u128 = 77;
     const STREAM: u128 = 88;
@@ -5297,8 +5298,8 @@ mod stage3_commands {
 /// it moves live on another screen.
 mod subagents_command {
     use super::*;
-    use crate::app::events::ChildView;
     use crate::entities::chat::ChildSummary;
+    use crate::entities::subagent::ChildView;
     use crate::entities::subagent::SubagentRun;
 
     /// [`Cmd::new`] with the open chat in the list snapshot, carrying one
@@ -5578,11 +5579,11 @@ fn a_rebuild_mid_continuation_appends_the_partial_into_the_seed_bubble() {
         None,
         None,
     );
-    s.set_live_turn(Some(Box::new(crate::app::events::LiveTurn {
+    s.set_live_turn(Some(Box::new(crate::entities::live_turn::LiveTurn {
         role: MessageRole::Assistant,
         turn: generation,
         stream: generation,
-        partial: Some(crate::app::events::LivePartial {
+        partial: Some(crate::entities::live_turn::LivePartial {
             text: "ло".into(),
             thoughts: String::new(),
             tools: Vec::new(),
@@ -5646,7 +5647,7 @@ fn the_caption_prefers_settings_and_falls_back_to_the_engine() {
 /// latest report; a run's `None` drops its line; one run left is one line.
 #[test]
 fn the_chip_counts_several_running_runs_and_names_the_latest() {
-    use crate::app::events::{RunProgressKind, SubagentProgress};
+    use crate::entities::subagent::{RunProgressKind, SubagentProgress};
     let mut s = ChatScreen::new();
     let generation = gen_id();
     s.begin_generation(generation, None);
@@ -5690,7 +5691,7 @@ fn the_chip_counts_several_running_runs_and_names_the_latest() {
 /// word for it, in the interface language.
 mod tasks_stop {
     use super::*;
-    use crate::app::events::BackgroundKind;
+    use crate::entities::task::BackgroundKind;
     use crate::shared::i18n::{Lang, locale};
 
     fn set_running(c: &mut Cmd, kind: BackgroundKind, on: bool) {

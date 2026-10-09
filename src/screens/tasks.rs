@@ -24,8 +24,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use uuid::Uuid;
 
-use crate::app::events::{AppTask, BackgroundKind, RunProgressKind, TaskList, TaskRun};
-use crate::entities::subagent::RunOutcome;
+use crate::entities::subagent::{RunOutcome, RunProgressKind};
+use crate::entities::task::{AppTask, BackgroundKind, TaskList, TaskRun};
 use crate::screens::awaited_chat::AwaitedChat;
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
@@ -720,7 +720,7 @@ fn tokens_label(tokens: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::events::SubagentProgress;
+    use crate::entities::subagent::SubagentProgress;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 

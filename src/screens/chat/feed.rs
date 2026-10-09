@@ -491,7 +491,7 @@ impl ChatScreen {
         &mut self,
         generation_id: Uuid,
         run: Uuid,
-        progress: Option<crate::app::events::SubagentProgress>,
+        progress: Option<crate::entities::subagent::SubagentProgress>,
     ) {
         if self.current_gen != Some(generation_id) && self.live_turn != Some(generation_id) {
             return;
@@ -501,7 +501,7 @@ impl ChatScreen {
         // `None` removes it. Several runs at once are the parallel group.
         self.subagents.retain(|(id, _)| *id != run);
         let Some(label) = progress.map(|p| {
-            use crate::app::events::RunProgressKind;
+            use crate::entities::subagent::RunProgressKind;
             let round = p.round.to_string();
             match p.kind {
                 RunProgressKind::DialogueLine => self.loc.tf(

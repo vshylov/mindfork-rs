@@ -5,9 +5,12 @@ use uuid::Uuid;
 
 use crate::entities::attachment::AttachmentInfo;
 use crate::entities::chat::{ChatSummary, FeedView};
+pub use crate::entities::live_turn::{LivePartial, LiveTool, LiveTurn};
 use crate::entities::message::{Message, MessageRole};
 use crate::entities::message_image::ImageInfo;
 use crate::entities::profile::{CharacterNames, Profile, ProfileSummary};
+pub use crate::entities::subagent::{ChildView, RunProgressKind, SubagentProgress};
+pub use crate::entities::task::{AppTask, BackgroundKind, TASK_LANDED_CAP, TaskList, TaskRun};
 pub use crate::features::chat_search::FeedFocus;
 use crate::features::chat_search_sort::SortMode;
 pub use crate::features::file_command::FileProgress;
@@ -428,184 +431,7 @@ impl AppCommand {
     }
 }
 
-/// What the chat screen needs to know about a sub-agent transcript it shows
-/// (spec §11.2, docs/research/subagent-chats.md §3.8): whose it is, and the
-/// persona to draw as its first bubble.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ChildView {
-    /// The chat whose call made the transcript.
-    pub parent: Uuid,
-    pub parent_title: String,
-    /// The sub-agent's system message — the persona the parent composed.
-    pub system_message: String,
-}
-
 /// Event from the orchestrator to UI. This is the only way UI updates its read-only
-/// The generation running on the conversation being activated
-/// ([`AppEvent::ChatActivated::live_turn`]).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LiveTurn {
-    /// The turn's generation id — what the sub-agent chip is keyed on.
-    pub turn: Uuid,
-    /// The stream this conversation's feed accepts: the turn's own on its
-    /// chat, the sub-agent's own on its transcript (docs/history/subagent-live.md §8).
-    pub stream: Uuid,
-    /// The round in progress so far — text and thoughts — so a feed opened
-    /// mid-round starts with what has already streamed.
-    pub partial: Option<LivePartial>,
-    /// The round in progress **continues** the feed's last assistant bubble
-    /// (`/continue` before its first tool round): the partial is appended
-    /// there, with no separator, instead of opening a bubble of its own.
-    pub continues: bool,
-    /// Which side of the conversation the round in progress streams into:
-    /// `Assistant` for a turn's own chat and a sub-agent's transcript; a
-    /// dialogue's line carries its speaker's side (spec §9.13 — participant
-    /// `b`'s lines are the transcript's `User` role).
-    pub role: MessageRole,
-    /// The conversation is the transcript of a run out in the **background**
-    /// (spec §9.3.2, docs/research/background-subagents.md §4.5): its stream
-    /// is no turn's, so on it `Esc` goes back instead of cancelling and `F6`
-    /// stops the run. `false` on a turn's own chat and on a turn child's
-    /// transcript, where `Esc` cancels the turn.
-    pub background: bool,
-}
-
-/// A round in progress (see [`LiveTurn::partial`]): its text and thoughts
-/// so far, and the tool calls it has opened — running or already answered —
-/// which are not in any filed message yet.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct LivePartial {
-    pub text: String,
-    pub thoughts: String,
-    pub tools: Vec<LiveTool>,
-}
-
-/// One tool call of a round in progress (see [`LivePartial::tools`]).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LiveTool {
-    pub call_id: String,
-    pub name: String,
-    pub arguments: String,
-    /// `None` while the call is running.
-    pub result: Option<(String, usize)>,
-}
-
-/// Which kind of nested run the chip describes — the screen words each in the
-/// interface language ([`SubagentProgress`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RunProgressKind {
-    /// A `call_subagent` run: `round` is its tool round, `tool` the tool it
-    /// is inside, if any (spec §9.3.2).
-    Subagent,
-    /// A dialogue's participant line being written: `round` is the line
-    /// number (spec §9.13).
-    DialogueLine,
-    /// A dialogue's director checkpoint — the scene is being judged.
-    DialogueDirector,
-}
-
-/// One nested run's position, for the status-bar chip
-/// ([`AppEvent::SubagentProgress`]): the persona's name (the `name` argument,
-/// else the run's title), the round/line it is on, and the tool it is inside,
-/// if any. Raw data — the screen words it in the interface language.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SubagentProgress {
-    pub name: String,
-    pub round: u32,
-    pub tool: Option<String>,
-    pub kind: RunProgressKind,
-}
-
-/// One sub-agent or dialogue run as the tasks screen lists it
-/// ([`AppEvent::TaskList`], spec §11.10): a projection of the orchestrator's
-/// mirror while the run is in flight, and of the record on its parent chat
-/// once it has landed — nothing is stored for the screen's sake
-/// (docs/research/tasks-screen.md R4).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TaskRun {
-    /// The run's id — what `Enter` opens and `F6` stops.
-    pub id: Uuid,
-    pub kind: crate::entities::subagent::RunKind,
-    pub title: String,
-    /// The chat whose exchange started it, and its title for the row.
-    pub parent: Uuid,
-    pub parent_title: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub finished_at: Option<chrono::DateTime<chrono::Utc>>,
-    /// How the run ended; `None` while it runs — or, with `running` false,
-    /// a run that never reported (the chat list's *interrupted* /
-    /// *unfinished* rows, spec §11.2).
-    pub outcome: Option<crate::entities::subagent::RunOutcome>,
-    /// The run is in flight right now — the orchestrator holds its mirror.
-    pub running: bool,
-    /// Out in the background (a seat of its own, spec §9.3.2) rather than a
-    /// child of the turn in flight. Only a running background run can be
-    /// stopped from the screen: `AppCommand::StopSubagentRun` names seats.
-    pub background: bool,
-    /// Completion tokens so far (the run's own count while it runs).
-    pub tokens: u64,
-    /// Where a running run stands — its latest [`SubagentProgress`] step,
-    /// stored on the mirror by the orchestrator. `None` before its first
-    /// round, and always on a landed row.
-    pub position: Option<SubagentProgress>,
-}
-
-impl TaskRun {
-    /// A background sub-agent run out right now, under a chat called
-    /// "Plans", started ten minutes ago with no position yet. Shared by the
-    /// tasks screen's and the runtime's tests — each keeping a copy of this
-    /// literal is the sliding self-duplication the gate measures
-    /// (docs/lessons.md §2); tests mutate the fields they are about.
-    #[cfg(test)]
-    pub fn fixture(title: &str) -> Self {
-        Self {
-            id: Uuid::new_v4(),
-            kind: crate::entities::subagent::RunKind::Subagent,
-            title: title.into(),
-            parent: Uuid::new_v4(),
-            parent_title: "Plans".into(),
-            created_at: chrono::Utc::now() - chrono::Duration::minutes(10),
-            finished_at: None,
-            outcome: None,
-            running: true,
-            background: true,
-            tokens: 0,
-            position: None,
-        }
-    }
-}
-
-/// One of the app's own silent tasks on the tasks screen: running or idle,
-/// which is all the slot registry can honestly say
-/// (docs/research/tasks-screen.md §2.4, fork F2).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AppTask {
-    pub kind: BackgroundKind,
-    pub running: bool,
-    /// Running, but not streaming: waiting for the silent lane's permit
-    /// behind another task, or for room in the pool beside an interactive
-    /// stream (docs/research/silent-tasks-budget.md §4.6). Read off the
-    /// budget, never stored.
-    pub waiting: bool,
-}
-
-/// The tasks screen's snapshot ([`AppEvent::TaskList`]): the runs — running
-/// first, then landed, each half newest first, the landed half capped — and
-/// the app's own silent tasks.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct TaskList {
-    pub runs: Vec<TaskRun>,
-    /// How many landed runs fell past the cap (`TASK_LANDED_CAP`); the
-    /// screen says "…and n more" rather than truncating silently.
-    pub more_landed: usize,
-    /// Every [`BackgroundKind`], in one fixed order.
-    pub app: Vec<AppTask>,
-}
-
-/// How many landed runs the tasks screen lists (docs/research/tasks-screen.md
-/// fork F1): the most recent ones, with a counted remainder line.
-pub const TASK_LANDED_CAP: usize = 50;
-
 /// projection.
 #[derive(Debug, Clone)]
 pub enum AppEvent {
@@ -995,38 +821,4 @@ pub enum AppEvent {
         summary: String,
         folded: usize,
     },
-}
-
-/// The kind of background task for the status-bar indicator
-/// (`AppEvent::BackgroundTask`). `Hash` — used as the key of the background-task slot
-/// registry (`orchestrator::background`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum BackgroundKind {
-    /// Auto-reflection of the "self-model".
-    Reflection,
-    /// Auto-consolidation of notes ("sleep").
-    Consolidation,
-    /// Auto-consolidation of the "self-model" (self-model "sleep"): merge duplicate
-    /// observations, compress a bloated description, link contradictions. See
-    /// docs/history/self-model-consolidation.md.
-    SelfConsolidation,
-    /// Compressing the older part of a conversation into a rolling summary
-    /// (`/compact`, spec §6.7).
-    Compaction,
-}
-
-impl BackgroundKind {
-    /// The bundle key of the task's name in the interface language — the
-    /// tasks screen's row label, and the name a `/tasks stop` note quotes
-    /// (spec §11.10, §11.7). One function for both surfaces, so the two
-    /// cannot call one task two things
-    /// (docs/research/tasks-stop-command.md §3.2).
-    pub fn label_key(self) -> &'static str {
-        match self {
-            BackgroundKind::Reflection => "ui.tasks.app.reflection",
-            BackgroundKind::Consolidation => "ui.tasks.app.consolidation",
-            BackgroundKind::SelfConsolidation => "ui.tasks.app.self_consolidation",
-            BackgroundKind::Compaction => "ui.tasks.app.compaction",
-        }
-    }
 }

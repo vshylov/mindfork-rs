@@ -20,12 +20,13 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, List, ListItem};
 use uuid::Uuid;
 
-use crate::app::events::{BackgroundKind, ChildView};
 use crate::entities::attachment::AttachmentInfo;
 use crate::entities::chat::{ChatSummary, FeedView};
 use crate::entities::message::Message;
 use crate::entities::message_image::ImageInfo;
 use crate::entities::profile::{CharacterNames, Profile, ProfileSummary};
+use crate::entities::subagent::ChildView;
+use crate::entities::task::BackgroundKind;
 use crate::features::rag_ingest::RagProgress;
 use crate::features::spellcheck::SpellChecker;
 use crate::features::tools::confirm::ToolDecision;
@@ -1062,7 +1063,7 @@ impl ChatScreen {
     /// resume into this feed. On the turn's **transcript**: the sub-agent's
     /// own stream resumes into it, seeded with the round so far; the chip is
     /// keyed on the turn, so it stays too.
-    pub fn set_live_turn(&mut self, live_turn: Option<Box<crate::app::events::LiveTurn>>) {
+    pub fn set_live_turn(&mut self, live_turn: Option<Box<crate::entities::live_turn::LiveTurn>>) {
         let Some(live) = live_turn else {
             self.live_turn = None;
             self.background_run = false;
