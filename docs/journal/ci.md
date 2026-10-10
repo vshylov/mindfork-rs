@@ -1634,6 +1634,10 @@ minutes — Qwen thinks, and its suite is ~3× gpt-oss's.
     prints every call's arguments and result.
   - `background_dialogue_e2e_live` (said it had started the scene, made no call) —
     green 3 of 3 locally; a slip the smoke is right to catch.
+  - Editing the withheld-image smoke failed Sonar's new-code coverage (0 % of 9 lines,
+    24 new): it sat in `client.rs`'s inline `mod ignored_smoke`, which CI never runs. The
+    whole module moved, unchanged, to `client/tests/ignored_smoke.rs`, which coverage
+    leaves out — the `llama_setup` (#720) and `fetch` (#740) precedent.
   - `fetch_url_address_policy_e2e_live` (refused a `127.0.0.1` address without calling
     the tool) — green 3 of 3 locally; on two models of three now, so the smoke was
     reworked in a pull request of its own: the model sees `status.mindfork.io`, pinned
