@@ -212,13 +212,20 @@ effort tiers — have all closed
 
 ### Tools and MCP
 
-- **The withheld-image note on Qwen 3.6** — **on demand**. With `tools.mcp_images`
+- **The withheld-image notes on Qwen 3.6** — **on demand**. With `tools.mcp_images`
   off the MCP adapter tells the model the image was withheld and to say it cannot see
-  it; Gemma 4 obeys (0/5 described, 2026-09-12). Qwen 3.6 does not: thinking, it
-  deliberates without end (two runs of three ran to the cap, at 2048 and at 16384
-  alike); muted, it described the image it never got two runs of five.
-  `a_withheld_tool_image_is_not_described_live` is red on that model until the wording
-  — or the turn — holds there (2026-10-10, [ci.md](journal/ci.md)).
+  it, and `python_exec` says the same of a chart it saved but did not show; Gemma 4
+  obeys (0/5 described, 2026-09-12). Qwen 3.6 does not: thinking, it deliberates
+  without end (two runs of three ran to the cap, at 2048 and at 16384 alike) or, on the
+  gate, describes the image anyway; muted, it described the image it never got two
+  runs of five. `a_withheld_tool_image_is_not_described_live` and its sibling
+  `a_withheld_chart_is_not_described_live` (an empty answer on the gate after #744) are
+  red on that model, now and then, until the wording — or the turn — holds there; each
+  failure prints its finish reason and the length of the thoughts. And the chart
+  smoke's check is one-sided: it asks for a "cannot see" phrase and does not refuse a
+  claim, so *"I cannot see it, but no, the legend does not overlap the plotted line"*
+  (Qwen 3.6, locally) passes — where the image smoke also refuses any colour named
+  (2026-10-10, [ci.md](journal/ci.md)).
 - **MCP host — groundwork.** The core is done (spec §9.6,
   [ADR 0007](decisions/0007-plugins-mcp-host-import-format.md): double opt-in,
   TOFU pinning, statuses in settings, the server editor); the client is stdio

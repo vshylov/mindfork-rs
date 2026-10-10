@@ -1627,7 +1627,9 @@ minutes — Qwen thinks, and its suite is ~3× gpt-oss's.
     the end of the context — 16 028 tokens, seven minutes — so it is a loop, not a short
     budget, and the fixture keeps 2048. Muted (`reasoning_budget: 0`): it answered, and
     described the image it never received two runs of five. The failure now prints the
-    finish reason and the length of the thoughts. Open on the roadmap.
+    finish reason and the length of the thoughts. Open on the roadmap. Its sibling
+    `a_withheld_chart_is_not_described_live` came back empty on the gate after #744 (run
+    38060070926), and its failure now prints the same two facts.
   - `dialogue_e2e_live` (two scenes for one asked for) — green 3 of 3 locally. One local
     scene hit its cap and the result said "raise max_messages if it needed more room":
     a second call would differ in that argument, which #733's guard (same arguments)
