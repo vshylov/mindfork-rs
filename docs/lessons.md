@@ -2476,6 +2476,19 @@ conversation, where the model is looking, and in the user's language, or the not
 language becomes the reply's.
 — *a dialogue staged once, and a round limit that ends in prose*.
 
+**An empty answer at the cap is not proof that the cap is small — raise it once and
+look.** On Qwen 3.6 a smoke's 2048-token fixture came back empty two runs of three,
+`Length` after ~8.7K characters of thoughts that had already reached the right answer,
+and the fix looked obvious: the app ships 16384 precisely because the budget covers
+the reasoning. At 16384 the same two runs of three thought on to the end of the
+context — 16 028 tokens, seven minutes, the same empty answer. It was a loop, not a
+short budget; muting the thinking then showed the second half of the truth (the model
+invented the answer two runs of five). One measurement at the larger cap cost
+twenty minutes and saved a commit that would only have made the red slower; print the
+finish reason and the length of the thoughts with the failure, so the next one says
+which it is.
+— *the first Qwen dispatch since August*.
+
 ## 10. CI and infrastructure
 
 
