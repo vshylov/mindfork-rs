@@ -2005,58 +2005,6 @@ mod tests {
         }
     }
 
-    /// The summary's usage on a live engine (docs/research/page-summary-usage.md
-    /// §6, fork F4a): a JSON page — the text measured to under-count most
-    /// (1.28) — fetched under a budget of four sessions over the LAN stack's
-    /// pool. The result carries a summary (reasoning muted: not the "summary
-    /// unavailable" fallback with the JSON behind it), the budget's `Summary`
-    /// ratio is above 1.0, and the outcome carries the engine's timing of the
-    /// prompt.
-    ///
-    /// `MINDFORK_ENGINE_URL=…/v1 cargo test summary_usage_e2e_live -- --ignored --nocapture`.
-    #[tokio::test]
-    #[ignore = "requires a running llama-server (MINDFORK_ENGINE_URL) and network access"]
-    async fn summary_usage_e2e_live() {
-        use crate::shared::session_budget::{SessionBudget, Shape};
-        let Some(client) =
-            crate::shared::api::live_client("MINDFORK_ENGINE_URL", "MINDFORK_ENGINE_KEY")
-        else {
-            eprintln!("skip: MINDFORK_ENGINE_URL not set");
-            return;
-        };
-        let (_d, mut ctx) = ctx_with_engine(Arc::new(client));
-        let budget = Arc::new(SessionBudget::new(4, Some(16_384)));
-        ctx.sessions = Some(budget.clone());
-        let url = "https://api.github.com/repos/rust-lang/rust";
-        let started = std::time::Instant::now();
-        let out = FetchUrl::default()
-            .invoke(&ctx, serde_json::json!({"url": url}))
-            .await
-            .unwrap();
-        eprintln!(
-            "summary_usage_e2e_live: {:.1} s, ratio {:.2}, sample {:?}\n{}",
-            started.elapsed().as_secs_f64(),
-            budget.density(Shape::Summary),
-            out.prefill,
-            out.result
-        );
-        assert!(
-            !out.result.contains("\"node_id\""),
-            "the JSON itself came back, not a summary: {}",
-            out.result
-        );
-        assert!(!out.result.trim().is_empty());
-        assert!(
-            budget.density(Shape::Summary) > 1.0,
-            "a JSON page under-counts: {budget:?}"
-        );
-        assert_eq!(budget.density(Shape::Turn), 1.0, "no other kind touched");
-        assert!(
-            out.prefill.is_some(),
-            "the engine's timing rides the outcome"
-        );
-    }
-
     /// A real network smoke (manual: `cargo test -- --ignored`).
     #[tokio::test]
     #[ignore = "requires network access"]
@@ -2178,3 +2126,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "fetch/tests/live.rs"]
+mod live_tests;
