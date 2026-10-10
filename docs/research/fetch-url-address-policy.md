@@ -5,7 +5,8 @@ recommendations** (F1 = `fetch_url` *and* `web_search`'s page fetches, F2 = the 
 range including IPv4-mapped forms, F3 = a guarded resolver plus an IP-literal check,
 F4 = a `tools.web_allow_private` setting defaulting to off, F5 = a refusal that names
 every closed route, F6 = `shared/net.rs`, F7 = `/image attach <url>` is untouched).
-Implemented; §6 below records what the implementation found that the design did not.
+Implemented; §6 below records what the implementation found that the design did not,
+and §7 the live smoke's move from a loopback literal to a pinned name (2026-10-10).
 Roadmap item:
 "`fetch_url`: no address policy" (opened 2026-08-13 by the image-URL track, which
 found the gap while looking for a guard to reuse).
@@ -195,3 +196,26 @@ Two things were learned by building it, and both changed the shape of the code:
   at a loopback stub the user might plausibly ask about, the smoke measures the guard
   instead of the model's own reflexes — and the stub's connection counter proves end to end
   that nothing reached the service.
+
+## 7. The smoke's target: a name, not a literal (2026-10-10)
+
+The loopback stub of §6 was a confound too, only a quieter one. With `127.0.0.1` in the
+URL, gpt-oss-120b (2026-08-30, and again on the gate in October) and Qwen 3.6 (the first
+Qwen dispatch since August, 2026-10-10) sometimes answered *"it points to a local server
+… not accessible from my environment"* without calling the tool — a flake on two models
+of three, and each red measured nothing. Locally the same smoke was green 3 of 3 on Qwen:
+the model's reflex is intermittent, which is what made it a flake rather than a fact.
+
+**The model now sees an ordinary name.** `net::pinned_hosts` (test builds only) answers a
+pinned name before the system resolver is asked, and the answer is then checked like any
+other; a release build has a `lookup` that always says *none*. The smoke pins
+`status.mindfork.io` to loopback and hands the model `http://status.mindfork.io:<port>/admin`.
+Nothing in the address says "local", and the refusal now comes from the **resolver** —
+F3's DNS-rebinding case, which the literal had never reached on a live run; the literal
+path keeps its unit tests. A unit test, `a_pinned_name_is_resolved_from_the_table_and_then_checked`,
+proves both halves: refused under `PublicOnly`, connected under `Unrestricted` — so the
+refusal is the policy's and not a name that never resolved.
+
+**Live — GO, 15 of 15**: Qwen3.6-27B Q4_K_M (local, the gate's file), gpt-oss-120b (an RTX
+PRO 6000) and Gemma 4 31B (an L40S), five runs each. Every run made exactly one
+`fetch_url` call, got the refusal, and stopped; the stub's counter stayed at zero.

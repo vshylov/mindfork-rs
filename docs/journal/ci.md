@@ -1635,5 +1635,8 @@ minutes — Qwen thinks, and its suite is ~3× gpt-oss's.
   - `background_dialogue_e2e_live` (said it had started the scene, made no call) —
     green 3 of 3 locally; a slip the smoke is right to catch.
   - `fetch_url_address_policy_e2e_live` (refused a `127.0.0.1` address without calling
-    the tool) — green 3 of 3 locally; on two models of three now, so the smoke is
-    reworked in a pull request of its own.
+    the tool) — green 3 of 3 locally; on two models of three now, so the smoke was
+    reworked in a pull request of its own: the model sees `status.mindfork.io`, pinned
+    to the loopback stub in the test (`net::pinned_hosts`), and the refusal comes from
+    the resolver. **15 of 15** on Qwen, gpt-oss and Gemma, one call each
+    ([fetch-url-address-policy.md](../research/fetch-url-address-policy.md) §7).

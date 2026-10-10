@@ -382,10 +382,13 @@ is only safe if the remaining one can still fail: verify that with a live mutati
 An address-policy smoke aimed at `169.254.169.254` had the model decline on its own —
 *"I am not permitted to access internal network addresses"* — without ever calling the
 tool, so the guard under test never ran. What caught it was asserting that the tool **was**
-called; without that the run reads as a pass. Pick a target the model has no opinion about
-(a plain loopback service the user might ask about), and keep the "it was actually
-exercised" assertion. Same family as the fixture traps below.
-— *an address policy for model-chosen URLs*.
+called; without that the run reads as a pass. Pick a target the model has no opinion about,
+and keep the "it was actually exercised" assertion. A plain loopback service looked like
+one and was not: `127.0.0.1` in the URL still let gpt-oss and Qwen predict the refusal
+now and then — a flake on two models of three. A name that resolves to the service (pinned
+in the test, never in the machine's resolver) carries no opinion at all: 15 of 15 calls on
+three models. Same family as the fixture traps below.
+— *an address policy for model-chosen URLs*; *the first Qwen dispatch since August*.
 
 **When a live smoke fails, suspect the fixture before the feature.** One took **four**
 attempts, each failing its own precondition: the model could answer from memory; the
