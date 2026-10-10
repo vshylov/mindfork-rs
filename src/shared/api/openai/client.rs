@@ -3082,7 +3082,7 @@ mod ignored_smoke {
             result.starts_with("stdout (1 line):\nsaved\n\nfiles:\n"),
             "the smoke has to send the shape a call returns: {result}"
         );
-        let (answer, _, finish) = collect(
+        let (answer, thoughts, finish) = collect(
             client
                 .chat_stream(chart_turn(&result), Default::default())
                 .await
@@ -3096,7 +3096,9 @@ mod ignored_smoke {
         }
         assert!(
             says_it_cannot_see(&answer),
-            "a chart it was never shown must not be answered for: {answer:?}"
+            "a chart it was never shown must not be answered for: {answer:?} ({finish:?} after {} \
+             characters of thoughts)",
+            thoughts.len()
         );
     }
 
