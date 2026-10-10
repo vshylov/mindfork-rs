@@ -2804,6 +2804,7 @@ mod ignored_smoke {
                 ),
                 tool,
             ],
+            // 2048 on purpose: a larger cap only lengthens Qwen 3.6's loop (docs/journal/ci.md).
             sampling: SamplingConfig {
                 max_tokens: Some(2048),
                 ..Default::default()
@@ -3006,7 +3007,7 @@ mod ignored_smoke {
         use crate::shared::i18n::{Lang, locale};
         let said = locale(Lang::En).tf("tool.mcp.images_off", &[("n", "1")]);
         let text = format!("Screenshot taken.\n{said}");
-        let (answer, _, _) = collect(
+        let (answer, thoughts, finish) = collect(
             client
                 .chat_stream(screenshot_turn_with(false, &text), Default::default())
                 .await
@@ -3027,7 +3028,9 @@ mod ignored_smoke {
         );
         assert!(
             says_it_cannot_see(&answer),
-            "the model has to say it cannot see the image: {answer:?}"
+            "the model has to say it cannot see the image: {answer:?} ({finish:?} after {} \
+             characters of thoughts)",
+            thoughts.len()
         );
     }
 

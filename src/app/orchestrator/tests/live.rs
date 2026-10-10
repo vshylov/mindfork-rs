@@ -5860,6 +5860,15 @@ async fn dialogue_e2e_live() {
     );
     let staged = calls.iter().filter(|(n, _, _)| n == "run_dialogue").count();
     eprintln!("run_dialogue calls: {staged}");
+    // Every call with its arguments: a second scene is explained only by what the
+    // model asked for the second time (docs/journal/ci.md, the Qwen dispatch).
+    for (name, args, result) in &calls {
+        eprintln!(
+            "call {name}({}) -> {}",
+            args.chars().take(400).collect::<String>(),
+            result.chars().take(300).collect::<String>()
+        );
+    }
     // The tool was actually exercised (lessons §2 — a run that never calls it
     // measures nothing).
     assert!(

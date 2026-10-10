@@ -1617,9 +1617,23 @@ minutes — Qwen thinks, and its suite is ~3× gpt-oss's.
   Reproduced and verified on a local `llama-server --api-key` with the gate's own
   Qwen3.6-27B Q4_K_M: `401` before, green after (arm A not rejected on this build, arm B
   `200` — August's measurement holds).
-- **Four reds that are the model's to explain**, looked into on the local stand next:
-  `background_dialogue_e2e_live` (Qwen said it had started the scene and made no call),
-  `dialogue_e2e_live` (two scenes for one asked for — different arguments, so #733's
-  guard did not apply), `a_withheld_tool_image_is_not_described_live` (an empty answer),
-  `fetch_url_address_policy_e2e_live` (refused a `127.0.0.1` address without calling the
-  tool — as gpt-oss does).
+- **Four reds that are the model's**, each looked into on a local stand with the gate's
+  own Qwen3.6-27B Q4_K_M (`llama-server --api-key`, `-c 16384 -np 1`):
+  - `a_withheld_tool_image_is_not_described_live` — **reproduced, and a finding about the
+    app**: the withheld-image note does not hold on Qwen 3.6. Thinking at the fixture's
+    2048: empty two runs of three (`Length` after ~8.7K characters of thoughts that had
+    reached "I cannot see it"). At the app's 16384: the same two of three thought on to
+    the end of the context — 16 028 tokens, seven minutes — so it is a loop, not a short
+    budget, and the fixture keeps 2048. Muted (`reasoning_budget: 0`): it answered, and
+    described the image it never received two runs of five. The failure now prints the
+    finish reason and the length of the thoughts. Open on the roadmap.
+  - `dialogue_e2e_live` (two scenes for one asked for) — green 3 of 3 locally. One local
+    scene hit its cap and the result said "raise max_messages if it needed more room":
+    a second call would differ in that argument, which #733's guard (same arguments)
+    does not stop — the likely CI case, which the log could not confirm. The smoke now
+    prints every call's arguments and result.
+  - `background_dialogue_e2e_live` (said it had started the scene, made no call) —
+    green 3 of 3 locally; a slip the smoke is right to catch.
+  - `fetch_url_address_policy_e2e_live` (refused a `127.0.0.1` address without calling
+    the tool) — green 3 of 3 locally; on two models of three now, so the smoke is
+    reworked in a pull request of its own.

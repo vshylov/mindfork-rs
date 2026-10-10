@@ -212,6 +212,13 @@ effort tiers — have all closed
 
 ### Tools and MCP
 
+- **The withheld-image note on Qwen 3.6** — **on demand**. With `tools.mcp_images`
+  off the MCP adapter tells the model the image was withheld and to say it cannot see
+  it; Gemma 4 obeys (0/5 described, 2026-09-12). Qwen 3.6 does not: thinking, it
+  deliberates without end (two runs of three ran to the cap, at 2048 and at 16384
+  alike); muted, it described the image it never got two runs of five.
+  `a_withheld_tool_image_is_not_described_live` is red on that model until the wording
+  — or the turn — holds there (2026-10-10, [ci.md](journal/ci.md)).
 - **MCP host — groundwork.** The core is done (spec §9.6,
   [ADR 0007](decisions/0007-plugins-mcp-host-import-format.md): double opt-in,
   TOFU pinning, statuses in settings, the server editor); the client is stdio
