@@ -200,8 +200,9 @@ being recent is dropped, not shortened.
   with endpoints of its own, under a 60-min ceiling; a cancellation now reaches the runner
   (`exec`) and a backstop step deletes by name. Its first full run found a dialogue staged
   nine times and a round limit answered with a raw tool call — fixed. An L40S HF cannot
-  start is created again on an A100; 251/251 green in one dispatch. HF withdrew
-  gpt-oss-120b's H200 region: it runs on an RTX PRO 6000, an A100 and a gcp H200 behind it
+  start — or has not started in 15 min — is created again on an A100; 251/251 green in
+  one dispatch. HF withdrew gpt-oss-120b's H200 region: it runs on an RTX PRO 6000, an
+  A100 and a gcp H200 behind it
   ([docs/research/e2e-gate-budget.md](docs/research/e2e-gate-budget.md),
   [e2e-gpt-oss-120b.md](docs/research/e2e-gpt-oss-120b.md) §11,
   [docs/journal/ci.md](docs/journal/ci.md)).
