@@ -2250,7 +2250,10 @@ raw `reqwest` posts, and answered `401` the first time it was dispatched — whi
 months to discover, because those modules had only ever been run by hand against an
 unauthenticated `llama-server`. When a shared helper exists for reaching the live stack,
 a new module using the raw constructor is a bug with a delayed fuse; the review question
-is "does this new live code go through `live_client` / `live_bearer`?"
+is "does this new live code go through `live_client` / `live_bearer`?" And sweep by what runs, not by
+what failed: the August sweep fixed the arms the gpt-oss dispatch had turned red, and left
+a raw client in the one arm that runs only on a Qwen — a `401` two months later, on the
+first Qwen dispatch since (`continue_probe`'s thinking arm, 2026-10-10).
 — *gpt-oss-120b on the live gate*.
 
 **Run the live gate when the change touches engine, memory or tool paths — even when it

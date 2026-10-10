@@ -267,8 +267,13 @@ async fn thinking_model_rejects_prefill_and_the_kwarg_lifts_it() {
         return;
     }
 
-    // Arm A — the default, through the app's own client (no extra fields).
-    let client = OpenAiClient::new(base.clone());
+    // Arm A — the default, through the app's own client (no extra fields). Through
+    // `live_client`, which carries the key: built raw, this arm was a 401 on the
+    // authenticated gate (2026-10-10, the first Qwen dispatch since August) — the
+    // one arm of the module that the August move to `live_client` missed, because
+    // it runs on a Qwen only (docs/lessons.md §9).
+    let client = crate::shared::api::live_client("MINDFORK_ENGINE_URL", "MINDFORK_ENGINE_KEY")
+        .expect("MINDFORK_ENGINE_URL was read above");
     let req = ChatRequest {
         continue_final: false,
         system: None,

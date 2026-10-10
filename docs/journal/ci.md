@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (23)
+## Entries (24)
 
 - Post-M9: cutting GitHub Actions minutes (done)
 - Post-M9: skipping the test job for docs-only pull requests (done)
@@ -36,6 +36,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the gate's embedders batch a whole chunk (done)
 - Post-M9: an endpoint HF cannot start is created again, on the fallback card (done)
 - Post-M9: gpt-oss-120b moves to an RTX PRO 6000, with two clouds behind it (done)
+- Post-M9: the first Qwen dispatch since August, and the probe arm that had no key (done)
 ### Post-M9: cutting GitHub Actions minutes (done)
 - **Trigger**: the `v0.9.4` release run was refused by GitHub with *"The job was
   not started because recent account payments have failed or your spending limit
@@ -1600,3 +1601,25 @@ first. [docs/research/e2e-gpt-oss-120b.md](../research/e2e-gpt-oss-120b.md) §11
   Live **GO**: the four smokes on an RTX PRO 6000 — the two image smokes green on answers
   typed with U+2019 again, the two parallel-call smokes skipped. `docs/lessons.md`'s
   typography lesson now names the apostrophe.
+
+### Post-M9: the first Qwen dispatch since August, and the probe arm that had no key (done)
+
+The whole suite on Qwen 3.6 27B, on `main` after #738–#740 (run 38014988780,
+2026-10-10): **246 of 251**. The last Qwen dispatch was in August, at 94 smokes. Two of
+four L40S failed to start and their shards moved to an A100 by themselves; jobs of 26–39
+minutes — Qwen thinks, and its suite is ~3× gpt-oss's.
+
+- **The one defect in the test code**: `continue_probe::thinking_model_rejects_prefill_and_the_kwarg_lifts_it`
+  built arm A's client with `OpenAiClient::new` — no key — and the gate answered `401`.
+  The August sweep to `live_client` (e2e-gpt-oss-120b.md §10.1) fixed the arms gpt-oss
+  had turned red; this one skips on any model but a Qwen, so nothing had dispatched it
+  against an authenticated server since. Arm A goes through `live_client` now.
+  Reproduced and verified on a local `llama-server --api-key` with the gate's own
+  Qwen3.6-27B Q4_K_M: `401` before, green after (arm A not rejected on this build, arm B
+  `200` — August's measurement holds).
+- **Four reds that are the model's to explain**, looked into on the local stand next:
+  `background_dialogue_e2e_live` (Qwen said it had started the scene and made no call),
+  `dialogue_e2e_live` (two scenes for one asked for — different arguments, so #733's
+  guard did not apply), `a_withheld_tool_image_is_not_described_live` (an empty answer),
+  `fetch_url_address_policy_e2e_live` (refused a `127.0.0.1` address without calling the
+  tool — as gpt-oss does).
