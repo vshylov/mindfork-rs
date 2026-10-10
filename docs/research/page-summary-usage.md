@@ -315,6 +315,34 @@ host — 2735 tokens at 36 tok/s, a 57 s hold at the external default batch
 outcome's sample on both paths, the turn's and the loop's folds through a
 `SampledTool`, the live smoke).
 
+### 6.2 The page from a fixture (2026-10-10)
+
+The first `gpt-oss-120b` gate run on `main` after its card moved
+([e2e-gpt-oss-120b.md](e2e-gpt-oss-120b.md) §11) had this smoke red with
+"a JSON page under-counts" and a ratio of exactly 1.00 in 0.1 s: the
+runner's fetch of `api.github.com` was answered `403` — sixty
+unauthenticated requests an hour per address, and a CI runner shares its
+address — so the summary was never asked for, and the smoke judged the
+budget of a page it never had. The same smoke was green on the branch run
+the hour before (1.20 on gpt-oss's tokenizer).
+
+The smoke now reads the page from `tests/fixtures/github-repo-rust.json` —
+the same repository's answer, saved that day (6199 bytes, compact) — through
+`body_to_text` and `FetchUrl::inline_result`, the path a fetched JSON page
+of its size takes, and asserts that it takes that path. Its assertions are
+unchanged. It moved to `src/features/tools/fetch/tests/live.rs` with it, so
+that coverage leaves an `#[ignore]` smoke's lines out (the
+`features::llama_setup` precedent). Fetching stays the network smokes' to
+prove. Live, on the rented gate's cards, the smoke alone:
+
+| model | card | time | exact | exact / estimate | the summary |
+|---|---|---:|---:|---:|---|
+| Gemma 4 31B | L40S | 9.5 s | 2265 | **1.36** | a structured summary, in the profile's language |
+| gpt-oss-120b | RTX PRO 6000 | 2.6 s | 1836 | **1.10** | the same |
+
+gpt-oss's tokenizer is the densest on this JSON, and its margin over 1.0 the
+narrowest; 1.20 on the fetched page of the branch run.
+
 ## 7. Not in this track
 
 - **The one-shot requests' samples** — done:

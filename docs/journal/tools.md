@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (87)
+## Entries (88)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -99,6 +99,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `youtube_watch` with a provider that reads the whole video (done)
 - Post-M9: `youtube_watch` on a Gemini model without the `minimal` thinking level (done)
 - Post-M9: a dialogue staged once, and a round limit that ends in prose (done)
+- Post-M9: `summary_usage_e2e_live` reads its JSON page from a fixture (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -5744,3 +5745,28 @@ CHANGELOG (Fixed); the research §7; lessons §9.
 
 **Gates**: fmt / clippy / test green — **3999 unit tests, 258 `#[ignore]`** (+5 unit
 tests, +1 live smoke).
+
+### Post-M9: `summary_usage_e2e_live` reads its JSON page from a fixture (done)
+
+The first `gpt-oss-120b` gate run on `main` after its card moved (run 38009487046,
+2026-10-10) had the smoke red: "a JSON page under-counts", a ratio of exactly 1.00, in
+0.1 s. The runner's fetch of `api.github.com/repos/rust-lang/rust` was answered `403` —
+sixty unauthenticated requests an hour per address, and a CI runner shares its address —
+so the summary was never asked for, and the smoke judged a page it never had. Green on
+the branch run an hour earlier. [docs/research/page-summary-usage.md](../research/page-summary-usage.md) §6.2.
+
+- **The page is a fixture**: `tests/fixtures/github-repo-rust.json`, the same
+  repository's answer saved that day (6199 bytes), handed to `body_to_text` and
+  `FetchUrl::inline_result` — the path a fetched JSON page of its size takes, which the
+  smoke asserts. The assertions are unchanged; fetching stays the network smokes' to
+  prove.
+- **Moved** to `src/features/tools/fetch/tests/live.rs`, so that coverage leaves an
+  `#[ignore]` smoke's lines out (the `features::llama_setup` precedent, #720).
+- **Live — GO**, the smoke alone on the gate's cards: Gemma 4 31B on an L40S, 1.36 in
+  9.5 s; gpt-oss-120b on an RTX PRO 6000, 1.10 in 2.6 s. Both a real summary.
+
+**Docs.** The research §6.2; lessons §10 (a live smoke should reach only the services it
+is about, and see a step it does not test succeed).
+
+**Gates**: fmt / clippy / test green — 4002 unit tests, 258 `#[ignore]` (the smoke moved,
+not added).

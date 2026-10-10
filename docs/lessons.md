@@ -2769,3 +2769,13 @@ reading. The embedder's log said it in one line. When a stand is fixed, find eve
 place the same server is configured (the managed launcher, the local recipe, the rented
 payload) and carry the fix — or a check — to each.
 — *the gate's embedders batch a whole chunk*.
+
+**A live smoke should reach only the services it is about — and a step it does not test
+is still a step it must see succeed.** `summary_usage_e2e_live` measures the summary's
+token accounting; it reached its JSON page through `api.github.com`, which allows an
+address sixty unauthenticated requests an hour, and a CI runner shares its address. The
+runner got a `403`, the summary was never asked for, and the smoke reported "a JSON page
+under-counts" about a page it never had — a red that pointed at the code under test. Read
+such a page from a fixture (the same bytes, frozen), and where a real fetch is the
+subject, assert that it loaded before asserting anything that follows from it.
+— *the gpt-oss gate on main, 2026-10-10*.
