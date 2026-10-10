@@ -221,10 +221,10 @@ effort tiers — have all closed
   runs of five. `a_withheld_tool_image_is_not_described_live` and its sibling
   `a_withheld_chart_is_not_described_live` (an empty answer on the gate after #744) are
   red on that model, now and then, until the wording — or the turn — holds there; each
-  failure prints its finish reason and the length of the thoughts. And the chart
-  smoke's check is one-sided: it asks for a "cannot see" phrase and does not refuse a
-  claim, so *"I cannot see it, but no, the legend does not overlap the plotted line"*
-  (Qwen 3.6, locally) passes — where the image smoke also refuses any colour named
+  failure prints its finish reason and the length of the thoughts. Both checks are
+  two-sided: the image smoke refuses any colour named, and the chart smoke a verdict
+  on the overlap with no hedge before it — *"I cannot see it, but no, the legend does
+  not overlap the plotted line"* (Qwen 3.6, locally) passed the one-sided check it had
   (2026-10-10, [ci.md](journal/ci.md)).
 - **MCP host — groundwork.** The core is done (spec §9.6,
   [ADR 0007](decisions/0007-plugins-mcp-host-import-format.md): double opt-in,
