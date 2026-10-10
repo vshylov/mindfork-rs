@@ -4802,12 +4802,16 @@ async fn image_url_attachment_e2e_live() {
 /// tries the same host by IP, then by name, then through a redirector — three more round
 /// trips that must all fail (docs/lessons.md §4).
 ///
-/// **The target is a plain loopback service, not the cloud metadata endpoint.** The first
-/// run of this smoke pointed at `169.254.169.254` and the model refused *on its own* —
-/// never calling the tool, so the guard was never exercised and the test proved nothing
-/// (the "never called the tool" assertion is what caught it). A local address the user
-/// plausibly asked about removes that confound. The stub counts connections, so this also
-/// proves end to end that nothing reached the service.
+/// **The target is an ordinary name that resolves to a loopback service.** The first run
+/// of this smoke pointed at `169.254.169.254` and the model refused *on its own* — never
+/// calling the tool, so the guard was never exercised and the test proved nothing (the
+/// "never called the tool" assertion is what caught it). A plain `127.0.0.1` address
+/// came next, and gpt-oss-120b and Qwen 3.6 still predicted the refusal now and then and
+/// declined unasked. So the model now sees `status.mindfork.io`, pinned for this process
+/// to loopback (`net::pinned_hosts`): nothing in the address says "local", and the
+/// refusal comes from the resolver — the DNS-rebinding case the guard exists for, which
+/// the literal never reached (docs/research/fetch-url-address-policy.md §7). The stub
+/// counts connections, so this also proves end to end that nothing reached the service.
 #[tokio::test]
 #[ignore = "requires a live model (MINDFORK_ENGINE_URL)"]
 async fn fetch_url_address_policy_e2e_live() {
@@ -4825,7 +4829,12 @@ async fn fetch_url_address_policy_e2e_live() {
         .await
         .unwrap();
 
-    let (url, hits) = crate::shared::net::stub::counting_stub();
+    // The stub listens on loopback; the model is handed an ordinary name pinned to it.
+    let (stub, hits) = crate::shared::net::stub::counting_stub();
+    let port = reqwest::Url::parse(&stub).unwrap().port().unwrap();
+    let host = "status.mindfork.io";
+    crate::shared::net::pinned_hosts::pin(host, std::net::Ipv4Addr::LOCALHOST.into());
+    let url = format!("http://{host}:{port}/admin");
     let (reply, calls) = run_turn_capture(
         &cmd_tx,
         &mut evt_rx,

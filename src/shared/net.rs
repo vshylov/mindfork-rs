@@ -240,10 +240,13 @@ impl reqwest::dns::Resolve for GuardedResolver {
         let host = name.as_str().to_string();
         Box::pin(async move {
             // Port 0: reqwest replaces it with the scheme's port (or the URL's own).
-            let addrs: Vec<SocketAddr> = tokio::net::lookup_host((host.as_str(), 0))
-                .await
-                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?
-                .collect();
+            let addrs: Vec<SocketAddr> = match pinned_hosts::lookup(&host) {
+                Some(ip) => vec![SocketAddr::new(ip, 0)],
+                None => tokio::net::lookup_host((host.as_str(), 0))
+                    .await
+                    .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?
+                    .collect(),
+            };
             if addrs.is_empty() {
                 return Err(NetError::Unresolvable(host).into());
             }
@@ -255,6 +258,51 @@ impl reqwest::dns::Resolve for GuardedResolver {
             }
             Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
         })
+    }
+}
+
+/// Names a test has pinned to an address, answered before the system resolver is asked
+/// — and then checked like any other answer.
+///
+/// It exists for the live smoke of this policy. Handed `http://127.0.0.1:…`, a model can
+/// predict the refusal and decline without calling the tool — gpt-oss-120b and Qwen 3.6
+/// both did, on the gate — and then the guard and the model's reaction to it go
+/// untested. An ordinary name that resolves into a denied range is the case the resolver
+/// exists for, and a model has no reason to doubt it (docs/research/fetch-url-address-policy.md
+/// §7). A table rather than a hosts file, so no test depends on the machine's resolver.
+#[cfg(test)]
+pub(crate) mod pinned_hosts {
+    use std::collections::HashMap;
+    use std::net::IpAddr;
+    use std::sync::{Mutex, OnceLock};
+
+    fn table() -> &'static Mutex<HashMap<String, IpAddr>> {
+        static TABLE: OnceLock<Mutex<HashMap<String, IpAddr>>> = OnceLock::new();
+        TABLE.get_or_init(Default::default)
+    }
+
+    /// From now on, in this process, `host` resolves to `ip` and nothing else.
+    pub(crate) fn pin(host: &str, ip: IpAddr) {
+        table()
+            .lock()
+            .unwrap()
+            .insert(host.to_ascii_lowercase(), ip);
+    }
+
+    pub(super) fn lookup(host: &str) -> Option<IpAddr> {
+        table()
+            .lock()
+            .unwrap()
+            .get(&host.to_ascii_lowercase())
+            .copied()
+    }
+}
+
+/// Outside tests nothing is pinned: every name goes to the system resolver.
+#[cfg(not(test))]
+mod pinned_hosts {
+    pub(super) fn lookup(_host: &str) -> Option<std::net::IpAddr> {
+        None
     }
 }
 
@@ -601,6 +649,41 @@ mod tests {
         assert!(
             !was_blocked(&err),
             "a dead port is not a policy refusal: {err}"
+        );
+    }
+
+    /// A pinned name is answered from the table and then checked like any other answer —
+    /// the shape the live smoke hands a model: an ordinary name that resolves to loopback.
+    /// The control arm, the same name under `Unrestricted`, reaches the stub, so the
+    /// refusal is the policy's and not a name that never resolved.
+    #[tokio::test]
+    async fn a_pinned_name_is_resolved_from_the_table_and_then_checked() {
+        let (url, hits) = counting_stub();
+        let port = reqwest::Url::parse(&url).unwrap().port().unwrap();
+        let host = "pinned-loopback.unit.mindfork.io";
+        pinned_hosts::pin(host, IpAddr::V4(Ipv4Addr::LOCALHOST));
+        let target = format!("http://{host}:{port}/admin");
+
+        let guarded = GuardedClient::new(AddressPolicy::PublicOnly, Duration::from_secs(5));
+        let err = guarded
+            .get(&target)
+            .expect("a name, so the literal check hands it to the resolver")
+            .send()
+            .await
+            .unwrap_err();
+        assert!(
+            was_blocked(&err),
+            "pinned to loopback, must be refused: {err}"
+        );
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+        let open = GuardedClient::new(AddressPolicy::Unrestricted, Duration::from_secs(5));
+        let reply = open.get(&target).unwrap().send().await.unwrap();
+        assert!(reply.status().is_success());
+        assert_eq!(
+            hits.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the pin routes the name to the stub"
         );
     }
 
