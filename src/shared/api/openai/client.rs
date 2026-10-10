@@ -2804,11 +2804,7 @@ mod ignored_smoke {
                 ),
                 tool,
             ],
-            // Below the app's 16384 on purpose. Qwen 3.6 thinking on the withheld arm ran
-            // out at 2048 two runs of three — and at 16384 it thought on to the end of the
-            // context (16 028 tokens, seven minutes) two runs of three, the same empty
-            // answer: a loop, not a short budget (2026-10-10, docs/journal/ci.md). The
-            // smaller cap only makes the same red cheaper.
+            // 2048 on purpose: a larger cap only lengthens Qwen 3.6's loop (docs/journal/ci.md).
             sampling: SamplingConfig {
                 max_tokens: Some(2048),
                 ..Default::default()
@@ -2987,9 +2983,7 @@ mod ignored_smoke {
     /// see them" moved it, to 0/5. So the sentence that ships here is deliberately not
     /// its siblings' shape, and this smoke is what says so. (A 256-token budget makes
     /// this unreadable: a thinking model runs out inside its thoughts and returns empty
-    /// content, which looks like a decline and is not one.) On Qwen 3.6 the wording does
-    /// not hold: thinking, it deliberates without end; muted, it described the image it
-    /// never got 2 runs of 5 — the failure prints which (docs/journal/ci.md).
+    /// content, which looks like a decline and is not one.)
     ///
     /// No projector is needed — nothing here sends an image.
     #[tokio::test]
