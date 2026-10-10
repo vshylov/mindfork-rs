@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (24)
+## Entries (25)
 
 - Post-M9: cutting GitHub Actions minutes (done)
 - Post-M9: skipping the test job for docs-only pull requests (done)
@@ -37,6 +37,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: an endpoint HF cannot start is created again, on the fallback card (done)
 - Post-M9: gpt-oss-120b moves to an RTX PRO 6000, with two clouds behind it (done)
 - Post-M9: the first Qwen dispatch since August, and the probe arm that had no key (done)
+- Post-M9: a card HF never schedules is left after 15 minutes (done)
 ### Post-M9: cutting GitHub Actions minutes (done)
 - **Trigger**: the `v0.9.4` release run was refused by GitHub with *"The job was
   not started because recent account payments have failed or your spending limit
@@ -1640,3 +1641,21 @@ minutes — Qwen thinks, and its suite is ~3× gpt-oss's.
     to the loopback stub in the test (`net::pinned_hosts`), and the refusal comes from
     the resolver. **15 of 15** on Qwen, gpt-oss and Gemma, one call each
     ([fetch-url-address-policy.md](../research/fetch-url-address-policy.md) §7).
+
+### Post-M9: a card HF never schedules is left after 15 minutes (done)
+
+On the Qwen run of 2026-10-10 (CI run 38033605197) shard 3's L40S was `initializing` for
+the whole 1500 s wait: the shard ended with no smoke run and was rerun by hand. #737 had
+not retried a long schedule on purpose — two L40S had come up after 585 s and 814 s.
+The owner's decision (2026-10-10): leave such a card for the next one.
+[docs/research/e2e-gate-budget.md](../research/e2e-gate-budget.md) §11.
+
+- **`--schedule-limit`** (900 s): a rung with another behind it waits that long for
+  `running`; still `pending`/`initializing`, the endpoint is deleted, proven gone and
+  created again on the next rung under the same name. The last rung keeps the whole
+  `--timeout`; `paused` and the like end the walk as before. 900 s waits for both slow
+  starts measured and keeps a moved Qwen shard inside its 60-minute job.
+- **`--self-test`**: four new walks and the wait each rung is given; six mutants caught.
+- **Live — GO**, with the limit at 15 s on Gemma: L40S → A100 → L40S, each left
+  `initializing` and deleted before the next create, the last given the whole timeout
+  (`running` at 343 s), the smoke green.

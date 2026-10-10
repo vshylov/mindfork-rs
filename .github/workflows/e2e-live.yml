@@ -59,8 +59,9 @@ on:
       # shards ~28 of them (the steering probe alone is 12). Each shard holds an
       # L40S and two T4s (quota: 16 and 30), and more shards at once meet more of
       # HF's capacity refusals — 8 of 13 L40S creates failed to start that
-      # evening. A shard whose card HF cannot start moves down its model's
-      # fallback cards by itself (e2e_hf.py `chat_rungs`); one that still fails is
+      # evening. A shard whose card HF cannot start — or has not started in 15
+      # minutes — moves down its model's fallback cards by itself (e2e_hf.py
+      # `chat_rungs`, `--schedule-limit`); one that still fails is
       # rerun alone: `gh run rerun <id> --failed`. `1` is the whole suite in one
       # job, as before; a filtered run is sharded too, so pick `1` for a handful of
       # smokes.

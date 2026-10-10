@@ -319,6 +319,7 @@ back to the A100.
   that is refused (a quota, a full region). **What is not**: a long schedule —
   `initializing` for ten minutes was followed by `running` more than once — and a
   server that came up and never answered `/health`; no other card cures either.
+  *(Amended in §11: a schedule past 15 minutes, with another card behind it, is.)*
 - **How**: the endpoint is deleted, the deletion proven, and it is created again
   **under the same name**, so the runner's cleanup, the workflow's `delete-run`
   and the sweeper know it without a change. The plan prints the ladder, the
@@ -336,3 +337,35 @@ fourth L40S took 585 s to schedule and was rightly waited for. **251 of 251
 smokes green**, in one dispatch, with no rerun by hand — the first full run of the
 suite that is green end to end; jobs of 18, 20, 31 and 30 minutes against 60;
 every shard's backstop found nothing left.
+
+## 11. A card that is never scheduled: the schedule limit
+
+§10 deliberately did not retry a long schedule: an L40S `initializing` for ten minutes
+and more had been followed by `running` — 585 s on 2026-10-09, 814 s on the Gemma run of
+2026-10-10. On the Qwen run of 2026-10-10 (CI run 38033605197) one did not come at all:
+shard 3's L40S was `initializing` for the whole 1500 s `--timeout`, the wait ended, and
+the shard failed with no smoke run — 63 of 251 — and was rerun by hand. **User's
+decision, 2026-10-10:** move such a schedule down the ladder too.
+
+- **The limit** (`--schedule-limit`, `SCHEDULE_LIMIT_S` = 900 s): a rung with another
+  behind it waits at most that long for `running`; still `pending` or `initializing`
+  then, the endpoint goes the way of one that failed — deleted, proven gone, created
+  again under the same name on the next rung. The **last rung** waits the whole
+  `--timeout`, as before; any other state (`paused`, an unreadable endpoint) ends the
+  walk as before. The plan prints the limit with the ladder.
+- **Why 900 s**: it waits for both slow starts measured (585 s, 814 s), and a shard that
+  moves still fits its 60-minute job — ~3 minutes of build, 15 of schedule, ~2 for an
+  A100 to come up (20–30 s after a recreate, §10) and Qwen's longest shard, 35 minutes
+  of smokes. A ladder whose every rung stalls does not fit; that is the job's ceiling
+  and the backstop step's to end, as it was.
+- **`--self-test`**: the walk with the limit — still `initializing`, and `pending`, at
+  the limit go to the A100; a schedule on the last rung waits the whole timeout and is
+  not retried; a `paused` endpoint is not retried — and the waits each rung is given
+  (the limit, the limit, the timeout). Six mutants caught: no limit, the last rung
+  limited too, a schedule never moving on, `pending` not counted, `paused` moved on,
+  the limit equal to the timeout.
+- **Live — GO** (`--schedule-limit 15`, Gemma 4 31B, one smoke): the L40S still
+  `initializing` at 15 s was deleted and created again on the A100, still `initializing`
+  at 15 s, deleted and created again on the L40S, which was given the whole 1500 s and
+  ran at 343 s; the smoke green, the endpoint deleted. Each delete was proven gone
+  before the name was created again.

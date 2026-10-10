@@ -2444,8 +2444,9 @@ when debugging, and delete afterwards — by name, or the whole run with
 In CI: **Live e2e (HF Inference Endpoints)** — `workflow_dispatch` only, with
 test-filter, model, GPU and shard-count inputs (four shards by default, each job
 under a 60-minute ceiling); it needs the `HF_TOKEN` repository secret. HF does not
-always have the card: an endpoint that *fails to start* — or whose create is
-refused — is deleted and created again on the model's fallback card (Gemma and Qwen:
+always have the card: an endpoint that *fails to start* — whose create is refused, or
+which is still being scheduled after 15 minutes while another card is behind it — is
+deleted and created again on the model's fallback card (Gemma and Qwen:
 an L40S, then an A100, then the L40S once more; `gpt-oss-120b`: the RTX PRO 6000, an
 A100, an H200 on gcp, the RTX once more; a card named with `--chat-instance` is
 retried, never swapped), and the summary says which card the run got. A card on that
@@ -2453,7 +2454,7 @@ ladder which HF's catalogue no longer lists as available is a warning on the run
 page before anything is created. A shard
 that still fails deletes what it created and fails alone, and `gh run rerun <run-id>
 --failed` runs just that shard again
-([docs/research/e2e-gate-budget.md](research/e2e-gate-budget.md) §8, §10;
+([docs/research/e2e-gate-budget.md](research/e2e-gate-budget.md) §8, §10, §11;
 [e2e-gpt-oss-120b.md](research/e2e-gpt-oss-120b.md) §11). **Live e2e
 sweeper** runs every six hours as the backstop (hourly until 2026-08-21; the cadence
 bounds how long an orphan holds endpoint quota, not money). Design and decisions:
