@@ -39,11 +39,14 @@ before the one-shot ones. Its first code track is the animated demo
 ([demo-reel.md](research/demo-reel.md)) — the reel and its renderer, then
 its publication: every release draws it — in English and in Russian — and
 the site and the README play it. The plan also feeds the reputation Windows code
-signing waits on. Where it stands on 2026-10-08: the storefront and the first
+signing waits on. Where it stands on 2026-10-10: the storefront and the first
 try are done as far as they can be (the AUR and winget wait on others), macOS
-included, with 0.18.0. The communities are under way: awesome-ratatui and
-Glama's MCP client list have the submissions, and the one-shot posts are open.
-The first of them carries the call for macOS testers.
+included, with 0.18.0. The communities are under way: awesome-ratatui lists
+mindfork (2026-10-08), Glama's MCP client list is still reviewing it, and the
+one-shot posts are open. The first of them carries the call for macOS testers
+and speaks to the audience the owner named, AI researchers on rented pods
+(promotion.md §8). The first two stars came the day of the listing; the weekly
+numbers are in promotion.md §7.1.
 
 The last two code tracks — small windows, and the reasoning effort a model
 does not have — closed on 2026-09-30 and 2026-10-01 and ship together in
