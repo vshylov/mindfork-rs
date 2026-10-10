@@ -5869,11 +5869,8 @@ async fn dialogue_e2e_live() {
     );
     let staged = calls.iter().filter(|(n, _, _)| n == "run_dialogue").count();
     eprintln!("run_dialogue calls: {staged}");
-    // Every call with its arguments and result: a second scene is explained only by
-    // what the model asked for the second time. Qwen 3.6 staged two in CI on
-    // 2026-10-10 and the log could not say why; a scene that hits its cap is told to
-    // raise `max_messages`, which is a different call, not the repeat the guard stops
-    // (docs/journal/ci.md).
+    // Every call with its arguments: a second scene is explained only by what the
+    // model asked for the second time (docs/journal/ci.md, the Qwen dispatch).
     for (name, args, result) in &calls {
         eprintln!(
             "call {name}({}) -> {}",
