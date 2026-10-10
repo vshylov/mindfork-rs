@@ -2231,14 +2231,17 @@ get. Point it at an empty directory when you want the truth.
 — *the Python sandbox package pin*.
 
 **A live assertion on a literal the model must echo is a typography bet — fold the
-dashes.** Every planted-fact smoke checks that the reply contains `ZARYA-8823`, and
+dashes, and the apostrophes.** Every planted-fact smoke checks that the reply contains `ZARYA-8823`, and
 `gpt-oss-120b` renders that code with a **non-breaking hyphen** (U+2011): three smokes
 went red while the model was answering perfectly. It was never a property of that model
 — 8 of 18 occurrences in a single run, *the same model producing both glyphs*, so these
 were latent flakes waiting for any model to reach for the prettier character. The fact
 under test is the code; the glyph is typography. Normalize the dashes on both sides and
-keep everything else (case, spacing, digits) strict.
-— *gpt-oss-120b on the live gate*.
+keep everything else (case, spacing, digits) strict. Six weeks later the same model
+declined exactly as two smokes asked — "I can’t see the image" — with a U+2019
+apostrophe, and both went red against `can't see`: a phrase a model must say is a literal
+too, and its apostrophes are typography as well.
+— *gpt-oss-120b on the live gate* (2026-08-29, 2026-10-10).
 
 **A probe module written against the LAN stand has never met an authenticated server.**
 Stage 1 of the remote gate routed six files through `live_client` so the smokes carry a

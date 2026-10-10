@@ -33,6 +33,25 @@ fn mentions_code(haystack: &str, code: &str) -> bool {
     fold_dashes(haystack).contains(&fold_dashes(code))
 }
 
+/// The stack under test serves a model that makes **one tool call per reply**, and
+/// the run says so (`MINDFORK_LIVE_ONE_CALL_PER_REPLY=1`).
+///
+/// Two smokes test what the app does with two calls in one reply — the round's
+/// parallel group of sub-agents and the concurrent segment (ADR 0012) — and ask the
+/// model for exactly that. `gpt-oss-120b` cannot give it: `<|call|>` ends its
+/// generation, so it made the two calls in two replies, answered correctly and never
+/// grouped (2026-10-10, docs/research/e2e-gpt-oss-120b.md §11, fork F10). Declared
+/// from the model record and never guessed, as `MINDFORK_LIVE_TEXT_ONLY` is
+/// (`shared::api::live_text_only`): the two smokes skip by name, and on every other
+/// model they go on failing a parent that delegates one call at a time — the no-go
+/// they exist for.
+fn live_one_call_per_reply() -> bool {
+    match std::env::var("MINDFORK_LIVE_ONE_CALL_PER_REPLY") {
+        Ok(v) => !matches!(v.trim(), "" | "0" | "false"),
+        Err(_) => false,
+    }
+}
+
 /// Not ceremony: this helper is the only thing standing between eight live
 /// assertions and a typographic hyphen, and "why is this not just `contains`?"
 /// is a question a future reader will ask. The answer is a test.
@@ -6077,6 +6096,12 @@ async fn background_dialogue_e2e_live() {
 #[tokio::test]
 #[ignore = "requires a live chat server (MINDFORK_ENGINE_URL)"]
 async fn parallel_subagents_e2e_live() {
+    if live_one_call_per_reply() {
+        eprintln!(
+            "skip: MINDFORK_LIVE_ONE_CALL_PER_REPLY — one tool call per reply, and this smoke needs two"
+        );
+        return;
+    }
     let sandbox = tempfile::tempdir().unwrap();
     let file_a = sandbox.path().join("alpha.txt");
     let file_b = sandbox.path().join("beta.txt");
@@ -6248,6 +6273,12 @@ async fn parallel_subagents_e2e_live() {
 #[tokio::test]
 #[ignore = "requires a live chat server (MINDFORK_ENGINE_URL)"]
 async fn concurrent_tools_e2e_live() {
+    if live_one_call_per_reply() {
+        eprintln!(
+            "skip: MINDFORK_LIVE_ONE_CALL_PER_REPLY — one tool call per reply, and this smoke needs two"
+        );
+        return;
+    }
     let sandbox = tempfile::tempdir().unwrap();
     let file_a = sandbox.path().join("alpha.txt");
     let file_b = sandbox.path().join("beta.txt");

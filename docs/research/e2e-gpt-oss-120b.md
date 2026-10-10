@@ -580,4 +580,13 @@ it, and the two smokes skip by name, saying why (*user's decision, 2026-10-10*).
 estimate knows the template's rendering of the tools. (b) A declared skip would
 hide it; (c) calibrating it now is a track of its own.
 
-F9 and F10 are built in a follow-up pull request, re-dispatched there.
+**F9 and F10, built** in a follow-up pull request: `says_it_cannot_see` folds
+U+2019, U+2018 and U+02BC to `'` and holds both image smokes to one list of
+phrases, "not able to" among them, with a unit test carrying the two answers
+gpt-oss gave (red without the fold); the record's `one_call_per_reply` becomes
+`MINDFORK_LIVE_ONE_CALL_PER_REPLY=1` in the runner, and the two parallel-call
+smokes skip by name — on Gemma and Qwen the variable is never set, which
+`--self-test` holds. **Live — GO** (the four smokes, `--exact`, on an RTX PRO 6000,
+2026-10-10): both image smokes green on "I can’t see the image, so I can’t tell…"
+and "I’m unable to view the screenshot…", typed with U+2019 again; both
+parallel-call smokes skipped, naming the variable. ≈$0.10.

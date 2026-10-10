@@ -190,7 +190,14 @@ def prebuild(args):
 
 
 def run_suite(
-    command, chat_url, embed_url, alt_embed_url, keepalive_every, text_only=False, split_model=False
+    command,
+    chat_url,
+    embed_url,
+    alt_embed_url,
+    keepalive_every,
+    text_only=False,
+    split_model=False,
+    one_call_per_reply=False,
 ):
     """Run the suite with the endpoint env set.
 
@@ -229,6 +236,12 @@ def run_suite(
         env["MINDFORK_LIVE_SPLIT_MODEL"] = "1"
     else:
         env.pop("MINDFORK_LIVE_SPLIT_MODEL", None)
+    # A model whose template makes one tool call per reply cannot give the two
+    # smokes that ask for a pair in one; they skip, by name (hf.one_call_per_reply).
+    if one_call_per_reply:
+        env["MINDFORK_LIVE_ONE_CALL_PER_REPLY"] = "1"
+    else:
+        env.pop("MINDFORK_LIVE_ONE_CALL_PER_REPLY", None)
     print("\n=== suite ===", flush=True)
     print(f"  MINDFORK_ENGINE_URL={env['MINDFORK_ENGINE_URL']}")
     print(f"  MINDFORK_EMBED_URL={env.get('MINDFORK_EMBED_URL', '(unset — memory smokes will skip)')}")
@@ -237,6 +250,8 @@ def run_suite(
         print("  MINDFORK_LIVE_TEXT_ONLY=1 (no projector exists for this model: the 3 vision smokes will SKIP)")
     if split_model:
         print("  MINDFORK_LIVE_SPLIT_MODEL=1 (the weights are split across files)")
+    if one_call_per_reply:
+        print("  MINDFORK_LIVE_ONE_CALL_PER_REPLY=1 (one tool call per reply: the 2 parallel-call smokes will SKIP)")
     print(f"  $ {show_command(command)}\n", flush=True)
     started = time.time()
     with KeepAlive(chat_url, [embed_url, alt_embed_url], every=keepalive_every):
@@ -635,6 +650,7 @@ def cmd_run(args):
         args.keepalive_seconds,
         text_only=hf.text_only(args),
         split_model=hf.split_model(args),
+        one_call_per_reply=hf.one_call_per_reply(args),
     )
 
     print("\n=== summary ===")
@@ -935,6 +951,22 @@ def _catalogue(*computes):
     return {"vendors": [{"name": v, "regions": list(r.values())} for v, r in vendors.items()]}
 
 
+def _check_declarations(failures):
+    """What each model declares to the suite — derived from its record, so a
+    declaration cannot drift from the model that was deployed. Only gpt-oss is
+    blind, split, and one call per reply."""
+    want = {
+        "gemma-4-31b": (False, False, False),
+        "qwen-3.6-27b": (False, False, False),
+        "gpt-oss-120b": (True, True, True),
+    }
+    for model, expected in want.items():
+        args = _run_args("--chat-model", model)
+        got = (hf.text_only(args), hf.split_model(args), hf.one_call_per_reply(args))
+        if got != expected:
+            failures.append(f"declarations: {model} -> text-only, split, one call {got}, want {expected}")
+
+
 def _check_catalogue(failures):
     """A card the ladder may ask for is warned about unless the catalogue lists
     it, in its place, plainly available — once per card, not once per rung."""
@@ -1131,6 +1163,7 @@ def self_test():
     _check_shard_deal(failures)
     _check_embed_batch(failures)
     _check_rungs(failures)
+    _check_declarations(failures)
     _check_catalogue(failures)
     _check_bring_up(failures)
     _check_sweep(failures)
