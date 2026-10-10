@@ -118,9 +118,13 @@ Tried so far:
 
 - **awesome-ratatui** — submitted 2026-10-06
   ([ratatui/awesome-ratatui#488](https://github.com/ratatui/awesome-ratatui/pull/488)),
-  no answer yet.
+  **listed**: a Ratatui maintainer approved and merged it on 2026-10-08, two
+  days later. mindfork is in *AI and Agents*. The maintainer starred the
+  repository during the review, seven seconds before the approval. That is one
+  of its first two stars (§7.1).
 - **Glama's MCP client list**, which awesome-mcp-clients names as its most up
-  to date list — submitted 2026-10-06, waiting on its review.
+  to date list — submitted 2026-10-06, waiting on its review (no public page
+  yet, 2026-10-10).
 
 One-shot — only after stages 0–1, with the animation and an honest macOS
 answer in hand (both since 2026-10-08). The first of them carries the call for
@@ -241,6 +245,40 @@ track's own design document, [demo-reel.md](demo-reel.md)):
 - **First milestones**: the first issue from a stranger; 50 stars — the
   threshold of awesome-rust, and a reputation SignPath can be shown.
 
+### 7.1 The weekly record
+
+§2's commands, run on the day. Views and clones cover the 14 days GitHub keeps.
+Downloads count the binaries and packages of the newest release, without the
+checksums, `install.sh` or the demo's GIF and WebP: the site's build fetches
+those.
+
+| Date | Views, 14 days (unique) | External referrers | Stars / forks / watchers | Issues from strangers | Newest release's downloads | crates.io, all versions |
+|---|---|---|---|---|---|---|
+| 2026-10-03 (§2) | 340 (4) | github.com 2, mindfork.io 2 | 0 / 0 / 0 | 0 | 0.14.1: 15 | 101 |
+| 2026-10-10 | 559 (17) | github.com 2, mindfork.io 2 | **2** / 0 / 0 | 0 | 0.18.1: 14 (0.18.0: 15) | 172 |
+
+**2026-10-10, the first week of stage 2:**
+- **The first two stars came on 2026-10-08.** Neither is from the owner or from
+  anyone the owner knows: the owner gave none and asked acquaintances to give
+  none, so the count stays clean.
+  - 19:49:35Z — a stranger. This was an hour before the awesome-ratatui
+    listing, so the list was not the way in.
+  - 21:00:39Z — the Ratatui maintainer reviewing #488.
+- **Neither star shows in the traffic.** GitHub counted one unique visitor that
+  day: 65 views, the owner's own pull requests. A star needs no visit to the
+  repository's pages, since GitHub's topic pages and its feed carry the button.
+- **The listing brought no measurable traffic in its first day and a half.**
+  The referrers are the same two as on 2026-10-03, and a link from a list on
+  GitHub would count under `github.com`.
+- **Unique visitors grew from 4 to 17.** Six of them saw the repository's front
+  page; the most-viewed pages are still the owner's own pull requests and runs.
+- **Downloads and crates.io are still the background** of ~10–15 a version:
+  mirrors, bots, and the release's own checks.
+- **Not captured:**
+  - Search Console, Bing and CloudFront's reports, which are the owner's
+    consoles; the CloudFront reports have no API.
+  - Discussions: no thread yet.
+
 ## 8. Decisions (the owner, 2026-10-03)
 
 - The plan as a whole: **accepted**.
@@ -258,3 +296,20 @@ Discussions would reach no one. It becomes a paragraph of the first one-shot
 post of stage 2, where §5 expected the testers to come from. The bug template
 already asks for what a Mac report needs: the chip and memory, the lines of
 `mindfork keys`, and the log found through `mindfork stats`.
+
+**2026-10-09 — the audience.** mindfork is for very advanced users: people
+who understand how an AI agent harness and inference work. Making it
+accessible to casual users is not a goal, because that would need a graphical
+interface. The audience is AI researchers who can run it right on a rented
+pod, and two uses:
+- **how agentic a language model is** — one agent loop across local Gemma and
+  Qwen and the cloud providers, with tools, subagents and MCP;
+- **creative work** — stories, poems, dialogues, where the memory, the
+  self-model, llama.cpp's samplers and the staged dialogue of two personas do
+  the work.
+
+The posts of stage 2 speak to that audience, and the honest limit goes with
+them: mindfork is an interactive harness, not a benchmark runner. It runs only
+in a terminal, and there is no batch mode. The hook in the README and on the
+site still says what mindfork is rather than whom it is for; changing that is a
+decision of its own, not taken here.
