@@ -1637,6 +1637,17 @@ minutes — Qwen thinks, and its suite is ~3× gpt-oss's.
     the declines all three gate models gave and that answer; eight mutants caught (each
     hedge dropped, a one-word window). Live on Qwen, five runs: a decline, three calls
     back to the tool, and the loop, which now said `Length after 29986 characters`.
+  - On the Qwen gate after #746 (run 38069725492, 248 of 251) the image smoke went red
+    on a **correct** decline — *"The system is currently configured to not display
+    images to me"*: the colour check matched substrings, and "configu**red**" holds a
+    colour. `names_a_colour` matches whole words, and its unit test carries that answer
+    (red under the old match). On the same run `prompt_estimate_e2e_live` counted no
+    impersonation. The guess that it had lost the JSON to the roll and been counted as a
+    title did not hold: locally (three runs) the impersonation was recorded each time,
+    JSON and all, and in CI the five requests seen were the three turns, the title and
+    the roll — the impersonation had no usage at all, while the app reported it
+    finished. The third turn's reply had come back empty first. The smoke never said how
+    the impersonation ended; it does now, in the log and in the failure.
   - `dialogue_e2e_live` (two scenes for one asked for) — green 3 of 3 locally. One local
     scene hit its cap and the result said "raise max_messages if it needed more room":
     a second call would differ in that argument, which #733's guard (same arguments)

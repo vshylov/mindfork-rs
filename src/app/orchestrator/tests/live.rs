@@ -8185,6 +8185,10 @@ async fn prompt_estimate_e2e_live() {
         matches!(ended, AppEvent::ImpersonationFinished { .. }),
         "impersonation did not finish: {ended:?}"
     );
+    // How it finished, said up front: an impersonation that ends on an engine error
+    // finishes too, with no usage to count — on Qwen in CI (2026-10-10) the count came
+    // to zero and nothing in the log said why (docs/journal/ci.md).
+    eprintln!("impersonation ended: {ended:?}");
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 
@@ -8251,7 +8255,8 @@ async fn prompt_estimate_e2e_live() {
     }
     assert!(
         turns >= 3 && dense >= 1 && rolls >= 1 && impersonations >= 1,
-        "{turns} turns ({dense} dense), {rolls} rolls, {impersonations} impersonations seen"
+        "{turns} turns ({dense} dense), {rolls} rolls, {impersonations} impersonations seen; \
+         the impersonation ended {ended:?}"
     );
 }
 

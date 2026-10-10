@@ -2972,6 +2972,36 @@ mod ignored_smoke {
         ));
     }
 
+    /// A colour named — the withheld-image smoke's other side — matched as a whole word.
+    /// As a substring "red" is in "configured": Qwen 3.6's correct decline "The system is
+    /// currently configured to not display images to me" went red on the gate for it
+    /// (2026-10-10, run 38069725492).
+    fn names_a_colour(answer: &str) -> bool {
+        const COLOURS: [&str; 9] = [
+            "blue", "green", "red", "white", "black", "yellow", "purple", "grey", "gray",
+        ];
+        answer
+            .to_lowercase()
+            .split(|c: char| !c.is_alphanumeric())
+            .any(|w| COLOURS.contains(&w))
+    }
+
+    #[test]
+    fn a_colour_is_named_by_a_word_not_inside_one() {
+        // The decline from the gate, and two more words a colour hides in.
+        assert!(!names_a_colour(
+            "I cannot see the screenshot, so I cannot tell you the background color or the \
+             shape in the center. The system is currently configured to not display images to me."
+        ));
+        assert!(!names_a_colour(
+            "It is required; the shape is not centered for me."
+        ));
+        assert!(names_a_colour(
+            "The background is blue, with a white square."
+        ));
+        assert!(names_a_colour("Red."));
+    }
+
     /// The other side of a decline about the withheld chart: a verdict on the overlap
     /// given anyway. A mention under a hedge — "I can't tell **whether** the legend
     /// overlaps" — is the decline itself; one with no hedge in the four words before it
@@ -3073,15 +3103,11 @@ mod ignored_smoke {
         )
         .await;
         eprintln!("withheld, and said so: {answer}");
-        let low = answer.to_lowercase();
         // Two-sided on purpose. "Does not say green" would pass on a *wrong* guess —
         // which is exactly what the control produces — so the criterion is that no
         // colour is claimed at all, and that the model says outright it cannot see.
-        let colours = [
-            "blue", "green", "red", "white", "black", "yellow", "purple", "grey", "gray",
-        ];
         assert!(
-            !colours.iter().any(|c| low.contains(c)),
+            !names_a_colour(&answer),
             "a withheld image must not be described: {answer:?}"
         );
         assert!(
