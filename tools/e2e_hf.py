@@ -332,10 +332,21 @@ def alt_payload(name, args):
 RETRY_PAUSE_S = 20
 
 # The states after which an endpoint is created again: HF could not start it.
-# A long schedule is not one of them — `initializing` for ten minutes and more
-# was followed by `running` several times on 2026-10-09 — and neither is a
-# server that came up and never answered `/health`, which no card would cure.
+# A server that came up and never answered `/health` is not one of them — no
+# card would cure that.
 FAILED_TO_START = ("failed", "updateFailed")
+
+# ...and a schedule that has stopped being a slow start. A rung with another
+# behind it waits at most this long for `running`; still `pending` or
+# `initializing` then, it is created again on the next one. The L40S has been
+# measured slow but coming — `running` after 585 s (2026-10-09) and 814 s
+# (2026-10-10) — and once not coming at all: nothing in the whole 1500 s, a
+# shard with no smokes run (CI run 38033605197). 900 s waits for both of the
+# first, and leaves a Qwen shard — 35 minutes of smokes — inside its 60-minute
+# job after a move. The last rung keeps the whole `--timeout`
+# (docs/research/e2e-gate-budget.md §11).
+STILL_STARTING = ("pending", "initializing")
+SCHEDULE_LIMIT_S = 900
 
 
 class Rung:
@@ -430,6 +441,11 @@ def bring_up(kind, name, args, rungs=None, created=True, pause=RETRY_PAUSE_S):
     whether the first rung's create (made by `create_endpoints`, before any
     wait, so the three overlap) went through. A reused endpoint has no rungs:
     it is waited for and nothing more.
+
+    A rung with another behind it waits `--schedule-limit` for `running`, not the
+    whole `--timeout`: still being scheduled then, the endpoint goes the way of
+    one that failed. The last rung waits the whole timeout, and a state that is
+    neither — `paused`, an unreadable endpoint — ends the walk as before.
     """
     rungs = rungs or [None]
     for i, rung in enumerate(rungs):
@@ -441,15 +457,21 @@ def bring_up(kind, name, args, rungs=None, created=True, pause=RETRY_PAUSE_S):
             created = hf.create(rung.make(name)) is not None
         if not created:
             continue
-        url = hf.wait_running(name, args.timeout)
+        last = i == len(rungs) - 1
+        wait = args.timeout if last else min(args.timeout, args.schedule_limit)
+        url = hf.wait_running(name, wait)
         if url:
             if not hf.wait_healthy(url, timeout=args.health_timeout):
                 print(f"  -> {kind} endpoint never became healthy")
                 return None
             return url, rung.card if rung else None
         state = hf.endpoint_state(name)[0]
-        if state not in FAILED_TO_START:
-            return None
+        if state in FAILED_TO_START:
+            continue
+        if not last and state in STILL_STARTING:
+            print(f"  -> {kind}: still {state} after {wait}s, past the schedule limit", flush=True)
+            continue
+        return None
     print(f"  -> {kind}: no card started it in {len(rungs)} attempt(s)")
     return None
 
@@ -534,7 +556,7 @@ def print_plan(plan, args):
     print(f"  chat  hardware: {hf.chat_instance(args)} {args.instance_size} @ {'/'.join(hf.chat_place(args))}")
     if not args.reuse_chat:
         # The trail an orphan hunt needs: which cards the name may be found on.
-        print(f"  chat  attempts: {' -> '.join(r.label() for r in chat_rungs(args))}  (when one fails to start)")
+        print(f"  chat  attempts: {' -> '.join(r.label() for r in chat_rungs(args))}  (when one fails to start, or is not running in {args.schedule_limit}s)")
     print(f"  chat  endpoint: {plan.chat_name}{'  (reused)' if args.reuse_chat else ''}")
     if plan.want_embed:
         print(f"  embed endpoint: {plan.embed_name}{'  (reused)' if args.reuse_embed else ''}")
@@ -1002,6 +1024,7 @@ class _FakeHf:
         self.creates = creates
         self.deletes = deletes
         self.calls = []
+        self.waits = []  # the timeout each wait for `running` was given
         self.left = None
 
     def create(self, payload, dry_run=False):
@@ -1013,6 +1036,7 @@ class _FakeHf:
         return self.deletes
 
     def wait_running(self, name, timeout, poll=10):
+        self.waits.append(timeout)
         # Past the script, still starting: a wait nobody planned for shows up as
         # a wrong result, not as a crash of the self-test.
         state = self.states.pop(0) if self.states else "initializing"
@@ -1065,7 +1089,28 @@ def _check_bring_up(failures):
             (url, "nvidia-a100"),
             [("delete", "e2e-chat-x"), ("create", "nvidia-a100")],
         ),
-        ("a long schedule is not retried", _FakeHf(["initializing"]), True, None, []),
+        (
+            "still being scheduled at the limit -> the fallback card",
+            _FakeHf(["initializing", url]),
+            True,
+            (url, "nvidia-a100"),
+            [("delete", "e2e-chat-x"), ("create", "nvidia-a100")],
+        ),
+        (
+            "pending at the limit -> the fallback card",
+            _FakeHf(["pending", url]),
+            True,
+            (url, "nvidia-a100"),
+            [("delete", "e2e-chat-x"), ("create", "nvidia-a100")],
+        ),
+        (
+            "a schedule on the last rung waits the whole timeout and is not retried",
+            _FakeHf(["failed", "failed", "initializing"]),
+            True,
+            None,
+            [("delete", "e2e-chat-x"), ("create", "nvidia-a100"), ("delete", "e2e-chat-x"), ("create", "nvidia-l40s")],
+        ),
+        ("a paused endpoint is not retried", _FakeHf(["paused"]), True, None, []),
         ("a server that never answers is not retried", _FakeHf([url], healthy=False), True, None, []),
         (
             "every rung failed",
@@ -1086,6 +1131,14 @@ def _check_bring_up(failures):
         got = _bring_up_with(fake, created)
         if got != want or fake.calls != calls:
             failures.append(f"bring_up: {what}: got {got} after {fake.calls}, want {want} after {calls}")
+    # How long each rung waits: the schedule limit while another rung is behind
+    # it, the whole timeout on the last.
+    args = _run_args()
+    fake = _FakeHf(["failed", "failed", "initializing"])
+    _bring_up_with(fake)
+    want = [args.schedule_limit, args.schedule_limit, args.timeout]
+    if fake.waits != want or args.schedule_limit >= args.timeout:
+        failures.append(f"bring_up: rung waits {fake.waits}, want {want} (limit below the timeout)")
 
 
 def _check_sweep(failures):
@@ -1217,6 +1270,12 @@ def build_parser():
     p.add_argument("--reuse-embed", default="", help="attach to an existing embedding endpoint")
     p.add_argument("--reuse-alt-embed", default="", help="attach to an existing alternate embedding endpoint")
     p.add_argument("--health-timeout", type=int, default=900, help="seconds to wait for /health after `running`")
+    p.add_argument(
+        "--schedule-limit",
+        type=int,
+        default=SCHEDULE_LIMIT_S,
+        help="seconds a card with another behind it may stay pending/initializing (the last waits --timeout)",
+    )
     p.add_argument(
         "--keepalive-seconds",
         type=int,
