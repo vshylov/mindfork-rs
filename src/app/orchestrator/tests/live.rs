@@ -3204,6 +3204,14 @@ async fn trait_gate_e2e_live() {
          model merged them into one trait (no paraphrase pile-up): {integrated}"
     );
 
+    // An empty turn is not the model declining the tool: on Qwen in CI session 2
+    // ran five minutes and said nothing (2026-10-10), and read as the assertion below.
+    assert!(
+        !t2.trim().is_empty() || !calls2.is_empty(),
+        "session 2 produced nothing at all — the all-thinking empty turn (lessons §9), \
+         not a verdict on the gate: its finish reason is in the log above; re-run before \
+         reading it as one"
+    );
     // The model must have touched the interlocutor model again (otherwise the gate isn't tested).
     assert!(
         calls2.iter().any(|(n, _)| n == "update_user_model"),
