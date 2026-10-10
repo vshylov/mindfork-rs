@@ -2972,6 +2972,64 @@ mod ignored_smoke {
         ));
     }
 
+    /// The other side of a decline about the withheld chart: a verdict on the overlap
+    /// given anyway. A mention under a hedge — "I can't tell **whether** the legend
+    /// overlaps" — is the decline itself; one with no hedge in the four words before it
+    /// is a claim about a chart the model never saw, as in Qwen 3.6's "I cannot see it,
+    /// but no, the legend does not overlap the plotted line" (2026-10-10), which the
+    /// one-sided check let through.
+    fn claims_the_overlap(answer: &str) -> bool {
+        const HEDGES: [&str; 7] = [
+            "whether",
+            "if",
+            "confirm",
+            "tell",
+            "determine",
+            "verify",
+            "check",
+        ];
+        let low = answer.to_lowercase();
+        let words: Vec<&str> = low
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|w| !w.is_empty())
+            .collect();
+        words.iter().enumerate().any(|(i, w)| {
+            w.starts_with("overlap")
+                && !words[i.saturating_sub(4)..i]
+                    .iter()
+                    .any(|h| HEDGES.contains(h))
+        })
+    }
+
+    #[test]
+    fn a_verdict_on_the_overlap_is_told_from_a_decline() {
+        // Declines the gate's three models gave, 2026-10-10: none of them is a claim.
+        for decline in [
+            "I can\u{2019}t see the image, so I can\u{2019}t tell whether the legend overlaps the plotted line.",
+            "I cannot see the generated chart, so I cannot confirm whether the legend overlaps the plotted line.",
+            "I cannot see the saved chart, so I cannot determine if the legend overlaps the plotted line.",
+            "I cannot see the generated image to verify if the legend overlaps the plotted line.",
+            "I can\u{2019}t see the image, but you can open the saved chart file to check.",
+            // Each hedge on its own, so none of them is in the list for nothing.
+            "I can't tell the overlap from a file I haven't seen.",
+            "I cannot confirm any overlap without seeing it.",
+            "I cannot determine the overlap from here.",
+            "Open the chart to verify the overlap yourself.",
+            "You could check for overlap in the saved file.",
+            "I cannot see it, so whether the legend overlaps is unknown to me.",
+            "I don't know if there is overlap; I never saw the chart.",
+        ] {
+            assert!(!claims_the_overlap(decline), "{decline}");
+        }
+        for claim in [
+            "I cannot see it, but no, the legend does not overlap the plotted line.",
+            "Yes, the legend overlaps the line in the upper right.",
+            "There is no overlap between the legend and the line.",
+        ] {
+            assert!(claims_the_overlap(claim), "{claim}");
+        }
+    }
+
     /// The blind arm once more, this time carrying the sentence the MCP adapter appends
     /// when `tools.mcp_images` withheld the image (`tool.mcp.images_off`).
     ///
@@ -3099,6 +3157,12 @@ mod ignored_smoke {
             "a chart it was never shown must not be answered for: {answer:?} ({finish:?} after {} \
              characters of thoughts)",
             thoughts.len()
+        );
+        // Two-sided, as the image smoke is: saying it cannot see is not enough if the
+        // answer then gives the verdict anyway.
+        assert!(
+            !claims_the_overlap(&answer),
+            "a chart it was never shown must not be answered for, even after a decline: {answer:?}"
         );
     }
 

@@ -1629,7 +1629,14 @@ minutes — Qwen thinks, and its suite is ~3× gpt-oss's.
     described the image it never received two runs of five. The failure now prints the
     finish reason and the length of the thoughts. Open on the roadmap. Its sibling
     `a_withheld_chart_is_not_described_live` came back empty on the gate after #744 (run
-    38060070926), and its failure now prints the same two facts.
+    38060070926), and its failure now prints the same two facts. Its check was also
+    one-sided — a "cannot see" phrase sufficed, so Qwen's *"I cannot see it, but no, the
+    legend does not overlap"* passed — and is two-sided now: `claims_the_overlap` fails a
+    mention of the overlap with no hedge ("whether", "if", "tell", "confirm",
+    "determine", "verify", "check") in the four words before it. Its unit test carries
+    the declines all three gate models gave and that answer; eight mutants caught (each
+    hedge dropped, a one-word window). Live on Qwen, five runs: a decline, three calls
+    back to the tool, and the loop, which now said `Length after 29986 characters`.
   - `dialogue_e2e_live` (two scenes for one asked for) — green 3 of 3 locally. One local
     scene hit its cap and the result said "raise max_messages if it needed more room":
     a second call would differ in that argument, which #733's guard (same arguments)
