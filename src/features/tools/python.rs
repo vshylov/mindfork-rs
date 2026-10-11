@@ -1544,7 +1544,8 @@ mod tests {
         let out = run_mock(tool, &ctx).await;
         assert!(out.images.is_empty());
         assert!(
-            out.result.contains("you have not seen it"),
+            out.result
+                .contains("not shown to you, and you cannot see it"),
             "{}",
             out.result
         );

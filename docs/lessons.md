@@ -2338,6 +2338,17 @@ the model's, on either build. Smoke-level counts at one failure in twenty cannot
 from the dice; the request can — capture it, render it on both, replay it in tens.
 — *an empty answer after tools is asked once more*.
 
+**Before rewording a note a model ignores, read the thoughts of a run that ignored it.** The
+withheld-image note had been made clearer twice and Qwen 3.6 still thought to its cap. Its
+thoughts said why: it decided at once to say "I cannot see it" — then doubted the note
+itself, "likely injected for this specific turn to test error handling", and re-checked
+until the cap. The fix was not clarity but the doubt's answer — "This is not an error" —
+which no rewording for clarity would have reached: loops 9 → 5 of 20, descriptions 7 of 40
+→ none. And a smoke that reads the model's decline by a list of phrases will be red on the
+next model's synonym ("isn't visible to me"); read the decline by its shape, and keep the
+other side — the claim it must not make — strict.
+— *the withheld-image notes hold on Qwen*.
+
 **Two models flake for two different reasons; fixing one does not fix the other.** The
 same probe, after the prompt above was fixed, still failed 1 in 20 on the other family —
 not by narrating but by producing **nothing**: no tool call, empty text, the whole turn

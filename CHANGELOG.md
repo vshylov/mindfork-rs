@@ -37,6 +37,11 @@ split by subsystem.
   the reply stopped at "first I'll look at the project…". Such an empty answer is
   now asked for once more, with thinking off, and the answer it gives is the
   one you see.
+- **With images from servers turned off, the assistant says it cannot see them.**
+  Some models — Qwen 3.6 and gpt-oss among them — described a screenshot or
+  judged a chart they were never shown, or got stuck deciding whether to. The
+  note they get now says plainly that they cannot see the image, that this is
+  not an error, and that calling the tool again will not change it.
 
 ## [0.18.1] — 2026-10-09
 

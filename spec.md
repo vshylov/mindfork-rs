@@ -1903,7 +1903,12 @@ append-only shape keeps the prefix cache intact across an image turn
   note went 3/5 → 0/5 and the dropped-image note 5/5 → 1/5. The `python_exec` notes are
   a suffix on a file's line rather than a line of their own, and there the shipped form
   was not inert but wasteful: the model mostly answered by calling the tool again, whose
-  image is withheld for the same reason. **Whether a line says "shown to you below" is the
+  image is withheld for the same reason. The two notes for the switch open on what the
+  model cannot do ("You cannot see…"), say that **this is not an error and another call
+  will not change it**, and end "do not describe or guess … tell the user you cannot see":
+  measured on Qwen 3.6, which described a screenshot it never got 7 times in 40 or doubted
+  the note as an injected test error until its cap, and on gpt-oss-120b, which gave a
+  verdict on an unseen chart 2 in 10 (docs/journal/tools.md). **Whether a line says "shown to you below" is the
   loop's to write, not the tool's**: `python_exec` offers each image with the line that
   names it and no claim on it, and the orchestrator — the one place that has both the
   engine's answer and the prepared pixels — ends that line with "shown", or "not shown"

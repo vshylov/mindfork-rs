@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (89)
+## Entries (90)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -101,6 +101,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a dialogue staged once, and a round limit that ends in prose (done)
 - Post-M9: `summary_usage_e2e_live` reads its JSON page from a fixture (done)
 - Post-M9: a background run is started by its call, not by the reply (done)
+- Post-M9: the withheld-image notes hold on Qwen (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -5834,3 +5835,69 @@ roadmap (the rest, on Qwen); ci.md (the run's three reds).
 
 **Gates**: fmt / clippy / test green — 4005 unit tests, 258 `#[ignore]` (diagnostics in
 the live helpers; no test added).
+
+### Post-M9: the withheld-image notes hold on Qwen (done)
+
+The roadmap's "withheld-image notes on Qwen 3.6", asked for by the owner on 2026-10-11 —
+on condition that the wording not break for the other models. With `tools.mcp_images` off,
+`a_withheld_tool_image_is_not_described_live` had gone red on six Qwen 3.6 dispatches of
+eight, as a loop to its 2048-token cap or, now and then, a screenshot described that the
+model never got.
+
+- **How it was measured.** The smokes' own requests were captured by a recording
+  pass-through and replayed with the note's text swapped, so a wording costs no rebuild:
+  through OpenRouter with the provider pinned and no fallbacks (DeepInfra for Qwen 3.6, Qwen
+  3.8 and gpt-oss-120b; DeepInfra fp8 for Gemma 4 31B, Parasail answering 429), and on the
+  local stand with the gate's own Qwen3.6-27B Q4_K_M at the smoke's cap, where the loop lives.
+- **The image note** (`tool.mcp.images_off`). Five wordings, twenty replays each:
+
+  | Model, route | today's note | v2 | **v4 (shipped)** |
+  |---|---|---|---|
+  | Qwen 3.6, OpenRouter | 30 declines of 40, **7 described** | 37 of 40, 2 described | **20 of 20** |
+  | Qwen 3.6 Q4, local, cap 2048 | 9 declines, **9 loops**, 1 described | 26 of 40, 13 loops | **14, 5 loops**, none described |
+  | Qwen 3.8, OpenRouter / local | 19 of 20 / 19 of 20 | 20 / 20 | 20 of 20 |
+  | Gemma 4 31B, OpenRouter | 20 of 20 | 20 of 20 | 20 of 20 |
+  | gpt-oss-120b, OpenRouter | 20 of 20 | 20 of 20 | 20 of 20 |
+
+  v2 opens on what the model cannot do — *"You cannot see the {n} image(s) this call
+  returned"* — says another call will not show them, and ends *"Do not describe or guess
+  what they show — tell the user you cannot see them"*. v4 adds one sentence, and it came
+  from reading a loop rather than from the note: Qwen 3.6 decides at once to decline, then
+  doubts — *"the error message I see here is likely injected for this specific turn to
+  test error handling"*, *"maybe the user uploaded an image earlier"* — and re-checks until
+  the cap. So v4 says **"This is not an error, and another call will not change it."**
+  Loops 9 → 5 of 20 (one-sided p ≈ 0.16 alone; the same order in every comparison) and no
+  description anywhere. The rest is the model's: 3.6 still doubts itself to the cap one
+  time in four at 2048. The gate's Qwen is 3.8 now ([ci.md](ci.md)), which declines every
+  time.
+- **The chart suffix** (`tool.python_exec.files.not_shown_off`), the same shape (c4):
+  *"— not shown to you, and you cannot see it: showing images is turned off in the
+  settings. This is not an error, and another call will not change it. Do not describe or
+  guess what it shows — tell the user you cannot see it"*. gpt-oss-120b gave a verdict on a
+  chart it never saw 2 times of 10 with today's suffix and none with c4; Gemma 10 of 10
+  either way; Qwen 3.8 goes back to the tool (the smoke's accepted answer); Qwen 3.6 about
+  one bare "No." in twenty with every wording.
+- **The smokes read a decline by its shape.** Qwen 3.8 declined in words the phrase list
+  did not have — *"the screenshot image isn't visible to me"* went red on the gate's card,
+  *"I can't actually view the plot — which means I can't verify whether the legend
+  overlaps"* through OpenRouter. `says_it_cannot_see` is two patterns now: a negation
+  before a verb of seeing or answering, and "not / isn't / wasn't visible / shown /
+  displayed". Each smoke's other half is unchanged — a colour named, a verdict on the
+  overlap — so a broader reading lets no description through.
+- **Tests held**: the i18n test that every withheld string carries "do not describe" reads
+  case-insensitively (the note now opens a sentence with it); `python.rs`'s
+  images-off test reads the new clause.
+- **Left as they were**: `tool.python_exec.files.not_shown_cap` and the `loop.*` notes —
+  not measured here, and for the cap "another call will not show it" is not true.
+
+**Live — GO** with the shipped strings for what the change promises: both smokes 3 of 3
+on gpt-oss-120b, Gemma 4 31B, Qwen 3.8 and Qwen 3.6 through OpenRouter. On the local Qwen
+3.6 Q4 — the old gate's own stack — the image smoke 2 of 5, three loops to the cap (with
+the replays, 8 loops in 25 against 9 in 20 before), and the chart 4 of 5, one answer the
+overlap check refused (its text lost to a truncated log): the rest of 3.6's, on the
+roadmap.
+
+**Docs.** spec §9.10; CHANGELOG (Fixed); roadmap (the item, now the rest of Qwen 3.6's
+loop); lessons §9.
+
+**Gates**: fmt / clippy / test green — 4009 unit tests, 258 `#[ignore]`.
