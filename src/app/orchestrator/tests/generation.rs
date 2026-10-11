@@ -859,6 +859,19 @@ async fn a_second_empty_answer_after_tools_is_not_asked_again() {
     .await;
     assert_eq!(reqs.len(), 3);
     assert_ne!(last, "never asked for");
+
+    // …and once per turn, not once per empty answer: when the re-ask goes on
+    // with another call and the round after it is empty too, that one stands.
+    let (reqs, last) = turn_on_recorder(vec![
+        call("c1", "get_sampling", "{}"),
+        empty_stop(),
+        call("c2", "get_sampling", "{}"),
+        empty_stop(),
+        text("never asked for"),
+    ])
+    .await;
+    assert_eq!(reqs.len(), 4);
+    assert_ne!(last, "never asked for");
 }
 
 /// Only after tools: an empty first answer, with no tool round before it, is the
