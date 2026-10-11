@@ -26,6 +26,12 @@ split by subsystem.
   looking for lines it had no way to read. The result now says where the scene's
   lines are and that staging it again would not show them, and the same scene is
   not staged twice in a turn.
+- **Fewer background scenes that were said to start and never did.** Some
+  local models — Qwen 3.6 among them — could reply that a background scene or
+  sub-agent was running, with a `chat://` link they made up, and never start
+  it. The tools now tell the model that only the call starts the run, and to
+  give you the link its result names. On Qwen 3.6 this makes it rarer, but does
+  not end it; Gemma 4 now names the run it started, with its link.
 
 ## [0.18.1] — 2026-10-09
 

@@ -2326,7 +2326,13 @@ the record shape was left for it by the subagent track (research §3.14,
   snapshotted at the call** — the parent's persona and the conversation as it
   was when the scene was staged, because a scene ending twenty minutes later
   has no turn to read them from — and the run counts against the shared
-  `tools.subagent_background_max` with background sub-agents.
+  `tools.subagent_background_max` with background sub-agents. Both twins'
+  descriptions say that **only the call starts the run**: it is made before any
+  text of the reply, and the model then tells the user the run is going, with
+  the address its result names — never one it writes. A description that only
+  said the call returns an address let Qwen 3.6 write the confirmation, address
+  and all, and end the turn without the call; the wording makes that rarer and
+  does not end it (docs/journal/tools.md).
 - **Limits**: `max_messages` counts every generated line, retried ones
   included (`round_limit` when it fires); `tools.subagent_max_tokens` caps
   each line; `tools.dialogue_run_timeout_secs` (default 1800 s — a dialogue

@@ -1661,6 +1661,19 @@ minutes — Qwen thinks, and its suite is ~3× gpt-oss's.
     to the loopback stub in the test (`net::pinned_hosts`), and the refusal comes from
     the resolver. **15 of 15** on Qwen, gpt-oss and Gemma, one call each
     ([fetch-url-address-policy.md](../research/fetch-url-address-policy.md) §7).
+- **On the Qwen gate after #747** (run 38076541948, 2026-10-10, 248 of 251), three reds,
+  each run again on the local stand:
+  - `code_edit_e2e_live` wrote `values.len().as_f64()`, a method `usize` does not have.
+    Green 5 of 5 locally, `as f64` each time: the model's.
+  - `trait_gate_e2e_live`'s second turn ran five minutes and came back empty. Green 3 of
+    3 locally, in 22–42 s; by its look, Qwen thinking to the cap, which the log could
+    not say.
+  - `background_dialogue_e2e_live` again, and **4 of 5 red locally**: the "3 of 3" above
+    did not hold — and the next hour 2 of 12. Read in the thoughts: the description's
+    "returns at once with the address" drafted a reply that was then written instead of
+    the call. Reworded, which makes it rarer and does not end it, together with a line
+    in the live helpers' log saying how every turn ended — [tools.md](tools.md), "a
+    background run is started by its call".
 
 ### Post-M9: a card HF never schedules is left after 15 minutes (done)
 

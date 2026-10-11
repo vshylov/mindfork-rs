@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (88)
+## Entries (89)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -100,6 +100,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `youtube_watch` on a Gemini model without the `minimal` thinking level (done)
 - Post-M9: a dialogue staged once, and a round limit that ends in prose (done)
 - Post-M9: `summary_usage_e2e_live` reads its JSON page from a fixture (done)
+- Post-M9: a background run is started by its call, not by the reply (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -5770,3 +5771,66 @@ is about, and see a step it does not test succeed).
 
 **Gates**: fmt / clippy / test green — 4002 unit tests, 258 `#[ignore]` (the smoke moved,
 not added).
+
+### Post-M9: a background run is started by its call, not by the reply (done)
+
+Found by the owner's dispatch of the live gate on Qwen 3.6 27B after #747 (run
+38076541948, 2026-10-10): `background_dialogue_e2e_live` red for the second Qwen run of
+five, on the same reply — *"I've started the café scene in the background … You can read
+the full transcript later here: `chat://cafe-oat-latte-mixup-8f2a`"* — and no call.
+[ci.md](ci.md) had read the first one (run 38014988780) as a slip, "green 3 of 3 locally".
+
+- **Reproduced on the gate's own weights** (Qwen3.6-27B Q4_K_M, RTX 4090, `-c 16384
+  -np 1`, llama.cpp b11513): **4 of 5 red**. The thoughts say how. The model plans the
+  call and its arguments, reads in the description that the call "returns at once with
+  the scene's chat:// address", drafts its reply around that address — *"(Tool call
+  inserted)"* — and then writes the draft, an address of its own included
+  (`chat://café-mix-up-7f3a`), and ends the turn with `Stop`. No parser lost a call:
+  there is no call markup in the thoughts, and the stop is clean. On the gate neither
+  gpt-oss-120b nor Gemma 4 has failed it.
+- **The descriptions** of `start_dialogue` and its twin `start_subagent` (en and ru — the
+  smoke's profile is Russian) now say that only the call starts the run, that it is made
+  before any text of the reply, and that the model then tells the user it is running,
+  with the address its result names — never one it writes. The result line and the rest
+  of the contract are unchanged. Two wordings before it were measured and dropped:
+  - "make it before you tell the user the run is going" — 2 of 10 red on Qwen: the model
+    answered the sum first, then said the scene was running;
+  - "make it before any text of your reply, and speak of the run only once its result
+    is in" — kept Qwen's misses down (3 of 20 against 6 of 20, interleaved) but silenced
+    Gemma 4, which then never mentioned the scene in the turn (0 of 5, against 2 of 3
+    with the old wording). The final wording names the scene with its real address on
+    Gemma 4 of 4, on the sub-agent 3 of 3.
+- **Measured, and a mitigation, not a fix.** The parent turn alone, the smoke stopped at
+  its verdict, old wording against new interleaved run by run on one stand: **3 of 20
+  against 1 of 20** misses with the final wording (and 6 of 20 against 3 of 20 with the
+  second). The old wording missed 9 of 40 across both; that against the final's 1 of 20
+  is a one-sided Fisher p ≈ 0.08 — fewer in every comparison, proven by none, and the
+  one remaining miss still wrote an address of its own. The same smoke ran 4 of 5 red
+  one hour and 2 of 12 the next with nothing changed: the rate itself wanders. What is
+  left is the model's — thinking, it plans the call, then writes the reply and stops —
+  and the smoke stays as it is, red on Qwen now and then; the roadmap carries the rest.
+  `start_subagent`, whose smoke names the tool in the ask, misses rarely either way: 15
+  of 15 against 15 of 15, interleaved, with the second wording.
+- **The live helpers say how a turn ended.** `run_turn_live` and
+  `run_turn_capture[_args]` print the finish reason, the lengths of the reply and the
+  thoughts, the call count and any error event (`TurnTrace`). On the same run
+  `trait_gate_e2e_live`'s second turn ran five minutes, came back empty and failed as
+  "expected update_user_model": the log could not tell a declined tool from a turn
+  thought to the cap or an engine error. That smoke now fails an empty turn as such
+  first, as `background_dialogue_e2e_live` already did. Locally it was green 4 of 4, in
+  22–42 s. The line earned its keep within the day: one A/B run's red was not a miss at
+  all but Qwen's all-thinking turn — `Length: 0 chars of reply, 15004 chars of
+  thoughts` — read off the log, not guessed.
+- **Smoke — GO** for what the change can promise: the call made, the scene landed, the
+  wake turn reported, and the reply naming the run by its real address. On Qwen, whole
+  runs: `background_dialogue_e2e_live` 2 of 2 and `background_subagent_e2e_live` 5 of 5
+  (one reply copied its address a digit short — `chat://3573108` for `…1081`). On
+  gpt-oss-120b (a rented RTX PRO 6000, `e2e_hf.py run --command`, two minutes of the
+  card a time) both ×3 green; on Gemma 4 31B Q4_0 locally `background_dialogue_e2e_live`
+  ×4 and `background_subagent_e2e_live` ×3 green.
+
+**Docs.** spec §9.13 (what the twins' descriptions say); CHANGELOG (Fixed); lessons §9;
+roadmap (the rest, on Qwen); ci.md (the run's three reds).
+
+**Gates**: fmt / clippy / test green — 4005 unit tests, 258 `#[ignore]` (diagnostics in
+the live helpers; no test added).

@@ -516,8 +516,43 @@ async fn drain_until_finished<F: Fn(&AppEvent) -> bool>(
     saw
 }
 
+/// How a live turn ended, said in the log whatever the smoke asserts next. An
+/// empty reply with no calls reads the same to an assertion whether the model
+/// chose not to act, thought until the cap (`Length`) or the engine failed —
+/// on Qwen in CI a five-minute empty turn failed as "expected
+/// update_user_model" and nothing in the log could say which
+/// (docs/journal/tools.md, "a background run is started by its call").
+#[derive(Default)]
+struct TurnTrace {
+    thoughts: usize,
+    errors: Vec<String>,
+}
+
+impl TurnTrace {
+    /// Takes the events the helpers do not collect themselves.
+    fn observe(&mut self, ev: &AppEvent) {
+        match ev {
+            AppEvent::Thoughts { text, .. } => self.thoughts += text.chars().count(),
+            AppEvent::Error(e) => self.errors.push(e.clone()),
+            _ => {}
+        }
+    }
+
+    fn report(&self, reason: &crate::shared::api::FinishReason, reply: &str, calls: usize) {
+        eprintln!(
+            "turn ended {reason:?}: {} chars of reply, {} chars of thoughts, {calls} call(s)",
+            reply.chars().count(),
+            self.thoughts
+        );
+        for e in &self.errors {
+            eprintln!("  error event: {e}");
+        }
+    }
+}
+
 /// Runs one turn: sends a message, drains events until `Finished`, collecting
-/// the reply text and the names of called tools. For live smokes.
+/// the reply text and the names of called tools. For live smokes; how the turn
+/// ended goes to the log ([`TurnTrace`]).
 #[cfg(test)]
 async fn run_turn_live(
     cmd_tx: &UnboundedSender<AppCommand>,
@@ -527,11 +562,16 @@ async fn run_turn_live(
     cmd_tx.send(AppCommand::SendMessage(text.into())).unwrap();
     let mut out = String::new();
     let mut tools = Vec::new();
+    let mut trace = TurnTrace::default();
     while let Some(ev) = evt_rx.recv().await {
+        trace.observe(&ev);
         match &ev {
             AppEvent::Chunk { text, .. } => out.push_str(text),
             AppEvent::ToolCall { name, .. } => tools.push(name.clone()),
-            AppEvent::Finished { .. } => break,
+            AppEvent::Finished { reason, .. } => {
+                trace.report(reason, &out, tools.len());
+                break;
+            }
             _ => {}
         }
     }
@@ -561,7 +601,9 @@ async fn run_turn_capture_args(
     cmd_tx.send(AppCommand::SendMessage(text.into())).unwrap();
     let mut out = String::new();
     let mut calls = Vec::new();
+    let mut trace = TurnTrace::default();
     while let Some(ev) = evt_rx.recv().await {
+        trace.observe(&ev);
         match &ev {
             AppEvent::Chunk { text, .. } => out.push_str(text),
             AppEvent::ToolCall {
@@ -570,7 +612,10 @@ async fn run_turn_capture_args(
                 result,
                 ..
             } => calls.push((name.clone(), arguments.clone(), result.clone())),
-            AppEvent::Finished { .. } => break,
+            AppEvent::Finished { reason, .. } => {
+                trace.report(reason, &out, calls.len());
+                break;
+            }
             _ => {}
         }
     }
