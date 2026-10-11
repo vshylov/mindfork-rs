@@ -226,20 +226,15 @@ effort tiers — have all closed
 
 ### Tools and MCP
 
-- **The withheld-image notes on Qwen 3.6** — **on demand**. With `tools.mcp_images`
-  off the MCP adapter tells the model the image was withheld and to say it cannot see
-  it, and `python_exec` says the same of a chart it saved but did not show; Gemma 4
-  obeys (0/5 described, 2026-09-12). Qwen 3.6 does not: thinking, it deliberates
-  without end (two runs of three ran to the cap, at 2048 and at 16384 alike) or, on the
-  gate, describes the image anyway; muted, it described the image it never got two
-  runs of five. `a_withheld_tool_image_is_not_described_live` and its sibling
-  `a_withheld_chart_is_not_described_live` (an empty answer on the gate after #744) are
-  red on that model, now and then, until the wording — or the turn — holds there; each
-  failure prints its finish reason and the length of the thoughts. Both checks are
-  two-sided: the image smoke refuses any colour named, and the chart smoke a verdict
-  on the overlap with no hedge before it — *"I cannot see it, but no, the legend does
-  not overlap the plotted line"* (Qwen 3.6, locally) passed the one-sided check it had
-  (2026-10-10, [ci.md](journal/ci.md)).
+- **What the withheld-image notes leave on Qwen 3.6** — **on demand**. The notes for
+  `tools.mcp_images` off were reworded on 2026-10-11 — "You cannot see…", "this is not an
+  error, and another call will not change it" — and now hold on Qwen 3.8, Gemma 4 and
+  gpt-oss-120b every time measured, and on Qwen 3.6 through a cloud route (20 of 20). On
+  the gate's own Qwen 3.6 Q4 at the image smoke's 2048-token cap the model still doubts the
+  note as an injected test error and thinks to the cap about one time in four (9 → 5 of
+  20). The gate runs Qwen 3.8 now; what would end it on 3.6 is the turn's, not the
+  wording's — the thinking budget of a turn that only has to say "I cannot see it"
+  ([tools.md](journal/tools.md), "the withheld-image notes hold on Qwen").
 - **A background run said to be started and never started, on Qwen 3.6** — **on
   demand**. Asked for a background scene and something to answer now, Qwen 3.6 plans
   the `start_dialogue` call in its thoughts, then writes the reply — "the scene is

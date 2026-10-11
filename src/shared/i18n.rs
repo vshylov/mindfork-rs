@@ -943,13 +943,15 @@ mod tests {
             "tool.python_exec.files.not_shown_cap",
             "tool.python_exec.files.svg",
         ];
-        // One per language, because the clause is a sentence and not a token.
+        // One per language, because the clause is a sentence and not a token — and in
+        // any case: the MCP note opens a sentence with it ("Do not describe or guess"),
+        // the wording measured on Qwen 3.6 (docs/journal/tools.md, 2026-10-11).
         for (lang, needle) in [(Lang::En, "do not describe"), (Lang::Ru, "не описывай")] {
             let loc = locale(lang);
             for key in FAMILY {
                 let text = loc.t(key);
                 assert!(
-                    text.contains(needle),
+                    text.to_lowercase().contains(needle),
                     "{lang:?} {key} must tell the model not to describe what it \
                      has not seen, got: {text:?}"
                 );

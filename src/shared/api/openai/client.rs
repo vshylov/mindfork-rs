@@ -2930,7 +2930,28 @@ mod ignored_smoke {
     /// apostrophe a model types is typography, as the dash is in the orchestrator's
     /// `mentions_code`; the phrases stay the criterion, and one list serves both smokes,
     /// so a decline one of them reads the other reads too.
+    ///
+    /// A list of phrases stopped keeping up on Qwen 3.8 (2026-10-11): *"I can't answer that
+    /// — the screenshot image isn't visible to me"* went red on the gate's card, and *"I
+    /// can't actually view the plot — which means I can't verify whether the legend
+    /// overlaps"* through OpenRouter — declines, each, in words the list did not have. So
+    /// it is two shapes now: a negation before a verb of seeing or answering, and "not
+    /// visible / shown / displayed". A broader reading cannot let a description through:
+    /// each smoke's other half refuses a colour named or a verdict on the overlap,
+    /// whatever came before it.
     fn says_it_cannot_see(answer: &str) -> bool {
+        static SHAPES: std::sync::LazyLock<[regex::Regex; 2]> = std::sync::LazyLock::new(|| {
+            [
+                regex::Regex::new(
+                    r"\b(can't|cannot|can not|couldn't|could not|unable to|not able to)\s+(actually\s+|really\s+)?(see|view|tell|answer|confirm|determine|verify|describe|know)\b",
+                )
+                .unwrap(),
+                regex::Regex::new(
+                    r"\b(not|isn't|wasn't|aren't|weren't)\s+(been\s+)?(visible|shown|displayed)\b",
+                )
+                .unwrap(),
+            ]
+        });
         let low: String = answer
             .to_lowercase()
             .chars()
@@ -2940,16 +2961,7 @@ mod ignored_smoke {
                 other => other,
             })
             .collect();
-        [
-            "cannot see",
-            "can't see",
-            "cannot tell",
-            "can't tell",
-            "unable to",
-            "not able to",
-        ]
-        .iter()
-        .any(|phrase| low.contains(phrase))
+        SHAPES.iter().any(|shape| shape.is_match(&low))
     }
 
     #[test]
@@ -2963,6 +2975,22 @@ mod ignored_smoke {
         ));
         assert!(says_it_cannot_see("I cannot see it."));
         assert!(says_it_cannot_see("I'm unable to view images here."));
+        // Qwen 3.8's, on the gate's card and locally (2026-10-11).
+        assert!(says_it_cannot_see(
+            "I can\u{2019}t answer that \u{2014} the screenshot image isn\u{2019}t visible to me \
+             (image display is turned off in the settings)."
+        ));
+        assert!(says_it_cannot_see(
+            "The chart was saved to `chart.png`. However, image display is turned off, so I \
+             can't actually see the saved plot."
+        ));
+        assert!(says_it_cannot_see(
+            "I cannot answer this question because the screenshot is not visible to me."
+        ));
+        assert!(says_it_cannot_see(
+            "However, image display is turned off in the settings, so I can't actually view \
+             the plot \u{2014} which means I can't verify whether the legend overlaps the line."
+        ));
         // An answer that claims to know is not a decline, in any typography.
         assert!(!says_it_cannot_see(
             "The background is blue, with a white square."
