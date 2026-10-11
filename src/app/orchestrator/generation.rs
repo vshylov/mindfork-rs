@@ -2274,11 +2274,14 @@ impl TurnLoop<'_> {
             self.images_withheld += withhold_images(&mut self.request.messages, self.ctx.loc);
         }
         let mut muted_retry_left = self.woken;
+        let mut empty_retry_left = true;
         loop {
             self.report_progress(None);
             let mut out = self.stream().await;
             self.total_tokens += out.tokens;
             self.total_reasoning += out.reasoning_tokens;
+
+            let mut asked_again = false;
 
             // A turn the app started on a task notification can spend its
             // whole cap thinking and say nothing — measured 2 in 5 on the
@@ -2292,9 +2295,41 @@ impl TurnLoop<'_> {
                 && out.reason != FinishReason::Cancelled
             {
                 muted_retry_left = false;
+                asked_again = true;
                 self.request.sampling.reasoning_budget = Some(0);
                 self.report_progress(None);
                 out = self.stream().await;
+                self.total_tokens += out.tokens;
+                self.total_reasoning += out.reasoning_tokens;
+            }
+
+            // A round right after tool results that says nothing — no text, no
+            // call, a clean stop — ends the turn on its narration ("first I'll
+            // look at the project…") with no answer behind it. The model's, not
+            // the engine's: one such request, replayed, came back empty 3 times
+            // in 40 under llama.cpp b11556 and 2 in 40 under b11513, from the
+            // same rendered prompt; muted, 0 in 40
+            // (docs/research/empty-round-after-tools.md). So it is asked once
+            // more per turn with thinking muted, and the turn's own budget is
+            // put back for any round after it; a second empty answer stands, as
+            // it always did. A round the woken re-ask above already asked again
+            // is not asked a third time.
+            if empty_retry_left
+                && !asked_again
+                && self.round + self.workspace_rounds > 0
+                && out.reason == FinishReason::Stop
+                && out.calls.is_empty()
+                && out.text.trim().is_empty()
+            {
+                empty_retry_left = false;
+                tracing::info!(
+                    thoughts = out.thoughts.len(),
+                    "an empty answer after a tool round; asking once more, muted"
+                );
+                let budget = self.request.sampling.reasoning_budget.replace(0);
+                self.report_progress(None);
+                out = self.stream().await;
+                self.request.sampling.reasoning_budget = budget;
                 self.total_tokens += out.tokens;
                 self.total_reasoning += out.reasoning_tokens;
             }

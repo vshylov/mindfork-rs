@@ -750,6 +750,138 @@ async fn the_final_round_tells_the_model_the_tools_are_gone() {
     assert_eq!(chat.messages.last().unwrap().text, "Summary.");
 }
 
+/// Sends one message on a [`ScriptRecorder`](super::subagent::ScriptRecorder)
+/// engine and returns the requests it saw and the chat's last message text.
+async fn turn_on_recorder(
+    scripts: Vec<super::subagent::Script>,
+) -> (Vec<crate::shared::api::ChatRequest>, String) {
+    let backend = super::subagent::ScriptRecorder::new(scripts);
+    let (dir, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(
+        Some(backend.clone() as Arc<dyn EngineBackend>),
+        no_auto_cfg(),
+    );
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    cmd_tx
+        .send(AppCommand::SendMessage("look it up".into()))
+        .unwrap();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+        .await
+        .unwrap();
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    let chat = Storage::open(Paths::with_root(dir.path()))
+        .unwrap()
+        .json()
+        .load_chats()
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    (
+        backend.requests(),
+        chat.messages.last().unwrap().text.clone(),
+    )
+}
+
+/// A clean stop with nothing in it — no text, no call.
+fn empty_stop() -> super::subagent::Script {
+    super::subagent::Script {
+        chunks: vec![ChatChunk::Finished(FinishReason::Stop)],
+        hang: false,
+    }
+}
+
+/// An answer that comes back empty right after a tool round is asked once more,
+/// muted, and the second answer is what the chat keeps
+/// (docs/research/empty-round-after-tools.md). Without it the turn ended on the
+/// round's narration — Qwen 3.6, `code_workspace_navigate_e2e_live` on the gate.
+#[tokio::test]
+async fn an_empty_answer_after_a_tool_round_is_asked_once_more_muted() {
+    use super::subagent::{call, text};
+    let (reqs, last) = turn_on_recorder(vec![
+        call("c1", "get_sampling", "{}"),
+        empty_stop(),
+        text("The temperature is 0.7."),
+    ])
+    .await;
+    assert_eq!(
+        reqs.len(),
+        3,
+        "the tool round, the empty answer, the re-ask"
+    );
+    assert_eq!(
+        reqs[2].messages.len(),
+        reqs[1].messages.len(),
+        "the re-ask adds nothing to the conversation"
+    );
+    assert_ne!(reqs[1].sampling.reasoning_budget, Some(0));
+    assert_eq!(
+        reqs[2].sampling.reasoning_budget,
+        Some(0),
+        "the re-ask is muted"
+    );
+    assert_eq!(last, "The temperature is 0.7.");
+}
+
+/// The mute is the re-ask's alone: when it answers with another call, the
+/// rounds after it think again.
+#[tokio::test]
+async fn the_muted_re_ask_does_not_mute_the_rounds_after_it() {
+    use super::subagent::{call, text};
+    let (reqs, last) = turn_on_recorder(vec![
+        call("c1", "get_sampling", "{}"),
+        empty_stop(),
+        call("c2", "get_sampling", "{}"),
+        text("Done."),
+    ])
+    .await;
+    assert_eq!(reqs.len(), 4);
+    assert_eq!(reqs[2].sampling.reasoning_budget, Some(0));
+    assert_eq!(
+        reqs[3].sampling.reasoning_budget, reqs[1].sampling.reasoning_budget,
+        "the turn's own budget is back"
+    );
+    assert_eq!(last, "Done.");
+}
+
+/// Once per turn: a second empty answer stands, and no third request is made.
+#[tokio::test]
+async fn a_second_empty_answer_after_tools_is_not_asked_again() {
+    use super::subagent::{call, text};
+    let (reqs, last) = turn_on_recorder(vec![
+        call("c1", "get_sampling", "{}"),
+        empty_stop(),
+        empty_stop(),
+        text("never asked for"),
+    ])
+    .await;
+    assert_eq!(reqs.len(), 3);
+    assert_ne!(last, "never asked for");
+}
+
+/// Only after tools: an empty first answer, with no tool round before it, is the
+/// turn's answer as before — and so is one cut by the cap (`Length`).
+#[tokio::test]
+async fn an_empty_answer_with_no_tool_round_or_cut_by_the_cap_is_not_asked_again() {
+    use super::subagent::{Script, call, text};
+    let (reqs, _) = turn_on_recorder(vec![empty_stop(), text("never asked for")]).await;
+    assert_eq!(reqs.len(), 1, "no tool round, no re-ask");
+
+    let cut = Script {
+        chunks: vec![ChatChunk::Finished(FinishReason::Length)],
+        hang: false,
+    };
+    let (reqs, _) = turn_on_recorder(vec![
+        call("c1", "get_sampling", "{}"),
+        cut,
+        text("never asked for"),
+    ])
+    .await;
+    assert_eq!(reqs.len(), 2, "a cut answer is not an empty one");
+}
+
 /// Where the note goes: onto a trailing `tool` or `user` turn, never as a
 /// `user` turn after one — a template that enforces alternation refuses that —
 /// and as a turn of its own only when the history ends otherwise.
