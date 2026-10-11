@@ -793,7 +793,7 @@ Semantics and signatures — as in attempt #1 (section 9.3 of its specification)
 |---|---|---|
 | `rag_search` | `{ query, top_k? }` | Embed the query → kNN in `rag_documents` (sqlite-vec, filtered by `profile_id`) → top-N fragments with sources. Refuses over a knowledge base another embedding model indexed, asked before **and after** the query is embedded ([9.3.4](#934-changing-the-embedding-model)). |
 | `rag_add` | `{ text, source? }` | Chunking → embedding → written to `rag_documents` (`profile_id`). Returns the number of chunks. Every chunk of the text goes to the embedder in one call, which sends it in requests of at most 64 (the embedding lifecycle, below). |
-| `note_save` | `{ content, tags? }` | Written to `notes` (`profile_id`). Returns the id. |
+| `note_save` | `{ content, tags? }` | Written to `notes` (`profile_id`). Returns the id, and up to three similar notes when there are any — the note is already written, so the hint says a repeat is merged with the one it repeats (`note_merge`, both ids). |
 | `note_recall` | `{ query?, tags?, limit? }` | Search notes (text/tags; optionally semantic), filtered by `profile_id`. |
 | `python_exec` | `{ code }` | Executes Python in an isolated Wasmer/WASIX sandbox (by default) or a local interpreter — see [13.2](#132-python-execution). Returns stdout/stderr/error. Behind a global switch (disabled by default). |
 | `web_search` | `{ query, max_results? }` | Searches DuckDuckGo (our own `reqwest` client) + extracts readable page content. Behind the `web_enabled` global switch (**off** by default, like Python and file access). See [9.3.1](#931-the-web-tool-our-own-implementation). |
@@ -5317,7 +5317,7 @@ The SelfModel tool group (optional: **not** in `default_tool_ids`, present in
 | `reflect` | Return the current model + a self-reflection rubric (no write; an "entry point") |
 | `update_self_model` | The self-description + goals (add/complete/abandon) |
 | `update_user_model` | The companion's traits/interests/relationship dynamic |
-| `add_insight` | Record an observation/insight (including a contradiction as prose) into the narrative |
+| `add_insight` | Record an observation/insight (including a contradiction as prose) into the narrative; similar observations are shown after the write, with the hint to merge a repeat (`note_merge`) |
 
 **A departure from the tool contract ([§9.2](#92-the-tool-contract)):** SelfModel
 is per-profile data in SQLite, so the mutator tools **write directly**

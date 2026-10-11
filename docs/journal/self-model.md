@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (24)
+## Entries (25)
 
 - Post-M9: SelfModel MVP — agent "self-model" (probe, done)
 - Post-M9: SelfModel Tier 2-A — narrative insights + contradictions in prose (done)
@@ -36,6 +36,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: self-model consolidation — stage A2 (summary↔observation semantics) (done)
 - Post-M9: self-model consolidation — stage A3-light (interest aging) (done)
 - Post-M9: self-model injection — per-section budgets (done)
+- Post-M9: the duplicate gate's hint — the repeat is already written (done)
 
 ### Post-M9: SelfModel MVP — agent "self-model" (probe, done)
 - **A trimmed-down Phase 1 from the idea bank** ([docs/self-model.md](../../docs/history/self-model.md)) per
@@ -1051,3 +1052,60 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - **Left alone deliberately**: what the model *writes* (summary target, trait
   counts) is a different question, already served by the summary size gate; and
   the wasted embedder call disappears on its own now that observations render.
+
+### Post-M9: the duplicate gate's hint — the repeat is already written (done)
+
+Found on the first gate dispatch on Qwen 3.8 (run 38172416081, 2026-10-11, 252 of 252):
+`self_model_gate_en_e2e_live` was green but took **186 s** (50 s on 3.6). Its second turn
+records a near-duplicate; the `add_insight` gate answered *"Similar observations (possible
+duplicate — if needed, rewrite that one via note_revise or supersede with note_supersede
+instead of a new entry)"* — and the model did exactly that: rewrote the old observation,
+superseded the new one (which made a third live note), then merged all of it, four calls
+and 18.8K characters of thinking. The gate runs **after** the write: "instead of a new
+entry" advises a moment that has passed, and both named tools leave the copy standing.
+The self-model policy in the system prompt said the same ("add_insight will show similar
+ones — rewrite that one…"), and so did the `note_save` gate.
+
+- **The fix is wording.** The gate says the entry is already there and names the call
+  that folds it: *"Similar observations (a possible duplicate). The new one is already
+  recorded: if it repeats one of these, merge the two with note_merge (both ids) —
+  rewriting the old one would leave both:"*; the `note_save` gate the same with *"repeats
+  or replaces"*; the policy splits the two moments — before writing, rewrite instead of
+  `add_insight`; after `add_insight` has shown similar ones, `note_merge`. Russian
+  mirrored. Each hint keeps its opening words, which the tests anchor on.
+- **Measured by replaying the turn's own request** (captured through a recording proxy)
+  after the gate's result, every next `note_*` call answered as the tool would, the live
+  observations counted; OpenRouter with the provider pinned (DeepInfra), arms interleaved.
+  Qwen 3.8, the smoke's prompt (which itself names `note_revise`/`note_supersede`): a
+  merge as the first step 12/20 → **20/20** (p = 0.003). A neutral prompt: 9/20 →
+  **20/20** (p = 0.0002), the copy left standing 6/20 → **0/20** (p = 0.02), thinking
+  median 1690 → 324 characters.
+- **The whole smoke, ten runs an arm**: English on `main` merged at once in 4 of 11 and
+  left the copy in 3; with the fix **10 of 10** (p = 0.004). Russian on `main` 7 of 10,
+  one copy left; with the fix **10 of 10** (p = 0.2 — the Russian hint misled less).
+- **On the gate's own weights** (`ggml-org` Q4_K_M, llama.cpp b11556): the replay 5/10 →
+  **10/10** at once, the copy left 3/10 → 0/10 (p = 0.03); both smokes, three runs each,
+  `add_insight` + `note_merge` every time.
+- **Other models**, the same replay with their own captured requests: gpt-oss-120b merged
+  at once 2/10 and left the copy in **8 of 10** with the old hint — it rewrote the old
+  observation and stopped — and **10/10** at once with the new one (p = 0.0007; one run
+  also recorded the observation again in the same message). Gemma 4 31B 6/10 → 10/10,
+  the copy left 4/10 → 0/10 (p = 0.09, the same direction).
+- **`note_save`** (a built request: a saved note and its repeat): a plain repeat was merged
+  9 of 10 either way; a *replacement* ("the release moved to …") merged at once 7/10 →
+  10/10, with a fifth of the thinking — no worse, and shorter.
+- **"Keep both" still holds.** The smokes that ask for two similar observations on
+  purpose were the risk of a hint that says *merge*: `self_model_graph_e2e_live` kept two
+  in 10 of 10 (10 of 10 on `main`), `self_consolidation_e2e_live` in 5 of 5 before its
+  background pass merged them, `self_consolidation_overview_e2e_live` 5 of 5 green; the
+  rest of the self-model and notes smokes (`auto_reflect`, `cross_organ_link`,
+  `note_cite_source`, `recall_includes_self`, `self_model`, `self_model_insight`,
+  `summary_gate`, `trait_gate`) green once each.
+- **The English smoke prints the observations live after its turn** (the Russian one
+  already did) — as text, since a scar `update_user_model` writes is an `@self` note too:
+  a local run with `add_insight` + `note_merge` counted two, one of them that scar.
+- **Tests**: the gate tests of both tools now pin "already recorded/saved" and
+  `note_merge`, so the old advice cannot come back unseen.
+
+**Gates**: 4009 unit tests green, 259 `#[ignore]`; clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check` clean.

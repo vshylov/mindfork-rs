@@ -51,8 +51,9 @@ impl Tool for NoteSave {
             .loc
             .tf("tool.note_save.result.saved", &[("id", &id.to_string())]);
         // Embedding (best-effort) + a compatibility gate: show semantically close
-        // existing notes, so the model can rewrite a duplicate via note_revise
-        // instead of accumulating a near-copy. Without an embedder — softly skip
+        // existing notes, so the model can merge a repeat it has just saved into
+        // the one it repeats (note_merge) instead of keeping a near-copy. The note
+        // is already written when the gate runs. Without an embedder — softly skip
         // (like RAG reranking), the note is saved either way.
         // Passage: this vector is stored, and the gate below compares it against
         // other stored notes — both sides of that comparison are passages.

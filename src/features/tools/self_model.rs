@@ -349,9 +349,9 @@ impl Tool for AddInsight {
             "tool.add_insight.result.recorded",
             &[("id", &id.to_string())],
         );
-        // The gate (Tier 1's core hypothesis): similar existing observations — to
-        // rewrite a near-duplicate via note_revise/note_supersede rather than
-        // spawning a copy.
+        // The gate (Tier 1's core hypothesis): similar existing observations. It runs
+        // after the write, so its hint says the repeat is already recorded and is merged
+        // (note_merge) — rewriting the old one beside it would leave both.
         let similar = notes::self_note_similar(ctx, &text, id).await;
         if !similar.is_empty() {
             msg.push('\n');
@@ -1314,7 +1314,8 @@ mod tests {
     #[tokio::test]
     async fn add_insight_gate_surfaces_similar_observation() {
         // Tier 1's core hypothesis: a near-duplicate observation surfaces the gate
-        // (a similar existing self-note) with a hint to rewrite via note_revise.
+        // (a similar existing self-note). The new one is already written, so the hint
+        // says so and names note_merge, not a rewrite of the old one beside it.
         let profile = Uuid::new_v4();
         let (_d, _s, ctx) = ctx_with_storage(profile);
         AddInsight
@@ -1327,7 +1328,8 @@ mod tests {
             .unwrap();
         assert!(out.result.contains("Похожие наблюдения"));
         assert!(out.result.contains("aaaa bbbb"));
-        assert!(out.result.contains("note_revise"));
+        assert!(out.result.contains("уже записано"));
+        assert!(out.result.contains("note_merge"));
     }
 
     #[tokio::test]
