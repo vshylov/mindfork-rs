@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (26)
+## Entries (27)
 
 - Post-M9: cutting GitHub Actions minutes (done)
 - Post-M9: skipping the test job for docs-only pull requests (done)
@@ -39,6 +39,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the first Qwen dispatch since August, and the probe arm that had no key (done)
 - Post-M9: a card HF never schedules is left after 15 minutes (done)
 - Post-M9: the gate's sampling in its log, and a graph probe that keeps two notes (done)
+- Post-M9: the gate's Qwen is 3.8 (done)
 ### Post-M9: cutting GitHub Actions minutes (done)
 - **Trigger**: the `v0.9.4` release run was refused by GitHub with *"The job was
   not started because recent account payments have failed or your spending limit
@@ -1743,3 +1744,33 @@ gate's `ggml-org` file — llama.cpp b11556) and through OpenRouter with the pro
 - **The withheld image** is the next pull request's.
 
 **Gates**: fmt / clippy / test green — 4009 unit tests, 259 `#[ignore]` (+1).
+
+### Post-M9: the gate's Qwen is 3.8 (done)
+
+The owner's call (2026-10-11): the second model family on the gate moves from Qwen 3.6 27B
+to **Qwen 3.8 27B**. The card `qwen-3.8-27b` replaces `qwen-3.6-27b` in `tools/hf_api.py`
+— `ggml-org/Qwen3.8-27B-GGUF`, `Qwen3.8-27B-Q4_K_M.gguf` (18.97 GB) and
+`mmproj-Qwen3.8-27B-Q8_0.gguf`, the repository layout, quantization, L40S and A100 fallback
+of 3.6's — and the workflow's choice, the self-test's walks and declarations, and
+install.md §7.2's table and examples with it. The tag stays `qwen`, so endpoint names do
+not change.
+
+- **Locally first** (Qwen3.8-27B Q4_K_M with an F16 projector, llama.cpp b11556 — the
+  owner's download, **not** the gate's file: 17.44 GB against 18.97, another quantizer's):
+  eighteen smokes across what a Qwen breaks first, all green — vision through the
+  projector (`tool_result_image_is_seen_live`, `image_attachment_e2e_live`), both withheld
+  notes, the `continue` probe's Qwen arm, `code_workspace_navigate`, `code_edit`,
+  `attachment_search`, `trait_gate`, `self_model_graph`, the background sub-agent and
+  scene, `dialogue_e2e_live`. Faster than 3.6 at the same work: the background scene
+  landed in 49 s, where 3.6 took 3–6 minutes. Its server warns that the template
+  **preserves reasoning** in the history — which the client does not send back on this
+  wire (roadmap, "the turn's own thoughts").
+- **The card itself** (`e2e_hf.py run --chat-model qwen-3.8-27b --command`, one L40S, the
+  gate's file): `running` and healthy in 40 s; `/props` says `b11552 — temperature 1.0,
+  top_k 20, top_p 0.95, min_p 0.05`; the projector sees the fixture; `code_edit_e2e_live`
+  3 of 3 green, `code_workspace_navigate`, `background_dialogue` green. One red:
+  `a_withheld_tool_image_is_not_described_live` on a correct decline the smoke's phrase
+  list did not know (*"the screenshot image isn't visible to me"*) — the next pull
+  request's, with the note's wording.
+
+**Gates**: `e2e_hf.py --self-test` 0 failures; no Rust changed.

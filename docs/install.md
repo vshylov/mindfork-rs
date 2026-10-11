@@ -2383,7 +2383,7 @@ The chat endpoint runs **one model per run**, chosen with `--chat-model`:
 | `--chat-model` | What it is | GPU |
 |---|---|---|
 | `gemma-4-31b` | the default, and what the memory thresholds were calibrated against | L40S 48 GB, us-east-1 |
-| `qwen-3.6-27b` | a second model family, so a Gemma-shaped assumption is caught here | L40S 48 GB, us-east-1 |
+| `qwen-3.8-27b` | a second model family, so a Gemma-shaped assumption is caught here (Qwen 3.6 until 2026-10-11) | L40S 48 GB, us-east-1 |
 | `gpt-oss-120b` | weights **split across two files** (63.39 GB, Q8_0), OpenAI open-weights, text-only | RTX PRO 6000 96 GB, us-east-2 |
 
 The name is one decision — it carries the repository, the weights, the vision
@@ -2408,7 +2408,7 @@ first: that flag exists to deploy a *sighted* model blind.
 $env:HF_TOKEN = "hf_..."          # fine-grained, Inference Endpoints
 python tools/e2e_hf.py run        # create, run the suite, delete
 python tools/e2e_hf.py run --dry-run          # payloads only, spends nothing
-python tools/e2e_hf.py run --chat-model qwen-3.6-27b   # the other model family
+python tools/e2e_hf.py run --chat-model qwen-3.8-27b   # the other model family
 python tools/e2e_hf.py run --chat-model gpt-oss-120b   # split weights, RTX PRO 6000, text-only
 python tools/e2e_hf.py run --filter e2e_live  # a subset
 python tools/e2e_hf.py run --shard 2/4        # every fourth smoke, on endpoints of its own

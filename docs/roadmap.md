@@ -73,7 +73,9 @@ effort tiers — have all closed
   from 5 in 100 to 0 in 100 (p ≈ 0.03). A change to every request after a turn's
   first tool round — context spent, and each template's handling (Gemma's, gpt-oss's
   analysis channel) to measure, with the A/B the research used
-  ([empty-round-after-tools.md](research/empty-round-after-tools.md) §6).
+  ([empty-round-after-tools.md](research/empty-round-after-tools.md) §6). Qwen 3.8's
+  template is built for it: llama.cpp starts it saying the template "supports preserving
+  reasoning" (2026-10-11).
 - **What the local-servers track left** — **idea**, each small
   ([local-servers.md](research/local-servers.md) §6): the settings' model list
   offers the chat slot LM Studio's embedding models too, which `/api/v1/models`

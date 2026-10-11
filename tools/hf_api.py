@@ -65,13 +65,15 @@ CHAT_MODELS = {
         # (docs/research/e2e-gate-budget.md §8, §10).
         "fallback": ["nvidia-a100"],
     },
-    "qwen-3.6-27b": {
+    # Qwen 3.8 since 2026-10-11; 3.6 before it (docs/journal/ci.md, "the gate's Qwen
+    # is 3.8"). The same repository layout, quantization and card as 3.6's.
+    "qwen-3.8-27b": {
         "tag": "qwen",
-        "repo": "ggml-org/Qwen3.6-27B-GGUF",
-        "gguf": "Qwen3.6-27B-Q4_K_M.gguf",  # 19.10 GB
-        "mmproj": "mmproj-Qwen3.6-27B-Q8_0.gguf",  # 0.63 GB
+        "repo": "ggml-org/Qwen3.8-27B-GGUF",
+        "gguf": "Qwen3.8-27B-Q4_K_M.gguf",  # 18.97 GB
+        "mmproj": "mmproj-Qwen3.8-27B-Q8_0.gguf",  # 0.63 GB
         "instance": "nvidia-l40s",
-        "fallback": ["nvidia-a100"],  # as Gemma's: 19.7 GB fits its 80 GB
+        "fallback": ["nvidia-a100"],  # as Gemma's: 19.6 GB fits its 80 GB
     },
     # The third model is not a third flavour of the first two: it is split
     # across two files, it is an OpenAI open-weights model (the harmony
