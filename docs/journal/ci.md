@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (25)
+## Entries (26)
 
 - Post-M9: cutting GitHub Actions minutes (done)
 - Post-M9: skipping the test job for docs-only pull requests (done)
@@ -38,6 +38,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: gpt-oss-120b moves to an RTX PRO 6000, with two clouds behind it (done)
 - Post-M9: the first Qwen dispatch since August, and the probe arm that had no key (done)
 - Post-M9: a card HF never schedules is left after 15 minutes (done)
+- Post-M9: the gate's sampling in its log, and a graph probe that keeps two notes (done)
 ### Post-M9: cutting GitHub Actions minutes (done)
 - **Trigger**: the `v0.9.4` release run was refused by GitHub with *"The job was
   not started because recent account payments have failed or your spending limit
@@ -1703,3 +1704,42 @@ The owner's decision (2026-10-10): leave such a card for the next one.
 - **Live — GO**, with the limit at 15 s on Gemma: L40S → A100 → L40S, each left
   `initializing` and deleted before the next create, the last given the whole timeout
   (`running` at 343 s), the smoke green.
+
+### Post-M9: the gate's sampling in its log, and a graph probe that keeps two notes (done)
+
+The Qwen 3.6 dispatch after #750 (run 38153486948, 2026-10-11, 248 of 251, every shard on
+its L40S): the smokes #749 and #750 touched green, and three reds — the withheld image's
+loop (`Length` after 8841 characters of thoughts, the roadmap's item, six Qwen dispatches of
+eight), `self_model_graph_e2e_live`, and `code_edit_e2e_live` for the third dispatch
+running. Measured on the local stand (Qwen3.6-27B Q4_K_M — **sha256-identical** to the
+gate's `ggml-org` file — llama.cpp b11556) and through OpenRouter with the provider pinned
+(DeepInfra), where a turn is seconds rather than minutes.
+
+- **`self_model_graph_e2e_live`** — in its second turn the model recorded the second
+  observation and then merged the two (`note_merge`): the `add_insight` gate shows the
+  first one as related, and a consolidation that is fair to the product ends a probe of
+  links between two notes. Twice on the gate (runs 38069725492, 38153486948). The turn now
+  asks for a separate observation and not to merge it. Interleaved on the local stand: the
+  old prompt **4 red of 10** (three merges, one turn with no call), the new **10 of 10**;
+  through OpenRouter both 10 of 10, the route that does not merge. The failure now prints
+  what session 2 called.
+- **`code_edit_e2e_live`** — `values.len().into()`, as `.as_f64()` before: three Qwen
+  dispatches red in a row, on the L40S and the A100 alike, after four green; locally 0 of
+  35 whole runs. The request the model answers with its edit was captured and replayed 30
+  times each way, interleaved: as sent (a Windows path in the system prompt) **1 wrong in
+  30**, the path made `/tmp/…` as on the gate **1 in 30**, with llama.cpp's own sampling
+  defaults (temperature 0.8, top_k 40) instead of the GGUF's **1 in 30**. Neither the
+  operating system's path nor the sampling defaults moves it; at that step the model is
+  wrong about one time in thirty everywhere. What the gate's endpoint actually samples
+  with is the one thing no log showed, so the suite now prints it:
+  `the_servers_default_sampling_is_in_the_log_live` reads `/props`
+  (`default_generation_settings.params` and `build_info`; a gateway's `/props` skips).
+  Locally: `b11556 — temperature 1.0, top_k 20, top_p 0.95, min_p 0.05`. On a rented gate
+  endpoint the same day (the Qwen 3.8 card, the same `server-cuda` image): `b11552 — 1.0,
+  20, 0.95, 0.05` — the GGUF's own, as locally. So the defaults are not the difference
+  either, and `code_edit` on Qwen 3.6 stays what it is: a fix the model gets wrong now and
+  then at one step of a multi-step turn, more often on the gate for reasons no measurement
+  here found. The gate moves to Qwen 3.8, where it was 3 of 3 green on that endpoint.
+- **The withheld image** is the next pull request's.
+
+**Gates**: fmt / clippy / test green — 4009 unit tests, 259 `#[ignore]` (+1).
