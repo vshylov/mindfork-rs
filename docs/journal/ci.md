@@ -1772,5 +1772,13 @@ not change.
   `a_withheld_tool_image_is_not_described_live` on a correct decline the smoke's phrase
   list did not know (*"the screenshot image isn't visible to me"*) — the next pull
   request's, with the note's wording.
+- **The first dispatch on 3.8** (run 38172416081, 2026-10-11, after #751–#753): **252 of
+  252 green**, every shard on its L40S, healthy in 30–40 s. The smokes add up to 3520 s —
+  59 min, against 72 on 3.6 — and the longest job ran 28 min: `dialogue_probe_steering`
+  863 s (1232 on the 3.6 dispatch before), `_finite` 259 s (819), `background_dialogue`
+  64 s (374). `/props` printed what the card's check had: b11552, temperature 1.0, top_k
+  20, top_p 0.95, min_p 0.05. The judge fell back on none of 46 checkpoint replies. One
+  slow green: `self_model_gate_en_e2e_live`, 186 s, four note edits after the duplicate
+  gate's hint — [self-model.md](self-model.md), "the duplicate gate's hint".
 
 **Gates**: `e2e_hf.py --self-test` 0 failures; no Rust changed.

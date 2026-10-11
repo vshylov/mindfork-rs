@@ -2678,8 +2678,9 @@ async fn self_consolidation_e2e_live() {
 
 /// End-to-end **gate** probe (the core of the Tier 1 "narrative as notes" hypothesis): the model
 /// records an observation (`add_insight` → a self-note @self), then a near-duplicate —
-/// the `add_insight` gate shows the similar existing observation with a hint to
-/// rewrite it via `note_revise`/`note_supersede` instead of a copy. Assert the
+/// the `add_insight` gate shows the similar existing observation with a hint that the
+/// repeat is already recorded and is merged with it via `note_merge` (rewriting the old
+/// one beside it would leave both — measured, docs/journal/self-model.md). Assert the
 /// **mechanism** (self-notes get created; the gate fires deterministically —
 /// the embedder in tests is `MockEmbedder`, observation #1 already exists); the model's
 /// **decision** to integrate is printed for go/no-go (behavior is unstable). Run (needs
@@ -2783,7 +2784,8 @@ async fn self_model_gate_e2e_live() {
 /// in English records an observation, a near-duplicate raises the `add_insight` gate —
 /// **both the gate text and the whole tool result must be in English** (the key
 /// Tier 2 criterion: tool results are localized, no Cyrillic). A real
-/// embedder (`MINDFORK_EMBED_URL`) is needed for the gate to fire. Run:
+/// embedder (`MINDFORK_EMBED_URL`) is needed for the gate to fire. The observations live
+/// after the turn are printed: the repeat merged leaves one of the pair. Run:
 /// `MINDFORK_ENGINE_URL=…/v1 MINDFORK_EMBED_URL=…/v1 cargo test self_model_gate_en_e2e_live -- --ignored --nocapture --test-threads=1`.
 #[tokio::test]
 #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
@@ -2851,6 +2853,25 @@ async fn self_model_gate_en_e2e_live() {
 
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
+
+    // The observations live after the gate: the repeat merged leaves one of the pair, the
+    // old one rewritten beside it leaves both. Printed as text — a scar `update_user_model`
+    // wrote in turn 1 is an @self note too, so a bare count would mislead.
+    let live = Storage::open(Paths::with_root(_d.path()))
+        .unwrap()
+        .db()
+        .note_list(
+            pid,
+            None,
+            &[crate::features::tools::notes::SELF_NOTE_TAG.to_string()],
+            None,
+        )
+        .unwrap();
+    eprintln!(
+        "live observations after turn 2: {} — {:#?}",
+        live.len(),
+        live.iter().map(|n| n.content.as_str()).collect::<Vec<_>>()
+    );
 
     assert!(
         tools1.iter().any(|t| t == "add_insight"),

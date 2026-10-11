@@ -1388,6 +1388,18 @@ stdout becomes data** — `stats --json > file` would have hidden the password q
 from the user and written it into the file.
 — *`mindfork stats` — which copy of the data is the newest*.
 
+**Advice in a tool's result is read in the state after the call.** The duplicate gates
+of `add_insight` and `note_save` run once the entry is written, and told the model to
+rewrite the old one "instead of a new entry" — advice for a moment that had passed. A
+model that took it literally rewrote the old observation beside the copy and kept both;
+Qwen 3.8 did so, or went the long way round through `note_revise`, `note_supersede` and
+only then `note_merge`, in 7 of 11 turns of the gate's own smoke, and once took 186 s
+and 18.8K characters of thinking to get there. Saying that the entry is already there
+and naming the one call that folds it (`note_merge`, both ids) made it 10 of 10 at
+once, on every model measured. When a result advises a next step, read it as the
+model will — after the side effect — and check that the step still fits.
+— *the duplicate gate's hint: the repeat is already written*.
+
 ## 5. Terminal and ratatui rendering
 
 **A state that a key can put the user into needs a key that takes them out — check a

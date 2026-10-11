@@ -42,6 +42,12 @@ split by subsystem.
   judged a chart they were never shown, or got stuck deciding whether to. The
   note they get now says plainly that they cannot see the image, that this is
   not an error, and that calling the tool again will not change it.
+- **An observation or note that repeats an earlier one is folded into it.** After
+  the assistant recorded something it already knew, the hint it got told it to
+  rewrite the old entry "instead of a new entry" — but the new one was already
+  there. Some models rewrote the old one beside the copy and kept both, or took a
+  long detour of several edits to undo it. The hint now says the entry is already
+  recorded and that a repeat is merged with the one it repeats.
 
 ## [0.18.1] — 2026-10-09
 

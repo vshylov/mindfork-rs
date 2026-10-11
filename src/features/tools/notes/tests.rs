@@ -847,6 +847,9 @@ async fn save_surfaces_similar_notes_as_gate() {
         .unwrap();
     assert!(out.result.contains("Похожие заметки"));
     assert!(out.result.contains("aaaa bbbb"));
+    // The note is already saved when the gate runs: the hint says so and names the merge.
+    assert!(out.result.contains("уже сохранена"));
+    assert!(out.result.contains("note_merge"));
 }
 
 #[tokio::test]
