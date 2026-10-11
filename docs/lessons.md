@@ -2327,6 +2327,17 @@ red one hour and 2 of 12 the next. Interleave the arms and count in tens before 
 a slip rare or a fix a fix.
 — *a background run is started by its call*.
 
+**A build that arrived with a failure is a suspect, not a culprit — replay the request on
+both.** A new kind of red (an empty last round) appeared just as the gate's llama.cpp image
+moved past a rework of its chat layer, and the new build logged an empty
+`generation_prompt` where the old one did not; smokes alternating by build went 2 of 21 red
+against 0 of 21. Everything pointed one way, and none of it was proof. A recording
+pass-through caught the failing request, and replayed on each build it came back empty 5 in
+100 against 2 in 40, from a rendered prompt `/apply-template` showed byte for byte the same:
+the model's, on either build. Smoke-level counts at one failure in twenty cannot tell a build
+from the dice; the request can — capture it, render it on both, replay it in tens.
+— *an empty answer after tools is asked once more*.
+
 **Two models flake for two different reasons; fixing one does not fix the other.** The
 same probe, after the prompt above was fixed, still failed 1 in 20 on the other family —
 not by narrating but by producing **nothing**: no tool call, empty text, the whole turn

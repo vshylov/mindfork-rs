@@ -32,6 +32,11 @@ split by subsystem.
   it. The tools now tell the model that only the call starts the run, and to
   give you the link its result names. On Qwen 3.6 this makes it rarer, but does
   not end it; Gemma 4 now names the run it started, with its link.
+- **A turn that used tools no longer ends in silence.** Now and then a local
+  model — Qwen 3.6 among them — looked something up and then said nothing, and
+  the reply stopped at "first I'll look at the project…". Such an empty answer is
+  now asked for once more, with thinking off, and the answer it gives is the
+  one you see.
 
 ## [0.18.1] — 2026-10-09
 

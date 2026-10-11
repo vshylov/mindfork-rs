@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (97)
+## Entries (98)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -109,6 +109,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: LM Studio's MLX refusal reads as an overflow (done)
 - Post-M9: a Mac's managed engine takes the knee batch (done)
 - Post-M9: the port tests' control survives a stranger on the freed port (done)
+- Post-M9: an empty answer after tools is asked once more (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -6675,3 +6676,46 @@ failure in the forty CI runs since the test landed (2026-10-02).
 
 No live run: unit tests only. **Gates**: fmt / clippy / test green — **4001 unit tests,
 258 `#[ignore]`** (+2).
+
+### Post-M9: an empty answer after tools is asked once more (done)
+
+The Qwen 3.6 dispatch after #749 (run 38101601194, 2026-10-11, 248 of 251) had
+`code_workspace_navigate_e2e_live` red on a turn whose last round said nothing — three
+calls, then no text, no call, no thoughts, a clean `stop`; the run before had ended
+`code_edit_e2e_live` the same way, unread behind a wrong edit. The endpoints run
+`server-cuda:latest`, and llama.cpp's chat layer had been reworked in between (#30210,
+b11531), so the engine was the suspect. It was acquitted:
+[docs/research/empty-round-after-tools.md](../research/empty-round-after-tools.md).
+
+- **The proof.** The local stand rebuilt to b11556 by the owner's script, b11513 kept
+  aside. Smokes alternating by build: 2 of 21 red on b11556 (one an empty round), 0 of 21
+  on b11513 — suggestive, and too small. So a recording pass-through caught the empty
+  request itself, and it was replayed: **5 empty in 100** on b11556, **2 in 40** on b11513,
+  from a rendered prompt `/apply-template` gives **byte for byte the same** on both. The
+  model's, at a few percent on that prompt, on either build. Muted, **0 in 40**.
+- **The fix** (`TurnLoop::run`): a round after a tool round that stops with no text and no
+  call is sent again once per turn, the same history, thinking muted
+  (`reasoning_budget: 0`), the turn's own budget put back for any round after it. Not a cut
+  (`Length`), not a turn with no tool round, not a round the woken-turn re-ask already
+  asked again. No tool is exempt — both control tools tell the model to write after them.
+- **Tests**: four — the re-ask and its mute, the budget back for the rounds after it, once
+  per turn (a second empty answer stands, also after a re-ask that went on with a call),
+  nothing for a first round or a cut. Five mutants (no mute, no restore, no tool-round
+  guard, any finish reason, once per empty answer) each turn one red; the last survived the
+  first version of the tests and is why the once-per-turn case exists.
+- **Live — GO**, Qwen3.6-27B Q4_K_M on b11556: the pass-through answered each turn's first
+  round after its first tool round with an empty `stop` itself — the branch
+  `code_workspace_navigate_e2e_live` 6 of 6 and `code_edit_e2e_live` 2 of 2 green, each
+  re-ask muted and the next round thinking again; `main`, the control, 3 of 3 red. Without
+  injection, seven smokes on the branch green (`code_workspace_navigate`,
+  `code_edit`, `attachment_search`, `trait_gate`, `background_subagent`,
+  `background_dialogue`).
+- **The lead, left for a track of its own**: the client sends a round's thoughts back on
+  the OpenAI-compatible wire as nothing, so the model sees its earlier rounds this turn
+  with an empty think block. Carried back as `reasoning_content`, the same request was
+  empty **0 in 100** against 5 in 100 (p ≈ 0.03). Roadmap.
+
+**Docs.** The research; spec §6.3; CHANGELOG (Fixed); roadmap (the lead); lessons §9;
+ci.md (the run's three reds).
+
+**Gates**: fmt / clippy / test green — **4009 unit tests, 258 `#[ignore]`** (+4).

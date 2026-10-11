@@ -1674,6 +1674,17 @@ minutes — Qwen thinks, and its suite is ~3× gpt-oss's.
     the call. Reworded, which makes it rarer and does not end it, together with a line
     in the live helpers' log saying how every turn ended — [tools.md](tools.md), "a
     background run is started by its call".
+- **On the Qwen gate after #749** (run 38101601194, 2026-10-11, 248 of 251, every shard on
+  the A100 fallback): the smokes #749 touched green, and three reds.
+  - `a_withheld_tool_image_is_not_described_live` — `Length` after 8773 characters of
+    thoughts, the roadmap's item; red on five Qwen dispatches of seven now.
+  - `code_edit_e2e_live` — `values.len().into()`, again a conversion `usize` does not
+    have; the second Qwen dispatch running. Locally 0 wrong edits in 27, `as f64` each
+    time, on b11513 and b11556 alike; nothing found that the gate does differently.
+  - `code_workspace_navigate_e2e_live` — a last round with nothing in it. The engine was
+    the suspect and was acquitted by replaying the request on two builds; the model's, and
+    now asked once more, muted — [engine.md](engine.md), "an empty answer after tools is
+    asked once more".
 
 ### Post-M9: a card HF never schedules is left after 15 minutes (done)
 
