@@ -1734,8 +1734,12 @@ gate's `ggml-org` file — llama.cpp b11556) and through OpenRouter with the pro
   with is the one thing no log showed, so the suite now prints it:
   `the_servers_default_sampling_is_in_the_log_live` reads `/props`
   (`default_generation_settings.params` and `build_info`; a gateway's `/props` skips).
-  Locally: `b11556 — temperature 1.0, top_k 20, top_p 0.95, min_p 0.05`. The next dispatch
-  answers for the gate; until then `code_edit` stays as it is.
+  Locally: `b11556 — temperature 1.0, top_k 20, top_p 0.95, min_p 0.05`. On a rented gate
+  endpoint the same day (the Qwen 3.8 card, the same `server-cuda` image): `b11552 — 1.0,
+  20, 0.95, 0.05` — the GGUF's own, as locally. So the defaults are not the difference
+  either, and `code_edit` on Qwen 3.6 stays what it is: a fix the model gets wrong now and
+  then at one step of a multi-step turn, more often on the gate for reasons no measurement
+  here found. The gate moves to Qwen 3.8, where it was 3 of 3 green on that endpoint.
 - **The withheld image** is the next pull request's.
 
 **Gates**: fmt / clippy / test green — 4009 unit tests, 259 `#[ignore]` (+1).
