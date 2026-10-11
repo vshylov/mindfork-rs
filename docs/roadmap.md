@@ -65,6 +65,15 @@ effort tiers — have all closed
 
 ### Engine and providers
 
+- **The turn's own thoughts on the OpenAI-compatible wire** — **idea**, measured once.
+  A round's thoughts go back to Anthropic and Responses with its tool calls
+  (`ThinkingBlock`), but on the OpenAI-compatible wire as nothing, so a llama.cpp model
+  sees its earlier rounds this turn with an empty think block. On the one Qwen 3.6
+  request where it mattered, carrying them as `reasoning_content` took empty answers
+  from 5 in 100 to 0 in 100 (p ≈ 0.03). A change to every request after a turn's
+  first tool round — context spent, and each template's handling (Gemma's, gpt-oss's
+  analysis channel) to measure, with the A/B the research used
+  ([empty-round-after-tools.md](research/empty-round-after-tools.md) §6).
 - **What the local-servers track left** — **idea**, each small
   ([local-servers.md](research/local-servers.md) §6): the settings' model list
   offers the chat slot LM Studio's embedding models too, which `/api/v1/models`
