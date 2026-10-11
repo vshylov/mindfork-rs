@@ -39,7 +39,7 @@ on:
         required: false
         default: gemma-4-31b
         type: choice
-        options: [gemma-4-31b, qwen-3.6-27b, gpt-oss-120b]
+        options: [gemma-4-31b, qwen-3.8-27b, gpt-oss-120b]
       # `model-default` is the normal answer: the model record names the card that
       # fits it, and the region follows the card — and the card to move to when HF
       # cannot start it (Gemma and Qwen: an L40S, then an A100, then the L40S once

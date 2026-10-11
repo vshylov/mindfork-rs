@@ -26,7 +26,7 @@ which is the failure mode a gate exists to prevent. `--no-alt-embed` opts out.
 
     set HF_TOKEN=hf_...
     python tools/e2e_hf.py run                  # the full remote gate
-    python tools/e2e_hf.py run --chat-model qwen-3.6-27b   # the other model family
+    python tools/e2e_hf.py run --chat-model qwen-3.8-27b   # the other model family
     python tools/e2e_hf.py run --chat-model gpt-oss-120b   # split weights, H200, text-only
     python tools/e2e_hf.py run --dry-run        # payloads only, spends nothing
     python tools/e2e_hf.py run --filter e2e_live --no-prebuild
@@ -933,7 +933,7 @@ def _check_rungs(failures):
     east1, east2, gcp = ("aws", "us-east-1"), ("aws", "us-east-2"), ("gcp", "us-south1")
     cases = [
         ((), [(l40s, east1), (a100, east1), (l40s, east1)]),
-        (("--chat-model", "qwen-3.6-27b"), [(l40s, east1), (a100, east1), (l40s, east1)]),
+        (("--chat-model", "qwen-3.8-27b"), [(l40s, east1), (a100, east1), (l40s, east1)]),
         (("--chat-model", "gpt-oss-120b"), [(rtx, east2), (a100, east1), (h200, gcp), (rtx, east2)]),
         (("--chat-instance", a100), [(a100, east1), (a100, east1)]),
         (("--chat-model", "gpt-oss-120b", "--chat-instance", h200), [(h200, gcp), (h200, gcp)]),
@@ -979,7 +979,7 @@ def _check_declarations(failures):
     blind, split, and one call per reply."""
     want = {
         "gemma-4-31b": (False, False, False),
-        "qwen-3.6-27b": (False, False, False),
+        "qwen-3.8-27b": (False, False, False),
         "gpt-oss-120b": (True, True, True),
     }
     for model, expected in want.items():
