@@ -229,6 +229,16 @@ effort tiers — have all closed
   on the overlap with no hedge before it — *"I cannot see it, but no, the legend does
   not overlap the plotted line"* (Qwen 3.6, locally) passed the one-sided check it had
   (2026-10-10, [ci.md](journal/ci.md)).
+- **A background run said to be started and never started, on Qwen 3.6** — **on
+  demand**. Asked for a background scene and something to answer now, Qwen 3.6 plans
+  the `start_dialogue` call in its thoughts, then writes the reply — "the scene is
+  running", at times with a `chat://` address of its own — and stops without the call.
+  The descriptions now say only the call starts the run and comes before any text of
+  the reply: 9 of 40 → 1 of 20, interleaved; gpt-oss-120b and Gemma 4 never miss it.
+  `background_dialogue_e2e_live` stays red on that model now and then. What would end
+  it is the app's, not the wording's — e.g. telling the model, in one more round, that
+  its reply names a run its turn never started
+  ([tools.md](journal/tools.md), "a background run is started by its call").
 - **MCP host — groundwork.** The core is done (spec §9.6,
   [ADR 0007](decisions/0007-plugins-mcp-host-import-format.md): double opt-in,
   TOFU pinning, statuses in settings, the server editor); the client is stdio

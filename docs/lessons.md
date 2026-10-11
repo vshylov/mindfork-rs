@@ -2310,6 +2310,23 @@ steps, was 0 in 12 untouched — so the trigger is the script, not the naming. T
 worded so that it can be satisfied without doing the thing it checks.
 — *the rewrite probe's flake, found by the live gate*.
 
+**A tool description that says what the result will hold lets a model write the result
+instead of making the call.** `start_dialogue` said its call "returns at once with the
+scene's chat:// address". Asked for a scene and a sum in one message, Qwen 3.6 planned
+the call in its thoughts, drafted the reply around that address, then wrote the draft —
+the sum, "the scene is running", a `chat://café-mix-up-7f3a` of its own — and stopped
+with no call: 4 runs of 5. No parser lost anything; once the text said it was done,
+nothing was left to do. Saying in the description that only the call does the thing,
+that it comes before any text of the reply, and that what it returns is quoted from its
+result made the misses rarer (9 of 40 → 1 of 20, interleaved) and did not end them — a
+description steers a model, it does not bind one. Check the steer on every model the
+tool meets: one wording that helped Qwen ("speak of the run only once its result is
+in") silenced Gemma 4, which then never mentioned the scene at all. And a smoke that
+failed once and was then "green 3 of 3" has measured nothing: the same smoke ran 4 of 5
+red one hour and 2 of 12 the next. Interleave the arms and count in tens before calling
+a slip rare or a fix a fix.
+— *a background run is started by its call*.
+
 **Two models flake for two different reasons; fixing one does not fix the other.** The
 same probe, after the prompt above was fixed, still failed 1 in 20 on the other family —
 not by narrating but by producing **nothing**: no tool call, empty text, the whole turn
