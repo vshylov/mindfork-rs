@@ -2981,10 +2981,15 @@ async fn self_model_graph_e2e_live() {
         "Запиши наблюдение (add_insight): я ценю краткость в ответах.",
     )
     .await;
+    // A separate note, said outright: the add_insight gate shows the first one as
+    // related, and Qwen 3.6 twice took that as a cue to `note_merge` the two into one
+    // — a fair consolidation, and the end of a probe of links between two notes
+    // (docs/journal/ci.md, 2026-10-11).
     let (_t2, tools2) = run_turn_live(
         &cmd_tx,
         &mut evt_rx,
-        "Запиши ещё одно наблюдение (add_insight): но иногда я даю слишком многословные ответы.",
+        "Запиши ещё одно, отдельное наблюдение (add_insight): но иногда я даю слишком \
+         многословные ответы. Не объединяй его с прошлым — пусть будут два наблюдения.",
     )
     .await;
     eprintln!("observations: {tools1:?} + {tools2:?}");
@@ -3015,7 +3020,10 @@ async fn self_model_graph_e2e_live() {
     );
 
     // Mechanism: observation notes are created.
-    assert!(self_notes.len() >= 2, "expected ≥2 observation notes");
+    assert!(
+        self_notes.len() >= 2,
+        "expected ≥2 observation notes; session 2 called {tools2:?}"
+    );
     let linked = calls3.iter().any(|(n, _)| n == "note_link");
     eprintln!(
         "model called note_link: {linked}; links now: {}",
@@ -4263,6 +4271,49 @@ async fn props_reports_the_context_window_live() {
          automatic trigger has no budget for an external server",
     );
     assert!(n >= 512, "an implausible window: {n}");
+}
+
+/// What the server samples with when a request names nothing — and the app's
+/// requests name nothing unless the user set it (spec §8). Printed, not asserted:
+/// `code_edit_e2e_live` went red three Qwen dispatches running on the rented gate
+/// while green every time locally on the same weights (sha256-identical GGUF), and
+/// the endpoint's defaults were the one difference no log showed
+/// (docs/journal/ci.md, 2026-10-11). A server with no `/props` (a gateway) skips.
+#[tokio::test]
+#[ignore = "needs a live engine (MINDFORK_ENGINE_URL)"]
+async fn the_servers_default_sampling_is_in_the_log_live() {
+    let Ok(url) = std::env::var("MINDFORK_ENGINE_URL") else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let base = url.trim_end_matches('/').trim_end_matches("/v1");
+    let resp = crate::shared::api::live_bearer(reqwest::Client::new().get(format!("{base}/props")))
+        .send()
+        .await;
+    let Ok(resp) = resp else {
+        eprintln!("skip: {base}/props did not answer");
+        return;
+    };
+    let props = resp.json::<serde_json::Value>().await.unwrap_or_default();
+    let params = &props["default_generation_settings"]["params"];
+    if !params.is_object() {
+        // A gateway answers the path with an error of its own (OpenRouter: JSON).
+        eprintln!("skip: {base}/props carries no default_generation_settings — not a llama-server");
+        return;
+    }
+    let pick = |k: &str| params.get(k).cloned().unwrap_or(serde_json::Value::Null);
+    eprintln!(
+        "server defaults: build {} — temperature {}, top_k {}, top_p {}, min_p {}, \
+         repeat_penalty {}, presence_penalty {}, samplers {}",
+        props["build_info"],
+        pick("temperature"),
+        pick("top_k"),
+        pick("top_p"),
+        pick("min_p"),
+        pick("repeat_penalty"),
+        pick("presence_penalty"),
+        pick("samplers"),
+    );
 }
 
 /// The fourth self-description question, and the one behind the `sessions`
