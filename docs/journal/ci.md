@@ -1780,5 +1780,18 @@ not change.
   20, top_p 0.95, min_p 0.05. The judge fell back on none of 46 checkpoint replies. One
   slow green: `self_model_gate_en_e2e_live`, 186 s, four note edits after the duplicate
   gate's hint — [self-model.md](self-model.md), "the duplicate gate's hint".
+- **After #754** (run 38179535109, 2026-10-11, 251 of 252, every shard on its L40S, 3610 s
+  of smokes): both duplicate smokes merged at once, 36 s and 19 s.
+  - `similarity_scale_follows_the_model_live` — red on its **second embedder**: the first
+    request to the e5 endpoint, 17 s after its `/health` said 200, was answered `500
+    {"error":"500 Internal Server Error","code":"INTERNAL_ERROR"}` after 18 s — the shape
+    of HF's own gateway (its 401 reads the same), not llama.cpp's. bge-m3 in the same test
+    had answered. Of the gate's last 28 runs, the only other gateway error on an embedder
+    is a 503 on 2026-07-28. Left as the platform's: the endpoint was deleted with
+    its log, and nothing in the client or the runner would have told it apart from a
+    real fault — a warm-up request after `/health` would be the step if it recurs.
+  - `self_consolidation_e2e_live`, green, recorded one observation of the two it was
+    asked for — the policy's new "instead of add_insight"; [self-model.md](self-model.md),
+    "an observation asked for is recorded".
 
 **Gates**: `e2e_hf.py --self-test` 0 failures; no Rust changed.

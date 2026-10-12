@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (25)
+## Entries (26)
 
 - Post-M9: SelfModel MVP — agent "self-model" (probe, done)
 - Post-M9: SelfModel Tier 2-A — narrative insights + contradictions in prose (done)
@@ -37,6 +37,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: self-model consolidation — stage A3-light (interest aging) (done)
 - Post-M9: self-model injection — per-section budgets (done)
 - Post-M9: the duplicate gate's hint — the repeat is already written (done)
+- Post-M9: an observation asked for is recorded — "instead of add_insight" undone (done)
 
 ### Post-M9: SelfModel MVP — agent "self-model" (probe, done)
 - **A trimmed-down Phase 1 from the idea bank** ([docs/self-model.md](../../docs/history/self-model.md)) per
@@ -1106,6 +1107,40 @@ ones — rewrite that one…"), and so did the `note_save` gate.
   a local run with `add_insight` + `note_merge` counted two, one of them that scar.
 - **Tests**: the gate tests of both tools now pin "already recorded/saved" and
   `note_merge`, so the old advice cannot come back unseen.
+
+**Gates**: 4009 unit tests green, 259 `#[ignore]`; clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check` clean.
+
+### Post-M9: an observation asked for is recorded — "instead of add_insight" undone (done)
+
+The next Qwen 3.8 dispatch after the gate's hint (run 38179535109, 2026-10-11) ran both
+duplicate smokes the way the entry above meant — `add_insight` + `note_merge`, one live
+observation, in 36 s (186 before) and 19 s (60). But `self_consolidation_e2e_live`, green,
+showed the second half of that change at work: asked *"record another observation …
+just record it, keep both"*, the model made **no call at all** and answered after 6.4K
+characters of thinking, so the background pass had one observation to fold and folded
+none.
+
+- **The cause is the policy's first half.** The entry above rewrote it as *"do not breed
+  a near-duplicate: rewrite that one … **instead of add_insight**"* — a ban where the old
+  text had been advice, and a ban the model weighs against an explicit request. Replayed
+  on the smoke's own request: with that wording it declined **4 of 80** (*"It is almost a
+  duplicate of the first — I do not breed copies"*, three times locally on the gate's
+  Q4 file, once a `note_revise` on OpenRouter); with the old first half 0 of 40.
+- **The fix keeps the old first half and the new second one**: *"If an observation
+  nearly repeats a prior one, rewrite that one via note_revise or supersede it with
+  note_supersede, do not breed a near-duplicate; if add_insight has already recorded it
+  and shows similar ones, merge them with note_merge."* — the parenthesis that promised
+  the gate *before* the write, the misleading part, stays out. Russian mirrored.
+- **Measured**: the request to record — 0 of 40 declines (OpenRouter 20, the Q4 file 20);
+  the gate's decision is unchanged — `note_merge` at once 20/20 in English and 20/20 in
+  Russian on OpenRouter, 10/10 on the Q4 file, the same as with the wording it replaces.
+  4/80 against 0/80 is p = 0.12 on its own; the change is taken because it returns the
+  sentence that held for months, costs the gate nothing, and the declines quote the very
+  words removed.
+- **The whole smokes** (OpenRouter, three runs each): both duplicate smokes `add_insight`
+  + `note_merge`; `self_consolidation_e2e_live` recorded both and its background pass
+  merged them, 3 of 3; `self_model_graph_e2e_live` kept two, 3 of 3.
 
 **Gates**: 4009 unit tests green, 259 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check` clean.
