@@ -401,6 +401,16 @@ because that test wants the fact kept. The same device is an aid or a confound
 depending on which way the assertion runs.
 — *history compression — stage 3 (the read-back tools)*, *… — stage 1*.
 
+**A smoke's request is part of what it measures — the tools in it included.** The
+withheld-chart smoke gave `python_exec` no parameters and its earlier call `{}`; on the
+gate's Q4 file Qwen 3.8 went back to the tool by writing `python_exec({})` again and
+again, once about 380 times until the cap, and the smoke read the cut as a failed
+decline. With the app's schema the loop was gone (8 of 15 → 0 of 15). The fix has its
+own trap: real code can answer the question — with the data and the default legend
+inline, 5 of 20 reasoned "it does not overlap" out of the code. Give the model what the
+app gives it, and check that the question still needs what the smoke withholds.
+— *the chart smoke sends the tool the app sends*.
+
 **Assert the symptom or the property, not the mechanism.** A highlighting test asserts
 the block carries RGB colours and no reverse-video line style — the path taken, not the
 table lookup. A degraded-message test asserts every locale names two stable tool ids,

@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (90)
+## Entries (91)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -102,6 +102,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `summary_usage_e2e_live` reads its JSON page from a fixture (done)
 - Post-M9: a background run is started by its call, not by the reply (done)
 - Post-M9: the withheld-image notes hold on Qwen (done)
+- Post-M9: the chart smoke sends the tool the app sends (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -5901,3 +5902,33 @@ roadmap.
 loop); lessons §9.
 
 **Gates**: fmt / clippy / test green — 4009 unit tests, 258 `#[ignore]`.
+
+### Post-M9: the chart smoke sends the tool the app sends (done)
+
+The gate after #755 (run 38188595634, 2026-10-12, Qwen 3.8) failed
+`a_withheld_chart_is_not_described_live` on `Length` with no text and 947 characters of
+thinking — 8192 tokens spent where the smoke does not look. Reproduced on the first try
+on the gate's own file (`ggml-org` Q4_K_M, llama.cpp b11556) with the request captured:
+**`python_exec({})` about 380 times in one answer** until the cap. The smoke's tool had
+no parameters and its earlier call the arguments `{}`, so going back to the tool — the
+answer the smoke accepts — had nothing to write but the same empty call, and the model
+wrote it again and again. In the app a round cut by the cap is not run, so nothing would
+have executed; the request was the smoke's own.
+
+- **The app's schema** (`code` required, `files`) and the earlier call carrying its code:
+  replayed on the gate's file, answers with more than one call or a cut **8 of 15 → 0 of
+  15** (p = 0.002) — 2 cut at the cap (one with 29 calls), 6 with two calls.
+- **The code had to keep the question unanswerable.** With the numbers inline and
+  matplotlib's default legend, 5 of 20 answered *"No — the default 'best' placement avoids
+  the line"* — reasoned out of the code, and red on the smoke's overlap check, since the
+  question no longer needed the image. The code now reads `/chat/files/sales.csv` and pins
+  the legend to the upper left: 0 of 40 claims (the gate's file 20, OpenRouter 20) — 37
+  calls back to the tool, one of them two calls in one answer, no cut, three plain
+  declines.
+- **The smoke itself, live**: 20 of 20 on the gate's file — one call each, `tool_calls` —
+  and 10 of 10 through OpenRouter.
+- **Left as it was**: the MCP image smoke's screenshot tool takes no arguments in reality
+  too, so its empty schema is the true one.
+
+**Gates**: 4009 unit tests green, 259 `#[ignore]`; clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check` clean.
