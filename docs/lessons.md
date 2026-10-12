@@ -1398,7 +1398,13 @@ and 18.8K characters of thinking to get there. Saying that the entry is already 
 and naming the one call that folds it (`note_merge`, both ids) made it 10 of 10 at
 once, on every model measured. When a result advises a next step, read it as the
 model will — after the side effect — and check that the step still fits.
-— *the duplicate gate's hint: the repeat is already written*.
+The same change also rewrote the system prompt's sentence about the moment *before* the
+write. That sentence had needed nothing, but it came out as a ban ("instead of
+add_insight"), and the model then declined an explicit "record it, keep both" 4 times in
+80. Fix the moment that was wrong and leave the other as it was: a rule made stricter
+for one case is weighed against requests in every case.
+— *the duplicate gate's hint: the repeat is already written*, *an observation asked for
+is recorded*.
 
 ## 5. Terminal and ratatui rendering
 
