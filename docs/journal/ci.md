@@ -1803,5 +1803,19 @@ not change.
     Gateway Timeout` for *War and Peace*; the site's, the first time in this smoke's
     record. If it recurs, the step is the web smokes' — a skip when the site, not the
     code, fails.
+- **After #756** (run 38194389474, 2026-10-12): **252 of 252 green**, every shard on its
+  L40S. The smokes add up to 3279 s — 55 min, the lowest yet (59 on the first 3.8
+  dispatch, 72 on 3.6) — and the longest job ran 28 min, `dialogue_probe_steering` 860 s
+  of it. What the three pull requests before it changed held:
+  - `a_withheld_chart_is_not_described_live` went back to the tool once (`ToolCalls`) in
+    20 s — no cut;
+  - both duplicate smokes `add_insight` + `note_merge`, one live observation;
+    `self_consolidation_e2e_live` recorded both observations and its background pass
+    merged them;
+  - neither outside fault came back: Project Gutenberg served *War and Peace* (1 000 450
+    characters, 172 pages), and the e5 endpoint calibrated as before (0.7897 / 0.9456).
+
+  The judge fell back on none of 47 checkpoint replies; all 87 turns the live helpers
+  traced ended on `Stop`, and the one error event was the round-limit smoke's own.
 
 **Gates**: `e2e_hf.py --self-test` 0 failures; no Rust changed.
