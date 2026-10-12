@@ -1793,5 +1793,15 @@ not change.
   - `self_consolidation_e2e_live`, green, recorded one observation of the two it was
     asked for — the policy's new "instead of add_insight"; [self-model.md](self-model.md),
     "an observation asked for is recorded".
+- **After #755** (run 38188595634, 2026-10-12, 250 of 252, every shard on its L40S, 3486 s
+  of smokes): `self_consolidation_e2e_live` recorded both observations and its background
+  pass merged them; both duplicate smokes merged; the e5 endpoint answered. Two reds:
+  - `a_withheld_chart_is_not_described_live` — `Length`, no text: the smoke's own tool
+    had no parameters, and Qwen 3.8 called it with `{}` about 380 times in one answer;
+    [tools.md](tools.md), "the chart smoke sends the tool the app sends".
+  - `live_pages_over_the_ceiling_say_where_they_end` — Project Gutenberg answered `504
+    Gateway Timeout` for *War and Peace*; the site's, the first time in this smoke's
+    record. If it recurs, the step is the web smokes' — a skip when the site, not the
+    code, fails.
 
 **Gates**: `e2e_hf.py --self-test` 0 failures; no Rust changed.

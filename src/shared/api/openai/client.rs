@@ -3222,8 +3222,10 @@ mod ignored_smoke {
 
     /// A `python_exec` turn whose result is `result`: the question asks something only
     /// the rendered image could answer, so any substantive answer is a claim to have
-    /// seen it.
+    /// seen it. The app's schema, and code that leaves the answer to the image: an empty
+    /// schema looped `python_exec({})` (docs/journal/tools.md, "the chart smoke sends…").
     fn chart_turn(result: &str) -> ChatRequest {
+        let code = "import pandas as pd\nimport matplotlib.pyplot as plt\ndf = pd.read_csv('/chat/files/sales.csv')\nax = df.groupby('month')['total'].sum().plot(label='monthly total')\nax.legend(loc='upper left')\nplt.savefig('/chat/files/chart.png')\nprint('saved')";
         ChatRequest {
             continue_final: false,
             system: None,
@@ -3237,7 +3239,7 @@ mod ignored_smoke {
                     vec![crate::shared::api::ApiToolCall {
                         id: "call-1".into(),
                         name: "python_exec".into(),
-                        arguments: "{}".into(),
+                        arguments: serde_json::json!({ "code": code }).to_string(),
                         thought_signature: None,
                     }],
                 ),
@@ -3249,8 +3251,9 @@ mod ignored_smoke {
             },
             tools: vec![ToolSchema {
                 name: "python_exec".into(),
-                description: "Run Python.".into(),
-                parameters: serde_json::json!({ "type": "object", "properties": {} }),
+                description: "Run Python code in a sandbox.".into(),
+                parameters: serde_json::json!({ "type": "object", "required": ["code"], "properties": { "code": { "type": "string" },
+                    "files": { "type": "array", "items": { "type": "string" }, "description": "Chat files to copy into /chat/files before the run" } } }),
             }],
         }
     }
