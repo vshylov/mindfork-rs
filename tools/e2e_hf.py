@@ -457,22 +457,35 @@ def bring_up(kind, name, args, rungs=None, created=True, pause=RETRY_PAUSE_S):
             created = hf.create(rung.make(name)) is not None
         if not created:
             continue
-        last = i == len(rungs) - 1
-        wait = args.timeout if last else min(args.timeout, args.schedule_limit)
-        url = hf.wait_running(name, wait)
-        if url:
-            if not hf.wait_healthy(url, timeout=args.health_timeout):
-                print(f"  -> {kind} endpoint never became healthy")
-                return None
-            return url, rung.card if rung else None
-        state = hf.endpoint_state(name)[0]
-        if state in FAILED_TO_START:
-            continue
-        if not last and state in STILL_STARTING:
-            print(f"  -> {kind}: still {state} after {wait}s, past the schedule limit", flush=True)
-            continue
-        return None
+        got = wait_rung(kind, name, args, rung, last=i == len(rungs) - 1)
+        if got is not NEXT_RUNG:
+            return got
     print(f"  -> {kind}: no card started it in {len(rungs)} attempt(s)")
+    return None
+
+
+# What `wait_rung` returns when the endpoint is to be created again on the next rung.
+NEXT_RUNG = object()
+
+
+def wait_rung(kind, name, args, rung, last):
+    """Wait for the endpoint `name` on one rung of `bring_up`'s ladder:
+    `(url, card)` once it answers, `NEXT_RUNG` when it failed to start (or, with
+    a rung behind it, is still being scheduled at the limit), None when the walk
+    ends here."""
+    wait = args.timeout if last else min(args.timeout, args.schedule_limit)
+    url = hf.wait_running(name, wait)
+    if url:
+        if not hf.wait_healthy(url, timeout=args.health_timeout):
+            print(f"  -> {kind} endpoint never became healthy")
+            return None
+        return url, rung.card if rung else None
+    state = hf.endpoint_state(name)[0]
+    if state in FAILED_TO_START:
+        return NEXT_RUNG
+    if not last and state in STILL_STARTING:
+        print(f"  -> {kind}: still {state} after {wait}s, past the schedule limit", flush=True)
+        return NEXT_RUNG
     return None
 
 
@@ -533,21 +546,24 @@ class Plan:
         self.want_alt = self.want_embed and not args.no_alt_embed
 
 
+def projector(plan, args):
+    """The plan's `mmproj` line: the projector the endpoint loads, or why none."""
+    # ASCII on purpose: a piped stdout on Windows is cp1252, and `init` only
+    # keeps a stray character from killing a run that is holding a GPU -- it does
+    # not make the log readable.
+    if args.no_mmproj:
+        return "(none - asked for; the 3 vision smokes will FAIL)"
+    if hf.text_only(args):
+        return "(none exists for this model; the 3 vision smokes will SKIP)"
+    return args.mmproj or plan.model["mmproj"]
+
+
 def print_plan(plan, args):
     """Printed before anything is created: the trail an orphan is found by."""
     print(f"\nrun id: {plan.ident}")
     print(f"  chat  model:    {args.chat_model}  ({plan.model['repo']})")
     print(f"                  weights {args.gguf or plan.model['gguf']}")
-    # ASCII on purpose: a piped stdout on Windows is cp1252, and `init` only
-    # keeps a stray character from killing a run that is holding a GPU -- it does
-    # not make the log readable.
-    if args.no_mmproj:
-        projector = "(none - asked for; the 3 vision smokes will FAIL)"
-    elif hf.text_only(args):
-        projector = "(none exists for this model; the 3 vision smokes will SKIP)"
-    else:
-        projector = args.mmproj or plan.model["mmproj"]
-    print(f"                  mmproj  {projector}")
+    print(f"                  mmproj  {projector(plan, args)}")
     variant = args.variant or plan.model.get("variant")
     if variant:
         # Which .gguf files the endpoint pulls at all. On a repository that holds
@@ -658,34 +674,44 @@ def cmd_run(args):
     up = bring_up_all(specs, create_endpoints(specs), args)
     if up is None:
         return hf.EXIT_FAILED
-    chat_url, chat_card = up["chat"]
-    embed_url = up.get("embed", (None, None))[0]
-    alt_embed_url = up.get("alt embed", (None, None))[0]
     ready = time.time()
     print(f"\n  endpoints ready after {ready - started:.0f}s", flush=True)
 
     code, suite_time = run_suite(
         cargo_command(args, names),
-        chat_url,
-        embed_url,
-        alt_embed_url,
+        up["chat"][0],
+        endpoint_url(up, "embed"),
+        endpoint_url(up, "alt embed"),
         args.keepalive_seconds,
         text_only=hf.text_only(args),
         split_model=hf.split_model(args),
         one_call_per_reply=hf.one_call_per_reply(args),
     )
 
+    print_summary(plan, args, up, code, (ready - started, suite_time, time.time() - started))
+    return hf.EXIT_OK if code == 0 else hf.EXIT_FAILED
+
+
+def endpoint_url(up, kind):
+    """The URL `bring_up_all` found for `kind`, or None for one the run did not want."""
+    return up.get(kind, (None, None))[0]
+
+
+def print_summary(plan, args, up, code, seconds):
+    """The run's last lines: where each endpoint ran and how long it took.
+    `seconds` is (ready, suite, total)."""
+    chat_url, chat_card = up["chat"]
     print("\n=== summary ===")
     on = f"  on {chat_card} @ {'/'.join(hf.card_place(args, chat_card))}" if chat_card else ""
     moved = "  (a fallback: the model's own card did not start)" if chat_card and chat_card != hf.chat_instance(args) else ""
     print(f"  chat  {plan.chat_name}  {chat_url}{on}{moved}")
-    print(f"  embed {plan.embed_name}  {embed_url or '(none)'}")
-    print(f"  alt   {plan.alt_name}  {alt_embed_url or '(none)'}")
-    print(f"  ready in {ready - started:.0f}s, suite {suite_time:.0f}s, total {time.time() - started:.0f}s")
+    print(f"  embed {plan.embed_name}  {endpoint_url(up, 'embed') or '(none)'}")
+    print(f"  alt   {plan.alt_name}  {endpoint_url(up, 'alt embed') or '(none)'}")
+    ready, suite, total = seconds
+    print(f"  ready in {ready:.0f}s, suite {suite:.0f}s, total {total:.0f}s")
     print(f"  suite exit={code}")
     if args.keep:
         print("  --keep: the endpoints are STILL RUNNING and billing.")
-    return hf.EXIT_OK if code == 0 else hf.EXIT_FAILED
 
 
 # --------------------------------------------------------------------------
@@ -1016,7 +1042,8 @@ def _check_catalogue(failures):
 
 class _FakeHf:
     """The calls `bring_up` makes, scripted: `states` is what each wait sees
-    (a URL, or the state the endpoint is left in), `healthy` what /health says."""
+    (a URL, or the state the endpoint is left in), `healthy` what /health says.
+    Each method takes what `bring_up` passes; what the script ignores is `_`-named."""
 
     def __init__(self, states, healthy=True, creates=True, deletes=True):
         self.states = list(states)
@@ -1027,7 +1054,7 @@ class _FakeHf:
         self.waits = []  # the timeout each wait for `running` was given
         self.left = None
 
-    def create(self, payload, dry_run=False):
+    def create(self, payload):
         self.calls.append(("create", payload["compute"]["instanceType"]))
         return {} if self.creates else None
 
@@ -1035,7 +1062,7 @@ class _FakeHf:
         self.calls.append(("delete", name))
         return self.deletes
 
-    def wait_running(self, name, timeout, poll=10):
+    def wait_running(self, _name, timeout):
         self.waits.append(timeout)
         # Past the script, still starting: a wait nobody planned for shows up as
         # a wrong result, not as a crash of the self-test.
@@ -1045,10 +1072,10 @@ class _FakeHf:
         self.left = state
         return None
 
-    def endpoint_state(self, name):
+    def endpoint_state(self, _name):
         return self.left, None, ""
 
-    def wait_healthy(self, url, timeout=900, poll=5):
+    def wait_healthy(self, _url, **_timeout):
         return self.healthy
 
 
