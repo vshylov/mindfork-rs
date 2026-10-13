@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (99)
+## Entries (100)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -111,6 +111,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the port tests' control survives a stranger on the freed port (done)
 - Post-M9: an empty answer after tools is asked once more (done)
 - Post-M9: a call's arguments split across two indices are joined (done)
+- Post-M9: a broken call is answered as broken (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -6752,3 +6753,41 @@ sent the same call again until the turn ran out of rounds.
 
 **Gates**: 4016 unit tests green, 260 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check` clean.
+
+### Post-M9: a broken call is answered as broken (done)
+
+The entry above left one thing standing: arguments that do not parse were read as `{}`
+(`call_args`, and the same fallback in the silent loop), so a call cut short — by a
+provider's stream, by a reply's cap — reached its tool as a call with nothing in it. The
+tool then answered about what was missing (*"expected a non-empty field code"*), the
+model was told something untrue about the call it had made, and a tool that takes `{}`
+would have run on arguments nobody sent.
+
+- **`ApiToolCall::arguments_error`**: the parser's reason when the arguments are not one
+  JSON value; `None` for an empty string, which is a call with no arguments.
+- **The turn loop asks it first.** `refuse_broken_arguments` answers such a call at its
+  position in `resolve_round`, ahead of the three kinds — a sub-agent, a background run,
+  an ordinary call or a segment — so none of them runs on `{}`; its card opens and closes
+  with *"The arguments of this python_exec call are not valid JSON (EOF while parsing a
+  list at line 6 column 1), so nothing was run. Send the call again with all of its
+  arguments as one JSON object."* A broken call is also no segment member, so the reads
+  around it still run at once. A disabled tool, a control call and a round being
+  rewritten keep their own answers. The silent loop (`run_tools`) answers it the same
+  way.
+- **Not changed**: the director's verdicts in `run_dialogue` read broken arguments as
+  nothing — they are parsed by the run, never answered to a model.
+- **Tests**: the reason (empty, whole and broken arguments); an ordinary call refused
+  with the parser's words and a no-argument call still run; a sub-agent call refused
+  before any child request; a broken member in a segment of three refused while the two
+  around it run at once, every card opened and closed; a broken writer in a silent round
+  answered and nothing written. The check removed from the loop, from the segment and
+  from the silent loop each fails its own tests.
+- **Live** (gpt-oss-120b through OpenRouter, Nebius fp4; a scratch proxy cut the
+  closing brace of each turn's first call): the files smoke **8 of 8** with the honest
+  answer, and 8 of 8 on `main` with *"expected a non-empty field code"* — gpt-oss
+  resends its call after either, one retry. What this changes is that the model is told
+  the truth and no tool runs on arguments it did not send, not how often this model
+  recovers.
+
+**Gates**: 4021 unit tests green, 260 `#[ignore]`; clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.

@@ -427,10 +427,26 @@ async fn run_tools(
     let started = Instant::now();
     let tools = async {
         for call in calls {
-            let args: serde_json::Value =
-                serde_json::from_str(&call.arguments).unwrap_or_else(|_| serde_json::json!({}));
-            let (result, call_wrote, sample) =
-                invoke_allowed(registry, ctx, allowed, call, args).await;
+            // Arguments that are not JSON are answered as such, never run as `{}` — the
+            // turn loop's rule (`refuse_broken_arguments`), for the background loop.
+            let broken = call
+                .arguments_error()
+                .filter(|_| allowed.iter().any(|t| t == &call.name));
+            let (result, call_wrote, sample) = match broken {
+                Some(err) => (
+                    ctx.loc.tf(
+                        "loop.call_args_invalid",
+                        &[("name", &call.name), ("err", &err)],
+                    ),
+                    false,
+                    None,
+                ),
+                None => {
+                    let args: serde_json::Value = serde_json::from_str(&call.arguments)
+                        .unwrap_or_else(|_| serde_json::json!({}));
+                    invoke_allowed(registry, ctx, allowed, call, args).await
+                }
+            };
             report.wrote |= call_wrote;
             crate::shared::api::contract::Prefill::keep_larger(&mut report.prefill, sample);
             request.messages.push(ApiMessage::tool(&call.id, &result));

@@ -677,6 +677,7 @@
   "tool.rewrite_current_message.desc": "Cancels the message you are writing right now (in the current turn) and lets you write it anew. It concerns ONLY your own current reply — not the user's message and not your past answers. Call it if you realize you started answering incorrectly: the draft already written will be discarded, and the next reply will replace it.",
   "control.permission.followup": "Okay. Write the next message — it will be shown as a separate reply.",
   "control.permission.rewrite": "Okay. Write your current message anew — the draft version will be hidden.",
+  "loop.call_args_invalid": "The arguments of this {name} call are not valid JSON ({err}), so nothing was run. Send the call again with all of its arguments as one JSON object.",
   "loop.tool_disabled": "Tool {name} is unavailable (disabled).",
   "loop.rewrite_skipped": "(the message is being rewritten — the call was skipped)",
   "loop.tool_error": "Tool {name} error: {err}",

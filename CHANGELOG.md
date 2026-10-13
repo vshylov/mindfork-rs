@@ -59,6 +59,11 @@ split by subsystem.
   if it began a second call. That piece was dropped, so the call came in cut short
   and the tool refused it — again and again, until the turn ran out of rounds. The
   piece is now joined to the call it ends.
+- **A tool call that arrives broken is said to be broken, and nothing runs on it.**
+  When a call's arguments came in cut short, the app treated them as empty: the tool
+  ran with nothing in it, or answered that something was missing — and the model was
+  told something untrue about the call it had made. Such a call is now answered
+  plainly — its arguments were not valid JSON, nothing was run, send it again.
 
 ## [0.18.1] — 2026-10-09
 

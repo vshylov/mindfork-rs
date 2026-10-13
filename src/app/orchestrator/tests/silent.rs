@@ -1177,6 +1177,46 @@ async fn a_round_of_reads_consumes_nothing_and_a_write_does() {
     assert_eq!(acted.get(), Acting::Idle, "never in a round of tools");
 }
 
+/// A writer call whose arguments are not JSON is answered as broken and writes
+/// nothing — the turn loop's rule, in the background loop: the window stays
+/// refundable, and the next round reads why.
+#[tokio::test]
+async fn a_broken_call_in_a_silent_round_is_answered_and_writes_nothing() {
+    let (_d, mut orch, chat_id) = orch_ready_for_reflection();
+    orch.config.compaction.context_tokens = Some(1000);
+    let mut broken = write_call();
+    if let ChatChunk::ToolCall(delta) = &mut broken.chunks[0] {
+        delta.arguments = r#"{"summary": "I value brevity""#.into();
+    }
+    let backend = KeyedRecorder::new(vec![("broken loop", vec![broken, long_text(30)])], 30);
+    let (stop, mut done, acted) = spawn_loop_allowing(
+        &mut orch,
+        backend.clone(),
+        chat_id,
+        "broken loop",
+        std::time::Duration::from_secs(30),
+        vec![UPDATE_SELF_MODEL_ID.into()],
+    );
+    settle(3000, || backend.open_at_arrival("broken loop").len() == 2).await;
+    assert_eq!(acted.get(), Acting::Idle, "nothing was written");
+    let second = backend.requests().last().unwrap().clone();
+    assert!(
+        second
+            .messages
+            .last()
+            .unwrap()
+            .content
+            .contains("not valid JSON"),
+        "{:?}",
+        second.messages.last()
+    );
+    stop.cancel();
+    assert_eq!(
+        landed(&mut done).await,
+        BgOutcome::Cancelled { consumed: false }
+    );
+}
+
 /// A call outside the task's set runs nothing and reports nothing: the
 /// window stays refundable.
 #[tokio::test]
