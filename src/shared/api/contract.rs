@@ -47,6 +47,24 @@ pub struct ApiToolCall {
     pub thought_signature: Option<String>,
 }
 
+impl ApiToolCall {
+    /// Why the call's arguments cannot be read, when they cannot: not empty, and not one
+    /// JSON value. An empty string is a call with no arguments, not a broken one. A call cut
+    /// short — a provider's stream that lost its end, a reply cut by the cap — arrives like
+    /// this, and read as `{}` it reached the tool as a call with nothing in it: the model was
+    /// told a field was missing and sent the same call again (docs/journal/engine.md, "a
+    /// broken call is answered as broken").
+    pub fn arguments_error(&self) -> Option<String> {
+        let args = self.arguments.trim();
+        if args.is_empty() {
+            return None;
+        }
+        serde_json::from_str::<serde_json::Value>(args)
+            .err()
+            .map(|e| e.to_string())
+    }
+}
+
 /// A reasoning block (extended thinking / reasoning item) for resending in history.
 /// Needed by providers that require the reasoning to be returned along with the tool call
 /// in the same turn, otherwise the round's next request returns `400`/degrades:
@@ -785,6 +803,26 @@ mod tests {
     fn role_wire_strings() {
         assert_eq!(ApiRole::System.as_wire(), "system");
         assert_eq!(ApiRole::Tool.as_wire(), "tool");
+    }
+
+    /// Empty is a call with no arguments; anything that is not one JSON value is broken,
+    /// the cut-off tail of a stream above all — and saying so is the point of the error.
+    #[test]
+    fn a_call_says_when_its_arguments_are_not_json() {
+        let with = |arguments: &str| ApiToolCall {
+            arguments: arguments.into(),
+            ..ApiToolCall::default()
+        };
+        for whole in ["", "  ", "{}", r#"{"code": "print(1)"}"#, " [1] "] {
+            assert_eq!(with(whole).arguments_error(), None, "{whole:?}");
+        }
+        for broken in [
+            r#"{"code": "print(1)", "files": ["sales"#,
+            "{",
+            r#"{"a":1}}"#,
+        ] {
+            assert!(with(broken).arguments_error().is_some(), "{broken:?}");
+        }
     }
 
     #[test]

@@ -552,3 +552,36 @@ async fn esc_mid_segment_cancels_every_member() {
         "the dropped futures released their count"
     );
 }
+
+/// A member with broken arguments leaves the segment: the reads around it still run
+/// at once, its card opens and closes with the refusal, and the records keep the
+/// model's order — nothing ran on the `{}` its arguments would have become.
+#[tokio::test]
+async fn a_member_with_broken_arguments_is_refused_and_the_rest_still_run() {
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let read = Probe::new("slow_read", true, 30, &log);
+    let mut round = calls(&[
+        ("a", "slow_read", "a"),
+        ("b", "slow_read", "b"),
+        ("c", "slow_read", "c"),
+    ]);
+    if let ChatChunk::ToolCall(delta) = &mut round.chunks[1] {
+        delta.arguments = r#"{"path": "b"#.into();
+    }
+    let run = run_turn(vec![read.clone()], 3, vec![round, text("done")], None).await;
+    let chat = super::subagent::load(run.dir.path(), run.chat_id);
+    let got = records(&chat);
+    assert_eq!(got[0], ("a".into(), "slow_read:a".into()));
+    assert!(got[1].0 == "b" && got[1].1.contains("JSON"), "{got:?}");
+    assert_eq!(got[2], ("c".into(), "slow_read:c".into()));
+    let starts: Vec<String> = log
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|l| l.starts_with("start"))
+        .cloned()
+        .collect();
+    assert_eq!(starts.len(), 2, "only the two whole calls ran: {starts:?}");
+    let (opened, closed) = cards(&run.events);
+    assert_eq!((opened.len(), closed.len()), (3, 3));
+}

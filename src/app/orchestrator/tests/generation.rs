@@ -2398,3 +2398,53 @@ async fn who_served_a_reply_and_what_it_cost_are_recorded_on_the_message() {
         "absent stays absent on disk: {file}"
     );
 }
+
+/// The tool message a request carries last — what the model reads of its call.
+fn last_tool_result(req: &crate::shared::api::ChatRequest) -> String {
+    req.messages.last().unwrap().content.clone()
+}
+
+/// A call whose arguments are not JSON is answered as broken, with serde's reason, and
+/// nothing runs: read as `{}` it reached the tool, which reported a missing field, and
+/// the model sent the same call again (docs/journal/engine.md, "a broken call is
+/// answered as broken"). An empty string is still a call with no arguments.
+#[tokio::test]
+async fn a_call_with_broken_arguments_is_answered_as_broken_and_not_run() {
+    use super::subagent::{call, text};
+    let broken = r#"{"field": "x""#;
+    let reason = serde_json::from_str::<serde_json::Value>(broken)
+        .unwrap_err()
+        .to_string();
+    let (reqs, _) = turn_on_recorder(vec![
+        call("c1", "get_sampling", broken),
+        call("c2", "get_sampling", ""),
+        text("done"),
+    ])
+    .await;
+    let refused = last_tool_result(&reqs[1]);
+    assert!(
+        refused.contains("get_sampling") && refused.contains(&reason),
+        "{refused}"
+    );
+    let ran = last_tool_result(&reqs[2]);
+    assert!(!ran.contains(&reason) && !ran.contains("JSON"), "{ran}");
+}
+
+/// The sub-agent's path is refused the same way, before a child is prepared: the
+/// parent's two rounds are the only requests the engine sees.
+#[tokio::test]
+async fn a_sub_agent_call_with_broken_arguments_starts_no_child() {
+    use super::subagent::{call, text};
+    let (reqs, last) = turn_on_recorder(vec![
+        call(
+            "c1",
+            "call_subagent",
+            r#"{"system_message": "x", "message": "#,
+        ),
+        text("done"),
+    ])
+    .await;
+    assert_eq!(reqs.len(), 2, "no child request");
+    assert!(last_tool_result(&reqs[1]).contains("JSON"));
+    assert_eq!(last, "done");
+}

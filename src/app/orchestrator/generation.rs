@@ -2663,7 +2663,11 @@ impl TurnLoop<'_> {
         let mut i = 0;
         while i < calls.len() {
             let call = &calls[i];
-            if self.is_group_call(call, rewrite) {
+            if let Some(refusal) = self.refuse_broken_arguments(call, rewrite) {
+                self.announce_call(call);
+                results[i] = Some(refusal);
+                i += 1;
+            } else if self.is_group_call(call, rewrite) {
                 self.queue_group_call(call, i, &mut group, &mut results);
                 i += 1;
             } else if self.is_background_call(call, rewrite) {
@@ -2749,6 +2753,28 @@ impl TurnLoop<'_> {
             && !control::is_control_tool(&call.name)
             && self.allowed_has(&call.name)
             && self.shared.registry.is_concurrent(&call.name)
+            && call.arguments_error().is_none()
+    }
+
+    /// The answer to a call whose arguments are not JSON, ahead of every kind of call —
+    /// a sub-agent, a background run, a segment member, an ordinary one — so none of
+    /// them runs on the `{}` that [`Self::call_args`] would make of it. A disabled tool,
+    /// a control call and a round being rewritten keep their own answers.
+    fn refuse_broken_arguments(&self, call: &ApiToolCall, rewrite: bool) -> Option<CallResult> {
+        if rewrite || control::is_control_tool(&call.name) || !self.allowed_has(&call.name) {
+            return None;
+        }
+        let err = call.arguments_error()?;
+        tracing::warn!(tool = %call.name, error = %err, "a call's arguments are not JSON; not run");
+        Some(
+            self.ctx
+                .loc
+                .tf(
+                    "loop.call_args_invalid",
+                    &[("name", &call.name), ("err", &err)],
+                )
+                .into(),
+        )
     }
 
     /// The end (exclusive) of the segment that starts at `start`: the first
