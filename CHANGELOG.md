@@ -54,6 +54,11 @@ split by subsystem.
   now says the code runs in a working folder that holds `in` and `out`, and a file
   written beside `out` instead of into it is named in the result, with the path that
   would have kept it, in the sandbox as well.
+- **gpt-oss tool calls through OpenRouter arrive whole.** One of the providers
+  OpenRouter routes gpt-oss to, Nebius, sends the last piece of a call's arguments as
+  if it began a second call. That piece was dropped, so the call came in cut short
+  and the tool refused it — again and again, until the turn ran out of rounds. The
+  piece is now joined to the call it ends.
 
 ## [0.18.1] — 2026-10-09
 

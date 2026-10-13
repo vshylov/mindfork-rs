@@ -2011,7 +2011,10 @@ its own — or named by `api_key_env`, resolved through the same
   a Gemini error payload, an OpenAI-shaped error object inside a llama.cpp `200`
   stream, or a dropped connection. `transient` is the retry verdict (spec §6.8),
   read by `RetryBackend` (below).
-  `ToolCallAccumulator` collects calls split across chunks by `index`; `Usage`
+  `ToolCallAccumulator` collects calls split across chunks by `index` — and joins
+  a delta that opens a new index with neither id nor name to the call before it
+  while that call's arguments are not one JSON value yet (Nebius sends a call's
+  last fragment under the next index); `Usage`
   (`prompt_tokens`/`completion_tokens`) arrives as a final chunk when
   `stream_options.include_usage=true` — the token counter. `ThoughtsSignature`
   is emitted by **Anthropic** (a thinking-block signature) and **OpenAI
