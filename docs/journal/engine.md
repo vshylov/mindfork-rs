@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (98)
+## Entries (99)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -110,6 +110,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a Mac's managed engine takes the knee batch (done)
 - Post-M9: the port tests' control survives a stranger on the freed port (done)
 - Post-M9: an empty answer after tools is asked once more (done)
+- Post-M9: a call's arguments split across two indices are joined (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -6719,3 +6720,35 @@ b11531), so the engine was the suspect. It was acquitted:
 ci.md (the run's three reds).
 
 **Gates**: fmt / clippy / test green — **4009 unit tests, 258 `#[ignore]`** (+4).
+
+### Post-M9: a call's arguments split across two indices are joined (done)
+
+Found while measuring the Local files smoke on gpt-oss-120b through OpenRouter
+([tools.md](tools.md), "a file written beside out/ is named"): on the provider Nebius
+(vLLM 0.22, fp4) the tool kept answering *"expected a non-empty field code"* to calls
+that plainly had code. The stream sends a call's arguments under index 0 and then its
+**last fragment under index 1**, with `"id": ""` and `"name": ""` — 110 of the 160
+answers with a call across the measurement. `ToolCallAccumulator` kept index 1 as a call
+of its own, nameless, and dropped it at the end, so the call arrived cut short; its JSON
+did not parse, the arguments became `{}`, and the tool reported an empty `code`. The model
+sent the same call again until the turn ran out of rounds.
+
+- **The rule** (`ToolCallAccumulator::slot_for`): a delta that opens a new index with
+  neither an id nor a name, while the call before it has a name and arguments that do not
+  parse as one JSON value yet, belongs to that call. A second call opens with its name or
+  its id, and a call whose arguments already parse is never extended — so parallel calls
+  and the old gap behaviour stand.
+- **Tests**: Nebius's stream as recorded, joined into one call that parses; a blank delta
+  after a whole call stays a gap; a named second call and a call opened by its id alone
+  stay their own. Each condition of the rule mutated away fails its own test.
+- **Live**, the same smoke on gpt-oss through Nebius, ten runs an arm: on `main` the cut
+  calls came 57 times and the smoke passed 1 of 10; with the join **0** cut calls and 7
+  of 10, the three reds the folder mix-up the other change fixes; with both changes
+  **10 of 10**. Two calls in one reply on Qwen 3.8 (`concurrent_tools`,
+  `parallel_subagents`, three runs each, the provider unpinned): 6 of 6.
+- **Left for later**: arguments that do not parse are still read as `{}`, so whatever
+  cut a call — a provider, a cap — the tool answers about a missing field rather than
+  saying the call's JSON was broken.
+
+**Gates**: 4016 unit tests green, 260 `#[ignore]`; clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check` clean.

@@ -454,10 +454,11 @@ pub struct ToolCallAccumulator {
 
 impl ToolCallAccumulator {
     pub fn push(&mut self, delta: ToolCallDelta) {
-        while self.calls.len() <= delta.index {
+        let index = self.slot_for(&delta);
+        while self.calls.len() <= index {
             self.calls.push(ApiToolCall::default());
         }
-        let call = &mut self.calls[delta.index];
+        let call = &mut self.calls[index];
         if let Some(id) = delta.id
             && !id.is_empty()
         {
@@ -475,6 +476,29 @@ impl ToolCallAccumulator {
             call.thought_signature = Some(sig);
         }
         call.arguments.push_str(&delta.arguments);
+    }
+
+    /// The call a delta belongs to. One that opens a new index with neither an id nor a
+    /// name, while the call before it holds arguments that are not one JSON value yet, is
+    /// that call's continuation: Nebius (vLLM 0.22) sends a call's last argument fragment
+    /// under the next index, and kept apart it was a nameless gap, dropped, with the call
+    /// cut short (docs/journal/engine.md, "a call's arguments split across two indices").
+    /// A second call opens with its name, and a call whose arguments parse is never
+    /// extended.
+    fn slot_for(&self, delta: &ToolCallDelta) -> usize {
+        let blank = |s: &Option<String>| s.as_deref().is_none_or(str::is_empty);
+        match self.calls.last() {
+            Some(prev)
+                if delta.index >= self.calls.len()
+                    && blank(&delta.id)
+                    && blank(&delta.name)
+                    && !prev.name.is_empty()
+                    && serde_json::from_str::<serde_json::Value>(&prev.arguments).is_err() =>
+            {
+                self.calls.len() - 1
+            }
+            _ => delta.index,
+        }
     }
 
     /// Returns the assembled calls (dropping nameless "gaps").
@@ -820,6 +844,105 @@ mod tests {
             arguments: "{}".into(),
         });
         assert_eq!(acc.finish().len(), 2);
+    }
+
+    /// A blank delta at index `i` carrying `arguments`.
+    fn blank(index: usize, arguments: &str) -> ToolCallDelta {
+        ToolCallDelta {
+            thought_signature: None,
+            index,
+            id: Some(String::new()),
+            name: Some(String::new()),
+            arguments: arguments.into(),
+        }
+    }
+
+    /// Nebius's stream as recorded (gpt-oss-120b through OpenRouter): the call's last
+    /// fragment arrives under index 1, its id and name empty. One call, whole.
+    #[test]
+    fn accumulator_joins_the_tail_sent_under_the_next_index() {
+        let mut acc = ToolCallAccumulator::default();
+        acc.push(ToolCallDelta {
+            thought_signature: None,
+            index: 0,
+            id: Some("chatcmpl-tool-b92a".into()),
+            name: Some("python_exec".into()),
+            arguments: "{\n  \"code\": \"print(1)\",\n  \"files\": [\"sales".into(),
+        });
+        acc.push(blank(1, ""));
+        acc.push(blank(1, ".csv\"]\n}"));
+        let calls = acc.finish();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "python_exec");
+        let args: serde_json::Value = serde_json::from_str(&calls[0].arguments).unwrap();
+        assert_eq!(args["files"][0], "sales.csv");
+    }
+
+    /// A call whose arguments already parse is never extended: a blank delta after it is
+    /// the gap it always was, and the call stays as it came.
+    #[test]
+    fn a_blank_delta_after_a_whole_call_is_not_joined() {
+        let mut acc = ToolCallAccumulator::default();
+        acc.push(ToolCallDelta {
+            thought_signature: None,
+            index: 0,
+            id: Some("a".into()),
+            name: Some("f".into()),
+            arguments: "{\"x\":1}".into(),
+        });
+        acc.push(blank(1, "{\"y\":2}"));
+        let calls = acc.finish();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].arguments, "{\"x\":1}");
+    }
+
+    /// A second call opens with its name, so it is kept apart even while the first one's
+    /// arguments are still incomplete.
+    #[test]
+    fn a_named_call_at_the_next_index_is_its_own() {
+        let mut acc = ToolCallAccumulator::default();
+        acc.push(ToolCallDelta {
+            thought_signature: None,
+            index: 0,
+            id: Some("a".into()),
+            name: Some("f".into()),
+            arguments: "{\"x\":".into(),
+        });
+        acc.push(ToolCallDelta {
+            thought_signature: None,
+            index: 1,
+            id: None,
+            name: Some("g".into()),
+            arguments: "{}".into(),
+        });
+        let calls = acc.finish();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].arguments, "{\"x\":");
+    }
+
+    /// An id opens a call too, its name possibly a delta later: the second call keeps
+    /// its own id, and the first is not handed it.
+    #[test]
+    fn a_call_opened_by_its_id_alone_is_its_own() {
+        let mut acc = ToolCallAccumulator::default();
+        for (index, id, name, arguments) in [
+            (0, Some("a"), Some("f"), "{\"x\":"),
+            (1, Some("b"), None, ""),
+            (1, None, Some("g"), "{}"),
+        ] {
+            acc.push(ToolCallDelta {
+                thought_signature: None,
+                index,
+                id: id.map(Into::into),
+                name: name.map(Into::into),
+                arguments: arguments.into(),
+            });
+        }
+        let calls = acc.finish();
+        assert_eq!(
+            calls.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
+            ["a", "b"]
+        );
     }
 
     #[test]
