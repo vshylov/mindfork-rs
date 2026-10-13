@@ -1824,5 +1824,22 @@ not change.
   `local_mode_files_round_trip_e2e_live` — the model read and wrote the working directory
   instead of `in/` and `out/`, the folders' bare names in Local mode; [tools.md](tools.md),
   "a file written beside out/ is named".
+- **gpt-oss-120b after #762 and #763** (run 38469389296, 2026-10-13, 251 of 253 — the
+  real-interpreter test #762 added is the 253rd). `local_mode_files_round_trip_e2e_live`,
+  that new test (the runner has a Python) and `sandbox_inputs_e2e_live` green.
+  - **Hugging Face could not start endpoints that evening** (21:19–21:29 UTC): the RTX PRO
+    6000 failed to start in all four shards and the A100 in three, and the T4 embedders
+    failed too and were created again. The ladder held — the chat came up on the gcp H200
+    in shards 1 and 3, the A100 in shard 2, and the RTX PRO 6000 on the last rung in shard
+    4 — and the jobs still ran 17–21 min.
+  - `prompt_estimate_e2e_live` at 0.57 — F11, left red on purpose.
+  - `live_search_returns_results` — Mojeek did not answer the runner before its timeout
+    (*"operation timed out"*). The smoke skips when every provider throttles the runner's
+    IP, not on a timeout; the first time in its record. If it recurs, the step is to skip
+    on a timeout of every provider as well.
+  - Not a red: the dialogue director answered with no call and empty prose 8 times in 57
+    checkpoint replies, all on the A100 and the H200 (0 of 10 on the RTX PRO 6000), against
+    1 in 53 on the previous dispatch. The fallback to *continue* is there for exactly this,
+    and the smokes were green; worth a look if the model's own card shows it.
 
 **Gates**: `e2e_hf.py --self-test` 0 failures; no Rust changed.
