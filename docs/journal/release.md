@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (75)
+## Entries (76)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -87,6 +87,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the release notes a local tag check writes are ignored (done)
 - Post-M9: the macOS probe branch, frozen as a tag (done)
 - Release 0.18.1 (prepared)
+- Release 0.18.2 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -4579,3 +4580,49 @@ macos.md §3 and §12 point at the tag.
   on real data, which is the owner's; `first-run`, which needs the Ollama and
   LM Studio stands up; the Windows installer and the `.deb`, `.rpm` and Arch
   packages, beyond what their jobs install.
+
+### Release 0.18.2 (prepared)
+
+- **A release PR** per [AGENTS.md §6](../../AGENTS.md), branch
+  `chore/release-0.18.2`:
+  - `Cargo.toml` `0.18.1 → 0.18.2` (+ one line of `Cargo.lock`), and the
+    site's `app_version`;
+  - `CHANGELOG.md`: `[Unreleased]` → `[0.18.2] — 2026-10-14` under a lead
+    paragraph, "What a tool tells the model is what happened", a fresh
+    `[Unreleased]`, and the comparison links;
+  - CLAUDE.md's status heading;
+  - the release's post, and `/llms.txt` regenerated from it.
+
+  Since `v0.18.1`, the nine items under *Fixed*, from eight pull requests: a
+  dialogue staged once and a round limit that ends in prose (733), a background
+  run started by its call (749), an empty answer after tools asked once more
+  (750), the withheld-image notes (753), the duplicate gate's hint and the
+  policy beside it (754, 755), Local mode's folders and a file beside `out/`
+  (762), a call's arguments split across two indices (763) and a broken call
+  answered as broken (765). The rest moved no behaviour of the app: the FSD
+  layer gate (731, types moved, not changed), the live gate's runner, cards,
+  shards and smokes (732, 734–747, 751, 752, 756, 761), the journal's run
+  records (748, 757, 764) and three Dependabot pins (758–760).
+- **A PATCH**: every item is a fix, and nothing new is stored.
+- **No `Data` rubric, by measurement.** `git diff v0.18.1 -- src/shared/storage
+  src/shared/config.rs src/entities src/features/data_migration.rs
+  src/features/backup.rs` names only `entities/{task,subagent,live_turn}.rs` —
+  the event payloads 731 moved down from `app::events`. None of them derives
+  `Serialize` but the four already in `entities/subagent.rs` (`RunKind`,
+  `Participant`, `RunOutcome`, `SubagentRun`, kept with a chat's record), and
+  those are byte for byte `v0.18.1`'s.
+- **No rehearsal.** `release.yml` changed only in three Dependabot pins —
+  `actions/upload-artifact` 7.0.1 → 7.0.2, `actions/download-artifact` 8.0.1 →
+  8.0.2, `taiki-e/install-action` 2.87.22 → 2.87.27. `packaging.yml` uses the
+  same three commits and ran green on each of those pull requests (2026-10-12),
+  and it runs again here, on `Cargo.toml`; nothing in the jobs, the assets or
+  their names moved. 0.16.0's precedent. The owner may still ask for an `-rc1`.
+- **The live gate before it.** Qwen 3.8 252 of 252 on `eb7795f6` (after 756);
+  Gemma 4 green on 2026-10-12; gpt-oss-120b 251 of 253 on `fd10537b` (after 762
+  and 763 — F11's estimate and a search provider's timeout). 765 came after
+  them, with its unit tests and a live run of its own.
+- **The post** says where the fixes came from — the live tests on three
+  families, Qwen moved from 3.6 to 3.8 — then the turns that now end in an
+  answer, the tools whose answers now say what happened, and gpt-oss through
+  OpenRouter; that nothing in the data changes; and, for the background runs,
+  that the slip is rarer on Qwen 3.6, not gone.
