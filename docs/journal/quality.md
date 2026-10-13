@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (35)
+## Entries (36)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -47,6 +47,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: SonarQube follow-up — the console probe's ready-chat chip (done)
 - Post-M9: SonarQube follow-up — the Mac probe's four spaces (done)
 - Post-M9: the FSD layer rule gets a gate, and the eleven types that broke it move down (done)
+- Post-M9: SonarQube follow-up — the live gate's ladder and its fake (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -1843,3 +1844,40 @@ structure (AGENTS.md §3).
   repository's own structure (AGENTS.md §3). **3994 unit tests green, 257
   `#[ignore]` — unchanged**, which is what a pure move has to show; rustdoc
   resolves the moved doc links (`cargo doc --no-deps`, no new warning).
+
+### Post-M9: SonarQube follow-up — the live gate's ladder and its fake (done)
+
+- **Ten open findings on `main`, the gate green** (read through the Sonar MCP on
+  2026-10-13; branch `refactor/sonar-e2e-hf`), all in `tools/e2e_hf.py`. Sonar dates
+  them to `d3ab1418`, the commit of #737 that built the fallback ladder; #738 and
+  #744 grew the same functions. Their PR gates let them through: maintainability
+  findings do not move an A rating ([lessons.md](../lessons.md) §10).
+- **`python:S3776` ×3, split along seams the code already had.** `bring_up` (24):
+  the wait for one rung is `wait_rung`, which answers `(url, card)`, `None`, or the
+  sentinel `NEXT_RUNG` where the loop used to `continue`. `print_plan` (16): the
+  `mmproj` line's three-way choice is `projector()`. `cmd_run` (18): the summary
+  is `print_summary`, with `endpoint_url` shared by it and the `run_suite` call.
+  Counted by hand the old three come to Sonar's own 24/16/18, the new ones to at
+  most 12; the snippet analyzer was unreachable that day (the MCP server had
+  disconnected), so the PR's own analysis is the measurement.
+- **`python:S1172` ×7 — the self-test's `_FakeHf`**, which copied `hf_api`'s
+  signatures down to arguments `bring_up` never passes (`dry_run`, `poll`). It now
+  takes what `bring_up` passes and names what it ignores `_…`, the rule's own
+  exemption; `wait_healthy` takes `**_timeout`, since that one comes by keyword.
+- **Measured, old against new.** `--self-test` (CI's `lint`) prints the same
+  report. Eight shapes of `run --dry-run` (each model, `--no-mmproj`, reused
+  endpoints, two shards, `--no-embed --variant`, explicit weights) print the same
+  bytes. `cmd_run` itself, driven past the rental with the builder, the ladder and
+  the suite stubbed and a scripted clock, prints the same lines, hands `run_suite`
+  the same arguments and exits the same in seven cases (a fallback card, a reused
+  chat with `--keep`, a red suite, an empty shard, a ladder that gave up). Mutants:
+  `FAILED_TO_START` ending the walk, and the sentinel test turned into `is None`,
+  each fail five self-test checks; the `--keep` line inverted fails five harness
+  cases; the text-only `mmproj` text changed alters the gpt-oss dry run. One
+  survives, as it did before the split: on the last rung, a state still being
+  scheduled ends the walk with `None` whether it is retried or not — only the
+  log line differs.
+- No Rust touched — test totals unchanged; the documentation gates green. No
+  CHANGELOG entry: internal tooling (AGENTS.md §4). No live run: the rented gate's
+  runner, whose renting paths are stubbed above; the next dispatch of the gate is
+  its first real use (AGENTS.md §3).
