@@ -14,6 +14,15 @@ split by subsystem.
 
 ## [Unreleased]
 
+## [0.18.2] — 2026-10-14
+
+**What a tool tells the model is what happened.** Nine fixes found by running
+the live tests on three model families — Gemma 4, Qwen and gpt-oss. A tool's
+answer now says what actually happened — a scene already staged, an image that
+was not shown, a note already written, a file saved where nothing keeps it, a
+call that arrived broken — so a turn ends in an answer, not in code, silence, a
+made-up link or the same call again and again.
+
 ### Fixed
 
 - **A turn that runs out of tool rounds ends in an answer, not in code.** When
@@ -3303,7 +3312,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.18.1...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.18.2...HEAD
+[0.18.2]: https://github.com/vshylov/mindfork-rs/compare/v0.18.1...v0.18.2
 [0.18.1]: https://github.com/vshylov/mindfork-rs/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/vshylov/mindfork-rs/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/vshylov/mindfork-rs/compare/v0.16.1...v0.17.0
