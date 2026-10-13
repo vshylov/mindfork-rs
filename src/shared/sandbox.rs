@@ -170,6 +170,11 @@ pub enum SkipReason {
     Unreadable,
     /// Left by a call that timed out — possibly half-written, so not read.
     TimedOut,
+    /// Written beside `in/` and `out/` in the job directory rather than into
+    /// `out/`: never collected. Named so the model is not told nothing about a file it
+    /// believes it saved — gpt-oss wrote `summary.txt` there and said it was kept
+    /// (docs/journal/tools.md, "a file written beside out/ is named").
+    Outside,
 }
 
 /// How much one call may leave in `/w/out` (F4).
@@ -540,7 +545,7 @@ impl SandboxRunner for WasmerSandbox {
                 // still made the chart (F4). The guest has exited, so nothing races the
                 // walk; up to a call's worth of bytes is read on the blocking pool, while
                 // `job` keeps the directory alive.
-                let (files, skipped) = collected(out_dir, collect_outputs).await;
+                let (files, skipped) = collected_after_run(&job.path, out_dir).await;
                 let (stdout, net_refused) = strip_net_prompt(&String::from_utf8_lossy(&out.stdout));
                 Ok(SandboxOutput {
                     net_refused,
@@ -690,7 +695,7 @@ impl SandboxRunner for LocalSandbox {
                 // Whatever the exit code: a script that saved its chart and then failed
                 // still made the chart (F4). The same rule, the same collector and the
                 // same caps as the guest's.
-                let (files, skipped) = collected(layout.out_dir, collect_outputs).await;
+                let (files, skipped) = collected_after_run(&job.path, layout.out_dir).await;
                 Ok(SandboxOutput {
                     stdout: drained(&out_buf, out_task).await,
                     stderr: drained(&err_buf, err_task).await,
@@ -1140,6 +1145,39 @@ async fn collected(out: PathBuf, collect: fn(&Path, OutputLimits) -> Collected) 
     }
 }
 
+/// What the call left in the job directory beside `job.py`, `in/` and `out/`:
+/// written where nothing is collected. Dot-names and `__pycache__` are left out — an
+/// interpreter's own leftovers, not something the code meant to save.
+fn stray_outputs(job: &Path) -> Vec<SkippedOutput> {
+    sorted_entries(job)
+        .into_iter()
+        .filter(|(name, _)| {
+            !matches!(name.as_str(), JOB_SCRIPT | "in" | "out" | "__pycache__")
+                && !name.starts_with('.')
+        })
+        .map(|(name, _)| SkippedOutput {
+            name,
+            reason: SkipReason::Outside,
+        })
+        .collect()
+}
+
+/// What a finished call gives back, in both runners: `out/` [`collected`], and after it
+/// what was left beside `out/` ([`stray_outputs`]), both on the blocking pool.
+async fn collected_after_run(job: &Path, out: PathBuf) -> Collected {
+    let (files, mut skipped) = collected(out, collect_outputs).await;
+    let job = job.to_path_buf();
+    skipped.extend(
+        tokio::task::spawn_blocking(move || stray_outputs(&job))
+            .await
+            .unwrap_or_else(|err| {
+                tracing::error!(error = %err, "listing a call's job directory failed");
+                Vec::new()
+            }),
+    );
+    (files, skipped)
+}
+
 /// [`named_outputs`] on the blocking pool: the timeout's path, and the failed collector's.
 async fn named_off_loop(out: PathBuf, reason: SkipReason) -> Vec<SkippedOutput> {
     tokio::task::spawn_blocking(move || named_outputs(&out, reason))
@@ -1162,6 +1200,47 @@ mod collect_tests {
 
     fn names(files: &[OutputFile]) -> Vec<&str> {
         files.iter().map(|f| f.name.as_str()).collect()
+    }
+
+    /// What the code wrote beside `in/` and `out/` is named — a file and a folder alike —
+    /// and the job's own entries, dot-names and `__pycache__` are not.
+    #[test]
+    fn what_was_written_beside_out_is_named_and_the_layout_is_not() {
+        let job = tempfile::tempdir().unwrap();
+        for d in ["in", "out", "results", "__pycache__", ".cache"] {
+            std::fs::create_dir(job.path().join(d)).unwrap();
+        }
+        for f in [JOB_SCRIPT, "summary.txt", ".python_history"] {
+            write(job.path(), f, b"x");
+        }
+        let strays = stray_outputs(job.path());
+        assert_eq!(
+            strays,
+            ["results", "summary.txt"].map(|name| SkippedOutput {
+                name: name.into(),
+                reason: SkipReason::Outside,
+            })
+        );
+    }
+
+    /// Both runners finish through this: what `out/` held is kept, and what was written
+    /// beside it is named after the out-folder's own entries.
+    #[tokio::test]
+    async fn a_finished_call_keeps_out_and_names_what_lies_beside_it() {
+        let job = tempfile::tempdir().unwrap();
+        let out = job.path().join("out");
+        std::fs::create_dir(&out).unwrap();
+        write(&out, "kept.txt", b"1");
+        write(job.path(), "summary.txt", b"1");
+        let (files, skipped) = collected_after_run(job.path(), out).await;
+        assert_eq!(names(&files), ["kept.txt"]);
+        assert_eq!(
+            skipped,
+            [SkippedOutput {
+                name: "summary.txt".into(),
+                reason: SkipReason::Outside,
+            }]
+        );
     }
 
     #[test]

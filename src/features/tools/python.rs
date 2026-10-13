@@ -617,6 +617,10 @@ fn skipped_line(loc: &Locale, skipped: &SkippedOutput, out_dir: &str) -> String 
             .t("tool.python_exec.files.reason.unreadable")
             .to_string(),
         SkipReason::TimedOut => loc.t("tool.python_exec.files.reason.timed_out").to_string(),
+        SkipReason::Outside => loc.tf(
+            "tool.python_exec.files.reason.outside",
+            &[("out", out_dir), ("name", &skipped.name)],
+        ),
     };
     let name = if skipped.reason == SkipReason::Directory {
         format!("{}/", skipped.name)
@@ -1205,6 +1209,42 @@ mod tests {
         // And the way out is the same one: the file is stored with the chat and named.
         assert_eq!(stored_names(&out), ["clean.csv"]);
         assert!(out.result.contains("clean.csv"), "{}", out.result);
+    }
+
+    /// A file the code wrote beside `out/` is not kept, and the result says so with the
+    /// path that would have kept it — in each mode's own words for the folder. Without it
+    /// the result said nothing, and gpt-oss told the user `summary.txt` was saved.
+    #[tokio::test]
+    async fn a_file_written_beside_out_is_named_with_the_path_that_keeps_it() {
+        use crate::shared::sandbox::{SkipReason, SkippedOutput};
+        let (_d, _folder, ctx) = ctx_with_inputs();
+        let beside = || SandboxOutput {
+            skipped: vec![SkippedOutput {
+                name: "summary.txt".into(),
+                reason: SkipReason::Outside,
+            }],
+            ..SandboxOutput::default()
+        };
+        let args = serde_json::json!({"code": "open('summary.txt', 'w').write('1')"});
+        let local = local_mock(Arc::new(MockSandbox::ready(beside())))
+            .invoke(&ctx, args.clone())
+            .await
+            .unwrap();
+        assert!(
+            local.result.contains("summary.txt") && local.result.contains("out/summary.txt"),
+            "{}",
+            local.result
+        );
+        assert!(stored_names(&local).is_empty(), "nothing was kept");
+        let sandboxed = wasmer(Arc::new(MockSandbox::ready(beside())), false)
+            .invoke(&ctx, args)
+            .await
+            .unwrap();
+        assert!(
+            sandboxed.result.contains("/w/out/summary.txt"),
+            "{}",
+            sandboxed.result
+        );
     }
 
     /// The refusals are the tool's, not the mode's: a handle nothing answers to stops a
@@ -2384,6 +2424,29 @@ print('pillow', png.getvalue()[:4] == b'\x89PNG')
             })
             .expect("the file was stored");
         assert_eq!(kept, NOTES.len() as u64);
+    }
+
+    /// The working directory is where a bare `open('summary.txt', 'w')` lands — the file
+    /// gpt-oss wrote and called saved. The runner names it, so the result says it was not
+    /// kept and where to put it, beside the file that was.
+    #[tokio::test]
+    #[ignore = "requires a Python interpreter on PATH"]
+    async fn a_file_written_beside_out_is_named_by_the_real_runner() {
+        let (_d, _folder, ctx) = ctx_with_inputs();
+        let code = concat!(
+            "open('summary.txt', 'w').write('4706')\n",
+            "open('out/kept.txt', 'w').write('4706')\n",
+        );
+        let out = local(None)
+            .invoke(&ctx, serde_json::json!({"code": code}))
+            .await
+            .unwrap();
+        assert_eq!(stored_names(&out), ["kept.txt"]);
+        assert!(
+            out.result.contains("out/summary.txt"),
+            "got: {}",
+            out.result
+        );
     }
 
     /// The local interpreter under a memory limit (Windows Job Object): an allocation past it
