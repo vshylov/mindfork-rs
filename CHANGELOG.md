@@ -48,6 +48,12 @@ split by subsystem.
   there. Some models rewrote the old one beside the copy and kept both, or took a
   long detour of several edits to undo it. The hint now says the entry is already
   recorded and that a repeat is merged with the one it repeats.
+- **Python on your own interpreter finds the chat's files and keeps what it saves.**
+  In the local mode, gpt-oss read the files it had asked for from the wrong folder
+  and saved its results where nothing is kept — then said they were saved. The tool
+  now says the code runs in a working folder that holds `in` and `out`, and a file
+  written beside `out` instead of into it is named in the result, with the path that
+  would have kept it, in the sandbox as well.
 
 ## [0.18.1] — 2026-10-09
 

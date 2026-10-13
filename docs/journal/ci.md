@@ -1817,5 +1817,12 @@ not change.
 
   The judge fell back on none of 47 checkpoint replies; all 87 turns the live helpers
   traced ended on `Stop`, and the one error event was the round-limit smoke's own.
+- **The other two families on the same commit** (2026-10-12): Gemma 4 green throughout;
+  gpt-oss-120b 250 of 252 (run 38196654317, every shard on its RTX PRO 6000).
+  `prompt_estimate_e2e_live` at 0.57, as on 2026-10-10 — F11, left red on purpose
+  ([e2e-gpt-oss-120b.md](../research/e2e-gpt-oss-120b.md) §11).
+  `local_mode_files_round_trip_e2e_live` — the model read and wrote the working directory
+  instead of `in/` and `out/`, the folders' bare names in Local mode; [tools.md](tools.md),
+  "a file written beside out/ is named".
 
 **Gates**: `e2e_hf.py --self-test` 0 failures; no Rust changed.

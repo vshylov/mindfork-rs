@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (91)
+## Entries (92)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -103,6 +103,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a background run is started by its call, not by the reply (done)
 - Post-M9: the withheld-image notes hold on Qwen (done)
 - Post-M9: the chart smoke sends the tool the app sends (done)
+- Post-M9: a file written beside out/ is named (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -5931,4 +5932,51 @@ have executed; the request was the smoke's own.
   too, so its empty schema is the true one.
 
 **Gates**: 4009 unit tests green, 259 `#[ignore]`; clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check` clean.
+
+### Post-M9: a file written beside out/ is named (done)
+
+The gpt-oss-120b dispatch of 2026-10-12 (run 38196654317, 250 of 252) failed
+`local_mode_files_round_trip_e2e_live`: the model named `sales.csv` in `files`, read
+`open('sales.csv')` — a `FileNotFoundError` twice — found `in/sales.csv` on the third
+call by listing the directory, then wrote `summary.txt` into the working directory and
+told the user it was in the output folder. Nothing was kept, and the result had said
+nothing about the file.
+
+- **The cause is the folders' names in Local mode.** The sandbox says `/w/in` and
+  `/w/out`; Local says `in` and `out`, bare — *"each is copied into in before the run"*,
+  *"save it directly into out"* — which reads as anything but two folders. Replayed on
+  the smoke's own first request (OpenRouter, the provider pinned), the first call read
+  `in/` and wrote `out/` in **0 of 15** answers in Russian and **0 of 10** in English
+  (eight of those wrote `out/` and still read the bare name). With one sentence added to
+  the Local head — *"Each call runs in a fresh working directory holding two folders: in,
+  with the files named in files, and out, for what comes back to the user. Read a file as
+  in/<name> and save one as out/<name> — not into the working directory itself."* —
+  **15 of 15** and **8 of 8** (two requests lost to the provider's rate limit). Qwen 3.8
+  and Gemma 4 did it right 10 of 10 either way.
+- **The whole smoke on gpt-oss** (the provider Nebius, fp4 — the nearest to the gate's
+  MXFP4; DeepInfra answered `429` to most requests that day): **1 of 10 → 8 of 10**, the
+  `FileNotFoundError`s 12 → 0. Qwen 3.8 and Gemma 4, three runs each, green.
+- **What lands beside `out/` is named.** The job directory is ours — `job.py`, `in/`,
+  `out/` — so after the run anything else in it is listed as not kept, with the path that
+  would have kept it: *"summary.txt — not kept: written beside out, not into it — only
+  what is in out is kept; save it as out/summary.txt"* (`SkipReason::Outside`; dot-names
+  and `__pycache__` left out). Both runners: on the host a bare `open('summary.txt',
+  'w')` lands there; in the guest `/w` is the job directory — its working directory is
+  `/` (measured), so only what is written to `/w` itself is seen there.
+- **Tests**: the listing (a file and a folder named, the layout and the leftovers not);
+  the helper both runners finish through (`collected_after_run`), on a directory; the
+  result on a mock runner in both modes' words; and the real interpreter (`#[ignore]`) —
+  the runner put back on the bare collector fails it. The real sandbox was run once by
+  hand for the guest's side, not kept as a test: past twenty new lines Sonar counts what
+  CI never runs as uncovered.
+- **Found on the way, not in this change**: Nebius (vLLM 0.22) sends the last fragment of
+  a call's arguments under the **next index**, with an empty id and name. The accumulator
+  keeps it as a nameless gap and drops it, so the call arrives cut and the tool answers
+  *"expected a non-empty field code"* — 176 of 210 argument streams on that route. A
+  client-side join belongs to its own change.
+- **Left as it was**: `prompt_estimate_e2e_live`, red on gpt-oss at 0.57 as on
+  2026-10-10 — F11, the owner's decision (e2e-gpt-oss-120b.md §11), on the roadmap.
+
+**Gates**: 4012 unit tests green, 260 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check` clean.
