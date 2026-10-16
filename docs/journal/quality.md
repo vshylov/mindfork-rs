@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (36)
+## Entries (37)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -48,6 +48,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: SonarQube follow-up — the Mac probe's four spaces (done)
 - Post-M9: the FSD layer rule gets a gate, and the eleven types that broke it move down (done)
 - Post-M9: SonarQube follow-up — the live gate's ladder and its fake (done)
+- Post-M9: `tools/repo_metrics.py` — the repository's numbers, defined once (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -1881,3 +1882,65 @@ structure (AGENTS.md §3).
   CHANGELOG entry: internal tooling (AGENTS.md §4). No live run: the rented gate's
   runner, whose renting paths are stubbed above; the next dispatch of the gate is
   its first real use (AGENTS.md §3).
+
+### Post-M9: `tools/repo_metrics.py` — the repository's numbers, defined once (done)
+
+**What.** A read-only script that prints the figures the project quotes about
+itself — days, commits, pull requests, version tags, the models in the commit
+trailers, the share of docs-only commits; `.rs` files, lines, the share of test
+code, test attributes beside cargo's own counts, `#[ignore]` marks, the spec and
+architecture citations in the code; the documentation's bytes against the code's,
+the journal's size and a census of its entries, the lessons and their recurrence
+counts — as a Markdown table or `--json`, from anywhere inside the repository.
+`--self-test` checks every definition against a fixture repository and runs in
+CI's `lint` job. Nothing is written.
+
+**Why.** The write-up on how this project was built needed some forty numbers,
+and each was an ad-hoc pipeline typed in a session, never the same way twice:
+three surveys of the journal counted its GO verdicts three ways (224, 196 and
+175) because one counted lines, one entries and one both. A figure that cannot be
+re-derived the same way a week later is not a measurement. One definition each,
+in one place, with the definition written down where it is not obvious.
+
+**Decisions.**
+- A pull request is a merge commit whose subject is GitHub's `Merge pull request
+  #N`; merges in general are kept apart (the first days' local merges, 39 today).
+- Test code is a whole file under `tests/` or named `*tests.rs`, plus everything
+  from the first `#[cfg(test)]` that opens a `mod` to the end of the file. The
+  first cut started the region at any `#[cfg(test)]`, which took a lone `use` for
+  the start and put the share at 58.8 % against 53.7 %.
+- cargo's counts are read from CLAUDE.md's Status line, since only `cargo test`
+  knows which test functions compile on a given platform; the raw attribute count
+  (4 304) stands beside them (4 031 + 260) and the gap is the platform-gated ones.
+- The journal census counts entries, never lines: an entry that says "measured"
+  five times counts once.
+- No CLI path argument, so lessons §1's confinement rule does not apply.
+
+**Measured** on `main` at d88f45c9 (2026-10-16): 124 days, 2 306 commits, 753 pull
+requests (6.07 a day), 28 version tags; 341 `.rs` files, 256 655 lines, 53.7 %
+test code; 3 282 spec/architecture citations from 305 files; documentation
+7.83 MB against 10.49 MB of `src/` (0.75); 643 journal entries, their indexes
+summing to the same 643, 265 of them measuring, 107 rejecting, 175 with a GO, 146
+with the user's decision, 117 with a mutation check; 264 lessons; `CLAUDE.md`
+29 263 bytes. A full run takes 1.5 s on the development machine, most of it the
+two passes over `git log`.
+
+**Self-test.** A fixture repository built in a temporary directory: six commits
+on three branches with model trailers on four of them, a pull-request merge in
+GitHub's words and a local merge in git's, a tag, two Rust files (an inline
+`#[cfg(test)] mod` and a whole-file `tests.rs`), a journal file with its index and
+two entries, a lessons file with a recurrence. 47 numbers checked.
+**Mutation-checked**, six mutants each on a copy of the script: every docs commit
+counted as docs-only; the test region started at the top of the file; whole-file
+tests not recognised; the census counting lines; pull requests counted as all
+merges; trailers counted on merges too — 6/6 killed, after two fixture repairs
+(lessons §2: a survivor indicts the fixture as often as the code). The census
+mutant survived while each keyword appeared once per entry; the two merge mutants
+survived while the only merge was the pull request and no merge carried a
+trailer. The fixture now says "measured" twice in one entry and merges a local
+branch with a trailer of its own.
+
+**Tests.** No Rust touched: 4031 unit tests green, 260 `#[ignore]`, unchanged;
+`cargo fmt --check` clean; the documentation gates green. No CHANGELOG entry:
+internal tooling (AGENTS.md §4). No live run: a script over git and the working
+tree (AGENTS.md §3).
