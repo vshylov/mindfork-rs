@@ -25,7 +25,7 @@ use crate::entities::profile::CharacterNames;
 use crate::entities::self_model::SelfModel;
 use crate::features::demo;
 use crate::shared::api::contract::FinishReason;
-use crate::shared::config::Theme;
+use crate::shared::config::{CodeBlockBackground, Theme};
 use crate::shared::i18n::Lang;
 use crate::shared::server::{ServerStatus, ServerStatuses};
 use crate::shared::shot::{self, ShotFrame};
@@ -52,6 +52,15 @@ const WORDS_PER_PIECE: usize = 3;
 /// A `TokenUsage` every this many answer pieces, the way a server reports
 /// usage while it streams rather than once at the end.
 const USAGE_EVERY: usize = 6;
+
+/// The background the reel draws an unhighlighted code block on — the
+/// normal one, not the app's default (the owner's review, 2026-10-16). The
+/// flowchart streams in as its source until its block closes, and on the
+/// inverted background that source was a bright reversed rectangle, the
+/// loudest thing in the reel, replaced a moment later by a diagram with no
+/// background at all (docs/research/demo-reel.md §10). The stills keep the
+/// default: none of them is caught mid-stream.
+const CODE_BACKGROUND: CodeBlockBackground = CodeBlockBackground::Normal;
 
 /// How long the self-model stays on screen — the reel's point, so the longest
 /// hold in it (the owner's review of the first reel, 2026-10-03).
@@ -156,11 +165,19 @@ struct Director {
 
 impl Director {
     /// The showcase chat holding `history`, both servers ready, an empty input
-    /// box — the settings the stills are taken with.
-    fn new(theme: Theme, lang: Lang, title: &str, history: &[Message]) -> Self {
+    /// box — the settings the stills are taken with, but for the code blocks'
+    /// `background` ([`CODE_BACKGROUND`]).
+    fn new(
+        theme: Theme,
+        lang: Lang,
+        background: CodeBlockBackground,
+        title: &str,
+        history: &[Message],
+    ) -> Self {
         let mut config = demo::app_config();
         config.interface.theme = theme;
         config.interface.language = lang;
+        config.interface.code_block_background = background;
         let mut screen = ChatScreen::new();
         screen.set_settings(
             config,
@@ -411,6 +428,12 @@ impl Showcase {
 
 /// The reel: the showcase chat's last exchange, played live (design doc §3.2).
 pub fn reel(theme: Theme, lang: Lang) -> Reel {
+    play(theme, lang, CODE_BACKGROUND)
+}
+
+/// [`reel`] with the code blocks on `background` — the seam a test plays the
+/// app's default through, to show what [`CODE_BACKGROUND`] is there to avoid.
+fn play(theme: Theme, lang: Lang, background: CodeBlockBackground) -> Reel {
     let Showcase {
         title,
         messages,
@@ -427,7 +450,7 @@ pub fn reel(theme: Theme, lang: Lang) -> Reel {
         panic!("the showcase answer makes one tool call");
     };
     let id = generation_id();
-    let mut d = Director::new(theme, lang, title, &messages[..2]);
+    let mut d = Director::new(theme, lang, background, title, &messages[..2]);
 
     d.beat("open");
     d.hold(1_500);
@@ -764,6 +787,51 @@ mod tests {
                 text(end_of(&reel, "answer"))
             );
         }
+    }
+
+    /// The rows of a reel's frames that show the flowchart's source — its
+    /// opening fence on screen, the block still streaming — each with whether
+    /// any of its cells is reversed.
+    fn source_rows(reel: &Reel) -> Vec<bool> {
+        reel.frames
+            .iter()
+            .filter(|f| f.beat == "answer")
+            .flat_map(|f| f.frame.rows.iter())
+            .filter(|row| {
+                row.iter()
+                    .map(|c| c.s.as_str())
+                    .collect::<String>()
+                    .contains("```mermaid")
+            })
+            .map(|row| row.iter().any(|c| c.m.contains('R')))
+            .collect()
+    }
+
+    /// The flowchart streams in as its source until its block closes, and the
+    /// reel draws that source on the normal background: not a cell of it is
+    /// reversed, in any look. The control is the app's default, which is the
+    /// loud frame the owner's review found (2026-10-16).
+    #[test]
+    fn the_flowchart_s_source_streams_in_without_a_reversed_block() {
+        for (theme, lang) in LOOKS {
+            let reel = reel(theme, lang);
+            let rows = source_rows(&reel);
+            assert!(
+                !rows.is_empty(),
+                "{}: the premise — the source is on screen before the diagram",
+                reel.name
+            );
+            assert!(
+                rows.iter().all(|reversed| !reversed),
+                "{}: the source is drawn reversed",
+                reel.name
+            );
+        }
+        let inverted = play(Theme::Dark, Lang::En, CodeBlockBackground::Inverted);
+        assert!(
+            source_rows(&inverted).iter().any(|&reversed| reversed),
+            "the control: on the default background the source is reversed"
+        );
     }
 
     /// The typing has a cursor to follow, and the self-model screen, which

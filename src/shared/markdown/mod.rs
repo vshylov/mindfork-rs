@@ -33,6 +33,7 @@ use syntect::highlighting::{
 use syntect::parsing::{SyntaxReference, SyntaxSet};
 use syntect::util::{LinesWithEndings, as_24_bit_terminal_escaped};
 
+use crate::shared::config::CodeBlockBackground;
 use crate::shared::theme::Palette;
 use crate::shared::wrap;
 
@@ -62,6 +63,11 @@ pub struct RenderOpts {
     /// setting (spec §11.4); `false` (Default) — the previous behavior, the
     /// source.
     pub render_mermaid: bool,
+    /// The background of a code block with no highlighting — reverse video
+    /// (Default: what every render did before the setting) or none. The
+    /// `interface.code_block_background` setting (spec §11.4); a highlighted
+    /// block has no background either way, and the monochrome mode none at all.
+    pub code_block_background: CodeBlockBackground,
 }
 
 /// Renders a markdown string into an owning [`Text`] (ready to show/cache)
@@ -102,6 +108,7 @@ pub fn render_with(
     writer.soft_break_as_newline = opts.soft_break_as_newline;
     writer.table_row_separators = opts.table_row_separators;
     writer.render_mermaid = opts.render_mermaid;
+    writer.code_block_background = opts.code_block_background;
     // An iterator with byte ranges: Writer uses the source to tell a closed
     // code block apart from one truncated mid-stream (the mermaid path, see
     // fenced_block_is_closed).
@@ -152,9 +159,17 @@ fn heading_style(level: u8, palette: &Palette) -> Style {
     }
 }
 
-/// Style of an unhighlighted code block — reversed (theme-independent).
+/// Style of an unhighlighted code block with the inverted background —
+/// reversed (theme-independent).
 fn code_style() -> Style {
     Style::new().add_modifier(Modifier::REVERSED)
+}
+
+/// Style of an unhighlighted code block with the normal background: the code
+/// colour a highlighted block gives text no scope claims ([`build_code_theme`]),
+/// over the feed's own background.
+fn code_text_style(palette: &Palette) -> Style {
+    Style::new().fg(palette.code_text)
 }
 
 /// Style of inline code (`like this`) — a quiet "chip" as in the design

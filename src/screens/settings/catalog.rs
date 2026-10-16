@@ -1644,6 +1644,12 @@ impl SettingsScreen {
             )
             .describe(loc.t("ui.settings.desc.mermaid")),
             row(
+                FieldId::ICodeBackground,
+                loc.t("ui.settings.field.code_background"),
+                FieldKind::Choice(code_background_label(i.code_block_background, loc)),
+            )
+            .describe(loc.t("ui.settings.desc.code_background")),
+            row(
                 FieldId::IModelName,
                 loc.t("ui.settings.field.model_name"),
                 FieldKind::Toggle(i.show_model_name),

@@ -51,6 +51,8 @@ pub(super) struct Writer {
     /// Render ```mermaid blocks as a diagram. See [`RenderOpts`] and the
     /// [`super::mermaid`] submodule.
     pub(super) render_mermaid: bool,
+    /// The background of an unhighlighted code block. See [`RenderOpts`].
+    pub(super) code_block_background: CodeBlockBackground,
     /// Active collection of a ```mermaid block: `(fence info string, source)`.
     /// While `Some`, `Text` events accumulate here (modeled on
     /// [`TableBuilder`]), and [`Writer::end_codeblock`] decides "diagram or
@@ -70,7 +72,8 @@ pub(super) struct Writer {
     /// diagram.
     codeblock_closed: bool,
     /// Index in [`Writer::lines`] of the opening fence of the code block being
-    /// collected, for the **unhighlighted** path only (`None` otherwise). The
+    /// collected, for the **unhighlighted** path on the inverted background
+    /// only (`None` otherwise). The
     /// block's background is squared off into a rectangle once its width is
     /// known, i.e. at [`Writer::end_codeblock`] — see [`pad_code_block`].
     code_start: Option<usize>,
@@ -102,6 +105,7 @@ impl Writer {
             soft_break_as_newline: false,
             table_row_separators: false,
             render_mermaid: false,
+            code_block_background: CodeBlockBackground::default(),
             mermaid: None,
             codeblock_closed: true,
             code_start: None,
@@ -429,8 +433,9 @@ impl Writer {
             // From here on the lines belong to the block's background
             // rectangle (squared off in `end_codeblock`, once its width is
             // known) — the fences included, they are its top and bottom edge.
-            // The monochrome mode has no background to square off.
-            self.code_start = (!self.palette.mono).then_some(self.lines.len());
+            // The normal background and the monochrome mode have none to
+            // square off.
+            self.code_start = self.plain_code_has_background().then_some(self.lines.len());
         }
         self.push_line(fence_line(format!("```{info}")));
         // The block's content must start on a new line under the opening
@@ -468,9 +473,9 @@ impl Writer {
         }
     }
 
-    /// Prints a code block's source in the previous "unhighlighted" look
-    /// (reversed style, DIM fences with the info string) — the ```mermaid
-    /// block's fallback. The look repeats the old path byte-for-byte
+    /// Prints a code block's source in the "unhighlighted" look (the chosen
+    /// background, DIM fences with the info string) — the ```mermaid block's
+    /// fallback. The look repeats the old path byte-for-byte
     /// (`start_codeblock` with no syntax + `text` + `end_codeblock`), see the
     /// golden test `mermaid_fallback_matches_disabled_render`.
     fn emit_fenced_source(&mut self, info: &str, src: &str) {
@@ -483,19 +488,30 @@ impl Writer {
         }
         self.push_line(fence_line("```".to_string()));
         self.line_styles.pop();
-        if !self.palette.mono {
+        if self.plain_code_has_background() {
             pad_code_block(&mut self.lines, start, self.width);
         }
     }
 
-    /// The line style of an unhighlighted code block: the reversed rectangle,
-    /// and nothing in the monochrome mode — reverse video is kept there for a
+    /// Whether an unhighlighted code block is drawn on a background — the
+    /// inverted one, outside the monochrome mode. Only then is there a
+    /// rectangle to square off ([`pad_code_block`]).
+    fn plain_code_has_background(&self) -> bool {
+        !self.palette.mono && self.code_block_background == CodeBlockBackground::Inverted
+    }
+
+    /// The line style of an unhighlighted code block: the reversed rectangle
+    /// for the inverted background, the code colour for the normal one, and
+    /// nothing in the monochrome mode — reverse video is kept there for a
     /// selection and a search match, and the block has its fences.
     fn plain_code_style(&self) -> Style {
         if self.palette.mono {
             Style::default()
         } else {
-            code_style()
+            match self.code_block_background {
+                CodeBlockBackground::Inverted => code_style(),
+                CodeBlockBackground::Normal => code_text_style(&self.palette),
+            }
         }
     }
 
@@ -1483,6 +1499,147 @@ not a diagram at all
         );
         // The premise: elsewhere the fallback is the padded rectangle.
         assert!(rows(&Palette::default()).iter().any(|r| r.ends_with(' ')));
+    }
+
+    /// Whether any line, or any span on one, carries reverse video.
+    fn any_reversed(text: &Text<'_>) -> bool {
+        text.lines.iter().any(|l| {
+            l.style.add_modifier.contains(Modifier::REVERSED)
+                || l.spans
+                    .iter()
+                    .any(|s| s.style.add_modifier.contains(Modifier::REVERSED))
+        })
+    }
+
+    fn with_background(background: CodeBlockBackground) -> RenderOpts {
+        RenderOpts {
+            render_mermaid: true,
+            code_block_background: background,
+            ..Default::default()
+        }
+    }
+
+    fn rows_of(text: &Text<'_>) -> Vec<String> {
+        text.lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect()
+    }
+
+    /// The normal background (spec §11.4): an unhighlighted block is its text
+    /// in the code colour between its fences — no reverse video, and no
+    /// padding squaring off a rectangle that is not drawn. The control is the
+    /// default, which is both.
+    #[test]
+    fn a_plain_code_block_on_the_normal_background_is_its_text_between_fences() {
+        let md = "```nolang\nshort\na longer line of it\n```";
+        let palette = Palette::default();
+        let normal = render_with(
+            md,
+            40,
+            &palette,
+            with_background(CodeBlockBackground::Normal),
+        );
+        assert!(!any_reversed(&normal), "{normal:?}");
+        assert_eq!(
+            rows_of(&normal),
+            ["```nolang", "short", "a longer line of it", "```"]
+        );
+        let short = &normal.lines[1];
+        assert_eq!(
+            short.style.patch(short.spans[0].style).fg,
+            Some(palette.code_text),
+            "the text takes the colour a highlighted block gives unscoped text"
+        );
+
+        let inverted = render_with(md, 40, &palette, RenderOpts::default());
+        assert!(
+            any_reversed(&inverted),
+            "the control: the default is reversed"
+        );
+        assert!(rows_of(&inverted).iter().any(|r| r.ends_with(' ')));
+    }
+
+    /// The case the setting exists for: a ```mermaid block still streaming is
+    /// shown as its source until the closing fence arrives, and on the
+    /// inverted background that source is a bright rectangle that a moment
+    /// later becomes a diagram with no background at all. On the normal one it
+    /// is never reversed — and the diagram it becomes is the same either way.
+    #[test]
+    fn a_streaming_mermaid_source_on_the_normal_background_is_not_reversed() {
+        let open = "Here:\n\n```mermaid\nflowchart TD\nA --> B";
+        let palette = Palette::default();
+        let normal = render_with(
+            open,
+            60,
+            &palette,
+            with_background(CodeBlockBackground::Normal),
+        );
+        assert!(!any_reversed(&normal), "{normal:?}");
+        assert!(rows_of(&normal).iter().any(|r| r == "flowchart TD"));
+        let inverted = render_with(
+            open,
+            60,
+            &palette,
+            with_background(CodeBlockBackground::Inverted),
+        );
+        assert!(
+            any_reversed(&inverted),
+            "the control: the reel's loud frame"
+        );
+
+        let closed = format!("{open}\n```");
+        let drawn = |b| render_with(&closed, 60, &palette, with_background(b));
+        let diagram = drawn(CodeBlockBackground::Normal);
+        assert!(
+            !rows_of(&diagram).iter().any(|r| r.contains("```")),
+            "the premise: the closed block is drawn, not printed: {diagram:?}"
+        );
+        assert_eq!(diagram, drawn(CodeBlockBackground::Inverted));
+    }
+
+    /// A ```mermaid block that cannot be drawn falls back to its source by a
+    /// road of its own — on the normal background without a rectangle too.
+    #[test]
+    fn a_mermaid_fallback_on_the_normal_background_has_no_rectangle() {
+        let md = "```mermaid\nnot a diagram at all\n```";
+        let normal = render_with(
+            md,
+            40,
+            &Palette::default(),
+            with_background(CodeBlockBackground::Normal),
+        );
+        assert!(!any_reversed(&normal), "{normal:?}");
+        assert_eq!(
+            rows_of(&normal),
+            ["```mermaid", "not a diagram at all", "```"]
+        );
+    }
+
+    /// What the setting does not touch: a highlighted block (it has no
+    /// background to choose), and the monochrome mode (it has none at all).
+    #[test]
+    fn the_background_changes_only_an_unhighlighted_block_in_colour() {
+        let both = |md: &str, palette: &Palette| {
+            (
+                render_with(
+                    md,
+                    40,
+                    palette,
+                    with_background(CodeBlockBackground::Inverted),
+                ),
+                render_with(
+                    md,
+                    40,
+                    palette,
+                    with_background(CodeBlockBackground::Normal),
+                ),
+            )
+        };
+        let (inverted, normal) = both(CODE_MD, &Palette::default());
+        assert_eq!(inverted, normal, "a highlighted block");
+        let (inverted, normal) = both("```nolang\nx\n```", &Palette::mono());
+        assert_eq!(inverted, normal, "the monochrome mode");
     }
 
     /// The wrap of the quoted lines is done over the finished list, by index

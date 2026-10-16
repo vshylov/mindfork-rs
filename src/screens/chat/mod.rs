@@ -812,6 +812,8 @@ impl ChatScreen {
         self.feed_view
             .set_render_mermaid(config.interface.render_mermaid);
         self.feed_view
+            .set_code_block_background(config.interface.code_block_background);
+        self.feed_view
             .set_show_model_name(config.interface.show_model_name);
         self.settings_snapshot = Some((config, profiles, language_locked, mcp, secrets_present));
     }

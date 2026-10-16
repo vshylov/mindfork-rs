@@ -761,6 +761,8 @@ enum FieldId {
     ITableSeparators,
     /// Render ```mermaid blocks in the feed as a diagram (fallback — the source).
     IMermaid,
+    /// The background of an unhighlighted code block in the feed: inverted / normal.
+    ICodeBackground,
     /// Show the model's name next to the assistant's header in the feed.
     IModelName,
     /// How many text rows the chat's input box grows to before it scrolls.
