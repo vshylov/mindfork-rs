@@ -4626,3 +4626,58 @@ macos.md §3 and §12 point at the tag.
   answer, the tools whose answers now say what happened, and gpt-oss through
   OpenRouter; that nothing in the data changes; and, for the background runs,
   that the slip is rarer on Qwen 3.6, not gone.
+- **The draft, checked before anyone else could see it** (§6 step 5).
+  - The owner merged and set `v0.18.2` on the merge commit `3b751edc`, which
+    was `origin/main`.
+  - `release.yml` (run 38483899071) was green in all eight jobs in
+    **16 min 01 s** (0.18.1: 15 min 36 s). Windows took the longest at 14 min
+    51 s, then macOS 12 min 49 s, Linux 8 min 13 s, and the demo 3 min 48 s.
+  - It left a draft that was not a prerelease, with fifteen assets. Every file
+    downloaded hashed to the line `sha256sums.txt` gives it, fourteen of
+    fourteen. Its notes were the `[0.18.2]` section and the footer, 62 lines.
+- **The job's install steps: `passed=46 failed=0` and `passed=47 failed=0`**,
+  and `installed: mindfork 0.18.2 (expected: mindfork 0.18.2)`. `install.sh`
+  is 0.18.1's file, byte for byte, and so are **the six animation files**: the
+  reel touches nothing this release changed.
+- **The released Windows binary.** The zip's `mindfork.exe` says `mindfork
+  0.18.2`; `console_probe.py --exe` passed `first-frame`, `small-window`,
+  `full-mode` and `keys`, every run exiting with code 0.
+- **The release's own subject, on the released binary.** A scratch script over
+  `console_probe`'s `Session` ran the zip's `mindfork.exe` in a temporary
+  folder — OpenRouter mode, `openai/gpt-oss-120b` with the router's own choice
+  of provider, Python on in Local mode, `sales.csv` attached with `/file attach`
+  — and sent the files smoke's request. **3 of 3**: one `python_exec` each,
+  reading `in/sales.csv`, the sum 4706 in the reply, and `summary.txt` kept in
+  the chat's files folder — the model that, on 2026-10-12's gate, had read
+  and written the working directory instead.
+- **The macOS archive** is a Mach-O arm64 executable with its dictionaries,
+  its `THIRD-PARTY-NOTICES.md` naming objc2 and coreaudio (twelve lines). Not
+  run: there is no Mac here.
+- **Attestations** verify for the three archives, the installer and
+  `install.sh`; a scratch file exits 1.
+- **Published, and the numbers of it.**
+  - The owner published at 00:04:20Z (immutable), 25 min 20 s after the draft
+    appeared.
+  - `crates-io.yml` ran 00:04:22Z → 00:06:47Z. `mindfork 0.18.2` was on the
+    registry at 00:06:41Z (4 497 546 bytes), 2 min 21 s after the
+    publication.
+  - `Site` started by itself three seconds after `crates.io` completed and
+    deployed at 00:07:23Z — **3 min 03 s after the publication** (0.18.1:
+    3 min 27 s). The hold on the merge had shown as before: "Is this version
+    out?" green, the build and the deploy skipped.
+  - From outside:
+    - the post answers 200 at `/blog/mindfork-0-18-2/`;
+    - the home page's and the install page's structured data say
+      `"softwareVersion": "0.18.2"`;
+    - the blog's index, `/llms.txt`, the feed and the sitemap list the post;
+    - `releases/latest` resolves to `v0.18.2`, and its `install.sh` is the
+      draft's.
+- **The package managers.** `aur.yml` built and checked `mindfork-rs-bin`
+  0.18.2 and stopped at its notice, because there is no key. Scoop's
+  Excavator (`20 */4`) and the tap's formula bump (`23 */6`) picked the
+  release up on their own schedules: the bucket named 0.18.2 at 01:00:27Z and
+  the formula at 01:01:30Z — 56 and 57 minutes after the publication. 0.18.1's
+  minutes had been the schedules falling right, as that entry said.
+- **Not run**: the released binaries on a Mac or Linux with a screen; the TUI
+  on real data, which is the owner's; the Windows installer and the `.deb`,
+  `.rpm` and Arch packages, beyond what their jobs install.
