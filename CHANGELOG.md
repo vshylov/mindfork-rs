@@ -38,6 +38,16 @@ up as a bright block of source before it appears. The default is unchanged.
   the file but does not keep the field: 0.18.2 rewrites the settings while it
   runs, without it, so after a trip back to 0.18.2 the choice is `inverted` again.
 
+### Security
+
+- **The TLS library every network request goes through is updated** (rustls
+  0.23.46), past four advisories. One reaches mindfork: someone on the network
+  between you and a server could make later connections to that server fall back
+  from post-quantum to classical key exchange. No key or authentication is
+  broken — what is lost is the protection against traffic recorded now being
+  decrypted later by a quantum computer. The other three are in parts of the
+  library mindfork does not use.
+
 ## [0.18.2] — 2026-10-14
 
 **What a tool tells the model is what happened.** Nine fixes found by running

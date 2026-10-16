@@ -4719,6 +4719,17 @@ macos.md §3 and §12 point at the tag.
   reader, from the other side: 0.18.3 on `"tinted"` parses, exit 0.
 - **No rehearsal.** Nothing under `.github/`, `packaging/` or `tools/` changed
   since `v0.18.2`; the `demo-reel` job runs the same steps on the new code.
+- **`cargo-deny` went red on the PR, and not for the PR.** RustSec had published
+  four advisories against `rustls 0.23.45` (RUSTSEC-2026-0346 to 0349, all fixed in
+  0.23.46), and the job reads the live database — `main` would have failed the same
+  way. `cargo update -p rustls`: two lines of `Cargo.lock`, nothing else moved.
+  Which reach mindfork: not 0346 (a custom `ClientSessionStore`'s `Debug`), 0347
+  (`EchMode::Enable`) or 0348 (the `brotli` feature — `cargo tree -e features`
+  shows `aws-lc-rs`, `std`, `tls12` and no `brotli`); 0349 does in principle —
+  reqwest keeps resumption on, so an active attacker could pin later connections to
+  a server to classical key exchange. A *Security* item and a paragraph of the
+  post say so. `cargo deny check advisories` locally: green on the new lock, and
+  red with all four on the old one (the control).
 - **On the draft, beyond §6's checks**: `mindfork-demo-dark-en.gif` is this
   release's subject — the flowchart's source streaming in without the reversed
   block (docs/research/demo-reel.md §10).
