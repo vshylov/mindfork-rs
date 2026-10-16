@@ -4733,3 +4733,64 @@ macos.md §3 and §12 point at the tag.
 - **On the draft, beyond §6's checks**: `mindfork-demo-dark-en.gif` is this
   release's subject — the flowchart's source streaming in without the reversed
   block (docs/research/demo-reel.md §10).
+- **The draft, checked before anyone else could see it** (§6 step 5).
+  - The owner merged and set `v0.18.3` on the merge commit `d6ab8d70`, which
+    was `origin/main`.
+  - `release.yml` (run 38948064562) was green in all eight jobs in
+    **15 min 57 s** (0.18.2: 16 min 01 s). macOS took the longest at 14 min
+    31 s, then Windows 12 min 01 s, Linux 7 min 30 s, and the demo 4 min 25 s.
+  - It left a draft that was not a prerelease, with fifteen assets. Every file
+    downloaded hashed to the line `sha256sums.txt` gives it, fourteen of
+    fourteen. Its notes were the `[0.18.3]` section and the footer, 36 lines.
+- **The job's install steps: `passed=46 failed=0` and `passed=47 failed=0`**,
+  and `installed: mindfork 0.18.3 (expected: mindfork 0.18.3)`. `install.sh`
+  is 0.18.2's file, byte for byte; **the six animation files are not** — they
+  are this release's subject (the dark English GIF 1 161 629 → 1 157 206 bytes,
+  the five others by 1–7 KB each).
+- **The released Windows binary.** The zip's `mindfork.exe` says `mindfork
+  0.18.3`, and its `THIRD-PARTY-NOTICES.md` names `rustls 0.23.46`;
+  `console_probe.py --exe` passed `first-frame`, `small-window`, `full-mode`
+  and `keys`, every run exiting with code 0.
+- **The release's subject, on the released binary and in the released
+  files.** The scratch probe over `console_probe`'s `Session` ran the zip's
+  `mindfork.exe demo`: a fenced block with no language, typed and sent, was
+  reversed on its three rows; with *Code block background* cycled to `normal`
+  the same rows had no reversed cell; exit 0. In the draft's own GIFs the
+  flowchart's source is on screen in frames 75–80 of both English looks and
+  66–71 of the Russian one, between dim fences like the `bash` block above it,
+  and the frame after the last of them is the diagram — no reversed block in
+  any of them.
+- **The macOS archive** is a Mach-O arm64 executable (`cf fa ed fe`, CPU type
+  `0x0100000c`) with its three dictionaries, its `THIRD-PARTY-NOTICES.md`
+  naming objc2 and coreaudio (twelve lines) and `rustls 0.23.46`. Not run:
+  there is no Mac here.
+- **Attestations** verify for the three archives, the installer and
+  `install.sh`; a scratch file exits 1.
+- **Published, and the numbers of it.**
+  - The owner published at 18:56:58Z (immutable), 9 min 02 s after the draft
+    appeared.
+  - `crates-io.yml` ran 18:57:00Z → 19:00:04Z. `mindfork 0.18.3` was on the
+    registry at 18:59:09Z (4 502 950 bytes), 2 min 11 s after the
+    publication.
+  - `Site` started by itself two seconds after `crates.io` completed and
+    deployed at 19:00:39Z — **3 min 41 s after the publication** (0.18.2:
+    3 min 03 s). The hold on the merge had shown as before: "Is this version
+    out?" green, the build and the deploy skipped.
+  - From outside:
+    - the post answers 200 at `/blog/mindfork-0-18-3/`;
+    - the home page's and the install page's structured data say
+      `"softwareVersion": "0.18.3"`;
+    - the blog's index, `/llms.txt`, the feed and the sitemap list the post;
+    - `releases/latest` resolves to `v0.18.3`, and its `install.sh` is the
+      draft's;
+    - **`mindfork.io/demo/mindfork-demo-dark-en.gif` and
+      `mindfork-demo-light-en.webp` are the draft's, byte for byte** — the
+      first is what the README's image points at, so the request that started
+      this release (a demo without the reversed block, "everywhere") is met.
+- **The package managers.** `aur.yml` built and checked `mindfork-rs-bin`
+  0.18.3 and stopped at its notice, because there is no key. At 19:04Z Scoop's
+  bucket and the tap's formula still named 0.18.2: their schedules
+  (`20 */4`, `23 */6`) next fire at 20:20Z and 00:23Z. Not waited for.
+- **Not run**: the released binaries on a Mac or Linux with a screen; the TUI
+  on real data, which is the owner's; the Windows installer and the `.deb`,
+  `.rpm` and Arch packages, beyond what their jobs install.
