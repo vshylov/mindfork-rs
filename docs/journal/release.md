@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (76)
+## Entries (77)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -88,6 +88,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the macOS probe branch, frozen as a tag (done)
 - Release 0.18.1 (prepared)
 - Release 0.18.2 (prepared)
+- Release 0.18.3 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -4681,3 +4682,43 @@ macos.md §3 and §12 point at the tag.
 - **Not run**: the released binaries on a Mac or Linux with a screen; the TUI
   on real data, which is the owner's; the Windows installer and the `.deb`,
   `.rpm` and Arch packages, beyond what their jobs install.
+
+### Release 0.18.3 (prepared)
+
+- **A release PR** per [AGENTS.md §6](../../AGENTS.md), branch
+  `chore/release-0.18.3`:
+  - `Cargo.toml` `0.18.2 → 0.18.3` (+ one line of `Cargo.lock`), and the
+    site's `app_version`;
+  - `CHANGELOG.md`: `[Unreleased]` → `[0.18.3] — 2026-10-16` under a lead
+    paragraph, "A plain code block can be quiet", a fresh `[Unreleased]`, and
+    the comparison links;
+  - CLAUDE.md's status heading;
+  - the release's post, and `/llms.txt` regenerated from it.
+
+  Since `v0.18.2`: one pull request with behaviour, 768 — the background of an
+  unhighlighted code block as a setting, and the animated demo drawn on the
+  `normal` one; and 767, the journal of 0.18.2's publication. Asked for so that
+  the demo's new look reaches the README and the site, which play the reel the
+  release's `demo-reel` job draws from the tag.
+- **A PATCH, as the owner asked, with an item under *Added*** — 0.18.1's
+  precedent, recorded above.
+- **The `Data` rubric, by measurement.** `git diff v0.18.2 -- src/shared/storage
+  src/shared/config.rs src/entities src/features/data_migration.rs
+  src/features/backup.rs` names `config.rs` alone: a new field, not a new value of
+  an existing enum, and read leniently. Measured anyway, on `v0.18.2` built from
+  the tag into a target directory of its own (2 min 28 s): in a fresh portable
+  folder the new binary wrote `interface.code_block_background = normal` with
+  `setup --set`; 0.18.2's `setup --set` parsed the file typed, exit 0, and left it
+  as it was; 0.18.2's interface, started in a hidden console
+  (`tools/console_probe.py`'s `Session`), drew its first screen and quit with 0 —
+  and the file it left **had no `code_block_background`**: it rewrites the
+  settings while it runs, through its own types. That is every additive field's
+  fate under an older version, and the first time one was written down: the
+  `Data` item said "an older version ignores it", and now says that after a trip
+  back to 0.18.2 the choice is `inverted` again — the post too. And the lenient
+  reader, from the other side: 0.18.3 on `"tinted"` parses, exit 0.
+- **No rehearsal.** Nothing under `.github/`, `packaging/` or `tools/` changed
+  since `v0.18.2`; the `demo-reel` job runs the same steps on the new code.
+- **On the draft, beyond §6's checks**: `mindfork-demo-dark-en.gif` is this
+  release's subject — the flowchart's source streaming in without the reversed
+  block (docs/research/demo-reel.md §10).

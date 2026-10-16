@@ -14,6 +14,13 @@ split by subsystem.
 
 ## [Unreleased]
 
+## [0.18.3] — 2026-10-16
+
+**A plain code block can be quiet.** A code block with no highlighting can now
+be drawn without its reversed background — the way a highlighted block looks —
+and the animated demo is drawn that way, so the diagram in it no longer flashes
+up as a bright block of source before it appears. The default is unchanged.
+
 ### Added
 
 - **The background of a plain code block is a setting.** Settings → Interface →
@@ -26,8 +33,10 @@ split by subsystem.
 ### Data
 
 - `settings.json` gains `interface.code_block_background` — `inverted` or
-  `normal`. An addition: nothing is migrated, an older version ignores it, and a
-  value a version does not know reads as `inverted` rather than costing the file.
+  `normal`. An addition: nothing is migrated, and a value a version does not know
+  reads as `inverted` rather than costing the file. An older version starts on
+  the file but does not keep the field: 0.18.2 rewrites the settings while it
+  runs, without it, so after a trip back to 0.18.2 the choice is `inverted` again.
 
 ## [0.18.2] — 2026-10-14
 
@@ -3327,7 +3336,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.18.2...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.18.3...HEAD
+[0.18.3]: https://github.com/vshylov/mindfork-rs/compare/v0.18.2...v0.18.3
 [0.18.2]: https://github.com/vshylov/mindfork-rs/compare/v0.18.1...v0.18.2
 [0.18.1]: https://github.com/vshylov/mindfork-rs/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/vshylov/mindfork-rs/compare/v0.17.0...v0.18.0
