@@ -124,7 +124,17 @@ Tried so far:
   of its first two stars (§7.1).
 - **Glama's MCP client list**, which awesome-mcp-clients names as its most up
   to date list — submitted 2026-10-06, waiting on its review (no public page
-  yet, 2026-10-10).
+  yet, 2026-10-17).
+- **A Medium article**, the owner's, published 2026-10-17: [*What Replaces Code
+  Ownership When AI Writes the Code*](https://medium.com/@vshylov/what-replaces-code-ownership-when-ai-writes-the-code-3482b725008a).
+  - **The subject** is how mindfork is built, not the app itself: how a
+    product's quality stays legible when an AI writes the code and its owner
+    reads no diffs.
+  - **Open to everyone**, not only Medium's members. It links to mindfork.io,
+    the repository and a CI run.
+  - **Not among the plan's channels.** Its readers are engineers and managers
+    who ask what AI-written code does to ownership, not the users §8 names. Its
+    effect is first measured on 2026-10-24 (§7.1).
 
 One-shot — only after stages 0–1, with the animation and an honest macOS
 answer in hand (both since 2026-10-08). The first of them carries the call for
@@ -256,6 +266,7 @@ those.
 |---|---|---|---|---|---|---|
 | 2026-10-03 (§2) | 340 (4) | github.com 2, mindfork.io 2 | 0 / 0 / 0 | 0 | 0.14.1: 15 | 101 |
 | 2026-10-10 | 559 (17) | github.com 2, mindfork.io 2 | **2** / 0 / 0 | 0 | 0.18.1: 14 (0.18.0: 15) | 172 |
+| 2026-10-17 | 544 (18) | github.com 2, mindfork.io 2 | 2 / 0 / 0 | 0 | 0.18.3: 8, a day old (0.18.2: 22, 0.18.1: 49) | 193 |
 
 **2026-10-10, the first week of stage 2:**
 - **The first two stars came on 2026-10-08.** Neither is from the owner or from
@@ -278,6 +289,26 @@ those.
   - Search Console, Bing and CloudFront's reports, which are the owner's
     consoles; the CloudFront reports have no API.
   - Discussions: no thread yet.
+
+**2026-10-17, the second week:**
+- **Nothing new from strangers.** Still two stars, and no fork, issue, pull
+  request or Discussions thread from anyone but the owner.
+- **GitHub's traffic ends on 2026-10-15**, two days behind. Over 14 days, 18
+  unique visitors; the front page had 10 views by 7 (6 a week earlier). The
+  referrers are the same two as on 2026-10-03. So the awesome-ratatui listing
+  has brought no visit that can be measured in its first week.
+- **A download nothing here explains.** 0.18.1's Windows zip was downloaded 17
+  times while it was the newest release (2026-10-09 to 2026-10-14);
+  0.18.0's and 0.18.2's were downloaded once each.
+  - No workflow fetches the zip, so these are people, Scoop or a mirror's bots,
+    and the count alone cannot tell them apart.
+  - The Linux archive's numbers (19 and 12) are mostly `packaging.yml`'s own
+    install of the latest release. That runs on every pull request that
+    touches the packaging, `Cargo.toml` or `Cargo.lock`.
+- **crates.io grew by 21**, about one version's background.
+- **The Medium article (§4 stage 2) came out on the day of this measurement**,
+  after the last day GitHub's traffic covers. A visit through it would show as
+  `medium.com` among the referrers, so 2026-10-24 is its first measure.
 
 ## 8. Decisions (the owner, 2026-10-03)
 
