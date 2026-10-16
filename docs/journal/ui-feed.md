@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (50)
+## Entries (51)
 
 - Post-M9: mouse-wheel feed scrolling (done)
 - Post-M9: own markdown renderer (tables + LaTeX + theme) (done)
@@ -62,6 +62,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the chat sheds its chrome one piece at a time (done)
 - Post-M9: the colour modes on a real Mac (done)
 - Post-M9: Terminal.app before macOS 26 gets its 256 colours (done)
+- Post-M9: the background of an unhighlighted code block is a setting (done)
 
 ### Post-M9: mouse-wheel feed scrolling (done)
 - **The mouse wheel scrolls the feed** on par with `PageUp/PageDown`. `ratatui::init()`
@@ -3077,3 +3078,68 @@ That Terminal sets no `COLORTERM`; Terminal on macOS 26 sets `truecolor`.
 
 **Tests:** +7 (6 in `colour_depth`, 1 in `ui`). **3986 unit tests green, 257
 `#[ignore]`**; fmt and clippy are clean.
+
+### Post-M9: the background of an unhighlighted code block is a setting (done)
+
+**Why.** The owner's review of the animated demo: the flowchart streams in as its
+source until its block closes, and an unhighlighted code block was always drawn in
+reverse video — so the reel showed a bright block of mermaid source that a moment
+later became a diagram with no background. Asked for: a setting with a normal and
+an inverted background, inverted for the app's users by default, normal for the
+reel (docs/research/demo-reel.md §10).
+
+**What.**
+- `interface.code_block_background` (`shared/config.rs::CodeBlockBackground`):
+  `inverted` (default) or `normal`. Read by `lenient_code_block_background`, the
+  `theme_mode` shape — a value a newer version adds reads as `inverted` with a line
+  in the log instead of failing the file (lessons §8: a setting that may grow is
+  lenient from its first release), so no schema step.
+- The renderer (`shared/markdown`): `RenderOpts::code_block_background`, its
+  `Default` the inverted one, so every caller that does not choose draws what it
+  drew. `Writer::plain_code_style` gives the normal background `code_text` — the
+  colour a highlighted block gives text no scope claims — and
+  `plain_code_has_background` decides `pad_code_block` for both roads to the look
+  (an unknown language, a mermaid block shown as its source). No rectangle, no
+  padding: a normal block's rows are its source's.
+- The feed threads it like `render_mermaid` — a field, a setter the chat screen
+  calls from `set_settings`, a member of the cache key — and the user's message
+  takes it too (its `opts` are the feed's).
+- Settings → Interface → Appearance, *Code block background*, after *Mermaid
+  diagrams*; `en` and `ru`. Its hint is 287 characters (`ru` 293) against the
+  tallest one's 694 (`sub_background`, `ru` 758), so the panel does not grow.
+- The reel: `CODE_BACKGROUND = Normal`, given to the director; `reel` is `play`
+  with it. The stills keep the default — none holds an unhighlighted block.
+
+**Decisions.**
+- **A choice of two values, not a switch** — the owner named the two; a
+  `Choice` row says which it is (`‹ inverted ›`), where a toggle would say only
+  `[x]` against a label that has to carry the meaning.
+- **`normal` is the highlighted block's look**, not the tool card's `palette.text`:
+  the point is that a block with no grammar reads like one with a grammar and no
+  colours.
+- **The monochrome mode is untouched** — it had no background to choose already.
+
+**Live.** `mindfork demo` in a hidden console (`tools/console_probe.py`'s
+`Session`): a fenced block with no language, typed and sent — its three rows
+reversed; Settings → Interface, the row cycled to `normal`, `Esc` twice — the same
+three rows with no reversed cell, at once; exit 0. The row and its hint read
+whole at 120×30. The reels rendered and looked at frame by frame: the source
+streams in like the `bash` block above it, and the diagram replaces it without a
+flash.
+
+**Screenshots.** The four `settings-*` dumps move by the Interface section's
+field count (17 → 18) and nothing else; the old dumps re-rendered byte-identical
+first (8/8), then the four PNGs and SVGs regenerated.
+
+**Mutation check.** 12 mutants behind a run-time switch, one build: the normal
+style replaced by the reverse, the padding decided without the setting (twice),
+the option not handed to the writer, the feed's options and its cache key
+dropping it, the chat screen not threading it, the reel's constant, the lenient
+reader's fallback, the settings cycle, the code colour — all 12 killed, each by
+the test written for it; the chat screen's threading only by the reel's test, the
+one that goes through `set_settings`.
+
+**Tests:** +10 (3 in `config`, 4 in `markdown::writer`, 1 each in
+`message_feed`, the settings screen and `demo_reel`). **4031 unit tests green,
+260 `#[ignore]`**; fmt and clippy are clean. A live run against an engine is not
+needed — a renderer setting, no engine, memory or tool path.

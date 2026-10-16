@@ -337,7 +337,9 @@ Eight sections, and these four are the ones worth a visit early.
 - **Memory** — the context window when the engine cannot say it, what triggers
   compaction, and how much of the knowledge base a turn may pull in.
 - **Interface** — the colour mode and its theme (below), whether the model's
-  name is shown in the reply header,
+  name is shown in the reply header, the background of a code block shown
+  without highlighting (`inverted` by default, or `normal` — just its text
+  between the ```` ``` ```` lines),
   how tall the input box grows before it scrolls (6 rows by default; it never
   takes more than half the window), mouse capture, and the OSC 52 clipboard mode
   for sessions over SSH.
