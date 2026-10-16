@@ -1829,6 +1829,78 @@ pub enum NoteOrder {
     OldestFirst,
 }
 
+/// The background of a code block the feed draws **without highlighting** —
+/// no language, or one syntect does not know (`interface.code_block_background`,
+/// spec §11.4). A highlighted block has no background whichever is chosen.
+///
+/// Like [`ThemeMode`], deliberately **not** `Deserialize`: the field is read
+/// through [`lenient_code_block_background`], so a value a newer version adds
+/// reads here as the default instead of failing the whole `settings.json`
+/// (docs/lessons.md §8 — a setting that may grow is read leniently from its
+/// first release).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CodeBlockBackground {
+    /// Reverse video (default): the block is a solid rectangle in the
+    /// terminal's own colours swapped, its rows padded to the block's width —
+    /// what the feed has always drawn.
+    #[default]
+    Inverted,
+    /// No background: the text in the code colour over the feed's own
+    /// background, told from the prose by its fences — the look a highlighted
+    /// block has. The animated demo is drawn with it (docs/research/demo-reel.md
+    /// §10): a reversed block streaming in ahead of the diagram it becomes was
+    /// the loudest thing in the reel.
+    Normal,
+}
+
+impl CodeBlockBackground {
+    /// Every value, in the order the settings row cycles through them.
+    pub const ALL: [CodeBlockBackground; 2] =
+        [CodeBlockBackground::Inverted, CodeBlockBackground::Normal];
+
+    /// The name a value has in `settings.json`.
+    pub fn name(self) -> &'static str {
+        match self {
+            CodeBlockBackground::Inverted => "inverted",
+            CodeBlockBackground::Normal => "normal",
+        }
+    }
+
+    /// The value by its `settings.json` name; `None` for one this binary does
+    /// not know.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|b| b.name() == name)
+    }
+
+    /// The next value in [`Self::ALL`], in direction `dir`, wrapping.
+    pub fn cycle(self, dir: i32) -> Self {
+        let n = Self::ALL.len() as i32;
+        let at = Self::ALL.iter().position(|b| *b == self).unwrap_or(0) as i32;
+        Self::ALL[(at + dir).rem_euclid(n) as usize]
+    }
+}
+
+/// Reads `interface.code_block_background`: a value's name. Anything else — a
+/// name from a newer version, a number, `null` — reads as the default and says
+/// so in the log, instead of failing the whole file (see [`CodeBlockBackground`]).
+fn lenient_code_block_background<'de, D>(de: D) -> Result<CodeBlockBackground, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = serde_json::Value::deserialize(de)?;
+    Ok(raw
+        .as_str()
+        .and_then(CodeBlockBackground::from_name)
+        .unwrap_or_else(|| {
+            tracing::warn!(
+                value = %raw,
+                "interface.code_block_background is not a background this version knows — using the default"
+            );
+            CodeBlockBackground::default()
+        }))
+}
+
 /// Interface settings (theme, spellcheck, dictionaries). See spec §11.6.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -1878,6 +1950,10 @@ pub struct InterfaceSettings {
     /// case = prior behavior). See spec §11.4 and
     /// docs/research/mermaid-ascii-rendering.md.
     pub render_mermaid: bool,
+    /// The background of an unhighlighted code block in the feed — reverse
+    /// video (default) or none. See [`CodeBlockBackground`] and spec §11.4.
+    #[serde(deserialize_with = "lenient_code_block_background")]
+    pub code_block_background: CodeBlockBackground,
     /// Show the model's name next to the assistant's role header in the feed,
     /// taken from the message's own metadata snapshot (`MessageMetadata::model`)
     /// — so a reloaded conversation names the model that actually wrote each
@@ -1966,6 +2042,7 @@ impl Default for InterfaceSettings {
             terminal_compat: false,
             table_row_separators: false,
             render_mermaid: true,
+            code_block_background: CodeBlockBackground::default(),
             show_model_name: false,
             language: crate::shared::i18n::Lang::default(),
             clipboard_osc52: crate::shared::osc52::Osc52Mode::default(),
@@ -3452,6 +3529,7 @@ mod tests {
                 terminal_compat: true,
                 table_row_separators: true,
                 render_mermaid: false,
+                code_block_background: CodeBlockBackground::Normal,
                 show_model_name: true,
                 language: crate::shared::i18n::Lang::Ru,
                 clipboard_osc52: crate::shared::osc52::Osc52Mode::Always,
@@ -3573,6 +3651,86 @@ mod tests {
         assert_eq!(ThemeMode::Full.cycle(1), ThemeMode::Mono);
         assert_eq!(ThemeMode::System.cycle(-1), ThemeMode::Mono, "wraps");
         assert_eq!(ThemeMode::from_name("sepia"), None);
+    }
+
+    /// An unhighlighted code block keeps the reversed background it has always
+    /// had — on a fresh config and under a file written before the key existed
+    /// (the additive-field rule, AGENTS.md §3) — and the choice is written by
+    /// name, so `normal` survives a save.
+    #[test]
+    fn the_code_block_background_is_inverted_unless_chosen() {
+        assert_eq!(
+            InterfaceSettings::default().code_block_background,
+            CodeBlockBackground::Inverted
+        );
+        let old: AppConfig = serde_json::from_str(r#"{"interface":{"theme":"dark"}}"#).unwrap();
+        assert_eq!(
+            old.interface.code_block_background,
+            CodeBlockBackground::Inverted
+        );
+
+        let mut chosen = InterfaceSettings {
+            code_block_background: CodeBlockBackground::Normal,
+            ..InterfaceSettings::default()
+        };
+        let written = serde_json::to_value(&chosen).unwrap();
+        assert_eq!(written["code_block_background"], "normal");
+        let back: InterfaceSettings = serde_json::from_value(written).unwrap();
+        assert_eq!(back.code_block_background, CodeBlockBackground::Normal);
+        chosen.code_block_background = CodeBlockBackground::Inverted;
+        assert_eq!(
+            serde_json::to_value(&chosen).unwrap()["code_block_background"],
+            "inverted"
+        );
+    }
+
+    /// The reason the background is parsed leniently: a value a newer version
+    /// adds must not fail the file (lessons §8) — it reads as the default, and
+    /// the rest of the file is what it said.
+    #[test]
+    fn a_code_block_background_from_a_newer_version_does_not_cost_the_config() {
+        for foreign in [
+            r#""tinted""#,
+            r#""NORMAL""#,
+            "7",
+            "true",
+            "null",
+            r#"{"a":1}"#,
+        ] {
+            let json = format!(
+                r#"{{"max_tool_rounds":3,"interface":{{"theme":"light","code_block_background":{foreign}}}}}"#
+            );
+            let c: AppConfig = serde_json::from_str(&json).unwrap_or_else(|e| {
+                panic!("code_block_background={foreign} failed the parse: {e}")
+            });
+            assert_eq!(
+                c.interface.code_block_background,
+                CodeBlockBackground::Inverted,
+                "{foreign}"
+            );
+            assert_eq!(c.interface.theme, Theme::Light, "{foreign}");
+            assert_eq!(c.max_tool_rounds, 3, "{foreign}");
+        }
+    }
+
+    /// The names are the file format, and the cycle is the settings row: two
+    /// values, so a step either way is the other one.
+    #[test]
+    fn code_block_backgrounds_have_stable_names_and_cycle_both_ways() {
+        assert_eq!(CodeBlockBackground::Inverted.name(), "inverted");
+        assert_eq!(CodeBlockBackground::Normal.name(), "normal");
+        for b in CodeBlockBackground::ALL {
+            assert_eq!(CodeBlockBackground::from_name(b.name()), Some(b));
+            assert_eq!(serde_json::to_value(b).unwrap(), b.name());
+            assert_eq!(b.cycle(1).cycle(-1), b);
+            assert_ne!(b.cycle(1), b);
+            assert_eq!(b.cycle(1), b.cycle(-1));
+        }
+        assert_eq!(
+            CodeBlockBackground::Inverted.cycle(1),
+            CodeBlockBackground::Normal
+        );
+        assert_eq!(CodeBlockBackground::from_name("tinted"), None);
     }
 
     /// `NO_COLOR` (no-color.org): set to anything but an empty string it asks

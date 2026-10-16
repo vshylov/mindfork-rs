@@ -1082,6 +1082,8 @@
   "ui.settings.desc.sm_note_order": ["The order the self-model screen (F3) lists observations in, by their date.", "Newest first (the default) puts what the assistant noticed last right under the", "header - usually what you opened the screen for; oldest first reads the narrative", "forward, as the story of how the self-model got here. Nothing else changes."],
   "ui.settings.choice.note_order_newest": "newest first",
   "ui.settings.choice.note_order_oldest": "oldest first",
+  "ui.settings.choice.code_background_inverted": "inverted",
+  "ui.settings.choice.code_background_normal": "normal",
   "ui.settings.field.auto_title": "Auto-title new chats",
   "ui.settings.desc.auto_title": ["The model names a new conversation by itself, once. After the user's message -", "the title appears while the reply streams; after the assistant's reply - the name", "reflects what the answer turned out to be about (usually more accurate). A chat", "you renamed yourself is never touched; Ctrl+R in the chat list works in any mode."],
   "ui.settings.choice.auto_title_user": "after the user's message",
@@ -1676,6 +1678,7 @@
   "ui.settings.field.compat": "Legacy terminal mode",
   "ui.settings.field.table_separators": "Table row separators",
   "ui.settings.field.mermaid": "Mermaid diagrams",
+  "ui.settings.field.code_background": "Code block background",
   "ui.settings.field.model_name": "Model name in the feed",
   "ui.settings.field.input_rows": "Input box height",
   "ui.settings.field.spell": "Spell check",
@@ -1797,6 +1800,12 @@
     "Render ```mermaid blocks as a text-graphics diagram instead of source.",
     "Flowchart and sequence only; on any failure (parse error, too wide, other",
     "kind) the block is printed as source, same as with the toggle off."
+  ],
+  "ui.settings.desc.code_background": [
+    "The background of a code block the feed shows without highlighting — no",
+    "language, or one the app does not know. Inverted (the default): a solid",
+    "reversed rectangle. Normal: the text between its ``` lines, the way a",
+    "highlighted block is shown — quieter while a diagram's source streams in."
   ],
   "ui.settings.desc.show_model_name": [
     "Show the name of the model that wrote the reply next to the assistant's",

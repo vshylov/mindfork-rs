@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::shared::api::llama_args::ManagedRole;
-use crate::shared::config::WebProvider;
+use crate::shared::config::{CodeBlockBackground, WebProvider};
 // ---------- free functions ----------
 
 // The sampling rows the screen offers come from
@@ -1488,6 +1488,16 @@ pub(super) fn note_order_label(m: NoteOrder, loc: &'static Locale) -> String {
     loc.t(match m {
         NoteOrder::NewestFirst => "ui.settings.choice.note_order_newest",
         NoteOrder::OldestFirst => "ui.settings.choice.note_order_oldest",
+    })
+    .to_string()
+}
+
+/// The label of an unhighlighted code block's background
+/// (`interface.code_block_background`).
+pub(super) fn code_background_label(b: CodeBlockBackground, loc: &'static Locale) -> String {
+    loc.t(match b {
+        CodeBlockBackground::Inverted => "ui.settings.choice.code_background_inverted",
+        CodeBlockBackground::Normal => "ui.settings.choice.code_background_normal",
     })
     .to_string()
 }

@@ -14,6 +14,21 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Added
+
+- **The background of a plain code block is a setting.** Settings → Interface →
+  *Code block background*: a code block with no highlighting — no language, or
+  one the app does not know — is drawn `inverted` (a solid block in reversed
+  colours, the default, as before) or `normal` (its text between the ```` ``` ````
+  lines, the way a highlighted block looks). The animated demo now uses `normal`,
+  so a diagram's source no longer flashes up as a bright block before it is drawn.
+
+### Data
+
+- `settings.json` gains `interface.code_block_background` — `inverted` or
+  `normal`. An addition: nothing is migrated, an older version ignores it, and a
+  value a version does not know reads as `inverted` rather than costing the file.
+
 ## [0.18.2] — 2026-10-14
 
 **What a tool tells the model is what happened.** Nine fixes found by running

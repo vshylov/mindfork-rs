@@ -3,7 +3,8 @@
 Status: **design accepted 2026-10-03** (its shape is the promotion plan's §6,
 [promotion.md](promotion.md)); **stage 1 — the MVP probe — GO** (the owner,
 2026-10-03, after one round of review, §7); **stage 2 — publication —
-implemented** (§8); **stage 3 — the Russian variant — implemented** (§9).
+implemented** (§8); **stage 3 — the Russian variant — implemented** (§9);
+the code blocks are drawn on the **normal background** (the owner, 2026-10-16, §10).
 
 ## 1. Context and goal
 
@@ -307,3 +308,27 @@ python tools/demo_reel.py --font-dir <dir with JetBrainsMono-*.ttf>
   saved (id=…)"). Making both honest regenerates the committed stills — a task
   of its own, with the Russian file to change alongside.
 
+## 10. The code blocks on the normal background
+
+**The owner's review (2026-10-16).** The reel streams the flowchart as its source
+until its block closes (spec §11.4 — a diagram is never drawn from half a block),
+and an unhighlighted code block was drawn in reverse video. So for about half a
+second the loudest thing on screen was a bright block of `flowchart TD` and arrows,
+and then it vanished into a diagram with no background at all: the reel's one
+untidy moment, in the beat it is there to show off.
+
+**What changed.** The background became a setting of the app,
+`interface.code_block_background` — `inverted`, the default and what the feed has
+always drawn, or `normal`: the text in the code colour between its fences, the way
+a highlighted block looks (spec §11.4). The reel takes `normal`
+(`CODE_BACKGROUND` in `app/runtime/demo_reel.rs`, handed to the director with the
+rest of the settings); a user of the app keeps the default. The stills keep it
+too: none of them is caught mid-stream, and none holds an unhighlighted block — the
+chat still's flowchart is drawn and its `bash` block is highlighted.
+
+**Held by a test**: in every look, the rows of the answer beat that show the
+source's opening fence carry no reversed cell, and the same reel played on the
+default background does (`play`, the seam the control arm goes through). The
+reel's length and frames are otherwise unchanged — 92 frames and 25.5 s in English,
+82 and 24.1 s in Russian; GIF 1 129 KB / WebP 976 KB dark, 1 048 / 956 KB light,
+991 / 874 KB Russian.

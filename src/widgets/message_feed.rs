@@ -18,6 +18,7 @@ use crate::entities::chat::FeedView;
 use crate::entities::message::{Message, MessageRole};
 use crate::entities::profile::CharacterNames;
 use crate::features::tools::present::{self, ToolBlock};
+use crate::shared::config::CodeBlockBackground;
 use crate::shared::i18n::Locale;
 use crate::shared::markdown;
 use crate::shared::theme::Palette;
@@ -287,6 +288,10 @@ pub struct MessageFeed {
     /// threaded via [`MessageFeed::set_render_mermaid`]). On a render failure the
     /// block is printed as source (hard fallback, see `shared::markdown::mermaid`).
     render_mermaid: bool,
+    /// The background of an unhighlighted code block (setting
+    /// `interface.code_block_background`, threaded via
+    /// [`MessageFeed::set_code_block_background`]).
+    code_block_background: CodeBlockBackground,
     /// Draw the model name next to the assistant's role header (setting
     /// `interface.show_model_name`, threaded via
     /// [`MessageFeed::set_show_model_name`]). Off by default. A bubble whose
@@ -410,6 +415,7 @@ struct CacheKey {
     view: FeedView,
     table_row_separators: bool,
     render_mermaid: bool,
+    code_block_background: CodeBlockBackground,
     /// The model name is baked into the assistant's cached header line, so
     /// toggling the setting has to rebuild every block.
     show_model_name: bool,
@@ -543,6 +549,7 @@ impl MessageFeed {
             // first settings snapshot arrives, the feed renders as the default config.
             table_row_separators: false,
             render_mermaid: true,
+            code_block_background: CodeBlockBackground::default(),
             show_model_name: false,
             role_names: CharacterNames::default(),
             compaction: None,
@@ -583,6 +590,13 @@ impl MessageFeed {
     /// `interface.render_mermaid`). Changing the value invalidates the cache via [`CacheKey`].
     pub fn set_render_mermaid(&mut self, on: bool) {
         self.render_mermaid = on;
+    }
+
+    /// Sets the background of an unhighlighted code block (setting
+    /// `interface.code_block_background`, spec §11.4). Changing the value
+    /// invalidates the cache via [`CacheKey`].
+    pub fn set_code_block_background(&mut self, background: CodeBlockBackground) {
+        self.code_block_background = background;
     }
 
     /// Toggles the model name next to the assistant's role header (setting
@@ -1096,6 +1110,7 @@ impl MessageFeed {
             view: self.view,
             table_row_separators: self.table_row_separators,
             render_mermaid: self.render_mermaid,
+            code_block_background: self.code_block_background,
             show_model_name: self.show_model_name,
             lang: loc.lang(),
             role_names: self.role_names.clone(),
@@ -1118,6 +1133,7 @@ impl MessageFeed {
         let opts = markdown::RenderOpts {
             table_row_separators: self.table_row_separators,
             render_mermaid: self.render_mermaid,
+            code_block_background: self.code_block_background,
             ..Default::default()
         };
         // Resolved once per frame, before the loop: the id → block mapping is a
@@ -3702,6 +3718,43 @@ mod tests {
         assert!(
             joined(&off).contains("```mermaid"),
             "disabled — source (cache reset by key)"
+        );
+    }
+
+    /// An unhighlighted code block is reversed by default (mirroring the
+    /// config default), in the assistant's reply and the user's message alike;
+    /// the normal background takes the reverse away, and changing the value
+    /// resets the cache (same messages/width/palette — only the setting
+    /// changes). Spec §11.4.
+    #[test]
+    fn code_block_background_follows_setting_and_invalidates_cache() {
+        let mut feed = MessageFeed::new();
+        let palette = Palette::default();
+        let md = "```\nplain text, no language\n```";
+        let messages = [
+            msg(FeedRole::Assistant, md, ""),
+            msg(FeedRole::User, md, ""),
+        ];
+        let reversed = |lines: &[Line<'static>]| -> usize {
+            lines
+                .iter()
+                .filter(|l| {
+                    l.spans.iter().any(|s| s.content.contains("plain text"))
+                        && (l.style.add_modifier.contains(Modifier::REVERSED)
+                            || l.spans
+                                .iter()
+                                .any(|s| s.style.add_modifier.contains(Modifier::REVERSED)))
+                })
+                .count()
+        };
+        let inverted = feed.build_lines(&messages, &palette, 80, ru());
+        assert_eq!(reversed(&inverted), 2, "inverted by default, in both roles");
+        feed.set_code_block_background(CodeBlockBackground::Normal);
+        let normal = feed.build_lines(&messages, &palette, 80, ru());
+        assert_eq!(
+            reversed(&normal),
+            0,
+            "normal — no reverse (cache reset by key)"
         );
     }
 

@@ -1024,6 +1024,39 @@ fn interface_has_the_self_model_note_order_choice() {
 }
 
 #[test]
+fn interface_has_the_code_block_background_choice() {
+    let mut s = screen();
+    // In the "Interface" section, with a hint that says which blocks it governs.
+    let rows = s.interface_fields();
+    assert!(rows.iter().any(|r| r.id == FieldId::ICodeBackground));
+    assert!(field_desc(&s, FieldId::ICodeBackground).is_some());
+
+    // Inverted by default — what the feed has always drawn (spec §11.4) — and
+    // the cycle visits normal and comes back.
+    use crate::shared::config::CodeBlockBackground;
+    assert_eq!(
+        s.config.interface.code_block_background,
+        CodeBlockBackground::Inverted
+    );
+    let mut seen = vec![s.config.interface.code_block_background];
+    for _ in 0..2 {
+        match s.cycle_field(FieldId::ICodeBackground, 1) {
+            Some(SettingsIntent::SaveConfig(c)) => seen.push(c.interface.code_block_background),
+            other => panic!("expected SaveConfig, got {other:?}"),
+        }
+    }
+    assert_eq!(
+        seen,
+        vec![
+            CodeBlockBackground::Inverted,
+            CodeBlockBackground::Normal,
+            CodeBlockBackground::Inverted,
+        ],
+        "the cycle must return to where it started"
+    );
+}
+
+#[test]
 fn interface_has_table_separators_toggle() {
     let mut s = screen();
     // The field is in the "Interface" section (the "Appearance" group).
