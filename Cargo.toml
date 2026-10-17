@@ -225,7 +225,7 @@ uuid = { version = "1.23.3", features = ["v4", "v5", "serde"] }
 # password-protected backups (WinZip AES-256, spec §12.3): it pulls RustCrypto
 # crates only (aes/hmac/pbkdf2/sha1/constant_time_eq) — still no C dependency.
 # See features/backup.rs, docs/history/backup-password.md.
-zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2", "aes-crypto"] }
+zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2", "aes-crypto"] }
 
 # Windows specifics:
 # * `Win32_System_JobObjects` — an OS-level memory limit for the Python sandbox via a Job

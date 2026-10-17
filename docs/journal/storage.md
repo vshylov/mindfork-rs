@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (21)
+## Entries (22)
 
 - Post-M9: persisting the input-box draft in the chat file (done)
 - Post-M9: persisting deleted exchanges in the chat file (`Ctrl+E`/`Ctrl+R`) (done)
@@ -33,6 +33,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `chacha20poly1305` 0.10.1 → 0.11.0 — the nonce API, and a wipe that became optional (done)
 - Post-M9: the `max` effort is a stored value — `SETTINGS_SCHEMA` and `CHAT_SCHEMA` 4→5 (done)
 - Post-M9: every stored enum names the schema of its values (done)
+- Post-M9: `zip` 8.6.0 → 9.0.5 — three advisories, and the mode `llama setup` copied (done)
 
 ### Post-M9: persisting the input-box draft in the chat file (done)
 - **Unsaved input-box text is stored on the chat and restored on
@@ -1256,3 +1257,61 @@ No live run: tests only (AGENTS.md §3). No CHANGELOG entry: no user-visible eff
 
 **Gates**: 4047 unit tests green, 271 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.
+
+### Post-M9: `zip` 8.6.0 → 9.0.5 — three advisories, and the mode `llama setup` copied (done)
+
+- **What arrived.** The release PR for 0.19.0 ran `cargo deny check advisories` first, and
+  the live RustSec database had three new advisories against `zip` 8.6.0, all fixed in
+  9.0.0: RUSTSEC-2026-0367 (`extract()` keeps set-user-ID, set-group-ID and sticky bits),
+  -0368 (`extract()` creates symbolic links whose targets leave the destination) and -0369
+  (permissions applied through such links). `main` fails the same way; nothing the release
+  changes caused it. The precedent in `deny.toml` (the quick-xml pair) is to move to the
+  fixed version rather than argue an `ignore`, and a major version is its own pull request,
+  with the release stacked on it.
+- **Do they reach mindfork?** None of the APIs: nothing calls `ZipArchive::extract()` or
+  `ZipStreamReader::extract()`. The three extractors are mindfork's own (backup restore,
+  `llama setup`, the sandbox's wheels), each through `enclosed_name` and `File::create`, so
+  a link entry is written as a regular file holding its target. **But 0367 had a twin**:
+  `llama setup`'s zip path, on unix, applied `entry.unix_mode()` as it came, set-user-ID
+  included — and on a pod the app runs as root. It now applies `mode & 0o777`
+  (`archive_mode`; `0o755` when the entry has none). The tar path was already safe (`tar`
+  keeps special bits only with `set_preserve_permissions`, off by default), and the wheels
+  are written with `fs::write`, no mode at all.
+- **What 9 changed in the API**: `ZipFile::name()` is fallible
+  (`ZipResult<Cow<str>>` — a name flagged UTF-8 that is not), and `FileOptions` takes two
+  lifetimes. A refusal and an archive's listing now name an entry by its raw bytes, lossily
+  (`backup::entry_name`) — the name of an entry being refused is the one not to trust, and
+  mindfork's own archives name entries in UTF-8, where the two agree; the tests' options
+  became `SimpleFileOptions`. Sixteen compile errors, nine sites.
+- **What a green build does not say, asked as the 2.4.2 → 8.6.0 entry says to.**
+  `cargo tree -e normal,build -f '{p} [{f}]'` on both sides, for Windows, Linux and macOS:
+  zip's own features are the same (`_deflate-any`, `aes-crypto`, `deflate-flate2`,
+  `getrandom`), so the flate2 backend did not move. The changes are zip's own:
+  `constant_time_eq` 0.4.2 → 0.6.1 (nothing else uses it) and, on macOS only, `nix`
+  0.31.3 `[fs]` with `cfg_aliases`.
+- **Do archives cross the versions?** A scratch probe, not committed, on one tree built
+  both ways (`main` in a worktree with its own target directory, and the branch), through
+  `create_backup` / `check_password` / `read_manifest` / `ArchiveReader` /
+  `restore_backup`: five archives — AES-256 at levels 6, 0 and 9, plain at 6 and 0 — of
+  ten files (an empty one, eight bytes, 200 KB of text, 700 001 bytes of noise, a Cyrillic
+  name with a space, and one in each restored directory). **Written by 8.6.0, read by
+  9.0.5: five of five. Written by 9.0.5, read by 8.6.0: five of five** — the password
+  matrix, the manifest, names and sizes, every entry streamed where it lies, and a restore
+  compared byte for byte. Per entry, the two write the same headers (made-by, versions,
+  mode, flags, method, extra fields); only `manifest.json`'s compressed size differs, by a
+  byte or two, and its content holds the time it was written.
+- **Then real data, read-only**: `mindfork stats <archive> --json` on the three backups
+  this machine has (504 to 529 AES entries) by both builds — identical apart from
+  `taken_at`. The snapshots and the old build's copy were deleted: they hold real chats.
+  The pinned 2.4.2 archive (`a_backup_written_by_an_older_zip_still_restores`) still opens.
+- **Tests**: `an_entry_keeps_its_permissions_without_the_special_bits` (each special bit,
+  the type bits a zip keeps in the same word, no mode at all) and, on unix,
+  `an_unpacked_entry_is_not_set_user_id` — an entry stored `0o4750` comes out `0o750`
+  through `extract`. The About dialog's credit is 9.0.5. `cargo deny check advisories`:
+  `advisories ok`.
+- **Docs**: CHANGELOG *Security*; lessons §3, on reading an advisory for its flaw.
+
+No live run beyond the probes above: no engine path (AGENTS.md §3).
+
+**Gates**: 4052 unit tests green (4053 on unix), 271 `#[ignore]`; clippy `-D warnings`,
+fmt, `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.

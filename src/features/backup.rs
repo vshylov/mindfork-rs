@@ -299,7 +299,7 @@ impl ArchiveReader {
             .filter_map(|i| {
                 let entry = self.zip.by_index_raw(i).ok()?;
                 (!entry.is_dir()).then(|| ArchiveEntry {
-                    name: entry.name().to_string(),
+                    name: entry_name(&entry),
                     size: entry.size(),
                 })
             })
@@ -780,6 +780,14 @@ fn write_zip(
     Ok(())
 }
 
+/// An entry's name as a person reads it — in a refusal, in a listing. Its raw
+/// bytes, lossily: `zip` 9's `name()` is fallible (a name flagged UTF-8 that is
+/// not), and the name of an entry being refused is exactly the one not to trust.
+/// mindfork's own archives name their entries in UTF-8, where the two agree.
+pub(crate) fn entry_name<R: io::Read + ?Sized>(entry: &zip::read::ZipFile<'_, R>) -> String {
+    String::from_utf8_lossy(entry.name_raw()).into_owned()
+}
+
 /// Checks that the archive opens, that all of its entries are safe relative
 /// paths (no `..`/absolute paths — zip-slip protection), and that `password`
 /// actually opens it.
@@ -801,7 +809,7 @@ fn validate_archive(archive: &Path, password: Option<&str>, loc: &Locale) -> Res
         if entry.enclosed_name().is_none() {
             bail!(
                 "{}",
-                loc.tf("backup.err.unsafe_entry", &[("name", entry.name())])
+                loc.tf("backup.err.unsafe_entry", &[("name", &entry_name(&entry))])
             );
         }
     }
@@ -844,7 +852,7 @@ fn extract_archive(
         let rel = entry.enclosed_name().ok_or_else(|| {
             anyhow!(
                 "{}",
-                loc.tf("backup.err.unsafe_entry", &[("name", entry.name())])
+                loc.tf("backup.err.unsafe_entry", &[("name", &entry_name(&entry))])
             )
         })?;
         // The manifest is archive metadata, not user data: not written into the root.
@@ -1186,7 +1194,7 @@ mod tests {
     fn archive_names(archive: &Path) -> Vec<String> {
         let mut zip = ZipArchive::new(File::open(archive).unwrap()).unwrap();
         (0..zip.len())
-            .map(|i| zip.by_index(i).unwrap().name().to_string())
+            .map(|i| entry_name(&zip.by_index(i).unwrap()))
             .collect()
     }
 

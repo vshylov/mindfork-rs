@@ -29,6 +29,17 @@ split by subsystem.
   `MINDFORK_EMBED_MODEL` does the same for the embedder. Before, both were
   ignored unless the binary was named too.
 
+### Security
+
+- **The library that reads and writes zip archives is updated** (zip 9.0.5),
+  past three advisories about unpacking an archive: set-user-ID bits kept, and
+  links that point outside the folder. None of them reaches mindfork's own
+  unpacking — backups, llama.cpp downloads and the Python sandbox's packages are
+  unpacked by mindfork's own code, which never creates a link — but the first
+  had a twin there: on Linux and macOS, a llama.cpp build downloaded as a zip
+  kept the permission bits its archive named, set-user-ID included. Those bits
+  are now dropped.
+
 ## [0.18.3] — 2026-10-16
 
 **A plain code block can be quiet.** A code block with no highlighting can now
