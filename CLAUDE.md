@@ -181,10 +181,10 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-10-16, version 0.18.3)
+## Status (2026-10-17, version 0.18.3)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **4031 unit tests
-green, 260 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **4045 unit tests
+green, 271 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump and demo-reel regenerators).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -196,6 +196,11 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **The cache share in the token counter** (2026-10-17): every wire's cache read
+  reaches the bar as `cache 99%`, a miss as `0%`; Gemini omits a zero, Anthropic's
+  prompt is summed. Live **GO** on every wire
+  ([docs/research/cached-tokens.md](docs/research/cached-tokens.md),
+  [docs/journal/engine.md](docs/journal/engine.md)).
 - **The live gate, sharded; a cancelled job deletes its GPUs** (2026-10-09): the whole
   suite is 72 min of smokes, dealt across four parallel jobs (`e2e_hf.py --shard`), each
   with endpoints of its own, under a 60-min ceiling; a cancellation now reaches the runner

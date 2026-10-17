@@ -2499,7 +2499,21 @@ Two main screens + overlays (modals):
   carrying `finish_reason` (`choices` empty, then `[DONE]`), so the client holds the reason
   until the stream's own terminator instead of ending on it — otherwise the exact numbers are
   discarded on every turn and the `~` estimate never goes away. History compression ([6.7](#67-history-compression-rolling-summary))
-  reads the same exact figure, and reads nothing else.
+  reads the same exact figure, and reads nothing else. That figure is the **whole** prompt on every
+  wire, the part the provider read from its cache included — Anthropic alone reports that part apart
+  from `input_tokens`, and its client adds it back.
+  **The cache share** ([docs/research/cached-tokens.md](docs/research/cached-tokens.md)): where the
+  provider reports its prompt cache — OpenAI `input_tokens_details.cached_tokens`, the
+  OpenAI-compatible `prompt_tokens_details.cached_tokens` (llama.cpp's older `timings.cache_n`),
+  Gemini `cachedContentTokenCount`, Anthropic `cache_read_input_tokens` — the counter adds the
+  cached share of the conversation in one parenthesis with the thoughts: `(reasoning 120 · cache
+  99%)`. Rounded **down**, so one missed token never reads `100%`; shown at `0%` too, since a miss
+  is what the figure is for — Gemini leaves a zero out of its reply, and the absent key reads as
+  `0`; absent where the server reports nothing. It describes the same request as the conversation
+  number — on a tool turn the latest round — arrives and is cleared with it, and a sub-agent's
+  figure, like its prompt size, stays off the bar. Each round's prompt, cached and written
+  figures go to the log, where a prefix broken on a turn's first round shows even when its later
+  rounds read the cache. Nothing of it is stored.
 - **Server state** in the status bar — compact **chips** (a glyph + a label) per
   server, since there can be several (chat / embeddings / impersonation). The glyph
   encodes the status: `●` ready (green), `◐` connecting (amber), `✕` no connection /

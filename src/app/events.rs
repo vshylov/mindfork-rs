@@ -629,7 +629,11 @@ pub enum AppEvent {
     /// untouched. `context_exact` — whether this number is exact, from the server's
     /// `usage` (otherwise a client-side estimate, UI marks it with `~`). `reasoning` —
     /// "thoughts" tokens (included in `completion`); `None` leaves the previous value
-    /// untouched (known only from `usage`, not from the stream).
+    /// untouched (known only from `usage`, not from the stream). `cached` — how
+    /// much of `context` the provider read from its cache: it describes the same
+    /// request as `context`, so it is replaced whenever `context` is and ignored
+    /// when `context` is `None`; `None` with a `context` — no cache figure for that
+    /// request (an estimate, or a server that does not report).
     /// UI shows "conversation + reply" in the status bar, see spec §11.1.
     TokenUsage {
         generation_id: Uuid,
@@ -637,6 +641,7 @@ pub enum AppEvent {
         context: Option<u64>,
         context_exact: bool,
         reasoning: Option<u32>,
+        cached: Option<u32>,
     },
     /// The agentic loop is holding a **dangerous** tool call and asking the user
     /// whether to run it (`tools.confirm_dangerous`, spec §9.8). The turn is

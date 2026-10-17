@@ -1339,6 +1339,7 @@ fn usage_with(prefill: Prefill) -> TokenUsage {
         completion_tokens: 3,
         reasoning_tokens: 0,
         prefill: Some(prefill),
+        ..Default::default()
     }
 }
 
@@ -1589,6 +1590,7 @@ async fn a_roll_records_its_usage_for_the_budget() {
         completion_tokens: 3,
         reasoning_tokens: 0,
         prefill: None,
+        ..Default::default()
     });
     let budget = orch.session_budget();
     assert_eq!(
@@ -1660,6 +1662,7 @@ fn round(prompt: u32, call: bool) -> Script {
         completion_tokens: 5,
         reasoning_tokens: 0,
         prefill: None,
+        ..Default::default()
     }));
     chunks.push(ChatChunk::Finished(if call {
         crate::shared::api::FinishReason::ToolCalls

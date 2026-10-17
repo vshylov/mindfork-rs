@@ -531,6 +531,7 @@ fn play(theme: Theme, lang: Lang, background: CodeBlockBackground) -> Reel {
                 context: Some(PROMPT_TOKENS + completion),
                 context_exact: false,
                 reasoning: Some(reasoning as u32),
+                cached: None,
             });
         }
         d.event(
@@ -548,6 +549,7 @@ fn play(theme: Theme, lang: Lang, background: CodeBlockBackground) -> Reel {
         context: Some(PROMPT_TOKENS + completion),
         context_exact: true,
         reasoning: Some(reasoning as u32),
+        cached: None,
     });
     d.beat("rest");
     d.event(

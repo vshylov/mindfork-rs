@@ -194,20 +194,18 @@ effort tiers — have all closed
   conversation (llama.cpp 0% vs 99% reuse; OpenAI 0% vs 81%; Anthropic a
   2304-token write per turn vs none). Relocating the block is
   [decided against](#decided-against). Still available and layout-independent:
-  Anthropic breakpoints (the head alone is worth ~5k tokens a turn), the cache
-  share in the token counter, `prompt_cache_key`. The promising way to the rest
-  is a **stable observation selection** rather than a relocation (§5 F1(e)
-  there) — untested.
-- **`cached_tokens` in the token counter** — **idea, and the instrument**. All
-  four providers report the cache-hit share and the client drops it (llama.cpp
-  `timings.cache_n`, present since 2025-09 and not gated by `include_usage`;
-  OpenAI `prompt_tokens_details.cached_tokens`; Anthropic
-  `cache_read_input_tokens`; Gemini `cachedContentTokenCount`). Beyond the
-  display: a prefix broken by some future change is otherwise invisible. The
-  accounting trap is measured in [prompt-caching.md §3.3](research/prompt-caching.md):
-  with caching on, Anthropic's `input_tokens` is only the *uncached remainder* —
-  13 tokens for a 7.4k prompt — so the counter must sum it with the cache
-  fields.
+  Anthropic breakpoints (the head alone is worth ~5k tokens a turn) and
+  `prompt_cache_key`. The instrument they need now exists: the token counter
+  shows each request's cache share ([cached-tokens.md](research/cached-tokens.md)).
+  The promising way to the rest is a **stable observation selection** rather
+  than a relocation (§5 F1(e) there) — untested.
+- **The cache share — leftovers** ([cached-tokens.md](research/cached-tokens.md);
+  the track is closed) — **on demand**, each: the rows not measured — Ollama
+  and LM Studio (whether `/v1` reports anything), vLLM (only with
+  `--enable-prompt-tokens-details`), xAI (documented, no key at hand); DeepSeek's
+  own `prompt_cache_hit_tokens`, which reads `None`; the share of the muted turns
+  (title, roll, impersonation, page summary), which nothing shows; the write
+  figure, carried and logged but not on the bar.
 - **History compression — leftovers** ([history-compression.md](research/history-compression.md),
   spec §6.7; the track is closed) — **deferred**: a **semantic index over the
   folded range** — sub-decision S11 chose the full-text index the app already
@@ -700,6 +698,10 @@ An index, newest first — one line per track, with the release that shipped it
 and where its story is told. What a track left open is a bullet above, under
 its area.
 
+- **The cache share in the token counter** — unreleased (2026-10-17): every
+  wire's cache read reaches the bar as `cache 99%`, a miss as `0%`; Gemini's
+  omitted zero read as one, Anthropic's prompt summed whole; a probe first,
+  then a live GO on every wire. [cached-tokens.md](research/cached-tokens.md).
 - **Local servers** — 0.17.0 (2026-10-06), two stages: LM Studio run live and
   known by name — its window read, its silent cut of a conversation's middle
   told, each note in its server's words; then the engineless chat offering a

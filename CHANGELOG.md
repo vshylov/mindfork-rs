@@ -14,6 +14,13 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Added
+
+- **The token counter shows how much the provider read from its cache** —
+  `tokens: 8414 (cache 99%)` — wherever the provider reports it, so a
+  conversation that is processed again from scratch on every turn is visible
+  rather than silent.
+
 ## [0.18.3] — 2026-10-16
 
 **A plain code block can be quiet.** A code block with no highlighting can now

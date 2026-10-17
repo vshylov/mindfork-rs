@@ -287,7 +287,8 @@ rather than proposed — nothing is being built now.
    Cost: `system` becomes an array of text blocks in `anthropic/wire.rs`.
 2. **Reporting** (F3) — all four providers report reuse; the status-bar counter
    already exists. This is also the instrument: without it, a prefix broken by
-   some future change is invisible.
+   some future change is invisible. **Built 2026-10-17**:
+   [cached-tokens.md](cached-tokens.md).
 3. **`prompt_cache_key`** (F2c) — one field on OpenAI, keyed by chat id.
 
 Each is independently verifiable with the probes in §3, which are cheap and

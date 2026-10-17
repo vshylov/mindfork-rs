@@ -13,10 +13,10 @@ use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
 use tokio_util::sync::CancellationToken;
 
-use super::wire::{self, AntDelta, AntStartBlock, AntStreamEvent};
+use super::wire::{self, AntDelta, AntStartBlock, AntStreamEvent, AntUsage};
 use crate::shared::api::contract::{
-    ChatChunk, ChatRequest, ChatStream, EngineBackend, FinishReason, ThinkingRef, TokenUsage,
-    ToolCallDelta, VisionSupport,
+    ChatChunk, ChatRequest, ChatStream, EngineBackend, FinishReason, ThinkingRef, ToolCallDelta,
+    VisionSupport,
 };
 use crate::shared::api::effort::{self, EffortMemo, EffortWire};
 use crate::shared::api::error::{self, EngineError, SUBJECT_ANTHROPIC};
@@ -191,8 +191,9 @@ impl EngineBackend for AnthropicClient {
         let mut events = response.bytes_stream().eventsource();
 
         let s = stream! {
-            // input_tokens arrive in message_start, output_tokens — in message_delta.
-            let mut input_tokens = 0u32;
+            // The input side (with the cache fields) arrives in message_start,
+            // output_tokens — in message_delta.
+            let mut start = AntUsage::default();
             loop {
                 tokio::select! {
                     biased;
@@ -216,7 +217,7 @@ impl EngineBackend for AnthropicClient {
                                 match serde_json::from_str::<AntStreamEvent>(&event.data) {
                                     Ok(AntStreamEvent::MessageStart { message }) => {
                                         if let Some(u) = message.usage {
-                                            input_tokens = u.input_tokens;
+                                            start = u;
                                         }
                                     }
                                     Ok(AntStreamEvent::ContentBlockStart {
@@ -256,14 +257,7 @@ impl EngineBackend for AnthropicClient {
                                     },
                                     Ok(AntStreamEvent::MessageDelta { delta, usage }) => {
                                         let completion = usage.map(|u| u.output_tokens).unwrap_or(0);
-                                        yield ChatChunk::Usage(TokenUsage {
-                                            prompt_tokens: input_tokens,
-                                            completion_tokens: completion,
-                                            // Anthropic doesn't separate reasoning tokens — "thoughts"
-                                            // are already counted in output_tokens.
-                                            reasoning_tokens: 0,
-                                            prefill: None,
-                                        });
+                                        yield ChatChunk::Usage(start.token_usage(completion));
                                         let reason = delta
                                             .stop_reason
                                             .as_deref()
@@ -319,6 +313,36 @@ impl EngineBackend for AnthropicClient {
 mod tests {
     use super::*;
     use crate::shared::api::sse_stub::{self, collect, serve as serve_sse};
+
+    /// The input side of the counter arrives in `message_start` and the output
+    /// in `message_delta`; the cache fields ride the first and must survive to
+    /// the second, summed into a whole prompt (docs/research/cached-tokens.md
+    /// §4.2–§4.3).
+    #[tokio::test]
+    async fn the_cache_fields_of_message_start_reach_the_usage() {
+        let base = serve_sse(&[
+            r#"{"type":"message_start","message":{"usage":{"input_tokens":13,"cache_creation_input_tokens":2304,"cache_read_input_tokens":5067,"output_tokens":1}}}"#,
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"pong"}}"#,
+            r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}"#,
+        ]);
+        let client = AnthropicClient::new(base, "k", "claude-x");
+        let req = ChatRequest {
+            messages: vec![crate::shared::api::contract::ApiMessage::user("hi")],
+            ..Default::default()
+        };
+        let chunks = collect(client.chat_stream(req, Default::default()).await.unwrap()).await;
+        let usage = chunks
+            .iter()
+            .find_map(|c| match c {
+                ChatChunk::Usage(u) => Some(*u),
+                _ => None,
+            })
+            .expect("usage");
+        assert_eq!(usage.prompt_tokens, 13 + 2304 + 5067);
+        assert_eq!(usage.cached_tokens, Some(5067));
+        assert_eq!(usage.cache_write_tokens, Some(2304));
+        assert_eq!(usage.completion_tokens, 2);
+    }
 
     /// The headline defect: Anthropic sheds load *after* accepting the stream, and
     /// that event used to fall into `AntStreamEvent::Other` — so the connection then

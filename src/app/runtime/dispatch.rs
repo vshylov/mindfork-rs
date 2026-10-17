@@ -143,7 +143,15 @@ pub(super) fn apply_event(
             context,
             context_exact,
             reasoning,
-        } => screen.set_token_usage(generation_id, completion, context, context_exact, reasoning),
+            cached,
+        } => screen.set_token_usage(
+            generation_id,
+            completion,
+            context,
+            context_exact,
+            reasoning,
+            cached,
+        ),
         AppEvent::ToolConfirmRequest {
             generation_id,
             call_id,

@@ -121,6 +121,7 @@ impl ChatScreen {
             context: self.gen_context,
             context_exact: self.gen_context_exact,
             reasoning: self.gen_reasoning,
+            cached: self.gen_cached,
             mouse_scroll: self.mouse_scroll,
             background,
             speaking: self.speaking,

@@ -840,6 +840,8 @@ impl EngineBackend for OpenAiClient {
                                                 completion_tokens: u.completion_tokens,
                                                 reasoning_tokens: u.completion_tokens_details.reasoning_tokens,
                                                 prefill,
+                                                cached_tokens: u.cached_tokens(chunk.timings.as_ref()),
+                                                cache_write_tokens: u.cache_write_tokens(),
                                             });
                                             if served != Served::default() {
                                                 yield ChatChunk::Served(served);
@@ -2723,6 +2725,12 @@ mod tests {
                 ms: 13333
             })
         );
+        // The same `timings` carry the cache read of a build that has no
+        // `prompt_tokens_details` (docs/research/cached-tokens.md §4.3); the
+        // prompt stays the whole one.
+        assert_eq!(usage.cached_tokens, Some(50));
+        assert_eq!(usage.cache_write_tokens, None);
+        assert_eq!(usage.prompt_tokens, 1250);
 
         let url = sse_server(&[
             r#"{"choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":"stop"}]}"#,

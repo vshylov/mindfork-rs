@@ -516,6 +516,10 @@ pub struct FunctionCall {
 
 /// The token counter (`usageMetadata`). `thoughtsTokenCount` — "thoughts" tokens (counted
 /// toward output billing), land in [`TokenUsage::reasoning_tokens`](crate::shared::api::contract::TokenUsage).
+/// Gemini **leaves a zero out**: a reply that did not reason has no
+/// `thoughtsTokenCount`, and a cache miss no `cachedContentTokenCount`
+/// (measured 2026-10-17, docs/research/cached-tokens.md §3.1) — so an absent
+/// count is `0` here, never "unknown".
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageMetadata {
@@ -525,6 +529,24 @@ pub struct UsageMetadata {
     pub candidates_token_count: u32,
     #[serde(default)]
     pub thoughts_token_count: u32,
+    #[serde(default)]
+    pub cached_content_token_count: u32,
+}
+
+impl UsageMetadata {
+    /// The domain's counter. `promptTokenCount` already counts the cached
+    /// part (9825 with 7782 cached); the cache read is always known —
+    /// `Some(0)` on a miss — and there is no write figure.
+    pub fn token_usage(&self) -> crate::shared::api::contract::TokenUsage {
+        crate::shared::api::contract::TokenUsage {
+            prompt_tokens: self.prompt_token_count,
+            completion_tokens: self.candidates_token_count,
+            reasoning_tokens: self.thoughts_token_count,
+            prefill: None,
+            cached_tokens: Some(self.cached_content_token_count),
+            cache_write_tokens: None,
+        }
+    }
 }
 
 /// Gemini's answer to a muted turn on `gemini-3.8-flash`, as it came on
@@ -1118,5 +1140,42 @@ mod stream_error_tests {
                 .error
                 .is_none()
         );
+    }
+}
+
+/// The cache read of a Gemini reply (docs/research/cached-tokens.md §3.1): the
+/// shapes `gemini-3.8-flash` sent on 2026-10-17.
+#[cfg(test)]
+mod cache_figure_tests {
+    use super::UsageMetadata;
+
+    fn usage(raw: &str) -> crate::shared::api::contract::TokenUsage {
+        serde_json::from_str::<UsageMetadata>(raw)
+            .unwrap()
+            .token_usage()
+    }
+
+    /// A hit: the cached count, out of a prompt that already counts it.
+    #[test]
+    fn a_hit_is_read_and_the_prompt_is_whole() {
+        let u = usage(
+            r#"{"cacheTokensDetails":[{"modality":"TEXT","tokenCount":7782}],"cachedContentTokenCount":7782,"candidatesTokenCount":2,"promptTokenCount":9825,"promptTokensDetails":[{"modality":"TEXT","tokenCount":9825}],"serviceTier":"standard","thoughtsTokenCount":25,"totalTokenCount":9852}"#,
+        );
+        assert_eq!((u.prompt_tokens, u.cached_tokens), (9825, Some(7782)));
+        assert_eq!((u.completion_tokens, u.reasoning_tokens), (2, 25));
+    }
+
+    /// A miss leaves the key out — Gemini omits a zero, as it omits
+    /// `thoughtsTokenCount` from a reply that did not reason. Read as `None`
+    /// it would look like a server that does not report; it is `Some(0)`. No
+    /// write figure exists on this wire.
+    #[test]
+    fn a_miss_is_an_absent_key_and_reads_as_zero() {
+        let u = usage(
+            r#"{"candidatesTokenCount":2,"promptTokenCount":9825,"promptTokensDetails":[{"modality":"TEXT","tokenCount":9825}],"serviceTier":"standard","totalTokenCount":9827}"#,
+        );
+        assert_eq!(u.cached_tokens, Some(0));
+        assert_eq!(u.cache_write_tokens, None);
+        assert_eq!(u.reasoning_tokens, 0);
     }
 }

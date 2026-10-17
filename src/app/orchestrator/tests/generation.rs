@@ -137,7 +137,8 @@ async fn assistant_metadata_records_mode_model_and_filtered_sampling() {
 #[tokio::test]
 async fn emits_token_counter_during_generation() {
     use crate::shared::api::contract::TokenUsage;
-    // Two text deltas (the live count = 2), then exact usage from the server (= 5).
+    // Two text deltas (the live count = 2), then exact usage from the server (= 5),
+    // with the provider's cache read (docs/research/cached-tokens.md §4.4).
     let backend = Arc::new(MockBackend::scripted(vec![
         ChatChunk::Text("При".into()),
         ChatChunk::Text("вет".into()),
@@ -146,6 +147,8 @@ async fn emits_token_counter_during_generation() {
             completion_tokens: 5,
             reasoning_tokens: 0,
             prefill: None,
+            cached_tokens: Some(9),
+            cache_write_tokens: Some(3),
         }),
         ChatChunk::Finished(FinishReason::Stop),
     ])) as Arc<dyn EngineBackend>;
@@ -170,10 +173,11 @@ async fn emits_token_counter_during_generation() {
                 completion: 0,
                 context: Some(c),
                 context_exact: false,
+                cached: None,
                 ..
             } if c > 0
         ),
-        "conversation estimate: {est:?}"
+        "conversation estimate, with no cache figure: {est:?}"
     );
 
     // Reply deltas → the reply counter grows, the conversation estimate is untouched (None).
@@ -188,6 +192,7 @@ async fn emits_token_counter_during_generation() {
             AppEvent::TokenUsage {
                 completion: 1,
                 context: None,
+                cached: None,
                 ..
             }
         ),
@@ -213,10 +218,11 @@ async fn emits_token_counter_during_generation() {
                 completion: 5,
                 context: Some(12),
                 context_exact: true,
+                cached: Some(9),
                 ..
             }
         ),
-        "exact count from usage: {exact:?}"
+        "exact count from usage, the cache read with it: {exact:?}"
     );
 
     cmd_tx.send(AppCommand::Quit).unwrap();
@@ -2166,6 +2172,7 @@ mod slow_prefill {
             completion_tokens: 1,
             reasoning_tokens: 0,
             prefill: Some(Prefill { tokens: 40, ms: 20 }),
+            ..Default::default()
         });
         let call = Script {
             chunks: vec![
@@ -2246,6 +2253,7 @@ mod slow_prefill {
                 completion_tokens: 1,
                 reasoning_tokens: 0,
                 prefill: Some(SLOW),
+                ..Default::default()
             }),
             ChatChunk::Finished(FinishReason::Stop),
         ])) as Arc<dyn EngineBackend>;

@@ -1474,6 +1474,7 @@ impl Orchestrator {
                     context: None,
                     context_exact: false,
                     reasoning,
+                    cached: None,
                 })
             }
             TurnProgress::RoundFiled(_)

@@ -673,6 +673,7 @@ fn reply(thoughts: Option<&str>, text: &str, prompt_tokens: u32) -> Vec<ChatChun
         completion_tokens: (text.len() / 4) as u32 + reasoning_tokens,
         reasoning_tokens,
         prefill: None,
+        ..Default::default()
     }));
     chunks.push(ChatChunk::Finished(FinishReason::Stop));
     chunks

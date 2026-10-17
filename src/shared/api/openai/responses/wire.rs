@@ -451,7 +451,8 @@ pub struct RespError {
 }
 
 /// The token counter of a Responses reply (`input_tokens`/`output_tokens` +
-/// `output_tokens_details.reasoning_tokens`).
+/// `output_tokens_details.reasoning_tokens`, and the cache figures in
+/// `input_tokens_details`).
 #[derive(Debug, Default, Deserialize)]
 pub struct RespUsage {
     #[serde(default)]
@@ -460,6 +461,35 @@ pub struct RespUsage {
     pub output_tokens: u32,
     #[serde(default)]
     pub output_tokens_details: RespOutputTokensDetails,
+    #[serde(default)]
+    pub input_tokens_details: Option<RespInputTokensDetails>,
+}
+
+impl RespUsage {
+    /// The domain's counter. `input_tokens` already counts the cached part
+    /// (8409 with 8406 cached, measured 2026-10-17 — docs/research/cached-tokens.md §3.1).
+    pub fn token_usage(&self) -> crate::shared::api::contract::TokenUsage {
+        let details = self.input_tokens_details.as_ref();
+        crate::shared::api::contract::TokenUsage {
+            prompt_tokens: self.input_tokens,
+            completion_tokens: self.output_tokens,
+            reasoning_tokens: self.output_tokens_details.reasoning_tokens,
+            prefill: None,
+            cached_tokens: details.and_then(|d| d.cached_tokens),
+            cache_write_tokens: details.and_then(|d| d.cache_write_tokens),
+        }
+    }
+}
+
+/// The prompt's cache figures: read from the cache, and written into it (billed
+/// at 1.25× on 5.6+). Both keys come on every reply, zeros included (measured
+/// on three models, 2026-10-17).
+#[derive(Debug, Default, Deserialize)]
+pub struct RespInputTokensDetails {
+    #[serde(default)]
+    pub cached_tokens: Option<u32>,
+    #[serde(default)]
+    pub cache_write_tokens: Option<u32>,
 }
 
 /// Token breakdown of the reply (only "thoughts" reasoning tokens matter).
@@ -1068,5 +1098,58 @@ mod failure_event_tests {
         let u = response.usage.unwrap();
         assert_eq!((u.input_tokens, u.output_tokens), (5, 7));
         assert!(response.error.is_none());
+    }
+}
+
+/// The cache figures of a Responses reply (docs/research/cached-tokens.md §3.1,
+/// §4.3), on the shapes measured 2026-10-17.
+#[cfg(test)]
+mod cache_figure_tests {
+    use super::RespUsage;
+
+    fn usage(raw: &str) -> crate::shared::api::contract::TokenUsage {
+        serde_json::from_str::<RespUsage>(raw)
+            .unwrap()
+            .token_usage()
+    }
+
+    /// `gpt-6.1-sol`, cold and warm: both keys come, the write on the first
+    /// request and the read after it; `input_tokens` is the whole prompt.
+    #[test]
+    fn both_keys_arrive_and_the_prompt_is_whole() {
+        let cold = usage(
+            r#"{"input_tokens":8409,"input_tokens_details":{"cache_write_tokens":8406,"cached_tokens":0},"output_tokens":5,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":8414}"#,
+        );
+        assert_eq!(
+            (
+                cold.prompt_tokens,
+                cold.cached_tokens,
+                cold.cache_write_tokens
+            ),
+            (8409, Some(0), Some(8406))
+        );
+        let warm = usage(
+            r#"{"input_tokens":8409,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":8406},"output_tokens":5,"output_tokens_details":{"reasoning_tokens":3}}"#,
+        );
+        assert_eq!(
+            (
+                warm.prompt_tokens,
+                warm.cached_tokens,
+                warm.cache_write_tokens
+            ),
+            (8409, Some(8406), Some(0))
+        );
+        assert_eq!((warm.completion_tokens, warm.reasoning_tokens), (5, 3));
+    }
+
+    /// A reply without the details says nothing about the cache — `None`, not
+    /// a miss.
+    #[test]
+    fn no_details_is_no_figure() {
+        let u = usage(r#"{"input_tokens":5,"output_tokens":2}"#);
+        assert_eq!(
+            (u.prompt_tokens, u.cached_tokens, u.cache_write_tokens),
+            (5, None, None)
+        );
     }
 }

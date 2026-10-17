@@ -659,13 +659,17 @@ pub struct ChatCompletionChunk {
     pub timings: Option<Timings>,
 }
 
-/// `llama-server`'s `timings` object; only the prefill's two fields are read.
+/// `llama-server`'s `timings` object: the prefill's two fields, and `cache_n` —
+/// the prompt tokens reused from the slot's prefix (since 2025-09), the cache
+/// figure of a build older than `prompt_tokens_details` (docs/research/cached-tokens.md §4.3).
 #[derive(Debug, Default, Deserialize)]
 pub struct Timings {
     #[serde(default)]
     pub prompt_n: u32,
     #[serde(default)]
     pub prompt_ms: f64,
+    #[serde(default)]
+    pub cache_n: Option<u32>,
 }
 
 /// An error object delivered **inside** an already-open `200` SSE stream, instead
@@ -737,13 +741,46 @@ pub struct Usage {
     pub completion_tokens: u32,
     #[serde(default)]
     pub completion_tokens_details: CompletionTokensDetails,
+    /// The prompt's cache figures — OpenAI's shape, which the gateway sends on
+    /// every reply with its zeros (measured 2026-10-17), and llama.cpp since
+    /// 2026-03. Absent from a server that does not report.
+    #[serde(default)]
+    pub prompt_tokens_details: Option<PromptTokensDetails>,
     /// What the request cost, in dollars — a gateway's own meter (OpenRouter puts
     /// it on the stream's last chunk). Absent everywhere else.
     #[serde(default)]
     pub cost: Option<f64>,
 }
 
+/// The prompt's cache figures in a Chat Completions `usage`: read from the
+/// cache, and written into it (the gateway's second key). Each `None` when the
+/// server leaves it out (docs/research/cached-tokens.md §3.1).
+#[derive(Debug, Default, Deserialize)]
+pub struct PromptTokensDetails {
+    #[serde(default)]
+    pub cached_tokens: Option<u32>,
+    #[serde(default)]
+    pub cache_write_tokens: Option<u32>,
+}
+
 impl Usage {
+    /// The cache read: the OpenAI-shaped details first, else llama.cpp's
+    /// `timings.cache_n` (a build from before the details existed); `None`
+    /// when the server reported neither.
+    pub fn cached_tokens(&self, timings: Option<&Timings>) -> Option<u32> {
+        self.prompt_tokens_details
+            .as_ref()
+            .and_then(|d| d.cached_tokens)
+            .or_else(|| timings.and_then(|t| t.cache_n))
+    }
+
+    /// The cache write, where a gateway reports one.
+    pub fn cache_write_tokens(&self) -> Option<u32> {
+        self.prompt_tokens_details
+            .as_ref()
+            .and_then(|d| d.cache_write_tokens)
+    }
+
     /// [`Self::cost`] in billionths of a dollar — an integer, so that what is
     /// stored compares and sums exactly. `None` for no figure, a negative one or
     /// one that is not a number.
@@ -1816,6 +1853,35 @@ mod continuation_tests {
         let plain = r#"{"choices":[],"usage":{"prompt_tokens":42,"completion_tokens":7,"total_tokens":49}}"#;
         let chunk: ChatCompletionChunk = serde_json::from_str(plain).unwrap();
         assert!(chunk.timings.is_none());
+    }
+
+    /// The cache figures (docs/research/cached-tokens.md §4.3): the
+    /// OpenAI-shaped details first — the gateway's warm reply as measured on
+    /// 2026-10-17, its zero write included — else llama.cpp's `cache_n`; a
+    /// server that reports neither is `None`, never a zero.
+    #[test]
+    fn cache_figures_from_the_details_or_the_timings() {
+        let usage = |raw: &str| -> (Option<u32>, Option<u32>) {
+            let chunk: ChatCompletionChunk = serde_json::from_str(raw).unwrap();
+            let u = chunk.usage.expect("usage");
+            (
+                u.cached_tokens(chunk.timings.as_ref()),
+                u.cache_write_tokens(),
+            )
+        };
+        let gateway = r#"{"choices":[],"usage":{"completion_tokens":5,"prompt_tokens":8404,"prompt_tokens_details":{"audio_tokens":0,"cache_write_tokens":0,"cached_tokens":8192,"video_tokens":0},"total_tokens":8409}}"#;
+        assert_eq!(usage(gateway), (Some(8192), Some(0)));
+        // A cold gateway reply: the miss is a reported zero.
+        let cold = r#"{"choices":[],"usage":{"prompt_tokens":8404,"completion_tokens":5,"prompt_tokens_details":{"cache_write_tokens":0,"cached_tokens":0}}}"#;
+        assert_eq!(usage(cold), (Some(0), Some(0)));
+        // A llama.cpp from before the details: `cache_n` stands in.
+        let llama = r#"{"choices":[],"usage":{"prompt_tokens":1250,"completion_tokens":7},"timings":{"cache_n":50,"prompt_n":1200,"prompt_ms":13333.4}}"#;
+        assert_eq!(usage(llama), (Some(50), None));
+        // Both: the details win.
+        let both = r#"{"choices":[],"usage":{"prompt_tokens":1250,"completion_tokens":7,"prompt_tokens_details":{"cached_tokens":1024}},"timings":{"cache_n":50,"prompt_n":1200,"prompt_ms":1.0}}"#;
+        assert_eq!(usage(both).0, Some(1024));
+        let silent = r#"{"choices":[],"usage":{"prompt_tokens":42,"completion_tokens":7}}"#;
+        assert_eq!(usage(silent), (None, None));
     }
 }
 

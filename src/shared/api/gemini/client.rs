@@ -15,8 +15,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::wire::{self, GenResponse};
 use crate::shared::api::contract::{
-    ChatChunk, ChatRequest, ChatStream, EngineBackend, FinishReason, TokenUsage, ToolCallDelta,
-    VisionSupport,
+    ChatChunk, ChatRequest, ChatStream, EngineBackend, FinishReason, ToolCallDelta, VisionSupport,
 };
 use crate::shared::api::effort::{self, EffortMemo, EffortWire};
 use crate::shared::api::error::{self, EngineError, SUBJECT_GEMINI};
@@ -257,12 +256,7 @@ impl EngineBackend for GeminiClient {
                                     }
                                 }
                                 if let Some(u) = resp.usage_metadata {
-                                    yield ChatChunk::Usage(TokenUsage {
-                                        prompt_tokens: u.prompt_token_count,
-                                        completion_tokens: u.candidates_token_count,
-                                        reasoning_tokens: u.thoughts_token_count,
-                                        prefill: None,
-                                    });
+                                    yield ChatChunk::Usage(u.token_usage());
                                 }
                                 if let Some(reason) = candidate.and_then(|c| c.finish_reason) {
                                     // A blocking reason that is not a filter (a malformed call,

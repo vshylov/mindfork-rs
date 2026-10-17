@@ -1696,6 +1696,7 @@ fn timed(tokens: u32, ms: u32) -> ChatChunk {
         completion_tokens: 3,
         reasoning_tokens: 0,
         prefill: Some(Prefill { tokens, ms }),
+        ..Default::default()
     })
 }
 

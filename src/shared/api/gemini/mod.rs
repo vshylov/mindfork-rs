@@ -9,6 +9,8 @@
 //! embeddings are fetched separately via the OpenAI-compatible endpoint (`OpenAiClient`),
 //! see the supervisor.
 
+#[cfg(test)]
+mod cache_probe_tests;
 mod client;
 #[cfg(test)]
 mod live_tests;
