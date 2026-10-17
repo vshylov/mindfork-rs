@@ -2035,7 +2035,9 @@ a chat holding the value was **skipped**, so the chat was missing from the list
 with one line in the log. Two things follow. Put the question at the point of
 change: a `match` with no wildcard arm over the enum, in the storage module's
 tests, naming the schema each variant arrived in — a new variant then does not
-compile until that is answered. And before a release, for each new value of a
+compile until that is answered. Since 2026-10-18 every stored strict enum has
+one (`schema/stored_enums_tests.rs`), with its wire form pinned beside it; the
+ledger is also the list to walk at the release step. And before a release, for each new value of a
 stored type, run the **previous** version's binary on a file that holds it;
 the file kinds fail differently, and the one that fails silently is the one a
 test of the current build cannot see.
