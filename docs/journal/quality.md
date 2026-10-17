@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (37)
+## Entries (38)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -49,6 +49,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the FSD layer rule gets a gate, and the eleven types that broke it move down (done)
 - Post-M9: SonarQube follow-up — the live gate's ladder and its fake (done)
 - Post-M9: `tools/repo_metrics.py` — the repository's numbers, defined once (done)
+- Post-M9: the source-language gate knows test code by shape (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -1943,4 +1944,48 @@ branch with a trailer of its own.
 **Tests.** No Rust touched: 4031 unit tests green, 260 `#[ignore]`, unchanged;
 `cargo fmt --check` clean; the documentation gates green. No CHANGELOG entry:
 internal tooling (AGENTS.md §4). No live run: a script over git and the working
+tree (AGENTS.md §3).
+
+### Post-M9: the source-language gate knows test code by shape (done)
+
+`tools/cyrillic_scan.py` allowlists Cyrillic in code position inside test code, where
+it is fixture data and ru-locale assertions. It found test code by a sticky flag: the
+first `#[cfg(test)]`, `mod tests`, `#[test]` or `#[tokio::test]` in a file set `in_test`,
+and nothing unset it. So a `#[cfg(test)]` on one accessor made the rest of the file test
+code — the way two production strings in `message_feed.rs` stayed Russian through the
+whole English-source migration ([ui-feed.md](ui-feed.md), *collapsible tool calls*).
+Left on the roadmap as on demand.
+
+- **Measured before the fix**: 16 997 production lines in 223 files were read as test
+  code — `orchestrator/mod.rs` from line 65 (1886 lines), `message_feed.rs` from 627
+  (1649), `input_box.rs` from 369 (1555). Comments there were still flagged; string
+  literals were not. With the fix they are scanned, and **none holds Russian**: the
+  migration was thorough, the gate was not.
+- **The shape has one implementation**: the layer gate's (`layer_check.py`: `mask`,
+  `test_lines`, `Tree`), imported rather than copied. A `#[cfg(test)]` marks the item it
+  stands on — further attributes, up to its closing brace or, for a `mod x;` or a `use`,
+  its `;` — with literals and comments blanked first, so a `"}"` closes nothing.
+- **Files that are test code end to end** are the name rule as before (`*tests.rs`, a
+  `tests/` directory) plus the layer gate's: a file opening with `#![cfg(test)]`, and one
+  declared by a `#[cfg(test)] mod x;`, followed through what it declares. That adds eight
+  files the old rule read from their first marker (`shared/http_stub.rs`,
+  `app/demo_shots.rs`, `features/demo/ru.rs` …).
+- **`#[test]`, `#[tokio::test]` and `mod tests` are no longer markers of their own**:
+  measured, none sits outside a `#[cfg(test)]` item or a test file in `src/`.
+- **What the markers stand on**, measured over the 370 in production files: 268
+  modules, 79 functions, 8 consts, 4 impls, 3 `use`s, 2 structs, a type, and five
+  statements or `thread_local!` blocks (1–8 lines each, every extent its own). None is
+  on a struct field or a match arm — the one shape the "brace or `;`" rule would
+  overrun, since a field ends at a comma.
+- **`--self-test`**, a CI step in `lint` beside the scan: 12 arms, both directions — the
+  accessor shape, a test module's fixture, a `mod x;` ending at its `;`, a brace inside a
+  string, a multi-line literal, stacked attributes, a print-macro label and a comment
+  inside a test, a declared file against the same file undeclared, a test file by name,
+  and the declaration closure on a temporary tree. **Control red**: the same arms against
+  the old sticky flag fail the five that need it (the accessor, the `;`, the brace, the
+  literal, the attributes).
+
+**Tests.** No Rust touched: 4045 unit tests green, 271 `#[ignore]`, unchanged; the scan
+clean, its self-test, `layer_check --self-test` and the documentation gates green. No
+CHANGELOG entry: internal tooling (AGENTS.md §4). No live run: a script over the working
 tree (AGENTS.md §3).
