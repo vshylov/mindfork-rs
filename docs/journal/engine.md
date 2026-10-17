@@ -6873,7 +6873,7 @@ roadmap as on demand.
   empty variable alone changes nothing, the embedder's two arms.
 - **Docs**: install.md's dev quick start leads with the model, CLAUDE.md's backend line,
   architecture §5, and the privacy policy's list of variables that replace an engine
-  (`PRIVACY.md`, its Russian copy, the site's page).
+  (`PRIVACY.md`, its Russian copy, the site's page and the installer's two RTF pages).
 
 **Live** — a copy of the binary in a scratch root whose settings name `openai` for both
 servers, `llama-server` b11715 beside it, on an RTX 4090. **GO**:
