@@ -856,7 +856,10 @@ fn unpack_wheel(bytes: &[u8], site: &Path, loc: &Locale) -> Result<()> {
         let Some(rel) = entry.enclosed_name() else {
             bail!(
                 "{}",
-                loc.tf("sandbox.setup.unsafe_wheel", &[("name", entry.name())])
+                loc.tf(
+                    "sandbox.setup.unsafe_wheel",
+                    &[("name", &crate::features::backup::entry_name(&entry))]
+                )
             );
         };
         let out = site.join(rel);

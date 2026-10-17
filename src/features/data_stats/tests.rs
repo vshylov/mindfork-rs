@@ -423,7 +423,7 @@ fn an_archive_from_a_newer_version_is_counted_and_flagged() {
     let mut to = zip::ZipWriter::new(fs::File::create(&newer).unwrap());
     for i in 0..from.len() {
         let entry = from.by_index_raw(i).unwrap();
-        if entry.name() != "manifest.json" {
+        if entry.name_raw() != b"manifest.json" {
             to.raw_copy_file(entry).unwrap();
         }
     }

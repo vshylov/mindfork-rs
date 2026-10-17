@@ -1148,6 +1148,14 @@ for every crate the bumped one shares with the rest of the graph, and when a
 feature set grew, ask for the narrow feature by name instead of the umbrella.
 — *`zip` 2.4.2 → 8.6.0 — what a green build does not say about a bump*.
 
+**An advisory against an API you do not call can still describe your code.** zip's
+three advisories of 2026-10 were all about its own `extract()`, which mindfork never
+calls — its extractors are its own, for zip-slip's sake. One of those extractors
+applied an entry's `unix_mode()` as it came, set-user-ID included: the first
+advisory's flaw, written again. So read an advisory for **what goes wrong**, then
+grep for your own code doing that, not only for the function it names.
+— *`zip` 8.6.0 → 9.0.5 — three advisories, and the mode `llama setup` copied*.
+
 **A crash-loop guard is only as good as the success that resets it.** The
 relaunch budget — three per five minutes, cleared on `Ready` — was right, and a
 RunPod pod still relaunched the embedder 17 times in ten seconds: `Ready` came

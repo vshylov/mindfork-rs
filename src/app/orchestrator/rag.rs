@@ -783,7 +783,7 @@ mod tests {
              <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
              <w:body><w:p><w:r><w:t>Абзац из DOCX-документа</w:t></w:r></w:p></w:body></w:document>";
         let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-        let opts: zip::write::FileOptions<'_, ()> = zip::write::FileOptions::default();
+        let opts = zip::write::SimpleFileOptions::default();
         zip.start_file("word/document.xml", opts).unwrap();
         zip.write_all(xml.as_bytes()).unwrap();
         std::fs::write(&docx, zip.finish().unwrap().into_inner()).unwrap();

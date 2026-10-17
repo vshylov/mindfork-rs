@@ -1576,6 +1576,18 @@ fn extract_targz(archive: &Path, dest: &Path, loc: &Locale) -> Result<()> {
     })
 }
 
+/// The permission bits an extracted file gets from its archive entry: the
+/// entry's own, **without** set-user-ID, set-group-ID and sticky (`& 0o777`),
+/// and `0o755` when the entry has none. A downloaded archive does not get to
+/// make a set-user-ID file — on a pod the app runs as root — which is the class
+/// `zip`'s own `extract()` was fixed for (RUSTSEC-2026-0367); this extractor
+/// is ours and needed the same mask. Unix only, where a mode is applied; the
+/// tests read it everywhere.
+#[cfg(any(unix, test))]
+fn archive_mode(entry_mode: Option<u32>) -> u32 {
+    entry_mode.map_or(0o755, |mode| mode & 0o777)
+}
+
 /// zip: zip-slip guarded with `enclosed_name` (as in `features::backup`).
 ///
 /// The mode is set explicitly on unix. Upstream ships Windows zips and Linux
@@ -1600,7 +1612,10 @@ fn extract_zip(archive: &Path, dest: &Path, loc: &Locale) -> Result<()> {
         let Some(rel) = entry.enclosed_name() else {
             bail!(
                 "{}",
-                loc.tf("llamacpp.setup.unsafe_entry", &[("name", entry.name())])
+                loc.tf(
+                    "llamacpp.setup.unsafe_entry",
+                    &[("name", &crate::features::backup::entry_name(&entry))]
+                )
             );
         };
         let out = dest.join(rel);
@@ -1621,7 +1636,7 @@ fn extract_zip(archive: &Path, dest: &Path, loc: &Locale) -> Result<()> {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mode = entry.unix_mode().unwrap_or(0o755);
+            let mode = archive_mode(entry.unix_mode());
             let _ = std::fs::set_permissions(&out, std::fs::Permissions::from_mode(mode));
         }
     }
@@ -2410,6 +2425,56 @@ mod tests {
             tar.finish().unwrap();
         }
         gz.finish().unwrap()
+    }
+
+    /// A downloaded archive does not get to make a set-user-ID, set-group-ID or
+    /// sticky file (RUSTSEC-2026-0367's class); the rest of its mode stands,
+    /// and an entry with none is executable. The file-type bits a zip keeps in
+    /// the same word go too.
+    #[test]
+    fn an_entry_keeps_its_permissions_without_the_special_bits() {
+        assert_eq!(archive_mode(Some(0o4750)), 0o750, "set-user-ID");
+        assert_eq!(archive_mode(Some(0o2750)), 0o750, "set-group-ID");
+        assert_eq!(archive_mode(Some(0o1750)), 0o750, "sticky");
+        assert_eq!(
+            archive_mode(Some(0o100_640)),
+            0o640,
+            "a regular file's type bits"
+        );
+        assert_eq!(archive_mode(Some(0o750)), 0o750);
+        assert_eq!(archive_mode(None), 0o755);
+    }
+
+    /// The same, end to end: an entry stored set-user-ID is unpacked without it.
+    #[cfg(unix)]
+    #[test]
+    fn an_unpacked_entry_is_not_set_user_id() {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        let mut buf = Vec::new();
+        {
+            let mut w = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+            let opts = zip::write::SimpleFileOptions::default().unix_permissions(0o4750);
+            w.start_file("llama-server", opts).unwrap();
+            w.write_all(b"a").unwrap();
+            w.finish().unwrap();
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("llama-b1-bin-ubuntu-x64.zip");
+        std::fs::write(&archive, &buf).unwrap();
+        let raw = dir.path().join("raw");
+        extract(
+            &archive,
+            "llama-b1-bin-ubuntu-x64.zip",
+            &raw,
+            locale(Lang::En),
+        )
+        .unwrap();
+        let mode = std::fs::metadata(raw.join("llama-server"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o7777, 0o750, "{mode:o}");
     }
 
     /// The Windows zip is flat and the Linux tarball wraps everything in

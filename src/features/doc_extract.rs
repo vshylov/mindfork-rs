@@ -112,8 +112,8 @@ mod tests {
         body.push_str("</w:body></w:document>");
 
         let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
-        let opts: zip::write::FileOptions<'_, ()> =
-            zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
         zip.start_file("word/document.xml", opts).unwrap();
         zip.write_all(body.as_bytes()).unwrap();
         zip.finish().unwrap().into_inner()
@@ -152,7 +152,7 @@ mod tests {
              <w:body><w:p><w:r><w:t>до</w:t><w:tab/><w:t>после</w:t><w:br/><w:t>строка</w:t>\
              </w:r></w:p></w:body></w:document>";
         let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
-        let opts: zip::write::FileOptions<'_, ()> = zip::write::FileOptions::default();
+        let opts = zip::write::SimpleFileOptions::default();
         zip.start_file("word/document.xml", opts).unwrap();
         zip.write_all(body.as_bytes()).unwrap();
         let docx = zip.finish().unwrap().into_inner();
@@ -165,7 +165,7 @@ mod tests {
     fn extract_docx_missing_document_xml_errors() {
         // A valid ZIP, but without word/document.xml → an error (not a panic).
         let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
-        let opts: zip::write::FileOptions<'_, ()> = zip::write::FileOptions::default();
+        let opts = zip::write::SimpleFileOptions::default();
         zip.start_file("other.txt", opts).unwrap();
         zip.write_all(b"nope").unwrap();
         let bytes = zip.finish().unwrap().into_inner();
