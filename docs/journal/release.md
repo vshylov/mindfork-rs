@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (77)
+## Entries (78)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -89,6 +89,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Release 0.18.1 (prepared)
 - Release 0.18.2 (prepared)
 - Release 0.18.3 (prepared)
+- Release 0.19.0 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -4794,3 +4795,48 @@ macos.md §3 and §12 point at the tag.
 - **Not run**: the released binaries on a Mac or Linux with a screen; the TUI
   on real data, which is the owner's; the Windows installer and the `.deb`,
   `.rpm` and Arch packages, beyond what their jobs install.
+
+### Release 0.19.0 (prepared)
+
+- **A release PR** per [AGENTS.md §6](../../AGENTS.md), branch `chore/release-0.19.0`:
+  - `Cargo.toml` `0.18.3 → 0.19.0` (+ one line of `Cargo.lock`), and the site's
+    `app_version`;
+  - `CHANGELOG.md`: `[Unreleased]` → `[0.19.0] — 2026-10-18` under a lead paragraph,
+    "See how much of a conversation was reused", a fresh `[Unreleased]`, and the
+    comparison links;
+  - CLAUDE.md's status heading;
+  - the release's post, and `/llms.txt` regenerated from it.
+
+  Since `v0.18.3`: two pull requests with behaviour — 773, the provider's cache share in
+  the token counter, and 774, `MINDFORK_MODEL` and `MINDFORK_EMBED_MODEL` on their own —
+  and 778, `zip` 9.0.5 with the special bits dropped from what `llama setup` unpacks. The
+  rest moved no behaviour of the app: the repository's numbers (771), the promotion plan's
+  second week (772), the source-language gate by shape and its Sonar follow-up (775, 777),
+  and the stored enums' ledger (776).
+- **A MINOR**: the cache share is a feature, §6's rule for `0.x`.
+- **The release is stacked on 778.** Its PR was the first to run `cargo deny check
+  advisories` since three advisories against `zip` 8.6.0 were published, and went red for
+  them — `main` fails the same way. A major version of a dependency, with a port and a
+  hardening, is a pull request of its own; this one is a draft on top of it until it
+  merges (the stacking AGENTS.md §6 names for a value with no schema step).
+- **No `Data` rubric, by measurement.** `git diff v0.18.3 -- src/shared/storage
+  src/shared/config.rs src/entities src/features/data_migration.rs
+  src/features/backup.rs` names `schema.rs` and the new `schema/stored_enums_tests.rs` —
+  test code (776) — and, with 778, `backup.rs`, where only an error's and a listing's
+  name for an entry changed. `TokenUsage` derives no `Serialize`: the cache share is shown
+  and never stored (fork F4 of cached-tokens.md). The ledger agrees: no stored enum gained
+  a value since `v0.18.3`. Archives across `zip` 8.6.0 and 9.0.5, both ways, are 778's
+  measurement.
+- **No rehearsal.** `release.yml` is unchanged since `v0.18.3`. `ci.yml` gained three
+  `lint` steps (the source-language gate's arms, the repository metrics' arms) and
+  `packaging/windows/privacy*.rtf` were regenerated from the privacy policy's new line
+  (774), whose installer compile `packaging.yml` ran green on that pull request. 0.17.0's
+  precedent; the owner may still ask for an `-rc1`.
+- **Live runs behind it**: 773's on every wire (llama.cpp 0% → 99% → 0% on Qwen 3.8 and
+  Gemma 4, OpenAI and OpenRouter 0% → 98% → 0%, Gemini and Anthropic a reported zero), and
+  774's on the RTX 4090 (both servers from `MINDFORK_MODEL` and `MINDFORK_EMBED_MODEL`
+  alone). The rented live gate was not run for this release.
+- **The post** says what the share means, what `0%` means and when it is normal, what was
+  measured per provider and why Anthropic reads `0%`; the quick start with the model alone;
+  the zip update and that backups cross the versions; and that nothing in the files
+  changes.

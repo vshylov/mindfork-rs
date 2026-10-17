@@ -14,6 +14,16 @@ split by subsystem.
 
 ## [Unreleased]
 
+## [0.19.0] — 2026-10-18
+
+**See how much of a conversation was reused.** A provider keeps the start of a
+conversation it has already read and serves it again on the next turn instead of
+processing it anew — faster, and on a cloud cheaper. The token counter now says how
+much of the prompt came from there: `cache 99%` on a warm turn, `cache 0%` when
+nothing was reused, so a conversation processed from scratch on every turn no
+longer goes unnoticed. `MINDFORK_MODEL` now starts a local engine on its own, and
+the zip library is updated past three advisories.
+
 ### Added
 
 - **The token counter shows how much the provider read from its cache** —
@@ -3372,7 +3382,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.18.3...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/vshylov/mindfork-rs/compare/v0.18.3...v0.19.0
 [0.18.3]: https://github.com/vshylov/mindfork-rs/compare/v0.18.2...v0.18.3
 [0.18.2]: https://github.com/vshylov/mindfork-rs/compare/v0.18.1...v0.18.2
 [0.18.1]: https://github.com/vshylov/mindfork-rs/compare/v0.18.0...v0.18.1
