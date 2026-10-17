@@ -1,7 +1,10 @@
 # Cache hits in the token counter — `cached_tokens` from every wire
 
-Status: **built** (branch `feat/cached-tokens`); the live run of §7 is
-pending — it needs a `llama-server`, and an Anthropic key for that wire. *User's
+Status: **built; live GO on every wire** (branch `feat/cached-tokens`, §8).
+The script read 0% → 98–99% → 0% (turn 1, turn 2, the control) on four arms:
+llama.cpp with Qwen 3.8 27B, llama.cpp with Gemma 4 31B, OpenAI and OpenRouter.
+Gemini and Anthropic reported their figure on every request: a miss each time,
+because Gemini's cache is best effort and nothing asks Anthropic to cache. *User's
 decision, 2026-10-17: F1 (b), F2 (c), F3 (a), F4 (a), F5 (a) — each the
 recommendation (§5).* Stage 0, the probe (§7), ran on 2026-10-17 on OpenAI,
 Gemini and OpenRouter. Its results are in §3.1, and they settle the parser's
@@ -82,14 +85,14 @@ dropped with it.
 
 | Provider | Caching | Field(s) | `prompt` includes the cached part? | Evidence |
 |---|---|---|---|---|
-| llama.cpp | automatic (`cache_prompt`) | `timings.cache_n` (since 2025-09, PR #15827); `prompt_tokens_details.cached_tokens` (since 2026-03, PR #19361) | **yes**: `prompt_tokens` = `cache_n` + `prompt_n` | `cache_n` measured on 2026-08-08 (prompt-caching.md §3.1); the details field **to measure** |
+| llama.cpp | automatic (`cache_prompt`) | `timings.cache_n` (since 2025-09, PR #15827); `prompt_tokens_details.cached_tokens` (since 2026-03, PR #19361), both sent and equal | **yes**: `prompt_tokens` = `cache_n` + `prompt_n` | **measured 2026-10-17** (§3.1): build 11715, Qwen 3.8 27B and Gemma 4 31B |
 | Ollama | automatic | none known on `/v1` | **yes** (1797 reported with 1491 cached, prompt-cut-detection.md §6) | **to measure** whether any field comes |
 | LM Studio | automatic | unknown | **yes** (prompt eval 42, `prompt_tokens` 1237, [local-servers.md](local-servers.md) §3) | **to measure** |
 | vLLM | automatic prefix caching | `prompt_tokens_details.cached_tokens`, only with `--enable-prompt-tokens-details` | yes | documented |
 | xAI | automatic | `prompt_tokens_details.cached_tokens` | yes | documented; no key in this environment |
 | OpenRouter | depends on the provider it routes to | `prompt_tokens_details.{cached_tokens, cache_write_tokens}`, both always sent | **yes** | **measured 2026-10-17** (§3.1): OpenAI, Anthropic and Gemini routes |
 | OpenAI Responses | automatic, 1024 tokens minimum | `input_tokens_details.{cached_tokens, cache_write_tokens}`, both always sent | **yes** | **measured 2026-10-17** (§3.1): `gpt-6.1-sol`, `gpt-5.6-sol`, `gpt-5.4-mini` |
-| Anthropic | **explicit only** (`cache_control`) | `cache_read_input_tokens`, `cache_creation_input_tokens` | **no**: `input_tokens` is the remainder | measured on 2026-08-08: zeros without `cache_control`, 13 + 7372 with it (§3.3 there); no key in this environment |
+| Anthropic | **explicit only** (`cache_control`) | `cache_read_input_tokens`, `cache_creation_input_tokens`, both always sent, on `message_start` and again on `message_delta` | **no**: `input_tokens` is the remainder | **measured 2026-10-17** (§3.1): zeros without `cache_control`; 13 + 7372 with it on 2026-08-08 (§3.3 there) |
 | Gemini | implicit; 2048 tokens minimum on 2.5, 4096 on 3.x | `cachedContentTokenCount`, **absent on a miss** | **yes** | **measured 2026-10-17** (§3.1): `gemini-3.8-flash`, `3.5-flash`, `2.5-flash` |
 
 A row marked "documented" is a claim about a provider: "a rule drawn from one
@@ -98,7 +101,9 @@ still marked so are measured by the live run (§7) before their parser ships.
 
 ### 3.1 The probe, 2026-10-17
 
-Stage 0 (§7) ran on every wire with a key in this environment. Each request was
+Stage 0 (§7) ran on every wire with a key in this environment. The last three
+rows were added the same day, once an Anthropic key and the local
+`llama-server` on an RTX 4090 were at hand. Each request was
 the same ~30 KB system message (8400 tokens on OpenAI's tokenizer, 9800 on
 Gemini's) behind a fresh nonce, and was sent three times in a row through the
 client's own request builder. Gemini 2.5 Flash and 3.5 Flash were run again in
@@ -115,6 +120,9 @@ a second probe, with the same outcome.
 | OpenRouter | `openai/gpt-5.4-mini` | cached 0, written 0 | cached **8192** of 8404 (97%) | `0`; both keys on every reply |
 | OpenRouter | `anthropic/claude-haiku-4.5` | cached 0, written 0 | cached 0, written 0 | `0` (nothing asks it to cache) |
 | OpenRouter | `google/gemini-3.8-flash` | cached 0, written 0 | cached **4080** of 9825 (42%) | `0` |
+| Anthropic | `claude-haiku-4-5` | read 0, written 0 of 9849 | read 0, written 0 | `0`; both keys on `message_start` and `message_delta` (nothing asks it to cache) |
+| llama.cpp b11715 | Qwen 3.8 27B Q4_K_M | cached 0 of 9914 (`cache_n` 0) | cached **9910** of 9914 (`cache_n` 9910, `prompt_n` 4) | `0`; the details and `timings` agree |
+| llama.cpp b11715 | Gemma 4 31B Q4_0 | cached 0 of 9840 | cached **9839** of 9840 | `0` |
 
 What this changes in the design, and what it confirms:
 
@@ -145,10 +153,8 @@ What this changes in the design, and what it confirms:
 
 **Not measured here:**
 
-- llama.cpp's `prompt_tokens_details`: `cache_n` was measured on 2026-08-08;
-  the details field is checked by the live run's llama.cpp arm;
 - Ollama and LM Studio;
-- xAI and Anthropic directly: no key in this environment;
+- xAI: no key in this environment;
 - vLLM.
 
 The parser for each follows §4.3 and is held to its row by the live run (§7).
@@ -343,3 +349,78 @@ About 10k input tokens per row, about 100k in all: a few cents.
 - CHANGELOG *Added*;
 - the engine journal;
 - the roadmap item closed, with a pointer from prompt-caching.md §6.
+
+## 8. The live run, 2026-10-17
+
+`app/orchestrator/tests/cached_tokens_live.rs` runs one script per wire on the
+**production** supervisor, so the turn goes through the client, the
+`RetryBackend`, the orchestrator and the `AppEvent::TokenUsage` the bar reads.
+The script is:
+
+- a profile whose persona is about 10k tokens of stable text behind a per-run
+  nonce, with no tools;
+- two turns in one chat;
+- the **control**: the persona's first byte changed, in a new chat.
+
+Each row is the first round's exact counter. The cloud results were the same on
+two consecutive runs. The llama.cpp arms ran against build 11715
+(`9d1878a43`) on an RTX 4090 with `-ngl 99 -c 16384 -np 1 --jinja`:
+
+| Arm | Model | Turn 1 | Turn 2 | Control |
+|---|---|---|---|---|
+| `cached_tokens_openai_e2e_live` | `gpt-5.4-mini` | 0 of 8689 (0%) | **8576 of 8708 (98%)** | 0 of 8689 (0%) |
+| `cached_tokens_openrouter_e2e_live` | `openai/gpt-5.4-mini` | 0 of 8693 (0%) | **8576 of 8712 (98%)** | 0 of 8693 (0%) |
+| `cached_tokens_gemini_e2e_live` | `gemini-3.8-flash` | `Some(0)` of 10888 | `Some(0)` of 10899 | `Some(0)` of 10888 |
+| `cached_tokens_anthropic_e2e_live` | `claude-haiku-4-5` | `Some(0)` of 10251 | `Some(0)` of 10267 | `Some(0)` of 10251 |
+| `cached_tokens_e2e_live` (llama.cpp) | Qwen 3.8 27B Q4_K_M | 0 of 10936 (0%) | **10932 of 10959 (99%)** | 0 of 10936 (0%) |
+| `cached_tokens_e2e_live` (llama.cpp) | Gemma 4 31B Q4_0 | 0 of 10903 (0%) | **10903 of 10922 (99%)** | 0 of 10903 (0%) |
+
+**Verdict: GO on every wire.**
+
+- The figure reaches the bar on every wire.
+- Where the cache served, the second turn reads its predecessor's prompt from
+  it, and the control reads nothing.
+- On llama.cpp this is asserted, not just logged: `cached > 0` on turn 2, a
+  prompt still whole and larger than turn 1's, and a control under 5%. The two
+  templates (Qwen's and Gemma's) gave the same picture.
+- On Anthropic the prompt is the sum §4.2 asks for, though here it is the sum of
+  `input_tokens` and two zeros. A non-zero cache field can only come from a
+  request that asks for caching, which F5 leaves out. The sum is held by its
+  unit tests on the 2026-08-08 figures.
+- On Gemini the absent key arrives as the `Some(0)` §4.3 promised, not as
+  `None`.
+- The arms assert what is theirs to assert: a parsed figure, `0` included. The
+  hit is logged, not asserted.
+
+What the run found:
+
+- **The smoke needs its own nonce.** The first runs had none, and a run's first
+  request read 3840 of 8666 tokens (44%) from the run before it, its control as
+  well. This is the contamination prompt-caching.md §3.2 recorded, met again. The
+  persona now carries a session id after its first byte. That keeps runs apart
+  and leaves the control's change at byte 0.
+- **Gemini's implicit cache did not serve a continuation.** Through the app, no
+  turn read anything, at 4.9k and at 10.9k tokens. Four raw requests isolated it
+  (`gemini-3.8-flash`, 10.9k tokens):
+  - a continuation sent right after its first request: missed, 2 of 2;
+  - the first request repeated exactly: hit, 8830 tokens;
+  - the next continuation: hit 1 time of 2.
+
+  So the probe's hits (§3.1, identical requests) say nothing about the
+  conversation's shape. On Gemini, `cache 0%` on a second turn is the provider
+  being best effort, not a defect of ours. An arm asserting a hit there would
+  measure Google's mood (lessons §2).
+- **One OpenAI run went silent for five minutes** and failed on the wait's
+  ceiling. That run had no nonce. It did not recur in the three runs since. The
+  wait now names its step and the last eight events when it times out, so a
+  recurrence says where it stopped.
+
+**Cost:**
+
+- OpenAI and OpenRouter: about 26k input tokens each per run, a third of them
+  read from cache;
+- Gemini: about 33k per run;
+- the four raw Gemini requests: about 44k;
+- Anthropic: about 30k for the smoke and 30k for the probe;
+- llama.cpp: local, free.
+

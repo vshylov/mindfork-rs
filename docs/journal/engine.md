@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (100)
+## Entries (101)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -112,6 +112,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: an empty answer after tools is asked once more (done)
 - Post-M9: a call's arguments split across two indices are joined (done)
 - Post-M9: a broken call is answered as broken (done)
+- Post-M9: the provider's cache share in the token counter (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -6790,4 +6791,58 @@ would have run on arguments nobody sent.
   recovers.
 
 **Gates**: 4021 unit tests green, 260 `#[ignore]`; clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.
+
+### Post-M9: the provider's cache share in the token counter (done)
+
+Every provider reports how much of a prompt it read from its cache, and every client
+dropped it. So a prefix that stopped being reused was invisible — the self-model's
+observations rendering at last, a future change to the prompt's layout — and on OpenAI
+5.6+ and Anthropic a miss is a write billed at 1.25×, not merely a lost discount. Design,
+forks and every measurement: [cached-tokens.md](../research/cached-tokens.md) (user's
+decision 2026-10-17: F1 (b), F2 (c), F3 (a), F4 (a), F5 (a), each the recommendation).
+
+- **The domain**: `TokenUsage.cached_tokens` and `cache_write_tokens`, both `Option` —
+  `None` when the wire said nothing, `Some(0)` for a reported miss, because a miss that
+  reads like silence is the defect the figure exists to show. `prompt_tokens` is written
+  down as the whole prompt on every wire, which every reader already assumed.
+- **A probe before the parsers** (`cache_probe_tests.rs` beside each client, `#[ignore]`;
+  the client's own body, the raw `usage` printed). It settled the one open question:
+  **Gemini leaves a zero out**, so a miss has no `cachedContentTokenCount` and the client
+  reads the absent key as `Some(0)`. Responses, the gateway and Anthropic send their keys
+  on every reply, zeros included. A cold request on 5.6+ writes the whole prompt (8406 of
+  8409). The prompt count includes the cached part on every wire but Anthropic's.
+- **The wires**: the OpenAI-compatible `prompt_tokens_details`, else llama.cpp's
+  `timings.cache_n`; Responses' `input_tokens_details`, on `Completed` and `Incomplete`;
+  Gemini's count; Anthropic's two fields from `message_start`, **summed** with
+  `input_tokens` into the prompt. That closes a latent collapse to the uncached
+  remainder (13 tokens of 7.4k), which every reader of the figure would have met the day
+  a breakpoint lands.
+- **The bar**: `tokens: 8414 (reasoning 120 · cache 99%)`. The share is rounded down,
+  `0%` is shown, and there is nothing without a figure. It travels with the exact
+  `context` only and is cleared with it. A sub-agent's figure is dropped with its
+  context. `ui.status.reasoning` gave way to `ui.status.tokens.reasoning` and
+  `ui.status.tokens.cache`, so the two notes share one parenthesis.
+- **The log**: one `round usage` line per round (`prompt`, `cached`, `written`), written
+  once at the round's end, because Gemini reports usage on every chunk. A first round's
+  miss shows there even when the bar describes the turn's warm last round.
+- **Tests**: the wires on the probe's own replies, the Anthropic sum, absent against
+  zero, the share's arithmetic and the label in `en`/`ru`, the event wiring, the screen's
+  pairing with `context`, and a child's figure kept off the bar. The last was
+  mutation-checked: sending the child's figure fails it.
+- **Live** (`cached_tokens_live.rs`, the production supervisor; a ~10k-token persona, two
+  turns, then a control whose persona differs in its first byte). **GO on every wire.**
+  - llama.cpp b11715 on an RTX 4090 (Qwen 3.8 27B, Gemma 4 31B): 0% → 99% → 0%,
+    asserted.
+  - OpenAI and OpenRouter (`gpt-5.4-mini`): 0% → 98% → 0%, logged.
+  - Gemini 3.8 and Anthropic Haiku 4.5: a reported `0` on every request.
+
+  The run found three things:
+  - The smoke needed its own nonce: its first request read 44% from the run before.
+  - Gemini's implicit cache served no continuation — the same 2 of 2 in raw requests,
+    while an identical repeat hit — so a hit there is not asserted.
+  - One early OpenAI run went silent for five minutes. It did not recur, and the wait
+    now names its step when it times out.
+
+**Gates**: 4045 unit tests green, 271 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.
