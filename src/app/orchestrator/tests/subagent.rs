@@ -286,6 +286,51 @@ async fn subagent_runs_with_tools_and_lands_on_the_record() {
     );
 }
 
+/// The bar's cache figure describes the conversation's own request, like its
+/// `context`: a child's round reports one of its own prompt, which the bar must
+/// not show — dropped with the child's `context` (docs/research/cached-tokens.md
+/// §2, §4.4) — while the parent's final round carries its own.
+#[tokio::test]
+async fn a_childs_cache_figure_stays_off_the_bar() {
+    use crate::shared::api::contract::TokenUsage;
+    let with_usage = |mut script: Script, prompt: u32, cached: u32| {
+        let usage = ChatChunk::Usage(TokenUsage {
+            prompt_tokens: prompt,
+            completion_tokens: 1,
+            cached_tokens: Some(cached),
+            ..Default::default()
+        });
+        script.chunks.insert(script.chunks.len() - 1, usage);
+        script
+    };
+    let (_dir, _backend, events, _chat) = run_turn(
+        vec![
+            call("c1", "call_subagent", DELEGATE),
+            with_usage(text("it is noon"), 30, 77),
+            with_usage(text("done: noon"), 50, 5),
+        ],
+        no_auto_cfg(),
+    )
+    .await;
+    let figures: Vec<(Option<u64>, Option<u32>)> = events
+        .iter()
+        .filter_map(|e| match e {
+            AppEvent::TokenUsage {
+                context, cached, ..
+            } => Some((*context, *cached)),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        !figures.iter().any(|(_, c)| *c == Some(77)),
+        "the child's cache figure reached the bar: {figures:?}"
+    );
+    assert!(
+        figures.contains(&(Some(50), Some(5))),
+        "the parent's own figure arrives with its context: {figures:?}"
+    );
+}
+
 /// A landed transcript is titled at landing under either trigger point
 /// (research §3.10): the run's whole exchange arrives at once, so the
 /// "after the user's message" and "after the reply" moments coincide. The

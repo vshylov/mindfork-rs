@@ -265,7 +265,7 @@ fn activate_chat_rebuilds_feed_and_resets_gen() {
     let mut s = ChatScreen::new();
     let prev = gen_id();
     s.begin_generation(prev, None); // as if a generation was running
-    s.set_token_usage(prev, 42, Some(123), true, Some(7)); // the previous chat's token counter
+    s.set_token_usage(prev, 42, Some(123), true, Some(7), Some(100)); // the previous chat's token counter
     let id = gen_id();
     let messages = vec![
         Message::new(MessageRole::System, "sys"),
@@ -288,9 +288,40 @@ fn activate_chat_rebuilds_feed_and_resets_gen() {
     assert_eq!(s.gen_tokens, 0);
     assert!(s.gen_context.is_none());
     assert!(!s.gen_context_exact);
+    assert_eq!(s.gen_cached, None, "the cache figure goes with the counter");
     // a system entry in the list draws as a note row (a dialogue transcript's
     // director intervention, spec §9.13) — three rows, not two
     assert_eq!(s.feed.len(), 3);
+}
+
+/// The cache figure describes the same request as the conversation count, so it
+/// moves with it (docs/research/cached-tokens.md §4.4): set with an exact
+/// `context`, left alone by a reply-only update, cleared by the next request's
+/// estimate — never a stale share of a different number.
+#[test]
+fn the_cache_figure_moves_with_the_context() {
+    let mut s = ChatScreen::new();
+    let id = gen_id();
+    s.begin_generation(id, None);
+    s.set_token_usage(id, 0, Some(100), false, None, None);
+    assert_eq!(s.gen_cached, None, "an estimate has no cache figure");
+    s.set_token_usage(id, 5, Some(120), true, Some(3), Some(90));
+    assert_eq!((s.gen_context, s.gen_cached), (Some(120), Some(90)));
+    s.set_token_usage(id, 6, None, false, None, None);
+    assert_eq!(
+        (s.gen_context, s.gen_cached),
+        (Some(120), Some(90)),
+        "a reply delta leaves both"
+    );
+    s.set_token_usage(id, 6, Some(130), false, None, None);
+    assert_eq!(
+        (s.gen_context, s.gen_cached),
+        (Some(130), None),
+        "the next estimate clears it"
+    );
+    // A stale generation's event changes nothing.
+    s.set_token_usage(gen_id(), 9, Some(999), true, None, Some(999));
+    assert_eq!(s.gen_cached, None);
 }
 
 /// A jump from a search hit (`AppCommand::OpenChatAt`): the feed opens on the

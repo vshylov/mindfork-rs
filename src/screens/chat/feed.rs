@@ -87,6 +87,7 @@ impl ChatScreen {
         self.gen_context = None;
         self.gen_context_exact = false;
         self.gen_reasoning = 0;
+        self.gen_cached = None;
         // The collapse state belongs to the chat, so it is applied **before**
         // the feed is built: the block cache is keyed on it (spec §11.3). So is
         // the compaction boundary — both are per-chat rendering inputs.
@@ -269,6 +270,7 @@ impl ChatScreen {
         self.gen_context = None;
         self.gen_context_exact = false;
         self.gen_reasoning = 0;
+        self.gen_cached = None;
         self.gen_model = model;
         self.pending_text_sep = false;
         self.pending_thoughts_sep = false;
@@ -568,7 +570,8 @@ impl ChatScreen {
 
     /// Updates the token counter of the current generation (live). Ignores stale
     /// events (by `generation_id`). Updates the context (the conversation) only when it's
-    /// set (`Some`), remembering whether it's an exact number or an estimate.
+    /// set (`Some`), remembering whether it's an exact number or an estimate — and the
+    /// cache figure with it, which describes the same request.
     pub fn set_token_usage(
         &mut self,
         generation_id: Uuid,
@@ -576,12 +579,14 @@ impl ChatScreen {
         context: Option<u64>,
         context_exact: bool,
         reasoning: Option<u32>,
+        cached: Option<u32>,
     ) {
         if self.current_gen == Some(generation_id) {
             self.gen_tokens = completion;
             if let Some(c) = context {
                 self.gen_context = Some(c);
                 self.gen_context_exact = context_exact;
+                self.gen_cached = cached;
             }
             // Reasoning tokens are only known from `usage` (Some) — otherwise leave them be.
             if let Some(r) = reasoning {

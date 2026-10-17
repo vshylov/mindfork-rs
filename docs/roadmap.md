@@ -198,7 +198,9 @@ effort tiers — have all closed
   share in the token counter, `prompt_cache_key`. The promising way to the rest
   is a **stable observation selection** rather than a relocation (§5 F1(e)
   there) — untested.
-- **`cached_tokens` in the token counter** — **idea, and the instrument**. All
+- **`cached_tokens` in the token counter** — **idea, and the instrument**;
+  built on `feat/cached-tokens`, the live run pending
+  ([cached-tokens.md](research/cached-tokens.md), 2026-10-17). All
   four providers report the cache-hit share and the client drops it (llama.cpp
   `timings.cache_n`, present since 2025-09 and not gated by `include_usage`;
   OpenAI `prompt_tokens_details.cached_tokens`; Anthropic

@@ -170,6 +170,15 @@ into a rolling summary — automatically where the engine says how large its win
 is, and on demand with `/compact`. The folded part stays on disk; only what the
 model sees changes.
 
+The status line counts it: `tokens: ~4600` while the number is mindfork's own
+estimate, the engine's exact figure once it answers. Where the provider says how
+much of the conversation it read from its prompt cache, the count adds the share —
+`tokens: 8414 (cache 99%)`. A high share means the earlier conversation was
+reused rather than processed again, which is faster and, on a cloud, cheaper.
+`cache 0%` on a short chat is normal: providers cache only a prompt above about
+one to four thousand tokens. Anthropic always reads `0%`, because mindfork does
+not ask it to cache.
+
 ### The self-model
 
 `F3`. A structured picture the assistant maintains of itself and of you: a

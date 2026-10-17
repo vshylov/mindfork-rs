@@ -1654,6 +1654,7 @@ fn spawn_generation(spawn: GenSpawn) {
             context: Some(estimate_prompt_tokens(&request)),
             context_exact: false,
             reasoning: None,
+            cached: None,
         });
 
         let shared = TurnShared {
@@ -1841,6 +1842,10 @@ struct TokenReport {
     own_reasoning: Option<u32>,
     context: Option<u64>,
     context_exact: bool,
+    /// The share of `context` read from the provider's cache — about the same
+    /// request as `context`, so it travels with the exact figure only
+    /// (docs/research/cached-tokens.md §4.4).
+    cached: Option<u32>,
 }
 
 /// One agentic loop's state: the turn's own, or a sub-agent's run inside it.
@@ -2027,17 +2032,20 @@ impl RoundSink<'_> {
                     context: r.context,
                     context_exact: r.context_exact,
                     reasoning: r.turn_reasoning,
+                    cached: r.cached,
                 });
             }
             Some(run) => {
                 // The child's prompt size is not the conversation's: the
-                // bar shows one number, so the `context` half is dropped.
+                // bar shows one number, so the `context` half is dropped —
+                // and the cache figure with it, being about the same request.
                 let _ = self.evt_tx.send(AppEvent::TokenUsage {
                     generation_id: self.turn,
                     completion: r.turn_completion,
                     context: None,
                     context_exact: false,
                     reasoning: r.turn_reasoning,
+                    cached: None,
                 });
                 let _ = self.done_tx.send(GenMessage::Progress {
                     id: self.turn,
@@ -5475,6 +5483,8 @@ async fn stream_round(
     let mut round_reasoning: u32 = 0;
     // Who served the round, and for how much — a gateway's own two facts.
     let mut round_served: Option<crate::shared::api::contract::Served> = None;
+    // The round's cache figures (read, written) — for the log line at its end.
+    let mut usage_cache: (Option<u32>, Option<u32>) = (None, None);
 
     // The reply counter: `context: None` leaves the prior conversation estimate
     // untouched (emitted by start_generation); the exact `context` only comes from the server's usage.
@@ -5490,6 +5500,7 @@ async fn stream_round(
             own_reasoning: None,
             context: None,
             context_exact: false,
+            cached: None,
         });
     };
 
@@ -5532,6 +5543,7 @@ async fn stream_round(
                         usage_prompt = Some(u.prompt_tokens);
                         usage_prefill = u.prefill.or(usage_prefill);
                         round_reasoning = u.reasoning_tokens;
+                        usage_cache = (u.cached_tokens, u.cache_write_tokens);
                         // Correct the turn's total from the delta count to the
                         // server's figure — the two differ by whatever a delta
                         // carried that was not exactly one token.
@@ -5548,6 +5560,7 @@ async fn stream_round(
                             own_reasoning: Some(own_base_reasoning + u.reasoning_tokens),
                             context: Some(u.prompt_tokens as u64),
                             context_exact: true,
+                            cached: u.cached_tokens,
                         });
                     }
                     // Recorded on the message, shown nowhere yet
@@ -5609,6 +5622,20 @@ async fn stream_round(
             )));
             reason = FinishReason::Error;
         }
+    }
+
+    // One line per round with what the provider reused and wrote: where a
+    // prefix broken on the turn's first round shows, which the bar — about the
+    // latest round — may not (docs/research/cached-tokens.md, F2). Logged here,
+    // once, because a wire can report usage on every chunk (Gemini).
+    if let Some(prompt) = usage_prompt {
+        tracing::info!(
+            generation = %id,
+            prompt,
+            cached = ?usage_cache.0,
+            written = ?usage_cache.1,
+            "round usage"
+        );
     }
 
     RoundOutput {

@@ -370,6 +370,7 @@ async fn the_title_records_its_usage_under_its_own_kind() {
             completion_tokens: 2,
             reasoning_tokens: 0,
             prefill: None,
+            ..Default::default()
         }),
         ChatChunk::Finished(FinishReason::Stop),
     ])) as Arc<dyn EngineBackend>);

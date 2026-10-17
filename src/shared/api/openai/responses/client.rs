@@ -15,8 +15,8 @@ use tokio_util::sync::CancellationToken;
 
 use super::wire::{self, RespEvent, RespItem};
 use crate::shared::api::contract::{
-    ChatChunk, ChatRequest, ChatStream, EngineBackend, FinishReason, ThinkingRef, TokenUsage,
-    ToolCallDelta, VisionSupport,
+    ChatChunk, ChatRequest, ChatStream, EngineBackend, FinishReason, ThinkingRef, ToolCallDelta,
+    VisionSupport,
 };
 use crate::shared::api::effort::{self, EffortMemo, EffortWire};
 use crate::shared::api::error::{self, EngineError, SUBJECT_RESPONSES};
@@ -213,12 +213,7 @@ impl EngineBackend for ResponsesClient {
                                     }
                                     Ok(RespEvent::Completed { response }) => {
                                         if let Some(u) = response.usage {
-                                            yield ChatChunk::Usage(TokenUsage {
-                                                prompt_tokens: u.input_tokens,
-                                                completion_tokens: u.output_tokens,
-                                                reasoning_tokens: u.output_tokens_details.reasoning_tokens,
-                                                prefill: None,
-                                            });
+                                            yield ChatChunk::Usage(u.token_usage());
                                         }
                                         let reason = if saw_tool_call {
                                             FinishReason::ToolCalls
@@ -238,12 +233,7 @@ impl EngineBackend for ResponsesClient {
                                             .map(|r| (r.usage, r.incomplete_details))
                                             .unwrap_or_default();
                                         if let Some(u) = usage {
-                                            yield ChatChunk::Usage(TokenUsage {
-                                                prompt_tokens: u.input_tokens,
-                                                completion_tokens: u.output_tokens,
-                                                reasoning_tokens: u.output_tokens_details.reasoning_tokens,
-                                                prefill: None,
-                                            });
+                                            yield ChatChunk::Usage(u.token_usage());
                                         }
                                         yield ChatChunk::Finished(wire::RespIncomplete::finish_reason(details.as_ref()));
                                         break;

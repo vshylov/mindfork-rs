@@ -1178,7 +1178,7 @@ counterpart of `Error` for an outcome that is not a failure) and `Compacted`
 (a rolling summary was made: the feed draws its boundary divider; `chat.messages`
 is unchanged, so nothing else moves).
 
-`TokenUsage { completion, context, context_exact, reasoning }` — the live token
+`TokenUsage { completion, context, context_exact, reasoning, cached }` — the live token
 counter: the reply (`completion`, accumulated across agentic-loop rounds) and the
 conversation/prompt (`context`). Dual source: a live approximation from the number
 of streamed deltas, plus an exact count from the server's `usage` block (requested
@@ -1191,7 +1191,11 @@ known only from `usage` (`None` — leave the previous value alone); reasoning
 providers supply it (OpenAI Responses `output_tokens_details.reasoning_tokens`,
 OpenAI-compat/llama.cpp `completion_tokens_details.reasoning_tokens`; Anthropic
 doesn't split it out → `0`). When `>0` the status bar shows a "(reasoning N)" note
-next to the sum.
+next to the sum. `cached` is how much of `context` the provider read from its
+prompt cache: it describes the same request, so it travels with an exact `context`
+only, the screen replaces it whenever `context` changes, and a sub-agent's report
+drops it with `context`. The bar shows it as a share, `(reasoning N · cache P%)`,
+rounded down (docs/research/cached-tokens.md §4.4).
 
 ### Flow invariants
 
@@ -1980,7 +1984,11 @@ its own — or named by `api_key_env`, resolved through the same
   by `RetryBackend` with its test from the start
   (docs/research/parallel-subagents.md §4.7).
 - **`ChatChunk`** = `Text` | `Thoughts` | `ThoughtsSignature(ThinkingRef)` |
-  `ToolCall(ToolCallDelta)` | `Usage(TokenUsage)` — carrying `prefill: Option<Prefill>`,
+  `ToolCall(ToolCallDelta)` | `Usage(TokenUsage)` — `prompt_tokens` the whole prompt
+  on every wire (Anthropic's client sums `input_tokens` and its two cache fields),
+  `cached_tokens`/`cache_write_tokens` as `Option` (`None` — not reported, `Some(0)`
+  — a reported miss; Gemini's absent key is a zero; docs/research/cached-tokens.md
+  §4.1–§4.3), and `prefill: Option<Prefill>`,
   llama.cpp's `timings` (`prompt_n` net of the prefix cache, `prompt_ms`),
   `None` from the other clients; the turn loop keeps its largest sample on
   `TurnUsage.prefill` (a tool's own request's included — `ToolOutcome.prefill`,

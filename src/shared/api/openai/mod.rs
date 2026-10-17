@@ -13,6 +13,8 @@
 //! Responses has no embeddings). Gemini cloud uses the native
 //! [`GeminiClient`](super::gemini::GeminiClient), not this client.
 
+#[cfg(test)]
+mod cache_probe_tests;
 pub mod client;
 #[cfg(test)]
 mod gateway_live_tests;

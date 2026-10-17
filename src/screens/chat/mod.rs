@@ -560,6 +560,11 @@ pub struct ChatScreen {
     /// `usage` (`0` — none / the provider doesn't separate them). The status bar
     /// shows them separately when `> 0`.
     gen_reasoning: u32,
+    /// How much of `gen_context` the provider read from its cache — set and
+    /// cleared together with `gen_context`, being about the same request;
+    /// `None` — no figure for it (an estimate, a server that does not report).
+    /// The status bar shows the share (docs/research/cached-tokens.md §4.4).
+    gen_cached: Option<u32>,
     /// The model of the current generation (`AppEvent::GenerationStarted`), for
     /// the streaming bubble's header (spec §11.3). Kept on the screen rather
     /// than only on the bubble because the turn can open **more** bubbles:
@@ -746,6 +751,7 @@ impl ChatScreen {
             gen_context: None,
             gen_context_exact: false,
             gen_reasoning: 0,
+            gen_cached: None,
             gen_model: None,
             spell: None,
             spell_dirty: false,

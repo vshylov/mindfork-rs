@@ -526,6 +526,7 @@ async fn impersonation_records_its_usage_under_its_own_kind() {
             completion_tokens: 4,
             reasoning_tokens: 0,
             prefill: None,
+            ..Default::default()
         }),
         ChatChunk::Finished(FinishReason::Stop),
     ])) as Arc<dyn EngineBackend>);
@@ -574,6 +575,7 @@ async fn impersonations_landing_offers_its_sample_on_the_shared_engine() {
                 tokens: 10_642,
                 ms: 280_000,
             }),
+            ..Default::default()
         }),
         ChatChunk::Finished(FinishReason::Stop),
     ])) as Arc<dyn EngineBackend>);
@@ -630,6 +632,7 @@ async fn a_separate_server_or_a_cut_stream_lands_no_sample() {
                     tokens: 400,
                     ms: 10_000,
                 }),
+                ..Default::default()
             }),
             ChatChunk::Finished(FinishReason::Stop),
         ])) as Arc<dyn EngineBackend>

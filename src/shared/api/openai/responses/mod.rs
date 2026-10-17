@@ -7,6 +7,8 @@
 //! `wire` — building the request body and parsing event-based SSE; `client` — the
 //! [`EngineBackend`](crate::shared::api::contract::EngineBackend) implementation.
 
+#[cfg(test)]
+mod cache_probe_tests;
 mod client;
 #[cfg(test)]
 mod live_tests;

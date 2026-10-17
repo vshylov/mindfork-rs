@@ -117,6 +117,10 @@ pub struct StatusModel<'a> {
     pub context_exact: bool,
     /// Reasoning tokens ("thoughts") in the reply (included in `tokens`); `0` — don't show.
     pub reasoning: u32,
+    /// How much of `context` the provider read from its cache; shown as a share
+    /// of it, `0%` included — a miss is the signal (docs/research/cached-tokens.md,
+    /// F3). `None` — no figure for this request: not shown.
+    pub cached: Option<u32>,
     pub mouse_scroll: bool,
     pub background: Option<&'a str>,
     /// Speech synthesis is running (`/tts`) — a quiet "speaking" chip. See spec §11.9.
@@ -485,6 +489,37 @@ pub fn cut_chip(chip: Vec<Span<'static>>, width: usize) -> Vec<Span<'static>> {
         .collect()
 }
 
+/// The counter's annotations, joined into one parenthesis — `(reasoning 120 · cache
+/// 99%)` — or nothing. Reasoning tokens ("thoughts") are included in the total and
+/// shown when there are any; the cache share is of the conversation shown, rounded
+/// **down** so that one missed token never reads as `100%`, and shown whenever the
+/// request reported it, `0%` included (docs/research/cached-tokens.md §4.4, F3).
+fn counter_notes(model: &StatusModel, loc: &'static Locale) -> String {
+    let mut notes = Vec::new();
+    if model.reasoning > 0 {
+        notes.push(loc.tf(
+            "ui.status.tokens.reasoning",
+            &[("n", &model.reasoning.to_string())],
+        ));
+    }
+    if let Some(pct) = cache_share(model.cached, model.context) {
+        notes.push(loc.tf("ui.status.tokens.cache", &[("pct", &pct.to_string())]));
+    }
+    if notes.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", notes.join(" · "))
+    }
+}
+
+/// The cached share of `context` in whole percent, rounded down; `None` without
+/// both figures or with an empty context. A count above the context (no provider
+/// sends one) reads as `100`.
+fn cache_share(cached: Option<u32>, context: Option<u64>) -> Option<u64> {
+    let context = context.filter(|c| *c > 0)?;
+    Some((u64::from(cached?) * 100 / context).min(100))
+}
+
 /// The combined token counter (conversation + reply): bright during generation (grows
 /// live), muted afterward (the last turn's final result). Marked with `~` while the
 /// conversation (prompt) is a client-side estimate, i.e. before the exact number arrives from the server's `usage`.
@@ -503,15 +538,7 @@ fn token_counter_span(
     } else {
         ""
     };
-    // Reasoning tokens ("thoughts") — a separate annotation, they're included in the total.
-    let reason = if model.reasoning > 0 {
-        loc.tf(
-            "ui.status.reasoning",
-            &[("n", &model.reasoning.to_string())],
-        )
-    } else {
-        String::new()
-    };
+    let reason = counter_notes(model, loc);
     let label = loc.tf(
         "ui.status.tokens",
         &[
@@ -668,6 +695,7 @@ mod tests {
             context,
             context_exact,
             reasoning: 0,
+            cached: None,
             mouse_scroll,
             background: None,
             speaking: false,
@@ -777,6 +805,7 @@ mod tests {
                 context: None,
                 context_exact: false,
                 reasoning: 0,
+                cached: None,
                 mouse_scroll: false,
                 background: Some("рефлексия"),
                 speaking: false,
@@ -885,6 +914,7 @@ mod tests {
                 context: Some(1000),
                 context_exact: true,
                 reasoning,
+                cached: None,
                 mouse_scroll: false,
                 background: None,
                 speaking: false,
@@ -906,6 +936,60 @@ mod tests {
         let none = with_reason(0);
         assert!(none.contains("токены: 1042"));
         assert!(!none.contains("рассужд"));
+    }
+
+    /// The counter as it reads with the cache figure (docs/research/cached-tokens.md,
+    /// F3): the share of the conversation, `0%` included, joined with reasoning in
+    /// one parenthesis — and nothing where the request reported no figure.
+    #[test]
+    fn token_counter_shows_the_cache_share() {
+        let statuses = ready();
+        let line = |reasoning: u32, cached: Option<u32>, lang| -> String {
+            let mut m = model(&statuses, false, 5, Some(8409), true, false);
+            m.reasoning = reasoning;
+            m.cached = cached;
+            lines(
+                200,
+                &m,
+                &Palette::default(),
+                crate::shared::i18n::locale(lang),
+            )
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect()
+        };
+        use crate::shared::i18n::Lang::{En, Ru};
+        // `gpt-6.1-sol` warm: 8406 of 8409 is 99.96% — rounded down, never `100%`.
+        assert!(line(0, Some(8406), En).contains("tokens: 8414 (cache 99%)"));
+        assert!(line(0, Some(8406), Ru).contains("токены: 8414 (кэш 99%)"));
+        // A miss is shown: it is the signal.
+        assert!(line(0, Some(0), En).contains("tokens: 8414 (cache 0%)"));
+        // Reasoning and the cache share in one parenthesis.
+        assert!(line(120, Some(8192), En).contains("tokens: 8414 (reasoning 120 · cache 97%)"));
+        assert!(line(120, Some(8192), Ru).contains("(рассужд. 120 · кэш 97%)"));
+        // No figure for the request: no annotation at all.
+        let silent = line(0, None, En);
+        assert!(
+            silent.contains("tokens: 8414") && !silent.contains("cache"),
+            "{silent}"
+        );
+        assert!(!silent.contains('('), "{silent}");
+    }
+
+    /// The share's arithmetic: whole percent, rounded down; nothing without
+    /// both figures or against an empty conversation; a count above the
+    /// conversation capped.
+    #[test]
+    fn the_cache_share_rounds_down_and_needs_both_figures() {
+        assert_eq!(cache_share(Some(8406), Some(8409)), Some(99));
+        assert_eq!(cache_share(Some(8409), Some(8409)), Some(100));
+        assert_eq!(cache_share(Some(7782), Some(9825)), Some(79));
+        assert_eq!(cache_share(Some(0), Some(9825)), Some(0));
+        assert_eq!(cache_share(None, Some(9825)), None);
+        assert_eq!(cache_share(Some(10), None), None);
+        assert_eq!(cache_share(Some(10), Some(0)), None);
+        assert_eq!(cache_share(Some(20), Some(10)), Some(100));
     }
 
     #[test]
@@ -1334,6 +1418,7 @@ mod tests {
             context: Some(456),
             context_exact: true,
             reasoning: 0,
+            cached: None,
             mouse_scroll: true,
             background: Some("рефлексия"),
             speaking: true,

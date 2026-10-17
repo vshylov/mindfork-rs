@@ -537,12 +537,42 @@ pub struct AntStopDelta {
     pub stop_reason: Option<String>,
 }
 
+/// The counter of a message: `input_tokens` on `message_start`, `output_tokens`
+/// on `message_delta`. With caching on, `input_tokens` is only the **uncached
+/// remainder** — 13 tokens of a 7.4k prompt (docs/research/prompt-caching.md
+/// §3.3) — and the two cache fields hold the rest.
 #[derive(Debug, Default, Deserialize)]
 pub struct AntUsage {
     #[serde(default)]
     pub input_tokens: u32,
     #[serde(default)]
     pub output_tokens: u32,
+    #[serde(default)]
+    pub cache_creation_input_tokens: Option<u32>,
+    #[serde(default)]
+    pub cache_read_input_tokens: Option<u32>,
+}
+
+impl AntUsage {
+    /// The domain's counter, from `message_start`'s usage (`self`) and the
+    /// `output_tokens` of `message_delta`. The prompt is the **sum** of the
+    /// three input fields — the whole prompt, as every other wire reports it
+    /// (docs/research/cached-tokens.md §4.2). Anthropic counts "thoughts" in
+    /// `output_tokens` and does not separate them.
+    pub fn token_usage(&self, output_tokens: u32) -> crate::shared::api::contract::TokenUsage {
+        let prompt = self
+            .input_tokens
+            .saturating_add(self.cache_creation_input_tokens.unwrap_or(0))
+            .saturating_add(self.cache_read_input_tokens.unwrap_or(0));
+        crate::shared::api::contract::TokenUsage {
+            prompt_tokens: prompt,
+            completion_tokens: output_tokens,
+            reasoning_tokens: 0,
+            prefill: None,
+            cached_tokens: self.cache_read_input_tokens,
+            cache_write_tokens: self.cache_creation_input_tokens,
+        }
+    }
 }
 
 /// `claude-haiku-4-5`'s answer to a thinking turn, as it came on 2026-10-01.
@@ -1209,6 +1239,54 @@ mod stream_error_tests {
         assert_eq!(
             a, b,
             "the flag touches only the trim and the thinking block"
+        );
+    }
+}
+
+/// Anthropic's cache fields and the whole-prompt sum
+/// (docs/research/cached-tokens.md §4.2).
+#[cfg(test)]
+mod cache_figure_tests {
+    use super::AntUsage;
+
+    /// With caching on, `input_tokens` is only the uncached remainder: the
+    /// figures of docs/research/prompt-caching.md §3.3 (13 fresh, 2304
+    /// written, 5067 read) are one 7384-token prompt, as every other wire
+    /// would report it.
+    #[test]
+    fn the_prompt_is_the_sum_of_the_three_input_fields() {
+        let start: AntUsage = serde_json::from_str(
+            r#"{"input_tokens":13,"cache_creation_input_tokens":2304,"cache_read_input_tokens":5067,"output_tokens":1}"#,
+        )
+        .unwrap();
+        let u = start.token_usage(42);
+        assert_eq!(u.prompt_tokens, 7384);
+        assert_eq!(
+            (u.cached_tokens, u.cache_write_tokens),
+            (Some(5067), Some(2304))
+        );
+        assert_eq!((u.completion_tokens, u.reasoning_tokens), (42, 0));
+    }
+
+    /// Nothing asks Anthropic to cache today: the fields come as zeros, and
+    /// the prompt is `input_tokens` alone. A `message_start` without them
+    /// reports no figure at all.
+    #[test]
+    fn zeros_are_a_miss_and_absence_is_no_figure() {
+        let zeros: AntUsage = serde_json::from_str(
+            r#"{"input_tokens":6910,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}"#,
+        )
+        .unwrap();
+        let u = zeros.token_usage(2);
+        assert_eq!(
+            (u.prompt_tokens, u.cached_tokens, u.cache_write_tokens),
+            (6910, Some(0), Some(0))
+        );
+        let bare: AntUsage = serde_json::from_str(r#"{"input_tokens":10}"#).unwrap();
+        let u = bare.token_usage(2);
+        assert_eq!(
+            (u.prompt_tokens, u.cached_tokens, u.cache_write_tokens),
+            (10, None, None)
         );
     }
 }

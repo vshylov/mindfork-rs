@@ -33,6 +33,11 @@ mod continue_probe;
 #[cfg(test)]
 mod dialogue_probe;
 
+// Stage-0 live probe for the prompt-cache fields of every wire
+// (docs/research/cached-tokens.md §7); each wire's arm sits beside its client.
+#[cfg(test)]
+pub(crate) mod cache_probe_tests;
+
 // The one-shot SSE server the clients' stream tests share.
 #[cfg(test)]
 pub(crate) mod sse_stub;

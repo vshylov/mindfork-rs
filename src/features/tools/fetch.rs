@@ -1663,6 +1663,7 @@ mod tests {
                         tokens: EXACT,
                         ms: 1000,
                     }),
+                    ..Default::default()
                 });
                 yield ChatChunk::Finished(FinishReason::Stop);
             };
