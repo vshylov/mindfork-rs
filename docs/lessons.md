@@ -1951,12 +1951,15 @@ and 5, so `строк: {n}` there too. The English half is gated <!-- cyrillic-o
 (`no_english_count_a_person_reads_comes_before_a_plural`); Russian is not.
 — *counts that read right at one*.
 
-**Know where `cyrillic_scan.py` cannot see.** It allowlists test files **wholesale**
-(they legitimately hold fixture data and reference-locale assertions), and it sets
-`in_test` on the first `#[cfg(test)]` it sees and **never unsets it** — so production
-code below a `#[cfg(test)]` test accessor is scanned as test code. Two unlocalized
-user-facing strings hid there for months.
-— *live-smoke diagnostic log in English*, *collapsible tool calls*.
+**Know where `cyrillic_scan.py` cannot see.** It allowlists test code **wholesale**
+(it legitimately holds fixture data and reference-locale assertions): a Cyrillic
+literal anywhere in a test item or a test file passes, and only a comment or a
+print-macro label inside one is flagged. Until 2026-10-18 it also took the first
+`#[cfg(test)]` in a file for the start of test code down to the file's end — two
+unlocalized user-facing strings hid below a test accessor for months, and 16 997
+production lines in 223 files were read that way. It now knows test code by
+shape, with the layer gate's code: one item per marker.
+— *live-smoke diagnostic log in English*, *collapsible tool calls*, *the source-language gate knows test code by shape*.
 
 **Decide which axis a string belongs to before localizing it.** Axis A is the *agent's*
 language (tool descriptions, results, prompts — via `ctx.loc`); axis B is the *interface*

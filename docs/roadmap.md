@@ -587,14 +587,6 @@ effort tiers — have all closed
 - **Hot-path benchmarks** — **idea**. Feed rendering (markdown + syntect
   cache), line wrapping, brute-force memory cosine — a performance regression
   detector; there is no `benches/` yet.
-- **`cyrillic_scan.py`: `in_test` is never unset** — **on demand**. It flips
-  on the first test marker in a file (`#[cfg(test)]`, `mod tests`, `#[test]`,
-  `#[tokio::test]`) and treats everything below as test code, where Cyrillic in
-  code position is legitimate fixture data. That is how two production strings
-  in `message_feed.rs` (a file with `#[cfg(test)]` test accessors mid-file)
-  stayed Russian through the whole English-source migration; they are fixed,
-  the scanner's blind spot is not. An attribute on a single item should not
-  mean "the rest of the file is tests".
 - **A stored enum's new value is caught for one enum only** — **on demand**.
   `ReasoningEffort` has a test that does not compile for a variant whose
   schema is not named (`schema.rs`, `effort_arrived_in`), added after `max`

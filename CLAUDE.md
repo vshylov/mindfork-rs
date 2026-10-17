@@ -144,6 +144,7 @@ cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 cargo run                          # TUI (needs a REAL terminal — see Pitfalls)
 python tools/cyrillic_scan.py      # source-language gate
+python tools/cyrillic_scan.py --self-test  # ...its test-code arms, against fixtures
 python tools/link_check.py         # relative-link gate
 python tools/doc_index_check.py    # documentation-structure gate
 python tools/list_scroll_check.py  # one implementation of a list's scroll state
