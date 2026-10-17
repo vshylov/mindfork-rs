@@ -228,9 +228,10 @@ data format change adds an item to `CHANGELOG.md` → `[Unreleased]` (§4).
    **Before the rename, the `Data` rubric is filled by measurement**: ask of every
    item in `[Unreleased]` what it writes to disk, and for each **new value of a
    stored type** — a variant of an enum kept in `settings.json`, `profiles.json`
-   or a chat file — run the **previous release's binary** on a file that holds
-   it (built from its tag into a target directory of its own; a couple of
-   minutes). A test of the current build cannot see this: today's reader reads
+   or a chat file, every one of them listed with its schema in
+   `src/shared/storage/schema/stored_enums_tests.rs` — run the **previous
+   release's binary** on a file that holds it (built from its tag into a target
+   directory of its own; a couple of minutes). A test of the current build cannot see this: today's reader reads
    today's value, and the file kinds fail differently — the settings refuse, a
    chat is skipped in silence. A value with no schema step is fixed in a pull
    request of its own, and the release PR is stacked on it as a draft

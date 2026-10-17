@@ -336,6 +336,9 @@ pub(super) fn dropped_paths(fixture: &Value, read_back: &Value) -> Vec<String> {
 }
 
 #[cfg(test)]
+mod stored_enums_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::entities::sampling::ReasoningEffort;
@@ -660,28 +663,6 @@ mod tests {
         );
     }
 
-    /// The schema of `settings.json` and of a chat file — one number so far —
-    /// in which a value of the effort scale became one a file may hold.
-    ///
-    /// **No wildcard arm, on purpose.** The effort is a strict enum stored in
-    /// three kinds of file, so a new variant is a breaking change of all of
-    /// them (the module's bump policy), and nothing else in the build says so:
-    /// `max` was added with every test green and no step, and 0.13.0 dropped
-    /// the chats that held it from its list. A variant added to
-    /// [`ReasoningEffort`] stops this function compiling until its author
-    /// names the schema it arrives in — and writes that schema's steps.
-    fn effort_arrived_in(effort: ReasoningEffort) -> u32 {
-        match effort {
-            ReasoningEffort::None
-            | ReasoningEffort::Minimal
-            | ReasoningEffort::Low
-            | ReasoningEffort::Medium
-            | ReasoningEffort::High
-            | ReasoningEffort::XHigh => 1,
-            ReasoningEffort::Max => 5,
-        }
-    }
-
     /// The reader a version at schema `current` ships: today's artifact, as
     /// many steps shorter as it is older.
     fn reader_at(art: JsonArtifact, current: u32) -> JsonArtifact {
@@ -696,19 +677,12 @@ mod tests {
     /// The reason for both stamps, from the other side: a file holding a value
     /// of the scale is, to every reader older than the value, a **newer
     /// version** — refused before it is parsed, where the parse would have
-    /// refused the settings as an unknown variant and skipped the chat.
+    /// refused the settings as an unknown variant and skipped the chat. The
+    /// values and their schemas are the ledger's ([`stored_enums_tests`]), whose
+    /// `match` has no wildcard arm.
     #[test]
     fn a_file_holding_an_effort_is_a_newer_version_to_a_reader_older_than_it() {
-        for effort in [
-            ReasoningEffort::None,
-            ReasoningEffort::Minimal,
-            ReasoningEffort::Low,
-            ReasoningEffort::Medium,
-            ReasoningEffort::High,
-            ReasoningEffort::XHigh,
-            ReasoningEffort::Max,
-        ] {
-            let since = effort_arrived_in(effort);
+        for (effort, since) in super::stored_enums_tests::efforts() {
             assert!(
                 since <= SETTINGS_SCHEMA && since <= CHAT_SCHEMA,
                 "{effort:?}"

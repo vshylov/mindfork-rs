@@ -2637,9 +2637,14 @@ Invariants:
   (each also checked to hold no key its reader drops — a misspelt key in a
   fixture is ignored, and pins nothing), by the end-to-end
   `run_stamps_a_root_of_the_version_before_the_max_effort`, and by
-  `a_file_holding_an_effort_is_a_newer_version_to_a_reader_older_than_it`,
-  whose `effort_arrived_in` is a `match` **with no wildcard arm**: a variant
-  added to the scale does not compile until its schema is named there.
+  `a_file_holding_an_effort_is_a_newer_version_to_a_reader_older_than_it`.
+  **Every strict enum a stored file holds** — 26 of them, in `settings.json`,
+  `profiles.json`, the chat files and the self-model's JSON in `data.db` — has a
+  ledger in `schema/stored_enums_tests.rs`: a `match` **with no wildcard arm**
+  naming the schema each value arrived in, and the value's wire form beside it.
+  A variant added to one of them does not compile until its schema is named
+  there, a schema above its files' is a step not written, and a renamed wire
+  form fails a test.
 
 The SQLite branch (`db/mod.rs::migrate`, version-aware): `baseline_ddl`
 (`CREATE … IF NOT EXISTS`) runs **every time** — an additive mechanism for

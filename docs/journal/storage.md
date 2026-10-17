@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (20)
+## Entries (21)
 
 - Post-M9: persisting the input-box draft in the chat file (done)
 - Post-M9: persisting deleted exchanges in the chat file (`Ctrl+E`/`Ctrl+R`) (done)
@@ -32,6 +32,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `zip` 2.4.2 → 8.6.0 — what a green build does not say about a bump (done)
 - Post-M9: `chacha20poly1305` 0.10.1 → 0.11.0 — the nonce API, and a wipe that became optional (done)
 - Post-M9: the `max` effort is a stored value — `SETTINGS_SCHEMA` and `CHAT_SCHEMA` 4→5 (done)
+- Post-M9: every stored enum names the schema of its values (done)
 
 ### Post-M9: persisting the input-box draft in the chat file (done)
 - **Unsaved input-box text is stored on the chat and restored on
@@ -1208,3 +1209,50 @@ discards is recoverable from `backups/`.
 - **Not measured**: a version older than 0.13.0 on the stamped data. Each has the downgrade
   guard since schema versioning shipped, and reads `settings.json` first.
 - 3856 unit tests (+7), 253 `#[ignore]`.
+
+### Post-M9: every stored enum names the schema of its values (done)
+
+The `max` effort shipped to `main` with no schema step, and 0.13.0 dropped every chat that
+held it from its list. The fix put the question where a variant is added — a `match` with no
+wildcard arm naming the schema each value arrived in (`effort_arrived_in`) — for that one enum.
+The other strict enums a file holds had the rule (spec §12.2, lessons §8) and no such check;
+left on the roadmap as on demand.
+
+- **The inventory**, from every `Deserialize` enum in production code: **26 strict enums a
+  stored file holds** — 16 in `settings.json` (the three mode enums — `ServerMode`, `ImpersonationMode`, `TtsMode` —, the video provider and its
+  resolution, the embedder's convention, flash attention, the speculative type, the web provider,
+  the Python mode, the theme and the colour mode, the code-block background, the titling mode,
+  the note order, OSC 52), 2 in the sampling (`settings.json`, `profiles.json` and the chat
+  files), 7 in the chat files (role, finish, attachment mode, a file's origin, a deletion's cause,
+  a run's kind and outcome) and `GoalStatus` in the self-model's JSON in `data.db`. Not in it,
+  each for its reason: `Lang` reads any code, `RoleLite` (`data_stats`) has a `#[serde(other)]`
+  arm, `CommandSlot` is not stored (a workspace keeps a field per slot), `DataLocation` lives in
+  `defaults.json`, which has no schema, and the wire enums are the providers'.
+- **The ledger** (`shared/storage/schema/stored_enums_tests.rs`): `ledger!(Enum in Held { since
+  => [Variant = "wire", …] })` expands to the exhaustive `match` and to the table the tests read.
+  A variant added to any of the 26 stops the tests compiling, the error pointing at the ledger,
+  whose doc says what to do: name the schema, write its step. **The wire form is pinned beside
+  each value** — renaming a stored value breaks an older reader as surely as adding one, and
+  nothing caught that either. `effort_arrived_in` folded into it; the effort's downgrade test now
+  takes its values from the ledger, so it no longer lists the scale by hand.
+- **The schemas were read off the releases**, not guessed: the variants of each enum at every tag
+  from v0.9.0, and `SETTINGS_SCHEMA` / `CHAT_SCHEMA` at each. A value present in 0.9.0 is `1`; a
+  later one names its step (`openrouter` 4, `max` 5, `dialogue` 3) or — when it came with an enum
+  or a field of its own, which an older reader skips whole — the schema of the first release that
+  wrote it (the colour mode 3, the code-block background 5, a message's `finish` 4).
+- **One historical breach found**: `grok` joined `ServerMode` and `ImpersonationMode` in 0.9.5
+  with no step, so 0.9.0–0.9.4 took a settings file naming it for one they could not parse —
+  which, until the typed-parse fix of 0.12.0, read as the defaults, and the first save wrote
+  them over the file. Those releases are long past; the ledger records it beside the value.
+- **Tests**: `every_stored_value_arrived_in_a_schema_its_files_have` (a schema above its files' is
+  a step never written) and `a_stored_value_keeps_its_wire_form`. **Mutation-checked**: a new
+  `DeletedCause` value fails the test build at the ledger (and at the one production `match` that
+  had it), a new `GoalStatus` value likewise; `openrouter` named as schema 6 fails the first test
+  ("write the step"); `NoteOrder` switched to kebab-case fails the second.
+- **Docs**: architecture §7, lessons §8, and AGENTS.md §6's release step, which now points at the
+  ledger as the list of stored enums to walk.
+
+No live run: tests only (AGENTS.md §3). No CHANGELOG entry: no user-visible effect.
+
+**Gates**: 4047 unit tests green, 271 `#[ignore]`; clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.
