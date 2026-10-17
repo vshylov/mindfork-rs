@@ -144,6 +144,7 @@ cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 cargo run                          # TUI (needs a REAL terminal — see Pitfalls)
 python tools/cyrillic_scan.py      # source-language gate
+python tools/cyrillic_scan.py --self-test  # ...its test-code arms, against fixtures
 python tools/link_check.py         # relative-link gate
 python tools/doc_index_check.py    # documentation-structure gate
 python tools/list_scroll_check.py  # one implementation of a list's scroll state
@@ -176,14 +177,14 @@ cargo test -- --ignored --nocapture --test-threads=1
 ```
 
 Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
-`MINDFORK_LLAMA_BIN` (+ `MINDFORK_MODEL` GGUF, `MINDFORK_NGL`, `MINDFORK_CTX`,
+`MINDFORK_MODEL` GGUF (+ `MINDFORK_LLAMA_BIN`, `MINDFORK_NGL`, `MINDFORK_CTX`,
 `MINDFORK_PORT`) for a managed `llama-server`. The whole live gate can also be
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
 ## Status (2026-10-18, version 0.18.3)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **4047 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **4051 unit tests
 green, 271 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump and demo-reel regenerators).
 

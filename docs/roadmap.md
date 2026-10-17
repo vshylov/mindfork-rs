@@ -125,10 +125,6 @@ effort tiers — have all closed
   occurrence wins" until `the_table_matches_the_binary_live` is run against the
   new build; a `MINDFORK_LLAMA_ARGS` variable for the dev launch, which
   `setup --set` covers today.
-- **`MINDFORK_MODEL` is ignored unless `MINDFORK_LLAMA_BIN` is set** —
-  **on demand**. An adjacent finding of the provisioning track (§2.2, §9 there):
-  an empty binary has resolved by itself since the download track, so the
-  variable could stand alone. A small fix in its own PR, or a line in install.md.
 - **Configurable health-check cadence** — **on demand**. The monitor's intervals
   (`HEALTHY_POLL` 60 s / `RECHECK_POLL` 5 s), the failure streak (3) and the
   relaunch budget (3 per 5 min; the MCP host keeps its own copy) are constants.
@@ -591,14 +587,6 @@ effort tiers — have all closed
 - **Hot-path benchmarks** — **idea**. Feed rendering (markdown + syntect
   cache), line wrapping, brute-force memory cosine — a performance regression
   detector; there is no `benches/` yet.
-- **`cyrillic_scan.py`: `in_test` is never unset** — **on demand**. It flips
-  on the first test marker in a file (`#[cfg(test)]`, `mod tests`, `#[test]`,
-  `#[tokio::test]`) and treats everything below as test code, where Cyrillic in
-  code position is legitimate fixture data. That is how two production strings
-  in `message_feed.rs` (a file with `#[cfg(test)]` test accessors mid-file)
-  stayed Russian through the whole English-source migration; they are fixed,
-  the scanner's blind spot is not. An attribute on a single item should not
-  mean "the rest of the file is tests".
 - **SonarQube Cloud — leftovers** — **deferred**. The gate is blocking
   (2026-08-05) and runs the custom "Sonar way without new-code coverage"
   (2026-08-06); the badge landed on 2026-09-19, once the project was public.

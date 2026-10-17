@@ -123,6 +123,11 @@ jobs:
       # Runs before the Rust setup — it needs neither the toolchain nor ALSA.
       - name: Source language (no untranslated Russian)
         run: python3 tools/cyrillic_scan.py
+      # Test code is known by its shape (the layer gate's code): the item a
+      # `#[cfg(test)]` stands on, not the rest of its file. These arms hold that
+      # in both directions, the shape that hid two production strings included.
+      - name: The source-language gate's own arms
+        run: python3 tools/cyrillic_scan.py --self-test
       # A stale relative link is valid Markdown, so nothing else notices it —
       # it only 404s when someone clicks it on GitHub. The dominant cause is
       # procedural: AGENTS.md §4 moves a finished plan into docs/history/, the
