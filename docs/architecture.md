@@ -4289,8 +4289,8 @@ Principles:
   All fields under `#[serde(default)]` — an old `settings.json` reads without a
   step for every **additive** change; a new value of an existing enum is not one
   (§7, "Schema versioning"). Backend choice via settings or env
-  (`MINDFORK_ENGINE_URL` external / `MINDFORK_LLAMA_BIN` + `MINDFORK_MODEL`…
-  managed; similarly `MINDFORK_EMBED_*`).
+  (`MINDFORK_ENGINE_URL` external / `MINDFORK_MODEL` and/or `MINDFORK_LLAMA_BIN`…
+  managed — either one asks for the managed mode; similarly `MINDFORK_EMBED_*`).
   - **The engine config is nested by mode/provider:** `EngineSettings`/
     `ImpersonationEngineSettings`/`EmbedSettings` carry `mode` + subsections
     `managed: ManagedSettings`, `external: ExternalSettings`, and one

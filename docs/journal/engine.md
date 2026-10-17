@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (101)
+## Entries (102)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -113,6 +113,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a call's arguments split across two indices are joined (done)
 - Post-M9: a broken call is answered as broken (done)
 - Post-M9: the provider's cache share in the token counter (done)
+- Post-M9: `MINDFORK_MODEL` stands alone (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -6845,4 +6846,43 @@ decision 2026-10-17: F1 (b), F2 (c), F3 (a), F4 (a), F5 (a), each the recommenda
     now names its step when it times out.
 
 **Gates**: 4045 unit tests green, 271 `#[ignore]`; clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.
+
+### Post-M9: `MINDFORK_MODEL` stands alone (done)
+
+The environment route's managed branch was keyed on `MINDFORK_LLAMA_BIN`: the model,
+the projector and the knobs were read only inside it, so "use this model" needed the
+binary spelt out as well — although an empty binary has resolved by itself to the build
+installed last since the download track. An adjacent finding of the provisioning track
+([cloud-provisioning.md](../research/cloud-provisioning.md) §2.2, §9), left on the
+roadmap as on demand.
+
+- **The rule**: `MINDFORK_LLAMA_BIN` **or** `MINDFORK_MODEL` asks for the managed mode,
+  as `setup --model` does (spec §3.4). A binary that is not named is the settings' own
+  (`None` resolves as the empty field does); a model that is not named is the settings'
+  own. The knobs (`MINDFORK_MMPROJ`, `NGL`, `CTX`, `PORT`) still ride with one of the two:
+  a knob alone changes nothing, as before. `MINDFORK_ENGINE_URL` still wins.
+- **The embedder has the same shape** and the same fix: `MINDFORK_EMBED_BIN` or
+  `MINDFORK_EMBED_MODEL`.
+- **An empty variable counts as unset** — with a model enough to switch the mode, an
+  `export MINDFORK_MODEL=` left in a shell must not.
+- **Testable**: the two halves read through `env: &dyn Fn(&str) -> Option<String>`
+  (`apply_env_from`), so the tests give a table instead of touching the process's
+  environment. Four tests: a model alone (mode, knobs, no invented binary, the embedder
+  untouched), a binary alone keeps the settings' model, the URL wins and a knob or an
+  empty variable alone changes nothing, the embedder's two arms.
+- **Docs**: install.md's dev quick start leads with the model, CLAUDE.md's backend line,
+  architecture §5, and the privacy policy's list of variables that replace an engine
+  (`PRIVACY.md`, its Russian copy, the site's page).
+
+**Live** — a copy of the binary in a scratch root whose settings name `openai` for both
+servers, `llama-server` b11715 beside it, on an RTX 4090. **GO**:
+- Control, no variables: the cloud mode stays (`no connection: specify the model name`),
+  nothing launched.
+- `MINDFORK_MODEL` (Gemma 4 E4B Q4_1) with `CTX`/`NGL`/`PORT`, and `MINDFORK_EMBED_MODEL`
+  (bge-m3) with its port, no binary named: both servers launched from the binary beside
+  the app on the given ports, `● chat  ● emb`, and the capital of France answered
+  `Paris`. No `llama-server` was left after the quit.
+
+**Gates**: 4049 unit tests green, 271 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.

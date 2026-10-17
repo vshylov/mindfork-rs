@@ -129,9 +129,10 @@ It is one switch for every slot that uses the gateway, and with it off neither
 header is sent by any of them. An `external` engine pointed at the same address
 never sends them.
 
-The `MINDFORK_ENGINE_URL`, `MINDFORK_LLAMA_BIN`, `MINDFORK_EMBED_URL` and
-`MINDFORK_EMBED_BIN` environment variables, when set, replace the chat or
-embedding engine in the settings for that launch
+The `MINDFORK_ENGINE_URL`, `MINDFORK_LLAMA_BIN`, `MINDFORK_MODEL`,
+`MINDFORK_EMBED_URL`, `MINDFORK_EMBED_BIN` and `MINDFORK_EMBED_MODEL`
+environment variables, when set, replace the chat or embedding engine in the
+settings for that launch
 ([docs/install.md](docs/install.md)).
 
 **What a request contains:** the conversation so far (a chat model is stateless,

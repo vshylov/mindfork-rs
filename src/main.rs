@@ -1558,70 +1558,84 @@ fn run_import(paths: &Paths, file: &Path, loc: &Locale) -> anyhow::Result<()> {
 /// priority over `settings.json`, so a quick launch against a server doesn't require
 /// editing the file. Affects only the chat/embedding servers:
 /// - `MINDFORK_ENGINE_URL` — an external chat server (any OpenAI-compatible one);
-/// - `MINDFORK_LLAMA_BIN` (+ `MINDFORK_MODEL` GGUF, `MINDFORK_MMPROJ` vision
-///   projector, `MINDFORK_NGL`, `MINDFORK_CTX`, `MINDFORK_PORT`) — a managed
-///   `llama-server`;
-/// - `MINDFORK_EMBED_URL` / `MINDFORK_EMBED_BIN` (+ `MINDFORK_EMBED_MODEL`,
-///   `MINDFORK_EMBED_PORT`) — the embedding server.
+/// - `MINDFORK_LLAMA_BIN` and/or `MINDFORK_MODEL` GGUF (+ `MINDFORK_MMPROJ`
+///   vision projector, `MINDFORK_NGL`, `MINDFORK_CTX`, `MINDFORK_PORT`) — a
+///   managed `llama-server`;
+/// - `MINDFORK_EMBED_URL` / `MINDFORK_EMBED_BIN` and/or `MINDFORK_EMBED_MODEL`
+///   (+ `MINDFORK_EMBED_PORT`) — the embedding server.
+///
+/// Naming a model is asking for managed mode on its own, as `setup --model` is
+/// (spec §3.4): the binary is optional, because an empty one resolves to the
+/// build installed last. An empty variable counts as unset.
 fn apply_env_overrides(config: &mut AppConfig) {
-    apply_engine_env(config);
-    apply_embed_env(config);
+    apply_env_from(config, &|name| std::env::var(name).ok());
 }
 
-/// The chat-server half of [`apply_env_overrides`].
-fn apply_engine_env(config: &mut AppConfig) {
-    if let Ok(url) = std::env::var("MINDFORK_ENGINE_URL") {
+/// [`apply_env_overrides`] over the variables `lookup` reads.
+fn apply_env_from(config: &mut AppConfig, lookup: &dyn Fn(&str) -> Option<String>) {
+    let env = |name: &str| lookup(name).filter(|v| !v.is_empty());
+    apply_engine_env(config, &env);
+    apply_embed_env(config, &env);
+}
+
+/// The chat-server half of [`apply_env_overrides`]; `env` reads a variable.
+fn apply_engine_env(config: &mut AppConfig, env: &dyn Fn(&str) -> Option<String>) {
+    if let Some(url) = env("MINDFORK_ENGINE_URL") {
         config.engine.mode = ServerMode::External;
         config.engine.external.url = Some(url);
-    } else if let Ok(bin) = std::env::var("MINDFORK_LLAMA_BIN") {
-        config.engine.mode = ServerMode::Managed;
-        config.engine.managed.binary = Some(bin);
-        if let Ok(m) = std::env::var("MINDFORK_MODEL") {
-            config.engine.managed.model_path = Some(m);
-        }
-        // The vision projector that ships next to the model's GGUF (spec §9.10):
-        // without it the managed server is text-only and says so on `/props`.
-        if let Ok(p) = std::env::var("MINDFORK_MMPROJ") {
-            config.engine.managed.mmproj = Some(p);
-        }
-        if let Some(ngl) = std::env::var("MINDFORK_NGL")
-            .ok()
-            .and_then(|v| v.parse().ok())
-        {
-            config.engine.managed.gpu_layers = ngl;
-        }
-        if let Some(ctx) = std::env::var("MINDFORK_CTX")
-            .ok()
-            .and_then(|v| v.parse().ok())
-        {
-            config.engine.managed.context_size = ctx;
-        }
-        if let Some(port) = std::env::var("MINDFORK_PORT")
-            .ok()
-            .and_then(|p| p.parse().ok())
-        {
-            config.engine.managed.port = port;
-        }
+        return;
+    }
+    let bin = env("MINDFORK_LLAMA_BIN");
+    let model = env("MINDFORK_MODEL");
+    if bin.is_none() && model.is_none() {
+        return;
+    }
+    config.engine.mode = ServerMode::Managed;
+    let managed = &mut config.engine.managed;
+    if bin.is_some() {
+        managed.binary = bin;
+    }
+    if model.is_some() {
+        managed.model_path = model;
+    }
+    // The vision projector that ships next to the model's GGUF (spec §9.10):
+    // without it the managed server is text-only and says so on `/props`.
+    if let Some(p) = env("MINDFORK_MMPROJ") {
+        managed.mmproj = Some(p);
+    }
+    if let Some(ngl) = env("MINDFORK_NGL").and_then(|v| v.parse().ok()) {
+        managed.gpu_layers = ngl;
+    }
+    if let Some(ctx) = env("MINDFORK_CTX").and_then(|v| v.parse().ok()) {
+        managed.context_size = ctx;
+    }
+    if let Some(port) = env("MINDFORK_PORT").and_then(|p| p.parse().ok()) {
+        managed.port = port;
     }
 }
 
-/// The embedding-server half of [`apply_env_overrides`].
-fn apply_embed_env(config: &mut AppConfig) {
-    if let Ok(url) = std::env::var("MINDFORK_EMBED_URL") {
+/// The embedding-server half of [`apply_env_overrides`]; `env` reads a variable.
+fn apply_embed_env(config: &mut AppConfig, env: &dyn Fn(&str) -> Option<String>) {
+    if let Some(url) = env("MINDFORK_EMBED_URL") {
         config.embed.mode = ServerMode::External;
         config.embed.external.url = Some(url);
-    } else if let Ok(bin) = std::env::var("MINDFORK_EMBED_BIN") {
-        config.embed.mode = ServerMode::Managed;
-        config.embed.managed.binary = Some(bin);
-        if let Ok(m) = std::env::var("MINDFORK_EMBED_MODEL") {
-            config.embed.managed.model_path = Some(m);
-        }
-        if let Some(port) = std::env::var("MINDFORK_EMBED_PORT")
-            .ok()
-            .and_then(|p| p.parse().ok())
-        {
-            config.embed.managed.port = port;
-        }
+        return;
+    }
+    let bin = env("MINDFORK_EMBED_BIN");
+    let model = env("MINDFORK_EMBED_MODEL");
+    if bin.is_none() && model.is_none() {
+        return;
+    }
+    config.embed.mode = ServerMode::Managed;
+    let managed = &mut config.embed.managed;
+    if bin.is_some() {
+        managed.binary = bin;
+    }
+    if model.is_some() {
+        managed.model_path = model;
+    }
+    if let Some(port) = env("MINDFORK_EMBED_PORT").and_then(|p| p.parse().ok()) {
+        managed.port = port;
     }
 }
 
@@ -2186,5 +2200,134 @@ mod tests {
         // A Russian prefix in the ru locale.
         let ru = cli_error_line(i18n::locale(Lang::Ru), &err);
         assert!(ru.starts_with("Ошибка: "), "{ru}");
+    }
+
+    /// [`apply_env_from`] over these variables only.
+    fn with_env(config: &mut AppConfig, vars: &[(&str, &str)]) {
+        let lookup = |name: &str| {
+            vars.iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| value.to_string())
+        };
+        apply_env_from(config, &lookup);
+    }
+
+    /// A config in a cloud mode with a model in its managed section — so a
+    /// test can tell a switch to managed and an overwritten field apart.
+    fn cloud_config() -> AppConfig {
+        let mut config = AppConfig::default();
+        config.engine.mode = ServerMode::OpenAi;
+        config.engine.managed.model_path = Some("settings.gguf".into());
+        config.embed.mode = ServerMode::OpenAi;
+        config.embed.managed.model_path = Some("settings-embed.gguf".into());
+        config
+    }
+
+    /// `MINDFORK_MODEL` with no `MINDFORK_LLAMA_BIN` used to be ignored, and
+    /// the knobs with it; it now asks for managed mode by itself and leaves the
+    /// binary empty, which resolves to the build installed last.
+    #[test]
+    fn a_model_alone_asks_for_a_managed_engine() {
+        let mut config = cloud_config();
+        with_env(
+            &mut config,
+            &[
+                ("MINDFORK_MODEL", "env.gguf"),
+                ("MINDFORK_CTX", "32768"),
+                ("MINDFORK_NGL", "99"),
+                ("MINDFORK_PORT", "8123"),
+                ("MINDFORK_MMPROJ", "mmproj.gguf"),
+            ],
+        );
+        let managed = &config.engine.managed;
+        assert_eq!(config.engine.mode, ServerMode::Managed);
+        assert_eq!(managed.model_path.as_deref(), Some("env.gguf"));
+        assert_eq!(managed.binary, None, "no binary is invented");
+        assert_eq!(managed.context_size, 32768);
+        assert_eq!(managed.gpu_layers, 99);
+        assert_eq!(managed.port, 8123);
+        assert_eq!(managed.mmproj.as_deref(), Some("mmproj.gguf"));
+        assert_eq!(
+            config.embed,
+            cloud_config().embed,
+            "the embedder is untouched"
+        );
+    }
+
+    #[test]
+    fn a_binary_alone_keeps_the_model_of_the_settings() {
+        let mut config = cloud_config();
+        with_env(&mut config, &[("MINDFORK_LLAMA_BIN", "llama-server")]);
+        assert_eq!(config.engine.mode, ServerMode::Managed);
+        assert_eq!(
+            config.engine.managed.binary.as_deref(),
+            Some("llama-server")
+        );
+        assert_eq!(
+            config.engine.managed.model_path.as_deref(),
+            Some("settings.gguf")
+        );
+    }
+
+    /// The external server wins, as before; a knob alone, or a variable set to
+    /// nothing, changes nothing.
+    #[test]
+    fn an_engine_url_wins_and_a_knob_alone_changes_nothing() {
+        let mut config = cloud_config();
+        with_env(
+            &mut config,
+            &[
+                ("MINDFORK_ENGINE_URL", "http://127.0.0.1:8000/v1"),
+                ("MINDFORK_MODEL", "env.gguf"),
+            ],
+        );
+        assert_eq!(config.engine.mode, ServerMode::External);
+        assert_eq!(
+            config.engine.managed.model_path.as_deref(),
+            Some("settings.gguf")
+        );
+
+        let mut config = cloud_config();
+        with_env(
+            &mut config,
+            &[
+                ("MINDFORK_CTX", "32768"),
+                ("MINDFORK_MODEL", ""),
+                ("MINDFORK_EMBED_PORT", "8124"),
+            ],
+        );
+        assert_eq!(config, cloud_config());
+    }
+
+    #[test]
+    fn an_embedding_model_alone_asks_for_a_managed_embedder() {
+        let mut config = cloud_config();
+        with_env(
+            &mut config,
+            &[
+                ("MINDFORK_EMBED_MODEL", "bge-m3.gguf"),
+                ("MINDFORK_EMBED_PORT", "8124"),
+            ],
+        );
+        assert_eq!(config.embed.mode, ServerMode::Managed);
+        assert_eq!(
+            config.embed.managed.model_path.as_deref(),
+            Some("bge-m3.gguf")
+        );
+        assert_eq!(config.embed.managed.binary, None);
+        assert_eq!(config.embed.managed.port, 8124);
+        assert_eq!(
+            config.engine,
+            cloud_config().engine,
+            "the engine is untouched"
+        );
+
+        let mut config = cloud_config();
+        with_env(&mut config, &[("MINDFORK_EMBED_BIN", "llama-server")]);
+        assert_eq!(config.embed.mode, ServerMode::Managed);
+        assert_eq!(
+            config.embed.managed.model_path.as_deref(),
+            Some("settings-embed.gguf")
+        );
     }
 }
