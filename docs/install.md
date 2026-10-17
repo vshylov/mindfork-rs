@@ -1487,18 +1487,24 @@ anything on the settings screen — so for a setup meant to last use
 ```powershell
 # external chat server (any OpenAI-compatible one)
 $env:MINDFORK_ENGINE_URL = "http://127.0.0.1:8000/v1"
-# or a managed llama-server:
-$env:MINDFORK_LLAMA_BIN = "C:\path\to\llama-server.exe"
+# or a managed llama-server — the model alone is enough:
 $env:MINDFORK_MODEL     = "C:\GGUF\google_gemma-4-E4B-it-Q4_1.gguf"
+$env:MINDFORK_LLAMA_BIN = "C:\path\to\llama-server.exe"  # opt. (below)
 $env:MINDFORK_MMPROJ    = "C:\GGUF\mmproj-google_gemma-4-E4B-it.gguf"  # vision (opt.)
 $env:MINDFORK_NGL       = "99"     # GPU layers (opt.)
 $env:MINDFORK_CTX       = "8192"   # context (opt.)
 $env:MINDFORK_PORT      = "8000"   # opt.
 ```
 
+Naming a model is asking for the managed mode, as `setup --model` does: it is
+switched on even when the settings name a cloud, and the knobs below the model
+are read with it. Without `MINDFORK_LLAMA_BIN` the binary is the settings' own —
+an empty one resolves to the build installed last (§3.1). A variable set to an
+empty value counts as unset.
+
 Embeddings for RAG — a **dedicated** server (ADR 0002):
-`MINDFORK_EMBED_URL` (external) or `MINDFORK_EMBED_BIN` + `MINDFORK_EMBED_MODEL`
-+ `MINDFORK_EMBED_PORT` (managed). If not configured — RAG returns an error, but the
+`MINDFORK_EMBED_URL` (external) or `MINDFORK_EMBED_MODEL` + `MINDFORK_EMBED_PORT`
+(managed; `MINDFORK_EMBED_BIN` is optional in the same way). If not configured — RAG returns an error, but the
 app doesn't crash. The same server also powers **search inside large files
 attached to a chat** (`/file attach`, spec §9.7): with no embedder those files are
 simply not indexed (a note says so) and are still read page by page.

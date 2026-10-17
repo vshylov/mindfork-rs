@@ -99,6 +99,8 @@ The environment route fails R4 and is awkward besides:
    (`main.rs:1193-1198`). That defeats §2.1's empty-binary resolution — to say
    "use this model" one must also spell
    `data/llama/cuda-12.8-b11070/llama-server`. The embedder has the same shape.
+   *Fixed 2026-10-18*: a model variable alone asks for the managed mode
+   (docs/journal/engine.md, "`MINDFORK_MODEL` stands alone").
 
 ### 2.3 The container precedent — `docker/lab`
 
@@ -660,7 +662,7 @@ The probe runs before stage 0 is merged; stage 1 does not depend on it.
 - **Adjacent finding: `MINDFORK_MODEL` is ignored without
   `MINDFORK_LLAMA_BIN`** (§2.2), although an empty binary has resolved by
   itself since the download track. A small fix in its own PR, or a line in
-  install.md.
+  install.md. *Fixed 2026-10-18*, both servers (§2.2).
 - **Exposing the pod's `llama-server` to the home machine.** The opposite
   topology — app at home, engine rented — already works as `external` over an
   SSH tunnel ([remote-e2e-gpu.md](remote-e2e-gpu.md) §5).

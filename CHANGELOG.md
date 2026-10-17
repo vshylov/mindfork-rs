@@ -21,6 +21,14 @@ split by subsystem.
   conversation that is processed again from scratch on every turn is visible
   rather than silent.
 
+### Fixed
+
+- **`MINDFORK_MODEL` works on its own.** Naming a model in the environment now
+  starts the local llama-server without `MINDFORK_LLAMA_BIN` as well — the
+  binary installed by `mindfork llama setup` is found by itself — and
+  `MINDFORK_EMBED_MODEL` does the same for the embedder. Before, both were
+  ignored unless the binary was named too.
+
 ## [0.18.3] — 2026-10-16
 
 **A plain code block can be quiet.** A code block with no highlighting can now

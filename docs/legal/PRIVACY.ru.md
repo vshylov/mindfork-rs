@@ -142,7 +142,8 @@ Linux этот каталог при каждом запуске приложе�
 `external`, направленный на тот же адрес, не отправляет их никогда.
 
 Переменные окружения `MINDFORK_ENGINE_URL`, `MINDFORK_LLAMA_BIN`,
-`MINDFORK_EMBED_URL` и `MINDFORK_EMBED_BIN`, если они заданы, заменяют движок
+`MINDFORK_MODEL`, `MINDFORK_EMBED_URL`, `MINDFORK_EMBED_BIN` и
+`MINDFORK_EMBED_MODEL`, если они заданы, заменяют движок
 чата или эмбеддингов из настроек на время этого запуска
 ([docs/install.md](../install.md)).
 

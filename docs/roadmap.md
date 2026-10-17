@@ -125,10 +125,6 @@ effort tiers — have all closed
   occurrence wins" until `the_table_matches_the_binary_live` is run against the
   new build; a `MINDFORK_LLAMA_ARGS` variable for the dev launch, which
   `setup --set` covers today.
-- **`MINDFORK_MODEL` is ignored unless `MINDFORK_LLAMA_BIN` is set** —
-  **on demand**. An adjacent finding of the provisioning track (§2.2, §9 there):
-  an empty binary has resolved by itself since the download track, so the
-  variable could stand alone. A small fix in its own PR, or a line in install.md.
 - **Configurable health-check cadence** — **on demand**. The monitor's intervals
   (`HEALTHY_POLL` 60 s / `RECHECK_POLL` 5 s), the failure streak (3) and the
   relaunch budget (3 per 5 min; the MCP host keeps its own copy) are constants.
