@@ -330,21 +330,24 @@ def report(offenders, total: int, list_mode: bool) -> int:
 # Self-test: the test-code rule against fixtures, in both directions.
 # ---------------------------------------------------------------------------
 
-# A Russian word, spelt as escapes so the fixtures read the same in any editor;
-# a fixture names it `{ru}`.
-_RU = "привет"
+# A Russian word, built from its code points so the fixtures' source stays
+# ASCII and reads the same in any editor; a fixture names it `{ru}`.
+_RU = "".join(map(chr, (0x43F, 0x440, 0x438, 0x432, 0x435, 0x442)))
+# The production file most arms are set in, and a one-line file holding the word.
+_FEED = "src/feed.rs"
+_ONE_LITERAL = 'const P: &str = "{ru}";\n'
 
 # (name, path, source, the file is test code by declaration, the lines flagged)
 SELF_TEST_CASES = [
     # message_feed.rs's shape: the strings below a test accessor are production.
-    ("a production string below a test accessor", "src/feed.rs", """pub struct Feed;
+    ("a production string below a test accessor", _FEED, """pub struct Feed;
 #[cfg(test)]
 impl Feed {
     pub fn probe(&self) -> &str { "{ru}" }
 }
 pub fn label() -> &'static str { "{ru}" }
 """, False, [6]),
-    ("a test module's fixture", "src/feed.rs", """pub fn x() -> u8 { 1 }
+    ("a test module's fixture", _FEED, """pub fn x() -> u8 { 1 }
 #[cfg(test)]
 mod tests {
     #[test]
@@ -354,19 +357,19 @@ mod tests {
     ("a declared test module ends at its `;`", "src/api/mod.rs", """#[cfg(test)] mod probe_tests;
 pub const LABEL: &str = "{ru}";
 """, False, [2]),
-    ("a brace in a string does not close the item", "src/feed.rs", """#[cfg(test)]
+    ("a brace in a string does not close the item", _FEED, """#[cfg(test)]
 mod tests {
     const B: &str = "}";
     const T: &str = "{ru}";
 }
 const P: &str = "{ru}";
 """, False, [6]),
-    ("a multi-line literal in a test item", "src/feed.rs", """#[cfg(test)]
+    ("a multi-line literal in a test item", _FEED, """#[cfg(test)]
 const T: &str = "first
 {ru}";
 const P: &str = "{ru}";
 """, False, [4]),
-    ("attributes stacked under the marker", "src/feed.rs", """#[cfg(test)]
+    ("attributes stacked under the marker", _FEED, """#[cfg(test)]
 #[allow(dead_code)]
 fn helper() -> &'static str {
     "{ru}"
@@ -375,19 +378,19 @@ fn shown() -> &'static str {
     "{ru}"
 }
 """, False, [7]),
-    ("a print-macro label inside a test", "src/feed.rs", """#[cfg(test)]
+    ("a print-macro label inside a test", _FEED, """#[cfg(test)]
 mod tests {
     fn t() { eprintln!("{ru} {}", 1); }
 }
 """, False, [3]),
-    ("a comment inside a test", "src/feed.rs", """#[cfg(test)]
+    ("a comment inside a test", _FEED, """#[cfg(test)]
 mod tests {
     // {ru}
 }
 """, False, [3]),
-    ("a file declared test code", "src/api/probe.rs", 'const P: &str = "{ru}";\n', True, []),
-    ("the same file undeclared", "src/api/probe.rs", 'const P: &str = "{ru}";\n', False, [1]),
-    ("a test file by its name", "src/api/cache_probe_tests.rs", 'const P: &str = "{ru}";\n', False, []),
+    ("a file declared test code", "src/api/probe.rs", _ONE_LITERAL, True, []),
+    ("the same file undeclared", "src/api/probe.rs", _ONE_LITERAL, False, [1]),
+    ("a test file by its name", "src/api/cache_probe_tests.rs", _ONE_LITERAL, False, []),
 ]
 
 
@@ -397,10 +400,14 @@ def _declaration_arm() -> str | None:
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / "src"
         (src / "probe").mkdir(parents=True)
-        (src / "main.rs").write_text("#[cfg(test)]\nmod probe;\nmod shown;\n", encoding="utf-8")
-        (src / "probe.rs").write_text("mod deeper;\n", encoding="utf-8")
-        (src / "probe" / "deeper.rs").write_text("", encoding="utf-8")
-        (src / "shown.rs").write_text("", encoding="utf-8")
+        tree = {
+            "main.rs": "#[cfg(test)]\nmod probe;\nmod shown;\n",
+            "probe.rs": "mod deeper;\n",
+            "probe/deeper.rs": "",
+            "shown.rs": "",
+        }
+        for name, text in tree.items():
+            (src / name).write_text(text, encoding="utf-8")
         got = sorted(p.rsplit("/", 1)[-1] for p in declared_test_files(src))
     want = ["deeper.rs", "probe.rs"]
     return None if got == want else f"declared test files: {got}, expected {want}"

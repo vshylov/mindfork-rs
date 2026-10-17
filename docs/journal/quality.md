@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (38)
+## Entries (39)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -50,6 +50,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: SonarQube follow-up — the live gate's ladder and its fake (done)
 - Post-M9: `tools/repo_metrics.py` — the repository's numbers, defined once (done)
 - Post-M9: the source-language gate knows test code by shape (done)
+- Post-M9: SonarQube follow-up — the source-language gate's fixtures (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -1989,3 +1990,26 @@ Left on the roadmap as on demand.
 clean, its self-test, `layer_check --self-test` and the documentation gates green. No
 CHANGELOG entry: internal tooling (AGENTS.md §4). No live run: a script over the working
 tree (AGENTS.md §3).
+
+### Post-M9: SonarQube follow-up — the source-language gate's fixtures (done)
+
+- **Two open findings on `main`, no hotspots** (read through the Sonar MCP on 2026-10-18;
+  branch `refactor/sonar-cyrillic-scan-fixtures`). Both `python:S1192`, CRITICAL, in
+  `tools/cyrillic_scan.py`, and both from the self-test of #775, whose PR gate let them
+  through as it did #692's and #699's ([lessons.md](../lessons.md) §10): `"src/feed.rs"`,
+  the path seven arms are set in, and `'const P: &str = "{ru}";\n'`, the one-line file
+  three arms read.
+- **Named beside the word they hold**: `_FEED` and `_ONE_LITERAL` next to `_RU`. The four
+  `write_text` calls of the declaration arm became one loop over the tree they write, which
+  takes `"utf-8"` from six back to three — the two the file had before #775 and the loop's.
+  Sonar had not raised it, but the repetition was the same arm's.
+- **And a comment that was false**: `_RU` was described as "spelt as escapes", and the file
+  held the Cyrillic word itself — the escapes were decoded on their way into the file. The
+  gate could not say so, since it skips its own source. The word is now built from its code
+  points (`chr`), so the source is ASCII again outside the Cyrillic ranges the detector has to
+  spell.
+- **Measured, old against new**: an AST count of the file's string literals repeated three
+  times or more — `src/feed.rs` ×7, `utf-8` ×6 and the one-line file ×3 before; `utf-8` ×3
+  after. The self-test's 12 arms green, the scan clean.
+- No Rust touched — test totals unchanged; the documentation gates green. No CHANGELOG entry:
+  internal tooling (AGENTS.md §4). No live run: a script over the working tree (AGENTS.md §3).
