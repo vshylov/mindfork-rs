@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (22)
+## Entries (23)
 
 - Post-M9: persisting the input-box draft in the chat file (done)
 - Post-M9: persisting deleted exchanges in the chat file (`Ctrl+E`/`Ctrl+R`) (done)
@@ -34,6 +34,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the `max` effort is a stored value — `SETTINGS_SCHEMA` and `CHAT_SCHEMA` 4→5 (done)
 - Post-M9: every stored enum names the schema of its values (done)
 - Post-M9: `zip` 8.6.0 → 9.0.5 — three advisories, and the mode `llama setup` copied (done)
+- Post-M9: the self-model cap left at 0.9.4's default — `SETTINGS_SCHEMA` 5→6 (done)
 
 ### Post-M9: persisting the input-box draft in the chat file (done)
 - **Unsaved input-box text is stored on the chat and restored on
@@ -1315,3 +1316,72 @@ No live run beyond the probes above: no engine path (AGENTS.md §3).
 
 **Gates**: 4052 unit tests green (4053 on unix), 271 `#[ignore]`; clippy `-D warnings`,
 fmt, `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.
+
+### Post-M9: the self-model cap left at 0.9.4's default — `SETTINGS_SCHEMA` 5→6 (done)
+
+- **What and why.** 0.9.5 raised the default `self_model.prompt_cap` from 1200 to 4000
+  (decision D5 of [self-model-injection-budget.md](../history/self-model-injection-budget.md)),
+  and an existing `settings.json` kept its stored number, since the field is always
+  written. So an installation from 0.9.0–0.9.4 that never touched the setting is still at
+  1200. The observations research measured what that costs
+  ([self-model-observations.md](../research/self-model-observations.md) §3.4): on a mature
+  profile the block has spent 1050 characters before the observations begin, so they show
+  a fragment of one, 7% of the pick at the median, and the model of the interlocutor shows
+  one trait and one interest. No way of sharing the room makes 1200 hold such a profile;
+  the best one measured shows 21%.
+- **The decision** is fork B′ there, the owner's of 2026-10-18: (b1), against the
+  document's recommendation to leave these installations alone. The owner's reason: for an
+  application with this much to say about itself, 1200 is too little. Exactly the old
+  default is rewritten. Any other value stays, because a small cap is a real choice on a
+  small local window (Ollama's default is 4096 tokens). A 1200 chosen on purpose cannot be
+  told from the default and is raised too, the price `settings_to_v3` already paid for
+  2048. Not taken: (b2), every value under 4000, or a higher floor in
+  `SelfModelParams::from_settings`.
+- **The step**, `settings_to_v6`, has the shape of `settings_to_v3`. Both numbers are
+  frozen in it (`V5_PROMPT_CAP`, `V6_PROMPT_CAP`), because a step describes the past and
+  must not follow `config.rs`. The value is compared as an integer and **written**, not
+  dropped. A dropped key would land on the same 4000 today, since `SelfModelSettings` is
+  `#[serde(default)]` with its constant (unlike `SamplingConfig`, the reason 2→3 had to
+  write), but it would follow the default wherever that moves later. `config::SCHEMA_VERSION`
+  moved with it, and the doc of `DEFAULT_SELF_MODEL_PROMPT_CAP` names the exception.
+  `tools/console_probe.py` writes its scenarios' settings at the app's schema, now 6, so a
+  scenario does not open with a migration and a backup it did not ask for.
+- **Tests (+7).** A golden `fixtures/settings_v5.json`, as 0.19.0 writes it for such an
+  installation: the cap at 1200, beside an effort at `max` that only schema 5 may hold. It
+  is checked to hold nothing the config drops, and its first draft did: a `temperature` of
+  0.7, which `f32` reads back as 0.699999988 (0.75 is exact). The step on the fixture gives
+  4000 with every other value where it was, and the parsed `AppConfig` reads 4000; the v3
+  precedent is to assert the outcome, not only the JSON. Seven other values (100, 800,
+  1199, 1201, 1500, 4000, 12000) are kept, parsed too. A file without the field or the
+  section gets nothing invented. A v1 file at 1200, an installation arriving straight from
+  0.9.4, reaches 4000 through the whole chain. A migrated file is `Downgrade { from: 6 }`
+  to the reader at schema 5. End to end through `data_migration::run`: one backup, 4000,
+  and a second start migrates nothing. Two 4→5 tests that ran the chain to its end now call
+  `settings_to_v5` directly or assert `SETTINGS_SCHEMA`. `stored_enums_tests.rs` needed
+  nothing: no value of a stored enum moved.
+- **Live run — GO, two binaries, Windows 11.** 0.19.0 built from its tag into a target
+  directory of its own; both driven through `mindfork import` with an empty import file,
+  a CLI path that runs the start's migration gate and needs no terminal. *Golden*: 0.19.0
+  takes a root holding the fixture as its own, keeping it at 5 with the cap at 1200 (and
+  writing the file out in full). *Upgrade*: the branch's build on that 0.19.0-written
+  file gives schema 6 and cap 4000, and nothing else differs between the two files; one
+  `pre-migrate-*.zip` holds the settings at 5 and 1200, the log names the step, and a
+  second run migrates nothing. *Back*: 0.19.0 on the migrated root refuses, *"Data
+  (settings.json) was created by a newer version of mindfork (schema 6, supported 5)"*
+  (printed in the root's Russian), exit 1, the file byte for byte as it was. *Kept*: a v5
+  file at 1500 comes out at 6 and 1500. 0.19.0's `stats` counts the migrated root without
+  a word about its version: that note reads the chat files' schema and a backup's
+  manifest, and this step moves neither. The start and every CLI writer refuse, which is
+  what the guard is for.
+- **A test that clippy turned on.** The effort ledger's check read
+  `since <= SETTINGS_SCHEMA && since <= CHAT_SCHEMA`; with the two schemas apart for the
+  first time, clippy calls one half redundant (`redundant_comparisons`). It now reads
+  `SETTINGS_SCHEMA.min(CHAT_SCHEMA)`, which is what it meant.
+- **Docs**: CHANGELOG *Data*; spec §12.2 (the step list and the constants) and §17.5
+  (`prompt_cap`); architecture §7; a forward pointer in the budgets plan's §4; the build
+  list in self-model-observations.md §6.
+
+No engine path, so no model run (AGENTS.md §3): a pure JSON step.
+
+**Gates**: 4062 unit tests green, 271 `#[ignore]`; clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.
