@@ -5362,7 +5362,8 @@ isn't affected.
 
 At the start of a turn, the orchestrator reads the profile's model snapshot and **compactly**
 injects it into the `system` prompt (rendering active goals, the description, the model of the
-companion, and a handful of recent insights). Gate: the profile enabled `get_self_model` (opt-in). This way
+companion, and a few observations: those nearest the chat's subject and the latest one, or the
+latest ones). Gate: the profile enabled `get_self_model` (opt-in). This way
 the model "remembers" itself and the user without an explicit tool call — this is the
 main mechanism of value (verified through cross-chat recall).
 
@@ -5402,15 +5403,30 @@ latest message: the section's floor means its top pick always renders, and the
 block ends `system`, so a pick that moved with each message re-prefilled the
 whole prompt on most turns ([6.6](#66-kv-cache-and-prefix-caching);
 [docs/research/prompt-caching.md](docs/research/prompt-caching.md) §2.2, F1 (e1)).
-The freshest observation is still guaranteed a place. With no user text yet, or
-no embedder, the pick falls back to recency.
+The `@self` notes are ranked alone, so notes about the user cannot crowd them out
+of the candidates. **The pick has a floor**: when the observation nearest the
+opening clears a cosine of 0.50 (in bge-m3's scale, mapped for another embedder
+like the other similarity gates), the nearest ones lead and the freshest
+observation is guaranteed a place, under the header *"Observations nearest this
+conversation, then the latest:"*. The picks after the lead need not clear the
+floor. Otherwise the chat takes the latest observations, under *"Latest
+observations:"*, and so it does with no user text yet, with no embedder, and
+with one place in the prompt, which the freshest observation takes anyway. Read
+blind on the dev profile's openings, no lead under 0.50 bore on its chat (0 of
+51); the floor buys no relevance below it, only a header that is true of what it
+heads, where "Recent observations" had stood over picks a median of 104 days
+old. The arm is decided on the opening too, so it holds every turn with the pick;
+the latest observations move when one is written or revised
+([docs/research/self-model-observations.md](docs/research/self-model-observations.md)
+§4–§5, F (b), H (c)).
 
 ### 17.5. Parameters (settings)
 
 `config.self_model: SelfModelSettings` (all under `#[serde(default)]` — no migration needed):
 
 - `max_narrative` — the cap on stored insights (older ones are evicted);
-- `narrative_in_prompt` — how many recent insights go into the prompt;
+- `narrative_in_prompt` — how many observations go into the prompt (those nearest the chat's
+  subject and the latest one, or the latest ones, §17.4); they share the section's room;
 - `prompt_cap` — the character cap for the compact injection (protecting the context window),
   split between the sections as described in §17.4; default **4000** (raised from 1200, which
   measurement showed too tight for a mature self-model — an existing `settings.json` keeps its

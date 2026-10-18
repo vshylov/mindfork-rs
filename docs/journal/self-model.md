@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (28)
+## Entries (29)
 
 - Post-M9: SelfModel MVP — agent "self-model" (probe, done)
 - Post-M9: SelfModel Tier 2-A — narrative insights + contradictions in prose (done)
@@ -40,6 +40,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: an observation asked for is recorded — "instead of add_insight" undone (done)
 - Post-M9: observations are picked by the chat's opening (done)
 - Post-M9: the observations' room — the labels counted, the room shared (done)
+- Post-M9: a floor under the observations' pick, and a header that says how they were picked (done)
 
 ### Post-M9: SelfModel MVP — agent "self-model" (probe, done)
 - **A trimmed-down Phase 1 from the idea bank** ([docs/self-model.md](../../docs/history/self-model.md)) per
@@ -1247,4 +1248,83 @@ This is the second of the three pull requests of §6; the first raises a stored
   its inputs; no engine, memory-write or tool path is touched.
 
 **Gates**: 4060 unit tests green, 271 `#[ignore]`; clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.
+
+### Post-M9: a floor under the observations' pick, and a header that says how they were picked (done)
+
+The research is [self-model-observations.md](../research/self-model-observations.md)
+§4, §5 and §7, forks F and H. User's decision, 2026-10-18: F (b), a floor of 0.50 on
+the lead only, and H (c), a header per arm. The third of the three pull requests of §6,
+on top of the second (the entry above), since both change `render_for_prompt`.
+
+- **The defects**: `self_notes_relevant` had no threshold, so every opening got the three
+  observations "nearest" it, however far: the lead's cosine ran from 0.354 to 0.776 over
+  the dev profile's 138 openings, and read blind, no lead under 0.50 bore on its chat (0 of
+  51; 14 of the 40 just above did). And the section said "Recent observations" over picks a
+  median of 104 days old, 127 of 138 leads older than 30 days.
+- **The floor** (`notes::OBSERVATION_LEAD_FLOOR`, 0.50 in bge-m3's scale, read through
+  `similarity_scale().map(..)` like the three similarity gates): when the opening's
+  nearest observation clears it, the relevance pick stands as before — the nearest ones,
+  then the freshest guaranteed (`blend_self_notes`); the picks after the lead need not
+  clear it (in the research's 87 chats above the floor, a floor on them would have traded
+  4 relevant and 9 moderate picks for 31 unrelated ones). Under it, the chat takes the
+  latest observations. `injection_recent` decides and returns the arm
+  (`ObservationPick`), and `render_for_prompt` heads the section with it. One place in the
+  prompt goes to the latest arm too: the guaranteed freshest observation took it anyway, so
+  the relevance pick could only ever show the freshest (and its embedding call is saved).
+- **The headers** replace `selfmodel.render.observations_recent`: *"Observations nearest this
+  conversation, then the latest:"* / *"Latest observations:"*, and in Russian «Наблюдения,
+  ближайшие к теме разговора, и последнее:» / «Последние наблюдения:». The description of
+  *Insights into prompt* says the same, and that the picks share the section's room.
+- **The candidate pool** (§7): the 20 notes nearest the query were taken among all of the
+  profile's notes and the `@self` ones kept, so notes about the user could fill all twenty
+  and the section fell back to recency in silence. The `@self` notes are now ranked alone;
+  `note_search_semantic` scores every note anyway.
+- **Stable by construction**: the arm is decided on the opening's vector, which the app
+  embeds alone and bge-m3 returns bit-identical (#782), so it holds every turn with the
+  pick. The latest arm moves when an observation is written or revised; so does the
+  relevance arm since the second pull request, which shows the freshest observation every
+  time (research §4.4).
+- **Live — GO.** prompt-caching.md §2.2's two conversations, on a copy of the dev data
+  and this branch's build: `external` mode through a logging proxy to a local
+  `llama-server` (b11715, Gemma 4 26B-A4B Q4_1, `-c 65536`), bge-m3 Q8_0 as the embedder,
+  driven by `console_probe`'s `Session`; and a third conversation whose opening bears on
+  the profile. Both of §2.2's openings lead under the floor (a greeting at 0.485, the KV
+  cache at 0.457) and took the latest arm; the third (how its memory of itself changes, at
+  0.586) took the nearest. `system` was byte-identical on **11 of 11** follow-ups (3, 5 and
+  3), and each follow-up read 94.6–99.3% of its prompt from the server's cache. One held
+  across a background reflection that wrote nothing, and the third conversation's
+  off-topic follow-up (the KV cache) moved neither the arm nor the header. An effect the
+  floor adds: the two chats of the latest arm had the same `system`, so the second chat's
+  first turn read 10,949 of its 10,980 prompt tokens from the first chat's cache.
+- **§4.3's probe — GO**, the research's go criterion being that the latest arm is not
+  worse. On the research's 51 openings under the floor: the app's own `system` (captured
+  above) with the block rendered by this code two ways — the relevance pick under the old
+  header, the latest observations under the new one — and the opening as the only message,
+  on the same stand (server defaults, thinking on, one seed per opening for both arms). A
+  judge pass (the same model, thinking off, temperature 0) asked whether the reply draws on
+  something specific in an observation it was shown: **3 of 51** under the relevance pick,
+  **2 of 51** under the latest, no opening in both (sign test p = 1.0). Counted by explicit
+  references to the user or the project instead, 5 against 2; the relevance arm's were links
+  to an unrelated observation's subject (a question on Husserl answered "through the prism
+  of your mindfork-rs", an editor's history tied to the user's earlier project). One judge,
+  one model, small counts: the latest arm drags in no more than the pick it replaces.
+- **The self-model smokes**, on the same stand and this branch (with the second pull
+  request under it): all eleven green in 79 s — `auto_reflect`, `recall_includes_self`,
+  `self_consolidation`, `self_consolidation_overview`, `self_model`, `self_model_gate`,
+  `self_model_gate_en`, `self_model_graph`, `self_model_insight`, `summary_gate`,
+  `trait_gate`.
+- **Tests**: an opening under the floor gets the latest observations and their header, and
+  one above it keeps the relevance pick with a sub-floor second pick; the floor goes through
+  the similarity scale (0.70 clears it on bge-m3's and not on e5's measured range); one place
+  takes the latest; #782's two-turn test extended — the arm and the header hold across
+  turns in both arms, and a follow-up that would clear the floor moves neither; the header
+  says how the observations were picked; the `@self` notes ranked alone with 25 nearer notes
+  about the user; the B0 sweep now runs under both headers (on the dev shape the longer one
+  shows at every cap from 820 in Russian and 933 in English, the shorter from 670 and 750).
+- **Mutation-checked**, six mutants, all killed: no floor; the floor read raw, not through
+  the scale; the floor on every pick; the old candidate pool; the header ignoring the arm;
+  one place going by relevance.
+
+**Gates**: 4064 unit tests green, 271 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.

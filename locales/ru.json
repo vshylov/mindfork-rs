@@ -103,7 +103,8 @@
   "selfmodel.render.user.traits": " черты: ",
   "selfmodel.render.user.interests": " интересы: ",
   "selfmodel.render.user.relationship": " отношения: ",
-  "selfmodel.render.observations_recent": "Недавние наблюдения:",
+  "selfmodel.render.observations_nearest": "Наблюдения, ближайшие к теме разговора, и последнее:",
+  "selfmodel.render.observations_latest": "Последние наблюдения:",
   "selfmodel.render.more": " … ещё {n}",
   "selfmodel.render.observations": "Наблюдения ({n}):",
   "selfmodel.render.impersonation.intro": "Известное о человеке, за которого ты пишешь:",
@@ -2041,8 +2042,8 @@
     "инструментами модели себя."
   ],
   "ui.settings.desc.sm_narrative_in_prompt": [
-    "Сколько самых свежих инсайтов подмешивать в системный промпт (новейшие",
-    "первыми). Больше — богаче контекст «я», но дороже по токенам."
+    "Сколько наблюдений подмешивать в системный промпт: ближайшие к теме чата",
+    "и последнее. Место секции делится между ними: чем больше, тем короче каждое."
   ],
   "ui.settings.desc.sm_prompt_cap": [
     "Потолок символов компактного блока «модели себя», подмешиваемого в",

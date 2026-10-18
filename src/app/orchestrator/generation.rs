@@ -1622,7 +1622,7 @@ fn spawn_generation(spawn: GenSpawn) {
         // observations; Tier 2). With injection disabled, `inject_self_model`
         // returns system as is.
         {
-            let recent = injection_recent(
+            let (recent, pick) = injection_recent(
                 &ctx.storage,
                 ctx.embedder.as_ref(),
                 ctx.profile_id,
@@ -1639,6 +1639,7 @@ fn spawn_generation(spawn: GenSpawn) {
                 &self_model_params,
                 chrono::Utc::now(),
                 &recent,
+                pick,
                 ctx.loc,
             );
         }
@@ -5726,11 +5727,21 @@ pub(super) fn blend_self_notes(
     out
 }
 
-/// Gathers observations (self-notes) for injection into the system prompt (Tier 2):
-/// **relevant** to `query` + a guaranteed freshest observation, with a fallback to
-/// plain recency when the embedder is unavailable/the query is empty. Empty if injection is
-/// disabled. Async (embedding the query) — that's why it's factored out of the sync handler into
-/// the generation task. Tested over a temp store + `MockEmbedder`.
+/// Gathers observations (self-notes) for injection into the system prompt (Tier 2),
+/// and says how they were picked. When the observation nearest `query` (the
+/// chat's opening) clears the floor ([`notes::OBSERVATION_LEAD_FLOOR`], read in
+/// the embedder's scale), the relevant ones lead and the freshest observation is
+/// guaranteed a place ([`blend_self_notes`]); the picks after the lead need not
+/// clear it. Otherwise the chat takes the latest ones: under the floor, with no
+/// query or no embedder, and with one place, which the guaranteed freshest
+/// observation would take anyway. Decided on the opening, so the pick and its
+/// header hold from turn to turn (spec §17.4,
+/// docs/research/self-model-observations.md §4.4). Empty if injection is
+/// disabled. Async (embedding the query) — that's why it's factored out of the
+/// sync handler into the generation task. Tested over a temp store +
+/// `MockEmbedder`.
+///
+/// [`notes::OBSERVATION_LEAD_FLOOR`]: crate::features::tools::notes::OBSERVATION_LEAD_FLOOR
 pub(super) async fn injection_recent(
     storage: &crate::shared::storage::Storage,
     embedder: &dyn crate::shared::api::Embedder,
@@ -5738,28 +5749,46 @@ pub(super) async fn injection_recent(
     inject_enabled: bool,
     query: &str,
     params: &crate::entities::self_model::SelfModelParams,
-) -> Vec<crate::entities::self_model::NarrativeSegment> {
+) -> (
+    Vec<crate::entities::self_model::NarrativeSegment>,
+    crate::entities::self_model::ObservationPick,
+) {
+    use crate::entities::self_model::ObservationPick;
     if !inject_enabled {
-        return Vec::new();
+        return (Vec::new(), ObservationPick::Latest);
     }
     use crate::features::tools::notes;
     let n = params.narrative_in_prompt;
     let fresh = notes::self_notes_recent(storage, profile_id, params.max_narrative);
-    // Observations relevant to the query; empty → fall back to recency.
-    let relevant = notes::self_notes_relevant(storage, embedder, profile_id, query, n).await;
-    let picked = if relevant.is_empty() {
-        fresh
+    let relevant = if n > 1 {
+        notes::self_notes_relevant(storage, embedder, profile_id, query, n).await
     } else {
-        blend_self_notes(relevant, &fresh, n)
+        Vec::new()
     };
-    picked
+    let floor = storage
+        .db()
+        .similarity_scale()
+        .map(notes::OBSERVATION_LEAD_FLOOR);
+    let (picked, pick) = match relevant.first() {
+        Some((_, lead)) if *lead >= floor => (
+            blend_self_notes(
+                relevant.into_iter().map(|(note, _)| note).collect(),
+                &fresh,
+                n,
+            ),
+            ObservationPick::Nearest,
+        ),
+        _ => (fresh, ObservationPick::Latest),
+    };
+    let segments = picked
         .into_iter()
         .map(|nt| crate::entities::self_model::NarrativeSegment {
             id: nt.id,
             text: nt.content,
             created_at: nt.created_at,
         })
-        .collect()
+        .collect();
+    (segments, pick)
 }
 
 /// Mixes the "self-model" into the turn's system prompt (SelfModel MVP, see
@@ -5778,6 +5807,7 @@ pub(super) fn inject_self_model(
     params: &crate::entities::self_model::SelfModelParams,
     now: chrono::DateTime<chrono::Utc>,
     recent: &[crate::entities::self_model::NarrativeSegment],
+    pick: crate::entities::self_model::ObservationPick,
     loc: &crate::shared::i18n::Locale,
 ) -> Option<String> {
     if !enabled {
@@ -5799,6 +5829,7 @@ pub(super) fn inject_self_model(
         params.narrative_in_prompt,
         now,
         recent,
+        pick,
         loc,
     );
     // Gather the parts to mix in: the model render (if any) + the protocol (if enabled).

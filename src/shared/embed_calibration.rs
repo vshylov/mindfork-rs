@@ -6,6 +6,12 @@
 //! live runs against **bge-m3** — so each is a position inside *that* model's
 //! cosine distribution, not a universal constant.
 //!
+//! One more threshold reads through the same scale without deciding sameness:
+//! `OBSERVATION_LEAD_FLOOR` (0.50, `features/tools/notes/self_notes.rs`) decides
+//! whether the observation nearest a chat's opening bears on the chat at all. It
+//! holds a query against stored passages, where the calibration is measured
+//! passage to passage; on bge-m3, which marks neither role, the two are one.
+//!
 //! Measured on the probe corpus below (2026-07-27):
 //!
 //! | | bge-m3 | multilingual-e5-large-instruct |
