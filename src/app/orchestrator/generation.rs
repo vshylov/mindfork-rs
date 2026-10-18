@@ -211,6 +211,26 @@ pub(super) struct ContinuationSeed {
     pub(super) text: std::sync::Arc<str>,
 }
 
+impl TurnLoop<'_> {
+    /// Whether a text tail this loop leaves could be resumed by `/continue`:
+    /// the mode's answer, unless its prefill takes no history with a tool call
+    /// and this one holds some — the chat's, or the loop's own rounds
+    /// ([`ServerMode::continues_without_tools_only`]).
+    fn prefill_resumes(&self) -> bool {
+        self.shared.continuation_supported
+            && !(self.shared.engine_mode.continues_without_tools_only()
+                && (self.shared.history_carries_tools || carries_tool_calls(&self.messages)))
+    }
+}
+
+/// Whether `messages` hold a tool call: an assistant message with calls, or a
+/// tool result.
+fn carries_tool_calls(messages: &[Message]) -> bool {
+    messages
+        .iter()
+        .any(|m| m.role == MessageRole::Tool || !m.tool_calls.is_empty())
+}
+
 /// Strips a server echo of the continuation seed from the front of a round's
 /// text stream. Bytes are withheld while they keep matching the seed; on a
 /// full match the echo is dropped and everything after it flows; on the first
@@ -484,12 +504,39 @@ impl Orchestrator {
                 }
             }
         };
+        // A text tail rides a prefill, and DeepSeek's prefix completion takes
+        // none over a history with a tool call in it (spec §6.4).
+        if seed.is_some()
+            && self.config.engine.mode.continues_without_tools_only()
+            && self.history_carries_tools(active_id)
+        {
+            let _ = self.evt_tx.send(AppEvent::Error(
+                self.ui_locale()
+                    .t("ui.cmd.continue_unsupported_deepseek_tools")
+                    .into(),
+            ));
+            return;
+        }
         let Some(backend) = self.ready_backend() else {
             return;
         };
         // A tool-result tail resumes as an ordinary next round (`seed` is
         // `None`); a text tail rides the prefill.
         self.start_generation(active_id, backend, seed);
+    }
+
+    /// Whether the chat's history, as a request carries it — what a compaction
+    /// summary stands in for is not sent — holds a tool call: an assistant
+    /// message with calls, or a tool result. What DeepSeek's prefix completion
+    /// refuses ([`ServerMode::continues_without_tools_only`]).
+    pub(super) fn history_carries_tools(&self, chat_id: Uuid) -> bool {
+        let Some(chat) = self.chats.iter().find(|c| c.id == chat_id) else {
+            return false;
+        };
+        let sent_from = chat
+            .compaction_view(self.config.compaction.enabled)
+            .map_or(0, |(_, upto)| upto);
+        carries_tool_calls(chat.messages.get(sent_from..).unwrap_or_default())
     }
 
     /// Deletes the last exchange: the assistant's reply together with the user
@@ -926,6 +973,7 @@ impl Orchestrator {
             observations_by,
             engine_mode,
             continuation_supported: self.continuation_supported(),
+            history_carries_tools: self.history_carries_tools(active_id),
             endpoint_sampling_fields: self.endpoint_sampling_fields(),
             model_name,
             anchor: self.context.anchor_for(active_id),
@@ -1369,6 +1417,10 @@ struct GenSpawn {
     /// what `Finished.continuable` and the interruption notes promise, so neither
     /// can name `/continue` where the command would refuse.
     continuation_supported: bool,
+    /// [`Orchestrator::history_carries_tools`] for the turn's chat, read when the
+    /// turn starts: with the turn's own rounds, what decides whether a prefill
+    /// would be refused where [`ServerMode::continues_without_tools_only`] holds.
+    history_carries_tools: bool,
     /// What the endpoint published about the model's sampling fields, for the
     /// same snapshot (docs/history/gateway-capabilities.md §4, G3(ii)).
     endpoint_sampling_fields: Option<std::sync::Arc<[String]>>,
@@ -1611,6 +1663,7 @@ fn spawn_generation(spawn: GenSpawn) {
         observations_by,
         engine_mode,
         continuation_supported,
+        history_carries_tools,
         endpoint_sampling_fields,
         model_name,
         anchor: (anchor_epoch, anchor),
@@ -1681,6 +1734,7 @@ fn spawn_generation(spawn: GenSpawn) {
             concurrent_calls,
             engine_mode,
             continuation_supported,
+            history_carries_tools,
             endpoint_sampling_fields,
             model_name,
             ui_loc,
@@ -1730,7 +1784,14 @@ fn spawn_generation(spawn: GenSpawn) {
             Some(m) if m.role == MessageRole::Assistant => !m.text.is_empty(),
             _ => continuation.is_some(),
         };
-        let continuable = turn.shared.continuation_supported
+        // A tool-result tail resumes the loop; anything else resumes by
+        // prefill, which DeepSeek's prefix completion refuses over a tool call
+        // anywhere in the history the request carries (`prefill_resumes`).
+        let resumes = match turn.messages.last() {
+            Some(m) if m.role == MessageRole::Tool => turn.shared.continuation_supported,
+            _ => turn.prefill_resumes(),
+        };
+        let continuable = resumes
             && matches!(
                 reason,
                 FinishReason::Cancelled | FinishReason::Error | FinishReason::Length
@@ -1804,6 +1865,8 @@ struct TurnShared {
     engine_mode: ServerMode,
     /// See [`GenSpawn::continuation_supported`].
     continuation_supported: bool,
+    /// See [`GenSpawn::history_carries_tools`].
+    history_carries_tools: bool,
     /// What the endpoint published about the model's sampling fields, when it
     /// published anything: the turn's metadata snapshot must not record a field
     /// the endpoint drops (docs/history/gateway-capabilities.md §4, G3(ii)).
@@ -2230,7 +2293,7 @@ impl TurnLoop<'_> {
                 self.total_reasoning,
                 self.shared.ui_loc,
                 self.shared.compaction_enabled,
-                self.shared.continuation_supported,
+                self.prefill_resumes(),
                 echo,
             )
             .await
@@ -3622,6 +3685,7 @@ struct SharedParts {
     concurrent_calls: u32,
     engine_mode: ServerMode,
     continuation_supported: bool,
+    history_carries_tools: bool,
     /// The endpoint's published sampling fields, carried for the snapshot the
     /// dialogue's messages record (docs/history/gateway-capabilities.md §4, G3(ii)).
     endpoint_sampling_fields: Option<std::sync::Arc<[String]>>,
@@ -3644,6 +3708,7 @@ impl SharedParts {
             concurrent_calls: shared.concurrent_calls,
             engine_mode: shared.engine_mode,
             continuation_supported: shared.continuation_supported,
+            history_carries_tools: shared.history_carries_tools,
             endpoint_sampling_fields: shared.endpoint_sampling_fields.clone(),
             model_name: shared.model_name.clone(),
             ui_loc: shared.ui_loc,
@@ -3802,6 +3867,7 @@ pub(super) fn spawn_background_run(
         concurrent_calls: parts.concurrent_calls,
         engine_mode: parts.engine_mode,
         continuation_supported: parts.continuation_supported,
+        history_carries_tools: parts.history_carries_tools,
         endpoint_sampling_fields: parts.endpoint_sampling_fields.clone(),
         model_name: parts.model_name,
         ui_loc: parts.ui_loc,

@@ -219,3 +219,80 @@ fn deepseeks_keys_of_another_shape_are_silence() {
         Some(false)
     );
 }
+
+/// `/continue` in the mode is DeepSeek's beta prefix completion: the cut goes
+/// to `/beta/chat/completions` marked `prefix: true`, with no tool schemas and
+/// the switch off; every other request stays on `/v1`
+/// (docs/research/deepseek-mode.md §4.2).
+#[tokio::test]
+async fn a_continuation_goes_to_the_beta_route_as_a_prefix_completion() {
+    use crate::shared::api::contract::{ApiMessage, ToolSchema};
+    const BETA_CHAT: Route = ("/beta/chat/completions", "200 OK", SSE, ONE_CHUNK);
+    const ROUTES: &[Route] = &[MODELS, CHAT, BETA_CHAT];
+    // The cut's switch with no effort asks the list once (as any such turn
+    // does), then the two chats.
+    let (url, server) = stub(3, ROUTES);
+    let client = deepseek(url, "deepseek-flash");
+    let mut cut = turn(SamplingConfig {
+        thinking: Some(true),
+        ..Default::default()
+    });
+    cut.messages.push(ApiMessage::assistant("Paris is"));
+    cut.continue_final = true;
+    cut.tools = vec![ToolSchema {
+        name: "t".into(),
+        description: "d".into(),
+        parameters: serde_json::json!({"type": "object"}),
+    }];
+    run(&client, cut).await;
+    run(
+        &client,
+        turn(SamplingConfig {
+            reasoning_effort: Some(ReasoningEffort::High),
+            ..Default::default()
+        }),
+    )
+    .await;
+    let seen = server.join().unwrap();
+    assert_eq!(
+        seen.iter().map(Seen::path).collect::<Vec<_>>(),
+        [
+            "/v1/models",
+            "/beta/chat/completions",
+            "/v1/chat/completions"
+        ]
+    );
+    let prefix = seen[1].json();
+    assert_eq!(
+        prefix["messages"].as_array().unwrap().last().unwrap()["prefix"],
+        serde_json::json!(true)
+    );
+    assert!(prefix.get("tools").is_none(), "{prefix}");
+    assert_eq!(prefix["thinking"], serde_json::json!({"type": "disabled"}));
+    assert!(
+        !seen[2].json().to_string().contains("\"prefix\""),
+        "an ordinary turn names no prefix"
+    );
+}
+
+/// The beta base, from each base DeepSeek serves and an override.
+#[test]
+fn the_beta_base_stands_in_for_the_version_segment() {
+    use super::client::deepseek_beta_base;
+    assert_eq!(
+        deepseek_beta_base("https://api.deepseek.com/v1"),
+        "https://api.deepseek.com/beta"
+    );
+    assert_eq!(
+        deepseek_beta_base("https://api.deepseek.com/v1/"),
+        "https://api.deepseek.com/beta"
+    );
+    assert_eq!(
+        deepseek_beta_base("https://api.deepseek.com"),
+        "https://api.deepseek.com/beta"
+    );
+    assert_eq!(
+        deepseek_beta_base("http://127.0.0.1:9000/v1"),
+        "http://127.0.0.1:9000/beta"
+    );
+}

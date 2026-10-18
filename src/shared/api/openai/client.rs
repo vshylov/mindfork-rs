@@ -111,6 +111,16 @@ fn said_in(body: &str) -> Option<String> {
     (!said.is_empty()).then(|| said.to_string())
 }
 
+/// The base of DeepSeek's beta features for a client at `base`: the `/beta`
+/// segment in place of `/v1`, or after a base that names no version (DeepSeek
+/// serves both `https://api.deepseek.com` and `…/v1`). Only the prefix
+/// completion goes there (docs/research/deepseek-mode.md §2.4).
+pub(super) fn deepseek_beta_base(base: &str) -> String {
+    let base = base.trim_end_matches('/');
+    let root = base.strip_suffix("/v1").unwrap_or(base);
+    format!("{root}/beta")
+}
+
 /// What the gateway said about a key ([`OpenAiClient::check_key`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KeyVerdict {
@@ -222,6 +232,11 @@ impl OpenAiClient {
     ///   in `GET /models` in DeepSeek's words — `context_window` and a top-level
     ///   `input_modalities` — which no other client reads, so `external` at the
     ///   same URL learns nothing new from them;
+    /// - a continuation (`/continue`) is DeepSeek's prefix completion: the
+    ///   trailing assistant message marked `prefix: true`, sent to the `/beta`
+    ///   route with no tool schemas and the switch off
+    ///   ([`wire::ChatCompletionRequest::with_prefix_completion`]); `/v1` answers
+    ///   a prefill with a new reply from the beginning;
     /// - llama.cpp's `/props`, Ollama's and LM Studio's routes are never asked:
     ///   each is a `404` here.
     pub fn for_deepseek(mut self) -> Self {
@@ -658,6 +673,9 @@ impl OpenAiClient {
             body.thinking = Some(wire::WireThinking::Switch(false));
             body.reasoning_effort = None;
         }
+        if self.deepseek && req.continue_final {
+            body = body.with_prefix_completion();
+        }
         if self.gateway.is_some() {
             body = body.for_gateway();
             // A muted turn on a model that must reason: the lowest effort it
@@ -795,7 +813,11 @@ impl EffortWire for OpenAiClient {
         body: &wire::ChatCompletionRequest,
         cancel: &CancellationToken,
     ) -> Result<Option<reqwest::Response>, error::EngineError> {
-        let url = format!("{}/chat/completions", self.base_url);
+        let url = if self.deepseek && body.continues_by_prefix() {
+            format!("{}/chat/completions", deepseek_beta_base(&self.base_url))
+        } else {
+            format!("{}/chat/completions", self.base_url)
+        };
         // Cancellable: until this moved inside the token's reach, `Esc` could not
         // interrupt a request that had not yet produced a stream.
         let Some(response) =

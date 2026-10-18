@@ -185,6 +185,11 @@ pub struct WireMessage {
     pub tool_call_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<WireToolCall>>,
+    /// DeepSeek's prefix completion: `true` on the trailing assistant message
+    /// asks the server to continue it in place
+    /// ([`ChatCompletionRequest::with_prefix_completion`]). Absent everywhere else.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prefix: Option<bool>,
 }
 
 /// The `content` of a wire message: a bare string, or an array of content parts.
@@ -368,6 +373,7 @@ pub fn build_chat_request(
             content: Some(WireContent::Text(system.clone())),
             tool_call_id: None,
             tool_calls: None,
+            prefix: None,
         });
     }
     for m in &req.messages {
@@ -394,6 +400,7 @@ pub fn build_chat_request(
             content: Some(wire_content(m)),
             tool_call_id: m.tool_call_id.clone(),
             tool_calls,
+            prefix: None,
         });
     }
 
@@ -522,6 +529,37 @@ impl ChatCompletionRequest {
     pub fn with_typed_thinking(mut self) -> Self {
         self.thinking = self.thinking.map(WireThinking::typed);
         self
+    }
+
+    /// The continuation as DeepSeek's prefix completion reads it
+    /// (docs/research/deepseek-mode.md §2.4, §4.2): `prefix: true` on the
+    /// trailing assistant message, sent to the `/beta` route. Measured
+    /// 2026-10-19, the route refuses a request carrying tool schemas ("Function
+    /// call should not be used with prefix"), so they are left out; the thinking
+    /// switch is off — resuming a visible reply does not re-open the reasoning,
+    /// the rule every other wire follows (spec §6.4) — and no effort is asked
+    /// for; llama.cpp's continuation fields go too, as nothing here reads them.
+    /// A body whose last message is not the assistant's is returned as it came.
+    pub fn with_prefix_completion(mut self) -> Self {
+        let Some(last) = self.messages.last_mut().filter(|m| m.role == "assistant") else {
+            return self;
+        };
+        last.prefix = Some(true);
+        self.tools = None;
+        self.tool_choice = None;
+        self.thinking = Some(WireThinking::Switch(false).typed());
+        self.reasoning_effort = None;
+        self.reasoning_budget = None;
+        self.chat_template_kwargs = None;
+        self.continue_final_message = None;
+        self.add_generation_prompt = None;
+        self
+    }
+
+    /// Whether this body asks for a prefix completion — what sends it to
+    /// DeepSeek's `/beta` route.
+    pub fn continues_by_prefix(&self) -> bool {
+        self.messages.last().is_some_and(|m| m.prefix == Some(true))
     }
 }
 
@@ -2516,5 +2554,82 @@ mod xai_effort_tests {
         assert_eq!(body.effort(), None);
         let json = serde_json::to_value(&body).unwrap();
         assert!(json.get("reasoning_effort").is_none(), "{json}");
+    }
+}
+
+/// DeepSeek's prefix completion (docs/research/deepseek-mode.md §4.2).
+#[cfg(test)]
+mod prefix_completion_tests {
+    use super::*;
+    use crate::shared::api::contract::{ApiMessage, ToolSchema};
+
+    fn continuation() -> ChatRequest {
+        ChatRequest {
+            continue_final: true,
+            system: Some("sys".into()),
+            messages: vec![ApiMessage::user("hi"), ApiMessage::assistant("Paris is")],
+            sampling: SamplingConfig {
+                thinking: Some(true),
+                reasoning_effort: Some(ReasoningEffort::High),
+                temperature: Some(0.5),
+                ..Default::default()
+            },
+            tools: vec![ToolSchema {
+                name: "t".into(),
+                description: "d".into(),
+                parameters: serde_json::json!({"type": "object"}),
+            }],
+        }
+    }
+
+    /// The trailing assistant message is marked, the tool schemas and the
+    /// reasoning asks go, the switch is off, and nothing else moves.
+    #[test]
+    fn a_continuation_marks_its_last_message_and_drops_what_the_route_refuses() {
+        let body = build_chat_request(&continuation(), true, Some("deepseek-flash"), true)
+            .with_prefix_completion();
+        assert!(body.continues_by_prefix());
+        let json = serde_json::to_value(&body).unwrap();
+        let messages = json["messages"].as_array().unwrap();
+        assert_eq!(messages.last().unwrap()["prefix"], serde_json::json!(true));
+        assert!(
+            messages[..messages.len() - 1]
+                .iter()
+                .all(|m| m.get("prefix").is_none()),
+            "only the last message is marked: {json}"
+        );
+        assert_eq!(json["thinking"], serde_json::json!({"type": "disabled"}));
+        for gone in [
+            "tools",
+            "tool_choice",
+            "reasoning_effort",
+            "continue_final_message",
+            "add_generation_prompt",
+            "chat_template_kwargs",
+        ] {
+            assert!(json.get(gone).is_none(), "{gone} must go: {json}");
+        }
+        assert_eq!(json["temperature"], serde_json::json!(0.5));
+        assert_eq!(json["model"], serde_json::json!("deepseek-flash"));
+    }
+
+    /// A body whose last message is not the assistant's is not a continuation
+    /// and comes back as it went; an ordinary body names no prefix at all.
+    #[test]
+    fn a_body_without_an_assistant_tail_is_left_as_it_came() {
+        let mut req = continuation();
+        req.messages.pop();
+        let before = serde_json::to_value(build_chat_request(&req, true, None, false)).unwrap();
+        let after = build_chat_request(&req, true, None, false).with_prefix_completion();
+        assert!(!after.continues_by_prefix());
+        assert_eq!(serde_json::to_value(after).unwrap(), before);
+
+        let plain = build_chat_request(&continuation(), true, None, false);
+        assert!(!plain.continues_by_prefix());
+        assert!(
+            !serde_json::to_string(&plain)
+                .unwrap()
+                .contains("\"prefix\"")
+        );
     }
 }
