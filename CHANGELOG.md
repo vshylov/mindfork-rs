@@ -23,6 +23,12 @@ split by subsystem.
   conversation and the latest; otherwise the chat gets the latest observations,
   under that header, rather than an unrelated one presented as fitting. The
   description of *Insights into prompt* says the same.
+- **The log records the cache of every request, not only the conversation's.** A
+  title, a history compression, an impersonation, a page summary and a
+  background task each leave a `round usage` line with how much of their prompt
+  the provider read from its cache — a compression re-sends the whole
+  conversation, so a miss there is the costliest one. A vLLM server's cache
+  writes are read as well.
 
 ### Fixed
 
