@@ -34,7 +34,7 @@ use crate::shared::tokens::estimate_prompt;
 use super::Orchestrator;
 use super::request::{
     PromptContext, RequestEnv, build_request, build_request_in, last_user_message_at,
-    withhold_images,
+    observation_query, withhold_images,
 };
 
 /// How long the turn waits to learn whether the engine takes images
@@ -703,9 +703,10 @@ impl Orchestrator {
 
         // The profile's "self-model" at the start of the turn. Injection into the
         // system prompt happens only if the profile enabled get_self_model (opt-in);
-        // the injection itself (observations by relevance to the last message +
+        // the injection itself (observations by relevance to the chat's opening +
         // recency) happens in the generation task (needs async embedding). See
-        // docs/history/narrative-as-notes.md (Tier 2).
+        // docs/history/narrative-as-notes.md (Tier 2), docs/research/prompt-caching.md
+        // F1 (e1).
         let self_model_params =
             crate::entities::self_model::SelfModelParams::from_settings(&self.config.self_model);
         let inject_enabled = enabled
@@ -733,8 +734,8 @@ impl Orchestrator {
         let model_name = self.effective_model_name();
         let engine_mode = self.config.engine.mode;
 
-        // Build the request/context + take the last user message (for relevance-
-        // based injection of observations in the task).
+        // Build the request/context + take the chat's opening (the query for the
+        // relevance-based injection of observations in the task).
         // The turn's session budget (spec §11.6): every stream of the turn —
         // the loops' own and a tool's summary request (`ToolContext::sessions`)
         // — takes a permit of this one budget, and under a shared KV pool
@@ -746,7 +747,7 @@ impl Orchestrator {
         let sessions = self.session_budget();
         let mut request;
         let ctx;
-        let last_user;
+        let observations_by;
         // Which `tool-image-N` names the chat has already spent. Collected whatever the
         // turn stages, unlike the images themselves: a name is a few bytes, and a turn
         // that cannot stage a file can still produce an image the next turn will name
@@ -802,13 +803,7 @@ impl Orchestrator {
                     loc: profile_loc,
                 },
             );
-            last_user = chat
-                .messages
-                .iter()
-                .rev()
-                .find(|m| m.role == MessageRole::User)
-                .map(|m| m.text.clone())
-                .unwrap_or_default();
+            observations_by = observation_query(chat, compact_cfg.enabled);
             // `turn` is built by the last access to `chat`; after this the `chat`
             // borrow ends and `self` (deps/config) can be read for `new`.
             let turn = TurnInfo {
@@ -920,7 +915,7 @@ impl Orchestrator {
             self_model_params,
             inject_enabled,
             maintenance_protocol: self.config.self_model.maintenance_protocol,
-            last_user,
+            observations_by,
             engine_mode,
             continuation_supported: self.continuation_supported(),
             endpoint_sampling_fields: self.endpoint_sampling_fields(),
@@ -1357,8 +1352,9 @@ struct GenSpawn {
     self_model_params: crate::entities::self_model::SelfModelParams,
     inject_enabled: bool,
     maintenance_protocol: bool,
-    /// The last user message — the query for relevance-based injection of observations.
-    last_user: String,
+    /// The query for relevance-based injection of observations: the chat's opening
+    /// ([`observation_query`]), so the pick holds from turn to turn.
+    observations_by: String,
     /// Engine mode and model name — a snapshot for `Message.metadata` (spec §8.3).
     engine_mode: ServerMode,
     /// [`Orchestrator::continuation_supported`], read once when the turn starts:
@@ -1604,7 +1600,7 @@ fn spawn_generation(spawn: GenSpawn) {
         self_model_params,
         inject_enabled,
         maintenance_protocol,
-        last_user,
+        observations_by,
         engine_mode,
         continuation_supported,
         endpoint_sampling_fields,
@@ -1622,7 +1618,7 @@ fn spawn_generation(spawn: GenSpawn) {
 
     tokio::spawn(async move {
         // Injecting the "self-model" into the system prompt (in the task — needs
-        // async embedding of the last message for relevance-based selection of
+        // async embedding of the chat's opening for relevance-based selection of
         // observations; Tier 2). With injection disabled, `inject_self_model`
         // returns system as is.
         {
@@ -1631,7 +1627,7 @@ fn spawn_generation(spawn: GenSpawn) {
                 ctx.embedder.as_ref(),
                 ctx.profile_id,
                 inject_enabled,
-                &last_user,
+                &observations_by,
                 &self_model_params,
             )
             .await;
@@ -5731,7 +5727,7 @@ pub(super) fn blend_self_notes(
 }
 
 /// Gathers observations (self-notes) for injection into the system prompt (Tier 2):
-/// **relevant** to the latest reply + a guaranteed freshest observation, with a fallback to
+/// **relevant** to `query` + a guaranteed freshest observation, with a fallback to
 /// plain recency when the embedder is unavailable/the query is empty. Empty if injection is
 /// disabled. Async (embedding the query) — that's why it's factored out of the sync handler into
 /// the generation task. Tested over a temp store + `MockEmbedder`.
@@ -5740,7 +5736,7 @@ pub(super) async fn injection_recent(
     embedder: &dyn crate::shared::api::Embedder,
     profile_id: Uuid,
     inject_enabled: bool,
-    last_user: &str,
+    query: &str,
     params: &crate::entities::self_model::SelfModelParams,
 ) -> Vec<crate::entities::self_model::NarrativeSegment> {
     if !inject_enabled {
@@ -5749,8 +5745,8 @@ pub(super) async fn injection_recent(
     use crate::features::tools::notes;
     let n = params.narrative_in_prompt;
     let fresh = notes::self_notes_recent(storage, profile_id, params.max_narrative);
-    // Observations relevant to the latest reply; empty → fall back to recency.
-    let relevant = notes::self_notes_relevant(storage, embedder, profile_id, last_user, n).await;
+    // Observations relevant to the query; empty → fall back to recency.
+    let relevant = notes::self_notes_relevant(storage, embedder, profile_id, query, n).await;
     let picked = if relevant.is_empty() {
         fresh
     } else {

@@ -6,7 +6,9 @@
 > measures how often and what it costs, and
 > [§5 F1 revisited](#f1-revisited-2026-10-18) lays
 > the options out again. User's decision: (e1), picking observations by the chat's
-> opening, behind an MVP probe, with (e2) on no-go. Roadmap: §Context and tokens.
+> opening, behind an MVP probe, with (e2) on no-go. The probe is **GO** (8 of 8
+> follow-ups keep the prefix, against 2 of 8): see "The probe" under F1 revisited.
+> Roadmap: §Context and tokens.
 > Adjacent: [history-compression.md](history-compression.md) §2.3, spec
 > [§6.6](../../spec.md) (KV cache and prefix caching),
 > [ADR 0004](../decisions/0004-engine-contract-multi-provider.md),
@@ -417,6 +419,72 @@ not rescue a changed prefix.
 
 **User's decision (2026-10-18): (e1), behind the MVP probe above, falling back to
 (e2) on no-go.**
+
+#### The probe, 2026-10-18 — GO
+
+Built as `observation_query` (`app/orchestrator/request.rs`). It returns the
+summary while one is in force, else the first user message with any text, and
+the turn passes it to `injection_recent` in place of the latest message.
+
+**Stability — live.** The (e1) binary ran on a fresh copy of the dev data, with
+the same stand and the same two conversations as §2.2.
+
+| conversation | follow-ups | `system` identical | reused per follow-up (Gemma 4, llama.cpp) |
+|---|---:|---:|---|
+| four unrelated questions | 3 | **3** | 96%, 99%, 97% |
+| six on one topic | 5 | **5** | 99%, 99%, 96%, 95%, 94% |
+
+That is 8 of 8, against 2 of 8 before. Turn 6 came right after the background
+reflection, which wrote nothing, and kept its prefix too.
+
+**On the owner's real chats — offline.** The app's ranking was replayed over the
+63 chats of the dev profile that have two or more user turns, using the
+profile's own vectors and the same embedder. Under today's rule the leading
+observation changed on **166 of 197 follow-up turns (84%)**; the ordered top
+three changed on 190 (96%). Under (e1) it changes on none, until the observations
+themselves change. The replay holds today's observation set fixed, which a chat
+at the time did not see, so the 84% is an estimate of the rate, not a record.
+
+**Relevance — read on the twelve most recent of those chats.** Each row gives the
+observation that leads the section under (e1), paraphrased, and a verdict.
+
+| the chat | the opening's lead observation | verdict |
+|---|---|---|
+| why well-being does not guarantee happiness | the owner comparing this companion with the official Claude chat | unrelated |
+| Sartre: the opposite of bad faith | a pattern of "conversion to an empty key", seen in the Strugatskys | weak |
+| the dimensions of a deep personality analysis | the owner's personal stake in the philosophy of mind | weak |
+| quiet wear and bad faith (a video) | the same "empty key" pattern | weak |
+| consciousness and creativity of language models | sub-agent experiments on "assert experience" against "deny experience" | **relevant** |
+| an analysis of a poem | a correction to the fear of "the Other who holds my cut-off" | unrelated |
+| a philosophical album ("Hi! Want to analyse some poetry?") | "a model more interesting than a human" | unrelated |
+| fact-checking an article on GPT-6.1 Sol | the day `get_llm_name` confirmed the model as gpt-6.1-sol | **relevant** |
+| prefix caching at large providers | the owner's mirror-copies experiment degrading at 20k tokens | unrelated |
+| what meaning is, in philosophy | "the space of meanings: the project serves meaning" | **relevant** |
+| an animated film (a video) | *Tenet* as a stress test of a formula about time | moderate |
+| how far AI replaces a game developer (Rust, Bevy) | the size of this repository and the owner's background | moderate |
+
+So 5 of 12 are relevant or moderately so. The follow-up picks that today's rule
+made in the same chats (the first three of each, 20 in all) score 6 of 20. A
+follow-up such as "I liked the film too" is a poor query, and an opening states
+the subject. The no-go case, that picks anchored on the opening are as unrelated
+as today's, is not what was seen. Relevance on this profile is weak either way,
+because most of its observations are about the relationship and the self-model
+while many chats are about something else. That is a property of the corpus,
+not of (e1).
+
+**The embedder repeats itself.** A stateless (e1) needs the same text to give the
+same pick every turn, so this was measured:
+
+- **bge-m3 on llama.cpp**: a text embedded alone, twice, is bit-identical (20 of
+  20). The same text in a batch of another shape moves by up to 0.0039 a
+  component and 0.0045 in cosine, and 10 of the 63 openings have a top-two
+  margin under that. The app embeds the query alone, so its pick repeats.
+- **OpenAI `text-embedding-3-small`**: bit-identical, 8 of 8.
+
+An embedder that is not bit-stable for one text would flip a near-tied pick now
+and then. The counter would show it, and the cure would be to remember the
+query's vector per chat. It is not built, because neither embedder measured
+needs it.
 
 ### F2. How far to go per provider
 

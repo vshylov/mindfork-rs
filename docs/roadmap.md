@@ -200,7 +200,9 @@ effort tiers — have all closed
   the section budgets made the top observation always render, and its per-turn
   pick changes (6 of 8 follow-ups). Each miss costs about 9× the prompt on OpenAI
   6.1 and 7–14× the prefill locally (§2.2 there). User's decision: F1 (e1),
-  picking by the chat's opening, behind a probe; (e2) on no-go.
+  picking by the chat's opening, behind a probe; (e2) on no-go. **Built, probe
+  GO**: the prefix holds on 8 of 8 follow-ups. Anthropic breakpoints and
+  `prompt_cache_key` remain as above.
 - **The cache share — leftovers** ([cached-tokens.md](research/cached-tokens.md);
   the track is closed) — **on demand**, each: the rows not measured — Ollama
   and LM Studio (whether `/v1` reports anything), vLLM (only with

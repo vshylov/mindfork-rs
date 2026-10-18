@@ -154,6 +154,30 @@ pub(super) fn last_user_message_at(chat: &Chat) -> Option<chrono::DateTime<chron
         .map(|m| m.timestamp)
 }
 
+/// What the turn's observations are picked by (spec §17.4): the chat's
+/// **opening**, not its latest message — the summary while one is in force, else
+/// the first user message with any text.
+///
+/// The self-model block ends `system`, ahead of the whole conversation, so a pick
+/// that followed the latest message changed the prompt's head on most turns, and
+/// every provider then re-read the whole conversation
+/// (docs/research/prompt-caching.md §2.2, F1 (e1)). This query changes only where
+/// the prefix breaks anyway: a compaction roll rewrites `system`, an edit of the
+/// opening rewrites the conversation. Empty while the chat has no user text — the
+/// caller then falls back to recency.
+pub(super) fn observation_query(chat: &Chat, compaction_enabled: bool) -> String {
+    if let Some((summary, _)) = chat.compaction_view(compaction_enabled) {
+        return summary.to_string();
+    }
+    chat.messages
+        .iter()
+        .filter(|m| m.role == MessageRole::User)
+        .map(|m| m.text.trim())
+        .find(|text| !text.is_empty())
+        .unwrap_or_default()
+        .to_string()
+}
+
 /// Everything the system prompt is assembled from besides the chat itself —
 /// gathered so a new injection input does not lengthen [`build_request`]'s
 /// signature again (the `ToolDeps`/`ToolParams` pattern,

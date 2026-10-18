@@ -3224,13 +3224,17 @@ Two independent access paths:
   into the `system` prompt via `generation::inject_self_model` — but only if
   the profile has **enabled** `get_self_model` (an opt-in gate). This way the
   agent "sees itself" on every turn without an explicit tool call.
-  Observations (self-notes) go into the prompt **by relevance to the user's
-  last message** (embed the message → find close observations) **plus a
-  guarantee of the most recent one** — an old but on-topic observation
-  surfaces when the topic comes back (Tier 2,
+  Observations (self-notes) go into the prompt **by relevance to the chat's
+  opening** (`request::observation_query`: the first user message with text,
+  or the summary while one is in force; embed it → find close observations)
+  **plus a guarantee of the most recent one** — an old but on-topic observation
+  surfaces in a chat on its topic (Tier 2,
   [narrative-as-notes.md](history/narrative-as-notes.md)):
   `notes::self_notes_relevant` + `blend_self_notes` → `injection_recent`; a
-  graceful degradation to recency without an embedder. Injection **happens
+  graceful degradation to recency without an embedder. The opening, not the
+  latest message: the block ends `system`, so a pick that moved with each
+  message broke the provider's prefix cache on most turns
+  ([prompt-caching.md](research/prompt-caching.md) §2.2, F1 (e1)). Injection **happens
   inside the generation's async task** (`spawn_generation`, not the sync
   `start_generation`) — relevance requires async embedding, and the command
   handler is synchronous.
@@ -3559,8 +3563,8 @@ Near-term decision points (deliberately deferred):
   done**: observations moved into `@self` notes
   ([narrative-as-notes.md](history/narrative-as-notes.md)) — gaining
   embeddings, duplicate gates, supersession with a scar, "sleep". **Tier 2
-  done** (structure): injecting observations **by relevance** to the message
-  (`injection_recent`), a **graph** over observations
+  done** (structure): injecting observations **by relevance** — to the chat's
+  opening since 2026-10-18 (`injection_recent`), a **graph** over observations
   (`note_link`/`note_neighbors` + an "Observation links" block, the graph
   smoke test — GO), **semantic gates for related `user_model` traits** (step
   C, threshold 0.72). **Tier 3 done in full** (Paths 1–3, all GO). **Path 1**

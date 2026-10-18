@@ -14,6 +14,17 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A conversation is reused from turn to turn again.** The few observations the
+  self-model brings into the prompt were chosen afresh for every new message,
+  which changed the start of the prompt on most turns, so the provider read the
+  whole conversation from scratch each time. On OpenAI that also billed a cache
+  write for all of it, about nine times the input of a reused turn. They are now
+  chosen by what the chat opened with, and stay the same while you talk. From
+  the second turn on, the token counter reads `cache 94%`–`99%` where it read
+  `cache 0%` (measured on a local Gemma 4).
+
 ## [0.19.0] — 2026-10-18
 
 **See how much of a conversation was reused.** A provider keeps the start of a
