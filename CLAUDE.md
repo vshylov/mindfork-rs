@@ -197,10 +197,11 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
-- **DeepSeek as a mode of its own** (2026-10-19, stage 1 of 2): window and images
-  from its list, the thinking switch typed from the first request, `/continue`
-  refused where it failed or doubled a reply; settings 6 → 7, chats 5 → 6. Live **GO**, both
-  models ([docs/research/deepseek-mode.md](docs/research/deepseek-mode.md)).
+- **DeepSeek as a mode of its own — track complete** (2026-10-19, two stages):
+  window and images from its list, the thinking switch typed from the first
+  request, `/continue` by the beta prefix completion where `external` failed or
+  doubled a reply; settings 6 → 7, chats 5 → 6. Live **GO**, both models
+  ([docs/research/deepseek-mode.md](docs/research/deepseek-mode.md)).
 - **Observations picked by the chat's opening** (2026-10-18): the prompt's prefix
   now holds on 8 of 8 turns, from 2 of 8. Live **GO**
   ([docs/research/prompt-caching.md](docs/research/prompt-caching.md) §2.2).

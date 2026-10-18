@@ -2211,7 +2211,11 @@ cargo test cached_tokens_e2e_live         -- --ignored --nocapture
 cargo test auto_title_first_reply_e2e_live -- --ignored --nocapture
 $env:MINDFORK_LIVE_VISION_EXPECT = "supported"       # "unsupported" on deepseek-v4-pro
 cargo test a_gateways_catalogue_decides_whether_images_are_sent_live -- --ignored --nocapture
+cargo test continue_in_prose_e2e_live      -- --ignored --nocapture   # /continue by the prefix
 ```
+
+Without `MINDFORK_ENGINE_DIALECT`, `continue_in_prose_e2e_live` is the control on
+`external`'s client, and it is red there: `/v1` does not continue.
 
 **Do not run the whole `--ignored` set against a paid gateway.** It is ~235
 smokes, 121 of them multi-round end-to-end conversations written for a local

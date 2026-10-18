@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (106)
+## Entries (107)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -118,6 +118,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the cache share's leftovers — measured, logged, decided (done)
 - Post-M9: DeepSeek's API — its cache figure, and the thinking switch it refused (done)
 - Post-M9: DeepSeek — a mode of its own, stage 1 (done)
+- Post-M9: DeepSeek — `/continue` by the beta prefix completion, stage 2 (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -7073,3 +7074,45 @@ F1 (a), F2 (a), F3 (a), each the recommendation — the mode, in two stages).
 **Gates**: 4093 unit tests green, 278 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check`, `site_legal_pages
 --check`, `wizard_rtf --check`, `site_llms_txt --check` clean.
+
+### Post-M9: DeepSeek — `/continue` by the beta prefix completion, stage 2 (done)
+
+The second stage of [deepseek-mode.md](../research/deepseek-mode.md) (§4.2, §9): the
+mode resumes a cut reply, which `/v1` cannot.
+
+- **Measured before building, on the app's request shape** (streamed, a system message,
+  the schemas): `/beta` with `prefix: true` continues — no echo, no reasoning — only
+  when the request carries **no tool schemas** and its history **no tool call**. A schema
+  is `400 "Function call should not be used with prefix"`; a tool round in the history the
+  same `400`, or with thinking on `400 "The reasoning_content in the thinking mode must be
+  passed back"`; `prefix` on `/v1` is `400 "only available when using beta api"`.
+- **The same measurement corrected stage 1.** Its probe had sent a bare two-message body
+  and seen `/v1` restart; the app's own request, run through the app, is refused there
+  with the reasoning `400` while tools and thinking are on. What `external` did at
+  DeepSeek was an error at the default settings, and a doubled reply only with thinking
+  off. The stage-1 documents, the note and the lesson were corrected on its branch
+  (41d3b04c); the lesson is now about probing with the body the client builds.
+- **Built**: `ChatCompletionRequest::with_prefix_completion` (the tail marked, the schemas,
+  the reasoning asks and llama.cpp's continuation fields dropped, the switch off) and
+  `continues_by_prefix`; the `/beta` route in `OpenAiClient::send` (`deepseek_beta_base`);
+  `supports_continuation(DeepSeek)`; `ServerMode::continues_without_tools_only`, read by
+  `handle_continue` (`history_carries_tools`, from the compaction boundary on, with a note of
+  its own) and by a finished turn and the interruption notes (`TurnLoop::prefill_resumes`,
+  the chat's history and the turn's own rounds). A tool-result tail resumes as anywhere.
+  `external` at the host still refuses; its note now names the mode.
+- **The smoke cuts in prose** (`continue_in_prose_e2e_live`): two hundred characters of a
+  story, then `/continue`, asserting the reply in place, byte-equal to what streamed, and
+  the cut's opening in it once — which a restart would break. **Live GO, both models**:
+  flash resumed "Tomas had kept the" with " light at Cradle Point for nineteen years…", pro
+  "he had stopped trying" with " to answer…"; the count (`continue_e2e_live`) in place too.
+  **Control red**: the same smoke on `external`'s client ends in the reasoning `400`.
+- **A flake, fixed on stage 1**: the mode's reasoning arm asked a greeting, which one run
+  answered with no thought; it asks for a product now (18–30 reasoning tokens, three runs).
+  Seen once and not again: a `deepseek-flash` greeting carried DeepSeek's own `<ds_safety>`
+  moderation markup in its content — the provider's, left as an observation.
+- **Docs**: spec §6.4; architecture §5–§6; ADR 0004; the manual's `/continue` row; install
+  (the smoke and its control); the research's §4.2 and §9; the roadmap (the track built,
+  the leftovers on demand); CHANGELOG *Added*; the status line.
+
+**Gates**: 4098 unit tests green, 279 `#[ignore]`; clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.

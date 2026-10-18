@@ -1615,7 +1615,11 @@ Details:
   catalogued)` —
   managed/external and Gemini unconditionally, Anthropic by an
   allowlist-by-version over the model id (≤4.5 continues, 4.6+ rejects,
-  unparseable refuses), OpenAI/Grok/DeepSeek never; a **gateway** is answered by the
+  unparseable refuses), OpenAI/Grok never, DeepSeek in its own mode by the
+  beta prefix completion and only over a history with no tool call
+  (`ServerMode::continues_without_tools_only`, read by `handle_continue`
+  through `Orchestrator::history_carries_tools` and by a finished turn through
+  `TurnLoop::prefill_resumes`); a **gateway** is answered by the
   slug's vendor against that same table (`gateway_model_continues`: Anthropic
   ≤4.5 and Gemini continue, everything else refuses) — `external` once its
   catalogue has answered for the model, `openrouter` always, since that mode is
@@ -1803,7 +1807,11 @@ input (a top-level `input_modalities`) are read from the entry in
 `GET /models` by `ModelEntry::deepseek_window`/`takes_images_top_level`, on
 this client alone — so `external` at the same URL reads what it read, and does
 not become catalogued (deepseek-api.md, fork F3); `/props`, Ollama's and LM
-Studio's routes are never asked. With a window read the endpoint counts as
+Studio's routes are never asked; and a continuation is the beta prefix completion
+— `ChatCompletionRequest::with_prefix_completion` marks the trailing assistant
+message `prefix: true` and drops the tool schemas and the reasoning asks, and
+`OpenAiClient::send` posts a body that `continues_by_prefix` to
+`deepseek_beta_base` (`/beta` in place of `/v1`). With a window read the endpoint counts as
 catalogued, so a tool's images are re-homed into a user message, which
 `deepseek-flash` reads either way. The picker reads the same list
 (`CatalogueShape::DeepSeek`: role `Chat`, the display name, the window).
