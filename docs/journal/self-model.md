@@ -1273,8 +1273,8 @@ on top of the second (the entry above), since both change `render_for_prompt`.
   prompt goes to the latest arm too: the guaranteed freshest observation took it anyway, so
   the relevance pick could only ever show the freshest (and its embedding call is saved).
 - **The headers** replace `selfmodel.render.observations_recent`: *"Observations nearest this
-  conversation, then the latest:"* / *"Latest observations:"*, and in Russian «Наблюдения,
-  ближайшие к теме разговора, и последнее:» / «Последние наблюдения:». The description of
+  conversation, then the latest:"* / *"Latest observations:"*, Russian mirrored (the
+  nearest to the conversation's subject, and the latest). The description of
   *Insights into prompt* says the same, and that the picks share the section's room.
 - **The candidate pool** (§7): the 20 notes nearest the query were taken among all of the
   profile's notes and the `@self` ones kept, so notes about the user could fill all twenty
