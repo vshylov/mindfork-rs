@@ -3242,8 +3242,12 @@ Two independent access paths:
   **plus a guarantee of the most recent one** — an old but on-topic observation
   surfaces in a chat on its topic (Tier 2,
   [narrative-as-notes.md](history/narrative-as-notes.md)):
-  `notes::self_notes_relevant` + `blend_self_notes` → `injection_recent`; a
-  graceful degradation to recency without an embedder. The opening, not the
+  `notes::self_notes_relevant` (the `@self` notes ranked alone, with their
+  cosines) + `blend_self_notes` → `injection_recent`. When the lead is under
+  `notes::OBSERVATION_LEAD_FLOOR` (0.50, read through `similarity_scale()`), or
+  there is no embedder or no query, the chat takes the latest observations
+  instead; `injection_recent` returns which (`ObservationPick`), and
+  `render_for_prompt` heads the section with it. The opening, not the
   latest message: the block ends `system`, so a pick that moved with each
   message broke the provider's prefix cache on most turns
   ([prompt-caching.md](research/prompt-caching.md) §2.2, F1 (e1)). Injection **happens

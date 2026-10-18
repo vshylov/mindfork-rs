@@ -822,14 +822,56 @@ async fn self_notes_relevant_ranks_and_filters() {
 
     let rel = self_notes_relevant(&storage, ctx.embedder.as_ref(), profile, "aaaa", 3).await;
     assert!(!rel.is_empty());
-    assert!(rel[0].content.contains("краткость")); // closest to "aaaa"
-    assert!(rel.iter().all(|n| n.content != "aaaa обычная")); // @self only
+    assert!(rel[0].0.content.contains("краткость")); // closest to "aaaa"
+    assert!(rel.iter().all(|(n, _)| n.content != "aaaa обычная")); // @self only
+    // Each with its cosine, nearest first: the caller holds the lead to its floor.
+    assert!(rel.windows(2).all(|w| w[0].1 >= w[1].1), "{rel:?}");
+    assert!(rel[0].1 > 0.5 && rel[0].1 <= 1.0, "{}", rel[0].1);
     // An empty query → empty (the caller's graceful degradation to recency).
     assert!(
         self_notes_relevant(&storage, ctx.embedder.as_ref(), profile, "  ", 3)
             .await
             .is_empty()
     );
+}
+
+/// The `@self` notes are ranked alone: notes about the user nearer the query
+/// than every observation must not fill the candidates and leave the prompt
+/// with none (docs/research/self-model-observations.md §7). Before, the nearest
+/// 20 of all notes were taken first and the `@self` ones kept from those.
+#[tokio::test]
+async fn self_notes_relevant_ranks_observations_alone() {
+    let profile = Uuid::new_v4();
+    let (_d, storage, ctx) = ctx_with_storage(profile);
+    let seed = async |content: String, tags: Vec<String>| {
+        let note = Note {
+            id: Uuid::new_v4(),
+            profile_id: profile,
+            content: content.clone(),
+            tags,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        storage.db().note_insert(&note).unwrap();
+        let emb = ctx
+            .embedder
+            .embed(vec![content], EmbedRole::Passage)
+            .await
+            .unwrap()
+            .remove(0);
+        storage
+            .db()
+            .note_vector_upsert(note.id, profile, &emb)
+            .unwrap();
+    };
+    // Twenty-five notes about the user, each the query's exact letters.
+    for i in 0..25 {
+        seed("a".repeat(4 + i), vec![]).await;
+    }
+    seed("aaaa про краткость".into(), vec![SELF_NOTE_TAG.to_string()]).await;
+    let rel = self_notes_relevant(&storage, ctx.embedder.as_ref(), profile, "aaaa", 3).await;
+    assert_eq!(rel.len(), 1, "{rel:?}");
+    assert!(rel[0].0.content.contains("краткость"));
 }
 
 #[tokio::test]

@@ -22,18 +22,36 @@ pub(crate) fn self_notes_recent(
     notes
 }
 
+/// The cosine the leading observation must reach for the prompt's observations
+/// to be picked by the chat's opening; under it the chat takes the latest ones
+/// instead (spec §17.4). Read blind on the dev profile's 138 openings, no lead
+/// under 0.50 bore on its chat (0 of 51), and 14 of the 40 just above it did
+/// (docs/research/self-model-observations.md §4.2). The floor is on the lead
+/// alone: the picks after it need not clear it.
+///
+/// A position in the **reference (bge-m3) scale**, read through
+/// [`crate::shared::embed_calibration::SimilarityScale`] like the other
+/// similarity gates; bge-m3 maps to itself.
+pub(crate) const OBSERVATION_LEAD_FLOOR: f32 = 0.50;
+
 /// Self-notes MOST RELEVANT to the query (relevance-based injection, Tier 2):
 /// backfill vectors → embed the query → search among self-notes by cosine, top-
-/// `limit` (descending by similarity). Empty on an empty query / an unavailable
+/// `limit` (descending by similarity), each with its cosine, which the caller
+/// holds against its floor. Empty on an empty query / an unavailable
 /// embedder (the caller falls back to recency — graceful degradation, as in
 /// Tier 1). See docs/history/narrative-as-notes.md (Tier 2, relevance-based injection).
+///
+/// The `@self` notes are ranked alone. Taking the nearest of all the profile's
+/// notes first let a profile with many notes about the user fill the candidates
+/// with those, and the section fell back to recency in silence; the search
+/// scores every note anyway (docs/research/self-model-observations.md §7).
 pub(crate) async fn self_notes_relevant(
     storage: &crate::shared::storage::Storage,
     embedder: &dyn crate::shared::api::Embedder,
     profile_id: Uuid,
     query: &str,
     limit: usize,
-) -> Vec<Note> {
+) -> Vec<(Note, f32)> {
     if query.trim().is_empty() || limit == 0 {
         return Vec::new();
     }
@@ -47,16 +65,14 @@ pub(crate) async fn self_notes_relevant(
     let Some(emb) = vecs.into_iter().next() else {
         return Vec::new();
     };
-    // A candidate margin for the @self filter (regular notes are among all of them too).
     let Ok(hits) = storage
         .db()
-        .note_search_semantic(profile_id, &emb, limit.max(20))
+        .note_search_semantic(profile_id, &emb, usize::MAX)
     else {
         return Vec::new();
     };
     hits.into_iter()
-        .map(|(n, _)| n)
-        .filter(is_self_note)
+        .filter(|(n, _)| is_self_note(n))
         .take(limit)
         .collect()
 }

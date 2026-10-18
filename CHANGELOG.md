@@ -14,6 +14,16 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Changed
+
+- **The self-model says how it picked the observations it brings into the
+  prompt.** They were headed "Recent observations", though most were months old
+  and chosen as the nearest to the chat's subject. When one is close enough to
+  what the chat opened with, they are now headed as the nearest to the
+  conversation and the latest; otherwise the chat gets the latest observations,
+  under that header, rather than an unrelated one presented as fitting. The
+  description of *Insights into prompt* says the same.
+
 ### Fixed
 
 - **A conversation is reused from turn to turn again.** The few observations the

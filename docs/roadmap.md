@@ -322,16 +322,6 @@ effort tiers — have all closed
   schema migration for a stable integer rowid (notes have a `TEXT` uuid PK).
   Revisit once the note count actually grows into the thousands; plan ready —
   [notes-vec0.md](notes-vec0.md).
-- **The self-model's observations: their room, a relevance floor, their
-  header** — **forks decided 2026-10-18**, the build pending in three pull
-  requests ([self-model-observations.md](research/self-model-observations.md)
-  §6): a `settings.json` step that raises a stored 1200 to 4000, the
-  section's room shared among its picks, then a 0.50 floor with a header per
-  arm. On a mature profile at the default cap the section shows one
-  observation of the three picked in two chats of three, and the block's last
-  cut lands inside it in 56 of 139; no opening's lead under cosine 0.50 was
-  judged relevant; and the header says "Recent" over observations a median
-  104 days old.
 - **Re-chunking attachments after a chunking change** — **deferred**. A model
   change needs no walk over the chats — `/reindex` re-embeds from the chunk
   text the DB already holds — but a change of chunk parameters still would
@@ -696,6 +686,12 @@ An index, newest first — one line per track, with the release that shipped it
 and where its story is told. What a track left open is a bullet above, under
 its area.
 
+- **The self-model's observations: their room, a floor, their header** —
+  unreleased (2026-10-18), three pull requests: a stored `prompt_cap` of 1200
+  raised to 4000; the section's room counting the labels and shared among the
+  picks, all three of which now show on a mature profile; a 0.50 floor on the
+  lead, under which a chat takes the latest observations, with a header per arm.
+  [self-model-observations.md](research/self-model-observations.md).
 - **The cache share in the token counter** — unreleased (2026-10-17): every
   wire's cache read reaches the bar as `cache 99%`, a miss as `0%`; Gemini's
   omitted zero read as one, Anthropic's prompt summed whole; a probe first,

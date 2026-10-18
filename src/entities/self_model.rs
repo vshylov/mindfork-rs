@@ -21,7 +21,8 @@ pub struct SelfModelParams {
     /// longer a FIFO storage cap; the parameter only bounds the read size. The
     /// historical field name is kept for `settings.json` compatibility.
     pub max_narrative: usize,
-    /// How many fresh observations go into the system prompt (injection).
+    /// How many observations go into the system prompt (injection): those nearest
+    /// the chat's opening and the latest one, or the latest ones (spec §17.4).
     pub narrative_in_prompt: usize,
     /// The character ceiling for rendering the model into the system prompt.
     pub prompt_cap: usize,
@@ -83,6 +84,29 @@ pub struct NarrativeSegment {
     pub id: Uuid,
     pub text: String,
     pub created_at: DateTime<Utc>,
+}
+
+/// How the prompt's observations were picked, which their header says (spec
+/// §17.4, docs/research/self-model-observations.md §5). Decided once per chat, on
+/// its opening, so the header holds from turn to turn as the pick does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObservationPick {
+    /// Those nearest the chat's opening, then the latest one: the opening's
+    /// nearest observation cleared the floor.
+    Nearest,
+    /// The latest ones: nothing cleared the floor, or there was nothing to
+    /// measure by (no text yet, no embedder).
+    Latest,
+}
+
+impl ObservationPick {
+    /// The section's header in the prompt.
+    fn header_key(self) -> &'static str {
+        match self {
+            Self::Nearest => "selfmodel.render.observations_nearest",
+            Self::Latest => "selfmodel.render.observations_latest",
+        }
+    }
 }
 
 /// Orders observations for **display** (the `F3` screen, spec §17.7) by their
@@ -489,8 +513,9 @@ impl SelfModel {
 
     /// A compact human-readable block for system-prompt injection.
     /// `None` if the structural part is empty **and** there are no observations.
-    /// Observations (`recent` — self-notes, newest first, prepared by the caller)
-    /// go into the block, `narrative_in_prompt` freshest ones. `now` — the
+    /// Observations (`recent` — self-notes in the order the caller picked them)
+    /// go into the block, the first `narrative_in_prompt`, under the header that
+    /// says how they were picked (`pick`). `now` — the
     /// reference point for age labels (day granularity, stable within a day —
     /// see [`age_label`]).
     ///
@@ -515,9 +540,10 @@ impl SelfModel {
         narrative_in_prompt: usize,
         now: DateTime<Utc>,
         recent: &[NarrativeSegment],
+        pick: ObservationPick,
         loc: &Locale,
     ) -> Option<String> {
-        self.prompt_block(max_chars, narrative_in_prompt, now, recent, loc)
+        self.prompt_block(max_chars, narrative_in_prompt, now, recent, pick, loc)
             // A backstop only: the observations' room counts every label, so this
             // cut is reached only when the sections above them overflow a cap too
             // small for their own labels.
@@ -531,6 +557,7 @@ impl SelfModel {
         narrative_in_prompt: usize,
         now: DateTime<Utc>,
         recent: &[NarrativeSegment],
+        pick: ObservationPick,
         loc: &Locale,
     ) -> Option<String> {
         if self.is_empty() && recent.is_empty() {
@@ -580,7 +607,7 @@ impl SelfModel {
         }
 
         if !recent.is_empty() && narrative_in_prompt > 0 {
-            let header = loc.t("selfmodel.render.observations_recent");
+            let header = loc.t(pick.header_key());
             // The budgets above count content, not the labels around it: the
             // block's header, the captions, the separators. The observations pay
             // for them and for their own header (B0,
@@ -1074,27 +1101,52 @@ mod tests {
         assert!(m.is_empty());
         // Empty both structurally and by observations → None.
         assert!(
-            m.render_for_prompt(p().prompt_cap, p().narrative_in_prompt, now(), &[], loc())
-                .is_none()
+            m.render_for_prompt(
+                p().prompt_cap,
+                p().narrative_in_prompt,
+                now(),
+                &[],
+                ObservationPick::Nearest,
+                loc()
+            )
+            .is_none()
         );
     }
 
+    /// The header says how the observations were picked: nearest the opening and
+    /// the latest, or the latest only (H (c),
+    /// docs/research/self-model-observations.md §5) — not "recent" over picks a
+    /// median of 104 days old.
     #[test]
-    fn render_includes_recent_observations() {
+    fn the_observations_header_says_how_they_were_picked() {
         // Only observations (recent), the structural part is empty → the model is informative.
         let m = SelfModel::new(Uuid::new_v4());
         let recent = [seg("заметил напряжение между «кратко» и «полно»")];
-        let r = m
-            .render_for_prompt(
+        let render = |pick| {
+            m.render_for_prompt(
                 p().prompt_cap,
                 p().narrative_in_prompt,
                 now(),
                 &recent,
+                pick,
                 loc(),
             )
-            .unwrap();
-        assert!(r.contains("Недавние наблюдения:"));
-        assert!(r.contains("напряжение"));
+            .unwrap()
+        };
+        let nearest = render(ObservationPick::Nearest);
+        assert!(nearest.contains("Наблюдения, ближайшие к теме разговора, и последнее:"));
+        assert!(nearest.contains("напряжение"));
+        let latest = render(ObservationPick::Latest);
+        assert!(
+            latest.contains(
+                "
+Последние наблюдения:
+"
+            ),
+            "{latest}"
+        );
+        assert!(!latest.contains("ближайшие"), "{latest}");
+        assert!(latest.contains("напряжение"));
     }
 
     #[test]
@@ -1114,6 +1166,7 @@ mod tests {
                 params.narrative_in_prompt,
                 now(),
                 &recent,
+                ObservationPick::Nearest,
                 loc(),
             )
             .unwrap();
@@ -1162,7 +1215,9 @@ mod tests {
     fn every_section_survives_a_bloated_model() {
         let m = bloated_model();
         let recent = vec![seg("наблюдение про кэш")];
-        let r = m.render_for_prompt(4000, 3, now(), &recent, loc()).unwrap();
+        let r = m
+            .render_for_prompt(4000, 3, now(), &recent, ObservationPick::Nearest, loc())
+            .unwrap();
         assert!(r.contains("О себе:"), "{r}");
         assert!(r.contains("цель номер 0"), "goals present: {r}");
         assert!(r.contains("черта номер 0"), "interlocutor present: {r}");
@@ -1179,7 +1234,9 @@ mod tests {
     fn every_section_survives_a_small_budget() {
         let m = bloated_model();
         let recent = vec![seg("наблюдение про кэш")];
-        let r = m.render_for_prompt(1200, 3, now(), &recent, loc()).unwrap();
+        let r = m
+            .render_for_prompt(1200, 3, now(), &recent, ObservationPick::Nearest, loc())
+            .unwrap();
         assert!(r.contains("О себе:"), "{r}");
         assert!(r.contains("цель номер 0"), "{r}");
         assert!(r.contains("черта номер 0"), "{r}");
@@ -1192,7 +1249,9 @@ mod tests {
         short.summary = "коротко".into();
         let long = bloated_model();
         let goals_of = |m: &SelfModel| {
-            let r = m.render_for_prompt(1200, 0, now(), &[], loc()).unwrap();
+            let r = m
+                .render_for_prompt(1200, 0, now(), &[], ObservationPick::Nearest, loc())
+                .unwrap();
             (0..5)
                 .filter(|i| r.contains(&format!("цель номер {i}")))
                 .count()
@@ -1210,7 +1269,9 @@ mod tests {
     #[test]
     fn lists_drop_whole_items_and_report_the_count() {
         let m = bloated_model();
-        let r = m.render_for_prompt(1200, 0, now(), &[], loc()).unwrap();
+        let r = m
+            .render_for_prompt(1200, 0, now(), &[], ObservationPick::Nearest, loc())
+            .unwrap();
         let traits = r
             .split("черты: ")
             .nth(1)
@@ -1300,7 +1361,7 @@ mod tests {
         block
             .split_once(&format!(
                 "{}\n",
-                l.t("selfmodel.render.observations_recent")
+                l.t("selfmodel.render.observations_nearest")
             ))
             .map(|(_, obs)| obs.lines().collect())
             .unwrap_or_default()
@@ -1315,7 +1376,9 @@ mod tests {
         let picks = dev_picks();
         for lang in [crate::shared::i18n::Lang::Ru, crate::shared::i18n::Lang::En] {
             let l = crate::shared::i18n::locale(lang);
-            let block = m.prompt_block(4000, 3, now(), &picks, l).unwrap();
+            let block = m
+                .prompt_block(4000, 3, now(), &picks, ObservationPick::Nearest, l)
+                .unwrap();
             let lines = observation_lines(&block, l);
             assert_eq!(lines.len(), 3, "{lang:?}: {block}");
             for (line, word) in lines.iter().zip(["первое", "второе", "свежее"]) {
@@ -1333,22 +1396,29 @@ mod tests {
     fn the_observations_never_reach_the_last_cut() {
         let m = dev_shaped_model();
         let picks = dev_picks();
-        for lang in [crate::shared::i18n::Lang::Ru, crate::shared::i18n::Lang::En] {
-            let l = crate::shared::i18n::locale(lang);
-            let header = l.t("selfmodel.render.observations_recent");
-            for cap in 100..=8000 {
-                let block = m.prompt_block(cap, 3, now(), &picks, l).unwrap();
-                let rendered = m.render_for_prompt(cap, 3, now(), &picks, l).unwrap();
-                assert!(rendered.chars().count() <= cap, "{lang:?} at {cap}");
-                if block.contains(header) {
+        for pick in [ObservationPick::Nearest, ObservationPick::Latest] {
+            for lang in [crate::shared::i18n::Lang::Ru, crate::shared::i18n::Lang::En] {
+                let l = crate::shared::i18n::locale(lang);
+                let header = l.t(pick.header_key());
+                for cap in 100..=8000 {
+                    let block = m.prompt_block(cap, 3, now(), &picks, pick, l).unwrap();
+                    let rendered = m.render_for_prompt(cap, 3, now(), &picks, pick, l).unwrap();
                     assert!(
-                        block.chars().count() <= cap,
-                        "{lang:?} at {cap}: {} chars",
-                        block.chars().count()
+                        rendered.chars().count() <= cap,
+                        "{pick:?} {lang:?} at {cap}"
                     );
-                } else {
-                    // On this shape they show from 638 (ru) and 720 (en).
-                    assert!(cap < 800, "{lang:?}: no observations at {cap}");
+                    if block.contains(header) {
+                        assert!(
+                            block.chars().count() <= cap,
+                            "{pick:?} {lang:?} at {cap}: {} chars",
+                            block.chars().count()
+                        );
+                    } else {
+                        // On this shape they show at every cap from 820 (ru) and 933
+                        // (en) under the longer header, from 670 and 750 under the
+                        // shorter.
+                        assert!(cap < 1000, "{pick:?} {lang:?}: no observations at {cap}");
+                    }
                 }
             }
         }
@@ -1364,7 +1434,9 @@ mod tests {
         picks[1].text = text_of(900, "второе");
         picks[2].text = text_of(900, "свежее");
         let l = loc();
-        let block = m.prompt_block(1100, 3, now(), &picks, l).unwrap();
+        let block = m
+            .prompt_block(1100, 3, now(), &picks, ObservationPick::Nearest, l)
+            .unwrap();
         let lines = observation_lines(&block, l);
         assert_eq!(lines.len(), 3, "{block}");
         assert!(lines[0].ends_with(&picks[0].text), "whole: {}", lines[0]);
@@ -1395,7 +1467,9 @@ mod tests {
             .collect();
         let l = loc();
         let lines_at = |cap: usize| {
-            let block = m.prompt_block(cap, 3, now(), &picks, l).unwrap();
+            let block = m
+                .prompt_block(cap, 3, now(), &picks, ObservationPick::Nearest, l)
+                .unwrap();
             assert!(block.chars().count() <= cap, "{cap}: {block}");
             observation_lines(&block, l)
                 .into_iter()
@@ -1441,7 +1515,9 @@ mod tests {
     fn an_oversized_single_item_degrades_to_a_cut() {
         let mut m = SelfModel::new(Uuid::new_v4());
         m.user_model.perceived_traits = vec!["очень длинная черта ".repeat(50)];
-        let r = m.render_for_prompt(400, 0, now(), &[], loc()).unwrap();
+        let r = m
+            .render_for_prompt(400, 0, now(), &[], ObservationPick::Nearest, loc())
+            .unwrap();
         assert!(r.contains("черты: очень длинная"), "{r}");
         assert!(r.chars().count() <= 400);
     }
@@ -1456,7 +1532,14 @@ mod tests {
         m.user_model.relationship_dynamic = "доверительные".into();
 
         let r = m
-            .render_for_prompt(p().prompt_cap, p().narrative_in_prompt, now(), &[], loc())
+            .render_for_prompt(
+                p().prompt_cap,
+                p().narrative_in_prompt,
+                now(),
+                &[],
+                ObservationPick::Nearest,
+                loc(),
+            )
             .unwrap();
         assert!(r.contains("О себе: ценю честность"));
         assert!(r.contains("разобраться в коде"));
@@ -1568,8 +1651,15 @@ mod tests {
         // only a completed goal → the model is "empty" for rendering
         assert!(m.is_empty());
         assert!(
-            m.render_for_prompt(p().prompt_cap, p().narrative_in_prompt, now(), &[], loc())
-                .is_none()
+            m.render_for_prompt(
+                p().prompt_cap,
+                p().narrative_in_prompt,
+                now(),
+                &[],
+                ObservationPick::Nearest,
+                loc()
+            )
+            .is_none()
         );
     }
 
@@ -1626,7 +1716,9 @@ mod tests {
         m.user_model.perceived_traits = vec!["внимательный".into()];
         let recent = [seg("свежее наблюдение о стиле")];
 
-        let r = m.render_for_prompt(1200, 3, now(), &recent, loc()).unwrap();
+        let r = m
+            .render_for_prompt(1200, 3, now(), &recent, ObservationPick::Nearest, loc())
+            .unwrap();
         // All sections are present despite the bloated description.
         assert!(r.contains("Активные цели:"), "goals crowded out: {r}");
         assert!(
@@ -1634,7 +1726,7 @@ mod tests {
             "interlocutor crowded out: {r}"
         );
         assert!(
-            r.contains("Недавние наблюдения:"),
+            r.contains("Наблюдения, ближайшие к теме разговора, и последнее:"),
             "observations crowded out: {r}"
         );
         // The block is within the limit; the description is truncated (beyond half the budget).
@@ -1649,7 +1741,14 @@ mod tests {
         let mut m = SelfModel::new(Uuid::new_v4());
         m.summary = "ценю ясность и краткость".into();
         let r = m
-            .render_for_prompt(1200, p().narrative_in_prompt, now(), &[], loc())
+            .render_for_prompt(
+                1200,
+                p().narrative_in_prompt,
+                now(),
+                &[],
+                ObservationPick::Nearest,
+                loc(),
+            )
             .unwrap();
         assert!(r.contains("О себе: ценю ясность и краткость"));
         assert!(!r.contains('…'));
@@ -1678,7 +1777,14 @@ mod tests {
         let mut m = SelfModel::new(Uuid::new_v4());
         m.summary = "я".repeat(500);
         let r = m
-            .render_for_prompt(50, p().narrative_in_prompt, now(), &[], loc())
+            .render_for_prompt(
+                50,
+                p().narrative_in_prompt,
+                now(),
+                &[],
+                ObservationPick::Nearest,
+                loc(),
+            )
             .unwrap();
         // No longer *equal* to the cap: the description's own section budget (40%)
         // cuts it before the block-wide truncation can, which is the point of
@@ -1815,13 +1921,34 @@ mod tests {
             m.user_model.perceived_traits = vec!["t".into()];
             let recent = [seg("obs")];
             let r = m
-                .render_for_prompt(p().prompt_cap, p().narrative_in_prompt, now(), &recent, l)
+                .render_for_prompt(
+                    p().prompt_cap,
+                    p().narrative_in_prompt,
+                    now(),
+                    &recent,
+                    ObservationPick::Nearest,
+                    l,
+                )
                 .unwrap();
             assert!(r.contains(l.t("selfmodel.render.header")), "{lang:?}: {r}");
             assert!(r.contains(l.t("selfmodel.render.goals_active")), "{lang:?}");
             assert!(r.contains(l.t("selfmodel.render.user")), "{lang:?}");
             assert!(
-                r.contains(l.t("selfmodel.render.observations_recent")),
+                r.contains(l.t("selfmodel.render.observations_nearest")),
+                "{lang:?}"
+            );
+            let latest = m
+                .render_for_prompt(
+                    p().prompt_cap,
+                    p().narrative_in_prompt,
+                    now(),
+                    &recent,
+                    ObservationPick::Latest,
+                    l,
+                )
+                .unwrap();
+            assert!(
+                latest.contains(l.t("selfmodel.render.observations_latest")),
                 "{lang:?}"
             );
             // The "today" age is substituted with no leftover `{…}`.

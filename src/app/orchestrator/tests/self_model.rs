@@ -2,6 +2,7 @@
 //! module (fixtures in mod.rs). See docs/history/refactoring-god-objects.md, stage 3.
 
 use super::*;
+use crate::entities::self_model::ObservationPick;
 use crate::shared::api::EmbedRole;
 
 #[test]
@@ -29,6 +30,7 @@ fn inject_self_model_respects_flag_and_emptiness() {
             &pp,
             now,
             &[],
+            ObservationPick::Nearest,
             crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
         ),
         Some("S".into())
@@ -42,6 +44,7 @@ fn inject_self_model_respects_flag_and_emptiness() {
         &pp,
         now,
         &[],
+        ObservationPick::Nearest,
         crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru),
     )
     .unwrap();
@@ -58,6 +61,7 @@ fn inject_self_model_respects_flag_and_emptiness() {
             &pp,
             now,
             &[],
+            ObservationPick::Nearest,
             crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
         ),
         Some("S".into())
@@ -72,10 +76,11 @@ fn inject_self_model_respects_flag_and_emptiness() {
         &pp,
         now,
         &obs,
+        ObservationPick::Nearest,
         crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru),
     )
     .unwrap();
-    assert!(only_obs.contains("Недавние наблюдения:"));
+    assert!(only_obs.contains("Наблюдения, ближайшие к теме разговора, и последнее:"));
     assert!(only_obs.contains("склонность к краткости"));
     // An empty model + empty observations, system=None → nothing to mix in → None.
     let empty = SelfModel::new(Uuid::new_v4());
@@ -88,6 +93,7 @@ fn inject_self_model_respects_flag_and_emptiness() {
             &pp,
             now,
             &[],
+            ObservationPick::Nearest,
             crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
         ),
         None
@@ -101,6 +107,7 @@ fn inject_self_model_respects_flag_and_emptiness() {
         &pp,
         now,
         &[],
+        ObservationPick::Nearest,
         crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru),
     )
     .unwrap();
@@ -115,6 +122,7 @@ fn inject_self_model_respects_flag_and_emptiness() {
         &pp,
         now,
         &[],
+        ObservationPick::Nearest,
         crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru),
     )
     .unwrap();
@@ -129,6 +137,7 @@ fn inject_self_model_respects_flag_and_emptiness() {
         &pp,
         now,
         &[],
+        ObservationPick::Nearest,
         crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru),
     )
     .unwrap();
@@ -163,6 +172,7 @@ fn inject_self_model_appends_summary_hint_when_bloated() {
         &params,
         now,
         &[],
+        ObservationPick::Nearest,
         crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru),
     )
     .unwrap();
@@ -176,6 +186,7 @@ fn inject_self_model_appends_summary_hint_when_bloated() {
         &params,
         now,
         &[],
+        ObservationPick::Nearest,
         crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru),
     )
     .unwrap();
@@ -265,18 +276,21 @@ async fn injection_recent_surfaces_relevant_over_fresh() {
     let params = SelfModelParams::default();
 
     // A query about "xxxx" → the old relevant observation is surfaced (though not the freshest).
-    let recent = injection_recent(&storage, &embedder, profile, true, "xxxx", &params).await;
+    let (recent, pick) =
+        injection_recent(&storage, &embedder, profile, true, "xxxx", &params).await;
     assert!(
         recent.iter().any(|s| s.text.contains("xxxx старое")),
         "the relevant old observation should be surfaced: {recent:?}"
     );
+    assert_eq!(pick, ObservationPick::Nearest);
     // A query about "yyyy" → the irrelevant old X isn't surfaced.
-    let recent = injection_recent(&storage, &embedder, profile, true, "yyyy", &params).await;
+    let (recent, _) = injection_recent(&storage, &embedder, profile, true, "yyyy", &params).await;
     assert!(!recent.iter().any(|s| s.text.contains("xxxx")));
     // Injection disabled → empty.
     assert!(
         injection_recent(&storage, &embedder, profile, false, "xxxx", &params)
             .await
+            .0
             .is_empty()
     );
 }
@@ -336,7 +350,8 @@ async fn a_follow_up_on_another_subject_leaves_the_system_prompt_as_it_was() {
     };
     let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::En);
     let system_for = async |query: &str| {
-        let recent = injection_recent(&storage, &embedder, profile, true, query, &params).await;
+        let (recent, pick) =
+            injection_recent(&storage, &embedder, profile, true, query, &params).await;
         inject_self_model(
             Some("You are X.".into()),
             None,
@@ -345,10 +360,13 @@ async fn a_follow_up_on_another_subject_leaves_the_system_prompt_as_it_was() {
             &params,
             now,
             &recent,
+            pick,
             loc,
         )
         .expect("a block with an observation")
     };
+    let nearest = "Observations nearest this conversation, then the latest:";
+    let latest = "\nLatest observations:\n";
 
     let p = Profile::new("X", "You are X.");
     let mut chat = Chat::from_profile(&p, "c");
@@ -360,8 +378,186 @@ async fn a_follow_up_on_another_subject_leaves_the_system_prompt_as_it_was() {
     assert_eq!(first, second, "the follow-up changed the system prompt");
     let lead = |s: &str| s.find("xxxx about").unwrap() < s.find("yyyy about").unwrap();
     assert!(lead(&first), "the opening's observation leads: {first}");
+    assert!(first.contains(nearest), "picked by the opening: {first}");
     // The control: picked by the latest message, the second turn's head differs.
     assert_ne!(first, system_for("yyyy").await);
+
+    // An opening near no observation (F (b)): the latest ones, under their own
+    // header, on every turn — a follow-up that would clear the floor moves
+    // neither the arm nor the header.
+    let mut chat = Chat::from_profile(&p, "c");
+    chat.push_message(Message::user("qqqq"));
+    let first = system_for(&observation_query(&chat, true)).await;
+    chat.push_message(Message::assistant("ok"));
+    chat.push_message(Message::user("yyyy"));
+    let second = system_for(&observation_query(&chat, true)).await;
+    assert_eq!(first, second, "the follow-up changed the system prompt");
+    assert!(
+        first.contains(latest) && !first.contains(nearest),
+        "{first}"
+    );
+    assert!(lead(&first), "the latest observation leads: {first}");
+    // The control: picked by the follow-up, it would have taken the other arm.
+    assert!(system_for("yyyy").await.contains(nearest));
+}
+
+/// Embeds every text as the same vector, the query's, so a test gives each
+/// observation its cosine to the query directly ([`observations_at`]).
+struct QueryVector;
+
+#[async_trait::async_trait]
+impl crate::shared::api::Embedder for QueryVector {
+    async fn embed(&self, texts: Vec<String>, _role: EmbedRole) -> anyhow::Result<Vec<Vec<f32>>> {
+        Ok(texts.iter().map(|_| vec![1.0, 0.0]).collect())
+    }
+}
+
+/// Seeds `@self` observations, each at a cosine to [`QueryVector`]'s query and an
+/// age in days, into a store under `dir`.
+fn observations_at(
+    dir: &std::path::Path,
+    profile: Uuid,
+    seeds: &[(&str, f32, i64)],
+) -> crate::shared::storage::Storage {
+    use crate::entities::note::Note;
+    use crate::features::tools::notes::SELF_NOTE_TAG;
+    let storage = Storage::open(Paths::with_root(dir)).unwrap();
+    let now = chrono::Utc::now();
+    for (content, cosine, days) in seeds {
+        let at = now - chrono::Duration::days(*days);
+        let note = Note {
+            id: Uuid::new_v4(),
+            profile_id: profile,
+            content: (*content).into(),
+            tags: vec![SELF_NOTE_TAG.to_string()],
+            created_at: at,
+            updated_at: at,
+        };
+        storage.db().note_insert(&note).unwrap();
+        let vector = vec![*cosine, (1.0 - cosine * cosine).sqrt()];
+        storage
+            .db()
+            .note_vector_upsert(note.id, profile, &vector)
+            .unwrap();
+    }
+    storage
+}
+
+/// F (b): an opening whose nearest observation is under the floor takes the
+/// latest observations for the whole chat, under their own header; one above it
+/// keeps the pick by relevance, and the picks after the lead need not clear the
+/// floor (docs/research/self-model-observations.md §6).
+#[tokio::test]
+async fn an_opening_under_the_floor_takes_the_latest_observations() {
+    use super::super::generation::{inject_self_model, injection_recent};
+    use crate::entities::self_model::SelfModelParams;
+    let params = SelfModelParams::default();
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::En);
+    let profile = Uuid::new_v4();
+    let pick_for = async |lead: f32| {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = observations_at(
+            dir.path(),
+            profile,
+            &[
+                ("old lead", lead, 30),
+                ("old second", 0.40, 40),
+                ("freshest", 0.10, 1),
+                ("second freshest", 0.05, 2),
+            ],
+        );
+        let (recent, pick) =
+            injection_recent(&storage, &QueryVector, profile, true, "an opening", &params).await;
+        let texts: Vec<String> = recent.iter().map(|s| s.text.clone()).collect();
+        let system = inject_self_model(
+            None,
+            None,
+            true,
+            false,
+            &params,
+            chrono::Utc::now(),
+            &recent,
+            pick,
+            loc,
+        )
+        .unwrap();
+        (texts, pick, system)
+    };
+
+    let (texts, pick, system) = pick_for(0.45).await;
+    assert_eq!(pick, ObservationPick::Latest);
+    assert_eq!(texts[..2], ["freshest", "second freshest"], "{texts:?}");
+    assert!(system.contains("\nLatest observations:\n"), "{system}");
+    assert!(!system.contains("nearest"), "{system}");
+
+    let (texts, pick, system) = pick_for(0.55).await;
+    assert_eq!(pick, ObservationPick::Nearest);
+    // The second pick is under the floor and kept: the floor is on the lead only.
+    assert_eq!(texts, ["old lead", "old second", "freshest"]);
+    assert!(
+        system.contains("Observations nearest this conversation, then the latest:"),
+        "{system}"
+    );
+}
+
+/// The floor is a position in bge-m3's scale, read in the embedder's own: on a
+/// model whose cosines run higher (multilingual-e5's measured range) the same
+/// lead falls under it.
+#[tokio::test]
+async fn the_floor_is_read_in_the_embedders_scale() {
+    use super::super::generation::injection_recent;
+    use crate::entities::self_model::SelfModelParams;
+    use crate::shared::embed_calibration::Calibration;
+    let params = SelfModelParams::default();
+    let profile = Uuid::new_v4();
+    let dir = tempfile::tempdir().unwrap();
+    let storage = observations_at(
+        dir.path(),
+        profile,
+        &[("old lead", 0.70, 30), ("freshest", 0.10, 1)],
+    );
+    let pick = async || {
+        injection_recent(&storage, &QueryVector, profile, true, "an opening", &params)
+            .await
+            .1
+    };
+    assert_eq!(
+        pick().await,
+        ObservationPick::Nearest,
+        "0.70 on bge-m3's scale"
+    );
+    storage
+        .db()
+        .set_embed_calibration(&Calibration {
+            unrelated: 0.7897,
+            paraphrase: 0.9456,
+        })
+        .unwrap();
+    // 0.50 maps to about 0.82 there.
+    assert_eq!(pick().await, ObservationPick::Latest, "0.70 on e5's scale");
+}
+
+/// One place in the prompt holds the guaranteed freshest observation whatever
+/// the relevance pick, so it is the latest one and says so.
+#[tokio::test]
+async fn one_place_takes_the_latest_observation() {
+    use super::super::generation::injection_recent;
+    use crate::entities::self_model::SelfModelParams;
+    let params = SelfModelParams {
+        narrative_in_prompt: 1,
+        ..SelfModelParams::default()
+    };
+    let profile = Uuid::new_v4();
+    let dir = tempfile::tempdir().unwrap();
+    let storage = observations_at(
+        dir.path(),
+        profile,
+        &[("old lead", 0.90, 30), ("freshest", 0.10, 1)],
+    );
+    let (recent, pick) =
+        injection_recent(&storage, &QueryVector, profile, true, "an opening", &params).await;
+    assert_eq!(pick, ObservationPick::Latest);
+    assert_eq!(recent[0].text, "freshest");
 }
 
 #[tokio::test]
