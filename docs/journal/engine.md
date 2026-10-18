@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (102)
+## Entries (103)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -114,6 +114,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a broken call is answered as broken (done)
 - Post-M9: the provider's cache share in the token counter (done)
 - Post-M9: `MINDFORK_MODEL` stands alone (done)
+- Post-M9: the prompt prefix misses on most turns — measured, F1 re-opened (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -6886,3 +6887,43 @@ servers, `llama-server` b11715 beside it, on an RTX 4090. **GO**:
 
 **Gates**: 4049 unit tests green, 271 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.
+
+### Post-M9: the prompt prefix misses on most turns — measured, F1 re-opened (done)
+
+The cache share in the token counter, built the day before, caught on its first
+release check what [prompt-caching.md](../research/prompt-caching.md) §2.1 had
+warned of. On `gpt-6.1-sol`, a chat's second turn read **0** of its ~9.2k-token
+prefix and wrote all of it again, where a fresh run of the first turn read 99%. A
+research task: no code and no layout change, since F1 is the owner's to decide.
+Everything is in §2.2 and "F1 revisited" there.
+
+- **The block**: the request bodies of consecutive turns were dumped through a
+  logging proxy, using the released binary on a copy of the dev data, a local
+  `llama-server` and `console_probe`'s `Session`. `system` diverges at character
+  8685, at the first item under "Recent observations". That is the self-model
+  block's observations section, picked by `injection_recent` for the latest user
+  message. The persona, the block's head, the 42 tool schemas and every earlier
+  message are byte-identical.
+- **Why §2.1 no longer holds**: the per-section budgets (`15a903d1`, 2026-08-08,
+  under an hour after F1 was deferred) give the observations a 20% floor and cut
+  the first item rather than drop it, so the top pick always renders. And
+  `self_notes_relevant` has no similarity floor: on one topic, the top pick changed
+  four times among four unrelated observations.
+- **How often**: 6 of 8 follow-up turns missed, over two conversations (four
+  unrelated questions; six on one topic).
+- **What it costs**: captured bodies were replayed on a fresh server per pair, as
+  sent and with the previous turn's `system`. Gemma 4 26B-A4B gave 0 vs 97–99%
+  reused, 1.77 s vs 0.23 s of prefill. Qwen 3.8 27B gave 0 vs 99%, 4.9 s vs
+  0.34 s. On OpenAI `gpt-6.1-sol` (one nonce per run) T2 read 0 and wrote 9687;
+  with T1's `system` it read 9344 and wrote 311, about 9× cheaper. The
+  2425-token head of `system` before the divergence was reused by no stack, so
+  reordering inside `system` (F1 (b)) buys nothing.
+- **A system message after the conversation** was tried as a new option: Qwen
+  3.8's template refuses it, so it is not portable.
+- **Recommendation**: F1 (e1), picking observations by the chat's opening instead
+  of its latest message, behind a probe; (e2), recency only, if the probe says
+  no-go. Spec §6.6 and §17.4 now say what the prompt does; the roadmap item is
+  re-opened.
+
+**Gates**: documentation only. `cyrillic_scan`, `link_check` and `doc_index_check`
+clean. No code changed, so the unit-test count stands.
