@@ -282,6 +282,89 @@ async fn injection_recent_surfaces_relevant_over_fresh() {
 }
 
 #[tokio::test]
+async fn a_follow_up_on_another_subject_leaves_the_system_prompt_as_it_was() {
+    // F1 (e1), docs/research/prompt-caching.md §2.2: the observations are picked by
+    // the chat's opening, so the self-model block — the end of `system`, ahead of
+    // the whole conversation — is byte-identical on the next turn, and the
+    // provider's cache holds. Picked by the latest message (the control), the
+    // follow-up would have changed it.
+    use super::super::generation::{inject_self_model, injection_recent};
+    use crate::app::orchestrator::request::observation_query;
+    use crate::entities::note::Note;
+    use crate::entities::self_model::SelfModelParams;
+    use crate::features::tools::notes::SELF_NOTE_TAG;
+    use chrono::{Duration, Utc};
+
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Storage::open(Paths::with_root(dir.path())).unwrap();
+    let embedder = MockEmbedder::new(16);
+    let profile = Uuid::new_v4();
+    let now = Utc::now();
+    // Two old observations on two subjects.
+    for (content, days) in [
+        ("xxxx about the first subject", 10),
+        ("yyyy about the second", 11),
+    ] {
+        let at = now - Duration::days(days);
+        let note = Note {
+            id: Uuid::new_v4(),
+            profile_id: profile,
+            content: content.into(),
+            tags: vec![SELF_NOTE_TAG.to_string()],
+            created_at: at,
+            updated_at: at,
+        };
+        storage.db().note_insert(&note).unwrap();
+        let emb = embedder
+            .embed(vec![content.into()], EmbedRole::Passage)
+            .await
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap();
+        storage
+            .db()
+            .note_vector_upsert(note.id, profile, &emb)
+            .unwrap();
+    }
+    // Both observations in the prompt, in the order of relevance — so the query
+    // decides which one leads the section. (With one, the guaranteed freshest
+    // observation would displace the pick and hide the difference.)
+    let params = SelfModelParams {
+        narrative_in_prompt: 2,
+        ..SelfModelParams::default()
+    };
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::En);
+    let system_for = async |query: &str| {
+        let recent = injection_recent(&storage, &embedder, profile, true, query, &params).await;
+        inject_self_model(
+            Some("You are X.".into()),
+            None,
+            true,
+            false,
+            &params,
+            now,
+            &recent,
+            loc,
+        )
+        .expect("a block with an observation")
+    };
+
+    let p = Profile::new("X", "You are X.");
+    let mut chat = Chat::from_profile(&p, "c");
+    chat.push_message(Message::user("xxxx"));
+    let first = system_for(&observation_query(&chat, true)).await;
+    chat.push_message(Message::assistant("ok"));
+    chat.push_message(Message::user("yyyy"));
+    let second = system_for(&observation_query(&chat, true)).await;
+    assert_eq!(first, second, "the follow-up changed the system prompt");
+    let lead = |s: &str| s.find("xxxx about").unwrap() < s.find("yyyy about").unwrap();
+    assert!(lead(&first), "the opening's observation leads: {first}");
+    // The control: picked by the latest message, the second turn's head differs.
+    assert_ne!(first, system_for("yyyy").await);
+}
+
+#[tokio::test]
 async fn update_self_model_persists_and_reemits() {
     use crate::entities::self_model::SelfModelEdit;
     let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(None);

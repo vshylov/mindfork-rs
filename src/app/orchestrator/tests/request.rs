@@ -621,3 +621,46 @@ fn withheld_images_become_markers_that_name_them() {
         "the wording the measurement ran with"
     );
 }
+
+// ---------------------------------------------------------------------------
+// The query the turn's observations are picked by (spec §17.4,
+// docs/research/prompt-caching.md F1 (e1)): the chat's opening, so the pick —
+// and with it the head of `system` — holds from turn to turn.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn observation_query_is_the_chat_opening_not_its_latest_message() {
+    use crate::app::orchestrator::request::observation_query;
+    let p = Profile::new("X", "You are X.");
+    let mut chat = Chat::from_profile(&p, "c");
+    // No user text yet: empty, which the injection reads as "fall back to recency".
+    assert_eq!(observation_query(&chat, true), "");
+    // An opening with no text (an image alone) is passed over for the first that has some.
+    chat.push_message(Message::user("   "));
+    chat.push_message(Message::assistant("I see a picture."));
+    chat.push_message(Message::user("  storage engines for the notes  "));
+    assert_eq!(
+        observation_query(&chat, true),
+        "storage engines for the notes"
+    );
+    // A follow-up on another subject does not move it.
+    chat.push_message(Message::assistant("SQLite."));
+    chat.push_message(Message::user("and what about the weather?"));
+    assert_eq!(
+        observation_query(&chat, true),
+        "storage engines for the notes"
+    );
+}
+
+#[test]
+fn observation_query_follows_the_summary_while_one_is_in_force() {
+    use crate::app::orchestrator::request::observation_query;
+    let chat = compacted_chat(5, 6, "Earlier: storage was discussed, SQLite chosen.");
+    // The roll rewrote `system` anyway, so the pick may move with it — once.
+    assert_eq!(
+        observation_query(&chat, true),
+        "Earlier: storage was discussed, SQLite chosen."
+    );
+    // The master switch off leaves the summary dormant: the opening again.
+    assert_eq!(observation_query(&chat, false), "вопрос 0");
+}

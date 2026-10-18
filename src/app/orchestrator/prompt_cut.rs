@@ -162,8 +162,8 @@ impl MessageShape {
 /// What changed between two system texts: the bytes of the old one between
 /// their common head and tail (an upper bound on the tokens it lost), and the
 /// floor of the new one's text in their place. The system text carries the
-/// time and the observations chosen for the turn (`inject_self_model`), so it
-/// changes from turn to turn in the middle and stays the same around it.
+/// time and the observations chosen for the chat (`inject_self_model`), so it
+/// can change between turns in the middle and stay the same around it.
 fn system_change(before: &str, now: &str) -> (u64, u64) {
     let (a, b) = (before.as_bytes(), now.as_bytes());
     let mut head = a.iter().zip(b).take_while(|(x, y)| x == y).count();

@@ -184,7 +184,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-10-18, version 0.19.0)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **4052 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **4055 unit tests
 green, 271 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump and demo-reel regenerators).
 
@@ -197,6 +197,9 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **Observations picked by the chat's opening** (2026-10-18): the prompt's prefix
+  now holds on 8 of 8 turns, from 2 of 8. Live **GO**
+  ([docs/research/prompt-caching.md](docs/research/prompt-caching.md) §2.2).
 - **The cache share in the token counter** (2026-10-17): every wire's cache read
   reaches the bar as `cache 99%`, a miss as `0%`; Gemini omits a zero, Anthropic's
   prompt is summed. Live **GO** on every wire

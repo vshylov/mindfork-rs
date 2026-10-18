@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (26)
+## Entries (27)
 
 - Post-M9: SelfModel MVP — agent "self-model" (probe, done)
 - Post-M9: SelfModel Tier 2-A — narrative insights + contradictions in prose (done)
@@ -38,6 +38,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: self-model injection — per-section budgets (done)
 - Post-M9: the duplicate gate's hint — the repeat is already written (done)
 - Post-M9: an observation asked for is recorded — "instead of add_insight" undone (done)
+- Post-M9: observations are picked by the chat's opening (done)
 
 ### Post-M9: SelfModel MVP — agent "self-model" (probe, done)
 - **A trimmed-down Phase 1 from the idea bank** ([docs/self-model.md](../../docs/history/self-model.md)) per
@@ -1144,3 +1145,47 @@ none.
 
 **Gates**: 4009 unit tests green, 259 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check` clean.
+
+### Post-M9: observations are picked by the chat's opening (done)
+
+The pick of observations for the prompt followed the latest user message, and since
+the per-section budgets its top item always renders, at the end of `system`. So the
+prompt's head changed on most turns, and every provider re-read the whole
+conversation. That was 6 of 8 follow-ups on the dev profile, about 9× the input on
+OpenAI 6.1, and 7–14× the prefill locally. The research is
+[prompt-caching.md](../research/prompt-caching.md) §2.2 and the decision record is
+in [engine.md](engine.md) ("the prompt prefix misses on most turns"). User's
+decision, 2026-10-18: F1 (e1), behind an MVP probe, with (e2) recency on no-go.
+
+- **The change**: `request::observation_query` returns the summary while one is in
+  force, else the first user message with any text. The turn passes it to
+  `injection_recent` in place of the latest message. Nothing else moves: the
+  ranking, the guaranteed freshest observation, the recency fallback and the
+  block's text are unchanged. The policy text already said an observation
+  "surfaces by relevance to the topic". The pick now changes only with the
+  observations themselves, at a compaction roll, or on an edit of the opening, and
+  each of those breaks the prefix anyway.
+- **The probe — GO.**
+  - *Live*: the stand of §2.2 (Gemma 4 26B-A4B on llama.cpp, bge-m3,
+    `console_probe`, a logging proxy) and the same two conversations. `system` was
+    identical on **8 of 8** follow-ups, against 2 of 8, at 94–99% reused, and
+    turn 6 kept its prefix after a background reflection.
+  - *Offline*, over the dev profile's 63 multi-turn chats: today's rule moves the
+    leading observation on 166 of 197 follow-ups (84%).
+  - *Relevance*, read on the twelve most recent chats: the opening's pick is
+    relevant or moderately so in 5 of 12, and today's follow-up picks in 6 of 20.
+    That is no worse; an opening states the subject.
+- **Determinism**, which a stateless pick needs: bge-m3 on llama.cpp gives the
+  same vector for a text embedded alone (20/20), though another batch shape moves
+  it by up to 0.0045 in cosine, under the top-two margin of 10 of 63 openings. The
+  app embeds the query alone. OpenAI's `text-embedding-3-small` is bit-identical
+  too (8/8). A per-chat memory of the query's vector is left unbuilt until an
+  embedder needs it.
+- **Tests**: `observation_query` is the opening and not the latest message; an
+  empty opening is passed over; the summary is followed only while compaction is
+  on. A two-turn test shows a follow-up on another subject leaves `system`
+  byte-identical, with a control picked by the latest message that differs. It
+  was mutation-checked: the query reversed to the latest message fails it.
+
+**Gates**: 4055 unit tests green, 271 `#[ignore]`; clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.

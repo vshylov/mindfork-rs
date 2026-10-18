@@ -530,8 +530,8 @@ loop:
 
 ### 6.6. KV cache and prefix caching
 
-- No on-disk state cache is used. We rely on **the server's automatic prefix caching** (reusing KV blocks on a matching request prefix) — between turns and between agentic-loop rounds the history is append-only, so prefill only happens for the new tokens, **as long as `system` is unchanged** (the self-model block below breaks that between turns).
-- **The self-model block breaks the prefix whenever its pick changes.** Its observations section ([17.4](#174-injection-into-the-system-prompt)) is picked each turn by relevance to the latest user message and sits at the end of `system`, ahead of the whole conversation. A changed pick re-prefills the whole prompt, and on OpenAI 5.6+ re-writes it at the write rate. That was measured on 6 of 8 follow-up turns on the dev profile, and not even the unchanged head of `system` is reused on the stacks measured (Gemma 4 and Qwen 3.8 on llama.cpp, OpenAI `gpt-6.1-sol`). An open decision: [docs/research/prompt-caching.md](docs/research/prompt-caching.md) §2.2, F1.
+- No on-disk state cache is used. We rely on **the server's automatic prefix caching** (reusing KV blocks on a matching request prefix) — between turns and between agentic-loop rounds the history is append-only, so prefill only happens for the new tokens, **as long as `system` is unchanged** (see the self-model block below).
+- **The self-model block holds between turns.** It ends `system`, ahead of the whole conversation, and any change to it re-prefills the whole prompt; on OpenAI 5.6+ the prompt is re-written at the write rate. Not even the unchanged head of `system` is reused on the stacks measured: Gemma 4 and Qwen 3.8 on llama.cpp, and OpenAI `gpt-6.1-sol`. So its observations ([17.4](#174-injection-into-the-system-prompt)) are picked by the chat's **opening**, not by each new message. The block then changes only with the self-model itself, at a compaction roll, or when the opening is edited, and each of those breaks the prefix anyway. Picked by the latest message, the block had broken the prefix on 6 of 8 follow-up turns; picked by the opening, it broke it on none of 8 ([docs/research/prompt-caching.md](docs/research/prompt-caching.md) §2.2, F1 (e1)).
 - **Within a turn**, adding tool results only appends tokens — there's no re-processing of the prefix.
 - **Changing the system message** (by the user or by the `set_system_message` tool) changes the start of the prefix → full reprocessing on the next turn (expected). Within the current turn, a `system_message` change is **not applied** (the old prefix keeps acting) — this preserves consistency and the current generation's cache.
 - KV compression and other optimizations are configured on the inference-server side and are transparent to the application.
@@ -5381,11 +5381,14 @@ observations were injected at all**, while the injected text told the model that
 observations "surface by relevance". See
 [docs/history/self-model-injection-budget.md](docs/history/self-model-injection-budget.md).
 
-The observations are picked each turn, by relevance to the latest user message,
-and the observations section's floor means the top pick always renders. Since the
-block ends `system`, a pick that changes from one turn to the next re-prefills the
-whole prompt ([6.6](#66-kv-cache-and-prefix-caching);
-[docs/research/prompt-caching.md](docs/research/prompt-caching.md) §2.2).
+**The observations are picked by the chat's opening.** The query is the first
+user message with any text, or the summary while one is in force. It is not the
+latest message: the section's floor means its top pick always renders, and the
+block ends `system`, so a pick that moved with each message re-prefilled the
+whole prompt on most turns ([6.6](#66-kv-cache-and-prefix-caching);
+[docs/research/prompt-caching.md](docs/research/prompt-caching.md) §2.2, F1 (e1)).
+The freshest observation is still guaranteed a place. With no user text yet, or
+no embedder, the pick falls back to recency.
 
 ### 17.5. Parameters (settings)
 
