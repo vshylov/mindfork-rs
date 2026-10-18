@@ -99,8 +99,10 @@ pub struct ChatCompletionRequest {
     /// The sampler order (an array of names); only a non-empty list is sent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub samplers: Option<Vec<String>>,
+    /// The settings' thinking switch, in llama.cpp's spelling unless the client
+    /// has learned another ([`WireThinking`]).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub thinking: Option<bool>,
+    pub thinking: Option<WireThinking>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<&'static str>,
     /// The "thoughts" budget (llama.cpp): `0` disables thinking. See [`SamplingConfig`].
@@ -133,6 +135,37 @@ pub struct ChatCompletionRequest {
     pub tools: Option<Vec<WireTool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<&'static str>,
+}
+
+/// The thinking switch on the wire, in one of the two spellings servers read.
+///
+/// Measured on DeepSeek's API (docs/research/deepseek-api.md §2.4): llama.cpp's
+/// boolean is a `422` there, `invalid type: boolean, expected struct
+/// ThinkingOptions`, and `{"type": "disabled"}` turns reasoning off. The client
+/// sends the boolean until a server refuses it, and the object from then on
+/// ([`ChatCompletionRequest::with_typed_thinking`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(untagged)]
+pub enum WireThinking {
+    /// llama.cpp's: `true` or `false`.
+    Switch(bool),
+    /// DeepSeek's: `{"type": "enabled"}` or `{"type": "disabled"}`.
+    Typed {
+        #[serde(rename = "type")]
+        kind: &'static str,
+    },
+}
+
+impl WireThinking {
+    /// The same switch in DeepSeek's spelling.
+    fn typed(self) -> Self {
+        match self {
+            Self::Switch(on) => Self::Typed {
+                kind: if on { "enabled" } else { "disabled" },
+            },
+            typed @ Self::Typed { .. } => typed,
+        }
+    }
 }
 
 /// OpenAI stream options (`stream_options`). `include_usage=true` makes the server
@@ -419,7 +452,7 @@ pub fn build_chat_request(
         mirostat_eta: s.mirostat_eta,
         seed: s.seed,
         samplers: non_empty(&s.samplers),
-        thinking: s.thinking,
+        thinking: s.thinking.map(WireThinking::Switch),
         reasoning_effort: s
             .reasoning_effort
             .filter(|r| !(omit_effort_none && *r == ReasoningEffort::None))
@@ -478,6 +511,16 @@ impl ChatCompletionRequest {
         self.chat_template_kwargs = None;
         self.continue_final_message = None;
         self.add_generation_prompt = None;
+        self
+    }
+
+    /// The body with the thinking switch as DeepSeek spells it, `{"type": …}`:
+    /// for a server that has refused the boolean ([`refuses_boolean_thinking`]).
+    /// The switch keeps its meaning, and every other field stays as it was:
+    /// DeepSeek ignores the llama.cpp fields it does not read
+    /// (docs/research/deepseek-api.md §2.4).
+    pub fn with_typed_thinking(mut self) -> Self {
+        self.thinking = self.thinking.map(WireThinking::typed);
         self
     }
 }
@@ -557,6 +600,25 @@ pub fn refuses_effort_parameter(err: &EngineError) -> bool {
     let message = err.message.to_lowercase();
     message.contains("does not support parameter")
         && (message.contains("reasoningeffort") || message.contains("reasoning_effort"))
+}
+
+/// Whether a failed request was refused for sending the thinking switch as a
+/// **boolean**.
+///
+/// DeepSeek's words, measured on both of its models
+/// (docs/research/deepseek-api.md §2.3): `422 "Failed to deserialize the JSON
+/// body into the target type: thinking: invalid type: boolean `true`, expected
+/// struct ThinkingOptions"`. A `400` is read the same way, since servers differ
+/// in which of the two a body of the wrong shape gets. The message must name the
+/// field and the type it refused. A misreading costs one more request, which
+/// meets the same refusal, and the client learns nothing from it
+/// ([`ChatCompletionRequest::with_typed_thinking`]).
+pub fn refuses_boolean_thinking(err: &EngineError) -> bool {
+    if !matches!(err.status, Some(400 | 422)) {
+        return false;
+    }
+    let message = err.message.to_lowercase();
+    message.contains("thinking") && message.contains("boolean")
 }
 
 /// The effort a **muted** turn asks for on a model that cannot be muted, or
@@ -1903,6 +1965,13 @@ mod continuation_tests {
         // Ollama 0.35.1 (§9.1): the details, and `timings` without `cache_n`.
         let ollama = r#"{"choices":[],"usage":{"completion_tokens":29,"prompt_tokens":9840,"prompt_tokens_details":{"cached_tokens":9839}},"timings":{"prompt_n":9840,"prompt_ms":10099}}"#;
         assert_eq!(usage(ollama), (Some(9839), None));
+        // DeepSeek's API (docs/research/deepseek-api.md §2.2): its own pair beside
+        // the details, equal on every request measured. The details are read,
+        // and the miss count is not a write.
+        let deepseek = r#"{"choices":[],"usage":{"completion_tokens":12,"completion_tokens_details":{"reasoning_tokens":10},"prompt_cache_hit_tokens":8832,"prompt_cache_miss_tokens":156,"prompt_tokens":8988,"prompt_tokens_details":{"cached_tokens":8832},"total_tokens":9000}}"#;
+        assert_eq!(usage(deepseek), (Some(8832), None));
+        let deepseek_cold = r#"{"choices":[],"usage":{"completion_tokens":36,"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":8988,"prompt_tokens":8988,"prompt_tokens_details":{"cached_tokens":0},"total_tokens":9024}}"#;
+        assert_eq!(usage(deepseek_cold), (Some(0), None));
     }
 }
 
@@ -2321,6 +2390,79 @@ mod xai_effort_tests {
             r#"{"code":"invalid-argument","error":"Invalid reasoning effort."}"#,
         ] {
             assert!(!refuses_effort_parameter(&refusal(400, other)), "{other}");
+        }
+    }
+
+    /// The switch in each spelling: llama.cpp's boolean as built, DeepSeek's
+    /// object once respelled, and no field where no switch was set. Nothing
+    /// else in the body changes.
+    #[test]
+    fn the_thinking_switch_respells_as_deepseeks_object() {
+        let body = |thinking: Option<bool>| {
+            let req = ChatRequest {
+                continue_final: false,
+                system: None,
+                messages: vec![ApiMessage::user("hi")],
+                sampling: SamplingConfig {
+                    thinking,
+                    reasoning_effort: Some(ReasoningEffort::None),
+                    top_k: Some(40),
+                    ..Default::default()
+                },
+                tools: vec![],
+            };
+            build_chat_request(&req, true, Some("deepseek-flash"), false)
+        };
+        let json = |b: ChatCompletionRequest| serde_json::to_value(b).unwrap();
+        assert_eq!(json(body(Some(true)))["thinking"], true);
+        assert_eq!(json(body(Some(false)))["thinking"], false);
+        assert_eq!(
+            json(body(Some(true)).with_typed_thinking())["thinking"],
+            serde_json::json!({"type": "enabled"})
+        );
+        let off = json(body(Some(false)).with_typed_thinking());
+        assert_eq!(off["thinking"], serde_json::json!({"type": "disabled"}));
+        assert_eq!(off["reasoning_effort"], "none");
+        assert_eq!(off["top_k"], 40);
+        assert!(
+            json(body(None).with_typed_thinking())
+                .get("thinking")
+                .is_none()
+        );
+        // Respelling twice is respelling once.
+        assert_eq!(
+            json(
+                body(Some(false))
+                    .with_typed_thinking()
+                    .with_typed_thinking()
+            )["thinking"],
+            serde_json::json!({"type": "disabled"})
+        );
+    }
+
+    /// DeepSeek's refusal as it wrote it on 2026-10-18, under the two statuses a
+    /// body of the wrong shape gets, and what must not read as one.
+    #[test]
+    fn only_a_refused_boolean_switch_is_read_as_one() {
+        let refusal = |status: u16, body: &str| {
+            EngineError::status(
+                crate::shared::api::error::SUBJECT_ENGINE,
+                reqwest::StatusCode::from_u16(status).unwrap(),
+                &reqwest::header::HeaderMap::new(),
+                body,
+            )
+        };
+        const DEEPSEEK: &str = r#"{"error":{"message":"Failed to deserialize the JSON body into the target type: thinking: invalid type: boolean `true`, expected struct ThinkingOptions at line 1 column 406","type":"invalid_request_error","param":null,"code":"invalid_request_error"}}"#;
+        assert!(refuses_boolean_thinking(&refusal(422, DEEPSEEK)));
+        assert!(refuses_boolean_thinking(&refusal(400, DEEPSEEK)));
+        assert!(!refuses_boolean_thinking(&refusal(503, DEEPSEEK)));
+        assert!(!refuses_boolean_thinking(&refusal(500, DEEPSEEK)));
+        for other in [
+            r#"{"error":{"message":"max_tokens: invalid type: boolean `true`, expected u32"}}"#,
+            r#"{"error":{"message":"Reasoning is mandatory for this endpoint and cannot be disabled."}}"#,
+            r#"{"error":{"message":"Model not found"}}"#,
+        ] {
+            assert!(!refuses_boolean_thinking(&refusal(422, other)), "{other}");
         }
     }
 

@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (104)
+## Entries (105)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -116,6 +116,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `MINDFORK_MODEL` stands alone (done)
 - Post-M9: the prompt prefix misses on most turns — measured, F1 re-opened (done)
 - Post-M9: the cache share's leftovers — measured, logged, decided (done)
+- Post-M9: DeepSeek's API — its cache figure, and the thinking switch it refused (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -6973,4 +6974,46 @@ F7 (a), F8 (a), each the recommendation).
   CHANGELOG *Changed* (the log records every request's cache).
 
 **Gates**: 4072 unit tests green, 272 `#[ignore]`; clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.
+
+### Post-M9: DeepSeek's API — its cache figure, and the thinking switch it refused (done)
+
+The cache share's last leftover was DeepSeek's own pair of keys,
+`prompt_cache_hit_tokens` / `_miss_tokens`, kept on demand because only a DeepSeek key
+could measure it. The owner opened an account and set the key on 2026-10-18. The probe
+ran first, and the design doc took the forks to the owner before any code
+([deepseek-api.md](../research/deepseek-api.md); user's decision 2026-10-18: F1 (a),
+F2 (a), F3 (a), each the recommendation).
+
+- **The figure needed no parser.** `cache_probe_external_live` on `deepseek-flash`
+  (V4.1-Flash) and `deepseek-v4-pro`: DeepSeek sends its pair **and**
+  `prompt_tokens_details.cached_tokens`, equal on 6 of 6 requests; the prompt count is
+  the whole prompt and a miss a reported zero. A fixture pins it.
+- **Every request was refused.** The smoke after the probe failed on its first turn
+  with `422 "thinking: invalid type: boolean, expected struct ThinkingOptions"`. The
+  switch went out as llama.cpp's boolean — `true` by default, `false` on the title,
+  the roll and impersonation — so in `external` mode nothing went through at
+  DeepSeek. Field by field, only `thinking` is refused: `{"type": "disabled"}` and
+  `reasoning_effort: "none"` both stop the reasoning, and every llama.cpp field is
+  ignored. A tool round needs no reasoning passed back.
+- **F1 (a), learned from the refusal**: `WireThinking` (`Switch(bool)` /
+  `Typed {type}`), `wire::refuses_boolean_thinking` (a `400` or `422` naming
+  `thinking` and a boolean), and the `thinking_typed` memo beside
+  `reasoning_off_refused`. `send_chat` re-sends once with `with_typed_thinking` and
+  keeps the spelling only if that request is not refused over `thinking` as well, so a
+  server that wanted the boolean teaches nothing. Four arms must not learn, and three
+  mutants turned their tests red.
+- **F2 (a)** nothing new parsed; **F3 (a)** DeepSeek's `context_window` stays unread.
+  Reading it would make the catalogue count as answered, which switches on the
+  gateway's behaviours; it is on the roadmap with a `deepseek` mode of its own.
+- **Live GO, both models.** The new `deepseek_live_tests` cover a muted turn (0
+  reasoning, learned) and a first turn with the switch on. `cached_tokens_e2e_live`
+  went 0% → **97%** / **98%** → 0%. Through `external` mode, the auto-title, a
+  follow-up tool round, the compaction roll (the planted fact back) and impersonation
+  after a roll all ran. All of these failed on their first request before the change.
+- **Docs**: spec §8 (the object spelling) and §11.1, architecture §6, the manual
+  (`external` names DeepSeek's API), install §7.1 (the smokes), the roadmap,
+  cached-tokens.md §6, §9.1 and F8, and CHANGELOG *Fixed*.
+
+**Gates**: 4076 unit tests green, 274 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.

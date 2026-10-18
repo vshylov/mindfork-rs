@@ -203,13 +203,14 @@ effort tiers — have all closed
   picking by the chat's opening, behind a probe; (e2) on no-go. **Built, probe
   GO**: the prefix holds on 8 of 8 follow-ups. Anthropic breakpoints and
   `prompt_cache_key` remain as above.
-- **The cache share — leftovers** ([cached-tokens.md](research/cached-tokens.md)
-  §9; closed 2026-10-18 but one: Ollama, LM Studio (which reports nothing), vLLM,
-  xAI and fifteen gateway routes measured, the muted turns logged, the write
-  figure [decided against](#decided-against) on the bar) — **on demand**:
-  DeepSeek's own `prompt_cache_hit_tokens`, spoken by DeepSeek's API alone — the
-  gateway normalises it and a DeepSeek GGUF speaks llama.cpp's fields, so only a
-  DeepSeek key would measure it.
+- **DeepSeek's API — leftovers** ([deepseek-api.md](research/deepseek-api.md);
+  the cache share's last leftover closed 2026-10-18 — its figure needed no parser,
+  and measuring it found every request refused until the thinking switch was sent
+  as DeepSeek reads it) — **on demand**: the **window**, which DeepSeek publishes
+  as `context_window` and which waits until the catalogue's "answered" signal is
+  split from the gateway's behaviours (F3); **a `deepseek` mode of its own**, with
+  the key, the picker, and the window, image input and efforts from its list
+  (F1 (c)).
 - **History compression — leftovers** ([history-compression.md](research/history-compression.md),
   spec §6.7; the track is closed) — **deferred**: a **semantic index over the
   folded range** — sub-decision S11 chose the full-text index the app already

@@ -1738,7 +1738,13 @@ between mode and backend/protocol:
 **Chat Completions sampling** (`OpenAiClient`): for llama.cpp and xAI there is
 no dialect or filtering — all fields are sent as-is (llama.cpp ignores what it
 doesn't know; the other clouds moved to their own protocols, `WireDialect` was
-removed). The one dialect is the OpenRouter gateway's, below. The **OpenAI** cloud
+removed). The one dialect is the OpenRouter gateway's, below. One field is
+respelled on evidence instead: a server that refuses the thinking switch as a
+boolean (DeepSeek's API, a `422`, `wire::refuses_boolean_thinking`) is sent the
+same request once more as `{"type": …}`
+(`ChatCompletionRequest::with_typed_thinking`), and the client's
+`thinking_typed` memo keeps that spelling once the second request is not refused
+over `thinking` too (docs/research/deepseek-api.md §4). The **OpenAI** cloud
 runs on Responses (`ResponsesClient`): the system message → top-level
 `instructions`, history → an `input` array of elements,
 `max_tokens`→`max_output_tokens`, `store:false`, a flat function-tool with

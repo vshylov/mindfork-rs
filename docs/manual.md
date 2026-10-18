@@ -61,7 +61,7 @@ Open settings — `Ctrl+P` (or type `/settings`) — and go to **Model/server**.
 | Mode | What it is |
 |---|---|
 | `managed` | the app launches its own `llama-server` child process from a binary and a GGUF file on this machine |
-| `external` | any OpenAI-compatible server you already run: llama.cpp, vLLM, LM Studio, Ollama, or a gateway such as LiteLLM |
+| `external` | any OpenAI-compatible server you already run: llama.cpp, vLLM, LM Studio, Ollama, a gateway such as LiteLLM, or a hosted API such as DeepSeek's (`https://api.deepseek.com/v1`, with its key) |
 | `openai` · `gemini` · `claude` · `grok` | the cloud providers, each with its own key and model |
 | `openrouter` | the OpenRouter gateway: one key in front of every vendor's models, the same key for the assistant, impersonation, embeddings and speech — and for watching videos, if you choose it there (§6) |
 
@@ -179,7 +179,8 @@ reused rather than processed again, which is faster and, on a cloud, cheaper.
 one to four thousand tokens. Anthropic always reads `0%`, because mindfork does
 not ask it to cache. On OpenRouter a share can fall back to `0%` from one turn to
 the next when a different provider serves the model; xAI reads a few percent even
-on a first turn, a block of its own. A vLLM server shows no share unless it was
+on a first turn, a block of its own. DeepSeek's API reports its share as OpenAI's
+does. A vLLM server shows no share unless it was
 started with `--enable-prompt-tokens-details`, and LM Studio shows none: it caches,
 but does not say how much. Every request's figures, the background ones included
 (titles, compression, impersonation), are in the log as `round usage` lines.

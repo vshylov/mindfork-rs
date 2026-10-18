@@ -17,6 +17,8 @@
 mod cache_probe_tests;
 pub mod client;
 #[cfg(test)]
+mod deepseek_live_tests;
+#[cfg(test)]
 mod gateway_live_tests;
 #[cfg(test)]
 mod gateway_tests;
