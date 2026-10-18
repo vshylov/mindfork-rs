@@ -383,6 +383,7 @@ impl SettingsScreen {
                     | ServerMode::Gemini
                     | ServerMode::Claude
                     | ServerMode::Grok
+                    | ServerMode::DeepSeek
                     | ServerMode::OpenRouter => {
                         let mut provider = cloud_rows(
                             x.cloud().zip(x.mode.cloud_provider()),
@@ -420,6 +421,7 @@ impl SettingsScreen {
                     | ServerMode::Gemini
                     | ServerMode::Claude
                     | ServerMode::Grok
+                    | ServerMode::DeepSeek
                     | ServerMode::OpenRouter => (
                         x.cloud().map_or(1, |c| c.sessions),
                         x.cloud().map_or(1, |c| c.concurrent_calls),
@@ -513,6 +515,7 @@ impl SettingsScreen {
                     | ImpersonationMode::Gemini
                     | ImpersonationMode::Claude
                     | ImpersonationMode::Grok
+                    | ImpersonationMode::DeepSeek
                     | ImpersonationMode::OpenRouter => {
                         let mut provider = cloud_rows(
                             x.cloud().zip(x.mode.cloud_provider()),
@@ -590,13 +593,14 @@ impl SettingsScreen {
                             .describe(loc.t(DESC_EXT_API_KEY_ENV)),
                         ],
                     )),
-                    // Claude and Grok show fields, but neither Anthropic nor xAI does
-                    // embeddings — the supervisor will return "unavailable" (RAG turns
-                    // off). ADR 0004.
+                    // Claude, Grok and DeepSeek show fields, but none of Anthropic, xAI
+                    // and DeepSeek does embeddings — the supervisor will return
+                    // "unavailable" (RAG turns off). ADR 0004.
                     ServerMode::OpenAi
                     | ServerMode::Gemini
                     | ServerMode::Claude
                     | ServerMode::Grok
+                    | ServerMode::DeepSeek
                     | ServerMode::OpenRouter => {
                         let none = CloudSettings::default();
                         let c = e.cloud().unwrap_or(&none);

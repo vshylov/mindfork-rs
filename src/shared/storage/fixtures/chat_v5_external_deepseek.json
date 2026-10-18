@@ -1,0 +1,40 @@
+{
+  "v": 5,
+  "id": "5c0ffee0-4d1e-4b2a-9e3f-6a7b8c9d0e1f",
+  "profile_id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+  "title": "Through DeepSeek's API",
+  "created_at": "2026-10-19T08:00:00Z",
+  "modified_at": "2026-10-19T08:01:00Z",
+  "system_message": "You are an assistant.",
+  "character_names": {
+    "user": "You",
+    "assistant": "Assistant",
+    "system": "System"
+  },
+  "messages": [
+    {
+      "id": "c0000000-0000-0000-0000-000000000001",
+      "role": "user",
+      "text": "Why is the sky blue?",
+      "timestamp": "2026-10-19T08:00:00Z"
+    },
+    {
+      "id": "c0000000-0000-0000-0000-000000000002",
+      "role": "assistant",
+      "text": "Rayleigh scattering: shorter wavelengths scatter more.",
+      "thoughts": "A short physical answer.",
+      "timestamp": "2026-10-19T08:00:05Z",
+      "metadata": {
+        "sampling": {
+          "temperature": 0.75,
+          "max_tokens": 16384,
+          "reasoning_effort": "high",
+          "thinking": true
+        },
+        "mode": "external",
+        "model": "deepseek-flash",
+        "finish": "stop"
+      }
+    }
+  ]
+}

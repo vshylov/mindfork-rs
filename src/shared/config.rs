@@ -9,7 +9,7 @@ use crate::shared::gguf::display_name;
 use crate::shared::secrets::{ExternalSlot, SecretKey};
 
 /// Current config schema version.
-pub const SCHEMA_VERSION: u32 = 6;
+pub const SCHEMA_VERSION: u32 = 7;
 
 /// Inference-engine connection mode. Local (`Managed`/`External`) and cloud
 /// providers (`OpenAi`/`Gemini`) are equal-footing variants of a single selector
@@ -37,6 +37,14 @@ pub enum ServerMode {
     /// reasoning (`delta.reasoning_content`) and needs no thinking-signature
     /// round-trip. See docs/research/grok-xai-provider.md.
     Grok,
+    /// DeepSeek's own API (`platform.deepseek.com`). Plain OpenAI Chat
+    /// Completions (`OpenAiClient`), with the thinking switch in DeepSeek's
+    /// spelling and the model's facts read from its list. A mode of its own
+    /// rather than a URL typed into `external`, which restarts a `/continue`
+    /// and cannot tell a model that drops images. See
+    /// docs/research/deepseek-mode.md.
+    #[serde(rename = "deepseek")]
+    DeepSeek,
     /// The OpenRouter gateway (`openrouter.ai`): one key in front of every
     /// vendor's models, spoken to as Chat Completions (`OpenAiClient`) in the
     /// gateway's own dialect. A mode of its own rather than a URL typed into
@@ -55,6 +63,7 @@ pub enum CloudProvider {
     Gemini,
     Claude,
     Grok,
+    DeepSeek,
     OpenRouter,
 }
 
@@ -62,11 +71,12 @@ impl CloudProvider {
     /// Every provider, in the order the per-provider arrays taken by
     /// [`cloud_ref`]/[`cloud_mut`] are indexed (and the order the settings UI
     /// cycles through them).
-    pub const ALL: [CloudProvider; 5] = [
+    pub const ALL: [CloudProvider; 6] = [
         CloudProvider::OpenAi,
         CloudProvider::Gemini,
         CloudProvider::Claude,
         CloudProvider::Grok,
+        CloudProvider::DeepSeek,
         CloudProvider::OpenRouter,
     ];
 
@@ -80,7 +90,8 @@ impl CloudProvider {
             CloudProvider::Gemini => 1,
             CloudProvider::Claude => 2,
             CloudProvider::Grok => 3,
-            CloudProvider::OpenRouter => 4,
+            CloudProvider::DeepSeek => 4,
+            CloudProvider::OpenRouter => 5,
         }
     }
     /// Base URL for **embeddings**/compat access (an OpenAI-compatible
@@ -95,6 +106,9 @@ impl CloudProvider {
             // xAI has no embedding models at all (docs/research/grok-xai-provider.md
             // §2.7) — this URL only serves as the chat base, which is the same path.
             CloudProvider::Grok => "https://api.x.ai/v1",
+            // DeepSeek has no embedding API either (`/v1/embeddings` is a `404`,
+            // docs/research/deepseek-mode.md §2.1): the chat base alone.
+            CloudProvider::DeepSeek => "https://api.deepseek.com/v1",
             // One base for chat, embeddings, the catalogue and the key check
             // (docs/research/openrouter-mode.md §3.1).
             CloudProvider::OpenRouter => "https://openrouter.ai/api/v1",
@@ -111,6 +125,7 @@ impl CloudProvider {
             CloudProvider::OpenAi
             | CloudProvider::Claude
             | CloudProvider::Grok
+            | CloudProvider::DeepSeek
             | CloudProvider::OpenRouter => self.base_url(),
         }
     }
@@ -125,6 +140,7 @@ impl CloudProvider {
             CloudProvider::Gemini => "gemini",
             CloudProvider::Claude => "claude",
             CloudProvider::Grok => "grok",
+            CloudProvider::DeepSeek => "deepseek",
             CloudProvider::OpenRouter => "openrouter",
         }
     }
@@ -141,6 +157,7 @@ impl CloudProvider {
             CloudProvider::Gemini => "Gemini",
             CloudProvider::Claude => "Claude",
             CloudProvider::Grok => "Grok",
+            CloudProvider::DeepSeek => "DeepSeek",
             CloudProvider::OpenRouter => "OpenRouter",
         }
     }
@@ -154,6 +171,7 @@ impl ServerMode {
             ServerMode::Gemini => Some(CloudProvider::Gemini),
             ServerMode::Claude => Some(CloudProvider::Claude),
             ServerMode::Grok => Some(CloudProvider::Grok),
+            ServerMode::DeepSeek => Some(CloudProvider::DeepSeek),
             ServerMode::OpenRouter => Some(CloudProvider::OpenRouter),
             ServerMode::Managed | ServerMode::External => None,
         }
@@ -170,6 +188,7 @@ impl ServerMode {
             ServerMode::Gemini => "gemini",
             ServerMode::Claude => "claude",
             ServerMode::Grok => "grok",
+            ServerMode::DeepSeek => "deepseek",
             ServerMode::OpenRouter => "openrouter",
         }
     }
@@ -180,13 +199,14 @@ impl ServerMode {
     }
 
     /// Every mode, in the settings UI's order.
-    pub const ALL: [ServerMode; 7] = [
+    pub const ALL: [ServerMode; 8] = [
         ServerMode::Managed,
         ServerMode::External,
         ServerMode::OpenAi,
         ServerMode::Gemini,
         ServerMode::Claude,
         ServerMode::Grok,
+        ServerMode::DeepSeek,
         ServerMode::OpenRouter,
     ];
 
@@ -204,7 +224,8 @@ impl ServerMode {
     /// Anthropic continues on models up to the 4.5 generation and returns a
     /// `400` from 4.6 on ("This model does not support assistant message
     /// prefill", pinned in `continue_probe`) — see
-    /// [`anthropic_model_continues`]; OpenAI cannot; Grok measurably restarts.
+    /// [`anthropic_model_continues`]; OpenAI cannot; Grok measurably restarts,
+    /// and so does DeepSeek on `/v1` (docs/research/deepseek-mode.md §1).
     ///
     /// `catalogued` — the endpoint published a catalogue entry for the model,
     /// which is what a gateway does and a llama.cpp never does. Through a
@@ -223,7 +244,7 @@ impl ServerMode {
             ServerMode::External if catalogued => model.is_some_and(gateway_model_continues),
             ServerMode::Managed | ServerMode::External | ServerMode::Gemini => true,
             ServerMode::Claude => model.is_some_and(anthropic_model_continues),
-            ServerMode::OpenAi | ServerMode::Grok => false,
+            ServerMode::OpenAi | ServerMode::Grok | ServerMode::DeepSeek => false,
         }
     }
 }
@@ -594,6 +615,7 @@ pub fn named_key_env_vars(cfg: &AppConfig) -> Vec<String> {
             e.gemini.api_key_env.clone(),
             e.claude.api_key_env.clone(),
             e.grok.api_key_env.clone(),
+            e.deepseek.api_key_env.clone(),
             e.openrouter.api_key_env.clone(),
         ]
     };
@@ -607,12 +629,14 @@ pub fn named_key_env_vars(cfg: &AppConfig) -> Vec<String> {
             imp.gemini.api_key_env.clone(),
             imp.claude.api_key_env.clone(),
             imp.grok.api_key_env.clone(),
+            imp.deepseek.api_key_env.clone(),
             imp.openrouter.api_key_env.clone(),
             embed.external.api_key_env.clone(),
             embed.openai.api_key_env.clone(),
             embed.gemini.api_key_env.clone(),
             embed.claude.api_key_env.clone(),
             embed.grok.api_key_env.clone(),
+            embed.deepseek.api_key_env.clone(),
             embed.openrouter.api_key_env.clone(),
             cfg.tts.openai.api_key_env.clone(),
             cfg.tts.gemini.api_key_env.clone(),
@@ -638,6 +662,7 @@ pub struct EngineSettings {
     pub gemini: CloudSettings,
     pub claude: CloudSettings,
     pub grok: CloudSettings,
+    pub deepseek: CloudSettings,
     pub openrouter: CloudSettings,
 }
 
@@ -651,6 +676,7 @@ impl EngineSettings {
                 &self.gemini,
                 &self.claude,
                 &self.grok,
+                &self.deepseek,
                 &self.openrouter,
             ],
         )
@@ -665,6 +691,7 @@ impl EngineSettings {
                 &mut self.gemini,
                 &mut self.claude,
                 &mut self.grok,
+                &mut self.deepseek,
                 &mut self.openrouter,
             ],
         )
@@ -681,6 +708,7 @@ impl EngineSettings {
             | ServerMode::Gemini
             | ServerMode::Claude
             | ServerMode::Grok
+            | ServerMode::DeepSeek
             | ServerMode::OpenRouter => self.cloud().map_or(DEFAULT_SESSIONS, |c| c.sessions),
         };
         n.max(1)
@@ -698,6 +726,7 @@ impl EngineSettings {
             | ServerMode::Gemini
             | ServerMode::Claude
             | ServerMode::Grok
+            | ServerMode::DeepSeek
             | ServerMode::OpenRouter => self
                 .cloud()
                 .map_or(DEFAULT_CONCURRENT_CALLS_CLOUD, |c| c.concurrent_calls),
@@ -718,13 +747,39 @@ impl EngineSettings {
             | ServerMode::Gemini
             | ServerMode::Claude
             | ServerMode::Grok
+            | ServerMode::DeepSeek
             | ServerMode::OpenRouter => self
                 .cloud()
                 .and_then(|c| c.model_name.clone())
                 .filter(|m| !m.is_empty()),
         }
     }
+
+    /// [`ServerMode::supports_continuation`] for this engine as configured: the
+    /// mode's answer, except `external` at **DeepSeek's host**, which answers a
+    /// trailing assistant message with a new reply — a `200`, so there is no
+    /// refusal to learn from, and nothing in its catalogue says so
+    /// (docs/research/deepseek-mode.md §1, fork F2). A proxy in front of DeepSeek
+    /// is not recognised: the `deepseek` mode is the road that knows.
+    pub fn supports_continuation(&self, model: Option<&str>, catalogued: bool) -> bool {
+        if self.mode == ServerMode::External && is_deepseek_host(self.external.url.as_deref()) {
+            return false;
+        }
+        self.mode.supports_continuation(model, catalogued)
+    }
 }
+
+/// Whether `url` is DeepSeek's own API — its host exactly, case aside
+/// (docs/research/deepseek-mode.md D5). A blank or unparseable URL is not.
+pub fn is_deepseek_host(url: Option<&str>) -> bool {
+    url.map(str::trim)
+        .and_then(|u| reqwest::Url::parse(u).ok())
+        .and_then(|u| u.host_str().map(str::to_ascii_lowercase))
+        .is_some_and(|host| host == DEEPSEEK_HOST)
+}
+
+/// The host of DeepSeek's API, which [`CloudProvider::DeepSeek`]'s base names.
+const DEEPSEEK_HOST: &str = "api.deepseek.com";
 
 /// Active cloud sub-structure by provider (a shared helper for all engines).
 /// `all` is indexed by [`CloudProvider::index`], i.e. it must be given in
@@ -833,6 +888,9 @@ pub enum ImpersonationMode {
     Claude,
     /// xAI cloud (Grok, OpenAI Chat Completions).
     Grok,
+    /// DeepSeek's own API (OpenAI Chat Completions).
+    #[serde(rename = "deepseek")]
+    DeepSeek,
     /// The OpenRouter gateway — on the key every slot of this provider
     /// shares, with a model of its own.
     #[serde(rename = "openrouter")]
@@ -847,6 +905,7 @@ impl ImpersonationMode {
             ImpersonationMode::Gemini => Some(CloudProvider::Gemini),
             ImpersonationMode::Claude => Some(CloudProvider::Claude),
             ImpersonationMode::Grok => Some(CloudProvider::Grok),
+            ImpersonationMode::DeepSeek => Some(CloudProvider::DeepSeek),
             ImpersonationMode::OpenRouter => Some(CloudProvider::OpenRouter),
             ImpersonationMode::Shared
             | ImpersonationMode::Managed
@@ -871,6 +930,7 @@ pub struct ImpersonationEngineSettings {
     pub gemini: CloudSettings,
     pub claude: CloudSettings,
     pub grok: CloudSettings,
+    pub deepseek: CloudSettings,
     pub openrouter: CloudSettings,
 }
 
@@ -888,6 +948,7 @@ impl Default for ImpersonationEngineSettings {
             gemini: CloudSettings::default(),
             claude: CloudSettings::default(),
             grok: CloudSettings::default(),
+            deepseek: CloudSettings::default(),
             openrouter: CloudSettings::default(),
         }
     }
@@ -903,6 +964,7 @@ impl ImpersonationEngineSettings {
                 &self.gemini,
                 &self.claude,
                 &self.grok,
+                &self.deepseek,
                 &self.openrouter,
             ],
         )
@@ -917,6 +979,7 @@ impl ImpersonationEngineSettings {
                 &mut self.gemini,
                 &mut self.claude,
                 &mut self.grok,
+                &mut self.deepseek,
                 &mut self.openrouter,
             ],
         )
@@ -972,6 +1035,7 @@ pub struct EmbedSettings {
     pub gemini: CloudSettings,
     pub claude: CloudSettings,
     pub grok: CloudSettings,
+    pub deepseek: CloudSettings,
     pub openrouter: CloudSettings,
     /// How the active model expects its input to be marked (`query:`/`passage:`
     /// and relatives). Independent of the mode — it is a property of the *model*,
@@ -991,6 +1055,7 @@ impl EmbedSettings {
                 &self.gemini,
                 &self.claude,
                 &self.grok,
+                &self.deepseek,
                 &self.openrouter,
             ],
         )
@@ -1005,6 +1070,7 @@ impl EmbedSettings {
                 &mut self.gemini,
                 &mut self.claude,
                 &mut self.grok,
+                &mut self.deepseek,
                 &mut self.openrouter,
             ],
         )
@@ -1028,6 +1094,7 @@ impl EmbedSettings {
             | ServerMode::Gemini
             | ServerMode::Claude
             | ServerMode::Grok
+            | ServerMode::DeepSeek
             | ServerMode::OpenRouter => self
                 .cloud()
                 .and_then(|c| c.model_name.clone())
@@ -2474,9 +2541,9 @@ impl TtsSettings {
             CloudProvider::OpenAi => Some(&self.openai),
             CloudProvider::Gemini => Some(&self.gemini),
             CloudProvider::OpenRouter => Some(&self.openrouter),
-            // Neither has a TTS API (and `TtsMode` has no variant for them
-            // anyway — these arms exist only to keep the match exhaustive).
-            CloudProvider::Claude | CloudProvider::Grok => None,
+            // None of them has a TTS API (and `TtsMode` has no variant for
+            // them anyway — these arms exist only to keep the match exhaustive).
+            CloudProvider::Claude | CloudProvider::Grok | CloudProvider::DeepSeek => None,
         }
     }
 
@@ -2500,9 +2567,9 @@ impl TtsSettings {
             CloudProvider::OpenAi => Some(&mut self.openai),
             CloudProvider::Gemini => Some(&mut self.gemini),
             CloudProvider::OpenRouter => Some(&mut self.openrouter),
-            // Neither has a TTS API (and `TtsMode` has no variant for them
-            // anyway — these arms exist only to keep the match exhaustive).
-            CloudProvider::Claude | CloudProvider::Grok => None,
+            // None of them has a TTS API (and `TtsMode` has no variant for
+            // them anyway — these arms exist only to keep the match exhaustive).
+            CloudProvider::Claude | CloudProvider::Grok | CloudProvider::DeepSeek => None,
         }
     }
 }
@@ -2705,7 +2772,7 @@ mod tests {
         ] {
             assert!(mode.supports_continuation(None, false), "{mode:?}");
         }
-        for mode in [ServerMode::OpenAi, ServerMode::Grok] {
+        for mode in [ServerMode::OpenAi, ServerMode::Grok, ServerMode::DeepSeek] {
             assert!(
                 !mode.supports_continuation(Some("anything"), false),
                 "{mode:?}"
@@ -3880,6 +3947,34 @@ mod tests {
             CloudProvider::Grok.chat_base_url(),
             CloudProvider::Grok.base_url()
         );
+        // DeepSeek — the same protocol, its own API: one base for chat and
+        // the list (it has no embeddings at all).
+        assert_eq!(
+            serde_json::to_string(&ServerMode::DeepSeek).unwrap(),
+            "\"deepseek\""
+        );
+        assert_eq!(
+            ServerMode::DeepSeek.cloud_provider(),
+            Some(CloudProvider::DeepSeek)
+        );
+        assert_eq!(
+            CloudProvider::DeepSeek.base_url(),
+            "https://api.deepseek.com/v1"
+        );
+        assert_eq!(
+            CloudProvider::DeepSeek.chat_base_url(),
+            CloudProvider::DeepSeek.base_url()
+        );
+        assert_eq!(CloudProvider::DeepSeek.key(), "deepseek");
+        assert_eq!(CloudProvider::DeepSeek.display_name(), "DeepSeek");
+        assert_eq!(
+            serde_json::to_string(&ImpersonationMode::DeepSeek).unwrap(),
+            "\"deepseek\""
+        );
+        assert_eq!(
+            ImpersonationMode::DeepSeek.cloud_provider(),
+            Some(CloudProvider::DeepSeek)
+        );
         // Impersonation: the same cloud providers, other modes — None.
         assert_eq!(
             ImpersonationMode::OpenAi.cloud_provider(),
@@ -3897,6 +3992,83 @@ mod tests {
                 .base_url()
                 .contains("generativelanguage")
         );
+    }
+
+    /// `external` at DeepSeek's host does not continue, whatever the catalogue
+    /// says: the API answers a prefill with a new reply
+    /// (docs/research/deepseek-mode.md §1). Its host exactly — a proxy, a
+    /// look-alike and a blank URL keep `external`'s own answer.
+    #[test]
+    fn external_at_deepseeks_host_does_not_continue() {
+        let at = |url: Option<&str>| {
+            let mut e = EngineSettings {
+                mode: ServerMode::External,
+                ..Default::default()
+            };
+            e.external.url = url.map(str::to_string);
+            e
+        };
+        for url in [
+            "https://api.deepseek.com/v1",
+            "https://api.deepseek.com",
+            "https://API.DeepSeek.com/v1/",
+            "  https://api.deepseek.com/beta  ",
+        ] {
+            let e = at(Some(url));
+            assert!(is_deepseek_host(Some(url)), "{url}");
+            assert!(!e.supports_continuation(None, false), "{url}");
+            assert!(
+                !e.supports_continuation(Some("deepseek-flash"), true),
+                "{url}"
+            );
+        }
+        for url in [
+            None,
+            Some(""),
+            Some("not a url"),
+            Some("http://127.0.0.1:8000/v1"),
+            Some("https://deepseek.com/v1"),
+            Some("https://api.deepseek.com.example.org/v1"),
+            Some("https://proxy.example.org/api.deepseek.com/v1"),
+        ] {
+            assert!(!is_deepseek_host(url), "{url:?}");
+            assert!(at(url).supports_continuation(None, false), "{url:?}");
+        }
+        // Another mode keeps its own answer, whatever the external URL holds.
+        let mut managed = at(Some("https://api.deepseek.com/v1"));
+        managed.mode = ServerMode::Managed;
+        assert!(managed.supports_continuation(None, false));
+        // The mode of its own refuses too, until stage 2.
+        let mut own = at(None);
+        own.mode = ServerMode::DeepSeek;
+        assert!(!own.supports_continuation(Some("deepseek-flash"), true));
+    }
+
+    /// The `deepseek` sections read back as written, beside the others, and
+    /// one key serves every slot of the provider.
+    #[test]
+    fn deepseek_sections_roundtrip_and_name_their_key_variable() {
+        let mut c = AppConfig::default();
+        c.engine.mode = ServerMode::DeepSeek;
+        c.engine.deepseek.model_name = Some("deepseek-flash".into());
+        c.engine.deepseek.api_key_env = Some("DEEPSEEK_API_KEY".into());
+        c.impersonation_engine.mode = ImpersonationMode::DeepSeek;
+        c.impersonation_engine.deepseek.model_name = Some("deepseek-v4-pro".into());
+        c.embed.deepseek.api_key_env = Some("DS_EMBED".into());
+        let back: AppConfig = serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
+        assert_eq!(back, c);
+        assert_eq!(c.engine.cloud(), Some(&c.engine.deepseek));
+        assert_eq!(
+            c.engine.active_model_name().as_deref(),
+            Some("deepseek-flash")
+        );
+        assert_eq!(
+            c.impersonation_engine.cloud(),
+            Some(&c.impersonation_engine.deepseek)
+        );
+        let vars = named_key_env_vars(&c);
+        assert!(vars.contains(&"DEEPSEEK_API_KEY".to_string()), "{vars:?}");
+        assert!(vars.contains(&"DS_EMBED".to_string()), "{vars:?}");
     }
 
     #[test]

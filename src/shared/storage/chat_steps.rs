@@ -63,6 +63,19 @@ pub(super) fn chat_to_v5(mut v: Value) -> Result<Value> {
     Ok(v)
 }
 
+/// `chats/<id>.json` 5 → 6: no shape change, like [`chat_to_v5`]. 6 is the
+/// first schema in which a reply's `metadata.mode` may read `"deepseek"`
+/// (docs/research/deepseek-mode.md, D1), and the mode is a strict enum: every
+/// reply records the mode it was generated in, so one answer in the new mode is
+/// enough for 0.20.0 to skip the whole file in silence. The reasoning of
+/// [`chat_to_v5`] holds word for word — the settings' stamp
+/// (`schema::settings_to_v7`) answers for a root downgraded in place, and this
+/// one for the chat file that arrives without its settings.
+pub(super) fn chat_to_v6(mut v: Value) -> Result<Value> {
+    v["v"] = json!(6);
+    Ok(v)
+}
+
 /// `chats/<id>.json` 3 → 4: a run title the old cap cut gets its tail back.
 ///
 /// Every title used to be shortened to [`OLD_TITLE_CAP`] characters **as it
@@ -342,6 +355,44 @@ mod tests {
     /// and the replies' `metadata.sampling`. The 0.13.0 binary lists it (the
     /// journal has the run).
     const V4_CHAT: &str = include_str!("fixtures/chat_v4_effort_xhigh.json");
+
+    /// A chat file as 0.20.0 wrote it: `v = 5`, one reply generated in the
+    /// `external` mode at DeepSeek's API — the setup that version's manual names.
+    const V5_CHAT: &str = include_str!("fixtures/chat_v5_external_deepseek.json");
+
+    #[test]
+    fn the_v5_fixture_holds_nothing_a_chat_drops() {
+        let fixture: Value = serde_json::from_str(V5_CHAT).unwrap();
+        let chat: Chat = serde_json::from_value(fixture.clone()).unwrap();
+        assert_eq!(chat.v, 5);
+        let read_back = serde_json::to_value(&chat).unwrap();
+        assert_eq!(
+            super::super::schema::dropped_paths(&fixture, &read_back),
+            Vec::<String>::new()
+        );
+    }
+
+    /// 5 → 6 is the version and nothing else, and a second pass finds nothing
+    /// to do. Nobody is moved to the new mode: the reply keeps the one it was
+    /// generated in.
+    #[test]
+    fn the_deepseek_stamp_is_v6_and_touches_nothing_else() {
+        let before: Value = serde_json::from_str(V5_CHAT).unwrap();
+        let after = chat_to_v6(before.clone()).unwrap();
+        assert_eq!(after["v"], json!(6));
+        let mut restamped = after.clone();
+        restamped["v"] = json!(5);
+        assert_eq!(restamped, before, "every other value is where it was");
+        assert_eq!(chat_to_v6(after.clone()).unwrap(), after);
+
+        let chat: Chat = serde_json::from_value(after).unwrap();
+        let meta = chat.messages[1]
+            .metadata
+            .as_ref()
+            .expect("the reply's metadata");
+        assert_eq!(meta.mode, crate::shared::config::ServerMode::External);
+        assert_eq!(meta.model.as_deref(), Some("deepseek-flash"));
+    }
 
     /// See `the_v4_settings_fixture_holds_nothing_the_config_drops`: a key the
     /// reader ignores would make the fixture pin nothing about its field.

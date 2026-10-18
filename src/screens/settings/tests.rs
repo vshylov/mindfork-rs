@@ -4874,11 +4874,12 @@ fn the_field_pane_scrolls_only_once_the_selection_leaves_the_window() {
 // ---------- parallel sessions (spec §11.6) ----------
 
 /// Every cloud provider's mode, the gateway's included, for the loops below.
-const CLOUD_MODES: [ServerMode; 5] = [
+const CLOUD_MODES: [ServerMode; 6] = [
     ServerMode::OpenAi,
     ServerMode::Gemini,
     ServerMode::Claude,
     ServerMode::Grok,
+    ServerMode::DeepSeek,
     ServerMode::OpenRouter,
 ];
 
@@ -5025,6 +5026,7 @@ fn editing_concurrent_writes_the_active_section_with_a_floor_of_one() {
                     (ServerMode::Gemini, c.engine.gemini.concurrent_calls, 4),
                     (ServerMode::Claude, c.engine.claude.concurrent_calls, 4),
                     (ServerMode::Grok, c.engine.grok.concurrent_calls, 4),
+                    (ServerMode::DeepSeek, c.engine.deepseek.concurrent_calls, 4),
                 ];
                 for (m, v, default) in others {
                     if m != mode {
@@ -5112,6 +5114,7 @@ fn editing_sessions_writes_the_active_section() {
                     (ServerMode::Gemini, c.engine.gemini.sessions),
                     (ServerMode::Claude, c.engine.claude.sessions),
                     (ServerMode::Grok, c.engine.grok.sessions),
+                    (ServerMode::DeepSeek, c.engine.deepseek.sessions),
                 ];
                 untouched.retain(|(m, _)| *m != mode);
                 for (m, v) in untouched {
@@ -6279,7 +6282,7 @@ fn goto_model_row(s: &mut SettingsScreen, tab: ModelTab, id: FieldId) {
 /// The mode is selectable where a mode is selected, by the arrows as well as
 /// by the popup: last in the cycle on every tab, so `←` from the first mode
 /// wraps onto it, `→` from it wraps back, and walking `→` meets it after
-/// `grok` and nowhere else. The alternative the commit names — a mode that
+/// `deepseek` — the last direct cloud — and nowhere else. The alternative the commit names — a mode that
 /// cannot be reached, or one that can on the assistant's tab alone — is a
 /// provider with a key and no slot to use it in.
 #[test]
@@ -6309,7 +6312,7 @@ fn the_mode_row_reaches_the_gateway_from_either_side_on_every_tab() {
         let tail: Vec<&str> = walked.iter().rev().take(3).map(String::as_str).collect();
         assert_eq!(
             tail,
-            [first.as_str(), "openrouter", "grok"],
+            [first.as_str(), "openrouter", "deepseek"],
             "{tab:?}: {walked:?}"
         );
         let met = walked.iter().filter(|m| *m == "openrouter").count();

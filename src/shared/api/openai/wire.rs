@@ -981,6 +981,16 @@ pub struct ModelEntry {
     /// [`Self::listed_efforts`].
     #[serde(default)]
     pub capabilities: Option<serde_json::Value>,
+    /// DeepSeek's spelling of the window: `"context_window": 1048576`. Raw JSON
+    /// for the same reason as `reasoning`, read by [`Self::deepseek_window`] — and
+    /// only by a client told it is DeepSeek, since a window read makes the
+    /// endpoint count as catalogued (docs/research/deepseek-mode.md §4.1).
+    #[serde(default)]
+    pub context_window: Option<serde_json::Value>,
+    /// DeepSeek's inputs, at the entry's top level: `"input_modalities": ["text",
+    /// "image"]`. Raw JSON, read by [`Self::takes_images_top_level`].
+    #[serde(default)]
+    pub input_modalities: Option<serde_json::Value>,
 }
 
 impl ModelEntry {
@@ -994,15 +1004,25 @@ impl ModelEntry {
     /// and four request shapes
     /// ([docs/research/gateway-vision-catalogue.md](../../../../docs/research/gateway-vision-catalogue.md) §2.2).
     pub fn takes_images(&self) -> Option<bool> {
-        let listed = self
-            .architecture
+        image_among(self.architecture.as_ref()?.get("input_modalities")?)
+    }
+
+    /// The same answer as [`Self::takes_images`] from DeepSeek's spelling, the
+    /// list at the entry's top level. Measured, the "no" holds as the "yes" does:
+    /// `deepseek-v4-pro` lists `["text"]` and answers an image it was sent as if
+    /// there were none (docs/research/deepseek-mode.md §1).
+    pub fn takes_images_top_level(&self) -> Option<bool> {
+        image_among(self.input_modalities.as_ref()?)
+    }
+
+    /// DeepSeek's window, when `context_window` is a positive number that fits
+    /// a `u32`. Anything else is silence.
+    pub fn deepseek_window(&self) -> Option<u32> {
+        self.context_window
             .as_ref()?
-            .get("input_modalities")?
-            .as_array()?
-            .iter()
-            .map(serde_json::Value::as_str)
-            .collect::<Option<Vec<_>>>()?;
-        (!listed.is_empty()).then(|| listed.contains(&"image"))
+            .as_u64()
+            .and_then(|n| u32::try_from(n).ok())
+            .filter(|&n| n > 0)
     }
 
     /// Whether `supported_parameters` names `name`. An absent list names nothing.
@@ -1050,6 +1070,17 @@ impl ModelEntry {
             .collect();
         (!known.is_empty()).then_some(known)
     }
+}
+
+/// Whether a list of input modalities names `image`: `None` for an empty list
+/// or anything but a list of strings.
+fn image_among(inputs: &serde_json::Value) -> Option<bool> {
+    let listed = inputs
+        .as_array()?
+        .iter()
+        .map(serde_json::Value::as_str)
+        .collect::<Option<Vec<_>>>()?;
+    (!listed.is_empty()).then(|| listed.contains(&"image"))
 }
 
 // ---------- embeddings ----------

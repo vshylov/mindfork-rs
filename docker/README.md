@@ -108,7 +108,7 @@ The ones that come up most:
   inside the container; empty (the default) means none runs. See §6.1.
 - `LAB_SSH_PORT` — host-side port for it, `2222` by default.
 - `OPENAI_API_KEY` / `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` / `XAI_API_KEY` /
-  `OPENROUTER_API_KEY` — passed through to the app, and the seeded settings
+  `DEEPSEEK_API_KEY` / `OPENROUTER_API_KEY` — passed through to the app, and the seeded settings
   already name them, so switching the engine to a cloud provider or to the
   OpenRouter gateway in the settings screen just works.
 

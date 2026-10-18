@@ -126,13 +126,14 @@ pub(super) fn ledgers() -> Vec<Ledger> {
         // --- settings.json ---------------------------------------------------
         // `grok` came in 0.9.5 with no step, so the schema-1 readers before it
         // (0.9.0–0.9.4) took a file naming it for a broken one. `openrouter` is
-        // what the 3→4 stamp is for.
+        // what the 3→4 stamp is for, `deepseek` the 6→7 one.
         ledger!(ServerMode in Settings {
             1 => [
                 Managed = "managed", External = "external", OpenAi = "openai",
                 Gemini = "gemini", Claude = "claude", Grok = "grok",
             ],
             4 => [OpenRouter = "openrouter"],
+            7 => [DeepSeek = "deepseek"],
         }),
         ledger!(ImpersonationMode in Settings {
             1 => [
@@ -140,6 +141,7 @@ pub(super) fn ledgers() -> Vec<Ledger> {
                 OpenAi = "openai", Gemini = "gemini", Claude = "claude", Grok = "grok",
             ],
             4 => [OpenRouter = "openrouter"],
+            7 => [DeepSeek = "deepseek"],
         }),
         ledger!(TtsMode in Settings {
             1 => [OpenAi = "openai", Gemini = "gemini", External = "external"],
@@ -189,6 +191,18 @@ pub(super) fn ledgers() -> Vec<Ledger> {
         }),
         ledger!(Verbosity in Sampling { 1 => [Low = "low", Medium = "medium", High = "high"] }),
         // --- the chat files --------------------------------------------------
+        // Every reply records the mode it was generated in (`metadata.mode`).
+        // `openrouter` came in 0.13.0 with no chat step, its file at 4, where
+        // the settings' stamp answered for a root downgraded in place;
+        // `deepseek` is what the 5→6 stamp is for (`chat_steps::chat_to_v6`).
+        ledger!(ServerMode in Chats {
+            1 => [
+                Managed = "managed", External = "external", OpenAi = "openai",
+                Gemini = "gemini", Claude = "claude", Grok = "grok",
+            ],
+            4 => [OpenRouter = "openrouter"],
+            6 => [DeepSeek = "deepseek"],
+        }),
         ledger!(MessageRole in Chats {
             1 => [System = "system", User = "user", Assistant = "assistant", Tool = "tool"],
         }),

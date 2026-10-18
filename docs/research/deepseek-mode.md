@@ -10,7 +10,7 @@ figure, and the field-by-field table this builds on),
 [grok-xai-provider.md](grok-xai-provider.md) (the last direct cloud added, and
 the wrong-type method), [openrouter-mode.md](openrouter-mode.md) (the last mode
 added, and its schema stamp), [effort-tiers.md](effort-tiers.md) §9 (xAI's list
-of efforts), [continue-generation.md](../history/continue-generation.md),
+of efforts), [continue-generation.md](continue-generation.md),
 [ADR 0004](../decisions/0004-engine-contract-multi-provider.md),
 [ADR 0006](../decisions/0006-data-schema-versioning.md), spec §3.4, §6.4, §8,
 §8.1, §9.10, §12.2.

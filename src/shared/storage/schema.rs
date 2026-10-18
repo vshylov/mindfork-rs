@@ -15,8 +15,8 @@
 //! entry (the "Data" rubric). **A new value of an existing enum is breaking**,
 //! though nothing in the file moves: an older binary fails the parse of the
 //! whole file on a value it does not know (docs/lessons.md §8), so the bump is
-//! what makes its refusal say "a newer version" — see [`settings_to_v4`] and
-//! [`settings_to_v5`].
+//! what makes its refusal say "a newer version" — see [`settings_to_v4`],
+//! [`settings_to_v5`] and [`settings_to_v7`].
 
 use std::cmp::Ordering;
 
@@ -26,11 +26,11 @@ use serde_json::Value;
 /// Schema version of `settings.json`. Matches [`crate::shared::config::SCHEMA_VERSION`]
 /// (the default of the `AppConfig.schema_version` field) — the invariant is checked by
 /// a test.
-pub const SETTINGS_SCHEMA: u32 = 6;
+pub const SETTINGS_SCHEMA: u32 = 7;
 /// Schema version of `profiles.json`.
 pub const PROFILES_SCHEMA: u32 = 1;
 /// Schema version of a chat file `chats/<id>.json`.
-pub const CHAT_SCHEMA: u32 = 5;
+pub const CHAT_SCHEMA: u32 = 6;
 /// SQLite schema version (`PRAGMA user_version`). The DB migration runner is in
 /// [`crate::shared::storage::db`] (baseline 0→1 + steps in transactions).
 pub const DB_SCHEMA: u32 = 1;
@@ -266,6 +266,17 @@ fn settings_to_v6(mut v: Value) -> Result<Value> {
     Ok(v)
 }
 
+/// `settings.json` 6→7: **nothing in the file changes**, as in
+/// [`settings_to_v4`]. 7 is the first schema in which a slot's `mode` may read
+/// `"deepseek"` (docs/research/deepseek-mode.md §4.1) — the assistant's, the
+/// impersonation engine's or the embedder's — and 0.20.0 refuses a file naming
+/// it as an unknown variant. The chat files take the same stamp, for the reason
+/// [`super::chat_steps::chat_to_v6`] gives.
+fn settings_to_v7(mut v: Value) -> Result<Value> {
+    v["schema_version"] = Value::from(7);
+    Ok(v)
+}
+
 const SETTINGS_STEPS: &[Step] = &[
     Step {
         to: 2,
@@ -292,10 +303,15 @@ const SETTINGS_STEPS: &[Step] = &[
         summary: "a self-model cap left at the 0.9.4 default rises to 4000",
         apply: settings_to_v6,
     },
+    Step {
+        to: 7,
+        summary: "a slot's mode may name DeepSeek's API",
+        apply: settings_to_v7,
+    },
 ];
 
-/// The registry of artifacts. `settings.json` is at 6 (five steps), the chat files
-/// at 5 (four); `profiles.json` is still at 1 with no steps.
+/// The registry of artifacts. `settings.json` is at 7 (six steps), the chat files
+/// at 6 (five); `profiles.json` is still at 1 with no steps.
 pub fn settings_artifact() -> JsonArtifact {
     JsonArtifact {
         name: "settings.json",
@@ -334,6 +350,11 @@ const CHAT_STEPS: &[Step] = &[
         to: 5,
         summary: "a reasoning effort may read max",
         apply: super::chat_steps::chat_to_v5,
+    },
+    Step {
+        to: 6,
+        summary: "a reply's metadata may name the deepseek mode",
+        apply: super::chat_steps::chat_to_v6,
     },
 ];
 
@@ -476,18 +497,19 @@ mod tests {
         // Settings took five real steps (the sub-agent's timeout, the reply
         // budget that has to cover reasoning, the version that lets a mode
         // name the OpenRouter gateway, the one that lets an effort read
-        // `max`, then the self-model cap left at 0.9.4's default); chats took
-        // four (the sub-agent transcripts, the dialogue-run stamp, spec §9.13,
-        // the cut run titles, spec §11.2, then the same `max` stamp);
+        // `max`, the self-model cap left at 0.9.4's default, then the version
+        // that lets a mode name DeepSeek's API); chats took five (the sub-agent
+        // transcripts, the dialogue-run stamp, spec §9.13, the cut run titles,
+        // spec §11.2, the same `max` stamp, then the same `deepseek` stamp);
         // profiles are still dormant.
         let settings = settings_artifact();
-        assert_eq!(settings.current, 6);
+        assert_eq!(settings.current, 7);
         let reached: Vec<u32> = settings.steps.iter().map(|s| s.to).collect();
-        assert_eq!(reached, [2, 3, 4, 5, 6]);
+        assert_eq!(reached, [2, 3, 4, 5, 6, 7]);
         let chats = chat_artifact();
-        assert_eq!(chats.current, 5);
+        assert_eq!(chats.current, 6);
         let reached: Vec<u32> = chats.steps.iter().map(|s| s.to).collect();
-        assert_eq!(reached, [2, 3, 4, 5]);
+        assert_eq!(reached, [2, 3, 4, 5, 6]);
         let profiles = profiles_artifact();
         assert_eq!(profiles.current, 1);
         assert!(profiles.steps.is_empty());
@@ -780,7 +802,7 @@ mod tests {
     fn settings_step_to_v6_raises_a_cap_left_at_the_old_default() {
         let before: Value = serde_json::from_str(V5_SETTINGS).unwrap();
         assert_eq!(before["self_model"]["prompt_cap"], json!(1200));
-        let after = settings_artifact().apply_steps(before.clone(), 5).unwrap();
+        let after = settings_to_v6(before.clone()).unwrap();
         assert_eq!(after["schema_version"], json!(6));
         assert_eq!(after["self_model"]["prompt_cap"], json!(4000));
         let mut restored = after.clone();
@@ -810,7 +832,7 @@ mod tests {
                     5,
                 )
                 .unwrap();
-            assert_eq!(out["schema_version"], json!(6));
+            assert_eq!(out["schema_version"], json!(SETTINGS_SCHEMA));
             assert_eq!(
                 out["self_model"]["prompt_cap"],
                 json!(chosen),
@@ -866,8 +888,88 @@ mod tests {
             .unwrap();
         assert_eq!(
             reader_at(settings_artifact(), 5).assess(&migrated),
-            Assessment::Downgrade { from: 6 }
+            Assessment::Downgrade {
+                from: SETTINGS_SCHEMA
+            }
         );
         assert_eq!(settings_artifact().assess(&migrated), Assessment::UpToDate);
+    }
+
+    /// `settings.json` as 0.20.0 wrote it for the setup its manual names:
+    /// DeepSeek's API in the `external` mode, a key in a variable, and a `grok`
+    /// section beside it. The golden v6 shape.
+    const V6_SETTINGS: &str = include_str!("fixtures/settings_v6.json");
+
+    #[test]
+    fn the_v6_settings_fixture_holds_nothing_the_config_drops() {
+        let fixture: Value = serde_json::from_str(V6_SETTINGS).unwrap();
+        let cfg: crate::shared::config::AppConfig =
+            serde_json::from_value(fixture.clone()).unwrap();
+        let read_back = serde_json::to_value(&cfg).unwrap();
+        assert_eq!(dropped_paths(&fixture, &read_back), Vec::<String>::new());
+    }
+
+    /// 6→7 moves nothing, like 3→4: nobody is moved to the new mode, and the
+    /// `external` slot at DeepSeek's URL stays where it was.
+    #[test]
+    fn settings_step_to_v7_stamps_the_version_and_touches_nothing_else() {
+        let before: Value = serde_json::from_str(V6_SETTINGS).unwrap();
+        let after = settings_to_v7(before.clone()).unwrap();
+        assert_eq!(after["schema_version"], json!(7));
+        let mut restamped = after.clone();
+        restamped["schema_version"] = json!(6);
+        assert_eq!(restamped, before, "every other value is where it was");
+
+        let cfg: crate::shared::config::AppConfig = serde_json::from_value(after).unwrap();
+        assert_eq!(cfg.engine.mode, crate::shared::config::ServerMode::External);
+        assert_eq!(
+            cfg.engine.external.url.as_deref(),
+            Some("https://api.deepseek.com/v1")
+        );
+        assert_eq!(
+            cfg.engine.deepseek,
+            crate::shared::config::CloudSettings::default(),
+            "a section 0.20.0 never wrote reads as the default"
+        );
+    }
+
+    /// The reason for both stamps, from the other side: a file naming the
+    /// `deepseek` mode is, to every reader older than it, a **newer version** —
+    /// refused before it is parsed, where the parse would have refused the
+    /// settings as an unknown variant and skipped the chat.
+    #[test]
+    fn a_file_holding_the_deepseek_mode_is_a_newer_version_to_the_previous_schema() {
+        use crate::shared::config::{AppConfig, ImpersonationMode, ServerMode};
+        let mut cfg = AppConfig::default();
+        cfg.engine.mode = ServerMode::DeepSeek;
+        cfg.impersonation_engine.mode = ImpersonationMode::DeepSeek;
+        let settings = serde_json::to_value(&cfg).unwrap();
+        assert_eq!(settings["engine"]["mode"], json!("deepseek"));
+        assert_eq!(settings_artifact().assess(&settings), Assessment::UpToDate);
+        assert_eq!(
+            reader_at(settings_artifact(), 6).assess(&settings),
+            Assessment::Downgrade {
+                from: SETTINGS_SCHEMA
+            },
+            "settings.json read by 0.20.0"
+        );
+
+        let fixture: Value =
+            serde_json::from_str(include_str!("fixtures/chat_v5_external_deepseek.json")).unwrap();
+        let mut chat: crate::entities::chat::Chat = serde_json::from_value(fixture).unwrap();
+        chat.v = CHAT_SCHEMA;
+        chat.messages[1]
+            .metadata
+            .as_mut()
+            .expect("the reply's metadata")
+            .mode = ServerMode::DeepSeek;
+        let chat = serde_json::to_value(&chat).unwrap();
+        assert_eq!(chat["messages"][1]["metadata"]["mode"], json!("deepseek"));
+        assert_eq!(chat_artifact().assess(&chat), Assessment::UpToDate);
+        assert_eq!(
+            reader_at(chat_artifact(), 5).assess(&chat),
+            Assessment::Downgrade { from: CHAT_SCHEMA },
+            "a chat file read by 0.20.0"
+        );
     }
 }

@@ -395,7 +395,7 @@ impl Orchestrator {
     /// tells an `external` gateway from a llama.cpp
     /// (docs/history/gateway-images-and-continue.md, fork H2).
     pub(super) fn continuation_supported(&self) -> bool {
-        self.config.engine.mode.supports_continuation(
+        self.config.engine.supports_continuation(
             self.effective_model_name().as_deref(),
             self.endpoint_catalogued(),
         )
@@ -422,12 +422,20 @@ impl Orchestrator {
             // continue, which is exactly what is not true here. `external` is one
             // once its catalogue has answered; the gateway's own mode is one by
             // name, before it has.
-            let gateway = match self.config.engine.mode {
+            let engine = &self.config.engine;
+            let gateway = match engine.mode {
                 ServerMode::OpenRouter => true,
                 ServerMode::External => self.endpoint_catalogued(),
                 _ => false,
             };
-            let key = if gateway {
+            // DeepSeek's API by its URL: neither a gateway nor an engine the
+            // generic note's "external engines continue" is true of
+            // (docs/research/deepseek-mode.md, fork F2).
+            let deepseek = engine.mode == ServerMode::External
+                && crate::shared::config::is_deepseek_host(engine.external.url.as_deref());
+            let key = if deepseek {
+                "ui.cmd.continue_unsupported_deepseek"
+            } else if gateway {
                 "ui.cmd.continue_unsupported_gateway"
             } else {
                 "ui.cmd.continue_unsupported"

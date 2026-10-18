@@ -39,6 +39,7 @@ pub(super) fn pool_for(
         | ServerMode::Gemini
         | ServerMode::Claude
         | ServerMode::Grok
+        | ServerMode::DeepSeek
         | ServerMode::OpenRouter => None,
     }
 }
@@ -105,6 +106,7 @@ mod tests {
             ServerMode::Gemini,
             ServerMode::Claude,
             ServerMode::Grok,
+            ServerMode::DeepSeek,
         ] {
             assert_eq!(
                 pool_for(mode, Some(4), || unreachable!("not asked")),

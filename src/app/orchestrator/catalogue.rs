@@ -142,6 +142,7 @@ fn impersonation_mode(mode: ImpersonationMode) -> Option<ServerMode> {
         ImpersonationMode::Gemini => Some(ServerMode::Gemini),
         ImpersonationMode::Claude => Some(ServerMode::Claude),
         ImpersonationMode::Grok => Some(ServerMode::Grok),
+        ImpersonationMode::DeepSeek => Some(ServerMode::DeepSeek),
         ImpersonationMode::OpenRouter => Some(ServerMode::OpenRouter),
     }
 }
@@ -232,12 +233,17 @@ fn source(
                 attribution: false,
             })
         }
-        ServerMode::OpenAi | ServerMode::Gemini | ServerMode::Claude | ServerMode::Grok => {
+        ServerMode::OpenAi
+        | ServerMode::Gemini
+        | ServerMode::Claude
+        | ServerMode::Grok
+        | ServerMode::DeepSeek => {
             let provider = mode.cloud_provider().ok_or(CatalogueError::NotConfigured)?;
             let shape = match mode {
                 ServerMode::Gemini => CatalogueShape::Gemini,
                 ServerMode::Claude => CatalogueShape::Anthropic,
                 ServerMode::Grok => CatalogueShape::Xai,
+                ServerMode::DeepSeek => CatalogueShape::DeepSeek,
                 // Named rather than left to `_`: a provider added later must
                 // choose its shape here, not inherit this one in silence.
                 ServerMode::OpenAi => CatalogueShape::OpenAi,
@@ -359,6 +365,11 @@ mod tests {
                 "https://api.anthropic.com",
             ),
             (ServerMode::Grok, CatalogueShape::Xai, "https://api.x.ai/v1"),
+            (
+                ServerMode::DeepSeek,
+                CatalogueShape::DeepSeek,
+                "https://api.deepseek.com/v1",
+            ),
         ] {
             let req =
                 source(CHAT, mode, &external(None), None, Some("k".into())).expect("a request");
@@ -446,7 +457,8 @@ mod tests {
                 ServerMode::OpenAi,
                 ServerMode::Gemini,
                 ServerMode::Claude,
-                ServerMode::Grok
+                ServerMode::Grok,
+                ServerMode::DeepSeek
             ],
             "the modes that refuse to ask without a key"
         );

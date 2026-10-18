@@ -15,6 +15,7 @@
 //! | Gemini | `GET {base}/models` (native) | `supportedGenerationMethods` |
 //! | Anthropic | `GET {base}/v1/models` | the route itself: the Messages API has only chat models |
 //! | xAI | `GET {base}/language-models` | the route itself: the language half of a catalogue that also holds image and video models |
+//! | DeepSeek | `GET {base}/models` | the route itself: an API with chat models alone — and the window besides |
 //! | OpenRouter | `GET {base}/models/user`, `/models`, `/embeddings/models`, `…?output_modalities=speech`, `…?input_modalities=video` | `architecture.output_modalities` and `input_modalities` — and the window, the price, the parameters and the voices besides |
 //!
 //! Hence [`ModelRole::Unstated`], which is **not** "it does nothing": where the
@@ -55,6 +56,9 @@ pub enum CatalogueShape {
     Anthropic,
     /// `{"models": [{"id": …}]}` — xAI's language-only half of its catalogue.
     Xai,
+    /// `{"data": [{"id": …, "name": …, "context_window": …}]}` — DeepSeek's
+    /// API, whose every model chats (docs/research/deepseek-mode.md §2.1).
+    DeepSeek,
     /// The OpenRouter gateway's list of models that answer with **text**:
     /// `/models/user` with a key — narrowed by the account's own privacy and
     /// provider settings — and the public `/models` without one. The one cloud
@@ -270,6 +274,7 @@ impl CatalogueRequest {
             // `/v1/messages` itself), so the catalogue appends its own.
             CatalogueShape::Anthropic => format!("{base}/v1/models?limit={PAGE_SIZE}"),
             CatalogueShape::Xai => format!("{base}/language-models"),
+            CatalogueShape::DeepSeek => format!("{base}/models"),
             // The account's own list where there is an account to ask about.
             CatalogueShape::OpenRouter if self.key.is_some() => format!("{base}/models/user"),
             CatalogueShape::OpenRouter => format!("{base}/models"),
@@ -449,6 +454,27 @@ pub fn parse(shape: CatalogueShape, body: &str) -> Result<Vec<CatalogModel>, Cat
                 .collect();
             v.sort_by_key(|(created, _)| std::cmp::Reverse(*created));
             v.into_iter().map(|(_, m)| m).collect()
+        }
+        // In the endpoint's own order: DeepSeek publishes no creation date.
+        CatalogueShape::DeepSeek => {
+            let list: DeepSeekList = serde_json::from_str(body).map_err(unreadable)?;
+            list.data
+                .into_iter()
+                .filter(|e| !e.id.is_empty())
+                .map(|e| CatalogModel {
+                    id: e.id,
+                    display: e.name.filter(|n| !n.is_empty()),
+                    // The API has no embedding or speech route at all
+                    // (`/v1/embeddings` is a `404`), so the route is the claim.
+                    role: ModelRole::Chat,
+                    retiring: None,
+                    facts: ModelFacts {
+                        context_length: e.context_window.filter(|&n| n > 0),
+                        ..ModelFacts::default()
+                    },
+                    voices: Vec::new(),
+                })
+                .collect()
         }
         CatalogueShape::OpenRouter
         | CatalogueShape::OpenRouterEmbeddings
@@ -769,6 +795,29 @@ struct XaiEntry {
     created: Option<i64>,
 }
 
+#[derive(Deserialize)]
+struct DeepSeekList {
+    #[serde(default)]
+    data: Vec<DeepSeekEntry>,
+}
+
+/// One model of DeepSeek's list. `context_window` is its word for the window;
+/// a value that is not a `u32` is a key that says nothing, not a list that
+/// fails ([`lenient_u32`]).
+#[derive(Deserialize)]
+struct DeepSeekEntry {
+    id: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default, deserialize_with = "lenient_u32")]
+    context_window: Option<u32>,
+}
+
+fn lenient_u32<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u32>, D::Error> {
+    let value = serde_json::Value::deserialize(d)?;
+    Ok(value.as_u64().and_then(|n| u32::try_from(n).ok()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -932,6 +981,51 @@ mod tests {
         );
     }
 
+    /// docs/research/deepseek-mode.md §2.1 — the body as measured on 2026-10-19,
+    /// trimmed to the keys the picker could read.
+    const DEEPSEEK_BODY: &str = r#"{"object":"list","data":[
+        {"id":"deepseek-flash","object":"model","owned_by":"deepseek",
+         "name":"DeepSeek-V4.1-Flash","context_window":1048576,"max_output_tokens":393216,
+         "input_modalities":["text","image"],"output_modalities":["text"],
+         "effort":{"supported_levels":["low","high","max"],"default_level":"high"}},
+        {"id":"deepseek-v4-pro","object":"model","owned_by":"deepseek",
+         "name":"DeepSeek-V4-Pro","context_window":1048576,"max_output_tokens":393216,
+         "input_modalities":["text"],"output_modalities":["text"]}
+    ]}"#;
+
+    #[test]
+    fn deepseek_lists_chat_models_with_their_names_and_window() {
+        let models = parse(CatalogueShape::DeepSeek, DEEPSEEK_BODY).expect("a catalogue");
+        assert_eq!(
+            models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            ["deepseek-flash", "deepseek-v4-pro"],
+            "the endpoint's own order: it publishes no date"
+        );
+        assert_eq!(models[0].display.as_deref(), Some("DeepSeek-V4.1-Flash"));
+        assert!(models.iter().all(|m| m.role == ModelRole::Chat));
+        assert!(
+            models
+                .iter()
+                .all(|m| m.facts.context_length == Some(1_048_576)),
+            "`context_window` is DeepSeek's word for the window"
+        );
+        assert!(
+            for_slot(models, ModelSlot::Embedder).is_empty(),
+            "DeepSeek has no embedding API, and the empty list says so"
+        );
+    }
+
+    /// A window that is not a number, or not a `u32`, is a key that says
+    /// nothing — the list still reads.
+    #[test]
+    fn a_deepseek_window_of_another_type_is_silence() {
+        let body = r#"{"data":[{"id":"a","context_window":"big"},
+            {"id":"b","context_window":99999999999},{"id":"c"},{"id":""}]}"#;
+        let models = parse(CatalogueShape::DeepSeek, body).expect("a catalogue");
+        assert_eq!(models.len(), 3, "an empty id is no model");
+        assert!(models.iter().all(|m| m.facts.context_length.is_none()));
+    }
+
     #[test]
     fn xai_reads_the_models_key_not_data() {
         let models = parse(CatalogueShape::Xai, XAI_BODY).expect("a catalogue");
@@ -989,6 +1083,10 @@ mod tests {
         assert_eq!(
             req(CatalogueShape::Xai).url(),
             "https://example.test/v1/language-models"
+        );
+        assert_eq!(
+            req(CatalogueShape::DeepSeek).url(),
+            "https://example.test/v1/models"
         );
         assert_eq!(
             CatalogueRequest {
@@ -1566,6 +1664,28 @@ mod live_smoke {
         assert!(
             models.iter().all(|m| !m.id.contains("imagine")),
             "the image and video models live under /models, which is why this route is asked"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires MINDFORK_DEEPSEEK_KEY (live DeepSeek API)"]
+    async fn the_deepseek_catalogue_e2e_live() {
+        let Ok(key) = std::env::var("MINDFORK_DEEPSEEK_KEY") else {
+            eprintln!("skip: MINDFORK_DEEPSEEK_KEY not set");
+            return;
+        };
+        let models = fetched(
+            CatalogueShape::DeepSeek,
+            "https://api.deepseek.com/v1",
+            Some(key),
+        )
+        .await;
+        report("deepseek", &models);
+        assert!(!models.is_empty());
+        assert!(models.iter().all(|m| m.role == ModelRole::Chat));
+        assert!(
+            models.iter().all(|m| m.facts.context_length.is_some()),
+            "every entry publishes its window"
         );
     }
 

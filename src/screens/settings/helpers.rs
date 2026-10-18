@@ -1184,6 +1184,7 @@ pub(super) fn mode_label(m: ServerMode) -> String {
         ServerMode::Gemini => "gemini".into(),
         ServerMode::Claude => "claude".into(),
         ServerMode::Grok => "grok".into(),
+        ServerMode::DeepSeek => "deepseek".into(),
         ServerMode::OpenRouter => "openrouter".into(),
     }
 }
@@ -1207,6 +1208,7 @@ pub(super) fn imp_mode_label(m: ImpersonationMode) -> String {
         ImpersonationMode::Gemini => "gemini".into(),
         ImpersonationMode::Claude => "claude".into(),
         ImpersonationMode::Grok => "grok".into(),
+        ImpersonationMode::DeepSeek => "deepseek".into(),
         ImpersonationMode::OpenRouter => "openrouter".into(),
     }
 }
@@ -1428,11 +1430,11 @@ pub(super) fn field_validation_error(id: FieldId, text: &str) -> Option<&'static
 /// The order of engine-mode options — for the Choice popup and for
 /// `cycle_mode`, which reads this list. The same order as
 /// [`ServerMode::ALL`], which a test pins.
-pub(super) const SERVER_MODES: [ServerMode; 7] = ServerMode::ALL;
+pub(super) const SERVER_MODES: [ServerMode; 8] = ServerMode::ALL;
 
 /// The order of impersonation-mode options — for the popup and for
 /// `cycle_imp_mode`.
-pub(super) const IMP_MODES: [ImpersonationMode; 8] = [
+pub(super) const IMP_MODES: [ImpersonationMode; 9] = [
     ImpersonationMode::Shared,
     ImpersonationMode::Managed,
     ImpersonationMode::External,
@@ -1440,6 +1442,7 @@ pub(super) const IMP_MODES: [ImpersonationMode; 8] = [
     ImpersonationMode::Gemini,
     ImpersonationMode::Claude,
     ImpersonationMode::Grok,
+    ImpersonationMode::DeepSeek,
     ImpersonationMode::OpenRouter,
 ];
 
