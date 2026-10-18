@@ -17,7 +17,7 @@
 **A terminal AI chat with a memory and a self-model.** The assistant keeps notes
 about you, a model of itself that it revisits, and a knowledge base over your
 files — on a local Gemma or Qwen through llama.cpp, or on OpenAI, Anthropic,
-Gemini, Grok and OpenRouter in the cloud — and works with real tools behind
+Gemini, Grok, DeepSeek and OpenRouter in the cloud — and works with real tools behind
 switches you set. One native Rust binary for **Windows**, **Linux** and **macOS**
 on Apple Silicon (a preview), built on [ratatui](https://ratatui.rs).
 
@@ -122,8 +122,8 @@ a checkout with a recent stable Rust. On a rented GPU box or in a container, the
 
 - **Any engine, one contract.** A managed `llama-server` the app launches
   itself, any OpenAI-compatible server you already run (vLLM, LM Studio, Ollama,
-  a gateway like LiteLLM), the **OpenAI**, **Gemini**, **Claude** and
-  **Grok** clouds, or the **OpenRouter** gateway — one key in front of every
+  a gateway like LiteLLM), the **OpenAI**, **Gemini**, **Claude**, **Grok**
+  and **DeepSeek** clouds, or the **OpenRouter** gateway — one key in front of every
   vendor's models — each with its own settings, all configured at once, and
   switching loses nothing.
 - **Memory that persists.** A **self-model** the assistant maintains about
@@ -168,7 +168,7 @@ articles at [mindfork.io](https://mindfork.io/articles/).
 Three routes, and they can all stay configured side by side.
 
 **A cloud provider.** Open settings (`Ctrl+P`, or `/settings`), pick the mode —
-`openai` / `gemini` / `claude` / `grok` / `openrouter` — paste your API key right
+`openai` / `gemini` / `claude` / `grok` / `deepseek` / `openrouter` — paste your API key right
 there (stored encrypted and machine-bound, never shown back), and choose the
 **model**: `Enter` on that field asks the provider what it serves and offers the
 list, filtered as you type.

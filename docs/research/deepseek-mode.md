@@ -242,3 +242,51 @@ Stage 1, both models, `MINDFORK_DEEPSEEK_KEY`:
   `impersonation_after_compaction_still_writes_live` — the smokes
   deepseek-api.md §8 ran in `external`;
 - `external` at DeepSeek: `/continue` is refused, with the note.
+
+## 8. What was built, and the live run (2026-10-19) — stage 1
+
+Built as §4.1:
+
+- `ServerMode::DeepSeek`, `ImpersonationMode::DeepSeek`, `CloudProvider::DeepSeek`
+  (wire `deepseek`), a `deepseek` section in the three slots, the mode after
+  `grok` in the selector;
+- `OpenAiClient::for_deepseek`: `thinking_typed` set at construction, a muted turn
+  as `thinking: disabled` with no effort (`asks_reasoning_off`), no `/props`,
+  `/api/ps` or LM Studio route; `ModelEntry::deepseek_window` and
+  `takes_images_top_level`, read on this client only;
+- `CatalogueShape::DeepSeek` for the picker (role `Chat`, the name, the window);
+- `supported_sampling_fields(DeepSeek)`; the embedder unavailable;
+- `EngineSettings::supports_continuation` with `is_deepseek_host`, and the note
+  `ui.cmd.continue_unsupported_deepseek`;
+- `settings_to_v7` and `chat_to_v6`, stamps, with the golden
+  `settings_v6.json` (the `external`-at-DeepSeek setup) and
+  `chat_v5_external_deepseek.json`; the ledger's `ServerMode in Chats`;
+- for the smokes, `MINDFORK_ENGINE_DIALECT=deepseek` (the mode's client on the
+  `external` path) and `cached_tokens_deepseek_e2e_live` (the mode on the
+  production supervisor).
+
+Unit tests (4093 green): the client over a scripted server — every way a turn is
+muted is the switch off and no effort, a reasoning turn keeps `medium`/`xhigh`/
+`max` as chosen, the window and the images from the list with nothing else asked,
+and `external` on the same list reading nothing new; the host rule (four spellings
+of the host refuse, seven look-alikes and blanks do not); the catalogue shape;
+the supervisor's `Ready` and the unavailable embedder; the two stamps, their
+fixtures, the run over a 0.20.0 root, and a file in the new mode as a newer
+version to 0.20.0's readers.
+
+The live run, both models (every arm **GO**):
+
+| Smoke | `deepseek-flash` | `deepseek-v4-pro` |
+|---|---|---|
+| `the_mode_mutes_and_reasons_on_deepseek` | muted 0 reasoning; on 24 | muted 0; on 35 |
+| `the_mode_reads_the_window_and_the_images_on_deepseek` | 1 048 576, `Supported` | 1 048 576, `Unsupported` |
+| `the_deepseek_catalogue_e2e_live` | 2 entries, both `Chat`, named | — |
+| `cached_tokens_deepseek_e2e_live` (the mode, production supervisor) | `0%` → **97%** → `0%` | `0%` → **98%** → `0%` |
+| `auto_title_first_reply_e2e_live` | a three-word Russian title on why the sky is blue | the same, worded otherwise |
+| `followup_tool_e2e_live` | the follow-up in its own bubble | the same |
+| `compaction_preserves_a_planted_fact_e2e_live` | `ZARYA-8823` after the roll | the same |
+| `impersonation_after_compaction_still_writes_live` | written | written |
+| `a_gateways_catalogue_decides_whether_images_are_sent_live` | attached, no caveat | refused with the way out; a `python_exec` chart withheld, and the reply says it cannot view it |
+
+The external-path smokes ran on the mode's client (`MINDFORK_ENGINE_DIALECT`);
+`deepseek_live_tests`' two `external` arms stay green beside them.

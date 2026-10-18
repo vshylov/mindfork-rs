@@ -2572,6 +2572,17 @@ finish reason and the length of the thoughts with the failure, so the next one s
 which it is.
 — *the first Qwen dispatch since August*.
 
+**A deterministic fixture can pass for the very behaviour it is there to rule out.**
+`/continue` against DeepSeek's API was green: the smoke cuts a count from one to
+thirty and checks that the two turns' text equals what is stored. DeepSeek ignores the
+prefill and starts again — and a count started again repeats the cut byte for byte,
+which the echo filter takes for llama.cpp's echo and drops. Measured by hand on a
+count, the API looked fine; in prose the same restart doubles the reply. Before
+trusting a smoke that a server *continues*, ask what a server that *restarts* would
+send for that fixture; if it is the same bytes, the fixture cannot tell them apart —
+cut the reply somewhere a fresh start cannot reproduce.
+— *DeepSeek — a mode of its own, stage 1*.
+
 ## 10. CI and infrastructure
 
 

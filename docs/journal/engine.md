@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (105)
+## Entries (106)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -117,6 +117,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the prompt prefix misses on most turns — measured, F1 re-opened (done)
 - Post-M9: the cache share's leftovers — measured, logged, decided (done)
 - Post-M9: DeepSeek's API — its cache figure, and the thinking switch it refused (done)
+- Post-M9: DeepSeek — a mode of its own, stage 1 (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -7017,3 +7018,57 @@ F2 (a), F3 (a), each the recommendation).
 
 **Gates**: 4076 unit tests green, 274 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.
+
+### Post-M9: DeepSeek — a mode of its own, stage 1 (done)
+
+The roadmap's leftover (F1 (c) of deepseek-api.md). Measuring the question found two
+defects in the `external` setup the manual has named since 0.20.0, and they decided
+it ([deepseek-mode.md](../research/deepseek-mode.md); user's decision 2026-10-19:
+F1 (a), F2 (a), F3 (a), each the recommendation — the mode, in two stages).
+
+- **`/continue` doubled a reply.** On `/v1` DeepSeek ignores a trailing assistant
+  message: `"1, 2, 3, 4,"` came back as `"1, 2, …, 10"` whole, thinking on or off.
+  `external` claims `/continue` wherever the catalogue is silent, so the restart was
+  glued onto the cut — and the echo filter hides it only when the restart repeats the
+  cut byte for byte, which `continue_e2e_live`'s counting fixture does. `/beta` with
+  `prefix: true` continues for real (stage 2).
+- **`deepseek-v4-pro` drops an image in silence**: a `200`, `NONE` when asked whether
+  it sees one, "Brown" for a red square. Its list says `["text"]` at the entry's top
+  level, a key `external` does not read, so the image went and nothing was said.
+- **The request schema, by the wrong-type method** (DeepSeek deserializes strictly):
+  `temperature`, `top_p`, the penalties, `seed`, `stop`, `logprobs`, `n`,
+  `response_format`, `tool_choice` and the two reasoning fields are read; `top_k`,
+  `min_p`, the repetition penalty, `logit_bias`, `max_completion_tokens` are dropped.
+  `seed` held three words of twelve. DeepSeek's docs map the effort scale themselves
+  (`medium`→`high`, `xhigh`→`high`) and say that with tools `reasoning_content` must be
+  passed back or the API answers `400`; measured, it does not (two rounds and the next
+  turn, both models).
+- **Built**: `ServerMode`/`ImpersonationMode`/`CloudProvider::DeepSeek`;
+  `OpenAiClient::for_deepseek` — the switch typed from the first request, a muted turn
+  as the switch off with no effort (D3), every other effort as it came (D2), the window
+  and the images from `GET /models` in DeepSeek's words on this client alone (F3 of
+  deepseek-api.md stands), no llama.cpp/Ollama/LM Studio route; `CatalogueShape::DeepSeek`
+  for the picker; the sampling offer (D4: `seed` included); the embedder unavailable;
+  `EngineSettings::supports_continuation` refusing `external` at `api.deepseek.com`
+  (F2 (a), D5) with a note of its own; the mode refuses until stage 2.
+- **A stored value, two stamps** (D1): `settings.json` 6 → 7 and the chat files 5 → 6,
+  because every reply records its mode and 0.20.0 skips a chat holding an unknown one.
+  The ledger gained `ServerMode in Chats`, `openrouter` at 4 — the chats' schema in
+  0.13.0, which wrote it with no chat step.
+- **For the smokes**: `MINDFORK_ENGINE_DIALECT=deepseek` builds the mode's client on the
+  `external` path, and `cached_tokens_deepseek_e2e_live` runs the mode on the
+  production supervisor.
+- **Live GO, both models**: muted 0 reasoning and on 24/35; window 1 048 576 and vision
+  `Supported`/`Unsupported`; the cache `0%` → **97%**/**98%** → `0%` in the mode; the
+  auto-title, a follow-up tool round, the compaction roll (the planted fact back) and
+  impersonation after a roll on the mode's client; on pro an image refused with the way
+  out and a `python_exec` chart withheld, the reply saying it cannot view it.
+- **Docs**: spec §3.4, §6.4, §8, §8.1, §9.10, §11.6, §12.2; architecture §5, §6, §7;
+  ADR 0004; the manual; install §3.2 and §7.1; README; PRIVACY (and its Russian
+  translation, the site's page and the installer's RTFs — `api.deepseek.com`, and the
+  `GET /models` it is asked); the docker stand; the roadmap; CHANGELOG *Added*, *Fixed*,
+  *Data*.
+
+**Gates**: 4093 unit tests green, 278 `#[ignore]`; clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check`, `site_legal_pages
+--check`, `wizard_rtf --check`, `site_llms_txt --check` clean.

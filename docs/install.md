@@ -1067,7 +1067,7 @@ resolving to is the one that just went away.
 ### 3.2. Cloud providers and API keys
 
 Besides a local server, the engine can be a cloud: **OpenAI**, **Google Gemini**,
-**Claude** (Anthropic), **Grok** (xAI), or the **OpenRouter** gateway — one
+**Claude** (Anthropic), **Grok** (xAI), **DeepSeek**, or the **OpenRouter** gateway — one
 account in front of every vendor's models, described under its own heading
 below. The mode is chosen in settings
 (`Ctrl+P` → "Model/server" → "Mode" field), where the model name is also set.
@@ -1076,9 +1076,20 @@ list — type to filter it, `Ctrl+R` asks again, and the list's first row is the
 old way, typing a name by hand. What it shows is the provider's own catalogue,
 narrowed to chat models where the provider says which those are; so this page
 names no model, and cannot recommend one that has since been retired. (For xAI,
-keys are issued at `console.x.ai`.)
+keys are issued at `console.x.ai`; for DeepSeek, at `platform.deepseek.com`.)
 
-Neither Anthropic nor xAI offers embeddings, so under a `claude`/`grok` engine
+**DeepSeek** has a mode of its own, `deepseek`, rather than its URL typed into
+`external`. The mode reads what DeepSeek publishes about each model — the
+context window, and whether it takes images (`deepseek-v4-pro` does not, and
+answers an image it was sent as if there were none, so the app keeps it back
+and says so) — and speaks DeepSeek's own thinking switch from the first
+request. `/continue` is not available in it yet: DeepSeek's API answers a cut
+reply with a new one from the beginning. `external` at `https://api.deepseek.com`
+still works, refuses `/continue` for the same reason, and leaves the window
+and the images unknown.
+
+None of Anthropic, xAI and DeepSeek offers embeddings, so under a
+`claude`/`grok`/`deepseek` engine
 RAG needs a separate embedder (a local `llama-server --embeddings`, OpenAI,
 Gemini, or OpenRouter) — set it in the same section's "Embeddings" tab.
 
@@ -2178,20 +2189,28 @@ cargo test a_gateway_stops_reasoning_when_the_switch_is_off        -- --ignored 
 cargo test the_switch_off_completes_on_an_endpoint_that_must_reason -- --ignored --nocapture
 ```
 
-**DeepSeek's own API** is an `external` endpoint with a key. It refuses the
-thinking switch as llama.cpp's boolean, and the client learns its spelling from
-that refusal ([docs/research/deepseek-api.md](research/deepseek-api.md)). Its own
-smokes read `MINDFORK_DEEPSEEK_KEY`; the orchestrator's take the usual three:
+**DeepSeek's own API** has a mode of its own and is an `external` endpoint with
+a key as well ([docs/research/deepseek-mode.md](research/deepseek-mode.md),
+[docs/research/deepseek-api.md](research/deepseek-api.md)). Its own smokes read
+`MINDFORK_DEEPSEEK_KEY` and cover both clients; the mode's whole road, on the
+production supervisor, is the cache arm; the orchestrator's take the usual three,
+and `MINDFORK_ENGINE_DIALECT=deepseek` builds the client the mode builds rather
+than `external`'s:
 
 ```powershell
 $env:MINDFORK_DEEPSEEK_KEY = $env:DEEPSEEK_API_KEY
-cargo test deepseek_live_tests -- --ignored --nocapture --test-threads=1
+cargo test deepseek_live_tests              -- --ignored --nocapture --test-threads=1
+cargo test the_deepseek_catalogue_e2e_live  -- --ignored --nocapture
+cargo test cached_tokens_deepseek_e2e_live  -- --ignored --nocapture
 
-$env:MINDFORK_ENGINE_URL   = "https://api.deepseek.com/v1"
-$env:MINDFORK_ENGINE_KEY   = $env:DEEPSEEK_API_KEY
-$env:MINDFORK_ENGINE_MODEL = "deepseek-flash"      # or deepseek-v4-pro
+$env:MINDFORK_ENGINE_URL     = "https://api.deepseek.com/v1"
+$env:MINDFORK_ENGINE_KEY     = $env:DEEPSEEK_API_KEY
+$env:MINDFORK_ENGINE_MODEL   = "deepseek-flash"      # or deepseek-v4-pro
+$env:MINDFORK_ENGINE_DIALECT = "deepseek"            # unset: external's client
 cargo test cached_tokens_e2e_live         -- --ignored --nocapture
 cargo test auto_title_first_reply_e2e_live -- --ignored --nocapture
+$env:MINDFORK_LIVE_VISION_EXPECT = "supported"       # "unsupported" on deepseek-v4-pro
+cargo test a_gateways_catalogue_decides_whether_images_are_sent_live -- --ignored --nocapture
 ```
 
 **Do not run the whole `--ignored` set against a paid gateway.** It is ~235

@@ -1615,11 +1615,14 @@ Details:
   catalogued)` —
   managed/external and Gemini unconditionally, Anthropic by an
   allowlist-by-version over the model id (≤4.5 continues, 4.6+ rejects,
-  unparseable refuses), OpenAI/Grok never; a **gateway** is answered by the
+  unparseable refuses), OpenAI/Grok/DeepSeek never; a **gateway** is answered by the
   slug's vendor against that same table (`gateway_model_continues`: Anthropic
   ≤4.5 and Gemini continue, everything else refuses) — `external` once its
   catalogue has answered for the model, `openrouter` always, since that mode is
-  the gateway by name; the Anthropic wire additionally
+  the gateway by name. The orchestrator asks it through
+  `EngineSettings::supports_continuation`, which answers `false` for `external`
+  at DeepSeek's host (`is_deepseek_host`): that API restarts a prefill with a
+  `200` (docs/research/deepseek-mode.md §1). The Anthropic wire additionally
   drops the thinking block and right-trims the trailing prefill on a
   continuation request. `finalize_message` records the end state
   (`MessageFinish`) that makes the eligibility readable; the turn carries a
@@ -1652,7 +1655,8 @@ spec §6.8. **`embed_policy`** is the embedder's counterpart of `retry`: the two
 ([ADR 0004](decisions/0004-engine-contract-multi-provider.md)): **`contract`**
 (provider-agnostic traits and types), **`openai`** (two protocols in the
 family: `client`+`wire` — Chat Completions for local/external `llama-server`/
-a proxy, **for the xAI Grok cloud and for the OpenRouter gateway**; `responses`
+a proxy, **for the xAI Grok cloud, for DeepSeek's API and for the OpenRouter
+gateway**; `responses`
 — the Responses API for the OpenAI cloud), **`gemini`** (native `generateContent` for the Google Gemini
 cloud), **`anthropic`** (Claude, Messages API), **`managed`** (launching a child
 `llama-server`).
@@ -1717,8 +1721,8 @@ classDiagram
 ```
 
 The provider is picked in settings via a single mode selector (`managed`/
-`external`/`openai`/`gemini`/`claude`/`grok`/`openrouter` — `ServerMode::ALL`,
-the one list the settings popup and `←/→` both read; five of the seven are a
+`external`/`openai`/`gemini`/`claude`/`grok`/`deepseek`/`openrouter` — `ServerMode::ALL`,
+the one list the settings popup and `←/→` both read; six of the eight are a
 `CloudProvider`); the API key is either **entered in
 settings** (stored encrypted with the machine key, `shared/secrets.rs` — see
 §12) or given as an **env-variable name** (fallback); the secret never lands on
@@ -1733,6 +1737,7 @@ between mode and backend/protocol:
 | **openai** | **`ResponsesClient`** | **Responses (`/v1/responses`)** | `max_tokens`+`thinking`+`reasoning_effort`+`verbosity` |
 | claude | `AnthropicClient` | Messages (`/v1/messages`) | `max_tokens`+`thinking`+`reasoning_effort` |
 | grok | `OpenAiClient` (`for_xai`) | Chat Completions | `temperature`/`top_p`/`max_tokens`/`seed`+`thinking`/`reasoning_effort` |
+| deepseek | `OpenAiClient` (`for_deepseek`) | Chat Completions | `temperature`/`top_p`/`max_tokens`/`seed`/penalties+`thinking`/`reasoning_effort` |
 | **openrouter** | **`OpenAiClient` (`for_openrouter`)** | **Chat Completions, the gateway's dialect** | `temperature`/`top_k`/`top_p`/`min_p`/`max_tokens`/`seed`/penalties/`repeat_penalty`+`thinking`/`reasoning_effort` — the ceiling, narrowed per model by the catalogue |
 
 **Chat Completions sampling** (`OpenAiClient`): for llama.cpp and xAI there is
@@ -1785,6 +1790,22 @@ without it). `supported_sampling_fields(Grok)`
 = `temperature`/`top_p`/`max_tokens`/`seed` + reasoning: the penalties are a hard
 `400` there and `top_k`/`min_p` are dropped silently. See
 docs/research/grok-xai-provider.md.
+
+**DeepSeek's API** (`deepseek`) is the same shape: a plain `OpenAiClient` with
+key + model + `for_deepseek` (docs/research/deepseek-mode.md §4.1). What the
+builder sets: the thinking switch is `{"type": …}` from the first request (the
+`thinking_typed` memo `external` learns from a `422`, set at construction); a
+turn that asks for reasoning to be off is sent `thinking: disabled` and no
+effort; every other effort goes as it came, since DeepSeek maps the scale onto
+its three listed depths itself; the window (`context_window`) and the image
+input (a top-level `input_modalities`) are read from the entry in
+`GET /models` by `ModelEntry::deepseek_window`/`takes_images_top_level`, on
+this client alone — so `external` at the same URL reads what it read, and does
+not become catalogued (deepseek-api.md, fork F3); `/props`, Ollama's and LM
+Studio's routes are never asked. With a window read the endpoint counts as
+catalogued, so a tool's images are re-homed into a user message, which
+`deepseek-flash` reads either way. The picker reads the same list
+(`CatalogueShape::DeepSeek`: role `Chat`, the display name, the window).
 
 The **OpenRouter gateway** (`openrouter`) is the second cloud on
 `OpenAiClient`, and the first that the client is **told** about rather than
@@ -2213,7 +2234,7 @@ crashing).
 | managed | `BatchedEmbedder { OpenAiClient }` | `Connecting`, then the `/health` probe |
 | openai, gemini | `BatchedEmbedder { RetryEmbedder { OpenAiClient } }` | `Ready` |
 | openrouter | `BatchedEmbedder { RetryEmbedder { OpenAiClient.for_openrouter } }` | `Connecting`, then the key check |
-| claude, grok; nothing configured; a launch that failed | `UnavailableEmbedder`, bare | `NotConfigured`, or `Disconnected` with the launch error |
+| claude, grok, deepseek; nothing configured; a launch that failed | `UnavailableEmbedder`, bare | `NotConfigured`, or `Disconnected` with the launch error |
 
 The cap is every embedder's; the retry is a cloud's alone — a server the user
 runs is up or it is down, and its probe and, for a managed one, the relaunch
@@ -2546,7 +2567,7 @@ Storage invariants:
 ### Schema versioning and migrations ([ADR 0006](decisions/0006-data-schema-versioning.md))
 
 Each artifact has its own schema version (per-artifact — they change at
-different rates; `settings.json` is at **6**, the chat files at **5**,
+different rates; `settings.json` is at **7**, the chat files at **6**,
 `profiles.json` at 1 — the steps are listed in spec §12.2). Ownership map:
 
 - **`shared/storage/schema.rs`** — a pure Value-level scaffold (no I/O):
@@ -2555,7 +2576,7 @@ different rates; `settings.json` is at **6**, the chat files at **5**,
   `detect` + a `steps` chain), the `Assessment` verdict (`UpToDate`/`Migrate`/
   `Downgrade`), a registry.
 - **`shared/storage/chat_steps.rs`** — the chat-file steps themselves
-  (`chat_to_v2` … `chat_to_v5`), kept out of the registry file because a step is a page of
+  (`chat_to_v2` … `chat_to_v6`), kept out of the registry file because a step is a page of
   logic with a golden fixture (`storage/fixtures/`), not a line in a table.
 - **`features/data_migration.rs`** — orchestration: file I/O, gates,
   pre-migration backup, control-parse. `run(paths, loc)` is called from
@@ -2659,7 +2680,18 @@ Invariants:
   file without the field, the whole chain from v1), and by the end-to-end
   `run_raises_a_self_model_cap_left_at_the_old_default`
   ([history/self-model-observations.md](history/self-model-observations.md)
-  §3.4, §6 B′).
+  §3.4, §6 B′);
+- **`settings_to_v7` and `chat_to_v6` are the `max` case once more**, for the
+  `deepseek` mode (research/deepseek-mode.md, D1): `ServerMode` is held by the
+  settings — every slot's mode — and by the chat files, in every reply's
+  `metadata.mode`, so one answer in the new mode is enough for 0.20.0 to skip
+  the file. The ledger now names `ServerMode` in the chat files too, with
+  `openrouter` at the 4 the chats had in 0.13.0, the release that first wrote
+  it with no chat step. Pinned by the golden `fixtures/settings_v6.json` (the
+  `external`-at-DeepSeek setup 0.20.0's manual names) and
+  `fixtures/chat_v5_external_deepseek.json`, by
+  `run_stamps_a_root_of_the_version_before_the_deepseek_mode`, and by
+  `a_file_holding_the_deepseek_mode_is_a_newer_version_to_the_previous_schema`.
 
 The SQLite branch (`db/mod.rs::migrate`, version-aware): `baseline_ddl`
 (`CREATE … IF NOT EXISTS`) runs **every time** — an additive mechanism for
@@ -4326,7 +4358,7 @@ Principles:
     `ImpersonationEngineSettings`/`EmbedSettings` carry `mode` + subsections
     `managed: ManagedSettings`, `external: ExternalSettings`, and one
     `CloudSettings` per cloud provider (`openai`/`gemini`/`claude`/`grok`/
-    `openrouter`, in `CloudProvider::ALL`'s order; for
+    `deepseek`/`openrouter`, in `CloudProvider::ALL`'s order; for
     embeddings' managed mode — `ManagedEmbedSettings`). Each mode has its
     own fields, so switching mode/provider doesn't lose the other's values.
     `cloud()`/`cloud_mut()` accessors return the active cloud substructure

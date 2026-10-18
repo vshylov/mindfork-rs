@@ -1,6 +1,6 @@
 # Privacy policy
 
-Effective **2026-09-29**. It covers three things that are easy to confuse: the
+Effective **2026-10-19**. It covers three things that are easy to confuse: the
 **mindfork application**, the website **mindfork.io**, and the project's
 presence on **GitHub**. They have very different answers, so they are kept
 apart below.
@@ -85,12 +85,14 @@ Where your conversation goes depends on the engine mode you chose:
 - **External** — the OpenAI-compatible URL you entered, and nowhere else.
 - **Cloud** — the provider you selected: `api.openai.com`,
   `generativelanguage.googleapis.com` (Google Gemini), `api.anthropic.com`,
-  `api.x.ai` (Grok), or a different base URL if you set one. Each processes your
-  data under its own policy —
+  `api.x.ai` (Grok), `api.deepseek.com` (DeepSeek), or a different base URL if
+  you set one. Each processes your data under its own policy —
   [OpenAI](https://openai.com/policies/privacy-policy),
   [Google](https://policies.google.com/privacy),
   [Anthropic](https://www.anthropic.com/legal/privacy),
-  [xAI](https://x.ai/legal/privacy-policy) — and their retention and
+  [xAI](https://x.ai/legal/privacy-policy),
+  [DeepSeek](https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html)
+  — and their retention and
   training-on-your-data rules are theirs, not ours. Read them.
 - **The OpenRouter gateway** — `openrouter.ai`, or a different base URL if you
   set one. A request sent through a gateway is processed by **two** parties: by
@@ -155,7 +157,9 @@ them on — reflection and the notes/self-model consolidation passes.
 `/props`, and `GET /models` for what it is running — the model's name, context
 window, image support and accepted parameters. The Grok cloud is asked the same
 `/props` and `/models`, with your key, when the engine is set up and when you
-attach an image. The OpenAI, Gemini and Anthropic clouds are not probed.
+attach an image. The DeepSeek cloud is asked `GET /models` alone, with your key,
+at the same two moments — for the model's context window and whether it takes
+images. The OpenAI, Gemini and Anthropic clouds are not probed.
 
 The OpenRouter gateway is asked two things, both with your key:
 

@@ -203,14 +203,18 @@ effort tiers — have all closed
   picking by the chat's opening, behind a probe; (e2) on no-go. **Built, probe
   GO**: the prefix holds on 8 of 8 follow-ups. Anthropic breakpoints and
   `prompt_cache_key` remain as above.
-- **DeepSeek's API — leftovers** ([deepseek-api.md](research/deepseek-api.md);
-  the cache share's last leftover closed 2026-10-18 — its figure needed no parser,
-  and measuring it found every request refused until the thinking switch was sent
-  as DeepSeek reads it) — **on demand**: the **window**, which DeepSeek publishes
-  as `context_window` and which waits until the catalogue's "answered" signal is
-  split from the gateway's behaviours (F3); **a `deepseek` mode of its own**, with
-  the key, the picker, and the window, image input and efforts from its list
-  (F1 (c)).
+- **DeepSeek — the mode of its own, stage 2 of 2** ([deepseek-mode.md](research/deepseek-mode.md);
+  user's decision 2026-10-19: F1 (a), F2 (a), F3 (a). Stage 1 built: the
+  `deepseek` mode, with the key, the picker, the window and the image input read
+  from DeepSeek's list, the thinking switch typed from the first request, and
+  `/continue` refused in the mode and in `external` at DeepSeek's host, where it
+  doubled a reply) — **next**: `/continue` on DeepSeek's beta prefix completion
+  (`/beta` + `prefix: true`, measured to continue, thinking on or off; §4.2).
+  **On demand**: `external`'s reading of `context_window`, which still waits
+  until the catalogue's "answered" signal is split from the gateway's behaviours
+  ([deepseek-api.md](research/deepseek-api.md) F3); passing `reasoning_content`
+  back across tool rounds, which DeepSeek's docs require and its API does not
+  enforce (deepseek-mode.md §2.5); the balance as a key check before `Ready`.
 - **History compression — leftovers** ([history-compression.md](research/history-compression.md),
   spec §6.7; the track is closed) — **deferred**: a **semantic index over the
   folded range** — sub-decision S11 chose the full-text index the app already
