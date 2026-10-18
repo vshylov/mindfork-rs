@@ -5373,7 +5373,22 @@ cannot starve what comes after it; unused room flows forward, so a short section
 makes the next one richer. Lists lose **whole items** rather than being cut
 mid-item and report how many were dropped ("… +N more"), because a trait cut in
 half reads as a different trait and the count tells the model it is seeing a
-part. The full picture is always one `get_self_model` away — that read
+part. **The observations come last and pay for the labels.** The budgets count
+content, not the block's header, the captions and the separators, so the
+observations' room is their share plus the carry less every label, their own
+header included, measured on the text as rendered. The block then fits
+`prompt_cap` without its last cut, by character, which stays as a backstop for a
+cap too small for the sections above. **The observations share their room**
+among the `narrative_in_prompt` picks by water-filling: a pick shorter than its
+share keeps its length, what it leaves goes to the longer ones, and each of those
+is cut to its share at a word boundary, ending in "…". An observation's
+beginning reads as its beginning, where half a trait reads as another trait.
+When a share would fall under 160 characters, fewer picks are shown and the
+marker counts the rest; the lead alone is cut to whatever room is left. On a
+mature profile at the default cap, all three picks now show in 139 of 139 chats,
+from 2, with 56% of their text, from 45%
+([docs/research/self-model-observations.md](docs/research/self-model-observations.md)
+§3.5, B0 + B (d)). The full picture is always one `get_self_model` away — that read
 (`render_full`) is deliberately untruncated. Before this, only the description
 was bounded and the rest was a queue: measured on a real profile, the description
 and goals consumed the entire budget and **neither the interlocutor model nor the

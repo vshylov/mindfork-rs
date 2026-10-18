@@ -24,6 +24,11 @@ split by subsystem.
   chosen by what the chat opened with, and stay the same while you talk. From
   the second turn on, the token counter reads `cache 94%`–`99%` where it read
   `cache 0%` (measured on a local Gemma 4).
+- **The assistant sees all the observations picked for a conversation.** On a
+  mature self-model the prompt held one of the three in most chats, because an
+  observation went in only whole. They now share the section's room, each shown
+  from its beginning and cut at a word if it must be, and the prompt's limit no
+  longer cuts the last one off mid-word.
 
 ### Data
 

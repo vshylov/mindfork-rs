@@ -3146,12 +3146,15 @@ prepares self-notes via `notes::self_notes_recent`; the render is no longer
 pure with respect to the narrative).
 
 - `render_for_prompt(cap, n, now, recent)` — **compact, truncated** (per
-  `prompt_cap`), active goals only, `n` recent observations. For **passive
+  `prompt_cap`), active goals only, `n` picked observations. For **passive
   injection** into the system prompt (saving context window). **Per-section
-  budget** (summary-as-snapshot, stage 3): the "About me" section is truncated
-  to **half** the limit (`truncate_chars_word` — on a word boundary) so a
-  bloated `summary` doesn't crowd goals/the interlocutor/observations out of
-  the injection; a final truncation of the whole block is a backstop.
+  budgets** (spec §17.4): shares of the cap (40/20/20/20) with unused room
+  carried forward; lists keep whole items (`fit_parts`). The observations come
+  last: their room is what the cap leaves of the text as rendered, so they pay
+  for every label, and `fit_observations` shares it among the picks by
+  water-filling (`water_fill`), each cut at a word boundary, fewer picks under
+  160 characters a share. A final character cut of the whole block
+  (`truncate_chars`) is a backstop that the observations never reach.
 - `render_full(now, recent)` — **untruncated**: goals with a short `#id` and
   status (+ recently closed ones), all observations with a **full** id
   (observations are notes; `note_revise`/`note_supersede` rewrites/supersedes
