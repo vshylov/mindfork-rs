@@ -155,7 +155,13 @@ async fn the_mode_mutes_and_reasons_on_deepseek() {
         assert!(client.thinking_learned(), "{model}: told, not learned");
         let muted = completed(&client, &model, "muted turn", muted()).await;
         assert_eq!(muted, 0, "{model}: the switch off must mean no reasoning");
-        let on = completed(&client, &model, "thinking turn", switched_on()).await;
+        // A greeting may be answered without a thought even with the switch on,
+        // so the turn that must reason is asked something worth thinking about.
+        let mut sum = switched_on();
+        sum.messages = vec![crate::shared::api::contract::ApiMessage::user(
+            "What is 17 multiplied by 23? Reply with the number alone.",
+        )];
+        let on = completed(&client, &model, "thinking turn", sum).await;
         assert!(on > 0, "{model}: the switch on must reason");
     }
 }
