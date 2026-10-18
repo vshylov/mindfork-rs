@@ -1,13 +1,18 @@
 # Prompt caching — research and decision points
 
-> Status: **research complete; implementation deferred** (user's decision,
-> 2026-08-08 — see [§5 F1](#f1-prompt-layout--the-one-that-decides-whether-anything-else-is-worth-doing)).
-> The measurements stand and the decision points are recorded; nothing is being
-> built on them for now. Roadmap: §Context and tokens.
+> Status: **F1 re-opened and decided** (2026-10-18). The 2026-08-08 deferral
+> rested on §2.1 — that the price of the layout was mostly not being paid. It is
+> paid on most turns, and has been since that evening: §2.2 names the block,
+> measures how often and what it costs, and
+> [§5 F1 revisited](#f1-revisited-2026-10-18) lays
+> the options out again. User's decision: (e1), picking observations by the chat's
+> opening, behind an MVP probe, with (e2) on no-go. Roadmap: §Context and tokens.
 > Adjacent: [history-compression.md](history-compression.md) §2.3, spec
 > [§6.6](../../spec.md) (KV cache and prefix caching),
-> [ADR 0004](../decisions/0004-engine-contract-multi-provider.md).
-> Measurements taken 2026-08-08 against live providers and a live `llama-server`.
+> [ADR 0004](../decisions/0004-engine-contract-multi-provider.md),
+> [cached-tokens.md](cached-tokens.md) (the instrument that caught it).
+> Measurements taken 2026-08-08 and 2026-10-18 against live providers and a live
+> `llama-server`.
 
 ## 1. What this is about
 
@@ -72,6 +77,130 @@ queried every turn and the result is discarded by truncation, while the injected
 text tells the model that observations "surface by relevance". Per-section
 budgets (summary-as-snapshot, stage 3) reserve half the cap for "About you", but
 goals and interlocutor traits then take the entire remainder.
+
+**Superseded the same evening.** That adjacent defect was fixed within the hour
+(per-section budgets, below), and the fix removed the truncation this section's
+"stable by accident" rested on. §2.2 is what the prompt does since.
+
+### 2.2 2026-10-18: the masking is gone — most turns miss
+
+**Seen first by the new counter.** While the 0.19.0 release draft was checked on a
+copy of the dev data (`openai` mode, `gpt-6.1-sol`, interface `ru`), the cache
+share in the token counter ([cached-tokens.md](cached-tokens.md)) showed a new
+chat's first turn at prompt 9217, cached 0, written 9214 (cold, as expected), and
+its second turn two minutes later at prompt 9245, **cached 0, written 9242**. A
+fresh run asking the same first question read 9214 (99%) from the cache. So the
+first turn is deterministic across runs, and something early in the prompt changes
+between turn 1 and turn 2 of one chat.
+
+**The block, named.** The released binary was run on a copy of the dev data in
+`external` mode behind a logging proxy to a local `llama-server` (Gemma 4 26B-A4B,
+with the dev profile's own embedder, bge-m3), driven through two conversations with
+`tools/console_probe.py`'s `Session`, and the request bodies of consecutive turns
+were diffed. On every miss, `system` diverges at **character 8685** of about 10.7k
+(token 2425 of about 3000, in Gemma's tokenizer) — at the first item under "Recent
+observations"
+(`selfmodel.render.observations_recent`). That is the observations section of the
+self-model block, which `SelfModel::render_for_prompt` renders from
+`injection_recent`'s pick for the **latest user message**
+(`app/orchestrator/generation.rs`). Everything before it is byte-identical: the
+persona, the block's header, the summary and the interlocutor model. The 42 tool
+schemas are identical too, and so is every earlier message. The other candidates
+are ruled out by the same diff. There is no attachment in these chats and no
+other recall in `system`. No time-dependent text changed either: the age labels
+are day buckets.
+
+**Why it renders now.** Two things changed since §2.1, and the first is decisive.
+
+- **The per-section budgets** ([self-model-injection-budget.md](../history/self-model-injection-budget.md),
+  commit `15a903d1`, 2026-08-08 20:21). They landed under an hour after F1 was
+  deferred, and §2.1's own measurement had found the defect they fix. They give the
+  observations a floor of 20% of `prompt_cap` (`SHARE_OBSERVATIONS`), plus whatever
+  the earlier sections leave. When no item fits whole, `fit_parts` cuts the first
+  item rather than dropping the section. So **the top pick always renders**. That
+  holds on every profile with the injection on (`get_self_model` enabled) and at
+  least one observation, not only on this one.
+- **On the dev profile, the room grew as well.** The summary went from 1349 to 733
+  characters, no goal is active, and `prompt_cap` is 4000. The section rendered at
+  479–964 characters, which holds one observation, twice two. Their median length
+  is 482 characters, and a tenth of them run past 940.
+
+**The pick is mostly noise.** `self_notes_relevant` has no similarity floor. It
+takes the 20 notes nearest the latest user message, keeps the `@self` ones and
+returns the first three, and the section shows what fits, from the first. The
+profile has 106 observations, nearly all about the relationship and the
+self-model. A question about the KV cache is "near" whichever of them happens to
+score highest, and that one changes with the wording. Across six follow-ups on one topic, the top pick
+changed four times, among four unrelated observations.
+
+**How often.** Two conversations in one new chat each, on the released binary:
+
+| conversation | follow-up turns | prefix kept | missed |
+|---|---:|---:|---:|
+| four unrelated questions | 3 | 0 | **3** |
+| six questions on one topic (the KV cache) | 5 | 2¹ | **3** |
+
+¹ One of the two was kept only because the pick flipped back to turn 1's
+observation, while turn 1's prompt was still in a server slot. After turn 5 a
+background reflection ran (`auto_reflect_every` = 5); it read the self-model and
+wrote nothing, so turn 6's change is again the observation alone.
+
+**What a miss costs.** The captured bodies were replayed with each pair on a freshly
+started server, so no slot or RAM cache carried over. The second request went once
+as sent, and once with the first request's `system` — the "stable block"
+counterfactual.
+
+| stack | turn | as sent: reused | prefill | stable block: reused | prefill |
+|---|---|---:|---:|---:|---:|
+| llama.cpp, Gemma 4 26B-A4B Q4_1, RTX 4090 | T2 | 0 of 11283 | 1760 ms | 10956 of 11261 (97%) | 236 ms |
+| | T3 | 0 of 11279 | 1765 ms | 11283 of 11377 (99%) | 225 ms |
+| | T4 | 0 of 11615 | 1776 ms | 11279 of 11638 (97%) | 245 ms |
+| llama.cpp, Qwen 3.8 27B Q4_K_M, RTX 4090 | T3 | 0 of 12244 | 4881 ms | 12246 of 12351 (99%) | 344 ms |
+
+The same bodies went to OpenAI `gpt-6.1-sol` in the app's Responses shape
+(`instructions`, flat tools, `store: false`). Their history holds Gemma's replies;
+what is under test is the layout, which is the app's. One nonce per run heads the
+instructions, so no earlier run can answer (§3.2's methodology note).
+
+| request | input | cached | written |
+|---|---:|---:|---:|
+| T1 (cold) | 9347 | 0 | 9344 |
+| T2 as sent | 9690 | **0** | **9687** |
+| T2 with T1's `system` | 9658 | **9344** | 311 |
+| T3 as sent | 9677 | 0 | 9674 |
+
+That is the release check's observation, reproduced, next to what a stable block
+would have read. At 0.1× for a read and 1.25× for a write (§4), the missed turn
+bills about 12.1k input-token equivalents and the kept one about 1.3k. **A miss
+costs about 9× the prompt of a hit**, on every such turn. On llama.cpp it costs 7×
+(Gemma) to 14× (Qwen) the prefill time. Both ratios hold as the conversation
+grows, because the miss re-pays the whole of it.
+
+**The shared head is worth nothing.** 2425 tokens of `system` precede the
+divergence, and no stack reused any of them.
+
+- **llama.cpp** found them (`selected slot by LCP similarity, f_sim_best = 0.215`)
+  and still re-processed the whole prompt. Both models carry layers whose state
+  cannot be rewound to an arbitrary position: Gemma 4's sliding-window attention
+  and Qwen 3.8's recurrent layers. So the server resumes from a saved checkpoint,
+  not from the point of divergence. The 0 is measured; the mechanism is
+  llama.cpp's.
+- **OpenAI** reused none of the 2425-token head of `instructions` either. §3.2's
+  layout B, by contrast, was reused up to the message its block sat in. That fits
+  reuse resuming at message boundaries, and a change inside the one `instructions`
+  string leaves none before it.
+
+So **on these stacks, a change anywhere in `system` costs the whole prompt**, and
+ordering inside `system` buys nothing (F1 (b)).
+
+**Adjacent, for the self-model track.** Of `narrative_in_prompt` = 3 observations,
+the section fits one, at most two, on this profile. It is also headed "Recent
+observations" while its content is a relevance pick.
+
+**Method, in case it is repeated.** The proxy saved every request body and the
+final `usage`/`timings`. The driver pasted each question and waited for the proxy
+to go quiet. Replays sent the body with `max_tokens: 1` (the prompt is unchanged).
+None of it is committed; each piece is a page of Python around `console_probe`.
 
 ## 3. Measurements
 
@@ -214,6 +343,7 @@ So the 2026-07-03 decision **stands**: the injection stays in `system`, and
 losing prefix reuse when it changes remains the accepted price. What this
 research adds is that the price is now known — §3 — rather than assumed, and
 that today it is mostly **not being paid**, for the accidental reason in §2.1.
+(No longer true from the same evening: see §2.2 and F1 revisited below.)
 
 If this is ever revisited, the promising direction is **(e)**, not (c): it
 removes the volatility instead of relocating it, so the prompt the model reads
@@ -221,6 +351,72 @@ is unchanged and the objection above does not apply. What it costs is the
 per-turn relevance selection, which §2.1 measured as inert on the real profile
 anyway. It would need its own measurement of whether a stabler selection is
 worth less to the model than a per-turn one.
+
+### F1 revisited (2026-10-18)
+
+The 2026-08-08 decision rested on §2.1's finding that the price "is mostly not
+being paid". §2.2 measured the opposite: it is paid on most turns, and has been
+since the evening of that decision. A paid turn costs about 9× the prompt of a kept
+one on OpenAI 6.1, and 7–14× the prefill on the local stacks. The objection to (c)
+and (d) is unchanged, because it was about the block's status and not its cost;
+so are their numbers. What changed is the case for (a), (b) and (e). One option is
+also considered here for the first time, as (f).
+
+- **(a) Leave as is.** This now means a full miss on every turn whose top pick
+  changes: 6 of 8 measured follow-ups. It applies on every profile with the
+  injection on and at least one observation. On OpenAI 5.6+ each miss is a write of
+  the whole prompt at 1.25×; on llama.cpp it is a full re-prefill.
+- **(b) Reorder inside `system`.** Measured to buy nothing on all three stacks,
+  because a change anywhere in `system` costs the whole prompt (§2.2, "the shared
+  head"). Drop.
+- **(c) The observations into the new user turn.** Numbers as in §3; the objection
+  stands.
+- **(d) The whole block after the conversation.** As (c), and larger.
+- **(e) Stable content, same place.** The block keeps its position and its status,
+  so the prompt the model reads is shaped as today, and the objection does not
+  apply. The open question was what the per-turn pick is worth. §2.2 answers part
+  of it: on the dev profile it is mostly noise, since there is no floor and the top
+  observation flips among unrelated ones within one topic. Three ways to make it
+  stable:
+  - **(e1) Pick by the chat's opening, not its latest message.** The query becomes
+    the chat's first user message, and after a compaction, the summary (the roll
+    breaks the prefix anyway). That is deterministic from turn to turn with no
+    stored state. The pick then changes only when the observations themselves
+    change, through a new one written or a reflection, which changes the
+    self-model block anyway. One input of `injection_recent` changes. Its weak
+    spot is an opening like "Hi!", which picks something arbitrary, but at least
+    the same thing every turn.
+  - **(e2) Recency only.** The freshest `narrative_in_prompt` observations, with no
+    embedding call per turn. This matches the section's own header, "Recent
+    observations". The pick changes only when an observation is written. It gives
+    up relevance entirely.
+  - **(e3) Relevance above a floor.** A pick displaces the recency default only
+    above a similarity threshold. Per-turn relevance survives where it is real, but
+    the prefix still breaks on every topic shift, and the threshold must be tuned
+    per embedder.
+- **(f) A system message after the conversation.** This would move the
+  observations out of `system` without making them the user's words. It is not
+  portable. Measured: the chat template of Qwen 3.8, a gate model, refuses it
+  ("System message must be at the beginning"); Gemma 4's accepts it. Anthropic and
+  Gemini have no system role inside the conversation at all. Drop.
+
+**Recommendation: (e1)**, built behind an MVP probe with a go/no-go criterion:
+
+- **go**: §2.2's two conversations, re-run, keep the prefix on every follow-up turn
+  except those right after a self-model write (here, 8 of 8). And the picks for
+  real chat openings read as relevant, judged on a dozen of the owner's own chats.
+- **no-go → (e2)**: if picks anchored on the opening are as unrelated as today's,
+  relevance buys nothing for its per-turn embedding, and recency is the honest
+  selection.
+
+Why not (e2) outright: it removes the Tier-2 behaviour (relevance) where (e1) only
+stabilises it, and the probe is cheap. Why not (e3): it keeps the miss on every
+topic shift and adds a threshold to tune. None of these changes Anthropic, which
+caches nothing until F2 (b). `prompt_cache_key` (F2 (c)) improves routing and does
+not rescue a changed prefix.
+
+**User's decision (2026-10-18): (e1), behind the MVP probe above, falling back to
+(e2) on no-go.**
 
 ### F2. How far to go per provider
 
@@ -288,7 +484,7 @@ rather than proposed — nothing is being built now.
 2. **Reporting** (F3) — all four providers report reuse; the status-bar counter
    already exists. This is also the instrument: without it, a prefix broken by
    some future change is invisible. **Built 2026-10-17**:
-   [cached-tokens.md](cached-tokens.md).
+   [cached-tokens.md](cached-tokens.md). Its first release check found §2.2.
 3. **`prompt_cache_key`** (F2c) — one field on OpenAI, keyed by chat id.
 
 Each is independently verifiable with the probes in §3, which are cheap and
