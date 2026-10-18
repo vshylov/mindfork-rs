@@ -6969,7 +6969,8 @@ F7 (a), F8 (a), each the recommendation).
   service): **no figure**, on `/v1` or its own `/api/v0` — though it caches (a 4523-token
   repeat's first token in 0.023 s). `None`, no share there; the manual says so.
 - **Docs**: spec §11.1 (the kinds, the write off the bar), the manual (the gateway, xAI,
-  vLLM's flag, the log), the roadmap's leftovers and *Decided against*.
+  vLLM's flag, LM Studio, the log), the roadmap's leftovers and *Decided against*, and
+  CHANGELOG *Changed* (the log records every request's cache).
 
 **Gates**: 4072 unit tests green, 272 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.
