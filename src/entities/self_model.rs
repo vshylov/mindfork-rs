@@ -141,6 +141,12 @@ const SHARE_OBSERVATIONS: usize = 20;
 /// marker's length is localized, and the block's final truncation is the backstop.
 const MORE_MARKER_RESERVE: usize = 12;
 
+/// The least share of the observations' room a pick is cut to, its line's frame
+/// included: when sharing the room would leave a pick less, fewer picks are shown
+/// (docs/research/self-model-observations.md §3.5 (d); the median observation's
+/// first sentence is 186 characters).
+const MIN_OBSERVATION_SHARE: usize = 160;
+
 /// The result of resolving a goal reference by its "handle" (a short `#id` or a
 /// full UUID). See [`SelfModel::match_goal`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -500,7 +506,26 @@ impl SelfModel {
     /// Lists lose **whole items** rather than being cut mid-item, and say how many
     /// were dropped, so the model knows it is seeing a part and can read the rest
     /// with `get_self_model` — which renders untruncated ([`Self::render_full`]).
+    /// The observations come last and share their room among the picks instead
+    /// (see [`fit_observations`]); their room is what the cap leaves once every
+    /// label is paid for, so the block fits the cap without its last cut.
     pub fn render_for_prompt(
+        &self,
+        max_chars: usize,
+        narrative_in_prompt: usize,
+        now: DateTime<Utc>,
+        recent: &[NarrativeSegment],
+        loc: &Locale,
+    ) -> Option<String> {
+        self.prompt_block(max_chars, narrative_in_prompt, now, recent, loc)
+            // A backstop only: the observations' room counts every label, so this
+            // cut is reached only when the sections above them overflow a cap too
+            // small for their own labels.
+            .map(|block| truncate_chars(&block, max_chars))
+    }
+
+    /// [`Self::render_for_prompt`] before its last cut.
+    fn prompt_block(
         &self,
         max_chars: usize,
         narrative_in_prompt: usize,
@@ -550,35 +575,38 @@ impl SelfModel {
         }
 
         let budget = share(SHARE_USER) + carry;
-        carry = budget;
         if !self.user_model.is_empty() {
-            let used = render_user_model(&mut out, &self.user_model, budget, loc);
-            carry = budget.saturating_sub(used);
+            render_user_model(&mut out, &self.user_model, budget, loc);
         }
 
         if !recent.is_empty() && narrative_in_prompt > 0 {
-            let budget = share(SHARE_OBSERVATIONS) + carry;
-            let items: Vec<String> = recent
+            let header = loc.t("selfmodel.render.observations_recent");
+            // The budgets above count content, not the labels around it: the
+            // block's header, the captions, the separators. The observations pay
+            // for them and for their own header (B0,
+            // docs/research/self-model-observations.md §3.3), measured on the text
+            // as rendered. Their share plus the carry is what the four shares hold
+            // less the content above, so their room is what the shares hold less
+            // the text above. Measured this way, it also repays an earlier
+            // fallback cut that overshot its budget by its marker, which the carry
+            // does not.
+            let held: usize = [SHARE_SUMMARY, SHARE_GOALS, SHARE_USER, SHARE_OBSERVATIONS]
+                .into_iter()
+                .map(share)
+                .sum();
+            let room = held.saturating_sub(out.chars().count() + header.chars().count() + 1);
+            let picks: Vec<(String, &str)> = recent
                 .iter()
                 .take(narrative_in_prompt)
-                .map(|seg| {
-                    loc.tf(
-                        "selfmodel.item.obs_prompt",
-                        &[
-                            ("age", &age_label(seg.created_at, now, loc)),
-                            ("text", seg.text.trim()),
-                        ],
-                    )
-                })
+                .map(|seg| (age_label(seg.created_at, now, loc), seg.text.trim()))
                 .collect();
-            let (text, _) = fit_lines(&items, budget, loc);
-            out.push_str(loc.t("selfmodel.render.observations_recent"));
-            out.push('\n');
-            out.push_str(&text);
+            if let Some(text) = fit_observations(&picks, room, loc) {
+                out.push_str(header);
+                out.push('\n');
+                out.push_str(&text);
+            }
         }
-        // A safety net only: the budgets above count content, not the fixed labels
-        // around it, so the assembled block can still overshoot by a little.
-        Some(truncate_chars(out.trim_end(), max_chars))
+        Some(out.trim_end().to_string())
     }
 
     /// Resolves a goal reference by "handle": a full UUID or a short hex prefix
@@ -750,9 +778,9 @@ fn fit_items(items: &[String], budget: usize, loc: &Locale) -> (String, usize) {
     fit_parts(items, ", ", budget, loc)
 }
 
-/// [`fit_items`] for whole lines (goals, observations), newline-separated. The
-/// returned text ends with a newline when non-empty, matching the previous
-/// line-by-line rendering.
+/// [`fit_items`] for whole lines (goals), newline-separated. The returned text
+/// ends with a newline when non-empty, matching the previous line-by-line
+/// rendering.
 fn fit_lines(items: &[String], budget: usize, loc: &Locale) -> (String, usize) {
     let (text, used) = fit_parts(items, "\n", budget, loc);
     if text.is_empty() {
@@ -802,6 +830,90 @@ fn fit_parts(items: &[String], sep: &str, budget: usize, loc: &Locale) -> (Strin
         out.push_str(&more);
     }
     (out, used)
+}
+
+/// The observations' lines within `room` characters: each pick is `(age label,
+/// text)`, in the order picked. The text ends with a newline, as [`fit_lines`]'s
+/// does; `None` leaves the section out.
+///
+/// The room is shared among the picks by water-filling
+/// (docs/research/self-model-observations.md §3.5 (d)): a pick shorter than its
+/// share keeps its length, and what it leaves is shared among the longer ones,
+/// each cut to its share at a word boundary, ending in "…". This is not the
+/// whole-item rule of the lists (D3): a trait cut in half reads as another trait,
+/// while an observation's beginning reads as its beginning, and the whole text is
+/// one `get_self_model` away. When a share would fall under
+/// [`MIN_OBSERVATION_SHARE`], fewer picks are shown and the "… N more" marker
+/// counts the rest. The lead alone is cut to whatever room there is, since an
+/// absent section would read as "no observations", unless nothing of its text
+/// would fit.
+fn fit_observations(picks: &[(String, &str)], room: usize, loc: &Locale) -> Option<String> {
+    let line = |age: &str, text: &str| {
+        loc.tf("selfmodel.item.obs_prompt", &[("age", age), ("text", text)])
+    };
+    // What a line costs around its text ("- (3mo) "), and what it costs whole.
+    let frames: Vec<usize> = picks
+        .iter()
+        .map(|(age, _)| line(age, "").chars().count())
+        .collect();
+    let needs: Vec<usize> = picks
+        .iter()
+        .zip(&frames)
+        .map(|((_, text), frame)| frame + text.chars().count())
+        .collect();
+    let n = picks.len();
+    for k in (1..=n).rev() {
+        let more = (k < n).then(|| loc.tf("selfmodel.render.more", &[("n", &(n - k).to_string())]));
+        // The newlines between the lines, and the marker after the last.
+        let fixed = (k - 1) + more.as_ref().map_or(0, |m| m.chars().count());
+        let shares = water_fill(&needs[..k], room.saturating_sub(fixed));
+        let starved = (0..k).any(|i| shares[i] < needs[i] && shares[i] < MIN_OBSERVATION_SHARE);
+        if starved && k > 1 {
+            continue;
+        }
+        // Nothing but its frame and the ellipsis would fit.
+        if shares[0] < needs[0] && shares[0] < frames[0] + 2 {
+            return None;
+        }
+        let mut out = (0..k)
+            .map(|i| {
+                let (age, text) = &picks[i];
+                line(age, &truncate_chars_word(text, shares[i] - frames[i]))
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        if let Some(more) = more {
+            out.push_str(&more);
+        }
+        out.push('\n');
+        return Some(out);
+    }
+    None
+}
+
+/// Shares `room` among items needing `needs` characters: each round, an item that
+/// needs no more than an equal share of what is left gets what it needs, and when
+/// none does, the rest get the equal share. Never more than `room` in all.
+fn water_fill(needs: &[usize], room: usize) -> Vec<usize> {
+    let mut shares = vec![0; needs.len()];
+    let mut open: Vec<usize> = (0..needs.len()).collect();
+    let mut left = room;
+    while !open.is_empty() {
+        let per = left / open.len();
+        let (fit, short): (Vec<usize>, Vec<usize>) = open.iter().partition(|&&i| needs[i] <= per);
+        if fit.is_empty() {
+            for i in short {
+                shares[i] = per;
+            }
+            break;
+        }
+        for i in fit {
+            shares[i] = needs[i];
+            left -= needs[i];
+        }
+        open = short;
+    }
+    shares
 }
 
 impl UserModel {
@@ -1120,6 +1232,207 @@ mod tests {
                 "a partial item leaked into the list: {part:?}"
             );
         }
+    }
+
+    /// Words to exactly `len` characters, with word boundaries to cut at.
+    fn text_of(len: usize, word: &str) -> String {
+        let unit = format!("{word} ");
+        let mut s: String = unit
+            .repeat(len / unit.chars().count() + 1)
+            .chars()
+            .take(len)
+            .collect();
+        if s.ends_with(' ') {
+            s.pop();
+            s.push('х');
+        }
+        s
+    }
+
+    /// A model shaped like the dev profile the observations' room was measured
+    /// on (docs/research/self-model-observations.md §2): every section's length
+    /// as it is there.
+    fn dev_shaped_model() -> SelfModel {
+        let mut m = SelfModel::new(Uuid::new_v4());
+        m.summary = text_of(733, "описание");
+        let created = now() - chrono::Duration::days(60);
+        for len in [62, 118, 172, 200, 303] {
+            m.add_goal(text_of(len, "цель"));
+        }
+        for g in &mut m.goals {
+            g.created_at = created;
+        }
+        let traits = [
+            130, 85, 93, 87, 84, 140, 199, 137, 144, 114, 143, 63, 95, 88, 206, 145, 115, 97, 120,
+            182,
+        ];
+        let interests = [
+            46, 58, 60, 81, 76, 96, 68, 62, 107, 46, 72, 56, 56, 38, 57, 60, 130, 102, 38, 59, 87,
+            49,
+        ];
+        m.user_model.perceived_traits = traits.iter().map(|&n| text_of(n, "черта")).collect();
+        m.user_model.current_interests = interests.iter().map(|&n| text_of(n, "интерес")).collect();
+        m.user_model.relationship_dynamic = text_of(223, "динамика");
+        m
+    }
+
+    /// Three picks the way `injection_recent` hands them over: two relevant ones,
+    /// months old, then the freshest. Their lengths are the median, the p90 and
+    /// the p10 of the profile's observations.
+    fn dev_picks() -> Vec<NarrativeSegment> {
+        [
+            (526, "первое", 95),
+            (948, "второе", 130),
+            (307, "свежее", 13),
+        ]
+        .into_iter()
+        .map(|(len, word, days)| NarrativeSegment {
+            id: Uuid::new_v4(),
+            text: text_of(len, word),
+            created_at: now() - chrono::Duration::days(days),
+        })
+        .collect()
+    }
+
+    /// The observations section of a rendered block: its lines, the marker on
+    /// the last one included.
+    fn observation_lines<'a>(block: &'a str, l: &Locale) -> Vec<&'a str> {
+        block
+            .split_once(&format!(
+                "{}\n",
+                l.t("selfmodel.render.observations_recent")
+            ))
+            .map(|(_, obs)| obs.lines().collect())
+            .unwrap_or_default()
+    }
+
+    /// The regression the shared room is for: at the default cap, the whole-item
+    /// rule showed one of the three picks on a mature profile in two chats of
+    /// three, and the freshest in 4 of 139.
+    #[test]
+    fn a_mature_profile_shows_all_three_picks_at_the_default_cap() {
+        let m = dev_shaped_model();
+        let picks = dev_picks();
+        for lang in [crate::shared::i18n::Lang::Ru, crate::shared::i18n::Lang::En] {
+            let l = crate::shared::i18n::locale(lang);
+            let block = m.prompt_block(4000, 3, now(), &picks, l).unwrap();
+            let lines = observation_lines(&block, l);
+            assert_eq!(lines.len(), 3, "{lang:?}: {block}");
+            for (line, word) in lines.iter().zip(["первое", "второе", "свежее"]) {
+                assert!(line.contains(word), "{lang:?}: {line}");
+            }
+            assert!(block.chars().count() <= 4000, "{lang:?}");
+        }
+    }
+
+    /// B0: the observations pay for every label, so wherever they show, the block
+    /// fits the cap before its last cut, by character, at every cap. Under the
+    /// smallest caps the sections above them overflow with their own labels; the
+    /// cut is theirs there, as before, and the observations are left out.
+    #[test]
+    fn the_observations_never_reach_the_last_cut() {
+        let m = dev_shaped_model();
+        let picks = dev_picks();
+        for lang in [crate::shared::i18n::Lang::Ru, crate::shared::i18n::Lang::En] {
+            let l = crate::shared::i18n::locale(lang);
+            let header = l.t("selfmodel.render.observations_recent");
+            for cap in 100..=8000 {
+                let block = m.prompt_block(cap, 3, now(), &picks, l).unwrap();
+                let rendered = m.render_for_prompt(cap, 3, now(), &picks, l).unwrap();
+                assert!(rendered.chars().count() <= cap, "{lang:?} at {cap}");
+                if block.contains(header) {
+                    assert!(
+                        block.chars().count() <= cap,
+                        "{lang:?} at {cap}: {} chars",
+                        block.chars().count()
+                    );
+                } else {
+                    // On this shape they show from 638 (ru) and 720 (en).
+                    assert!(cap < 800, "{lang:?}: no observations at {cap}");
+                }
+            }
+        }
+    }
+
+    /// Water-filling: a pick shorter than its share keeps its length, and the
+    /// room it leaves goes to the longer ones, which get more than an equal share.
+    #[test]
+    fn a_short_pick_keeps_its_length() {
+        let m = SelfModel::new(Uuid::new_v4());
+        let mut picks = dev_picks();
+        picks[0].text = text_of(120, "короткое");
+        picks[1].text = text_of(900, "второе");
+        picks[2].text = text_of(900, "свежее");
+        let l = loc();
+        let block = m.prompt_block(1100, 3, now(), &picks, l).unwrap();
+        let lines = observation_lines(&block, l);
+        assert_eq!(lines.len(), 3, "{block}");
+        assert!(lines[0].ends_with(&picks[0].text), "whole: {}", lines[0]);
+        // The section's room: the cap less the block's header and its own.
+        let above = block.split_once(lines[0]).unwrap().0;
+        let room = 1100 - above.chars().count();
+        for line in &lines[1..] {
+            assert!(line.ends_with('…'), "cut: {line}");
+            assert!(
+                line.chars().count() > room / 3,
+                "more than an equal share of {room}: {line}"
+            );
+        }
+        assert!(block.chars().count() <= 1100);
+    }
+
+    /// When sharing the room would cut a pick under the floor, fewer are shown and
+    /// the marker counts the rest; the lead alone is cut to a room smaller still.
+    #[test]
+    fn fewer_picks_when_a_share_falls_under_the_floor() {
+        let m = SelfModel::new(Uuid::new_v4());
+        let picks: Vec<NarrativeSegment> = dev_picks()
+            .into_iter()
+            .map(|s| NarrativeSegment {
+                text: text_of(900, s.text.split(' ').next().unwrap()),
+                ..s
+            })
+            .collect();
+        let l = loc();
+        let lines_at = |cap: usize| {
+            let block = m.prompt_block(cap, 3, now(), &picks, l).unwrap();
+            assert!(block.chars().count() <= cap, "{cap}: {block}");
+            observation_lines(&block, l)
+                .into_iter()
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        };
+        // Three shares of at least the floor.
+        let three = lines_at(600);
+        assert_eq!(three.len(), 3, "{three:?}");
+        assert!(!three[2].contains("ещё"), "{three:?}");
+        // Three would fall under it, two do not.
+        let two = lines_at(420);
+        assert_eq!(two.len(), 2, "{two:?}");
+        assert!(two[1].ends_with(" … ещё 1"), "{two:?}");
+        for line in &two {
+            assert!(
+                line.chars().count() >= MIN_OBSERVATION_SHARE - " … ещё 1".chars().count(),
+                "{line}"
+            );
+        }
+        // Under one share: the lead alone, cut, the other two counted.
+        let one = lines_at(150);
+        assert_eq!(one.len(), 1, "{one:?}");
+        assert!(
+            one[0].contains("первое") && one[0].ends_with("… … ещё 2"),
+            "{one:?}"
+        );
+    }
+
+    #[test]
+    fn water_fill_shares_what_the_short_ones_leave() {
+        assert_eq!(water_fill(&[100, 600, 700], 1000), [100, 450, 450]);
+        assert_eq!(water_fill(&[100, 200, 300], 1000), [100, 200, 300]);
+        assert_eq!(water_fill(&[500, 500, 500], 900), [300, 300, 300]);
+        // A second round: once the shortest is placed, the next one fits too.
+        assert_eq!(water_fill(&[100, 380, 900], 1000), [100, 380, 520]);
+        assert_eq!(water_fill(&[400, 400], 0), [0, 0]);
     }
 
     /// A single item larger than the whole section still renders (cut), rather

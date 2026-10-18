@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (27)
+## Entries (28)
 
 - Post-M9: SelfModel MVP — agent "self-model" (probe, done)
 - Post-M9: SelfModel Tier 2-A — narrative insights + contradictions in prose (done)
@@ -39,6 +39,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the duplicate gate's hint — the repeat is already written (done)
 - Post-M9: an observation asked for is recorded — "instead of add_insight" undone (done)
 - Post-M9: observations are picked by the chat's opening (done)
+- Post-M9: the observations' room — the labels counted, the room shared (done)
 
 ### Post-M9: SelfModel MVP — agent "self-model" (probe, done)
 - **A trimmed-down Phase 1 from the idea bank** ([docs/self-model.md](../../docs/history/self-model.md)) per
@@ -1188,4 +1189,62 @@ decision, 2026-10-18: F1 (e1), behind an MVP probe, with (e2) recency on no-go.
   was mutation-checked: the query reversed to the latest message fails it.
 
 **Gates**: 4055 unit tests green, 271 `#[ignore]`; clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.
+
+### Post-M9: the observations' room — the labels counted, the room shared (done)
+
+The research is [self-model-observations.md](../research/self-model-observations.md)
+§3 and §6, fork B. User's decision, 2026-10-18: B0 + B (d), the labels charged to the
+observations, and decision D3 (lists lose whole items) reversed for observations only.
+This is the second of the three pull requests of §6; the first raises a stored
+`prompt_cap` of 1200 (storage.md), the third adds the floor and the header.
+
+- **The defect, measured on a copy of the dev data**: at the default cap 4000 a mature
+  profile showed one of its three picks in 92 of 139 chats and two in 45, and 45% of
+  the picks' text reached the prompt. The guaranteed freshest observation, appended
+  last, showed in 4. And in 56 chats the block's last cut, by character, landed inside
+  the observations, because no budget counted the labels around the content: the
+  block's header, the captions and the separators, about 112 characters there.
+- **B0**: the observations' room is what the four shares hold less the text above them
+  as rendered, less their own header. Where every section kept to its budget, that is
+  their share plus the carry less every label; measured on the text, it also repays an
+  earlier fallback cut that overshot its budget by its marker, which the carry does
+  not. The other sections render exactly as before. `render_for_prompt` keeps its last
+  cut as a backstop over `prompt_block`, the block before it.
+- **(d)**: `fit_observations` shares the room among the `narrative_in_prompt` picks by
+  water-filling (`water_fill`). A pick shorter than its share keeps its length and the
+  rest share what it leaves; each of those is cut to its share at a word boundary,
+  ending in "…". When a share, the line's frame included, would fall under 160
+  characters (`MIN_OBSERVATION_SHARE`), fewer picks are shown and the "… N more"
+  marker, now measured exactly, counts the rest. The lead alone is cut to whatever room
+  is left, since an absent section would read as "no observations", unless nothing of
+  its text would fit. Lists and goals keep whole items (`fit_parts`, D3).
+- **Verified with the real code on the real picks**: the 139 chats' (e1) picks of the
+  research, rendered by `prompt_block` in a throwaway test against the same copy. At
+  4000 all three picks show in **139 of 139** chats (from 2), with **56%** of their
+  text (from 45%), and the last cut is reached in **none** (from 56), in Russian and in
+  English. At 6000, 89% of the text. At 1200 the section holds one pick, cut, 6% of
+  the text, as the research predicted; nothing in this fork helps there, which is what
+  the settings step of the first pull request is for.
+- **Where the backstop still cuts**: on a model shaped like the dev profile, the
+  sections above the observations overflow with their own labels below a cap of 419
+  (Russian) or 510 (English), as they did before; the observations show from 638 and
+  720, the first caps whose room holds the marker and a line's frame with some of its
+  text.
+- **Tests**: all three picks at 4000 on a model with every section the length the dev
+  profile has, in both languages; the observations never push the block past the cap,
+  at every cap from 100 to 8000, in both languages; a short pick keeps its length
+  while the others get more than an equal share; fewer picks under the floor, with the
+  marker, and the lead alone in a room under one share; `water_fill` itself. No
+  existing test relied on whole observations.
+- **Mutation-checked**, nine mutants, all killed: the own header left out of the room,
+  an equal split instead of water-filling, the floor removed, the marker or the
+  newlines left out of the room, a starved lead dropped, the frame guard removed (an
+  overflow in debug), `water_fill` not spending what it gives, a cut that forgets the
+  line's frame.
+- **No live model run is required** (AGENTS.md §3), by the per-section budgets'
+  precedent: a pure rendering function in `entities`, its output fully determined by
+  its inputs; no engine, memory-write or tool path is touched.
+
+**Gates**: 4060 unit tests green, 271 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.
