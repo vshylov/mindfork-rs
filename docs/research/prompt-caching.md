@@ -1,12 +1,12 @@
 # Prompt caching — research and decision points
 
-> Status: **F1 re-opened, awaiting the owner's decision** (2026-10-18). The
-> 2026-08-08 deferral rested on §2.1 — that the price of the layout was mostly not
-> being paid. It is paid on most turns, and has been since that evening: §2.2
-> names the block, measures how often and what it costs, and
-> [§5 F1 revisited](#f1-revisited-2026-10-18--awaiting-the-owners-decision) lays
-> the options out again with a recommendation. Nothing is built until the owner
-> chooses. Roadmap: §Context and tokens.
+> Status: **F1 re-opened and decided** (2026-10-18). The 2026-08-08 deferral
+> rested on §2.1 — that the price of the layout was mostly not being paid. It is
+> paid on most turns, and has been since that evening: §2.2 names the block,
+> measures how often and what it costs, and
+> [§5 F1 revisited](#f1-revisited-2026-10-18) lays
+> the options out again. User's decision: (e1), picking observations by the chat's
+> opening, behind an MVP probe, with (e2) on no-go. Roadmap: §Context and tokens.
 > Adjacent: [history-compression.md](history-compression.md) §2.3, spec
 > [§6.6](../../spec.md) (KV cache and prefix caching),
 > [ADR 0004](../decisions/0004-engine-contract-multi-provider.md),
@@ -352,7 +352,7 @@ per-turn relevance selection, which §2.1 measured as inert on the real profile
 anyway. It would need its own measurement of whether a stabler selection is
 worth less to the model than a per-turn one.
 
-### F1 revisited (2026-10-18) — awaiting the owner's decision
+### F1 revisited (2026-10-18)
 
 The 2026-08-08 decision rested on §2.1's finding that the price "is mostly not
 being paid". §2.2 measured the opposite: it is paid on most turns, and has been
@@ -415,7 +415,8 @@ topic shift and adds a threshold to tune. None of these changes Anthropic, which
 caches nothing until F2 (b). `prompt_cache_key` (F2 (c)) improves routing and does
 not rescue a changed prefix.
 
-**User's decision: pending.**
+**User's decision (2026-10-18): (e1), behind the MVP probe above, falling back to
+(e2) on no-go.**
 
 ### F2. How far to go per provider
 

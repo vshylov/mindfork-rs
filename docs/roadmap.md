@@ -195,12 +195,12 @@ effort tiers — have all closed
   shows each request's cache share ([cached-tokens.md](research/cached-tokens.md)).
   The promising way to the rest is a **stable observation selection** rather
   than a relocation (§5 F1(e) there) — untested.
-  **Re-opened 2026-10-18, awaiting the owner's choice.** The counter's first
+  **Re-opened and decided 2026-10-18.** The counter's first
   release check found the prefix missed on most turns, and has since 2026-08-08:
   the section budgets made the top observation always render, and its per-turn
   pick changes (6 of 8 follow-ups). Each miss costs about 9× the prompt on OpenAI
-  6.1 and 7–14× the prefill locally (§2.2 there). The recommendation is F1 (e1),
-  picking by the chat's opening, behind a probe.
+  6.1 and 7–14× the prefill locally (§2.2 there). User's decision: F1 (e1),
+  picking by the chat's opening, behind a probe; (e2) on no-go.
 - **The cache share — leftovers** ([cached-tokens.md](research/cached-tokens.md);
   the track is closed) — **on demand**, each: the rows not measured — Ollama
   and LM Studio (whether `/v1` reports anything), vLLM (only with

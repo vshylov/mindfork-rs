@@ -6894,7 +6894,8 @@ The cache share in the token counter, built the day before, caught on its first
 release check what [prompt-caching.md](../research/prompt-caching.md) §2.1 had
 warned of. On `gpt-6.1-sol`, a chat's second turn read **0** of its ~9.2k-token
 prefix and wrote all of it again, where a fresh run of the first turn read 99%. A
-research task: no code and no layout change, since F1 is the owner's to decide.
+research task: no code and no layout change until the owner chose (F1 (e1), the
+same day; built in its own pull request).
 Everything is in §2.2 and "F1 revisited" there.
 
 - **The block**: the request bodies of consecutive turns were dumped through a
@@ -6920,7 +6921,7 @@ Everything is in §2.2 and "F1 revisited" there.
   reordering inside `system` (F1 (b)) buys nothing.
 - **A system message after the conversation** was tried as a new option: Qwen
   3.8's template refuses it, so it is not portable.
-- **Recommendation**: F1 (e1), picking observations by the chat's opening instead
+- **Recommendation, adopted (user, 2026-10-18)**: F1 (e1), picking observations by the chat's opening instead
   of its latest message, behind a probe; (e2), recency only, if the probe says
   no-go. Spec §6.6 and §17.4 now say what the prompt does; the roadmap item is
   re-opened.
