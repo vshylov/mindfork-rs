@@ -1,6 +1,7 @@
 # The self-model's observations — their room, a relevance floor, their header
 
-> Status: **research; forks open** (2026-10-18). Nothing is built. Three defects
+> Status: **forks decided** (2026-10-18; §6): B0 + B (d), B′ (b1), F (b), H (c).
+> Nothing is built yet; the build is three pull requests (§6). Three defects
 > that [prompt-caching.md](prompt-caching.md) §2.2 recorded for the self-model
 > track ("Adjacent, for the self-model track") are measured here and laid out as
 > forks B, F and H (§6). Two constraints frame every option. The pick stays
@@ -366,7 +367,10 @@ exist to protect. Against (c): a fixed cap wastes the room a young profile has
 ### B′. Installations still at 1200
 
 - **(a)** Leave them (D5).
-- **(b)** A schema step that raises a stored 1200 to 4000.
+- **(b)** A schema step that raises a stored 1200 to 4000. Either **(b1)** exactly
+  1200, the old default, as `settings_to_v3` rewrote the old reply budget and
+  left a typed one alone; or **(b2)** every value under 4000, or a higher
+  minimum in `SelfModelParams::from_settings`.
 
 **Recommendation: (a).** §3.4 gives the correctness argument D5 lacked, since a
 mature profile at 1200 shows 7% of its pick and one trait. But a stored 1200
@@ -404,29 +408,58 @@ header is true of its content, including the freshest observation that the
 relevance arm carries last. Because F (b) decides per chat, the header is as
 stable as the pick.
 
-### If the recommendations are taken — the build
+### The build
 
-Two stages, two pull requests:
+Three pull requests. The first is independent of the other two; the third
+builds on the second, since both change `render_for_prompt`.
 
-1. **B0 + B (d)** in `render_for_prompt`, a pure rendering function in
+1. **B′ (b1)**, a storage change: `SETTINGS_SCHEMA` 5 → 6 and a step
+   `settings_to_v6` that rewrites a stored `self_model.prompt_cap` of exactly
+   1200 to 4000, both numbers frozen in the step as `settings_to_v3`'s are. A
+   golden fixture of v5, a test of the parsed outcome, an entry under the
+   CHANGELOG's **Data**, and the release checklist's run of the previous
+   binary on the new file, which must refuse it as a newer version's data.
+2. **B0 + B (d)** in `render_for_prompt`, a pure rendering function in
    `entities`. Tests: three picks shown on a shape like the measured one at
    4000; the block's last cut never reached across caps; a short pick keeps its
    length; fewer picks under 160 characters, with the marker; the existing
    observation tests moved off the whole-item rule. By the per-section budgets'
    precedent, no live model run is required; the self-model smokes are run as a
    check.
-2. **F (b) + H (c)**, with the candidate-pool change from §7.
+3. **F (b) + H (c)**, with the candidate-pool change from §7.
    `self_notes_relevant` returns its scores, `injection_recent` decides the arm,
    and `render_for_prompt` takes the arm's header. Tests: a sub-floor opening
    gets recency and its header; the floor is read through the similarity scale;
    the arm holds across turns (an extension of #782's two-turn test). Live:
-   prompt-caching.md §2.2's two conversations again, keeping `system` identical on every
-   follow-up as (e1) did on 8 of 8. Optionally, a probe for §4.3's open
+   prompt-caching.md §2.2's two conversations again, keeping `system`
+   identical on every follow-up as (e1) did on 8 of 8. Optionally, a probe for §4.3's open
    question: on a set of sub-floor openings, how often the reply drags in an
    injected observation, today's pick against recency. Go if recency is not
    worse.
 
-**User's decision:** pending.
+**User's decision (2026-10-18)**, fork by fork, after going through them one at
+a time:
+
+- **B: B0 + (d)**, the labels charged to the observations (§3.5). The
+  reversal of D3 for observations is accepted: three beginnings over one or
+  two whole observations.
+- **B′: (b), as (b1)**, against this document's recommendation of (a). The
+  owner's reason: for an application with this much to say about itself, 1200
+  is too little. Exactly the old default is rewritten, and any other stored
+  value stays, because a small cap is a real choice on a small local window
+  (Ollama's default is 4096 tokens). A 1200 that was chosen on purpose becomes
+  4000 too, the price `settings_to_v3` already paid for 2048.
+- **F: (b)**, the floor 0.50 **on the lead only**. Picks 2 and 3 of the
+  relevance arm need not clear it. In the 87 chats of that arm, the second and
+  third picks above the floor read R 25 / M 34 / U 71 and those below it
+  R 4 / M 9 / U 31, so a floor on them would trade 4 relevant and 9 moderate
+  picks for 31 unrelated ones.
+- **H: (c)**, with the texts above. In Russian the relevance arm says the
+  observations nearest the conversation's subject, and the latest; the recency
+  arm, the latest observations. The settings' description of
+  `narrative_in_prompt` says the same: the observations nearest the chat's
+  subject and the latest one, sharing the section's room, so that more of them
+  means each is shorter.
 
 ## 7. Adjacent, not forked
 
