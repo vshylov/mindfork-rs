@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (103)
+## Entries (104)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -115,6 +115,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the provider's cache share in the token counter (done)
 - Post-M9: `MINDFORK_MODEL` stands alone (done)
 - Post-M9: the prompt prefix misses on most turns — measured, F1 re-opened (done)
+- Post-M9: the cache share's leftovers — measured, logged, decided (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -6928,3 +6929,48 @@ Everything is in §2.2 and "F1 revisited" there.
 
 **Gates**: documentation only. `cyrillic_scan`, `link_check` and `doc_index_check`
 clean. No code changed, so the unit-test count stands.
+
+### Post-M9: the cache share's leftovers — measured, logged, decided (done)
+
+The cache-share track closed with seven items on the roadmap as *on demand*: four rows
+never measured (Ollama, LM Studio, vLLM, xAI), DeepSeek's own dialect, the muted turns'
+share, and the write figure on the bar. The owner asked to close as many as possible
+before the next release, with an xAI key, the gateway's key, LM Studio, Docker and a
+DeepSeek GGUF at hand. The probe of the track's §7 ran first; forks F6–F8 were written
+down and decided before anything was built
+([cached-tokens.md](../research/cached-tokens.md) §9; user's decision 2026-10-18: F6 (a),
+F7 (a), F8 (a), each the recommendation).
+
+- **Measured, no parser change needed**: xAI (`grok-4.7`, `4.5`, `4.3` — 98–99% on a
+  repeat, and a block of xAI's own, 128 to 1152 tokens, cached even on a cold request),
+  Ollama 0.35.1 in Docker (`prompt_tokens_details.cached_tokens`, its `timings` without
+  `cache_n`), the DeepSeek GGUF on llama.cpp b11719, and fifteen more gateway routes —
+  every one sends both keys, zeros included, and a hit can come and go on one route as
+  the gateway changes provider (Maverick, Kimi, Mistral Large, MiniMax).
+- **vLLM 0.31.0** (Docker, `Qwen/Qwen3-0.6B`): with `--enable-prompt-tokens-details` the
+  read is `cached_tokens` and the write `created_cache_tokens` — now read as the write
+  when the gateway's key is absent, as a field of its own so a server sending both still
+  parses; without the flag no details come, and the manual says so.
+- **F6 (a)**: `TokenUsage::log_round(kind)`, one `round usage` line per request after its
+  stream, called by the title, the roll, the impersonation, the page summary and the
+  background tool loop; the main turn's line gains `kind="turn"`. Driven through the
+  interface on Gemma 4 E4B (three turns, `/compact`, `Ctrl+U`): lines of kind `turn`,
+  `title`, `roll` and `impersonation`. The summary and the background loop were not
+  driven live.
+- **F7 (a)**: the write stays in the log; *Decided against* on the roadmap with the
+  reason — a billed write was measured only on OpenAI 5.6+.
+- **F8 (a)**: DeepSeek's `prompt_cache_hit_tokens` stays on demand — the gateway
+  normalises it and the GGUF speaks llama.cpp's fields, so only a DeepSeek key would
+  measure it.
+- **`cached_tokens_xai_e2e_live`**, the fifth cloud arm. **Live GO**: xAI `grok-4.5` 4% →
+  **98%** → 4%; vLLM 0% → **99%** → 0%; DeepSeek-R1-Distill-Qwen-32B on llama.cpp 0% →
+  **99%** → 0%.
+- **LM Studio 1.1.7** (started from the app by the owner, its CLI could not wake the
+  service): **no figure**, on `/v1` or its own `/api/v0` — though it caches (a 4523-token
+  repeat's first token in 0.023 s). `None`, no share there; the manual says so.
+- **Docs**: spec §11.1 (the kinds, the write off the bar), the manual (the gateway, xAI,
+  vLLM's flag, LM Studio, the log), the roadmap's leftovers and *Decided against*, and
+  CHANGELOG *Changed* (the log records every request's cache).
+
+**Gates**: 4072 unit tests green, 272 `#[ignore]`; clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.

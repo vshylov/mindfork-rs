@@ -967,6 +967,9 @@ pub(super) async fn collect_roll(
             ChatChunk::ThoughtsSignature(_) | ChatChunk::ToolCall(_) | ChatChunk::Served(_) => {}
         }
     }
+    if let Some(u) = &c.usage {
+        u.log_round("roll");
+    }
     if let Some(err) = failure {
         anyhow::bail!("{err}");
     }

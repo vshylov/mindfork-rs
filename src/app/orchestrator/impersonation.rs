@@ -356,6 +356,7 @@ pub(super) fn spawn_impersonation(
                 None => None,
             };
             let mut stream = backend.chat_stream(request, cancel.clone()).await?;
+            let mut usage = None;
             while let Some(chunk) = stream.next().await {
                 match chunk {
                     ChatChunk::Text(t) => {
@@ -390,6 +391,7 @@ pub(super) fn spawn_impersonation(
                             );
                             prefill = u.prefill;
                         }
+                        usage = Some(u);
                     }
                     ChatChunk::Thoughts(_)
                     | ChatChunk::ThoughtsSignature(_)
@@ -400,6 +402,9 @@ pub(super) fn spawn_impersonation(
                         break;
                     }
                 }
+            }
+            if let Some(u) = usage {
+                u.log_round("impersonation");
             }
             Ok::<(FinishReason, Option<crate::shared::api::contract::Prefill>), anyhow::Error>((
                 reason, prefill,

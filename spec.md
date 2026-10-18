@@ -2514,7 +2514,10 @@ Two main screens + overlays (modals):
   number — on a tool turn the latest round — arrives and is cleared with it, and a sub-agent's
   figure, like its prompt size, stays off the bar. Each round's prompt, cached and written
   figures go to the log, where a prefix broken on a turn's first round shows even when its later
-  rounds read the cache. Nothing of it is stored.
+  rounds read the cache — one `round usage` line per request, of kind `turn`, and of `title`,
+  `roll`, `impersonation`, `summary` or `background` for the muted requests the bar does not
+  describe (a broken prefix on a roll is the costliest miss there is). The write figure stays in
+  the log, off the bar (vLLM's `created_cache_tokens` read as one). Nothing of it is stored.
 - **Server state** in the status bar — compact **chips** (a glyph + a label) per
   server, since there can be several (chat / embeddings / impersonation). The glyph
   encodes the status: `●` ready (green), `◐` connecting (amber), `✕` no connection /

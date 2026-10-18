@@ -532,6 +532,9 @@ async fn read_round(mut stream: ChatStream) -> RoundOut {
             ChatChunk::Thoughts(_) | ChatChunk::ThoughtsSignature(_) | ChatChunk::Served(_) => {}
         }
     }
+    if let Some(u) = &usage {
+        u.log_round("background");
+    }
     (text, acc.finish(), reason, usage)
 }
 

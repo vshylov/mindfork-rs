@@ -203,13 +203,13 @@ effort tiers — have all closed
   picking by the chat's opening, behind a probe; (e2) on no-go. **Built, probe
   GO**: the prefix holds on 8 of 8 follow-ups. Anthropic breakpoints and
   `prompt_cache_key` remain as above.
-- **The cache share — leftovers** ([cached-tokens.md](research/cached-tokens.md);
-  the track is closed) — **on demand**, each: the rows not measured — Ollama
-  and LM Studio (whether `/v1` reports anything), vLLM (only with
-  `--enable-prompt-tokens-details`), xAI (documented, no key at hand); DeepSeek's
-  own `prompt_cache_hit_tokens`, which reads `None`; the share of the muted turns
-  (title, roll, impersonation, page summary), which nothing shows; the write
-  figure, carried and logged but not on the bar.
+- **The cache share — leftovers** ([cached-tokens.md](research/cached-tokens.md)
+  §9; closed 2026-10-18 but one: Ollama, LM Studio (which reports nothing), vLLM,
+  xAI and fifteen gateway routes measured, the muted turns logged, the write
+  figure [decided against](#decided-against) on the bar) — **on demand**:
+  DeepSeek's own `prompt_cache_hit_tokens`, spoken by DeepSeek's API alone — the
+  gateway normalises it and a DeepSeek GGUF speaks llama.cpp's fields, so only a
+  DeepSeek key would measure it.
 - **History compression — leftovers** ([history-compression.md](research/history-compression.md),
   spec §6.7; the track is closed) — **deferred**: a **semantic index over the
   folded range** — sub-decision S11 chose the full-text index the app already
@@ -617,6 +617,13 @@ effort tiers — have all closed
 Measured or reasoned through, and turned down. Each line says what would reopen
 it; re-proposing one without that repeats a day of work whose answer is written
 down.
+
+- **The cache write on the status bar** (2026-10-18, fork F7 of
+  [cached-tokens.md §9.3](research/cached-tokens.md)). `cache 0%` already says a
+  miss; a write that is billed was measured only on OpenAI's 5.6+ (every gateway
+  route wrote 0, xAI reports none, and vLLM's write is a local one that costs
+  nothing); and the bar sheds chips on a narrow window. The figure stays in the log's `round usage` line. Reopen if a
+  provider bills writes that the read share does not reveal.
 
 - **A semantic index over the attached project** (2026-08-21, fork F4 of the
   code workspace, [code-workspace.md §7.9](history/code-workspace.md)). A probe
