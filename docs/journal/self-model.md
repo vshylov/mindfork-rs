@@ -1246,5 +1246,5 @@ This is the second of the three pull requests of §6; the first raises a stored
   precedent: a pure rendering function in `entities`, its output fully determined by
   its inputs; no engine, memory-write or tool path is touched.
 
-**Gates**: 4060 unit tests green, 271 `#[ignore]`; clippy `-D warnings`, fmt,
+**Gates**: 4067 unit tests green, 271 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.
