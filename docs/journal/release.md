@@ -4840,3 +4840,64 @@ macos.md §3 and §12 point at the tag.
   measured per provider and why Anthropic reads `0%`; the quick start with the model alone;
   the zip update and that backups cross the versions; and that nothing in the files
   changes.
+- **The draft, checked before anyone else could see it** (§6 step 5).
+  - The owner merged 778 (`c5050732`) and 779 (`4f06c8bd`) and set `v0.19.0` on
+    `4f06c8bd`, which was `origin/main`.
+  - `release.yml` (run 39080496628) was green in all eight jobs in **13 min 14 s**
+    (0.18.3: 15 min 57 s). Windows took the longest at 11 min 59 s, then macOS 10 min
+    36 s, Linux 6 min 12 s, and the demo 3 min 51 s.
+  - It left a draft that was not a prerelease, with fifteen assets — the same set as
+    0.18.3's. Its notes were the `[0.19.0]` section, compared as text. The two files
+    downloaded, the Windows zip and the dark English GIF, hashed to their lines in
+    `sha256sums.txt`; the other twelve were compared by GitHub's asset digests only.
+- **The job's install steps: `passed=46 failed=0` and `passed=47 failed=0`**, and
+  `installed: mindfork 0.19.0 (expected: mindfork 0.19.0)`. **`install.sh` and all six
+  animation files are 0.18.3's, byte for byte** (the assets' digests): nothing the reel
+  draws changed, and its status line already read `tokens: 2134 (reasoning 28)` — the
+  scripted engine reports no cache figure, so the reel shows no share.
+- **The released Windows binary.** The zip's `mindfork.exe` says `mindfork 0.19.0`, its
+  `THIRD-PARTY-NOTICES.md` names `zip 9.0.5`, and its 48 entries are 0.18.3's archive's,
+  name for name.
+- **The release's subject, on the released binary.** A copy of the dev data root beside
+  the zip's `mindfork.exe` (273 MB, without the sandbox, the backups, the logs and the
+  dictionaries the archive brings), driven by `console_probe`'s `Session`: the Russian
+  interface, `gpt-6.1-sol` through OpenAI, a new chat, one-word questions answered
+  (`Paris`, `Rome`), exit 0, no `ERROR` line in the log. On a run whose first question
+  matched the previous run's, the bar read **`токены: 9222 (кэш 99%)`**, and the log <!-- cyrillic-ok -->
+  `prompt=9217 cached=Some(9214)`. The copy was deleted afterwards: it holds real chats.
+- **And the counter's first catch, on the release check itself.** Within one chat, the
+  second turn reused nothing: `prompt=9217 cached=0 written=9214`, then
+  `prompt=9245 cached=0 written=9242` — the whole prompt written again, at OpenAI's write
+  premium. A session started for it named the moving block: the self-model's
+  observations, picked per turn for the latest message, break the prefix at system
+  character 8685 on 6 of 8 follow-ups — prompt-caching.md §2.1's prediction, no longer
+  masked by truncation on this profile; F1 is re-opened there with a recommendation
+  (780, documentation only).
+- **The draft's dark English GIF**: 92 frames, 25.3 s; frames 41 and 64 show the table,
+  the `note_save` card, the flowchart drawn and the status line.
+- **Not run this time**: `console_probe`'s `first-frame`, `small-window`, `full-mode` and
+  `keys` on the zip's binary (0.18.3 ran them; nothing they cover changed), the
+  attestations (the files were deleted first), the macOS archive's inspection, the
+  released binaries on a Mac or Linux with a screen, and the installer and the packages
+  beyond what their jobs install.
+- **Published, and the numbers of it.**
+  - **Published at 00:26:31Z by the agent, at the owner's explicit request** — AGENTS.md
+    §6 leaves that step to the owner, and the owner said to take it. Immutable; 23 min
+    30 s after the draft appeared (00:03:01Z).
+  - `crates-io.yml` ran 00:26:33Z → 00:29:24Z. `mindfork 0.19.0` was on the registry at
+    00:29:18Z (4 525 048 bytes), **2 min 47 s** after the publication.
+  - `Site` started a second after `crates.io` completed and deployed at 00:29:59Z —
+    **3 min 28 s after the publication** (0.18.3: 3 min 41 s). The hold on the merge had
+    shown as before (run 39080443817): "Is this version out?" green, the build and the
+    deploy skipped.
+  - From outside:
+    - the post answers 200 at `/blog/mindfork-0-19-0/`;
+    - the home page's and the install page's structured data say
+      `"softwareVersion": "0.19.0"`;
+    - the blog's index, `/llms.txt`, the Atom feed and the sitemap list the post;
+    - `releases/latest` resolves to `v0.19.0`;
+    - `mindfork.io/demo/mindfork-demo-dark-en.gif` is the draft's, byte for byte.
+- **The package managers.** `aur.yml` built and checked `mindfork-rs-bin` 0.19.0 and
+  stopped at its notice, because there is no key. Scoop's bucket took 0.19.0 at
+  01:05:38Z, 39 min after the publication. At 01:06Z the tap's formula still named
+  0.18.3; its schedule (`23 */6`) next fires at 06:23Z. Not waited for.
