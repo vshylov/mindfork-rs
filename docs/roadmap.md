@@ -692,7 +692,7 @@ its area.
   picks, all three of which now show on a mature profile; a 0.50 floor on the
   lead, under which a chat takes the latest observations, with a header per arm.
   [self-model-observations.md](history/self-model-observations.md).
-- **The cache share in the token counter** — unreleased (2026-10-17): every
+- **The cache share in the token counter** — 0.19.0 (2026-10-18): every
   wire's cache read reaches the bar as `cache 99%`, a miss as `0%`; Gemini's
   omitted zero read as one, Anthropic's prompt summed whole; a probe first,
   then a live GO on every wire. [cached-tokens.md](research/cached-tokens.md).

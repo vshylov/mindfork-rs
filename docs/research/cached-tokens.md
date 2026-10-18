@@ -1,6 +1,13 @@
 # Cache hits in the token counter — `cached_tokens` from every wire
 
-Status: **built; live GO on every wire** (branch `feat/cached-tokens`, §8).
+Status: **built; live GO on every wire** (§8); merged as #773 and **released in
+0.19.0** (2026-10-18). The roadmap keeps it in its Closed list, and what was left
+out (§6) under "The cache share — leftovers".
+*After the release:* its first release check found the prefix missing on most
+turns — the accident §1 relies on had stopped holding on 2026-08-08 — and the
+stable observation selection §6 leaves out was then built, as F1 (e1) of
+[prompt-caching.md](prompt-caching.md) (the finding in §2.2, the build in §5,
+*F1 revisited*).
 The script read 0% → 98–99% → 0% (turn 1, turn 2, the control) on four arms:
 llama.cpp with Qwen 3.8 27B, llama.cpp with Gemma 4 31B, OpenAI and OpenRouter.
 Gemini and Anthropic reported their figure on every request: a miss each time,
@@ -9,7 +16,7 @@ decision, 2026-10-17: F1 (b), F2 (c), F3 (a), F4 (a), F5 (a) — each the
 recommendation (§5).* Stage 0, the probe (§7), ran on 2026-10-17 on OpenAI,
 Gemini and OpenRouter. Its results are in §3.1, and they settle the parser's
 open question: Gemini omits a zero. The
-roadmap item is *`cached_tokens` in the token counter* under §Context and
+roadmap item was *`cached_tokens` in the token counter* under §Context and
 tokens. The groundwork is [prompt-caching.md](prompt-caching.md): its §3 measured
 what a broken prefix costs on three providers, its fork F3 recommended this
 counter, and its §6 lists it as one of the three things still available while
@@ -28,7 +35,11 @@ none of it. Three things follow.
   `system`, and the whole conversation is reprocessed. llama.cpp went from 100%
   to 0% reuse on that edit, with 3.5× the prefill. On OpenAI 5.6+ and Anthropic a
   miss is worse than a lost discount: the rewrite is billed at 1.25×. Nothing on
-  screen and nothing in the log would say so.
+  screen and nothing in the log would say so. *Since measured otherwise
+  (2026-10-18):* the masking had stopped holding on 2026-08-08, when the section
+  budgets made the top observation always render, and the counter showed it on
+  its first release check — the second turn of a chat read nothing back
+  ([prompt-caching.md](prompt-caching.md) §2.2).
 - **The deferred caching work has no instrument.** Anthropic breakpoints,
   `prompt_cache_key` and the stable observation selection (prompt-caching.md §5
   F1(e), §6) can only be judged by the figure this track reads.
@@ -277,7 +288,9 @@ Anthropic honestly reads `cache 0%`.
 ## 6. Not in this track
 
 - **The request side**, per F5: breakpoints, `prompt_cache_key`, and the stable
-  observation selection (prompt-caching.md §5 F1(e)).
+  observation selection (prompt-caching.md §5 F1(e)). The last has been built
+  since, as F1 (e1) there (§5, *F1 revisited*): the prefix now holds on 8 of 8
+  follow-ups, read through this track's figure. Breakpoints and `prompt_cache_key` remain open.
 - **DeepSeek's dialect** (`prompt_cache_hit_tokens` / `_miss_tokens`). An
   external server that speaks it reads `None`. On demand.
 - **Money.** The gateway's `cost_nanos` is the only meter the app has, and it is
