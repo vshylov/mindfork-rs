@@ -4951,3 +4951,72 @@ macos.md §3 and §12 point at the tag.
   prefix broke, how the pick is anchored now and what that measured, the three changes
   to the observations' section, the log and DeepSeek, and exactly which setting the
   schema step changes.
+- **The draft, checked before anyone else could see it** (§6 step 5).
+  - The owner merged 791 (`36b72290`) and set `v0.20.0` on `36b72290`, which was
+    `origin/main`.
+  - `release.yml` (run 39164605392) was green in all eight jobs in **15 min 59 s**
+    (0.19.0: 13 min 14 s). Windows took the longest at 14 min 46 s, then macOS 10 min
+    25 s, Linux 8 min 53 s, and the demo 2 min 45 s.
+  - It left a draft that was not a prerelease, with fifteen assets — the same set as
+    0.19.0's. Its notes were the `[0.20.0]` section, compared as text. The owner
+    approved two downloads, the Windows zip and the dark English GIF; both hashed to
+    GitHub's digests of the assets. `sha256sums.txt` was not fetched this time, so the
+    other thirteen were compared by those digests only.
+- **The job's install steps: `passed=46 failed=0` and `passed=47 failed=0`**, and
+  `installed: mindfork 0.20.0 (expected: mindfork 0.20.0)`. **`install.sh` and all six
+  animation files are 0.19.0's, byte for byte** (the assets' digests): nothing the reel
+  draws changed.
+- **The released Windows binary.** The zip's `mindfork.exe` says `mindfork 0.20.0`, its
+  `THIRD-PARTY-NOTICES.md` names `zip 9.0.5`, and the archive has 48 entries, as
+  0.19.0's did. The names were not compared this time.
+- **The release's subject, on the released binary.** The data was a copy of the dev data
+  root beside the zip's `mindfork.exe`: 273 MB at `settings.json` schema 5 with a cap of
+  4000, without the sandbox, the backups, the logs, the CUDA cache and the dictionaries
+  the archive brings. `console_probe`'s `Session` drove the Russian interface,
+  `gpt-6.1-sol` through OpenAI, in a new chat with two questions (answered `Paris` and
+  `Rome`). The app exited 0, and the log has no `ERROR` line.
+  - **The migration** ran at the start. It wrote one `pre-migrate-*.zip` (encrypted,
+    as the root's backups are), the log names the step ("a self-model cap left at the
+    0.9.4 default rises to 4000"), and the settings came out at 6. Only
+    `schema_version` and `last_active_chat` differ from the original. The cap of 4000
+    is kept, since only exactly 1200 is raised.
+  - **The second turn read its prompt from the cache.** Turn 1 showed
+    `токены: 9192 (кэш 0%)`, logged as `prompt=9187 cached=Some(0) written=Some(9184)`. <!-- cyrillic-ok -->
+    Turn 2 showed **`токены: 9210 (кэш 99%)`**, logged as <!-- cyrillic-ok -->
+    **`prompt=9205 cached=Some(9184) written=Some(18)`**. On 0.19.0's own release
+    check, the same second turn had logged `cached=0 written=9242`. That is the
+    defect this release fixes, measured on the binary that ships the fix.
+  - **Back.** 0.19.0 ran on the migrated root through `mindfork import` with an empty
+    import file. The binary was 784's debug build from its tag. It refuses with
+    *"Data (settings.json) was created by a newer version of mindfork (schema 6,
+    supported 5)"* (printed in the root's Russian) and exit 1. `settings.json` was byte
+    for byte as before, and no backup was added.
+  - The copy was deleted afterwards: it holds real chats.
+- **The draft's dark English GIF**: 92 frames, 25.3 s; frame 64 shows the table, the
+  `llama-server` line and the thinking block.
+- **Not run this time**: `console_probe`'s `first-frame`, `small-window`, `full-mode` and
+  `keys` on the zip's binary (nothing they cover changed), the attestations, the macOS
+  archive's inspection, the archive's entry names against 0.19.0's, the released binaries
+  on a Mac or Linux with a screen, and the installer and the packages beyond what their
+  jobs install.
+- **Published, and the numbers of it.**
+  - **Published at 21:17:53Z by the agent, at the owner's explicit request** — AGENTS.md
+    §6 leaves that step to the owner, and the owner said to take it. The release is
+    immutable. It went out about 18 min 30 s after the draft appeared (20:59:24Z).
+  - `crates-io.yml` ran 21:17:54Z → 21:20:36Z. `mindfork 0.20.0` was on the registry at
+    21:20:29Z (4 543 354 bytes), **2 min 36 s** after the publication.
+  - `Site` started 2 s after `crates.io` completed and deployed at 21:21:15Z —
+    **3 min 22 s after the publication** (0.19.0: 3 min 28 s). The hold on the merge had
+    shown as before (run 39164529185): "Is this version out?" green, the build and the
+    deploy skipped.
+  - From outside:
+    - the post answers 200 at `/blog/mindfork-0-20-0/`;
+    - the home page's and the install page's structured data say
+      `"softwareVersion": "0.20.0"`;
+    - the blog's index, `/llms.txt`, the Atom feed and the sitemap list the post;
+    - `releases/latest` resolves to `v0.20.0`;
+    - `mindfork.io/demo/mindfork-demo-dark-en.gif` is the draft's, byte for byte.
+- **The package managers.** `aur.yml` built and checked `mindfork-rs-bin` 0.20.0 and
+  stopped at its notice, because there is no key. At 21:57Z, Scoop's bucket and the tap's
+  formula still named 0.19.0. The Excavator picks a release up within four hours, and
+  the tap's schedule (`23 */6`) next fires at 00:23Z. Neither was waited for.
