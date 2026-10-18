@@ -292,7 +292,9 @@ Anthropic honestly reads `cache 0%`.
   since, as F1 (e1) there (§5, *F1 revisited*): the prefix now holds on 8 of 8
   follow-ups, read through this track's figure. Breakpoints and `prompt_cache_key` remain open.
 - **DeepSeek's dialect** (`prompt_cache_hit_tokens` / `_miss_tokens`). An
-  external server that speaks it reads `None`. On demand.
+  external server that speaks it reads `None`. On demand. Measured since, with a
+  key: DeepSeek's API sends `prompt_tokens_details.cached_tokens` beside its pair,
+  so nothing new is parsed ([deepseek-api.md](deepseek-api.md) §2.2).
 - **Money.** The gateway's `cost_nanos` is the only meter the app has, and it is
   recorded but not shown ([openrouter-mode.md](openrouter-mode.md), F11).
 - **Muted turns** (title, roll, impersonation, page summary). They do not drive
@@ -520,6 +522,7 @@ routes cost $0.07 on the gateway's meter; the three Grok models about $0.09
 - **DeepSeek's own dialect** (`prompt_cache_hit_tokens` / `_miss_tokens`) is
   spoken by DeepSeek's API alone: the gateway normalises it away (above), and the
   GGUF on llama.cpp speaks llama.cpp's. Only a DeepSeek API key would measure it.
+  The owner set one the same day: [deepseek-api.md](deepseek-api.md).
 
 ### 9.2 What that settles
 
@@ -568,6 +571,10 @@ and Anthropic writes only when asked, which we do not.
   reaches it. *Recommended* unless a key is at hand.
 - (b) Parse it from DeepSeek's documentation, with unit tests and no live run.
 - (c) Parse it, and run it live with a DeepSeek API key.
+
+*Re-opened the same day with a key at hand, as (c):
+[deepseek-api.md](deepseek-api.md). The figure needed no parser; the requests
+needed DeepSeek's spelling of the thinking switch.*
 
 ### 9.4 What was built, and the live run
 

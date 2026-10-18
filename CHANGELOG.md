@@ -32,6 +32,13 @@ split by subsystem.
 
 ### Fixed
 
+- **DeepSeek's own API works in the `external` mode.** It refused every request
+  with a `422`, because the thinking switch went out in llama.cpp's spelling
+  (`true` or `false`) and DeepSeek reads it as an object. The first refusal now
+  teaches the app DeepSeek's spelling, and the request is sent again in it. The
+  switch keeps its meaning, so titles, history compression and impersonation do
+  not reason there. Its prompt cache shows on the status bar as any other
+  provider's does.
 - **A conversation is reused from turn to turn again.** The few observations the
   self-model brings into the prompt were chosen afresh for every new message,
   which changed the start of the prompt on most turns, so the provider read the

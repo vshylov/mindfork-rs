@@ -2178,6 +2178,22 @@ cargo test a_gateway_stops_reasoning_when_the_switch_is_off        -- --ignored 
 cargo test the_switch_off_completes_on_an_endpoint_that_must_reason -- --ignored --nocapture
 ```
 
+**DeepSeek's own API** is an `external` endpoint with a key. It refuses the
+thinking switch as llama.cpp's boolean, and the client learns its spelling from
+that refusal ([docs/research/deepseek-api.md](research/deepseek-api.md)). Its own
+smokes read `MINDFORK_DEEPSEEK_KEY`; the orchestrator's take the usual three:
+
+```powershell
+$env:MINDFORK_DEEPSEEK_KEY = $env:DEEPSEEK_API_KEY
+cargo test deepseek_live_tests -- --ignored --nocapture --test-threads=1
+
+$env:MINDFORK_ENGINE_URL   = "https://api.deepseek.com/v1"
+$env:MINDFORK_ENGINE_KEY   = $env:DEEPSEEK_API_KEY
+$env:MINDFORK_ENGINE_MODEL = "deepseek-flash"      # or deepseek-v4-pro
+cargo test cached_tokens_e2e_live         -- --ignored --nocapture
+cargo test auto_title_first_reply_e2e_live -- --ignored --nocapture
+```
+
 **Do not run the whole `--ignored` set against a paid gateway.** It is ~235
 smokes, 121 of them multi-round end-to-end conversations written for a local
 stack where a token costs nothing and a 20k-token ballast is free: against a

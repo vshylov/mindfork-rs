@@ -59,6 +59,11 @@ pub struct OpenAiClient {
     /// configured: nothing at construction time can know it
     /// (docs/research/openrouter-external.md §5, F2(a)).
     reasoning_off_refused: std::sync::atomic::AtomicBool,
+    /// Learned at runtime, as the memo above is: this server refused the thinking
+    /// switch as llama.cpp's boolean and took it as `{"type": …}`, so every
+    /// request is sent that way from now on — DeepSeek's API
+    /// ([`wire::refuses_boolean_thinking`], docs/research/deepseek-api.md §4).
+    thinking_typed: std::sync::atomic::AtomicBool,
     /// The endpoint's catalogue entry for the configured model, remembered once a
     /// fetch **succeeded** — an entry, or a list without the model — for the
     /// client's lifetime (a new engine gets a new client). A transport failure or a
@@ -130,6 +135,7 @@ impl OpenAiClient {
             xai: false,
             efforts: EffortMemo::default(),
             reasoning_off_refused: std::sync::atomic::AtomicBool::new(false),
+            thinking_typed: std::sync::atomic::AtomicBool::new(false),
             catalogue: tokio::sync::OnceCell::new(),
             gateway: None,
         }
@@ -201,6 +207,14 @@ impl OpenAiClient {
     #[cfg(test)]
     pub(super) fn learned(&self, wish: &str) -> Option<Option<&'static str>> {
         self.efforts.instead_of(wish)
+    }
+
+    /// Whether this client has learned to send the thinking switch as
+    /// `{"type": …}`. For the smokes, which must tell the spelling it settled on.
+    #[cfg(test)]
+    pub(super) fn thinking_learned(&self) -> bool {
+        self.thinking_typed
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Adds a Bearer header if a key is set — and, on a gateway that was told
@@ -590,9 +604,10 @@ impl OpenAiClient {
 
     /// The chat request as this endpoint reads it, sent — and asked once more
     /// without `reasoning_effort` where the server refuses that parameter
-    /// ([`EffortWire::answer`]). `Ok(None)` — the cancellation token fired
-    /// before a response arrived (the caller answers with a cancelled stream,
-    /// never an error).
+    /// ([`EffortWire::answer`]), or with the thinking switch as `{type}` where it
+    /// refuses the boolean ([`Self::send_typed_thinking`]). `Ok(None)` — the
+    /// cancellation token fired before a response arrived (the caller answers
+    /// with a cancelled stream, never an error).
     async fn send_chat(
         &self,
         req: &ChatRequest,
@@ -614,7 +629,52 @@ impl OpenAiClient {
                 body.reasoning = None;
             }
         }
-        effort::send_asking_again(self, &mut body, cancel).await
+        if self
+            .thinking_typed
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            body = body.with_typed_thinking();
+        }
+        match effort::send_asking_again(self, &mut body, cancel).await {
+            Err(err)
+                if matches!(body.thinking, Some(wire::WireThinking::Switch(_)))
+                    && wire::refuses_boolean_thinking(&err) =>
+            {
+                self.send_typed_thinking(body, &err, cancel).await
+            }
+            sent => sent,
+        }
+    }
+
+    /// The refused request once more, with the thinking switch as `{type}`.
+    ///
+    /// The memo is set only when this second request is **not** refused over
+    /// `thinking` as well. A server that wanted the boolean after all refuses the
+    /// object in the same words ("invalid type: map, expected a boolean"), and
+    /// learning from that would refuse every later request on this client. A
+    /// cancelled request teaches nothing either way.
+    async fn send_typed_thinking(
+        &self,
+        body: wire::ChatCompletionRequest,
+        refused: &error::EngineError,
+        cancel: &CancellationToken,
+    ) -> Result<Option<reqwest::Response>, error::EngineError> {
+        let mut body = body.with_typed_thinking();
+        let sent = effort::send_asking_again(self, &mut body, cancel).await;
+        let learned = match &sent {
+            Ok(response) => response.is_some(),
+            Err(err) => !err.message.to_lowercase().contains("thinking"),
+        };
+        if learned {
+            tracing::info!(
+                reason = %refused.message,
+                "the engine refuses the thinking switch as a boolean; sending it \
+                 as {{\"type\": …}} from now on"
+            );
+            self.thinking_typed
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        sent
     }
 
     /// The effort an xAI model is asked for on this request, from the list its
@@ -1610,6 +1670,117 @@ mod tests {
             assert!(
                 err.to_string().contains(expected),
                 "{err} (expected to carry {expected:?})"
+            );
+        }
+    }
+
+    /// DeepSeek's refusal of llama.cpp's boolean, as its API answered it
+    /// (docs/research/deepseek-api.md §2.3).
+    const THINKING_BOOLEAN: &str = r#"{"error":{"message":"Failed to deserialize the JSON body into the target type: thinking: invalid type: boolean `false`, expected struct ThinkingOptions at line 1 column 123","type":"invalid_request_error","param":null,"code":"invalid_request_error"}}"#;
+
+    /// The `thinking` of each body a stub saw.
+    fn thinking_sent(seen: &[String]) -> Vec<serde_json::Value> {
+        seen.iter()
+            .map(|raw| serde_json::from_str::<serde_json::Value>(raw).unwrap()["thinking"].clone())
+            .collect()
+    }
+
+    /// DeepSeek's API answers the switch as a boolean with a `422`, so in
+    /// `external` mode every request failed there: an ordinary turn for `true`, a
+    /// muted one for `false` (docs/research/deepseek-api.md §2.3). The refused
+    /// turn is asked again as `{"type": …}`, the rest of its body unchanged, and
+    /// the next turn is sent that way from its first request.
+    #[tokio::test]
+    async fn a_refused_boolean_switch_is_sent_as_an_object_and_remembered() {
+        let (url, seen) = scripted_server(&[
+            (422, THINKING_BOOLEAN),
+            (200, ONE_CHUNK_SSE),
+            (200, ONE_CHUNK_SSE),
+        ]);
+        let client = OpenAiClient::new(url);
+        let mut muted = muted_turn();
+        muted.sampling.thinking = Some(false);
+        let chunks = collect_turn(&client, muted).await;
+        assert!(
+            matches!(&chunks[0], ChatChunk::Text(t) if t == "hi"),
+            "the turn must recover, not fail: {chunks:?}"
+        );
+        collect_turn(&client, switch_turn(Some(true))).await;
+
+        let seen = seen.join().unwrap();
+        assert_eq!(
+            thinking_sent(&seen),
+            [
+                serde_json::json!(false),
+                serde_json::json!({"type": "disabled"}),
+                serde_json::json!({"type": "enabled"}),
+            ],
+            "one refusal, then the object, from the next turn's first request on"
+        );
+        assert!(
+            seen[1].contains(r#""reasoning_effort":"none""#),
+            "the same request, its effort kept: {}",
+            seen[1]
+        );
+    }
+
+    /// The arms that must not learn. Each script ends with a reply that would
+    /// succeed, so a wrong recovery turns the turn green (see
+    /// [`the_recovery_does_not_fire_on_anything_else`]):
+    ///
+    /// - a server that wanted the boolean after all refuses the object over
+    ///   `thinking` as well, and its words reach the caller;
+    /// - a `422` about another field is a plain failure;
+    /// - DeepSeek's words under a transient status belong to the retry decorator;
+    /// - a turn that sent no switch has nothing to respell.
+    #[tokio::test]
+    async fn the_thinking_recovery_does_not_fire_on_anything_else() {
+        const WANTS_BOOLEAN: &str =
+            r#"{"error":{"message":"thinking: invalid type: map, expected a boolean"}}"#;
+        const UNRELATED: &str = r#"{"error":{"message":"max_tokens: invalid type: boolean"}}"#;
+        let cases: [(Script, Option<bool>, &str); 4] = [
+            (
+                &[
+                    (422, THINKING_BOOLEAN),
+                    (422, WANTS_BOOLEAN),
+                    (200, ONE_CHUNK_SSE),
+                ],
+                Some(true),
+                "expected a boolean",
+            ),
+            (
+                &[(422, UNRELATED), (200, ONE_CHUNK_SSE)],
+                Some(true),
+                "max_tokens",
+            ),
+            (
+                &[(503, THINKING_BOOLEAN), (200, ONE_CHUNK_SSE)],
+                Some(true),
+                "",
+            ),
+            (
+                &[(422, THINKING_BOOLEAN), (200, ONE_CHUNK_SSE)],
+                None,
+                "ThinkingOptions",
+            ),
+        ];
+        for (script, switch, expected) in cases {
+            let (url, _seen) = scripted_server(script);
+            let client = OpenAiClient::new(url);
+            let err = client
+                .chat_stream(switch_turn(switch), CancellationToken::new())
+                .await
+                .map(|_| ())
+                .expect_err("this failure must reach the caller unrecovered");
+            assert!(
+                err.to_string().contains(expected),
+                "{err} (expected to carry {expected:?})"
+            );
+            assert!(
+                !client
+                    .thinking_typed
+                    .load(std::sync::atomic::Ordering::Relaxed),
+                "nothing learned from {expected:?}"
             );
         }
     }
