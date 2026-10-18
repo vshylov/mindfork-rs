@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (78)
+## Entries (79)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -90,6 +90,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Release 0.18.2 (prepared)
 - Release 0.18.3 (prepared)
 - Release 0.19.0 (prepared)
+- Release 0.20.0 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -4901,3 +4902,52 @@ macos.md §3 and §12 point at the tag.
   stopped at its notice, because there is no key. Scoop's bucket took 0.19.0 at
   01:05:38Z, 39 min after the publication. At 01:06Z the tap's formula still named
   0.18.3; its schedule (`23 */6`) next fires at 06:23Z. Not waited for.
+
+### Release 0.20.0 (prepared)
+
+- **A release PR** per [AGENTS.md §6](../../AGENTS.md), branch `chore/release-0.20.0`:
+  - `Cargo.toml` `0.19.0 → 0.20.0` (+ one line of `Cargo.lock`), and the site's
+    `app_version`;
+  - `CHANGELOG.md`: `[Unreleased]` → `[0.20.0] — 2026-10-18` under a lead paragraph,
+    "A conversation is reused from turn to turn", a fresh `[Unreleased]`, and the
+    comparison links;
+  - CLAUDE.md's status heading;
+  - the release's post, and `/llms.txt` regenerated from it.
+
+  Since `v0.19.0`, the pull requests with behaviour:
+  - 782, the observations picked by the chat's opening;
+  - 784, `settings.json` 5 → 6;
+  - 785, the observations sharing the section's room;
+  - 786, the relevance floor and the header;
+  - 789, a `round usage` line per muted request and vLLM's write;
+  - 790, DeepSeek's spelling of the thinking switch.
+
+  The rest moved no behaviour: the 0.19.0 publication's journal (781), the prompt-caching
+  revisit (780), the observations research and its move to `docs/history` (783, 787), and
+  the cache share's docs after the release (788).
+- **A MINOR**: the observations track and a schema step, §6's rule for `0.x`.
+- **The `Data` rubric, by measurement**, already filled by 784, and its one item holds.
+  - `git diff v0.19.0 -- src/shared/storage src/shared/config.rs src/entities
+    src/features/data_migration.rs src/features/backup.rs` names the step
+    (`schema.rs`, `data_migration.rs`, `config.rs`, the golden
+    `fixtures/settings_v5.json`) and `entities/self_model.rs`.
+  - The one new enum there, `ObservationPick`, derives no `Serialize`: it is decided per
+    chat and never stored. `CHAT_SCHEMA` stays at 5, and no stored enum gained a value.
+  - The step's run on two binaries is 784's: 0.19.0 built from its tag keeps its own
+    file at 5, the branch migrates it to 6 with one backup, and 0.19.0 then refuses the
+    migrated root as a newer version's, the file byte for byte as it was.
+    Step 5 repeats the last half on the released binary.
+- **No rehearsal.** `git diff v0.19.0 -- .github packaging tools/release_guard.py` is
+  empty. `release_guard.py --tag v0.20.0` accepts the tag and cuts 58 lines of notes.
+  `cargo deny check advisories`, against the live RustSec database: ok.
+- **Live runs behind it**, from the pull requests:
+  - 782: the prefix held on 8 of 8 follow-ups on Gemma 4, against 2 of 8 before;
+  - 786: `system` byte-identical on 11 of 11;
+  - 789: xAI, vLLM and the DeepSeek GGUF;
+  - 790: DeepSeek's API on both of its models.
+
+  The rented live gate was not run for this release.
+- **The post** says what 0.19.0's counter showed on its own release check and where the
+  prefix broke, how the pick is anchored now and what that measured, the three changes
+  to the observations' section, the log and DeepSeek, and exactly which setting the
+  schema step changes.

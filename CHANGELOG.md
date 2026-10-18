@@ -14,6 +14,17 @@ split by subsystem.
 
 ## [Unreleased]
 
+## [0.20.0] — 2026-10-18
+
+**A conversation is reused from turn to turn.** The cache share 0.19.0 put on
+the status bar showed that most turns reused nothing: the self-model's
+observations were picked afresh for every message, which changed the start of
+the prompt. They are now picked by what the chat opened with, so from the second
+turn on the counter reads `cache 94%`–`99%` where it read `0%`. Every
+observation picked now fits into the prompt, an old installation's 1200-character
+limit for the self-model is raised to today's 4000, and DeepSeek's own API works
+in the `external` mode.
+
 ### Changed
 
 - **The self-model says how it picked the observations it brings into the
@@ -3432,7 +3443,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/vshylov/mindfork-rs/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/vshylov/mindfork-rs/compare/v0.18.3...v0.19.0
 [0.18.3]: https://github.com/vshylov/mindfork-rs/compare/v0.18.2...v0.18.3
 [0.18.2]: https://github.com/vshylov/mindfork-rs/compare/v0.18.1...v0.18.2
