@@ -322,6 +322,13 @@ effort tiers — have all closed
   schema migration for a stable integer rowid (notes have a `TEXT` uuid PK).
   Revisit once the note count actually grows into the thousands; plan ready —
   [notes-vec0.md](notes-vec0.md).
+- **The self-model's observations: their room, a relevance floor, their
+  header** — **deferred** until the owner picks the forks
+  ([self-model-observations.md](research/self-model-observations.md) §6). On
+  a mature profile at the default cap the section shows one observation of the
+  three picked in two chats of three, and the block's last cut lands inside it in
+  56 of 139; no opening's lead under cosine 0.50 was judged relevant; and the
+  header says "Recent" over observations a median 104 days old.
 - **Re-chunking attachments after a chunking change** — **deferred**. A model
   change needs no walk over the chats — `/reindex` re-embeds from the chunk
   text the DB already holds — but a change of chunk parameters still would
