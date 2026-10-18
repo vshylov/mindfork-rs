@@ -2540,7 +2540,7 @@ Storage invariants:
 ### Schema versioning and migrations ([ADR 0006](decisions/0006-data-schema-versioning.md))
 
 Each artifact has its own schema version (per-artifact — they change at
-different rates; `settings.json` and the chat files are each at **5**,
+different rates; `settings.json` is at **6**, the chat files at **5**,
 `profiles.json` at 1 — the steps are listed in spec §12.2). Ownership map:
 
 - **`shared/storage/schema.rs`** — a pure Value-level scaffold (no I/O):
@@ -2644,7 +2644,16 @@ Invariants:
   naming the schema each value arrived in, and the value's wire form beside it.
   A variant added to one of them does not compile until its schema is named
   there, a schema above its files' is a step not written, and a renamed wire
-  form fails a test.
+  form fails a test;
+- `settings_to_v6` is a value step again, the shape of `settings_to_v3`: a
+  `self_model.prompt_cap` of exactly 1200, the default through 0.9.4, becomes
+  4000; any other value stays. Both numbers are frozen in the step
+  (`V5_PROMPT_CAP`, `V6_PROMPT_CAP`). Pinned by the golden
+  `fixtures/settings_v5.json`, by tests of the parsed outcome (a kept value, a
+  file without the field, the whole chain from v1), and by the end-to-end
+  `run_raises_a_self_model_cap_left_at_the_old_default`
+  ([research/self-model-observations.md](research/self-model-observations.md)
+  §3.4, §6 B′).
 
 The SQLite branch (`db/mod.rs::migrate`, version-aware): `baseline_ddl`
 (`CREATE … IF NOT EXISTS`) runs **every time** — an additive mechanism for

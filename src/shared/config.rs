@@ -9,7 +9,7 @@ use crate::shared::gguf::display_name;
 use crate::shared::secrets::{ExternalSlot, SecretKey};
 
 /// Current config schema version.
-pub const SCHEMA_VERSION: u32 = 5;
+pub const SCHEMA_VERSION: u32 = 6;
 
 /// Inference-engine connection mode. Local (`Managed`/`External`) and cloud
 /// providers (`OpenAi`/`Gemini`) are equal-footing variants of a single selector
@@ -1579,7 +1579,9 @@ pub const DEFAULT_SELF_MODEL_NARRATIVE_IN_PROMPT: usize = 3;
 /// observations were never injected at all. The per-section budgets fix the
 /// starvation; this gives them room to be worth having. **An existing
 /// `settings.json` pins its own value** — the field is always serialized, so this
-/// only affects fresh installs.
+/// only affects fresh installs — except the old default itself, which the schema
+/// step `settings_to_v6` rewrites to 4000 (docs/research/self-model-observations.md
+/// §6, fork B′).
 pub const DEFAULT_SELF_MODEL_PROMPT_CAP: usize = 4000;
 /// Whether to inject a persona-neutral "self-model maintenance protocol" by default.
 pub const DEFAULT_SELF_MODEL_MAINTENANCE_PROTOCOL: bool = true;
