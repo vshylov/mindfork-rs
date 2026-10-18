@@ -1,8 +1,16 @@
 # The self-model's observations — their room, a relevance floor, their header
 
-> Status: **forks decided** (2026-10-18; §6): B0 + B (d), B′ (b1), F (b), H (c).
-> Built in three pull requests (§6): #784, #785 and #786. Three defects
-> that [prompt-caching.md](prompt-caching.md) §2.2 recorded for the self-model
+> Status: the track is **closed**. The forks were the owner's, 2026-10-18 (§6):
+> B0 + B (d), B′ (b1), F (b), H (c). All three pull requests of §6 merged the
+> same day: #784 (B′ (b1), `settings.json` 5 → 6), #785 (B0 + B (d)) and #786
+> (F (b) + H (c), with §7's candidate pool). #786's live run was a GO (`system`
+> byte-identical on 11 of 11 follow-ups), and so was §4.3's probe (3 of 51
+> against 2 of 51). What each measured is in the journal:
+> [self-model.md](../journal/self-model.md) and
+> [storage.md](../journal/storage.md).
+>
+> Three defects
+> that [prompt-caching.md](../research/prompt-caching.md) §2.2 recorded for the self-model
 > track ("Adjacent, for the self-model track") are measured here and laid out as
 > forks B, F and H (§6). Two constraints frame every option. The pick stays
 > stable from turn to turn: since #782 it is anchored on the chat's opening
@@ -11,7 +19,7 @@
 > block stays in `system` (the owner's decision of 2026-08-08, prompt-caching.md
 > §5 F1).
 > Adjacent: spec §17.4–§17.5,
-> [self-model-injection-budget.md](../history/self-model-injection-budget.md)
+> [self-model-injection-budget.md](self-model-injection-budget.md)
 > (the per-section budgets, decisions D1–D5),
 > [docs/journal/self-model.md](../journal/self-model.md),
 > `shared/embed_calibration.rs` (the similarity scale a threshold is read in).

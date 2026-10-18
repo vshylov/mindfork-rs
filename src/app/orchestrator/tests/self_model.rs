@@ -446,7 +446,7 @@ fn observations_at(
 /// F (b): an opening whose nearest observation is under the floor takes the
 /// latest observations for the whole chat, under their own header; one above it
 /// keeps the pick by relevance, and the picks after the lead need not clear the
-/// floor (docs/research/self-model-observations.md §6).
+/// floor (docs/history/self-model-observations.md §6).
 #[tokio::test]
 async fn an_opening_under_the_floor_takes_the_latest_observations() {
     use super::super::generation::{inject_self_model, injection_recent};

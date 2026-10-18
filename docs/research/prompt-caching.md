@@ -199,7 +199,7 @@ ordering inside `system` buys nothing (F1 (b)).
 the section fits one, at most two, on this profile. It is also headed "Recent
 observations" while its content is a relevance pick. Both, and the pick's
 missing similarity floor, are measured and laid out as forks in
-[self-model-observations.md](self-model-observations.md).
+[self-model-observations.md](../history/self-model-observations.md).
 
 **Method, in case it is repeated.** The proxy saved every request body and the
 final `usage`/`timings`. The driver pasted each question and waited for the proxy

@@ -241,7 +241,7 @@ const V6_PROMPT_CAP: u64 = 4000;
 /// to 4000 (docs/history/self-model-injection-budget.md, D5), and an existing
 /// file kept its own number, since the field is always written — so an
 /// installation from before it that never touched the setting is still at 1200.
-/// Measured there on a mature profile (docs/research/self-model-observations.md
+/// Measured there on a mature profile (docs/history/self-model-observations.md
 /// §3.4), the block has spent 1050 characters before the observations begin:
 /// they show a fragment of one, 7% of the pick at the median, and the model of
 /// the interlocutor shows one trait. No way of sharing the room makes 1200 hold
@@ -775,7 +775,7 @@ mod tests {
     }
 
     /// 5→6: the old default becomes 4000, and nothing else in the file moves
-    /// (docs/research/self-model-observations.md §3.4, §6 B′).
+    /// (docs/history/self-model-observations.md §3.4, §6 B′).
     #[test]
     fn settings_step_to_v6_raises_a_cap_left_at_the_old_default() {
         let before: Value = serde_json::from_str(V5_SETTINGS).unwrap();

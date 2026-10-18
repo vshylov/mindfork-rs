@@ -5736,7 +5736,7 @@ pub(super) fn blend_self_notes(
 /// query or no embedder, and with one place, which the guaranteed freshest
 /// observation would take anyway. Decided on the opening, so the pick and its
 /// header hold from turn to turn (spec §17.4,
-/// docs/research/self-model-observations.md §4.4). Empty if injection is
+/// docs/history/self-model-observations.md §4.4). Empty if injection is
 /// disabled. Async (embedding the query) — that's why it's factored out of the
 /// sync handler into the generation task. Tested over a temp store +
 /// `MockEmbedder`.

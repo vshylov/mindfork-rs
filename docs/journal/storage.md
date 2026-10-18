@@ -1324,7 +1324,7 @@ fmt, `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.
   and an existing `settings.json` kept its stored number, since the field is always
   written. So an installation from 0.9.0–0.9.4 that never touched the setting is still at
   1200. The observations research measured what that costs
-  ([self-model-observations.md](../research/self-model-observations.md) §3.4): on a mature
+  ([self-model-observations.md](../history/self-model-observations.md) §3.4): on a mature
   profile the block has spent 1050 characters before the observations begin, so they show
   a fragment of one, 7% of the pick at the median, and the model of the interlocutor shows
   one trait and one interest. No way of sharing the room makes 1200 hold such a profile;

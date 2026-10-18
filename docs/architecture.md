@@ -2652,7 +2652,7 @@ Invariants:
   `fixtures/settings_v5.json`, by tests of the parsed outcome (a kept value, a
   file without the field, the whole chain from v1), and by the end-to-end
   `run_raises_a_self_model_cap_left_at_the_old_default`
-  ([research/self-model-observations.md](research/self-model-observations.md)
+  ([history/self-model-observations.md](history/self-model-observations.md)
   §3.4, §6 B′).
 
 The SQLite branch (`db/mod.rs::migrate`, version-aware): `baseline_ddl`

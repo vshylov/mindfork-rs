@@ -691,7 +691,7 @@ its area.
   raised to 4000; the section's room counting the labels and shared among the
   picks, all three of which now show on a mature profile; a 0.50 floor on the
   lead, under which a chat takes the latest observations, with a header per arm.
-  [self-model-observations.md](research/self-model-observations.md).
+  [self-model-observations.md](history/self-model-observations.md).
 - **The cache share in the token counter** — unreleased (2026-10-17): every
   wire's cache read reaches the bar as `cache 99%`, a miss as `0%`; Gemini's
   omitted zero read as one, Anthropic's prompt summed whole; a probe first,

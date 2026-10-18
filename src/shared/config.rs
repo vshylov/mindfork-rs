@@ -1580,7 +1580,7 @@ pub const DEFAULT_SELF_MODEL_NARRATIVE_IN_PROMPT: usize = 3;
 /// starvation; this gives them room to be worth having. **An existing
 /// `settings.json` pins its own value** — the field is always serialized, so this
 /// only affects fresh installs — except the old default itself, which the schema
-/// step `settings_to_v6` rewrites to 4000 (docs/research/self-model-observations.md
+/// step `settings_to_v6` rewrites to 4000 (docs/history/self-model-observations.md
 /// §6, fork B′).
 pub const DEFAULT_SELF_MODEL_PROMPT_CAP: usize = 4000;
 /// Whether to inject a persona-neutral "self-model maintenance protocol" by default.
