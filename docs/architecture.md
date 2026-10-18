@@ -1621,8 +1621,9 @@ Details:
   catalogue has answered for the model, `openrouter` always, since that mode is
   the gateway by name. The orchestrator asks it through
   `EngineSettings::supports_continuation`, which answers `false` for `external`
-  at DeepSeek's host (`is_deepseek_host`): that API restarts a prefill with a
-  `200` (docs/research/deepseek-mode.md §1). The Anthropic wire additionally
+  at DeepSeek's host (`is_deepseek_host`): that API answers a prefill on `/v1`
+  with a restart, or with a `400` when tools and thinking are on
+  (docs/research/deepseek-mode.md §1). The Anthropic wire additionally
   drops the thinking block and right-trims the trailing prefill on a
   continuation request. `finalize_message` records the end state
   (`MessageFinish`) that makes the eligibility readable; the turn carries a

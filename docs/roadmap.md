@@ -208,7 +208,7 @@ effort tiers — have all closed
   `deepseek` mode, with the key, the picker, the window and the image input read
   from DeepSeek's list, the thinking switch typed from the first request, and
   `/continue` refused in the mode and in `external` at DeepSeek's host, where it
-  doubled a reply) — **next**: `/continue` on DeepSeek's beta prefix completion
+  failed or doubled a reply) — **next**: `/continue` on DeepSeek's beta prefix completion
   (`/beta` + `prefix: true`, measured to continue, thinking on or off; §4.2).
   **On demand**: `external`'s reading of `context_window`, which still waits
   until the catalogue's "answered" signal is split from the gateway's behaviours

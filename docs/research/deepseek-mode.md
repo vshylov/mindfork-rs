@@ -26,15 +26,24 @@ DeepSeek's API has worked in `external` mode since 0.20.0, and the manual names
 that setup (manual §2). Measuring it once more for this question found two
 defects in that setup, besides what a mode of its own would add:
 
-1. **`/continue` restarts the answer.** **[live]** On `/v1` DeepSeek ignores a
-   trailing assistant message: given `"1, 2, 3, 4,"` to continue, it answered
-   `"1, 2, …, 10"` whole, with thinking on and off. **[code]** `external` claims
-   `/continue` wherever the catalogue has not answered
-   (`ServerMode::supports_continuation`), and DeepSeek's entry carries none of
-   the keys that would answer it, so the restart is appended to the cut. The
-   echo filter (`EchoFilter`) hides it only when the restart repeats the cut
-   byte for byte — which a counting fixture does, so `continue_e2e_live` passes
-   there while prose doubles.
+1. **`/continue` fails or restarts the answer.** **[live]** On `/v1` DeepSeek
+   does not continue a trailing assistant message. What it does depends on the
+   rest of the request, measured on both models with a system message and the
+   cut as the last message:
+
+   | Request | Answer |
+   |---|---|
+   | tool schemas **and** thinking on — the app's request at the default settings | `400 "The reasoning_content in the thinking mode must be passed back to the API"` |
+   | thinking off, or no tool schemas | `200`, a new reply from the beginning (`"1, 2, 3, 4,"` → `"1, 2, …, 10"` whole) |
+
+   **[code]** `external` claims `/continue` wherever the catalogue has not
+   answered (`ServerMode::supports_continuation`), and DeepSeek's entry carries
+   none of the keys that would answer it. So the command ended in that `400` as
+   an error under the cut reply, or — with thinking off — glued the new reply
+   onto the cut. The echo filter (`EchoFilter`) would hide such a restart only
+   when it repeats the cut byte for byte, which a count does and prose does
+   not. **[live]** Through the app, on `external`'s client at DeepSeek's URL, the
+   prose smoke of stage 2 (§4.2) ends in the `400` above.
 2. **`deepseek-v4-pro` drops an image in silence.** **[live]** A request with an
    image is a `200`; asked whether it sees one, the model says `NONE` (2 of 2),
    and asked its colour it says "Brown" of a red square. `deepseek-flash` sees it
@@ -162,9 +171,10 @@ defect.
   warning, as on `claude` and `grok`.
 - **`/continue`** is refused in this mode (stage 2 builds it).
 - **`external` at `api.deepseek.com`:** `/continue` is refused by the host
-  (F2 (a)). The server answers a prefill with a `200`, so there is no refusal to
-  learn from, and nothing in the catalogue says it. A proxy in front of DeepSeek
-  is not covered; the note says to use the `deepseek` mode.
+  (F2 (a)). The server answers a prefill with a `200` restart, or with a `400`
+  about the reasoning that names nothing about a prefill, so there is no refusal
+  to learn from, and nothing in the catalogue says it. A proxy in front of
+  DeepSeek is not covered; the note says to use the `deepseek` mode.
 - **The schema.** A new value of a stored enum is a breaking change
   (lessons §8). `settings.json` 6 → 7 is a stamp, as `settings_to_v4` was for
   `openrouter`. The chat files hold the mode too, in every reply's metadata, so

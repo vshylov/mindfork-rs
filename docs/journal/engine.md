@@ -7026,12 +7026,13 @@ defects in the `external` setup the manual has named since 0.20.0, and they deci
 it ([deepseek-mode.md](../research/deepseek-mode.md); user's decision 2026-10-19:
 F1 (a), F2 (a), F3 (a), each the recommendation — the mode, in two stages).
 
-- **`/continue` doubled a reply.** On `/v1` DeepSeek ignores a trailing assistant
-  message: `"1, 2, 3, 4,"` came back as `"1, 2, …, 10"` whole, thinking on or off.
-  `external` claims `/continue` wherever the catalogue is silent, so the restart was
-  glued onto the cut — and the echo filter hides it only when the restart repeats the
-  cut byte for byte, which `continue_e2e_live`'s counting fixture does. `/beta` with
-  `prefix: true` continues for real (stage 2).
+- **`/continue` failed or doubled a reply.** On `/v1` DeepSeek does not continue a
+  trailing assistant message: with tool schemas and thinking on — the app's request at
+  the default settings — it answers `400 "The reasoning_content in the thinking mode
+  must be passed back"`, and otherwise with a new reply from the beginning
+  (`"1, 2, 3, 4,"` → `"1, 2, …, 10"` whole), which `external` glued onto the cut. The
+  first probe sent a bare body and saw only the restart; the 400 came from the app's own
+  request (lessons §9). `/beta` with `prefix: true` continues for real (stage 2).
 - **`deepseek-v4-pro` drops an image in silence**: a `200`, `NONE` when asked whether
   it sees one, "Brown" for a red square. Its list says `["text"]` at the entry's top
   level, a key `external` does not read, so the image went and nothing was said.

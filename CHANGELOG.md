@@ -30,11 +30,12 @@ split by subsystem.
 
 ### Fixed
 
-- **`/continue` no longer doubles a reply on DeepSeek's API.** DeepSeek answers a
-  cut reply with a new one from the beginning, and the app glued that onto the
-  part already written. `/continue` is now refused there, in the `external` mode
-  at `https://api.deepseek.com` and in the new mode alike, with a note that says
-  why; `/regen` regenerates the reply instead.
+- **`/continue` no longer fails or doubles a reply on DeepSeek's API.** DeepSeek
+  does not continue a cut reply: with thinking on it refused the request with an
+  error, and with thinking off it answered with a new reply from the beginning,
+  which the app glued onto the part already written. `/continue` is now refused
+  in the `external` mode at `https://api.deepseek.com` and in the new mode alike,
+  with a note that says why; `/regen` regenerates the reply instead.
 
 ### Data
 

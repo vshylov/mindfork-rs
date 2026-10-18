@@ -756,10 +756,12 @@ impl EngineSettings {
     }
 
     /// [`ServerMode::supports_continuation`] for this engine as configured: the
-    /// mode's answer, except `external` at **DeepSeek's host**, which answers a
-    /// trailing assistant message with a new reply — a `200`, so there is no
-    /// refusal to learn from, and nothing in its catalogue says so
-    /// (docs/research/deepseek-mode.md §1, fork F2). A proxy in front of DeepSeek
+    /// mode's answer, except `external` at **DeepSeek's host**, which does not
+    /// continue a trailing assistant message: it answers with a new reply (a
+    /// `200`), or with a `400` about the reasoning when tools and thinking are on.
+    /// Neither says "no prefill", so there is no refusal to learn from, and
+    /// nothing in its catalogue says so (docs/research/deepseek-mode.md §1,
+    /// fork F2). A proxy in front of DeepSeek
     /// is not recognised: the `deepseek` mode is the road that knows.
     pub fn supports_continuation(&self, model: Option<&str>, catalogued: bool) -> bool {
         if self.mode == ServerMode::External && is_deepseek_host(self.external.url.as_deref()) {
@@ -3995,7 +3997,7 @@ mod tests {
     }
 
     /// `external` at DeepSeek's host does not continue, whatever the catalogue
-    /// says: the API answers a prefill with a new reply
+    /// says: the API answers a prefill with a new reply, or a `400`
     /// (docs/research/deepseek-mode.md §1). Its host exactly — a proxy, a
     /// look-alike and a blank URL keep `external`'s own answer.
     #[test]
