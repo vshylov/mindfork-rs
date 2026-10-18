@@ -1,7 +1,7 @@
 # The self-model's observations — their room, a relevance floor, their header
 
 > Status: **forks decided** (2026-10-18; §6): B0 + B (d), B′ (b1), F (b), H (c).
-> Nothing is built yet; the build is three pull requests (§6). Three defects
+> Built in three pull requests (§6): #784, #785 and #786. Three defects
 > that [prompt-caching.md](prompt-caching.md) §2.2 recorded for the self-model
 > track ("Adjacent, for the self-model track") are measured here and laid out as
 > forks B, F and H (§6). Two constraints frame every option. The pick stays
@@ -419,14 +419,14 @@ builds on the second, since both change `render_for_prompt`.
    golden fixture of v5, a test of the parsed outcome, an entry under the
    CHANGELOG's **Data**, and the release checklist's run of the previous
    binary on the new file, which must refuse it as a newer version's data.
-2. **B0 + B (d)** in `render_for_prompt`, a pure rendering function in
+2. **B0 + B (d)** (PR #785) in `render_for_prompt`, a pure rendering function in
    `entities`. Tests: three picks shown on a shape like the measured one at
    4000; the block's last cut never reached across caps; a short pick keeps its
    length; fewer picks under 160 characters, with the marker; the existing
    observation tests moved off the whole-item rule. By the per-section budgets'
    precedent, no live model run is required; the self-model smokes are run as a
    check.
-3. **F (b) + H (c)**, with the candidate-pool change from §7.
+3. **F (b) + H (c)** (PR #786), with the candidate-pool change from §7.
    `self_notes_relevant` returns its scores, `injection_recent` decides the arm,
    and `render_for_prompt` takes the arm's header. Tests: a sub-floor opening
    gets recency and its header; the floor is read through the similarity scale;
