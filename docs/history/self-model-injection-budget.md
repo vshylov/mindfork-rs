@@ -87,6 +87,10 @@ Out:
   value migration is deliberately not done: it would also overwrite a
   deliberately-chosen 1200 (ADR 0006 treats a value rewrite as a real
   migration, and this one has no correctness argument behind it).
+  *Revisited 2026-10-18:* the argument was measured
+  ([self-model-observations.md](../research/self-model-observations.md) §3.4),
+  and the owner chose the migration — `SETTINGS_SCHEMA` 5→6 rewrites exactly a
+  stored 1200 to 4000 (§6 B′ there).
 - `render_full` — deliberately untruncated, unchanged.
 - The size of what the model *writes* (summary target, trait counts) — a
   different question, already served by the summary size gate.

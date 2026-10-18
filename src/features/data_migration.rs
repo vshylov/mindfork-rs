@@ -457,7 +457,8 @@ mod tests {
             serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap()
         };
         let settings = read(paths.settings_file());
-        assert_eq!(settings["schema_version"], json!(5));
+        // Stamped 5, and on to wherever the chain ends now.
+        assert_eq!(settings["schema_version"], json!(schema::SETTINGS_SCHEMA));
         assert_eq!(
             settings["default_sampling"]["reasoning_effort"],
             json!("xhigh")
@@ -468,6 +469,34 @@ mod tests {
         let before: Value = serde_json::from_str(chat_before).unwrap();
         assert_eq!(chat, before, "the chat holds what it held");
         assert_eq!(fs::read_to_string(paths.profiles_file()).unwrap(), profiles);
+        assert_eq!(pre_migrate_backups(&paths), 1, "one pre-migrate backup");
+
+        run(&paths, ru()).unwrap();
+        assert_eq!(pre_migrate_backups(&paths), 1);
+    }
+
+    /// A root whose settings still hold the self-model cap of 0.9.4, through
+    /// the real registry: backed up once, the cap raised to 4000 and the file
+    /// stamped 6, read by today's config as 4000; the next start finds nothing
+    /// to do.
+    #[test]
+    fn run_raises_a_self_model_cap_left_at_the_old_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(dir.path());
+        write(
+            &paths.settings_file(),
+            include_str!("../shared/storage/fixtures/settings_v5.json"),
+        );
+        write(&paths.profiles_file(), "[]");
+
+        run(&paths, ru()).unwrap();
+
+        let settings: Value =
+            serde_json::from_str(&fs::read_to_string(paths.settings_file()).unwrap()).unwrap();
+        assert_eq!(settings["schema_version"], json!(6));
+        assert_eq!(settings["self_model"]["prompt_cap"], json!(4000));
+        let cfg: AppConfig = serde_json::from_value(settings).unwrap();
+        assert_eq!(cfg.self_model.prompt_cap, 4000);
         assert_eq!(pre_migrate_backups(&paths), 1, "one pre-migrate backup");
 
         run(&paths, ru()).unwrap();

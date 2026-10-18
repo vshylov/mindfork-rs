@@ -40,6 +40,17 @@ split by subsystem.
   from its beginning and cut at a word if it must be, and the prompt's limit no
   longer cuts the last one off mid-word.
 
+### Data
+
+- **`settings.json` 5 → 6**: an installation begun on 0.9.0–0.9.4 that never
+  changed the self-model's *Injection limit* ("Memory" → "Self-model") is still
+  at that version's 1200 characters, where a grown self-model brings a fragment
+  of one observation and one thing it knows about you into the conversation.
+  A stored 1200 is raised to today's 4000; any other value, a smaller one chosen
+  for a small local window included, is kept. As with every schema change, the
+  file is backed up before it is migrated, and an older version refuses settings
+  this one has written, saying a newer version made them.
+
 ## [0.19.0] — 2026-10-18
 
 **See how much of a conversation was reused.** A provider keeps the start of a

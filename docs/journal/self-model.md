@@ -1247,7 +1247,7 @@ This is the second of the three pull requests of §6; the first raises a stored
   precedent: a pure rendering function in `entities`, its output fully determined by
   its inputs; no engine, memory-write or tool path is touched.
 
-**Gates**: 4060 unit tests green, 271 `#[ignore]`; clippy `-D warnings`, fmt,
+**Gates**: 4067 unit tests green, 271 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.
 
 ### Post-M9: a floor under the observations' pick, and a header that says how they were picked (done)
@@ -1326,5 +1326,5 @@ on top of the second (the entry above), since both change `render_for_prompt`.
   the scale; the floor on every pick; the old candidate pool; the header ignoring the arm;
   one place going by relevance.
 
-**Gates**: 4064 unit tests green, 271 `#[ignore]`; clippy `-D warnings`, fmt,
+**Gates**: 4071 unit tests green, 271 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.

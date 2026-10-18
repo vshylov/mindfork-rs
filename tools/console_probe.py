@@ -221,7 +221,7 @@ RUBLE_KEY = "altgr+8"
 # The schema the scenarios write their settings at: the app's own
 # `SETTINGS_SCHEMA`. A file below it is migrated at the start — with a
 # pre-migration backup no scenario asked for — and one above it is refused.
-SETTINGS_SCHEMA = 5
+SETTINGS_SCHEMA = 6
 
 # How long the app gets to draw after a key (the loop ticks every 50 ms; a
 # screen switch or a mode change repaints everything).

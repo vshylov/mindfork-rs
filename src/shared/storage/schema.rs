@@ -26,7 +26,7 @@ use serde_json::Value;
 /// Schema version of `settings.json`. Matches [`crate::shared::config::SCHEMA_VERSION`]
 /// (the default of the `AppConfig.schema_version` field) — the invariant is checked by
 /// a test.
-pub const SETTINGS_SCHEMA: u32 = 5;
+pub const SETTINGS_SCHEMA: u32 = 6;
 /// Schema version of `profiles.json`.
 pub const PROFILES_SCHEMA: u32 = 1;
 /// Schema version of a chat file `chats/<id>.json`.
@@ -230,6 +230,42 @@ fn settings_to_v5(mut v: Value) -> Result<Value> {
     Ok(v)
 }
 
+/// The self-model block's cap `settings.json` was written with by default
+/// through 0.9.4, and the one v6 puts in its place — frozen here for the same
+/// reason as the constants above.
+const V5_PROMPT_CAP: u64 = 1200;
+const V6_PROMPT_CAP: u64 = 4000;
+
+/// `settings.json` 5→6: a self-model cap left at the default of 0.9.0–0.9.4 is
+/// raised to today's. 0.9.5 raised the default `self_model.prompt_cap` from 1200
+/// to 4000 (docs/history/self-model-injection-budget.md, D5), and an existing
+/// file kept its own number, since the field is always written — so an
+/// installation from before it that never touched the setting is still at 1200.
+/// Measured there on a mature profile (docs/research/self-model-observations.md
+/// §3.4), the block has spent 1050 characters before the observations begin:
+/// they show a fragment of one, 7% of the pick at the median, and the model of
+/// the interlocutor shows one trait. No way of sharing the room makes 1200 hold
+/// such a profile; the best one measured shows 21%.
+///
+/// **Exactly** the old default is rewritten — the owner's decision of
+/// 2026-10-18 (fork B′ (b1)), against the research's recommendation to leave
+/// it: for an application with this much to say about itself, 1200 is too
+/// little. Any other value stays, because a small cap is a real choice on a
+/// small local window (Ollama's default is 4096 tokens). A stored 1200 cannot
+/// be told from a chosen one, so a 1200 chosen on purpose becomes 4000 too —
+/// the price [`settings_to_v3`] already paid for 2048. Written rather than
+/// dropped, as there: a dropped key would land on whatever the default is on
+/// the day it is read, and the step describes one transition.
+fn settings_to_v6(mut v: Value) -> Result<Value> {
+    if let Some(self_model) = v.get_mut("self_model").and_then(Value::as_object_mut)
+        && self_model.get("prompt_cap").and_then(Value::as_u64) == Some(V5_PROMPT_CAP)
+    {
+        self_model.insert("prompt_cap".into(), Value::from(V6_PROMPT_CAP));
+    }
+    v["schema_version"] = Value::from(6);
+    Ok(v)
+}
+
 const SETTINGS_STEPS: &[Step] = &[
     Step {
         to: 2,
@@ -251,9 +287,14 @@ const SETTINGS_STEPS: &[Step] = &[
         summary: "a reasoning effort may read max",
         apply: settings_to_v5,
     },
+    Step {
+        to: 6,
+        summary: "a self-model cap left at the 0.9.4 default rises to 4000",
+        apply: settings_to_v6,
+    },
 ];
 
-/// The registry of artifacts. `settings.json` is at 5 (four steps), the chat files
+/// The registry of artifacts. `settings.json` is at 6 (five steps), the chat files
 /// at 5 (four); `profiles.json` is still at 1 with no steps.
 pub fn settings_artifact() -> JsonArtifact {
     JsonArtifact {
@@ -432,16 +473,17 @@ mod tests {
 
     #[test]
     fn real_registry_versions_and_steps() {
-        // Settings took four real steps (the sub-agent's timeout, the reply
+        // Settings took five real steps (the sub-agent's timeout, the reply
         // budget that has to cover reasoning, the version that lets a mode
-        // name the OpenRouter gateway, then the one that lets an effort read
-        // `max`); chats took four (the sub-agent transcripts, the dialogue-run
-        // stamp, spec §9.13, the cut run titles, spec §11.2, then the same
-        // `max` stamp); profiles are still dormant.
+        // name the OpenRouter gateway, the one that lets an effort read
+        // `max`, then the self-model cap left at 0.9.4's default); chats took
+        // four (the sub-agent transcripts, the dialogue-run stamp, spec §9.13,
+        // the cut run titles, spec §11.2, then the same `max` stamp);
+        // profiles are still dormant.
         let settings = settings_artifact();
-        assert_eq!(settings.current, 5);
+        assert_eq!(settings.current, 6);
         let reached: Vec<u32> = settings.steps.iter().map(|s| s.to).collect();
-        assert_eq!(reached, [2, 3, 4, 5]);
+        assert_eq!(reached, [2, 3, 4, 5, 6]);
         let chats = chat_artifact();
         assert_eq!(chats.current, 5);
         let reached: Vec<u32> = chats.steps.iter().map(|s| s.to).collect();
@@ -645,7 +687,7 @@ mod tests {
     #[test]
     fn settings_step_to_v5_stamps_the_version_and_touches_nothing_else() {
         let before: Value = serde_json::from_str(V4_SETTINGS).unwrap();
-        let after = settings_artifact().apply_steps(before.clone(), 4).unwrap();
+        let after = settings_to_v5(before.clone()).unwrap();
         assert_eq!(after["schema_version"], json!(5));
         let mut restamped = after.clone();
         restamped["schema_version"] = json!(4);
@@ -683,10 +725,9 @@ mod tests {
     #[test]
     fn a_file_holding_an_effort_is_a_newer_version_to_a_reader_older_than_it() {
         for (effort, since) in super::stored_enums_tests::efforts() {
-            assert!(
-                since <= SETTINGS_SCHEMA && since <= CHAT_SCHEMA,
-                "{effort:?}"
-            );
+            // An effort lives in both kinds of file, so it names a schema
+            // both have reached.
+            assert!(since <= SETTINGS_SCHEMA.min(CHAT_SCHEMA), "{effort:?}");
 
             let mut cfg = crate::shared::config::AppConfig::default();
             cfg.default_sampling.reasoning_effort = Some(effort);
@@ -716,5 +757,117 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// `settings.json` as 0.19.0 wrote it for an installation begun on
+    /// 0.9.0–0.9.4 that never touched the self-model's cap: the golden v5
+    /// shape, the cap at that version's default of 1200, beside an effort at
+    /// `max`, which only schema 5 may hold.
+    const V5_SETTINGS: &str = include_str!("fixtures/settings_v5.json");
+
+    #[test]
+    fn the_v5_settings_fixture_holds_nothing_the_config_drops() {
+        let fixture: Value = serde_json::from_str(V5_SETTINGS).unwrap();
+        let cfg: crate::shared::config::AppConfig =
+            serde_json::from_value(fixture.clone()).unwrap();
+        let read_back = serde_json::to_value(&cfg).unwrap();
+        assert_eq!(dropped_paths(&fixture, &read_back), Vec::<String>::new());
+    }
+
+    /// 5→6: the old default becomes 4000, and nothing else in the file moves
+    /// (docs/research/self-model-observations.md §3.4, §6 B′).
+    #[test]
+    fn settings_step_to_v6_raises_a_cap_left_at_the_old_default() {
+        let before: Value = serde_json::from_str(V5_SETTINGS).unwrap();
+        assert_eq!(before["self_model"]["prompt_cap"], json!(1200));
+        let after = settings_artifact().apply_steps(before.clone(), 5).unwrap();
+        assert_eq!(after["schema_version"], json!(6));
+        assert_eq!(after["self_model"]["prompt_cap"], json!(4000));
+        let mut restored = after.clone();
+        restored["schema_version"] = json!(5);
+        restored["self_model"]["prompt_cap"] = json!(1200);
+        assert_eq!(restored, before, "every other value is where it was");
+
+        // What today's config reads: the new cap, its neighbours as they were.
+        let cfg: crate::shared::config::AppConfig = serde_json::from_value(after).unwrap();
+        assert_eq!(cfg.self_model.prompt_cap, 4000);
+        assert_eq!(cfg.self_model.narrative_in_prompt, 3);
+        assert_eq!(cfg.self_model.max_narrative, 50);
+        assert_eq!(
+            cfg.default_sampling.reasoning_effort,
+            Some(ReasoningEffort::Max)
+        );
+    }
+
+    /// Any other stored cap is a choice, and stays — a small one above all, on
+    /// a small local window. The step's one exception is the old default.
+    #[test]
+    fn settings_step_to_v6_keeps_any_other_cap() {
+        for chosen in [100usize, 800, 1199, 1201, 1500, 4000, 12000] {
+            let out = settings_artifact()
+                .apply_steps(
+                    json!({"schema_version": 5, "self_model": {"prompt_cap": chosen}}),
+                    5,
+                )
+                .unwrap();
+            assert_eq!(out["schema_version"], json!(6));
+            assert_eq!(
+                out["self_model"]["prompt_cap"],
+                json!(chosen),
+                "a stored {chosen} must survive"
+            );
+            let cfg: crate::shared::config::AppConfig = serde_json::from_value(out).unwrap();
+            assert_eq!(cfg.self_model.prompt_cap, chosen);
+        }
+    }
+
+    /// A file that never wrote the cap, or its section, gets nothing invented:
+    /// it reads as today's default, as it did before the step.
+    #[test]
+    fn settings_step_to_v6_leaves_a_file_without_the_cap_alone() {
+        for before in [
+            json!({"schema_version": 5}),
+            json!({"schema_version": 5, "self_model": {"narrative_in_prompt": 5}}),
+        ] {
+            let after = settings_artifact().apply_steps(before.clone(), 5).unwrap();
+            let mut restamped = after.clone();
+            restamped["schema_version"] = json!(5);
+            assert_eq!(restamped, before);
+            let cfg: crate::shared::config::AppConfig = serde_json::from_value(after).unwrap();
+            assert_eq!(
+                cfg.self_model.prompt_cap,
+                crate::shared::config::DEFAULT_SELF_MODEL_PROMPT_CAP
+            );
+        }
+    }
+
+    /// The installation the step is for, arriving straight from 0.9.4, at
+    /// schema 1, with no release run in between: the whole chain runs, and the
+    /// cap ends at 4000.
+    #[test]
+    fn a_settings_file_from_0_9_4_reaches_the_raised_cap_through_the_whole_chain() {
+        let out = settings_artifact()
+            .apply_steps(
+                json!({"schema_version": 1, "self_model": {"prompt_cap": 1200}}),
+                1,
+            )
+            .unwrap();
+        assert_eq!(out["schema_version"], json!(SETTINGS_SCHEMA));
+        assert_eq!(out["self_model"]["prompt_cap"], json!(4000));
+    }
+
+    /// The other side of the bump: a file the step wrote is, to the reader
+    /// 0.19.0 ships (schema 5), a newer version's data, refused before a
+    /// value of it is parsed.
+    #[test]
+    fn a_file_past_the_cap_step_is_a_newer_version_to_the_previous_schema() {
+        let migrated = settings_artifact()
+            .apply_steps(serde_json::from_str(V5_SETTINGS).unwrap(), 5)
+            .unwrap();
+        assert_eq!(
+            reader_at(settings_artifact(), 5).assess(&migrated),
+            Assessment::Downgrade { from: 6 }
+        );
+        assert_eq!(settings_artifact().assess(&migrated), Assessment::UpToDate);
     }
 }

@@ -1,0 +1,35 @@
+{
+  "schema_version": 5,
+  "default_sampling": {
+    "temperature": 0.75,
+    "max_tokens": 16384,
+    "reasoning_effort": "max",
+    "thinking": true
+  },
+  "engine": {
+    "mode": "external",
+    "external": {
+      "url": "http://127.0.0.1:8000/v1",
+      "model_name": null,
+      "sessions": 1,
+      "concurrent_calls": 1,
+      "api_key_env": null
+    }
+  },
+  "max_tool_rounds": 32,
+  "self_model": {
+    "max_narrative": 50,
+    "narrative_in_prompt": 3,
+    "prompt_cap": 1200,
+    "max_closed_goals": 10,
+    "summary_target_chars": 1000,
+    "auto_reflect_every": 0,
+    "auto_consolidate_every": 0,
+    "maintenance_protocol": true
+  },
+  "interface": {
+    "input_max_rows": 6,
+    "theme_mode": "full",
+    "code_block_background": "normal"
+  }
+}
