@@ -286,6 +286,7 @@ fn spawn_title(
                 let mut thoughts = String::new();
                 let mut cancelled = false;
                 let mut sample = None;
+                let mut usage = None;
                 while let Some(chunk) = stream.next().await {
                     match chunk {
                         ChatChunk::Text(t) => text.push_str(&t),
@@ -324,11 +325,15 @@ fn spawn_title(
                                 u.prompt_tokens as u64,
                             );
                             sample = u.prefill;
+                            usage = Some(u);
                         }
                         ChatChunk::ThoughtsSignature(_)
                         | ChatChunk::ToolCall(_)
                         | ChatChunk::Served(_) => {}
                     }
+                }
+                if let Some(u) = usage {
+                    u.log_round("title");
                 }
                 Ok::<Collected, anyhow::Error>((text, thoughts, cancelled, sample))
             };

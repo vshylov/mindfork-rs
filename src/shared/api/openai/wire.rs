@@ -761,6 +761,11 @@ pub struct PromptTokensDetails {
     pub cached_tokens: Option<u32>,
     #[serde(default)]
     pub cache_write_tokens: Option<u32>,
+    /// vLLM's spelling of the write (measured on 0.31.0, cached-tokens.md
+    /// §9.1): the prompt's blocks newly put into its prefix cache. A field of
+    /// its own rather than an alias, so a server sending both keys still parses.
+    #[serde(default)]
+    pub created_cache_tokens: Option<u32>,
 }
 
 impl Usage {
@@ -774,11 +779,12 @@ impl Usage {
             .or_else(|| timings.and_then(|t| t.cache_n))
     }
 
-    /// The cache write, where a gateway reports one.
+    /// The cache write, where the server reports one: the gateway's key, else
+    /// vLLM's.
     pub fn cache_write_tokens(&self) -> Option<u32> {
         self.prompt_tokens_details
             .as_ref()
-            .and_then(|d| d.cache_write_tokens)
+            .and_then(|d| d.cache_write_tokens.or(d.created_cache_tokens))
     }
 
     /// [`Self::cost`] in billionths of a dollar — an integer, so that what is
@@ -1882,6 +1888,21 @@ mod continuation_tests {
         assert_eq!(usage(both).0, Some(1024));
         let silent = r#"{"choices":[],"usage":{"prompt_tokens":42,"completion_tokens":7}}"#;
         assert_eq!(usage(silent), (None, None));
+        // vLLM 0.31.0 with `--enable-prompt-tokens-details` (§9.1): its write
+        // is `created_cache_tokens`; cold, then warm.
+        let vllm_cold = r#"{"choices":[],"usage":{"completion_tokens":378,"prompt_tokens":9917,"prompt_tokens_details":{"cached_tokens":0,"created_cache_tokens":9904},"total_tokens":10295}}"#;
+        assert_eq!(usage(vllm_cold), (Some(0), Some(9904)));
+        let vllm_warm = r#"{"choices":[],"usage":{"completion_tokens":221,"prompt_tokens":9917,"prompt_tokens_details":{"cached_tokens":9904,"created_cache_tokens":0},"total_tokens":10138}}"#;
+        assert_eq!(usage(vllm_warm), (Some(9904), Some(0)));
+        // A server sending both keys parses, and the gateway's wins.
+        let both_writes = r#"{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":1,"prompt_tokens_details":{"cached_tokens":0,"cache_write_tokens":7,"created_cache_tokens":9}}}"#;
+        assert_eq!(usage(both_writes), (Some(0), Some(7)));
+        // xAI (§9.1): the read alone, a block of its own cached on a cold request.
+        let xai = r#"{"choices":[],"usage":{"completion_tokens":1,"prompt_tokens":9681,"prompt_tokens_details":{"audio_tokens":0,"cached_tokens":1152,"image_tokens":0,"text_tokens":9681}}}"#;
+        assert_eq!(usage(xai), (Some(1152), None));
+        // Ollama 0.35.1 (§9.1): the details, and `timings` without `cache_n`.
+        let ollama = r#"{"choices":[],"usage":{"completion_tokens":29,"prompt_tokens":9840,"prompt_tokens_details":{"cached_tokens":9839}},"timings":{"prompt_n":9840,"prompt_ms":10099}}"#;
+        assert_eq!(usage(ollama), (Some(9839), None));
     }
 }
 

@@ -340,6 +340,25 @@ pub struct TokenUsage {
     pub cache_write_tokens: Option<u32>,
 }
 
+impl TokenUsage {
+    /// The `round usage` log line of one request: its `kind` (`turn`, `title`,
+    /// `roll`, `impersonation`, `summary`, `background`), the prompt, and what
+    /// the provider read from its cache and wrote to it
+    /// (docs/research/cached-tokens.md §9, F6). Called **once per request,
+    /// after its stream** — a wire can report usage on every chunk (Gemini).
+    /// The muted turns have nowhere else to show it: a broken prefix on a roll,
+    /// which re-sends the whole conversation, is the costliest miss there is.
+    pub fn log_round(&self, kind: &'static str) {
+        tracing::info!(
+            kind,
+            prompt = self.prompt_tokens,
+            cached = ?self.cached_tokens,
+            written = ?self.cache_write_tokens,
+            "round usage"
+        );
+    }
+}
+
 /// A prompt's processing, measured by the engine: `tokens` processed (the
 /// cached prefix excluded) in `ms`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -799,6 +818,67 @@ impl Embedder for UnavailableEmbedder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The line a muted request leaves: its kind, the prompt, and the cache's
+    /// read and write as reported — `None` kept apart from `Some(0)`, as the
+    /// bar keeps them (cached-tokens.md §4.1).
+    #[test]
+    fn a_round_usage_line_names_its_kind_and_the_cache_figures() {
+        use std::io::Write;
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Clone, Default)]
+        struct Buf(Arc<Mutex<Vec<u8>>>);
+        impl Write for Buf {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let buf = Buf::default();
+        let writer = buf.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            TokenUsage {
+                prompt_tokens: 9245,
+                cached_tokens: Some(0),
+                cache_write_tokens: Some(9242),
+                ..Default::default()
+            }
+            .log_round("roll");
+            TokenUsage {
+                prompt_tokens: 120,
+                ..Default::default()
+            }
+            .log_round("title");
+        });
+        let out = String::from_utf8(buf.0.lock().unwrap().clone()).unwrap();
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 2, "{out}");
+        assert!(
+            lines[0].contains("round usage")
+                && lines[0].contains("kind=\"roll\"")
+                && lines[0].contains("prompt=9245")
+                && lines[0].contains("cached=Some(0)")
+                && lines[0].contains("written=Some(9242)"),
+            "{}",
+            lines[0]
+        );
+        assert!(
+            lines[1].contains("kind=\"title\"")
+                && lines[1].contains("cached=None")
+                && lines[1].contains("written=None"),
+            "{}",
+            lines[1]
+        );
+    }
 
     #[test]
     fn finish_reason_mapping() {

@@ -290,6 +290,7 @@ fn cloud_config(
         ServerMode::Gemini => config.engine.gemini = settings,
         ServerMode::Claude => config.engine.claude = settings,
         ServerMode::OpenRouter => config.engine.openrouter = settings,
+        ServerMode::Grok => config.engine.grok = settings,
         other => panic!("not a cloud arm: {other:?}"),
     }
     Some(config)
@@ -395,6 +396,26 @@ async fn cached_tokens_openrouter_e2e_live() {
         return;
     };
     cloud_arm("openrouter", config).await;
+}
+
+/// xAI — measured on the wire before this arm existed (cached-tokens.md §9.1):
+/// `prompt_tokens_details.cached_tokens`, a block of xAI's own cached even on a
+/// cold request, and no write figure.
+///
+/// `MINDFORK_XAI_KEY=… [MINDFORK_CACHED_E2E_XAI_MODEL=…] cargo test
+/// cached_tokens_xai_e2e_live -- --ignored --nocapture`
+#[tokio::test]
+#[ignore = "requires MINDFORK_XAI_KEY"]
+async fn cached_tokens_xai_e2e_live() {
+    let Some(config) = cloud_config(
+        ServerMode::Grok,
+        "MINDFORK_XAI_KEY",
+        "MINDFORK_CACHED_E2E_XAI_MODEL",
+        "grok-4.5",
+    ) else {
+        return;
+    };
+    cloud_arm("xai", config).await;
 }
 
 /// Anthropic — nothing asks it to cache, so its figure is a reported zero and

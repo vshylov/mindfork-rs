@@ -97,10 +97,10 @@ dropped with it.
 | Provider | Caching | Field(s) | `prompt` includes the cached part? | Evidence |
 |---|---|---|---|---|
 | llama.cpp | automatic (`cache_prompt`) | `timings.cache_n` (since 2025-09, PR #15827); `prompt_tokens_details.cached_tokens` (since 2026-03, PR #19361), both sent and equal | **yes**: `prompt_tokens` = `cache_n` + `prompt_n` | **measured 2026-10-17** (§3.1): build 11715, Qwen 3.8 27B and Gemma 4 31B |
-| Ollama | automatic | none known on `/v1` | **yes** (1797 reported with 1491 cached, prompt-cut-detection.md §6) | **to measure** whether any field comes |
+| Ollama | automatic | `prompt_tokens_details.cached_tokens` (its `timings` have no `cache_n`) | **yes** | **measured 2026-10-18** (§9.1): 0.35.1, `gemma4:e4b` |
 | LM Studio | automatic | unknown | **yes** (prompt eval 42, `prompt_tokens` 1237, [local-servers.md](local-servers.md) §3) | **to measure** |
-| vLLM | automatic prefix caching | `prompt_tokens_details.cached_tokens`, only with `--enable-prompt-tokens-details` | yes | documented |
-| xAI | automatic | `prompt_tokens_details.cached_tokens` | yes | documented; no key in this environment |
+| vLLM | automatic prefix caching | `prompt_tokens_details.{cached_tokens, created_cache_tokens}`, only with `--enable-prompt-tokens-details` | yes | **measured 2026-10-18** (§9.1): 0.31.0, `Qwen/Qwen3-0.6B`, with and without the flag |
+| xAI | automatic; a block of its own cached even cold | `prompt_tokens_details.cached_tokens`, no write | yes | **measured 2026-10-18** (§9.1): `grok-4.7`, `4.5`, `4.3` |
 | OpenRouter | depends on the provider it routes to | `prompt_tokens_details.{cached_tokens, cache_write_tokens}`, both always sent | **yes** | **measured 2026-10-17** (§3.1): OpenAI, Anthropic and Gemini routes |
 | OpenAI Responses | automatic, 1024 tokens minimum | `input_tokens_details.{cached_tokens, cache_write_tokens}`, both always sent | **yes** | **measured 2026-10-17** (§3.1): `gpt-6.1-sol`, `gpt-5.6-sol`, `gpt-5.4-mini` |
 | Anthropic | **explicit only** (`cache_control`) | `cache_read_input_tokens`, `cache_creation_input_tokens`, both always sent, on `message_start` and again on `message_delta` | **no**: `input_tokens` is the remainder | **measured 2026-10-17** (§3.1): zeros without `cache_control`; 13 + 7372 with it on 2026-08-08 (§3.3 there) |
@@ -452,3 +452,152 @@ track's first run there, unchanged:
 
 The dispatch was 264 of 264 green across its four shards in 36 min.
 
+
+## 9. The leftovers, before 0.20.0 (2026-10-18)
+
+The roadmap's *The cache share — leftovers* named seven items: four rows never
+measured (Ollama, LM Studio, vLLM, xAI), DeepSeek's own dialect, the muted turns'
+share, and the write figure on the bar. The owner asked to close as many as
+possible before the next release, with an xAI key, the gateway's key, LM Studio,
+Docker and a DeepSeek GGUF at hand. The probes of §7 ran again first; nothing was
+built before them.
+
+### 9.1 What was measured
+
+The same probe as §3.1 (a ~30 KB system message behind a fresh nonce, three
+identical requests through the client's own builder):
+
+| Wire | Model | Request 1 (cold) | Requests 2–3 | Field |
+|---|---|---|---|---|
+| xAI | `grok-4.7` | cached 1152 of 9681 | cached **9600** (99%) | `prompt_tokens_details.cached_tokens`; no write key |
+| xAI | `grok-4.5` | cached 384 of 8938 | cached **8832** (98%) | same |
+| xAI | `grok-4.3` | cached 128 of 8591 | cached **8576** (99%) | same |
+| Ollama 0.35.1 (Docker, RTX 4090) | `gemma4:e4b` | cached 0 of 9840 | cached **9839** | `prompt_tokens_details.cached_tokens`; its `timings` carry no `cache_n`, and their `prompt_n` is the whole prompt |
+| llama.cpp b11719 | DeepSeek-R1-Distill-Qwen-32B Q4_0 | cached 0 of 9901 (`cache_n` 0) | cached **9900** (`cache_n` 9900, `prompt_n` 1) | both, equal |
+| vLLM 0.31.0 (Docker, RTX 4090), `--enable-prompt-tokens-details` | `Qwen/Qwen3-0.6B` | cached 0 of 9917, **created 9904** | cached **9904**, created 0 | `prompt_tokens_details.{cached_tokens, created_cache_tokens}` |
+| vLLM 0.31.0, without the flag | `Qwen/Qwen3-0.6B` | no details | no details | none: `None`, no share on the bar |
+
+xAI's cold request is never zero: a block of its own (128 to 1152 tokens,
+growing with the model) is cached before the first byte of ours. The steps are
+128 tokens, as on OpenAI's older generation.
+
+On the DeepSeek GGUF the smoke ran as well (`cached_tokens_e2e_live`): turn 1
+`0%`, turn 2 **10630 of 10643 (99%)**, the control `0%` — a reasoning model whose
+template drops the `<think>` part of the earlier answers keeps the prefix, since
+the cut falls after the prompt the cache holds.
+
+The gateway, fifteen routes beyond §3.1's three (cheap models, one per vendor
+where the catalogue prices a cache read, two where it does not):
+
+| Route | Cold | Then | Note |
+|---|---|---|---|
+| `deepseek/deepseek-v4.1-flash` | 0 of 8987 | 0, then **8960** | normalised: no `prompt_cache_hit_tokens` reaches us |
+| `qwen/qwen3.8-flash` | 0 of 9912 | **9728**, 9728 | |
+| `mistralai/mistral-small-2603` | 0 of 10121 | **10096**, 10096 | a 429 on the first try, through on the second |
+| `mistralai/mistral-large-4-0` | 0 of 9282 | 0, then **8684** | |
+| `meta-llama/llama-4-maverick` | 0 of 9840 | **9824**, then 0 | |
+| `moonshotai/kimi-k3` | 0 of 8730 | **8729**, then 0 | |
+| `minimax/minimax-m3` | 0 of 8729 | 0, then **8576** | |
+| `xiaomi/mimo-v2.6-flash` | 0 of 9913 | **9856**, 9856 | |
+| `nvidia/nemotron-3.5-lightning` | 0 of 10122 | 4336, 4336 | half the prompt |
+| `tencent/hy4-preview` | 0 of 8983 | **8896**, 8896 | |
+| `meta-llama/llama-3.3-70b-instruct` | 0 of 8456 | 0, 0 | no cache read priced |
+| `cohere/command-a-plus` | 0 of 8356 | 0, 0 | |
+| `amazon/nova-2-lite-v1` | 0 of 8406 | 0, 0 | no cache read priced |
+| `anthropic/claude-haiku-5.5` | 0 of 12510 | 0, 0 | nothing asks it to cache |
+
+Every route sent both `cached_tokens` and `cache_write_tokens`, zeros included —
+the gateway's shape, whatever the vendor. **A hit can come and go on one route**
+(Maverick, Kimi, Mistral Large, MiniMax): the gateway may serve consecutive
+requests from different providers, each with a cache of its own, so on the
+gateway `cache 0%` after a hit is the routing, not the prompt. The fifteen
+routes cost $0.07 on the gateway's meter; the three Grok models about $0.09
+(`cost_in_usd_ticks`).
+
+**Not measured:**
+
+- **LM Studio** (1.1.7, `Bionic.exe`): its CLI could not wake the local service
+  (`Timed out waiting for LM Studio daemon to start`), and with the app started
+  the server logged `Server stopped` at once. It needs the server started from the
+  app's own window.
+- **DeepSeek's own dialect** (`prompt_cache_hit_tokens` / `_miss_tokens`) is
+  spoken by DeepSeek's API alone: the gateway normalises it away (above), and the
+  GGUF on llama.cpp speaks llama.cpp's. Only a DeepSeek API key would measure it.
+
+### 9.2 What that settles
+
+- **One parser addition, no change.** xAI, Ollama, vLLM's read, the DeepSeek GGUF
+  on llama.cpp and every gateway route arrive in a shape the OpenAI-compatible
+  client already reads, and the gateway always sends a reported zero, so a miss
+  there is `Some(0)`. vLLM spells its write `created_cache_tokens`: read as the
+  write when the gateway's key is absent — a field of its own, not an alias, so a
+  server sending both still parses.
+- **vLLM shows a share only with `--enable-prompt-tokens-details`**; without it the
+  reply carries no details and the bar shows none — the manual says so.
+- **xAI gets a smoke arm** of its own (`cached_tokens_xai_e2e_live`), beside the
+  four of §7: the probe measured the wire, the arm measures the app's xAI mode.
+- **The manual says** that on the gateway a share can drop to `0%` between turns
+  when a different provider serves them, and that xAI's first turn reads a few
+  percent.
+
+### 9.3 Forks
+
+*User's decision, 2026-10-18: F6 (a), F7 (a), F8 (a) — each the recommendation.*
+
+**F6. The muted turns' share** — a title, a roll, an impersonation, a page summary.
+They do not drive the bar (§6), and nothing records their figure.
+- **(a) A `round usage` line per muted request, with its kind** (`title`, `roll`,
+  `impersonation`, `summary`, `background`) — the log only, as the main turn's.
+  *Recommended*: a broken prefix on a roll (which re-sends the whole conversation)
+  is the costliest miss the app makes, and today it leaves no trace.
+- (b) As (a), and a chip on the bar while such a request runs.
+- (c) Leave them as they are.
+
+**F7. The write figure** — carried by the domain, logged, not shown. Measured, only
+OpenAI's 5.6+ write (§3.1); the gateway's routes all wrote 0, xAI has no key for it,
+and Anthropic writes only when asked, which we do not.
+- **(a) The log only, and the item moves to *Decided against*** with this reason.
+  *Recommended*: `cache 0%` already says a miss, and the bar sheds chips on narrow
+  windows.
+- (b) `· wrote N` beside the share when N > 0.
+
+**F8. DeepSeek's dialect.**
+- **(a) Leave it on demand**, the reason written down: only a direct DeepSeek key
+  reaches it. *Recommended* unless a key is at hand.
+- (b) Parse it from DeepSeek's documentation, with unit tests and no live run.
+- (c) Parse it, and run it live with a DeepSeek API key.
+
+### 9.4 What was built, and the live run
+
+- **F6 (a)**: `TokenUsage::log_round(kind)` writes the `round usage` line once per
+  request, after its stream (a wire can report usage on every chunk — Gemini).
+  The title, the roll, the impersonation, the page summary and the background tool
+  loop each call it; the main turn's line gains `kind="turn"`. A unit test holds
+  the line's fields — the kind, the prompt, `Some(0)` kept apart from `None`.
+- **vLLM's write**: `created_cache_tokens` read as the write (above), with the
+  measured replies as fixtures beside xAI's and Ollama's.
+- **`cached_tokens_xai_e2e_live`**, the fifth cloud arm, through the app's xAI mode.
+
+The live run, 2026-10-18:
+
+| Arm | Setup | Turn 1 | Turn 2 | Control |
+|---|---|---|---|---|
+| `cached_tokens_xai_e2e_live` | xAI, `grok-4.5` | 384 of 9174 (4%) | **9088 of 9191 (98%)** | 384 (4%) |
+| `cached_tokens_e2e_live` | vLLM 0.31.0, `Qwen/Qwen3-0.6B` | 0 of 10637 (0%) | **10624 of 10656 (99%)** | 0 (0%) |
+| `cached_tokens_e2e_live` | llama.cpp b11719, DeepSeek-R1-Distill-Qwen-32B Q4_0 | 1 of 10630 (0%) | **10630 of 10643 (99%)** | 1 (0%) |
+
+On xAI the bar reads `cache 4%` on a first turn: xAI's own block, honestly reported.
+The control's assertion (under 5% of the prompt) holds there with room to spare.
+
+**F6, through the interface**: a scratch copy of the debug build on a
+`llama-server` with Gemma 4 E4B, driven by `console_probe`'s `Session` — three
+questions, `/compact` (with `compaction.tail_tokens` at 128, so that three short
+answers leave something to fold), then `Ctrl+U`. The log held a `round usage`
+line of kind `turn` (three), `title`, `roll` and `impersonation`, each with its
+prompt and cache figures — `title prompt=174 cached=Some(71)`, the roll
+`prompt=277 cached=Some(0)`. Not driven live: the page summary and the background
+loop, whose call is the same two lines after the same kind of stream.
+
+**Cost:** the gateway's meter $0.07 for fifteen routes and $0.01 for Mistral's
+retry; xAI about $0.20 across the probe's two runs and the smoke; the local
+servers free.

@@ -5628,6 +5628,7 @@ async fn stream_round(
     if let Some(prompt) = usage_prompt {
         tracing::info!(
             generation = %id,
+            kind = "turn",
             prompt,
             cached = ?usage_cache.0,
             written = ?usage_cache.1,

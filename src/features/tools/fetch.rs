@@ -794,6 +794,7 @@ async fn summarize_text(
         let mut stream = engine.chat_stream(request, cancel.clone()).await?;
         let mut out = String::new();
         let mut prefill = None;
+        let mut usage = None;
         while let Some(chunk) = stream.next().await {
             match chunk {
                 ChatChunk::Text(t) => out.push_str(&t),
@@ -826,12 +827,16 @@ async fn summarize_text(
                         );
                     }
                     prefill = u.prefill;
+                    usage = Some(u);
                 }
                 ChatChunk::Thoughts(_)
                 | ChatChunk::ThoughtsSignature(_)
                 | ChatChunk::ToolCall(_)
                 | ChatChunk::Served(_) => {}
             }
+        }
+        if let Some(u) = usage {
+            u.log_round("summary");
         }
         Ok::<Summarized, anyhow::Error>(Summarized { text: out, prefill })
     };

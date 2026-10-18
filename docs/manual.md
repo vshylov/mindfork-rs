@@ -177,7 +177,12 @@ much of the conversation it read from its prompt cache, the count adds the share
 reused rather than processed again, which is faster and, on a cloud, cheaper.
 `cache 0%` on a short chat is normal: providers cache only a prompt above about
 one to four thousand tokens. Anthropic always reads `0%`, because mindfork does
-not ask it to cache.
+not ask it to cache. On OpenRouter a share can fall back to `0%` from one turn to
+the next when a different provider serves the model; xAI reads a few percent even
+on a first turn, a block of its own. A vLLM server shows no share unless it was
+started with `--enable-prompt-tokens-details`. Every request's figures, the
+background ones included (titles, compression, impersonation), are in the log as
+`round usage` lines.
 
 ### The self-model
 
