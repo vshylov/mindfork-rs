@@ -1228,9 +1228,9 @@ This is the second of the three pull requests of §6; the first raises a stored
   the settings step of the first pull request is for.
 - **Where the backstop still cuts**: on a model shaped like the dev profile, the
   sections above the observations overflow with their own labels below a cap of 419
-  (Russian) or 510 (English), as they did before; the observations show from 638 and
-  720, the first caps whose room holds the marker and a line's frame with some of its
-  text.
+  (Russian) or 510 (English), as they did before. The observations first show at 638
+  and 720, where the room first holds the marker and a line's frame with some of its
+  text, and show at every cap from 800 on.
 - **Tests**: all three picks at 4000 on a model with every section the length the dev
   profile has, in both languages; the observations never push the block past the cap,
   at every cap from 100 to 8000, in both languages; a short pick keeps its length
