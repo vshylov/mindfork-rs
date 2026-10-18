@@ -291,6 +291,7 @@ fn cloud_config(
         ServerMode::Claude => config.engine.claude = settings,
         ServerMode::OpenRouter => config.engine.openrouter = settings,
         ServerMode::Grok => config.engine.grok = settings,
+        ServerMode::DeepSeek => config.engine.deepseek = settings,
         other => panic!("not a cloud arm: {other:?}"),
     }
     Some(config)
@@ -416,6 +417,27 @@ async fn cached_tokens_xai_e2e_live() {
         return;
     };
     cloud_arm("xai", config).await;
+}
+
+/// DeepSeek in its own mode — on the production supervisor, so the whole road
+/// the `deepseek` mode takes is under test: its section, its key, its client
+/// (docs/research/deepseek-mode.md §7). It sends OpenAI's spelling of the
+/// figure beside its own pair (deepseek-api.md §2.2).
+///
+/// `MINDFORK_DEEPSEEK_KEY=… [MINDFORK_CACHED_E2E_DEEPSEEK_MODEL=…] cargo test
+/// cached_tokens_deepseek_e2e_live -- --ignored --nocapture`
+#[tokio::test]
+#[ignore = "requires MINDFORK_DEEPSEEK_KEY"]
+async fn cached_tokens_deepseek_e2e_live() {
+    let Some(config) = cloud_config(
+        ServerMode::DeepSeek,
+        "MINDFORK_DEEPSEEK_KEY",
+        "MINDFORK_CACHED_E2E_DEEPSEEK_MODEL",
+        "deepseek-flash",
+    ) else {
+        return;
+    };
+    cloud_arm("deepseek", config).await;
 }
 
 /// Anthropic — nothing asks it to cache, so its figure is a reported zero and

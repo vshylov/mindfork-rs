@@ -1,5 +1,6 @@
-//! Live smokes of DeepSeek's own API in `external` mode, against the real API.
-//! `#[ignore]` — not in CI; silently skipped without the key.
+//! Live smokes of DeepSeek's own API — in `external` mode and in the `deepseek`
+//! mode of its own — against the real API. `#[ignore]` — not in CI; silently
+//! skipped without the key.
 //!
 //! DeepSeek refuses the thinking switch as llama.cpp's boolean with a `422`, so
 //! before the client learned its spelling no request went through
@@ -15,7 +16,9 @@
 //! cargo test -- deepseek_live_tests --ignored --nocapture --test-threads=1`.
 
 use super::OpenAiClient;
-use crate::shared::api::contract::{ChatChunk, ChatRequest, EngineBackend, FinishReason};
+use crate::shared::api::contract::{
+    ChatChunk, ChatRequest, EngineBackend, FinishReason, VisionSupport,
+};
 use crate::shared::api::sse_stub::{collect, hello, muted};
 
 /// DeepSeek's OpenAI-compatible base, as a user would type it in `external`.
@@ -125,5 +128,58 @@ async fn the_first_turn_of_a_new_engine_completes_on_deepseek() {
     for (model, client) in clients {
         completed(&client, &model, "first turn", switched_on()).await;
         assert!(client.thinking_learned(), "{model}: learned on the way");
+    }
+}
+
+/// The clients of [`clients`] as the `deepseek` mode builds them
+/// ([`OpenAiClient::for_deepseek`], docs/research/deepseek-mode.md §4.1).
+fn in_the_mode() -> Option<Vec<(String, OpenAiClient)>> {
+    Some(
+        clients()?
+            .into_iter()
+            .map(|(model, client)| (model, client.for_deepseek()))
+            .collect(),
+    )
+}
+
+/// In the mode the switch is typed from the first request: a muted turn —
+/// the switch off and no effort — completes without reasoning, and a turn with
+/// the switch on reasons. Neither had a refusal to learn from.
+#[tokio::test]
+#[ignore = "requires MINDFORK_DEEPSEEK_KEY (live DeepSeek API)"]
+async fn the_mode_mutes_and_reasons_on_deepseek() {
+    let Some(clients) = in_the_mode() else {
+        return;
+    };
+    for (model, client) in clients {
+        assert!(client.thinking_learned(), "{model}: told, not learned");
+        let muted = completed(&client, &model, "muted turn", muted()).await;
+        assert_eq!(muted, 0, "{model}: the switch off must mean no reasoning");
+        let on = completed(&client, &model, "thinking turn", switched_on()).await;
+        assert!(on > 0, "{model}: the switch on must reason");
+    }
+}
+
+/// The window and the images, read from DeepSeek's list in its words: every
+/// model's window, and images on the models whose inputs name them —
+/// `deepseek-flash` takes them, `deepseek-v4-pro` does not (measured §1).
+#[tokio::test]
+#[ignore = "requires MINDFORK_DEEPSEEK_KEY (live DeepSeek API)"]
+async fn the_mode_reads_the_window_and_the_images_on_deepseek() {
+    let Some(clients) = in_the_mode() else {
+        return;
+    };
+    for (model, client) in clients {
+        let caps = client.model_capabilities().await;
+        let vision = client.vision().await;
+        println!("{model}: caps={caps:?} vision={vision:?}");
+        let window = caps.and_then(|c| c.context_length);
+        assert!(window.is_some_and(|w| w >= 65_536), "{model}: {window:?}");
+        let expected = match model.as_str() {
+            "deepseek-flash" => VisionSupport::Supported,
+            "deepseek-v4-pro" => VisionSupport::Unsupported,
+            _ => continue,
+        };
+        assert_eq!(vision, expected, "{model}");
     }
 }
