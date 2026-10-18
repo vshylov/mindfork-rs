@@ -227,8 +227,8 @@ rows and the orchestrator's smokes failed on their first request):
 
 | Smoke | `deepseek-flash` | `deepseek-v4-pro` |
 |---|---|---|
-| `a_muted_turn_and_a_thinking_turn_complete_on_deepseek` | muted: `pong`, 0 reasoning, learned; on: `pong`, 8 reasoning | muted: 0 reasoning, learned; on: 23 reasoning |
-| `the_first_turn_of_a_new_engine_completes_on_deepseek` | `pong`, 25 reasoning, learned | `pong`, 22 reasoning, learned |
+| `a_muted_turn_and_a_thinking_turn_complete_on_deepseek` | muted: 0 reasoning, learned; on: 22 reasoning | muted: 0 reasoning, learned; on: 37 reasoning |
+| `the_first_turn_of_a_new_engine_completes_on_deepseek` | 17 reasoning, learned | 15 reasoning, learned |
 | `cached_tokens_e2e_live` | turn 1 `0%`, turn 2 **8704 of 8956 (97%)**, control `0%` | turn 1 `0%`, turn 2 **8832 of 8958 (98%)**, control `0%` |
 | `auto_title_first_reply_e2e_live` | a five-word Russian title on why the sky is blue | a four-word one on the same |
 | `followup_tool_e2e_live` | the follow-up in its own bubble | the same |
