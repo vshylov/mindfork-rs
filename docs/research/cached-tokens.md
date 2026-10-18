@@ -98,7 +98,7 @@ dropped with it.
 |---|---|---|---|---|
 | llama.cpp | automatic (`cache_prompt`) | `timings.cache_n` (since 2025-09, PR #15827); `prompt_tokens_details.cached_tokens` (since 2026-03, PR #19361), both sent and equal | **yes**: `prompt_tokens` = `cache_n` + `prompt_n` | **measured 2026-10-17** (§3.1): build 11715, Qwen 3.8 27B and Gemma 4 31B |
 | Ollama | automatic | `prompt_tokens_details.cached_tokens` (its `timings` have no `cache_n`) | **yes** | **measured 2026-10-18** (§9.1): 0.35.1, `gemma4:e4b` |
-| LM Studio | automatic | unknown | **yes** (prompt eval 42, `prompt_tokens` 1237, [local-servers.md](local-servers.md) §3) | **to measure** |
+| LM Studio | automatic (its first token comes in 0.02 s on a 4.5k-token repeat) | **none**, on `/v1` and on its own `/api/v0` (whose `stats` are speeds and times) | **yes** | **measured 2026-10-18** (§9.1): 1.1.7, Gemma 4 E4B |
 | vLLM | automatic prefix caching | `prompt_tokens_details.{cached_tokens, created_cache_tokens}`, only with `--enable-prompt-tokens-details` | yes | **measured 2026-10-18** (§9.1): 0.31.0, `Qwen/Qwen3-0.6B`, with and without the flag |
 | xAI | automatic; a block of its own cached even cold | `prompt_tokens_details.cached_tokens`, no write | yes | **measured 2026-10-18** (§9.1): `grok-4.7`, `4.5`, `4.3` |
 | OpenRouter | depends on the provider it routes to | `prompt_tokens_details.{cached_tokens, cache_write_tokens}`, both always sent | **yes** | **measured 2026-10-17** (§3.1): OpenAI, Anthropic and Gemini routes |
@@ -476,6 +476,7 @@ identical requests through the client's own builder):
 | llama.cpp b11719 | DeepSeek-R1-Distill-Qwen-32B Q4_0 | cached 0 of 9901 (`cache_n` 0) | cached **9900** (`cache_n` 9900, `prompt_n` 1) | both, equal |
 | vLLM 0.31.0 (Docker, RTX 4090), `--enable-prompt-tokens-details` | `Qwen/Qwen3-0.6B` | cached 0 of 9917, **created 9904** | cached **9904**, created 0 | `prompt_tokens_details.{cached_tokens, created_cache_tokens}` |
 | vLLM 0.31.0, without the flag | `Qwen/Qwen3-0.6B` | no details | no details | none: `None`, no share on the bar |
+| LM Studio 1.1.7 (`:1235`, JIT-loaded at 131072) | Gemma 4 E4B | `prompt_tokens` 9839, nothing else | the same | none, on `/v1` and `/api/v0`: `None`, no share |
 
 xAI's cold request is never zero: a block of its own (128 to 1152 tokens,
 growing with the model) is cached before the first byte of ours. The steps are
@@ -516,10 +517,6 @@ routes cost $0.07 on the gateway's meter; the three Grok models about $0.09
 
 **Not measured:**
 
-- **LM Studio** (1.1.7, `Bionic.exe`): its CLI could not wake the local service
-  (`Timed out waiting for LM Studio daemon to start`), and with the app started
-  the server logged `Server stopped` at once. It needs the server started from the
-  app's own window.
 - **DeepSeek's own dialect** (`prompt_cache_hit_tokens` / `_miss_tokens`) is
   spoken by DeepSeek's API alone: the gateway normalises it away (above), and the
   GGUF on llama.cpp speaks llama.cpp's. Only a DeepSeek API key would measure it.
@@ -534,6 +531,11 @@ routes cost $0.07 on the gateway's meter; the three Grok models about $0.09
   server sending both still parses.
 - **vLLM shows a share only with `--enable-prompt-tokens-details`**; without it the
   reply carries no details and the bar shows none — the manual says so.
+- **LM Studio reports no figure at all**, though it caches: a repeat of 4523 tokens
+  had its first token in 0.023 s. Its `stats` give speeds and times, not counts,
+  and a share inferred from a time would be a guess. So `None`, and no share there —
+  the manual says so. (Its CLI could not wake the service from here; the owner
+  started the server from the app, on `:1235`.)
 - **xAI gets a smoke arm** of its own (`cached_tokens_xai_e2e_live`), beside the
   four of §7: the probe measured the wire, the arm measures the app's xAI mode.
 - **The manual says** that on the gateway a share can drop to `0%` between turns

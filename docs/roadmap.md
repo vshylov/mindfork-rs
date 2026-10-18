@@ -204,13 +204,12 @@ effort tiers — have all closed
   GO**: the prefix holds on 8 of 8 follow-ups. Anthropic breakpoints and
   `prompt_cache_key` remain as above.
 - **The cache share — leftovers** ([cached-tokens.md](research/cached-tokens.md)
-  §9; mostly closed 2026-10-18: Ollama, vLLM, xAI and fifteen gateway routes
-  measured, the muted turns logged, the write figure [decided
-  against](#decided-against) on the bar) — **on demand**: DeepSeek's own
-  `prompt_cache_hit_tokens`, spoken by DeepSeek's API alone — the gateway
-  normalises it and a DeepSeek GGUF speaks llama.cpp's fields, so only a DeepSeek
-  key would measure it; LM Studio's row, whose server would not start from its
-  CLI.
+  §9; closed 2026-10-18 but one: Ollama, LM Studio (which reports nothing), vLLM,
+  xAI and fifteen gateway routes measured, the muted turns logged, the write
+  figure [decided against](#decided-against) on the bar) — **on demand**:
+  DeepSeek's own `prompt_cache_hit_tokens`, spoken by DeepSeek's API alone — the
+  gateway normalises it and a DeepSeek GGUF speaks llama.cpp's fields, so only a
+  DeepSeek key would measure it.
 - **History compression — leftovers** ([history-compression.md](research/history-compression.md),
   spec §6.7; the track is closed) — **deferred**: a **semantic index over the
   folded range** — sub-decision S11 chose the full-text index the app already

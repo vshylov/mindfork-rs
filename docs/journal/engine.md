@@ -6965,8 +6965,9 @@ F7 (a), F8 (a), each the recommendation).
 - **`cached_tokens_xai_e2e_live`**, the fifth cloud arm. **Live GO**: xAI `grok-4.5` 4% →
   **98%** → 4%; vLLM 0% → **99%** → 0%; DeepSeek-R1-Distill-Qwen-32B on llama.cpp 0% →
   **99%** → 0%.
-- **Not measured**: LM Studio — its CLI could not wake the service, and the app's server
-  stopped as soon as it started; it needs starting from the app's window.
+- **LM Studio 1.1.7** (started from the app by the owner, its CLI could not wake the
+  service): **no figure**, on `/v1` or its own `/api/v0` — though it caches (a 4523-token
+  repeat's first token in 0.023 s). `None`, no share there; the manual says so.
 - **Docs**: spec §11.1 (the kinds, the write off the bar), the manual (the gateway, xAI,
   vLLM's flag, the log), the roadmap's leftovers and *Decided against*.
 

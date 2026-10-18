@@ -180,9 +180,9 @@ one to four thousand tokens. Anthropic always reads `0%`, because mindfork does
 not ask it to cache. On OpenRouter a share can fall back to `0%` from one turn to
 the next when a different provider serves the model; xAI reads a few percent even
 on a first turn, a block of its own. A vLLM server shows no share unless it was
-started with `--enable-prompt-tokens-details`. Every request's figures, the
-background ones included (titles, compression, impersonation), are in the log as
-`round usage` lines.
+started with `--enable-prompt-tokens-details`, and LM Studio shows none: it caches,
+but does not say how much. Every request's figures, the background ones included
+(titles, compression, impersonation), are in the log as `round usage` lines.
 
 ### The self-model
 
