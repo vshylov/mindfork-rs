@@ -413,7 +413,7 @@ stable as the pick.
 Three pull requests. The first is independent of the other two; the third
 builds on the second, since both change `render_for_prompt`.
 
-1. **B′ (b1)**, a storage change: `SETTINGS_SCHEMA` 5 → 6 and a step
+1. **B′ (b1)**, a storage change (PR #784): `SETTINGS_SCHEMA` 5 → 6 and a step
    `settings_to_v6` that rewrites a stored `self_model.prompt_cap` of exactly
    1200 to 4000, both numbers frozen in the step as `settings_to_v3`'s are. A
    golden fixture of v5, a test of the parsed outcome, an entry under the
