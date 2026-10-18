@@ -87,7 +87,7 @@ pub struct NarrativeSegment {
 }
 
 /// How the prompt's observations were picked, which their header says (spec
-/// §17.4, docs/research/self-model-observations.md §5). Decided once per chat, on
+/// §17.4, docs/history/self-model-observations.md §5). Decided once per chat, on
 /// its opening, so the header holds from turn to turn as the pick does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ObservationPick {
@@ -167,7 +167,7 @@ const MORE_MARKER_RESERVE: usize = 12;
 
 /// The least share of the observations' room a pick is cut to, its line's frame
 /// included: when sharing the room would leave a pick less, fewer picks are shown
-/// (docs/research/self-model-observations.md §3.5 (d); the median observation's
+/// (docs/history/self-model-observations.md §3.5 (d); the median observation's
 /// first sentence is 186 characters).
 const MIN_OBSERVATION_SHARE: usize = 160;
 
@@ -611,7 +611,7 @@ impl SelfModel {
             // The budgets above count content, not the labels around it: the
             // block's header, the captions, the separators. The observations pay
             // for them and for their own header (B0,
-            // docs/research/self-model-observations.md §3.3), measured on the text
+            // docs/history/self-model-observations.md §3.3), measured on the text
             // as rendered. Their share plus the carry is what the four shares hold
             // less the content above, so their room is what the shares hold less
             // the text above. Measured this way, it also repays an earlier
@@ -864,7 +864,7 @@ fn fit_parts(items: &[String], sep: &str, budget: usize, loc: &Locale) -> (Strin
 /// does; `None` leaves the section out.
 ///
 /// The room is shared among the picks by water-filling
-/// (docs/research/self-model-observations.md §3.5 (d)): a pick shorter than its
+/// (docs/history/self-model-observations.md §3.5 (d)): a pick shorter than its
 /// share keeps its length, and what it leaves is shared among the longer ones,
 /// each cut to its share at a word boundary, ending in "…". This is not the
 /// whole-item rule of the lists (D3): a trait cut in half reads as another trait,
@@ -1115,7 +1115,7 @@ mod tests {
 
     /// The header says how the observations were picked: nearest the opening and
     /// the latest, or the latest only (H (c),
-    /// docs/research/self-model-observations.md §5) — not "recent" over picks a
+    /// docs/history/self-model-observations.md §5) — not "recent" over picks a
     /// median of 104 days old.
     #[test]
     fn the_observations_header_says_how_they_were_picked() {
@@ -1311,7 +1311,7 @@ mod tests {
     }
 
     /// A model shaped like the dev profile the observations' room was measured
-    /// on (docs/research/self-model-observations.md §2): every section's length
+    /// on (docs/history/self-model-observations.md §2): every section's length
     /// as it is there.
     fn dev_shaped_model() -> SelfModel {
         let mut m = SelfModel::new(Uuid::new_v4());

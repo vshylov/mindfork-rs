@@ -837,7 +837,7 @@ async fn self_notes_relevant_ranks_and_filters() {
 
 /// The `@self` notes are ranked alone: notes about the user nearer the query
 /// than every observation must not fill the candidates and leave the prompt
-/// with none (docs/research/self-model-observations.md §7). Before, the nearest
+/// with none (docs/history/self-model-observations.md §7). Before, the nearest
 /// 20 of all notes were taken first and the `@self` ones kept from those.
 #[tokio::test]
 async fn self_notes_relevant_ranks_observations_alone() {

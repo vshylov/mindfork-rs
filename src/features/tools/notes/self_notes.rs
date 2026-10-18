@@ -26,7 +26,7 @@ pub(crate) fn self_notes_recent(
 /// to be picked by the chat's opening; under it the chat takes the latest ones
 /// instead (spec §17.4). Read blind on the dev profile's 138 openings, no lead
 /// under 0.50 bore on its chat (0 of 51), and 14 of the 40 just above it did
-/// (docs/research/self-model-observations.md §4.2). The floor is on the lead
+/// (docs/history/self-model-observations.md §4.2). The floor is on the lead
 /// alone: the picks after it need not clear it.
 ///
 /// A position in the **reference (bge-m3) scale**, read through
@@ -44,7 +44,7 @@ pub(crate) const OBSERVATION_LEAD_FLOOR: f32 = 0.50;
 /// The `@self` notes are ranked alone. Taking the nearest of all the profile's
 /// notes first let a profile with many notes about the user fill the candidates
 /// with those, and the section fell back to recency in silence; the search
-/// scores every note anyway (docs/research/self-model-observations.md §7).
+/// scores every note anyway (docs/history/self-model-observations.md §7).
 pub(crate) async fn self_notes_relevant(
     storage: &crate::shared::storage::Storage,
     embedder: &dyn crate::shared::api::Embedder,

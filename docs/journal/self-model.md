@@ -1194,7 +1194,7 @@ decision, 2026-10-18: F1 (e1), behind an MVP probe, with (e2) recency on no-go.
 
 ### Post-M9: the observations' room — the labels counted, the room shared (done)
 
-The research is [self-model-observations.md](../research/self-model-observations.md)
+The research is [self-model-observations.md](../history/self-model-observations.md)
 §3 and §6, fork B. User's decision, 2026-10-18: B0 + B (d), the labels charged to the
 observations, and decision D3 (lists lose whole items) reversed for observations only.
 This is the second of the three pull requests of §6; the first raises a stored
@@ -1252,7 +1252,7 @@ This is the second of the three pull requests of §6; the first raises a stored
 
 ### Post-M9: a floor under the observations' pick, and a header that says how they were picked (done)
 
-The research is [self-model-observations.md](../research/self-model-observations.md)
+The research is [self-model-observations.md](../history/self-model-observations.md)
 §4, §5 and §7, forks F and H. User's decision, 2026-10-18: F (b), a floor of 0.50 on
 the lead only, and H (c), a header per arm. The third of the three pull requests of §6,
 on top of the second (the entry above), since both change `render_for_prompt`.
