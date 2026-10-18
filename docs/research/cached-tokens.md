@@ -437,3 +437,18 @@ What the run found:
 - Anthropic: about 30k for the smoke and 30k for the probe;
 - llama.cpp: local, free.
 
+**On the rented gate, 2026-10-18** (run 39143245277, `main` at `5f18fceb`, after
+0.19.0 and prompt-caching's F1 (e1); Gemma 4 31B QAT Q4_0 on an L40S, an endpoint
+of one slot). The gate lists every `#[ignore]` smoke by itself, so this was the
+track's first run there, unchanged:
+
+- `cached_tokens_e2e_live`: turn 1 `prompt 10904 cached 0` (0%), turn 2
+  **10904 of 10923 (99%)**, the control `0` (0%) — every assertion held on a server
+  the track had never seen.
+- `cache_probe_external_live`: the same request three times read 3, then 9838 and
+  9838 of 9839 tokens from the slot.
+- The cloud arms and the cloud probes skipped there: the gate carries no keys for
+  them.
+
+The dispatch was 264 of 264 green across its four shards in 36 min.
+
