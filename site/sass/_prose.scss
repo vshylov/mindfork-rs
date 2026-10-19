@@ -47,7 +47,15 @@
   }
   img {
     max-width: 100%;
+    height: auto;
     border-radius: 10px;
+  }
+  // An article's cover, under its lede. It carries width and height so the
+  // page does not jump when it loads; `height: auto` above keeps the ratio.
+  img.cover {
+    display: block;
+    margin: 8px 0 30px;
+    border: 1px solid var(--line);
   }
   table {
     border-collapse: collapse;

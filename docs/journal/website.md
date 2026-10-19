@@ -1481,3 +1481,10 @@ both on `main` at `88e5ce29`, the merge of the pull request.
 - `llms.txt` regenerated; `zola check --skip-external-links`, `link_check.py`,
   `doc_index_check.py` and `cyrillic_scan.py` pass, and the article's 33 links
   into GitHub return 200. No live run: no code of the app changed.
+- **The card is the cover too** (follow-up, branch `docs/article-cover-image`).
+  The owner expected it under the lede, where Medium shows a story's cover; the
+  first pull request used it only as the social card, so the page had no picture
+  at its top. It is now an `<img class="cover">` there, with its width and height
+  so the page does not jump while it loads (`.prose img` gained `height: auto`,
+  which keeps the ratio), and alt text that reads the card out. The dark card
+  sits in a light page as a cover would; checked in both themes and at 375 px.
