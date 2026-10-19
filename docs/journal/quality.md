@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (39)
+## Entries (40)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -51,6 +51,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: `tools/repo_metrics.py` — the repository's numbers, defined once (done)
 - Post-M9: the source-language gate knows test code by shape (done)
 - Post-M9: SonarQube follow-up — the source-language gate's fixtures (done)
+- Post-M9: the console probe stops the tree it started, not the `cmd` in front of it (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -2013,3 +2014,59 @@ tree (AGENTS.md §3).
   after. The self-test's 12 arms green, the scan clean.
 - No Rust touched — test totals unchanged; the documentation gates green. No CHANGELOG entry:
   internal tooling (AGENTS.md §4). No live run: a script over the working tree (AGENTS.md §3).
+
+### Post-M9: the console probe stops the tree it started, not the `cmd` in front of it (done)
+
+- **The defect, met twice in the 0.21.0 release check** ([release.md](release.md),
+  *Release 0.21.0*, "A probe trap, met twice"; branch `fix/console-probe-close`).
+  `Session(size=…)` starts the app as `cmd /d /c mode con: … && mindfork.exe`, so that the
+  console is sized first, and the process the probe holds is that `cmd`. `close()` sent
+  `Esc` and `Ctrl+Q`, waited 6 s and `kill()`ed what it held — the `cmd`. A debug build
+  migrating the 270 MB data root (1 min 24 s) had not read the keys yet, outlived the
+  probe in its hidden console and kept the single-instance lock, so the next session
+  failed with "the app exited at once with code 2".
+- **The app's tree goes in a Job Object of its own** — the mechanism `shared/proc.rs`
+  already uses for the app's own children ([lessons.md](../lessons.md) §6, *killing a
+  child is not killing a tree*). The `Popen` is started with `CREATE_SUSPENDED`, assigned
+  to a kill-on-close job, then resumed (`NtResumeProcess`, since `Popen` closes the
+  thread's handle), so nothing the `cmd` or the app starts is born outside the job — the
+  race `proc.rs` accepts is closed here, where a suspended start costs nothing. A probe
+  that dies takes the tree with it. Nothing is matched by name or path: a mindfork the
+  probe did not start — the owner's — is never in the job.
+- **Rejected**: `taskkill /PID … /T /F` and a `Win32_Process` walk by
+  `ParentProcessId`. Both find the tree by parent ids at the moment of the stop, so they
+  need the wrapper still alive, can match a reused id, and do nothing when the probe
+  itself is the one that dies.
+- **`close()` says how it ended.** It returns the exit code, or `None` when the tree had
+  to be stopped, with a `STOP` line naming each process it stopped (`cmd.exe …,
+  conhost.exe …, mindfork.exe …`). The checks word the result through `ended(code)` —
+  "the app was stopped by force" where they printed "exited with code None". A clean
+  quit's leftovers are stopped and named too. The console's own host is in the job and
+  leaves 0.00–0.05 s after the app (six quits measured, both launch shapes); the first
+  run, before this was known, named it as left behind — so a clean quit gives the job up
+  to 2 s to empty before anything is named.
+- **`Session(startup=…)`** — the longest the app has to draw its first frame: `STARTUP`
+  (3.5 s) as before, then for as long as the console stays blank, up to `startup`, with a
+  repaint's settle once something is drawn. The default changes nothing any scenario was
+  written against. The app is polled throughout, so one that exits is reported when it
+  does (0.1 s for an `exit 2`, where it took 3.5 s), and a start the probe gives up on
+  (`AttachConsole` failing, `Ctrl+C`) stops the tree as well.
+- **Measured on stand-ins**: a `ping` behind the sized `cmd`, which ignores the keys —
+  `cmd`, `conhost` and `PING` stopped, none alive after; a `powershell` that draws
+  nothing for 8 s, with `startup=30` — attached at 9.5 s with its line on screen, and at
+  3.5 s on a blank screen with the default; the probe killed (`Stop-Process -Force`) with
+  its tree up — all three processes gone.
+- **Control arm, on the real binary**: `mindfork demo` at 80×24 behind the `cmd`, the
+  app suspended so that it cannot answer `Ctrl+Q`. The old `close()` returned `None` with
+  the `cmd` dead and `mindfork.exe` alive; the new one stopped `cmd.exe`, `conhost.exe`
+  and `mindfork.exe`, and none was alive after.
+- **The scenarios rerun on the branch**, against a fresh debug build: `full-mode` 13/13,
+  `small-window` 83/83 (thirteen sized sessions), `mono` 22/22, `no-color` 12/12, `keys`
+  18/18, `altgr` 6/6, `first-frame` 8/8, `user-theme` 9/9 — exit code 0, no `STOP` line
+  in any. Not rerun: `gateway`, `ollama`, `ollama-cut`, `lmstudio`, `lmstudio-cut`,
+  `first-run` and `first-run-none`, which need a key or a running server; they open and
+  close the same `Session`.
+- No Rust touched — test totals unchanged; the documentation gates green. A sentence in
+  [lessons.md](../lessons.md) §6, on the `mode con` recipe the trap came from. No
+  CHANGELOG entry: internal tooling (AGENTS.md §4). No live run beyond the probe's own: a
+  developer tool, no engine path (AGENTS.md §3).
