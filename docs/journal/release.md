@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (79)
+## Entries (80)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -91,6 +91,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Release 0.18.3 (prepared)
 - Release 0.19.0 (prepared)
 - Release 0.20.0 (prepared)
+- Release 0.21.0 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -5020,3 +5021,56 @@ macos.md §3 and §12 point at the tag.
   stopped at its notice, because there is no key. At 21:57Z, Scoop's bucket and the tap's
   formula still named 0.19.0. The Excavator picks a release up within four hours, and
   the tap's schedule (`23 */6`) next fires at 00:23Z. Neither was waited for.
+
+### Release 0.21.0 (prepared)
+
+- **A release PR** per [AGENTS.md §6](../../AGENTS.md), branch `chore/release-0.21.0`:
+  - `Cargo.toml` `0.20.0 → 0.21.0` (+ one line of `Cargo.lock`), and the site's
+    `app_version`;
+  - `CHANGELOG.md`: `[Unreleased]` → `[0.21.0] — 2026-10-19` under a lead paragraph,
+    "DeepSeek as a provider of its own", a fresh `[Unreleased]`, and the comparison links;
+  - CLAUDE.md's status heading;
+  - the release's post, and `/llms.txt` regenerated from it.
+
+  Since `v0.20.0`, the pull requests with behaviour:
+  - 793, the `deepseek` mode — the window and the images from its list, the thinking
+    switch typed, `/continue` refused in `external` at DeepSeek's host, `settings.json`
+    6 → 7 and the chat files 5 → 6;
+  - 794, `/continue` in the mode, by DeepSeek's beta prefix completion;
+  - 798, the token counter on the feed's bottom border, and its two notes as settings.
+
+  The rest moved no behaviour: the 0.20.0 publication's journal (792), the plan's move to
+  `docs/history` (795), the site's copy naming DeepSeek, merged ahead of the release (796),
+  the steady-monitor test's paused clock (797), and the hero screenshot showing the counter
+  (799, to be merged before this PR).
+- **A MINOR**: a provider of its own, a moved interface element and two schema steps,
+  §6's rule for `0.x`.
+- **The `Data` rubric, by measurement.** The new stored value is `ServerMode::DeepSeek`
+  (and `ImpersonationMode::DeepSeek`), held by `settings.json` and by every reply's
+  `metadata.mode` in a chat file; 798's two interface switches are new fields with
+  defaults, additive. Run on Windows 11 with 0.20.0 built from its tag into a target
+  directory of its own, both binaries through `mindfork import` with an empty import file:
+  - *Golden*: 0.20.0 takes a root holding the golden `settings_v6.json` and
+    `chat_v5_external_deepseek.json` as its own (exit 0, schema 6 and 5).
+  - *Upgrade*: the branch's build migrates it to 7 and 6, one `pre-migrate-*.zip`.
+  - *Back*: 0.20.0 on the migrated root refuses, *"Data (settings.json) was created by a
+    newer version of mindfork (schema 7, supported 6)"* (printed in the root's Russian),
+    exit 1, both files byte for byte as they were.
+  - *A chat copied without its settings*: a chat at 6 whose reply names `deepseek`, in a
+    root 0.20.0 wrote — 0.20.0 refuses it by name (*"schema 6, supported 5"*), exit 1. The
+    control, the same chat left at 5, passes the version gate in silence (exit 0): the
+    road on which 0.20.0 would have left it out of the list.
+- **No rehearsal.** `git diff v0.20.0 -- .github packaging tools/release_guard.py
+  tools/demo_reel.py` holds only the two privacy RTFs, regenerated text the installer's
+  compile check passed on 793. `release_guard.py --tag v0.21.0` accepts the tag and cuts
+  56 lines of notes. `cargo deny check advisories`: ok. `zola build`: ok.
+- **The screenshots.** 798 regenerated the four `settings-*` frames, which moved by a
+  field count. The hero had never shown the counter — a static frame runs no turn — so
+  799 gives it the figures a finished reply leaves, on the feed's bottom border. The
+  animated demo plays a turn and is drawn by `release.yml` from the tag.
+- **Live runs behind it**, from the pull requests: 793 and 794 on DeepSeek's API, both
+  models, every arm GO, with a red control for `external`'s `/continue`; 798, the counter
+  in a hidden Windows console at 120×30 and 120×7, 12 of 12 checks. The rented live gate
+  was not run for this release.
+- **The post** says why a mode when `external` worked, what the mode reads and does,
+  where the counter went, and exactly what the two schema steps change.
