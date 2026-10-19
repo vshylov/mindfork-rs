@@ -5892,7 +5892,7 @@ async fn continue_e2e_live() {
 ///
 /// For DeepSeek's mode, `MINDFORK_ENGINE_DIALECT=deepseek` runs it on that
 /// client, which continues by the beta prefix completion
-/// (docs/research/deepseek-mode.md §4.2). Without the dialect at DeepSeek's URL
+/// (docs/history/deepseek-mode.md §4.2). Without the dialect at DeepSeek's URL
 /// it is the control, and red: the config's mode lets `/continue` through, and
 /// `external`'s client sends the cut to `/v1`, which refuses it with a `400`
 /// while tools and thinking are on, and restarts it otherwise — which the last

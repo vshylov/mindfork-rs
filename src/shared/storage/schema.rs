@@ -268,7 +268,7 @@ fn settings_to_v6(mut v: Value) -> Result<Value> {
 
 /// `settings.json` 6→7: **nothing in the file changes**, as in
 /// [`settings_to_v4`]. 7 is the first schema in which a slot's `mode` may read
-/// `"deepseek"` (docs/research/deepseek-mode.md §4.1) — the assistant's, the
+/// `"deepseek"` (docs/history/deepseek-mode.md §4.1) — the assistant's, the
 /// impersonation engine's or the embedder's — and 0.20.0 refuses a file naming
 /// it as an unknown variant. The chat files take the same stamp, for the reason
 /// [`super::chat_steps::chat_to_v6`] gives.

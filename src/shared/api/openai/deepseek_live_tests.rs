@@ -132,7 +132,7 @@ async fn the_first_turn_of_a_new_engine_completes_on_deepseek() {
 }
 
 /// The clients of [`clients`] as the `deepseek` mode builds them
-/// ([`OpenAiClient::for_deepseek`], docs/research/deepseek-mode.md §4.1).
+/// ([`OpenAiClient::for_deepseek`], docs/history/deepseek-mode.md §4.1).
 fn in_the_mode() -> Option<Vec<(String, OpenAiClient)>> {
     Some(
         clients()?

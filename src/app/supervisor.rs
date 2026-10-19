@@ -439,7 +439,7 @@ impl ServerSupervisor for LlamaSupervisor {
             // Anthropic, xAI and DeepSeek have no embeddings API — RAG uses a
             // separate embedder (ADR 0002; docs/research/grok-xai-provider.md §2.7:
             // xAI's `/v1/embedding-models` returns an empty list;
-            // docs/research/deepseek-mode.md §2.1: DeepSeek's `/v1/embeddings` is a
+            // docs/history/deepseek-mode.md §2.1: DeepSeek's `/v1/embeddings` is a
             // `404`).
             ServerMode::Claude | ServerMode::Grok | ServerMode::DeepSeek => {
                 tracing::warn!(
@@ -756,7 +756,7 @@ fn cloud_chat_setup(
                 .for_xai(),
         ),
         // DeepSeek's API is Chat Completions too, read in its own words
-        // (docs/research/deepseek-mode.md §4.1).
+        // (docs/history/deepseek-mode.md §4.1).
         CloudProvider::DeepSeek => Arc::new(
             OpenAiClient::new(base)
                 .with_api_key(Some(key))
@@ -2427,7 +2427,7 @@ mod tests {
     #[tokio::test]
     async fn deepseek_embed_is_unavailable() {
         // DeepSeek has no embedding API (`/v1/embeddings` is a `404`,
-        // docs/research/deepseek-mode.md §2.1) — RAG is unavailable, as for xAI.
+        // docs/history/deepseek-mode.md §2.1) — RAG is unavailable, as for xAI.
         let s = EmbedSettings {
             mode: ServerMode::DeepSeek,
             deepseek: crate::shared::config::CloudSettings {

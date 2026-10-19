@@ -73,7 +73,7 @@ pub use openai::{KeyVerdict, OpenAiClient, ResponsesClient};
 /// The **dialect** — `MINDFORK_ENGINE_DIALECT=deepseek`, read for the engine's
 /// stack alone — builds the client the `deepseek` mode builds
 /// ([`OpenAiClient::for_deepseek`]), so the orchestrator's smokes run on it as
-/// they run on `external` (docs/research/deepseek-mode.md §7). Unset, the
+/// they run on `external` (docs/history/deepseek-mode.md §7). Unset, the
 /// client is `external`'s.
 #[cfg(test)]
 pub(crate) fn live_client(url_var: &str, key_var: &str) -> Option<OpenAiClient> {

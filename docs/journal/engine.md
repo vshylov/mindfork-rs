@@ -7024,7 +7024,7 @@ F2 (a), F3 (a), each the recommendation).
 
 The roadmap's leftover (F1 (c) of deepseek-api.md). Measuring the question found two
 defects in the `external` setup the manual has named since 0.20.0, and they decided
-it ([deepseek-mode.md](../research/deepseek-mode.md); user's decision 2026-10-19:
+it ([deepseek-mode.md](../history/deepseek-mode.md); user's decision 2026-10-19:
 F1 (a), F2 (a), F3 (a), each the recommendation — the mode, in two stages).
 
 - **`/continue` failed or doubled a reply.** On `/v1` DeepSeek does not continue a
@@ -7077,7 +7077,7 @@ F1 (a), F2 (a), F3 (a), each the recommendation — the mode, in two stages).
 
 ### Post-M9: DeepSeek — `/continue` by the beta prefix completion, stage 2 (done)
 
-The second stage of [deepseek-mode.md](../research/deepseek-mode.md) (§4.2, §9): the
+The second stage of [deepseek-mode.md](../history/deepseek-mode.md) (§4.2, §9): the
 mode resumes a cut reply, which `/v1` cannot.
 
 - **Measured before building, on the app's request shape** (streamed, a system message,

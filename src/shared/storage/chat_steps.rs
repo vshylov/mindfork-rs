@@ -65,7 +65,7 @@ pub(super) fn chat_to_v5(mut v: Value) -> Result<Value> {
 
 /// `chats/<id>.json` 5 → 6: no shape change, like [`chat_to_v5`]. 6 is the
 /// first schema in which a reply's `metadata.mode` may read `"deepseek"`
-/// (docs/research/deepseek-mode.md, D1), and the mode is a strict enum: every
+/// (docs/history/deepseek-mode.md, D1), and the mode is a strict enum: every
 /// reply records the mode it was generated in, so one answer in the new mode is
 /// enough for 0.20.0 to skip the whole file in silence. The reasoning of
 /// [`chat_to_v5`] holds word for word — the settings' stamp
