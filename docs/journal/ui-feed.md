@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (52)
+## Entries (53)
 
 - Post-M9: mouse-wheel feed scrolling (done)
 - Post-M9: own markdown renderer (tables + LaTeX + theme) (done)
@@ -64,6 +64,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: Terminal.app before macOS 26 gets its 256 colours (done)
 - Post-M9: the background of an unhighlighted code block is a setting (done)
 - Post-M9: the token counter moves to the feed's bottom border, its notes become settings (done)
+- Post-M9: the hero screenshot shows the token counter in its place (done)
 
 ### Post-M9: mouse-wheel feed scrolling (done)
 - **The mouse wheel scrolls the feed** on par with `PageUp/PageDown`. `ratatui::init()`
@@ -3215,3 +3216,27 @@ and the settings screen; four counter tests left `status_bar` with the code and 
 pill test took their place). **4103 unit tests green, 279 `#[ignore]`**; fmt and
 clippy are clean. A live run against an engine is not needed — a rendering and
 settings change, no engine, memory or tool path.
+
+### Post-M9: the hero screenshot shows the token counter in its place (done)
+
+The counter moved to the feed's bottom border (the entry above), and the owner asked for
+the screenshots to show it. They could not: the hero shot activates the showcase chat
+and runs no turn, and activation clears the counter, so neither the status bar nor the
+border had ever carried it in a screenshot. That is why the move left the chat dumps
+alone and the drift gate green — only the four `settings-*` dumps moved, by a field
+count. The animated demo plays a turn and shows the counter; it is drawn from each
+release's tag by `release.yml`.
+
+- **The hero now shows the chat after its last reply.** `ChatScreen::show_finished_turn_usage`
+  (`#[cfg(test)]`) sets the figures a finished turn keeps, and `demo_shots::chat_frame`
+  passes the fixture's: a conversation of 9 184 tokens, a reply of 612 with 48 of
+  reasoning, 8 960 read from the cache. The border reads `tokens: 9796 (reasoning 48 ·
+  cache 97%)`, muted, at its right corner.
+- **Pinned** by `the_hero_shows_the_counter_on_the_feeds_bottom_border`: on the row above
+  the input box, and not in the status bar.
+- **The images**: the committed `chat-*` dumps re-rendered byte-identical first (4 of 4,
+  PNG and SVG), then the two regenerated with the four images. The other screens did not
+  move.
+
+**Gates**: unit tests green; clippy `-D warnings`, fmt, `cyrillic_scan`, `link_check`,
+`doc_index_check` clean. A screenshot-fixture change: no live run.

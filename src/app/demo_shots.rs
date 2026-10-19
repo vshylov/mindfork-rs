@@ -126,8 +126,27 @@ fn capture(
     )
 }
 
+/// What the showcase's last reply left on the token counter: the conversation,
+/// the reply with its reasoning, and the share of the conversation the
+/// provider read from its cache — the figures a finished turn keeps, muted, at
+/// the right corner of the feed's bottom border (spec §11.3). Plausible for the
+/// conversation on screen, not measured.
+const HERO_TURN: HeroTurn = HeroTurn {
+    context: 9_184,
+    completion: 612,
+    reasoning: 48,
+    cached: 8_960,
+};
+
+struct HeroTurn {
+    context: u64,
+    completion: u64,
+    reasoning: u32,
+    cached: u32,
+}
+
 /// The hero shot: the chat screen over the showcase conversation, thoughts and
-/// tool details expanded, English UI.
+/// tool details expanded, English UI, and the counter the last reply left.
 pub fn chat_frame(look: Look) -> ShotFrame {
     let mut screen = ChatScreen::new();
     let mut config = crate::shared::config::AppConfig::default();
@@ -151,6 +170,12 @@ pub fn chat_frame(look: Look) -> ShotFrame {
         demo::feed_view(),
         None,
         None,
+    );
+    screen.show_finished_turn_usage(
+        HERO_TURN.completion,
+        HERO_TURN.context,
+        HERO_TURN.reasoning,
+        Some(HERO_TURN.cached),
     );
     capture("chat", look, HERO_H, |f| screen.render(f))
 }
@@ -322,6 +347,36 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The hero shows the token counter where a finished turn leaves it: at the
+    /// right corner of the feed's bottom border, the row above the input box,
+    /// and nowhere in the status bar (spec §11.3) — the place the screenshots
+    /// exist to show.
+    #[test]
+    fn the_hero_shows_the_counter_on_the_feeds_bottom_border() {
+        let frame = chat_frame(Look::System(Theme::Dark));
+        let rows: Vec<String> = frame
+            .rows
+            .iter()
+            .map(|row| row.iter().map(|c| c.s.as_str()).collect())
+            .collect();
+        let input = rows
+            .iter()
+            .position(|r| r.starts_with("╭ input"))
+            .expect("the input box");
+        let border = &rows[input - 1];
+        let total = HERO_TURN.context + HERO_TURN.completion;
+        assert!(
+            border.starts_with('╰') && border.contains(&format!("tokens: {total}")),
+            "the counter is not on the feed's bottom border: {border:?}"
+        );
+        assert!(border.contains("cache 97%"), "{border:?}");
+        let status = rows.last().unwrap();
+        assert!(
+            !status.contains("tokens"),
+            "the status bar shows it too: {status:?}"
+        );
     }
 
     /// The drift gate (design plan §5, fork 4): the committed dumps must equal
