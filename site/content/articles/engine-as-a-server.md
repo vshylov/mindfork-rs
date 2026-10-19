@@ -38,8 +38,8 @@ a relaunch budget. In **external** mode you point it at any compatible
 endpoint: vLLM, LM Studio, Ollama, a box across the room.
 
 The cloud providers are not special cases bolted on the side. OpenAI,
-Anthropic, Gemini and Grok are **sibling implementations of the same small
-trait** the local server sits behind — streamed text, "thoughts", tool
+Anthropic, Gemini, Grok and DeepSeek are **sibling implementations of the same
+small trait** the local server sits behind — streamed text, "thoughts", tool
 calls, token usage, finish. A conversation can hop from a local Gemma to a
 cloud frontier model and back without changing shape.
 

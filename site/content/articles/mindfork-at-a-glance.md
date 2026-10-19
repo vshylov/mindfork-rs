@@ -22,8 +22,8 @@ mindfork does not embed an inference runtime. The engine is an
 **OpenAI-compatible HTTP server** behind a small backend trait: in managed
 mode the app launches and supervises a local llama.cpp `llama-server`
 itself; in external mode any OpenAI-compatible endpoint works — vLLM,
-LM Studio, Ollama, a remote box of your own. OpenAI, Anthropic, Gemini and
-Grok are sibling implementations of the same trait, and the OpenRouter
+LM Studio, Ollama, a remote box of your own. OpenAI, Anthropic, Gemini, Grok
+and DeepSeek are sibling implementations of the same trait, and the OpenRouter
 gateway is a mode beside them — one key in front of every vendor's models —
 so a chat can hop between a local Gemma and a cloud frontier model without
 changing shape.

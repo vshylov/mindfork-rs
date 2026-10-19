@@ -45,8 +45,8 @@ one physical batch, and llama-server's default of 512 tokens makes long
 chunks fail outright. In **managed** mode — the Embeddings tab of the
 settings, point it at the binary and the GGUF — the app launches the
 server with the right flags itself. External servers and the cloud
-providers with an embeddings endpoint work too; a chat on Claude or
-Grok simply pairs with a local embedder, since those clouds offer none.
+providers with an embeddings endpoint work too; a chat on Claude, Grok or
+DeepSeek simply pairs with a local embedder, since those clouds offer none.
 
 ## What it powers
 

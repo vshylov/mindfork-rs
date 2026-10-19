@@ -4,7 +4,7 @@ description = "A terminal AI chat whose assistant keeps notes about you, a self-
 
 [extra]
 hero_title = "An AI chat with a memory and a self-model"
-hero_sub = "The assistant keeps notes about you, a model of itself that it revisits, and a knowledge base over your files. Run a local Gemma or Qwen through llama.cpp, Ollama or LM Studio — or bring OpenAI, Anthropic, Gemini, Grok or an OpenRouter key. Real tools behind switches you set; one fast native binary for Windows, Linux and macOS."
+hero_sub = "The assistant keeps notes about you, a model of itself that it revisits, and a knowledge base over your files. Run a local Gemma or Qwen through llama.cpp, Ollama or LM Studio — or bring OpenAI, Anthropic, Gemini, Grok, DeepSeek or an OpenRouter key. Real tools behind switches you set; one fast native binary for Windows, Linux and macOS."
 
 [[extra.features]]
 title = "Memory that persists"
@@ -16,7 +16,7 @@ desc = "A managed llama-server under the hood — one command downloads the llam
 
 [[extra.features]]
 title = "Four clouds and a gateway"
-desc = "OpenAI, Anthropic, Gemini and Grok as first-class backends, and OpenRouter as a mode of its own — one key for chat, embeddings, speech and YouTube video, in front of every vendor's models, picked from a list that shows each one's context window and price. Switch per profile; API keys are stored with machine-bound encryption."
+desc = "OpenAI, Anthropic, Gemini, Grok and DeepSeek as first-class backends, and OpenRouter as a mode of its own — one key for chat, embeddings, speech and YouTube video, in front of every vendor's models, picked from a list that shows each one's context window and price. Switch per profile; API keys are stored with machine-bound encryption."
 
 [[extra.features]]
 title = "Real tools"
