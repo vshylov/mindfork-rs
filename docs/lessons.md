@@ -309,6 +309,18 @@ paused clock a bound costs nothing — the timeout fires the moment the runtime 
 gateway*, *whether a gateway's model takes images comes from its catalogue*, *a chat
 whose history carries images, on an engine that takes none*.
 
+**A paused clock fast-forwards an idle runtime, and real I/O is idle.** A test paused
+tokio's clock to make ten minutes of a monitor's polling free, against a real TCP stub.
+Waiting on a socket is the runtime having nothing to do, so the clock jumped to the next
+timer — the probe's 10 s connect timeout — and a connection still on its way failed
+in 0.7 ms of real time. It happened once in forty CI runs, on macOS. The same sleep also
+let the test end after none of the polls it was about. If a test needs both a paused
+clock and real I/O, keep the runtime busy (`yield_now` polls the I/O driver without
+moving a paused clock), move the clock with `advance` in small steps, and count the
+events the test is about at the far end of the socket rather than trusting the clock
+to have produced them.
+— *the steady-monitor test on a paused clock*.
+
 **On a path built to degrade gracefully, `is_ok()` can never be the assertion.** A test
 asserted `is_ok()` on a tool that turns an index failure into a normal answer, so
 bypassing the query escaping entirely still passed. Assert *which* answer comes back.
