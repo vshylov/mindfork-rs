@@ -203,7 +203,7 @@ effort tiers — have all closed
   picking by the chat's opening, behind a probe; (e2) on no-go. **Built, probe
   GO**: the prefix holds on 8 of 8 follow-ups. Anthropic breakpoints and
   `prompt_cache_key` remain as above.
-- **DeepSeek's API — leftovers** ([deepseek-mode.md](research/deepseek-mode.md);
+- **DeepSeek's API — leftovers** ([deepseek-mode.md](history/deepseek-mode.md);
   the mode of its own is built, both stages, 2026-10-19: the key, the picker, the
   window and the image input from DeepSeek's list, the thinking switch typed from
   the first request, and `/continue` by the beta prefix completion in a

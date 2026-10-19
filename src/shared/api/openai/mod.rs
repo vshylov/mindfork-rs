@@ -2,7 +2,7 @@
 //! - **Chat Completions** ([`OpenAiClient`], `wire`): local/external `llama-server`
 //!   (and OpenAI-compatible proxies/embeddings), where sampling is sent as-is; xAI
 //!   and DeepSeek, which take the same body (DeepSeek with its own thinking switch,
-//!   docs/research/deepseek-mode.md); and the OpenRouter gateway, in a dialect of
+//!   docs/history/deepseek-mode.md); and the OpenRouter gateway, in a dialect of
 //!   its own (docs/research/openrouter-mode.md). The other clouds moved to their own
 //!   protocols, see ADR 0004;
 //! - **Responses API** ([`ResponsesClient`], `responses`): OpenAI cloud

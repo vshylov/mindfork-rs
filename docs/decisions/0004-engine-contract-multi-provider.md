@@ -225,7 +225,7 @@ extra architectural work required.
   breaking change for an older binary. `external` is unchanged and still reaches
   the gateway. Speech and video through the gateway are later stages, not done.
 - **DeepSeek's API — done, both stages** (2026-10-19,
-  [docs/research/deepseek-mode.md](../research/deepseek-mode.md)): a sixth
+  [docs/history/deepseek-mode.md](../history/deepseek-mode.md)): a sixth
   `CloudProvider`/eighth `ServerMode` (`deepseek`), served — like xAI — by a plain
   `OpenAiClient` over Chat Completions, told by `for_deepseek` what `external`
   could only learn from a `422` or not at all: the thinking switch as

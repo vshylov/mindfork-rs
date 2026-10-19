@@ -57,7 +57,7 @@ pub enum CatalogueShape {
     /// `{"models": [{"id": …}]}` — xAI's language-only half of its catalogue.
     Xai,
     /// `{"data": [{"id": …, "name": …, "context_window": …}]}` — DeepSeek's
-    /// API, whose every model chats (docs/research/deepseek-mode.md §2.1).
+    /// API, whose every model chats (docs/history/deepseek-mode.md §2.1).
     DeepSeek,
     /// The OpenRouter gateway's list of models that answer with **text**:
     /// `/models/user` with a key — narrowed by the account's own privacy and
@@ -981,7 +981,7 @@ mod tests {
         );
     }
 
-    /// docs/research/deepseek-mode.md §2.1 — the body as measured on 2026-10-19,
+    /// docs/history/deepseek-mode.md §2.1 — the body as measured on 2026-10-19,
     /// trimmed to the keys the picker could read.
     const DEEPSEEK_BODY: &str = r#"{"object":"list","data":[
         {"id":"deepseek-flash","object":"model","owned_by":"deepseek",

@@ -1748,7 +1748,7 @@ async fn continue_refusals_answer_with_the_route_that_works() {
     orch.config.engine.claude.model_name = Some("claude-opus-4-8".into());
     expect_note(&mut orch, "ui.cmd.continue_unsupported");
 
-    // DeepSeek's API restarts a prefill on `/v1` (docs/research/deepseek-mode.md
+    // DeepSeek's API restarts a prefill on `/v1` (docs/history/deepseek-mode.md
     // §1): `external` at its host refuses with a note of its own — the general
     // one says external engines continue — and its own mode continues by the
     // beta prefix completion, which refuses a history with a tool call, so a
@@ -2484,7 +2484,7 @@ async fn a_sub_agent_call_with_broken_arguments_starts_no_child() {
 }
 
 /// DeepSeek in its own mode continues by the beta prefix completion, which takes
-/// no history with a tool call (docs/research/deepseek-mode.md §4.2). A length
+/// no history with a tool call (docs/history/deepseek-mode.md §4.2). A length
 /// cut in a plain conversation is announced as continuable and `/continue`
 /// resumes it by prefill; one after a tool round in the same turn is announced
 /// as not continuable, and the command refuses with the note that says why.

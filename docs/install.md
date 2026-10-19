@@ -2190,7 +2190,7 @@ cargo test the_switch_off_completes_on_an_endpoint_that_must_reason -- --ignored
 ```
 
 **DeepSeek's own API** has a mode of its own and is an `external` endpoint with
-a key as well ([docs/research/deepseek-mode.md](research/deepseek-mode.md),
+a key as well ([docs/history/deepseek-mode.md](history/deepseek-mode.md),
 [docs/research/deepseek-api.md](research/deepseek-api.md)). Its own smokes read
 `MINDFORK_DEEPSEEK_KEY` and cover both clients; the mode's whole road, on the
 production supervisor, is the cache arm; the orchestrator's take the usual three,

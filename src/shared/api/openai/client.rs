@@ -114,7 +114,7 @@ fn said_in(body: &str) -> Option<String> {
 /// The base of DeepSeek's beta features for a client at `base`: the `/beta`
 /// segment in place of `/v1`, or after a base that names no version (DeepSeek
 /// serves both `https://api.deepseek.com` and `…/v1`). Only the prefix
-/// completion goes there (docs/research/deepseek-mode.md §2.4).
+/// completion goes there (docs/history/deepseek-mode.md §2.4).
 pub(super) fn deepseek_beta_base(base: &str) -> String {
     let base = base.trim_end_matches('/');
     let root = base.strip_suffix("/v1").unwrap_or(base);
@@ -218,7 +218,7 @@ impl OpenAiClient {
     /// The server is DeepSeek's API. Builder-style.
     ///
     /// What `external` learns from a refusal, or cannot learn at all, this
-    /// client is told (docs/research/deepseek-mode.md §4.1):
+    /// client is told (docs/history/deepseek-mode.md §4.1):
     ///
     /// - the thinking switch goes as `{"type": …}` from the first request, not
     ///   after a `422` ([`wire::refuses_boolean_thinking`]);

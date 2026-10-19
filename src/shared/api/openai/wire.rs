@@ -532,7 +532,7 @@ impl ChatCompletionRequest {
     }
 
     /// The continuation as DeepSeek's prefix completion reads it
-    /// (docs/research/deepseek-mode.md §2.4, §4.2): `prefix: true` on the
+    /// (docs/history/deepseek-mode.md §2.4, §4.2): `prefix: true` on the
     /// trailing assistant message, sent to the `/beta` route. Measured
     /// 2026-10-19, the route refuses a request carrying tool schemas ("Function
     /// call should not be used with prefix"), so they are left out; the thinking
@@ -1022,7 +1022,7 @@ pub struct ModelEntry {
     /// DeepSeek's spelling of the window: `"context_window": 1048576`. Raw JSON
     /// for the same reason as `reasoning`, read by [`Self::deepseek_window`] — and
     /// only by a client told it is DeepSeek, since a window read makes the
-    /// endpoint count as catalogued (docs/research/deepseek-mode.md §4.1).
+    /// endpoint count as catalogued (docs/history/deepseek-mode.md §4.1).
     #[serde(default)]
     pub context_window: Option<serde_json::Value>,
     /// DeepSeek's inputs, at the entry's top level: `"input_modalities": ["text",
@@ -1048,7 +1048,7 @@ impl ModelEntry {
     /// The same answer as [`Self::takes_images`] from DeepSeek's spelling, the
     /// list at the entry's top level. Measured, the "no" holds as the "yes" does:
     /// `deepseek-v4-pro` lists `["text"]` and answers an image it was sent as if
-    /// there were none (docs/research/deepseek-mode.md §1).
+    /// there were none (docs/history/deepseek-mode.md §1).
     pub fn takes_images_top_level(&self) -> Option<bool> {
         image_among(self.input_modalities.as_ref()?)
     }
@@ -2557,7 +2557,7 @@ mod xai_effort_tests {
     }
 }
 
-/// DeepSeek's prefix completion (docs/research/deepseek-mode.md §4.2).
+/// DeepSeek's prefix completion (docs/history/deepseek-mode.md §4.2).
 #[cfg(test)]
 mod prefix_completion_tests {
     use super::*;

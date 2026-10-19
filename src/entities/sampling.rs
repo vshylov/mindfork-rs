@@ -261,7 +261,7 @@ pub const SETTABLE_SAMPLING_FIELDS: &[&str] = &[
 ///   lie rather than an error. No `verbosity` (OpenAI-Responses-specific);
 /// - **DeepSeek** (its own API, plain Chat Completions via
 ///   [`OpenAiClient`](crate::shared::api::OpenAiClient)) — what its request schema
-///   reads, measured by the wrong-type method (docs/research/deepseek-mode.md
+///   reads, measured by the wrong-type method (docs/history/deepseek-mode.md
 ///   §2.2): `temperature`/`top_p`/`frequency_penalty`/`presence_penalty`/
 ///   `max_tokens`/`seed` + reasoning. `top_k`/`min_p`/`repeat_penalty` and every
 ///   llama.cpp extension are dropped in silence. In thinking mode DeepSeek

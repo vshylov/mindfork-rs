@@ -450,7 +450,7 @@ impl Orchestrator {
             };
             // DeepSeek's API by its URL: neither a gateway nor an engine the
             // generic note's "external engines continue" is true of
-            // (docs/research/deepseek-mode.md, fork F2).
+            // (docs/history/deepseek-mode.md, fork F2).
             let deepseek = engine.mode == ServerMode::External
                 && crate::shared::config::is_deepseek_host(engine.external.url.as_deref());
             let key = if deepseek {
