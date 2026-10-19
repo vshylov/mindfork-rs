@@ -421,7 +421,7 @@ async fn cached_tokens_xai_e2e_live() {
 
 /// DeepSeek in its own mode — on the production supervisor, so the whole road
 /// the `deepseek` mode takes is under test: its section, its key, its client
-/// (docs/research/deepseek-mode.md §7). It sends OpenAI's spelling of the
+/// (docs/history/deepseek-mode.md §7). It sends OpenAI's spelling of the
 /// figure beside its own pair (deepseek-api.md §2.2).
 ///
 /// `MINDFORK_DEEPSEEK_KEY=… [MINDFORK_CACHED_E2E_DEEPSEEK_MODEL=…] cargo test

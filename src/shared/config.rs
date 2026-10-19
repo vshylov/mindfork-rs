@@ -42,7 +42,7 @@ pub enum ServerMode {
     /// spelling and the model's facts read from its list. A mode of its own
     /// rather than a URL typed into `external`, which restarts a `/continue`
     /// and cannot tell a model that drops images. See
-    /// docs/research/deepseek-mode.md.
+    /// docs/history/deepseek-mode.md.
     #[serde(rename = "deepseek")]
     DeepSeek,
     /// The OpenRouter gateway (`openrouter.ai`): one key in front of every
@@ -107,7 +107,7 @@ impl CloudProvider {
             // §2.7) — this URL only serves as the chat base, which is the same path.
             CloudProvider::Grok => "https://api.x.ai/v1",
             // DeepSeek has no embedding API either (`/v1/embeddings` is a `404`,
-            // docs/research/deepseek-mode.md §2.1): the chat base alone.
+            // docs/history/deepseek-mode.md §2.1): the chat base alone.
             CloudProvider::DeepSeek => "https://api.deepseek.com/v1",
             // One base for chat, embeddings, the catalogue and the key check
             // (docs/research/openrouter-mode.md §3.1).
@@ -228,7 +228,7 @@ impl ServerMode {
     /// DeepSeek restarts on `/v1` too, and continues through its beta prefix
     /// completion, which the `deepseek` client sends — in a conversation with no
     /// tool call, the one the route takes ([`Self::continues_without_tools_only`],
-    /// docs/research/deepseek-mode.md §4.2).
+    /// docs/history/deepseek-mode.md §4.2).
     ///
     /// `catalogued` — the endpoint published a catalogue entry for the model,
     /// which is what a gateway does and a llama.cpp never does. Through a
@@ -258,7 +258,7 @@ impl ServerMode {
     /// travels in carries **no tool call** — no assistant message with calls,
     /// and no tool result. DeepSeek's prefix completion refuses one with a
     /// `400` ("Function call should not be used with prefix"), measured on both
-    /// models, thinking on and off (docs/research/deepseek-mode.md §4.2). A
+    /// models, thinking on and off (docs/history/deepseek-mode.md §4.2). A
     /// tail of tool results is not a prefill, and resumes anywhere.
     pub fn continues_without_tools_only(self) -> bool {
         self == ServerMode::DeepSeek
@@ -776,7 +776,7 @@ impl EngineSettings {
     /// continue a trailing assistant message: it answers with a new reply (a
     /// `200`), or with a `400` about the reasoning when tools and thinking are on.
     /// Neither says "no prefill", so there is no refusal to learn from, and
-    /// nothing in its catalogue says so (docs/research/deepseek-mode.md §1,
+    /// nothing in its catalogue says so (docs/history/deepseek-mode.md §1,
     /// fork F2). A proxy in front of DeepSeek is not recognised: the `deepseek`
     /// mode is the road that knows, and the one that continues.
     pub fn supports_continuation(&self, model: Option<&str>, catalogued: bool) -> bool {
@@ -788,7 +788,7 @@ impl EngineSettings {
 }
 
 /// Whether `url` is DeepSeek's own API — its host exactly, case aside
-/// (docs/research/deepseek-mode.md D5). A blank or unparseable URL is not.
+/// (docs/history/deepseek-mode.md D5). A blank or unparseable URL is not.
 pub fn is_deepseek_host(url: Option<&str>) -> bool {
     url.map(str::trim)
         .and_then(|u| reqwest::Url::parse(u).ok())
@@ -4024,7 +4024,7 @@ mod tests {
 
     /// `external` at DeepSeek's host does not continue, whatever the catalogue
     /// says: the API answers a prefill with a new reply, or a `400`
-    /// (docs/research/deepseek-mode.md §1). Its host exactly — a proxy, a
+    /// (docs/history/deepseek-mode.md §1). Its host exactly — a proxy, a
     /// look-alike and a blank URL keep `external`'s own answer.
     #[test]
     fn external_at_deepseeks_host_does_not_continue() {

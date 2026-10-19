@@ -184,8 +184,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-10-19, version 0.20.0)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **4093 unit tests
-green, 278 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **4098 unit tests
+green, 279 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump and demo-reel regenerators).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -201,7 +201,7 @@ being recent is dropped, not shortened.
   window and images from its list, the thinking switch typed from the first
   request, `/continue` by the beta prefix completion where `external` failed or
   doubled a reply; settings 6 → 7, chats 5 → 6. Live **GO**, both models
-  ([docs/research/deepseek-mode.md](docs/research/deepseek-mode.md)).
+  ([docs/history/deepseek-mode.md](docs/history/deepseek-mode.md)).
 - **Observations picked by the chat's opening** (2026-10-18): the prompt's prefix
   now holds on 8 of 8 turns, from 2 of 8. Live **GO**
   ([docs/research/prompt-caching.md](docs/research/prompt-caching.md) §2.2).

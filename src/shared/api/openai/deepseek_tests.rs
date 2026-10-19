@@ -1,5 +1,5 @@
 //! What a client built with [`OpenAiClient::for_deepseek`] sends and reads, over
-//! a real socket (docs/research/deepseek-mode.md §4.1): the thinking switch in
+//! a real socket (docs/history/deepseek-mode.md §4.1): the thinking switch in
 //! DeepSeek's spelling from the first request, a muted turn as the switch alone,
 //! and the window and the images from the list in DeepSeek's words — which a
 //! client not told it is DeepSeek leaves unread.
@@ -83,7 +83,7 @@ async fn a_muted_turn_is_the_typed_switch_off_and_no_effort() {
 
 /// A turn that reasons goes as it came: the switch typed on, and the effort
 /// the settings chose — `medium` too, which DeepSeek itself reads as `high`
-/// (docs/research/deepseek-mode.md §2.3, D2), where a nearest-tier rule here
+/// (docs/history/deepseek-mode.md §2.3, D2), where a nearest-tier rule here
 /// would have sent `low`.
 #[tokio::test]
 async fn a_reasoning_turn_keeps_its_effort_and_types_the_switch_on() {
@@ -223,7 +223,7 @@ fn deepseeks_keys_of_another_shape_are_silence() {
 /// `/continue` in the mode is DeepSeek's beta prefix completion: the cut goes
 /// to `/beta/chat/completions` marked `prefix: true`, with no tool schemas and
 /// the switch off; every other request stays on `/v1`
-/// (docs/research/deepseek-mode.md §4.2).
+/// (docs/history/deepseek-mode.md §4.2).
 #[tokio::test]
 async fn a_continuation_goes_to_the_beta_route_as_a_prefix_completion() {
     use crate::shared::api::contract::{ApiMessage, ToolSchema};

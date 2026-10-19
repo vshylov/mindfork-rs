@@ -1,17 +1,23 @@
 # Research: a `deepseek` mode of its own
 
 *Research, 2026-10-19. The roadmap's DeepSeek leftover, F1 (c) of
-[deepseek-api.md](deepseek-api.md) §5. **User's decision, 2026-10-19: F1 (a),
+[deepseek-api.md](../research/deepseek-api.md) §5. **User's decision, 2026-10-19: F1 (a),
 F2 (a), F3 (a)** (§5), each the recommendation — the mode, in two stages, with
 `/continue` refused in `external` at DeepSeek's host. **Both stages built**
 (§8, §9).*
 
-**Related:** [deepseek-api.md](deepseek-api.md) (the thinking switch, the cache
+**Status:** the track is **closed**. Stage 1 merged as #793 and stage 2 as #794,
+both on 2026-10-19, each with a live run that was a GO on `deepseek-flash` and
+`deepseek-v4-pro` (§8, §9). The forks were the user's (F1–F3); D1–D5 were decided
+in the design under the go-ahead. Measuring stage 2 corrected stage 1's account of
+what `external` did (§1). The leftovers are on the roadmap.
+
+**Related:** [deepseek-api.md](../research/deepseek-api.md) (the thinking switch, the cache
 figure, and the field-by-field table this builds on),
-[grok-xai-provider.md](grok-xai-provider.md) (the last direct cloud added, and
-the wrong-type method), [openrouter-mode.md](openrouter-mode.md) (the last mode
-added, and its schema stamp), [effort-tiers.md](effort-tiers.md) §9 (xAI's list
-of efforts), [continue-generation.md](continue-generation.md),
+[grok-xai-provider.md](../research/grok-xai-provider.md) (the last direct cloud added, and
+the wrong-type method), [openrouter-mode.md](../research/openrouter-mode.md) (the last mode
+added, and its schema stamp), [effort-tiers.md](../research/effort-tiers.md) §9 (xAI's list
+of efforts), [continue-generation.md](../research/continue-generation.md),
 [ADR 0004](../decisions/0004-engine-contract-multi-provider.md),
 [ADR 0006](../decisions/0006-data-schema-versioning.md), spec §3.4, §6.4, §8,
 §8.1, §9.10, §12.2.

@@ -1627,7 +1627,7 @@ Details:
   `EngineSettings::supports_continuation`, which answers `false` for `external`
   at DeepSeek's host (`is_deepseek_host`): that API answers a prefill on `/v1`
   with a restart, or with a `400` when tools and thinking are on
-  (docs/research/deepseek-mode.md §1). The Anthropic wire additionally
+  (docs/history/deepseek-mode.md §1). The Anthropic wire additionally
   drops the thinking block and right-trims the trailing prefill on a
   continuation request. `finalize_message` records the end state
   (`MessageFinish`) that makes the eligibility readable; the turn carries a
@@ -1797,7 +1797,7 @@ without it). `supported_sampling_fields(Grok)`
 docs/research/grok-xai-provider.md.
 
 **DeepSeek's API** (`deepseek`) is the same shape: a plain `OpenAiClient` with
-key + model + `for_deepseek` (docs/research/deepseek-mode.md §4.1). What the
+key + model + `for_deepseek` (docs/history/deepseek-mode.md §4.1). What the
 builder sets: the thinking switch is `{"type": …}` from the first request (the
 `thinking_typed` memo `external` learns from a `422`, set at construction); a
 turn that asks for reasoning to be off is sent `thinking: disabled` and no
@@ -2691,7 +2691,7 @@ Invariants:
   ([history/self-model-observations.md](history/self-model-observations.md)
   §3.4, §6 B′);
 - **`settings_to_v7` and `chat_to_v6` are the `max` case once more**, for the
-  `deepseek` mode (research/deepseek-mode.md, D1): `ServerMode` is held by the
+  `deepseek` mode (history/deepseek-mode.md, D1): `ServerMode` is held by the
   settings — every slot's mode — and by the chat files, in every reply's
   `metadata.mode`, so one answer in the new mode is enough for 0.20.0 to skip
   the file. The ledger now names `ServerMode` in the chat files too, with

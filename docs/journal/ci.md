@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (27)
+## Entries (28)
 
 - Post-M9: cutting GitHub Actions minutes (done)
 - Post-M9: skipping the test job for docs-only pull requests (done)
@@ -40,6 +40,8 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: a card HF never schedules is left after 15 minutes (done)
 - Post-M9: the gate's sampling in its log, and a graph probe that keeps two notes (done)
 - Post-M9: the gate's Qwen is 3.8 (done)
+- Post-M9: the steady-monitor test on a paused clock, closed for good (done)
+
 ### Post-M9: cutting GitHub Actions minutes (done)
 - **Trigger**: the `v0.9.4` release run was refused by GitHub with *"The job was
   not started because recent account payments have failed or your spending limit
@@ -1843,3 +1845,34 @@ not change.
     and the smokes were green; worth a look if the model's own card shows it.
 
 **Gates**: `e2e_hf.py --self-test` 0 failures; no Rust changed.
+
+### Post-M9: the steady-monitor test on a paused clock, closed for good (done)
+
+`monitor_stays_quiet_while_the_server_is_steady` failed on `macos-latest` on PR #796,
+which touched only `site/` — the one failure of that test in the last 40 CI runs. The
+test paused tokio's clock and slept out ten minutes of it while the monitor polled a
+real TCP stub. A paused clock jumps to the next timer whenever the runtime is idle, and
+real I/O makes it idle: every poll is a new connection under the client's 10 s connect
+timeout (`http::CONNECT_TIMEOUT`), so a loopback connection still on its way when the
+runtime parked had its timeout fire at once. Three such probes in a row are a
+`Disconnected`, and the assertion failed. The first verdict had already been taken out
+of the race in the macOS round (docs/research/macos.md §3.3); the ten polls after it
+were the same race, left open.
+
+- **The mechanism, measured** with a throwaway test: a 10 s `timeout` around 50 ms of
+  real loopback I/O on a paused clock expired after 0.7 ms of real time; the same with
+  the runtime kept busy by `yield_now` completed the I/O.
+- **And the test was vacuous**: the sleep could end it after fewer than ten polls, or
+  none. A mutant whose monitor stops after the first verdict passed it.
+- **The fix, in the test alone**: the stub counts what it answered
+  (`spawn_counting_stub_server`), and the test moves the clock a second at a time with
+  `advance`, yielding a hundred times between steps — a busy runtime is never
+  fast-forwarded, and `yield_now` polls the I/O driver without moving a paused clock —
+  until the stub has answered ten polls, under a bound of three times their clock.
+- **Checked**: both mutants red on the new test (no polls: "the monitor stopped polling:
+  0 polls in 1800 s"; a monitor publishing on every poll: the original assertion) — the
+  old test passed the first; 120 runs each of the old and the new under CPU burners on
+  Windows, 0 failures for both (the race needs macOS's timing, so the reproduction is the
+  mechanism test above, not the old test).
+
+**Gates**: 4098 unit tests green, 279 `#[ignore]`; clippy `-D warnings`, fmt clean.

@@ -93,7 +93,7 @@ code audit predicted (§4), each measured:
 |---|---|
 | 11 settings and orchestrator tests, and the screenshot drift gate (`settings-tools-*`: its Tavily key row reads "unavailable on this system" where the committed still says "not set") | **no stored secrets on macOS** (§4.1): the tests need the machine-key scheme, and some already return early without it |
 | `the_backends_listing_marks_what_is_already_installed` | the test lists the B10883 fixture for `std::env::consts::OS` with arch `x86_64` — on a Mac that is `macos`, whose only build is `cpu`, and its `vulkan` line is not there. The test's assumption, not a defect |
-| `monitor_stays_quiet_while_the_server_is_steady` (round 1 only) | a paused tokio clock against a real TCP stub: on a slow VM the 15 s readiness timeout auto-advanced before the socket answered. A race in the test, not macOS — it passed on both images in round 2 |
+| `monitor_stays_quiet_while_the_server_is_steady` (round 1 only) | a paused tokio clock against a real TCP stub: on a slow VM the 15 s readiness timeout auto-advanced before the socket answered. A race in the test, not macOS — it passed on both images in round 2. The polls after the first verdict were the same race, under the 10 s connect timeout; it failed once on a GitHub runner (2026-10-19) and the test now drives the clock by hand (docs/journal/ci.md) |
 
 ## 4. What is missing — the code
 

@@ -439,7 +439,7 @@ impl ServerSupervisor for LlamaSupervisor {
             // Anthropic, xAI and DeepSeek have no embeddings API — RAG uses a
             // separate embedder (ADR 0002; docs/research/grok-xai-provider.md §2.7:
             // xAI's `/v1/embedding-models` returns an empty list;
-            // docs/research/deepseek-mode.md §2.1: DeepSeek's `/v1/embeddings` is a
+            // docs/history/deepseek-mode.md §2.1: DeepSeek's `/v1/embeddings` is a
             // `404`).
             ServerMode::Claude | ServerMode::Grok | ServerMode::DeepSeek => {
                 tracing::warn!(
@@ -756,7 +756,7 @@ fn cloud_chat_setup(
                 .for_xai(),
         ),
         // DeepSeek's API is Chat Completions too, read in its own words
-        // (docs/research/deepseek-mode.md §4.1).
+        // (docs/history/deepseek-mode.md §4.1).
         CloudProvider::DeepSeek => Arc::new(
             OpenAiClient::new(base)
                 .with_api_key(Some(key))
@@ -1385,7 +1385,7 @@ mod tests {
     use super::*;
     use crate::shared::api::EmbedRole;
     use crate::shared::config::ManagedEmbedSettings;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use tokio::sync::mpsc::unbounded_channel;
 
     /// The production path end to end: a managed section with **no** binary at
@@ -1626,13 +1626,25 @@ mod tests {
     /// retries until its timeout — which turned an early version of this into a
     /// minute-long test.
     async fn spawn_stub_server(healthy: bool) -> (String, Arc<AtomicBool>) {
+        let (url, switch, _served) = spawn_counting_stub_server(healthy).await;
+        (url, switch)
+    }
+
+    /// [`spawn_stub_server`], and the number of requests it has answered with a
+    /// `200` — what lets a test know a probe took place rather than assume it.
+    async fn spawn_counting_stub_server(
+        healthy: bool,
+    ) -> (String, Arc<AtomicBool>, Arc<AtomicUsize>) {
         let switch = Arc::new(AtomicBool::new(healthy));
+        let served = Arc::new(AtomicUsize::new(0));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let flag = switch.clone();
+        let count = served.clone();
         tokio::spawn(async move {
             while let Ok((mut sock, _)) = listener.accept().await {
                 let flag = flag.clone();
+                let count = count.clone();
                 tokio::spawn(async move {
                     use tokio::io::{AsyncReadExt, AsyncWriteExt};
                     // Drain the request first: closing a socket with unread data
@@ -1644,12 +1656,13 @@ mod tests {
                             .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
                             .await;
                         let _ = sock.shutdown().await;
+                        count.fetch_add(1, Ordering::SeqCst);
                     }
                     // Otherwise: drop the socket — the client sees the connection close.
                 });
             }
         });
-        (format!("http://{addr}/v1"), switch)
+        (format!("http://{addr}/v1"), switch, served)
     }
 
     /// `apply_embed` with the probe plumbing defaulted — for tests that only care
@@ -2427,7 +2440,7 @@ mod tests {
     #[tokio::test]
     async fn deepseek_embed_is_unavailable() {
         // DeepSeek has no embedding API (`/v1/embeddings` is a `404`,
-        // docs/research/deepseek-mode.md §2.1) — RAG is unavailable, as for xAI.
+        // docs/history/deepseek-mode.md §2.1) — RAG is unavailable, as for xAI.
         let s = EmbedSettings {
             mode: ServerMode::DeepSeek,
             deepseek: crate::shared::config::CloudSettings {
@@ -2585,8 +2598,8 @@ mod tests {
     }
 
     /// A steady server publishes nothing after its first verdict — the monitor must
-    /// not wake the UI on every poll. (Paused time makes "a while" free: 10 minutes of
-    /// virtual time is ~10 healthy polls.)
+    /// not wake the UI on every poll. Ten healthy polls are watched, each counted by
+    /// the stub, on a paused clock that moves only when the test moves it.
     ///
     /// The first verdict is waited for in **real** time, and the clock paused only
     /// after it. A paused clock jumps to the next timer whenever the runtime has
@@ -2594,9 +2607,19 @@ mod tests {
     /// runner the loopback connection had not completed when the clock looked, and
     /// the 15 s readiness deadline went by in an instant — `Disconnected`, 1 run in 3
     /// (docs/research/macos.md §3.3).
+    ///
+    /// The polls after it are the same race, which the test used to leave open by
+    /// sleeping out ten minutes of paused time: every poll is a new connection under
+    /// the client's 10 s connect timeout (`http::CONNECT_TIMEOUT`), so a runtime that
+    /// went idle while one was on its way jumped over the timeout, three such probes
+    /// in a row published `Disconnected`, and the assertion failed — once on a GitHub
+    /// macOS runner (PR #796). The same sleep could also end the test after fewer than
+    /// ten polls, or none, and pass. So the test keeps the runtime **busy**
+    /// (`yield_now`, which polls the I/O driver without advancing a paused clock),
+    /// moves the clock a second at a time, and counts what the stub answered.
     #[tokio::test]
     async fn monitor_stays_quiet_while_the_server_is_steady() {
-        let (url, _switch) = spawn_stub_server(true).await;
+        let (url, _switch, served) = spawn_counting_stub_server(true).await;
         let (tx, mut rx) = unbounded_channel();
         LlamaSupervisor::default().apply_embed(
             &embed_external(&url),
@@ -2606,8 +2629,23 @@ mod tests {
             ru(),
         );
         assert_eq!(rx.recv().await, Some(ServerStatus::Ready));
+        let after_verdict = served.load(Ordering::SeqCst);
         tokio::time::pause();
-        tokio::time::sleep(HEALTHY_POLL * 10).await;
+        // Ten polls take ten minutes of the clock; the bound is three times that.
+        let bound = HEALTHY_POLL.as_secs() * 10 * 3;
+        let mut seconds = 0;
+        while served.load(Ordering::SeqCst) < after_verdict + 10 {
+            assert!(
+                seconds < bound,
+                "the monitor stopped polling: {} polls in {seconds} s of the clock",
+                served.load(Ordering::SeqCst) - after_verdict
+            );
+            tokio::time::advance(Duration::from_secs(1)).await;
+            for _ in 0..100 {
+                tokio::task::yield_now().await;
+            }
+            seconds += 1;
+        }
         assert!(
             rx.try_recv().is_err(),
             "a steady server should publish nothing after its first verdict"
