@@ -21,6 +21,7 @@ The assistant keeps notes about you, a model of itself that it revisits, and a k
 - [Where the trust boundaries are](https://mindfork.io/articles/trust-boundaries/): An assistant that can browse, run code and edit your project needs edges, not promises: what leaves the machine, where the model may not point, what the code can touch, when the app asks — and what the author receives, which is nothing.
 - [The code workspace: containment before capability](https://mindfork.io/articles/code-workspace/): A project attached to a chat: what the assistant can read, edit and run there, why the commands are only ever yours, how every change is a diff with a way back — and the semantic index that was measured and did not ship.
 - [Background runs, and the pool they share](https://mindfork.io/articles/background-runs/): A subagent that outlives its round, the app's own quiet requests, and one local llama-server with one context pool under all of them: what the server does when the pool overflows, how the app keeps it from happening, and what parallel sessions actually buy on one GPU.
+- [What replaces code ownership when AI writes the code](https://mindfork.io/articles/what-replaces-code-ownership/): 257K lines of Rust, 754 PRs, zero read diffs, and four months of green metrics. How externalized memory, mutation testing, and CI gates replaced reading the code.
 
 ## News
 

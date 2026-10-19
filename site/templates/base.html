@@ -20,10 +20,14 @@
 {% endblock og %}
 <meta property="og:site_name" content="mindfork">
 <meta property="og:url" content="{{ current_url | default(value=config.base_url) }}">
+{# The card is a block of its own so a page can carry one made for it
+   (`extra.og_image`, page.html); every other page shows the site's. #}
+{% block og_image %}
 <meta property="og:image" content="{{ get_url(path='brand/og-card.png') }}">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:image:alt" content="mindfork — a terminal AI chat with a memory and a self-model">
+{% endblock og_image %}
 <meta name="twitter:card" content="summary_large_image">
 <link rel="canonical" href="{{ current_url | default(value=config.base_url) }}">
 <meta name="author" content="{{ config.extra.author }}">

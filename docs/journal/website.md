@@ -10,7 +10,7 @@ the reasoning behind the site, not its current shape. For the current shape
 read the research/design doc above; for the traps that recur across areas
 read [lessons.md](../lessons.md).
 
-## Entries (28)
+## Entries (29)
 
 - Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 - Post-M9: website — S2 infra: one CloudFormation stack, mindfork.io live (done)
@@ -40,6 +40,7 @@ read [lessons.md](../lessons.md).
 - Post-M9: website — the gateway in the description, and speech through it (done)
 - Post-M9: website — the home page plays the release's animated demo (done)
 - Post-M9: website — the hero leads with the self-model, and the Ollama recipe (done)
+- Post-M9: website — the essay on what replaced code ownership (done)
 
 ### Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 
@@ -1434,3 +1435,49 @@ both on `main` at `88e5ce29`, the merge of the pull request.
 - `llms.txt` regenerated; `zola check --skip-external-links` (the CI's form)
   passes.
 
+### Post-M9: website — the essay on what replaced code ownership (done)
+
+- **Why** (branch `docs/article-code-ownership`,
+  [promotion.md](../research/promotion.md) §4 stage 2). The owner's essay on how
+  the project is built — how a codebase whose owner reads no diffs stayed
+  coherent — came out on Medium on 2026-10-17. For Hacker News it needed a home
+  without Medium's pop-ups and sign-in prompts: it is now the tenth article,
+  `/articles/what-replaces-code-ownership/`.
+- **The owner's text, unchanged** apart from what a page on this site needs:
+  links to the repository files it names (the router and its gate, the lessons,
+  the PR template, AGENTS.md, the Sonar configuration, the layer gate, the
+  metrics script, the frozen probe tag) and to the articles that tell a part of
+  it at length (the engine, the self-model, vector search, the sandbox, the code
+  workspace); DeepSeek in its list of clouds, which 0.20.0 added after the essay
+  was measured; and a closing link to this site's home and install pages rather
+  than to itself. The title is in sentence case, as every article here is. The
+  figures the chart touches were read again from git: 8,333 bytes in the first
+  commit that has the file, 994,562 on 2026-08-08 (`15a903d1`), 29,363 on
+  2026-10-16 — as the essay says.
+- **An article, not a post**: `extra.published`, no top-level `date`, so it stays
+  out of the Atom feed, which carries release news.
+- **The chart is drawn, not pasted.** The Medium copy carries a PNG on a white
+  ground, a light slab on this site's dark default, where every figure follows
+  the theme toggle. So it is inline SVG with every colour a token — the series
+  in the accent (validated against both grounds), text in text tokens — and its
+  points come from git: the size of CLAUDE.md at the last commit of each week,
+  plus the peak and the day after (11,969 bytes; the split itself landed the
+  same evening, 11,253 at 21:10). They match the PNG point for point. A
+  `<details>` table lists every point with its commit, and each point has a
+  native `<title>` tooltip, so the theme toggle stays the site's only script.
+  The SVG scales with its viewBox, so under 560 px its text is raised in user
+  units and every other date on the x-axis is hidden — the first look at 375 px
+  had two pairs of dates run into each other. Checked in both themes, at desktop
+  width and at 375 px, where nothing scrolls sideways.
+- **A social card of its own.** The `og:image` group in `base.html` is a block,
+  and `page.html` overrides it for a page that names `extra.og_image` and
+  `og_image_alt`: here the owner's 2000×1000 card, its size read with
+  `get_image_metadata` so a replaced file cannot leave stale numbers behind.
+  JSON-LD's `image` follows it; every other page keeps the site's card (checked
+  in the built HTML). The file is committed under `site/static/images/` —
+  `static/brand/` is the gitignored mirror of `assets/`.
+- **Pull quotes** are `<blockquote class="pull">`: the essay lifts two of its own
+  sentences, and the plain blockquote's style is for quoting someone else.
+- `llms.txt` regenerated; `zola check --skip-external-links`, `link_check.py`,
+  `doc_index_check.py` and `cyrillic_scan.py` pass, and the article's 33 links
+  into GitHub return 200. No live run: no code of the app changed.

@@ -11,6 +11,17 @@
 <meta property="article:author" content="{{ config.extra.author }}">
 {% endblock og %}
 
+{# A page may name a card of its own under static/, with its alt text; the
+   size is read from the file, so a replaced image cannot leave stale numbers
+   behind. Without one, the site's card (base.html). #}
+{% block og_image %}{% if page.extra.og_image %}
+{% set card = get_image_metadata(path=page.extra.og_image) %}
+<meta property="og:image" content="{{ get_url(path=page.extra.og_image) }}">
+<meta property="og:image:width" content="{{ card.width }}">
+<meta property="og:image:height" content="{{ card.height }}">
+<meta property="og:image:alt" content="{{ page.extra.og_image_alt }}">
+{% else %}{{ super() }}{% endif %}{% endblock og_image %}
+
 {# A post and an article are the same template and not the same thing: a post is
    dated news, an article is an explainer that gets revised. `BlogPosting` and
    `Article` say which. `Article` rather than the more precise `TechArticle`
@@ -31,7 +42,7 @@
   "headline": {{ page.title | json_encode | safe }},
   "description": {{ page.description | default(value=config.description) | json_encode | safe }},
   "url": "{{ page.permalink }}",
-  "image": "{{ get_url(path='brand/og-card.png') }}",
+  "image": "{{ get_url(path=page.extra.og_image | default(value='brand/og-card.png')) }}",
   "inLanguage": {{ config.default_language | json_encode | safe }},
   "wordCount": {{ page.word_count }},
   {% if page.date %}"datePublished": "{{ page.date }}",{% elif page.extra.published %}"datePublished": "{{ page.extra.published }}",{% endif %}
