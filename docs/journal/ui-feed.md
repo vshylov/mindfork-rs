@@ -3193,7 +3193,10 @@ bar; *Reasoning in the token counter* toggled off in Settings → Interface — 
 border reads `tokens: 512`, and back on; at 120×7 the feed is bare and the counter
 is in the status bar, once; exit 0 both times — 12/12 checks. The rendered frames
 read by eye at 120×20, 120×7 and 40×14 (the 40-column border shows `tokens: 14587`
-without its notes). Windows' console host only; Windows Terminal is the owner's look.
+without its notes). In Windows Terminal the owner saw it mid-turn on a real
+`gpt-6.1-sol` chat — `tokens: 14646 (reasoning 15 · cache 0%)` bright on the
+feed's corner, the status bar back to six hints beside the pill — and approved
+it (2026-10-19).
 
 **Screenshots.** The four `settings-*` dumps move by the Interface section's field
 count (18 → 20) and nothing else — the chat still shows no counter at rest; the old
