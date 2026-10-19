@@ -1,5 +1,6 @@
 //! Tests for the chat screen (via handle_key/render). See mod.rs.
 
+use super::render::ChatChrome;
 use super::*;
 use crate::entities::message::MessageRole;
 use crate::features::chat_search::FeedFocus;
@@ -322,6 +323,64 @@ fn the_cache_figure_moves_with_the_context() {
     // A stale generation's event changes nothing.
     s.set_token_usage(gen_id(), 9, Some(999), true, None, Some(999));
     assert_eq!(s.gen_cached, None);
+}
+
+/// The counter's place follows the chrome (spec §11.1.1, §11.3): the feed's
+/// bottom border at its right corner while the feed has a border, the status
+/// bar's pill where a short window takes the border away — one of the two,
+/// never both. Its notes follow the settings (spec §11.6).
+#[test]
+fn the_counter_rides_the_feed_border_or_the_pill() {
+    let mut s = ChatScreen::new();
+    let id = gen_id();
+    let messages = [Message::user("привет")];
+    s.activate_chat(
+        id,
+        "Чат".into(),
+        &messages,
+        "",
+        FeedView::default(),
+        None,
+        None,
+    );
+    s.begin_generation(id, None);
+    s.set_token_usage(id, 10, Some(14577), true, Some(10), Some(13300));
+    let counter_rows = |rows: &[String]| -> Vec<usize> {
+        (0..rows.len())
+            .filter(|&i| rows[i].contains("14587"))
+            .collect()
+    };
+
+    // A tall window: on the feed's bottom border, at its right corner.
+    let rows = screen_rows(&mut s, 120, 20);
+    let at = counter_rows(&rows);
+    assert_eq!(at.len(), 1, "{rows:#?}");
+    let border = &rows[at[0]];
+    assert!(
+        border.starts_with('╰') && border.ends_with(" токены: 14587 (рассужд. 10 · кэш 91%) ╯"),
+        "{border}"
+    );
+    assert!(at[0] < rows.len() - 4, "above the input box: {rows:#?}");
+
+    // A seven-row window has a bare feed: the pill carries the counter.
+    let rows = screen_rows(&mut s, 120, 7);
+    assert_eq!(counter_rows(&rows), [6], "{rows:#?}");
+    assert!(rows[6].contains("│  токены: 14587 (рассужд. 10 · кэш 91%)"));
+
+    // The notes off in the settings: the bare total, in either place.
+    let mut cfg = AppConfig::default();
+    cfg.interface.show_reasoning_tokens = false;
+    cfg.interface.show_cache_share = false;
+    s.set_settings(cfg, Vec::new(), Vec::new(), Default::default(), Vec::new());
+    let rows = screen_rows(&mut s, 120, 20);
+    let at = counter_rows(&rows);
+    assert!(
+        rows[at[0]].ends_with("─ токены: 14587 ╯"),
+        "{}",
+        rows[at[0]]
+    );
+    let rows = screen_rows(&mut s, 120, 7);
+    assert!(!rows[6].contains("рассужд") && !rows[6].contains("кэш"));
 }
 
 /// A jump from a search hit (`AppCommand::OpenChatAt`): the feed opens on the
@@ -945,7 +1004,7 @@ fn ctrl_q_breaks_through_confirm_popup_to_quit() {
 /// each part has the rows it needs, the input box being the one cut back.
 #[test]
 fn the_chats_areas_tile_the_window_and_the_input_gives_way() {
-    use super::render::{CHAT_MIN_SIZE, ChatChrome, chat_areas};
+    use super::render::{CHAT_MIN_SIZE, chat_areas};
     for height in 0..=40u16 {
         let chrome = ChatChrome::at(height);
         let (feed_min, input_min) = (
@@ -993,7 +1052,7 @@ fn the_chats_areas_tile_the_window_and_the_input_gives_way() {
 /// status bar that fits its row.
 #[test]
 fn the_chat_sheds_its_chrome_one_piece_at_a_time() {
-    use super::render::{ChatChrome, chat_areas, input_height};
+    use super::render::{chat_areas, input_height};
     // (rows, status rows allowed, input bordered, feed bordered, rows of the
     // conversation on screen)
     let ladder = [
@@ -4803,9 +4862,14 @@ mod read_only_transcript {
     #[test]
     fn status_and_input_title_say_read_only() {
         let c = transcript();
-        let model = c.s.status_model(None, None, None);
+        let model = c.s.status_model(ChatChrome::at(40), None, None, None);
         assert!(model.read_only);
-        assert!(!Cmd::new().s.status_model(None, None, None).read_only);
+        assert!(
+            !Cmd::new()
+                .s
+                .status_model(ChatChrome::at(40), None, None, None)
+                .read_only
+        );
     }
 
     #[test]
@@ -4903,7 +4967,7 @@ mod background_transcript {
     fn esc_goes_back_and_f6_stops_the_run() {
         let mut c = streaming(true);
         assert!(c.s.generating, "the run's stream is live in this feed");
-        let model = c.s.status_model(None, None, None);
+        let model = c.s.status_model(ChatChrome::at(40), None, None, None);
         assert!(model.background_run && model.read_only);
         assert_eq!(c.key(KeyCode::Esc), Some(ChatIntent::OpenChatList));
         assert_eq!(
@@ -4920,7 +4984,10 @@ mod background_transcript {
         let mut c = streaming(true);
         c.s.finish_generation(Uuid::from_u128(STREAM), FinishReason::Cancelled, false);
         assert!(!c.s.generating);
-        assert!(!c.s.status_model(None, None, None).background_run);
+        assert!(
+            !c.s.status_model(ChatChrome::at(40), None, None, None)
+                .background_run
+        );
         assert_eq!(c.key(KeyCode::F(6)), None);
         assert_eq!(c.key(KeyCode::Esc), Some(ChatIntent::OpenChatList));
     }
@@ -4931,7 +4998,10 @@ mod background_transcript {
     fn a_turn_childs_transcript_keeps_esc_as_cancel_and_has_no_stop_key() {
         let mut c = streaming(false);
         assert!(c.s.generating);
-        assert!(!c.s.status_model(None, None, None).background_run);
+        assert!(
+            !c.s.status_model(ChatChrome::at(40), None, None, None)
+                .background_run
+        );
         assert_eq!(c.key(KeyCode::Esc), Some(ChatIntent::Cancel));
         assert_eq!(c.key(KeyCode::F(6)), None);
     }
@@ -4941,7 +5011,10 @@ mod background_transcript {
         let mut c = Cmd::new();
         assert_eq!(c.key(KeyCode::F(6)), None);
         c.s.begin_generation(gen_id(), None);
-        assert!(!c.s.status_model(None, None, None).background_run);
+        assert!(
+            !c.s.status_model(ChatChrome::at(40), None, None, None)
+                .background_run
+        );
         assert_eq!(c.key(KeyCode::F(6)), None);
         assert_eq!(c.key(KeyCode::Esc), Some(ChatIntent::Cancel));
     }

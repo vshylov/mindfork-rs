@@ -2485,10 +2485,10 @@ Two main screens + overlays (modals):
 │  Message feed (markdown, scroll)                                      │
 │   • role/name; ▸ collapsed "thoughts" block; ▸ collapsed tool-call block │
 │   • "assistant is using a tool…" indicator                            │
-├──────────────────────────────────────────────────────────────────────┤
+├─────────────────────────────────────── tokens: N (reasoning · cache) ┤
 │  Input box (our own multiline widget, spellcheck)                     │
 ├──────────────────────────────────────────────────────────────────────┤
-│ status: model · tokens/context · profile · server state               │
+│ status: server state · generation · key hints                         │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -2497,7 +2497,9 @@ Two main screens + overlays (modals):
 - **The "self-model" screen** — a separate screen (`F3`) for viewing and editing the agent's self-model (see [17.7](#177-ui--the-self-model-screen-f3)).
 - **The tasks screen** — a separate screen (`F7`, `/tasks`): every sub-agent and dialogue run across every chat, running with its position or landed with its outcome, and the app's own background work (see [11.10](#1110-the-tasks-screen-f7)).
 - **Overlays**: the chat list, profile picker when creating a chat, confirmations, the spellcheck-suggestion popup, key-binding help (`F1`), the server startup log.
-- **Token counter** in the status bar: the total "conversation (prompt) + response" count,
+- **Token counter** at the right corner of the feed's bottom border ([11.3](#113-the-message-feed);
+  in the status bar's pill only where a short window takes that border away,
+  [11.1.1](#1111-small-windows)): the total "conversation (prompt) + response" count,
   updates live during generation and is visible right from the start (not "starting from one").
   There's a dual source: a live approximation from the number of streamed deltas + an exact
   number from the server's `usage` block (requested via `stream_options.include_usage`; arrives
@@ -2528,6 +2530,10 @@ Two main screens + overlays (modals):
   `roll`, `impersonation`, `summary` or `background` for the muted requests the bar does not
   describe (a broken prefix on a roll is the costliest miss there is). The write figure stays in
   the log, off the bar (vLLM's `created_cache_tokens` read as one). Nothing of it is stored.
+  **Either note can be turned off** — `interface.show_reasoning_tokens` and
+  `interface.show_cache_share` (Settings → Interface → Appearance, both **on** by default,
+  [11.6](#116-the-settings-screen)); the total is shown either way, and counts the reasoning
+  tokens whether or not they are noted.
 - **Server state** in the status bar — compact **chips** (a glyph + a label) per
   server, since there can be several (chat / embeddings / impersonation). The glyph
   encodes the status: `●` ready (green), `◐` connecting (amber), `✕` no connection /
@@ -2583,13 +2589,13 @@ Two main screens + overlays (modals):
   label ("to search"), which also can't be misread as "`Esc` opens search"; and hence
   "cancel", the shortest word that says what a running turn's `Esc` does.
 - **The bar's own layout** keeps the hints in one place: the indicators (server
-  chips, generation, the token counter, the quiet background/speech/attachment
-  chips) sit on the left of the **top** row, and the hint grid is right-aligned
+  chips, generation, the quiet background/speech/attachment chips — and the token
+  counter, in a window with no feed border) sit on the left of the **top** row, and the hint grid is right-aligned
   **beside them** — a corner block at most **two rows** deep, columns lined up
   vertically, an incomplete bottom row landing under the columns above. The
   block never moves below the indicators and never grows deeper: when the
   indicators leave it too little width — mid-turn the line carries a generation
-  indicator, a token counter with thoughts and the attachment chips — it
+  indicator and the attachment chips — it
   **sheds hints** instead, least important first (`F1` last: it opens the full
   per-screen list every hidden hint is still on; `Esc` next-to-last — its label
   carries navigation state; in scroll mode the mouse toggle is pinned first, as
@@ -2699,7 +2705,9 @@ size panics, 0×0 included, which is a size real hosts report.
   tag too, colour being what says it elsewhere. A bare feed is rows of the
   conversation wrapped to the window's full width, with no title, no
   scrollbar — and it ends on the last line of text, not on the padding row
-  under it, so a four-row feed shows four rows of the conversation. A bare
+  under it, so a four-row feed shows four rows of the conversation. The token
+  counter its border carried moves into the status bar's pill, which still has
+  its row at six and seven rows; below six there is no row for it. A bare
   impersonation preview is the same shape as the bare box, its spinner in the
   prompt column.
 - **The status bar within its rows, and the pill within the row.** The bar
@@ -3241,6 +3249,18 @@ this?"*; this screen answers *"where exactly, and take me there."*
   what was left: a 45-column window showed five letters of the title beside a
   33-column model name, and a 30-column one no title and a caption clipped
   from its left (`widgets/message_feed.rs::fit_header`).
+- **The token counter stands on the bottom border**, at its right corner — a row
+  it has to itself ([11.1](#111-screens-and-navigation) for what it counts). It
+  used to be a chip in the status bar's pill, and the widest one: at `tokens: 14587
+  (reasoning 10 · cache 91%)` it took a third of a 120-column row and cost the
+  corner block its hints for the length of every turn (user's request,
+  2026-10-19). Bright while the turn runs, muted after it, as in the pill. It is
+  fitted to the row the way the caption is — whole, then without its notes, then
+  not at all, never a cut number (`widgets/message_feed.rs::fit_counter`) — and
+  the scrollbar on the right border leaves the corner row alone. The text comes
+  from one type for both places (`widgets/token_counter.rs`), so the border and
+  the pill a short window moves it to ([11.1.1](#1111-small-windows)) cannot word
+  one turn two ways.
 - Contextual message actions: copy thoughts/message/the whole chat; **edit in place** (both user and assistant — a direct requirement); regenerate; delete last.
 - **Scrolling**: `PageUp`/`PageDown` (by `PAGE_SCROLL` lines) and the **mouse wheel** (by `WHEEL_SCROLL` lines), with automatic "tail-following" when scrolled to the bottom. Terminal mouse capture is a **toggle**, `Ctrl+W` (off by default, so native text selection with the mouse works; when captured, the wheel goes to the application, and selection stays available with `Shift`). The wheel and selection share one terminal mouse-reporting mechanism, so "wheel only" can't be enabled separately. The current mode is shown in the status bar.
 - **Who may scroll to the tail** — split by *who asked*. **User-initiated** actions go
@@ -3882,7 +3902,9 @@ section and subsection), `Esc` — cancel.
   **legacy-terminal compatibility** — see below, table row separators, Mermaid diagrams,
   **the background of an unhighlighted code block** — `code_block_background`,
   inverted by default, §11.4, **the model's name next to the
-  assistant's header** — `show_model_name`, off by default, §11.3, **the input box's
+  assistant's header** — `show_model_name`, off by default, §11.3, **the token
+  counter's two notes** — `show_reasoning_tokens` and `show_cache_share`, both on by
+  default, §11.1, §11.3, **the input box's
   height** — `input_max_rows`, 6 rows by default, §11.5, OSC 52 clipboard,
   **which end the self-model screen lists observations from** —
   `self_model_note_order`, newest first by default, [§17.7](#177-ui--the-self-model-screen-f3)),

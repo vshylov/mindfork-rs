@@ -84,6 +84,10 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
         }
         IMermaid => toggle(|c| c.interface.render_mermaid = !c.interface.render_mermaid),
         IModelName => toggle(|c| c.interface.show_model_name = !c.interface.show_model_name),
+        ICounterReasoning => {
+            toggle(|c| c.interface.show_reasoning_tokens = !c.interface.show_reasoning_tokens)
+        }
+        ICounterCache => toggle(|c| c.interface.show_cache_share = !c.interface.show_cache_share),
         ISpell => toggle(|c| c.interface.spellcheck_enabled = !c.interface.spellcheck_enabled),
         IConfirmKeys => {
             toggle(|c| c.interface.confirm_destructive_keys = !c.interface.confirm_destructive_keys)

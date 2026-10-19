@@ -11,6 +11,7 @@ use crate::shared::wrap;
 use crate::widgets::impersonation_preview::Preview;
 use crate::widgets::input_box::RenderOpts;
 use crate::widgets::message_feed::{FeedCaption, FeedFrame};
+use crate::widgets::token_counter::{CounterNotes, TokenCounter};
 
 /// The smallest window the chat is drawn in (spec §11.1.1): a row of the
 /// conversation, a row of the draft and a row between them for the banner or
@@ -103,13 +104,38 @@ impl ChatScreen {
         FeedCaption { name, detail }
     }
 
+    /// The token counter for this frame: the turn's figures and the notes
+    /// `interface.show_reasoning_tokens` / `interface.show_cache_share` keep
+    /// (both, before the settings snapshot arrives — the config's defaults).
+    /// The feed's border carries it, or the status bar where there is no
+    /// border (spec §11.1.1, §11.3).
+    pub(super) fn token_counter(&self) -> TokenCounter {
+        let notes = self
+            .settings_snapshot
+            .as_ref()
+            .map_or_else(CounterNotes::default, |(cfg, ..)| {
+                CounterNotes::of(&cfg.interface)
+            });
+        TokenCounter {
+            generating: self.generating,
+            tokens: self.gen_tokens,
+            context: self.gen_context,
+            context_exact: self.gen_context_exact,
+            reasoning: self.gen_reasoning,
+            cached: self.gen_cached,
+            notes,
+        }
+    }
+
     /// Assembles the status-bar state snapshot in one place — a new indicator
     /// adds a field here rather than extending `status_bar::render`/`height`'s
-    /// signatures. `background` is passed separately (the owning `String` at the
-    /// call site outlives the borrow) — and so are the two attachment chips, for
-    /// the same reason.
+    /// signatures. `chrome` says whether the feed has the border the token
+    /// counter sits on; without one the counter rides in the pill. `background`
+    /// is passed separately (the owning `String` at the call site outlives the
+    /// borrow) — and so are the two attachment chips, for the same reason.
     pub(super) fn status_model<'a>(
         &'a self,
+        chrome: ChatChrome,
         background: Option<&'a str>,
         attachments: Option<&'a str>,
         staged_images: Option<&'a str>,
@@ -117,11 +143,7 @@ impl ChatScreen {
         status_bar::StatusModel {
             statuses: &self.statuses,
             generating: self.generating,
-            tokens: self.gen_tokens,
-            context: self.gen_context,
-            context_exact: self.gen_context_exact,
-            reasoning: self.gen_reasoning,
-            cached: self.gen_cached,
+            counter: (!chrome.feed_border).then(|| self.token_counter()),
             mouse_scroll: self.mouse_scroll,
             background,
             speaking: self.speaking,
@@ -229,7 +251,12 @@ impl ChatScreen {
         let images = self.staged_images_hint();
         let status_h = status_bar::height(
             frame.area().width as usize,
-            &self.status_model(background.as_deref(), files.as_deref(), images.as_deref()),
+            &self.status_model(
+                chrome,
+                background.as_deref(),
+                files.as_deref(),
+                images.as_deref(),
+            ),
             &self.palette,
             self.loc,
             chrome.status_rows,
@@ -247,6 +274,7 @@ impl ChatScreen {
             FeedFrame::Bordered {
                 title: &title,
                 caption: &caption,
+                counter: Some(self.token_counter()),
             }
         } else {
             FeedFrame::Bare
@@ -279,7 +307,12 @@ impl ChatScreen {
         status_bar::render(
             frame,
             status_area,
-            &self.status_model(background.as_deref(), files.as_deref(), images.as_deref()),
+            &self.status_model(
+                chrome,
+                background.as_deref(),
+                files.as_deref(),
+                images.as_deref(),
+            ),
             &self.palette,
             self.loc,
         );

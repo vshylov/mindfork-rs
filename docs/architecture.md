@@ -428,7 +428,9 @@ src/
 │  │                        the model name on the assistant's header
 │  │                        (`FeedMessage.model` ← `MessageMetadata.model`,
 │  │                        `set_show_model_name` → CacheKey, spec §11.3);
-│  │                        drawn bordered or bare (`FeedFrame`, spec §11.1.1)
+│  │                        drawn bordered or bare (`FeedFrame`, spec §11.1.1);
+│  │                        the border carries the token counter at its bottom
+│  │                        right corner (`fit_counter`, spec §11.3)
 │  ├─ chat_link_picker.rs   the Ctrl+L overlay over a chat's `chat://` references
 │  ├─ local_server_picker.rs the *Local servers* list: a row per server and model, Enter picks, Esc closes
 │  │                        (spec §11.3) — the profile-picker shape: snapshot in,
@@ -456,13 +458,16 @@ src/
 │  │                        (tab_window); "About" ends with the Locations group
 │  │                        (location_lines) from the paths::Locations the
 │  │                        runtime's HelpOverlay holds — the demo's made up
-│  ├─ status_bar.rs         model/tokens/profile/server status/mouse mode. The hint
+│  ├─ status_bar.rs         server status/generation/quiet chips/mouse mode — and the
+│  │                        token counter where the feed has no border. The hint
 │  │                        block's geometry is shared::ui's; what is local is the
 │  │                        capped, shedding column choice the status pill's
 │  │                        competition for the row makes chat-specific
 │  │                        (HINT_ROWS_MAX/corner_cols/trim_to_fit/keep_order),
 │  │                        within the rows the chat allows (`height`'s ceiling),
 │  │                        and the pill fitted to the row (`fit_pill`)
+│  ├─ token_counter.rs      the token counter's text, notes and style — one type for
+│  │                        the feed's bottom border and the status pill (spec §11.3)
 │  ├─ profile_list.rs       profile selection overlay when creating a chat
 │  └─ impersonation_preview.rs  streaming preview of the reply (Ctrl+U), bordered or bare
 │
@@ -4101,7 +4106,10 @@ single `AnyIntent` + `dispatch_any` (single ownership instead of 4 parallel
 `Option`s); a clipboard write — `deliver_clipboard` (`apply_event` doesn't
 know about `arboard`). The status line receives a `status_bar::StatusModel`
 snapshot (assembled by `ChatScreen::status_model`) — a new indicator adds a
-field instead of extending the `render`/`height` signatures. The per-event
+field instead of extending the `render`/`height` signatures. The token counter
+is assembled once too (`ChatScreen::token_counter`) and handed to whichever of
+the two carries it this frame: the feed's border (`FeedFrame::Bordered`) or,
+under a chrome with no feed border, the snapshot's `counter`. The per-event
 `match` in `apply_event` itself deliberately stays as is (enum dispatch is
 idiomatic here). See docs/history/refactoring-solid.md §6.
 

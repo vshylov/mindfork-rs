@@ -1665,6 +1665,18 @@ impl SettingsScreen {
             // `builtin_bundles_have_no_duplicate_keys` guards the class.
             .describe(loc.t("ui.settings.desc.show_model_name")),
             row(
+                FieldId::ICounterReasoning,
+                loc.t("ui.settings.field.counter_reasoning"),
+                FieldKind::Toggle(i.show_reasoning_tokens),
+            )
+            .describe(loc.t("ui.settings.desc.counter_reasoning")),
+            row(
+                FieldId::ICounterCache,
+                loc.t("ui.settings.field.counter_cache"),
+                FieldKind::Toggle(i.show_cache_share),
+            )
+            .describe(loc.t("ui.settings.desc.counter_cache")),
+            row(
                 FieldId::IInputRows,
                 loc.t("ui.settings.field.input_rows"),
                 // The effective value: a hand-edited `0` reads as the 1 it acts as.

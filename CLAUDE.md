@@ -184,7 +184,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-10-19, version 0.20.0)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **4098 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **4103 unit tests
 green, 279 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump and demo-reel regenerators).
 
@@ -197,6 +197,9 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **The token counter on the feed's bottom border** (2026-10-19): out of the
+  status pill; its reasoning and cache notes are two settings, both on by default
+  ([docs/journal/ui-feed.md](docs/journal/ui-feed.md), spec §11.3).
 - **DeepSeek as a mode of its own — track complete** (2026-10-19, two stages):
   window and images from its list, the thinking switch typed from the first
   request, `/continue` by the beta prefix completion where `external` failed or

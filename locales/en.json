@@ -1684,6 +1684,8 @@
   "ui.settings.field.mermaid": "Mermaid diagrams",
   "ui.settings.field.code_background": "Code block background",
   "ui.settings.field.model_name": "Model name in the feed",
+  "ui.settings.field.counter_reasoning": "Reasoning in the token counter",
+  "ui.settings.field.counter_cache": "Cache share in the token counter",
   "ui.settings.field.input_rows": "Input box height",
   "ui.settings.field.spell": "Spell check",
   "ui.settings.field.dicts": "Dictionaries (comma-separated)",
@@ -1817,6 +1819,17 @@
     "names the model that actually answered — not the one selected now. A",
     "message stored without that information (or with no model named) shows",
     "nothing. Off by default."
+  ],
+  "ui.settings.desc.counter_reasoning": [
+    "Note how many of the reply's tokens went to reasoning — the model's",
+    "«thoughts» — on the token counter at the bottom right of the feed:",
+    "«(reasoning 120)». The total counts them either way. On by default."
+  ],
+  "ui.settings.desc.counter_cache": [
+    "Note what share of the conversation the provider read from its prompt",
+    "cache on the token counter at the bottom right of the feed: «(cache 97%)».",
+    "A miss reads «0%»; nothing is noted where the provider does not report",
+    "it. On by default."
   ],
   "ui.settings.desc.input_rows": [
     "How many text rows the chat's input box grows to before it scrolls",

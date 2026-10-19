@@ -14,3 +14,4 @@ pub mod logo;
 pub mod message_feed;
 pub mod profile_list;
 pub mod status_bar;
+pub mod token_counter;
