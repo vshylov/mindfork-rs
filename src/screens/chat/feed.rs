@@ -595,6 +595,24 @@ impl ChatScreen {
         }
     }
 
+    /// The figures a finished turn leaves on the counter (spec §11.3) — drawn
+    /// muted, as after any reply — for a frame that runs no turn: the
+    /// screenshot of the showcase chat (`app/demo_shots.rs`).
+    #[cfg(test)]
+    pub(crate) fn show_finished_turn_usage(
+        &mut self,
+        completion: u64,
+        context: u64,
+        reasoning: u32,
+        cached: Option<u32>,
+    ) {
+        self.gen_tokens = completion;
+        self.gen_context = Some(context);
+        self.gen_context_exact = true;
+        self.gen_reasoning = reasoning;
+        self.gen_cached = cached;
+    }
+
     pub fn finish_generation(
         &mut self,
         generation_id: Uuid,

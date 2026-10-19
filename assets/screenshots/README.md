@@ -23,7 +23,10 @@ them.
 
 The set (per the design plan's confirmed forks): the chat hero shot, the chat
 list, settings twice — Model/server and Tools — and the self-model screen,
-each in Dark and Light themes, English UI.
+each in Dark and Light themes, English UI. The hero shows the chat after its
+last reply, with the figures that reply left on the token counter — at the
+right corner of the feed's bottom border, muted, as the app draws a finished
+turn (spec §11.3); the numbers are the fixture's, plausible and not measured.
 
 **Which variant goes where.** The project README (and therefore the crate's
 page on crates.io) embeds the **Dark** PNGs unconditionally — a picture of a
