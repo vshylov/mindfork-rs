@@ -14,6 +14,15 @@ split by subsystem.
 
 ## [Unreleased]
 
+## [0.21.0] — 2026-10-19
+
+**DeepSeek as a provider of its own.** The `deepseek` mode reads what DeepSeek
+publishes about each model — the context window and whether it takes images —
+sends its thinking switch in its own spelling, and resumes a cut reply with
+`/continue`. Measuring it found the `external` route to the same API failing or
+doubling `/continue` there and `deepseek-v4-pro` dropping images without a word.
+The token counter moves from the status line to the conversation's frame.
+
 ### Added
 
 - **DeepSeek as a provider of its own.** Pick the `deepseek` mode ("Model/server"
@@ -3493,7 +3502,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/vshylov/mindfork-rs/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/vshylov/mindfork-rs/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/vshylov/mindfork-rs/compare/v0.18.3...v0.19.0
 [0.18.3]: https://github.com/vshylov/mindfork-rs/compare/v0.18.2...v0.18.3
