@@ -259,6 +259,14 @@ pub const SETTABLE_SAMPLING_FIELDS: &[&str] = &[
 ///   `top_k`/`min_p`/`repeat_penalty` and every llama.cpp extension are **silently
 ///   dropped** — they aren't in xAI's request schema, so offering them would be a
 ///   lie rather than an error. No `verbosity` (OpenAI-Responses-specific);
+/// - **DeepSeek** (its own API, plain Chat Completions via
+///   [`OpenAiClient`](crate::shared::api::OpenAiClient)) — what its request schema
+///   reads, measured by the wrong-type method (docs/research/deepseek-mode.md
+///   §2.2): `temperature`/`top_p`/`frequency_penalty`/`presence_penalty`/
+///   `max_tokens`/`seed` + reasoning. `top_k`/`min_p`/`repeat_penalty` and every
+///   llama.cpp extension are dropped in silence. In thinking mode DeepSeek
+///   leaves `temperature` and the penalties without effect, and `top_p` applies
+///   per model; `seed` is honoured in part at best, never reproducibly;
 /// - **OpenRouter** — what the gateway's own schema reads, measured by sending
 ///   each field with a value of the wrong type
 ///   (docs/research/openrouter-mode.md §3.5). This list is the **ceiling**, and
@@ -357,6 +365,16 @@ pub fn supported_sampling_fields(provider: Option<CloudProvider>) -> &'static [&
             "top_p",
             "max_tokens",
             "seed",
+            "thinking",
+            "reasoning_effort",
+        ],
+        Some(CloudProvider::DeepSeek) => &[
+            "temperature",
+            "top_p",
+            "max_tokens",
+            "seed",
+            "frequency_penalty",
+            "presence_penalty",
             "thinking",
             "reasoning_effort",
         ],

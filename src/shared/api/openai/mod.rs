@@ -1,8 +1,9 @@
 //! Inference backends of the OpenAI family. Two protocols:
 //! - **Chat Completions** ([`OpenAiClient`], `wire`): local/external `llama-server`
-//!   (and OpenAI-compatible proxies/embeddings), where sampling is sent as-is; xAI,
-//!   which takes the same body; and the OpenRouter gateway, in a dialect of its own
-//!   (docs/research/openrouter-mode.md). The other clouds moved to their own
+//!   (and OpenAI-compatible proxies/embeddings), where sampling is sent as-is; xAI
+//!   and DeepSeek, which take the same body (DeepSeek with its own thinking switch,
+//!   docs/research/deepseek-mode.md); and the OpenRouter gateway, in a dialect of
+//!   its own (docs/research/openrouter-mode.md). The other clouds moved to their own
 //!   protocols, see ADR 0004;
 //! - **Responses API** ([`ResponsesClient`], `responses`): OpenAI cloud
 //!   (`platform.openai.com/v1/responses`) with reasoning summaries, `reasoning.effort`,
@@ -18,6 +19,8 @@ mod cache_probe_tests;
 pub mod client;
 #[cfg(test)]
 mod deepseek_live_tests;
+#[cfg(test)]
+mod deepseek_tests;
 #[cfg(test)]
 mod gateway_live_tests;
 #[cfg(test)]

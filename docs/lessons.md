@@ -2572,6 +2572,20 @@ finish reason and the length of the thoughts with the failure, so the next one s
 which it is.
 — *the first Qwen dispatch since August*.
 
+**Probe a server with the request the app sends, not a bare one.** Asked to continue
+`"1, 2, 3, 4,"` in a body of two messages, DeepSeek's `/v1` answered with the count
+from one — a restart — and the stage was written up as "`/continue` doubled a reply".
+The app's own request, run through the app for the next stage, carries a system
+prompt, the tool schemas and the thinking switch on, and the same API refused it with a
+`400` about the reasoning: the user had been seeing an error, not a doubled reply. A
+server's answer is a function of the whole body, so a probe that trims it to the field
+under study measures another request. Send the body the client builds — the request
+dump, or the client itself — or vary one field at a time from it. And a count is the
+wrong fixture for a continuation either way: a restart repeats it byte for byte, which
+the echo filter takes for llama.cpp's echo; cut in prose, where a fresh start cannot
+reproduce the cut.
+— *DeepSeek — a mode of its own, stages 1 and 2*.
+
 ## 10. CI and infrastructure
 
 

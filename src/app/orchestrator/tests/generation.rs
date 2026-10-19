@@ -1748,6 +1748,17 @@ async fn continue_refusals_answer_with_the_route_that_works() {
     orch.config.engine.claude.model_name = Some("claude-opus-4-8".into());
     expect_note(&mut orch, "ui.cmd.continue_unsupported");
 
+    // DeepSeek's API restarts a prefill (docs/research/deepseek-mode.md §1):
+    // its own mode refuses with the general note, and `external` at its host
+    // with a note of its own — the general one says external engines continue.
+    orch.config.engine.mode = ServerMode::DeepSeek;
+    orch.config.engine.deepseek.model_name = Some("deepseek-flash".into());
+    expect_note(&mut orch, "ui.cmd.continue_unsupported");
+    orch.config.engine.mode = ServerMode::External;
+    orch.config.engine.external.url = Some("https://api.deepseek.com/v1".into());
+    expect_note(&mut orch, "ui.cmd.continue_unsupported_deepseek");
+    orch.config.engine.external.url = None;
+
     // Back on a supporting mode with a continuable tail — and a message stored
     // before the bookkeeping existed (`finish: None`) is continuable too
     // (fork F1): the turn actually starts.

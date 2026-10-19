@@ -69,14 +69,25 @@ pub use openai::{KeyVerdict, OpenAiClient, ResponsesClient};
 /// so every smoke here — engine, orchestrator e2e, embedder — used to be a
 /// single-model stack's privilege. Unset, nothing is sent and the request is
 /// byte-identical to before (docs/research/openrouter-external.md §8).
+///
+/// The **dialect** — `MINDFORK_ENGINE_DIALECT=deepseek`, read for the engine's
+/// stack alone — builds the client the `deepseek` mode builds
+/// ([`OpenAiClient::for_deepseek`]), so the orchestrator's smokes run on it as
+/// they run on `external` (docs/research/deepseek-mode.md §7). Unset, the
+/// client is `external`'s.
 #[cfg(test)]
 pub(crate) fn live_client(url_var: &str, key_var: &str) -> Option<OpenAiClient> {
     let url = std::env::var(url_var).ok()?;
-    Some(
-        OpenAiClient::new(url)
-            .with_api_key(std::env::var(key_var).ok())
-            .with_model(std::env::var(model_var(url_var)).ok()),
-    )
+    let client = OpenAiClient::new(url)
+        .with_api_key(std::env::var(key_var).ok())
+        .with_model(std::env::var(model_var(url_var)).ok());
+    let deepseek = url_var == "MINDFORK_ENGINE_URL"
+        && std::env::var("MINDFORK_ENGINE_DIALECT").is_ok_and(|d| d.trim() == "deepseek");
+    Some(if deepseek {
+        client.for_deepseek()
+    } else {
+        client
+    })
 }
 
 /// The model variable's name for the stack named by `url_var`, derived rather

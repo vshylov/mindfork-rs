@@ -464,7 +464,8 @@ mod tests {
             json!("xhigh")
         );
         let mut chat = read(paths.chat_file(id));
-        assert_eq!(chat["v"], json!(5));
+        // Stamped 5, and on to wherever the chain ends now.
+        assert_eq!(chat["v"], json!(schema::CHAT_SCHEMA));
         chat["v"] = json!(4);
         let before: Value = serde_json::from_str(chat_before).unwrap();
         assert_eq!(chat, before, "the chat holds what it held");
@@ -493,10 +494,47 @@ mod tests {
 
         let settings: Value =
             serde_json::from_str(&fs::read_to_string(paths.settings_file()).unwrap()).unwrap();
-        assert_eq!(settings["schema_version"], json!(6));
+        assert_eq!(settings["schema_version"], json!(schema::SETTINGS_SCHEMA));
         assert_eq!(settings["self_model"]["prompt_cap"], json!(4000));
         let cfg: AppConfig = serde_json::from_value(settings).unwrap();
         assert_eq!(cfg.self_model.prompt_cap, 4000);
+        assert_eq!(pre_migrate_backups(&paths), 1, "one pre-migrate backup");
+
+        run(&paths, ru()).unwrap();
+        assert_eq!(pre_migrate_backups(&paths), 1);
+    }
+
+    /// A root as 0.20.0 left it for the setup its manual names — DeepSeek's API
+    /// in the `external` mode — through the real registry: the golden v6
+    /// settings and a v5 chat are backed up once and stamped 7 and 6, the first
+    /// schemas in which a mode may read `deepseek`; nothing they hold moves, and
+    /// the next start finds nothing to do.
+    #[test]
+    fn run_stamps_a_root_of_the_version_before_the_deepseek_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(dir.path());
+        let settings_before = include_str!("../shared/storage/fixtures/settings_v6.json");
+        write(&paths.settings_file(), settings_before);
+        write(&paths.profiles_file(), "[]");
+        let id = "5c0ffee0-4d1e-4b2a-9e3f-6a7b8c9d0e1f";
+        let chat_before = include_str!("../shared/storage/fixtures/chat_v5_external_deepseek.json");
+        write(&paths.chat_file(id), chat_before);
+
+        run(&paths, ru()).unwrap();
+
+        let read = |path: PathBuf| -> Value {
+            serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap()
+        };
+        let mut settings = read(paths.settings_file());
+        assert_eq!(settings["schema_version"], json!(7));
+        settings["schema_version"] = json!(6);
+        let before: Value = serde_json::from_str(settings_before).unwrap();
+        assert_eq!(settings, before, "the settings hold what they held");
+        let mut chat = read(paths.chat_file(id));
+        assert_eq!(chat["v"], json!(6));
+        chat["v"] = json!(5);
+        let before: Value = serde_json::from_str(chat_before).unwrap();
+        assert_eq!(chat, before, "the chat holds what it held");
         assert_eq!(pre_migrate_backups(&paths), 1, "one pre-migrate backup");
 
         run(&paths, ru()).unwrap();

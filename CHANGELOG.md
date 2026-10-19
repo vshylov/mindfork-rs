@@ -14,6 +14,38 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Added
+
+- **DeepSeek as a provider of its own.** Pick the `deepseek` mode ("Model/server"
+  → "Mode"), paste a key from `platform.deepseek.com`, and choose
+  `deepseek-flash` or `deepseek-v4-pro` from the list DeepSeek publishes, which
+  shows each model's window. The mode knows what the `external` route to the same
+  API could not: the context window (1 048 576 tokens), so a long chat is
+  compressed before it overflows; which model takes images — `deepseek-v4-pro`
+  does not, and answered an image it was sent as if there were none, so the
+  app now keeps it back and says so; and DeepSeek's own thinking switch, sent
+  right from the first request. The sampling settings offer only what DeepSeek
+  reads. It works for the assistant and for impersonation; DeepSeek has no
+  embeddings, so a knowledge base needs another embedder.
+
+### Fixed
+
+- **`/continue` no longer fails or doubles a reply on DeepSeek's API.** DeepSeek
+  does not continue a cut reply: with thinking on it refused the request with an
+  error, and with thinking off it answered with a new reply from the beginning,
+  which the app glued onto the part already written. `/continue` is now refused
+  in the `external` mode at `https://api.deepseek.com` and in the new mode alike,
+  with a note that says why; `/regen` regenerates the reply instead.
+
+### Data
+
+- **`settings.json` 6 → 7 and the chat files 5 → 6**: the version is all that
+  changes, so that the version before this one refuses settings that name the
+  `deepseek` mode — and a chat with a reply written in it — as a newer version's
+  data, rather than as a broken file or by leaving the chat out of its list.
+  Nothing in either file moves; as with every schema change, the files are
+  backed up before they are stamped.
+
 ## [0.20.0] — 2026-10-18
 
 **A conversation is reused from turn to turn.** The cache share 0.19.0 put on

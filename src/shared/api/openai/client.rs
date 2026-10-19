@@ -43,6 +43,9 @@ pub struct OpenAiClient {
     /// The server is **xAI's API**, known rather than inferred
     /// ([`Self::for_xai`]).
     xai: bool,
+    /// The server is **DeepSeek's API**, known rather than inferred
+    /// ([`Self::for_deepseek`]).
+    deepseek: bool,
     /// What this client has learned about the efforts its model takes: a value
     /// xAI's list does not name and what goes in its place, and a parameter a
     /// server refused whole ([`EffortWire`]).
@@ -133,6 +136,7 @@ impl OpenAiClient {
             api_key: None,
             model: None,
             xai: false,
+            deepseek: false,
             efforts: EffortMemo::default(),
             reasoning_off_refused: std::sync::atomic::AtomicBool::new(false),
             thinking_typed: std::sync::atomic::AtomicBool::new(false),
@@ -198,6 +202,31 @@ impl OpenAiClient {
     ///   asked once more without it ([`wire::refuses_effort_parameter`]).
     pub fn for_xai(mut self) -> Self {
         self.xai = true;
+        self
+    }
+
+    /// The server is DeepSeek's API. Builder-style.
+    ///
+    /// What `external` learns from a refusal, or cannot learn at all, this
+    /// client is told (docs/research/deepseek-mode.md §4.1):
+    ///
+    /// - the thinking switch goes as `{"type": …}` from the first request, not
+    ///   after a `422` ([`wire::refuses_boolean_thinking`]);
+    /// - a turn that asks for reasoning to be off is sent `thinking: {type:
+    ///   disabled}` and no `reasoning_effort` — the switch DeepSeek documents for
+    ///   this wire, where `"none"` is a value it takes without naming;
+    /// - every other effort goes as it came: DeepSeek maps the whole scale onto
+    ///   the three depths it lists itself, and a nearest-tier rule here would read
+    ///   `medium` as `low` where DeepSeek reads `high`;
+    /// - the window and whether the model takes images are read from the entry
+    ///   in `GET /models` in DeepSeek's words — `context_window` and a top-level
+    ///   `input_modalities` — which no other client reads, so `external` at the
+    ///   same URL learns nothing new from them;
+    /// - llama.cpp's `/props`, Ollama's and LM Studio's routes are never asked:
+    ///   each is a `404` here.
+    pub fn for_deepseek(mut self) -> Self {
+        self.deepseek = true;
+        self.thinking_typed = std::sync::atomic::AtomicBool::new(true);
         self
     }
 
@@ -289,8 +318,9 @@ impl OpenAiClient {
     /// a network error, a body that doesn't parse — is `None`, i.e. "cannot say".
     /// Logged at debug, since not answering is normal here.
     async fn props(&self) -> Option<Props> {
-        // A gateway serves none, and asking would be a `404` per question.
-        if self.gateway.is_some() {
+        // A gateway serves none, nor does DeepSeek, and asking would be a `404`
+        // per question.
+        if self.gateway.is_some() || self.deepseek {
             return None;
         }
         let url = props_url(&self.base_url);
@@ -322,7 +352,7 @@ impl OpenAiClient {
     /// A blank model field is not looked up — Ollama refuses a request without
     /// one anyway — and a gateway serves no such endpoint (the guard `/props` has).
     async fn loaded_window(&self) -> Option<u32> {
-        if self.gateway.is_some() {
+        if self.gateway.is_some() || self.deepseek {
             return None;
         }
         let wanted = self
@@ -353,7 +383,7 @@ impl OpenAiClient {
     /// before that it is silence and the orchestrator asks again after the first
     /// turn; a blank model field is not looked up.
     async fn lm_studio_window(&self) -> Option<u32> {
-        if self.gateway.is_some() || self.xai {
+        if self.gateway.is_some() || self.xai || self.deepseek {
             return None;
         }
         let wanted = self
@@ -568,10 +598,12 @@ impl OpenAiClient {
 impl OpenAiClient {
     /// Whether a `reasoning_effort` of `"none"` is dropped rather than sent as
     /// it came: because the server is xAI, where what a muted turn asks for is
-    /// decided by the model's list ([`Self::xai_effort`]), **or** because this
+    /// decided by the model's list ([`Self::xai_effort`]), or DeepSeek, where the
+    /// thinking switch says it ([`Self::for_deepseek`]), **or** because this
     /// server has already refused such a request.
     fn omit_effort_none(&self) -> bool {
         self.xai
+            || self.deepseek
             || self
                 .reasoning_off_refused
                 .load(std::sync::atomic::Ordering::Relaxed)
@@ -619,6 +651,12 @@ impl OpenAiClient {
         body.reasoning = reasoning;
         if self.xai {
             body.reasoning_effort = self.xai_effort(req).await;
+        }
+        if self.deepseek && wire::asks_reasoning_off(&req.sampling) {
+            // Off in the one word DeepSeek documents, whichever way the turn
+            // said it: `none` is already dropped (`omit_effort_none`).
+            body.thinking = Some(wire::WireThinking::Switch(false));
+            body.reasoning_effort = None;
         }
         if self.gateway.is_some() {
             body = body.for_gateway();
@@ -1001,10 +1039,10 @@ impl EngineBackend for OpenAiClient {
     }
 
     /// Ollama by `/api/version`, then LM Studio by `/api/v1/models` — each by
-    /// a field only it sends (docs/research/local-servers.md §3). A gateway and
-    /// xAI are neither, and are not asked.
+    /// a field only it sends (docs/research/local-servers.md §3). A gateway, xAI
+    /// and DeepSeek are neither, and are not asked.
     async fn server_kind(&self) -> ServerKind {
-        if self.gateway.is_some() || self.xai {
+        if self.gateway.is_some() || self.xai || self.deepseek {
             return ServerKind::Other;
         }
         if let Some(ollama) = self.root_json::<OllamaVersion>("api/version").await {
@@ -1034,8 +1072,15 @@ impl EngineBackend for OpenAiClient {
     /// sampling field on a server that simply says little.
     async fn model_capabilities(&self) -> Option<ModelCapabilities> {
         let entry = self.catalogue_entry().await?;
+        // DeepSeek's spelling is read on the client told it is DeepSeek alone: a
+        // window makes the endpoint count as catalogued, which `external` keeps
+        // to the gateways (docs/research/deepseek-api.md, fork F3).
+        let window = entry
+            .context_length
+            .filter(|&n| n > 0)
+            .or_else(|| self.deepseek.then(|| entry.deepseek_window()).flatten());
         let caps = ModelCapabilities {
-            context_length: entry.context_length.filter(|&n| n > 0),
+            context_length: window,
             sampling_fields: entry
                 .supported_parameters
                 .filter(|v| !v.is_empty())
@@ -1076,7 +1121,10 @@ impl EngineBackend for OpenAiClient {
         let props = self.props().await.and_then(|p| p.modalities?.vision);
         let answer = match props {
             Some(said) => Some(said),
-            None => self.catalogue_entry().await.and_then(|e| e.takes_images()),
+            None => self.catalogue_entry().await.and_then(|e| {
+                e.takes_images()
+                    .or_else(|| self.deepseek.then(|| e.takes_images_top_level()).flatten())
+            }),
         };
         match answer {
             Some(true) => VisionSupport::Supported,

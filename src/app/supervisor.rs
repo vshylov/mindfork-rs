@@ -248,6 +248,7 @@ impl ServerSupervisor for LlamaSupervisor {
             | ServerMode::Gemini
             | ServerMode::Claude
             | ServerMode::Grok
+            | ServerMode::DeepSeek
             | ServerMode::OpenRouter => {
                 let cloud = settings.cloud().expect("cloud mode");
                 cloud_chat_setup(
@@ -302,6 +303,7 @@ impl ServerSupervisor for LlamaSupervisor {
             | ImpersonationMode::Gemini
             | ImpersonationMode::Claude
             | ImpersonationMode::Grok
+            | ImpersonationMode::DeepSeek
             | ImpersonationMode::OpenRouter => {
                 let cloud = settings.cloud().expect("cloud mode");
                 cloud_chat_setup(
@@ -434,10 +436,12 @@ impl ServerSupervisor for LlamaSupervisor {
                     },
                 )
             }
-            // Anthropic and xAI have no embeddings API — RAG uses a separate embedder
-            // (ADR 0002; docs/research/grok-xai-provider.md §2.7: xAI's
-            // `/v1/embedding-models` returns an empty list).
-            ServerMode::Claude | ServerMode::Grok => {
+            // Anthropic, xAI and DeepSeek have no embeddings API — RAG uses a
+            // separate embedder (ADR 0002; docs/research/grok-xai-provider.md §2.7:
+            // xAI's `/v1/embedding-models` returns an empty list;
+            // docs/research/deepseek-mode.md §2.1: DeepSeek's `/v1/embeddings` is a
+            // `404`).
+            ServerMode::Claude | ServerMode::Grok | ServerMode::DeepSeek => {
                 tracing::warn!(
                     mode = ?settings.mode,
                     "this provider has no embeddings API; set a different embedder for RAG"
@@ -750,6 +754,14 @@ fn cloud_chat_setup(
                 .with_api_key(Some(key))
                 .with_model(Some(model.to_string()))
                 .for_xai(),
+        ),
+        // DeepSeek's API is Chat Completions too, read in its own words
+        // (docs/research/deepseek-mode.md §4.1).
+        CloudProvider::DeepSeek => Arc::new(
+            OpenAiClient::new(base)
+                .with_api_key(Some(key))
+                .with_model(Some(model.to_string()))
+                .for_deepseek(),
         ),
         CloudProvider::OpenRouter => {
             let client = Arc::new(
@@ -2380,6 +2392,46 @@ mod tests {
             mode: ServerMode::Grok,
             grok: crate::shared::config::CloudSettings {
                 model_name: Some("x".into()),
+                api_key_env: Some("PATH".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let err = embed_setup(&s)
+            .embedder
+            .embed(vec!["x".into()], EmbedRole::Passage)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("not configured"));
+    }
+
+    #[tokio::test]
+    async fn cloud_chat_deepseek_with_model_and_key_is_ready() {
+        let (tx, _rx) = unbounded_channel();
+        let s = EngineSettings {
+            mode: ServerMode::DeepSeek,
+            deepseek: crate::shared::config::CloudSettings {
+                model_name: Some("deepseek-flash".into()),
+                api_key_env: Some("PATH".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let setup =
+            LlamaSupervisor::default().apply_chat(&s, None, CancellationToken::new(), tx, ru());
+        assert!(setup.backend.is_some());
+        assert!(setup.handle.is_none());
+        assert_eq!(setup.status, ServerStatus::Ready);
+    }
+
+    #[tokio::test]
+    async fn deepseek_embed_is_unavailable() {
+        // DeepSeek has no embedding API (`/v1/embeddings` is a `404`,
+        // docs/research/deepseek-mode.md §2.1) — RAG is unavailable, as for xAI.
+        let s = EmbedSettings {
+            mode: ServerMode::DeepSeek,
+            deepseek: crate::shared::config::CloudSettings {
+                model_name: Some("deepseek-flash".into()),
                 api_key_env: Some("PATH".into()),
                 ..Default::default()
             },

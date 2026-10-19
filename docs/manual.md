@@ -61,8 +61,8 @@ Open settings — `Ctrl+P` (or type `/settings`) — and go to **Model/server**.
 | Mode | What it is |
 |---|---|
 | `managed` | the app launches its own `llama-server` child process from a binary and a GGUF file on this machine |
-| `external` | any OpenAI-compatible server you already run: llama.cpp, vLLM, LM Studio, Ollama, a gateway such as LiteLLM, or a hosted API such as DeepSeek's (`https://api.deepseek.com/v1`, with its key) |
-| `openai` · `gemini` · `claude` · `grok` | the cloud providers, each with its own key and model |
+| `external` | any OpenAI-compatible server you already run: llama.cpp, vLLM, LM Studio, Ollama, a gateway such as LiteLLM, or another hosted OpenAI-compatible API |
+| `openai` · `gemini` · `claude` · `grok` · `deepseek` | the cloud providers, each with its own key and model |
 | `openrouter` | the OpenRouter gateway: one key in front of every vendor's models, the same key for the assistant, impersonation, embeddings and speech — and for watching videos, if you choose it there (§6) |
 
 For a cloud mode, fill in the API key (it is stored encrypted and bound to this

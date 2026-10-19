@@ -182,10 +182,10 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-10-18, version 0.20.0)
+## Status (2026-10-19, version 0.20.0)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **4076 unit tests
-green, 274 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **4093 unit tests
+green, 278 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump and demo-reel regenerators).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -197,6 +197,10 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **DeepSeek as a mode of its own** (2026-10-19, stage 1 of 2): window and images
+  from its list, the thinking switch typed from the first request, `/continue`
+  refused where it failed or doubled a reply; settings 6 → 7, chats 5 → 6. Live **GO**, both
+  models ([docs/research/deepseek-mode.md](docs/research/deepseek-mode.md)).
 - **Observations picked by the chat's opening** (2026-10-18): the prompt's prefix
   now holds on 8 of 8 turns, from 2 of 8. Live **GO**
   ([docs/research/prompt-caching.md](docs/research/prompt-caching.md) §2.2).
@@ -378,18 +382,6 @@ being recent is dropped, not shortened.
   *diverged*, never as "newer there"; equal fingerprints mean an identical comparison.
   Live **GO**, both stages ([docs/history/data-stats.md](docs/history/data-stats.md), spec §12.4,
   [docs/journal/storage.md](docs/journal/storage.md)).
-- **Robustness and the shipped defaults** (stage 4a; the model picker is 4b). A panic in
-  the orchestrator left a live interface with nothing behind it — the loop now tells a
-  closed channel from an empty one and ends the session saying where the log is; a managed
-  build with **no GGUF** started a *router* whose `/health` says ok while every message is
-  a 400 (measured) and which could fetch a model from Hugging Face, so an unset model is
-  `NotConfigured`; the default reply budget rose 2048 → 16384 because it covers the
-  model's reasoning (measured: 1697 thinking + 347 answer, cut) with a `settings.json`
-  2→3 step; a refusal printed into a double-clicked console waits for Enter
-  (`GetConsoleProcessList` = 1); a second instance exits 2; an external locale falls back
-  to English; and the installer offers `PATH` as an unchecked box. Live **GO**
-  ([docs/research/robustness-and-defaults.md](docs/research/robustness-and-defaults.md),
-  [docs/journal/engine.md](docs/journal/engine.md), [docs/journal/release.md](docs/journal/release.md)).
 - **The release pipeline — what a stranger downloads, and what produced it** (stage 3).
   The Windows binary needed a Visual C++ runtime nothing ships (`VCRUNTIME140.dll`,
   measured) — the C runtime is now static, in `.cargo/config.toml` so the tests run on the
