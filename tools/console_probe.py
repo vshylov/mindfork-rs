@@ -14,6 +14,15 @@ Windows Terminal), the probe attaches to that console, injects key events
 (`WriteConsoleInputW`) and reads the active screen buffer
 (`ReadConsoleOutputW`) — characters and attributes, cell by cell.
 
+The app is started suspended and put in a **Job Object** of its own before it
+runs a line, so whatever it starts — and the `cmd` a sized console starts it
+under — is one tree. When the app does not quit, `Session.close` stops that
+tree and says so (a `STOP` line, and no exit code); killing the process the
+probe holds would stop only the `cmd`, and the app would live on in its hidden
+console, holding the single-instance lock. The job is kill-on-close, so a probe
+that dies takes the tree with it, and a mindfork the probe did not start is
+never touched.
+
 What it can and cannot see:
 
 * A cell's colours come back as the **nearest of the 16 legacy colours**. So
@@ -181,6 +190,7 @@ import ctypes.wintypes as wt  # noqa: E402  (after the platform gate)
 
 KERNEL32 = ctypes.WinDLL("kernel32", use_last_error=True)
 USER32 = ctypes.WinDLL("user32", use_last_error=True)
+NTDLL = ctypes.WinDLL("ntdll")
 
 GENERIC_READ_WRITE = 0x80000000 | 0x40000000
 FILE_SHARE_READ_WRITE = 1 | 2
@@ -207,6 +217,15 @@ NOT_STYLING = LEADING_CELL | TRAILING_CELL
 # Legacy colour indexes, as `ReadConsoleOutputW` reports a background.
 BLACK = 0
 BRIGHT_WHITE = 15
+# The app's start, suspended until it is in its job, and the job's terms.
+CREATE_SUSPENDED = 0x00000004
+PROCESS_TERMINATE = 0x0001
+PROCESS_SET_QUOTA = 0x0100
+PROCESS_SUSPEND_RESUME = 0x0800
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+JOB_BASIC_PROCESS_ID_LIST = 3  # JobObjectBasicProcessIdList
+JOB_EXTENDED_LIMIT_INFORMATION = 9  # JobObjectExtendedLimitInformation
 
 # What opens the settings screen and the emoji picker, and the file the settings
 # are kept in — each said once, for the scenarios that press the one and write
@@ -228,6 +247,12 @@ SETTINGS_SCHEMA = 6
 SETTLE = 0.35
 SETTLE_REPAINT = 0.8
 STARTUP = 3.5
+# How long the app gets to quit after `Ctrl+Q` before its tree is stopped; how
+# long the console's host gets to leave the job after the app (0.00–0.05 s,
+# measured); and how long a stopped tree gets to be gone.
+QUIT_WAIT = 6
+LEAVE_WAIT = 2
+STOP_WAIT = 5
 
 
 class Coord(ctypes.Structure):
@@ -276,6 +301,41 @@ class InputRecord(ctypes.Structure):
     _fields_ = [("EventType", wt.WORD), ("Event", EventUnion)]
 
 
+class JobBasicLimits(ctypes.Structure):
+    _fields_ = [
+        ("PerProcessUserTimeLimit", ctypes.c_longlong),
+        ("PerJobUserTimeLimit", ctypes.c_longlong),
+        ("LimitFlags", wt.DWORD),
+        ("MinimumWorkingSetSize", ctypes.c_size_t),
+        ("MaximumWorkingSetSize", ctypes.c_size_t),
+        ("ActiveProcessLimit", wt.DWORD),
+        ("Affinity", ctypes.c_size_t),
+        ("PriorityClass", wt.DWORD),
+        ("SchedulingClass", wt.DWORD),
+    ]
+
+
+class JobExtendedLimits(ctypes.Structure):
+    _fields_ = [
+        ("BasicLimitInformation", JobBasicLimits),
+        ("IoInfo", ctypes.c_ulonglong * 6),
+        ("ProcessMemoryLimit", ctypes.c_size_t),
+        ("JobMemoryLimit", ctypes.c_size_t),
+        ("PeakProcessMemoryUsed", ctypes.c_size_t),
+        ("PeakJobMemoryUsed", ctypes.c_size_t),
+    ]
+
+
+class JobProcessIds(ctypes.Structure):
+    """Room for 64 — more than any tree the app starts."""
+
+    _fields_ = [
+        ("NumberOfAssignedProcesses", wt.DWORD),
+        ("NumberOfProcessIdsInList", wt.DWORD),
+        ("ProcessIdList", ctypes.c_size_t * 64),
+    ]
+
+
 KERNEL32.CreateFileW.restype = wt.HANDLE
 KERNEL32.CreateFileW.argtypes = [
     wt.LPCWSTR,
@@ -303,6 +363,31 @@ KERNEL32.GetConsoleScreenBufferInfo.argtypes = [
     wt.HANDLE,
     ctypes.POINTER(ScreenBufferInfo),
 ]
+KERNEL32.CloseHandle.argtypes = [wt.HANDLE]
+KERNEL32.OpenProcess.restype = wt.HANDLE
+KERNEL32.OpenProcess.argtypes = [wt.DWORD, wt.BOOL, wt.DWORD]
+KERNEL32.QueryFullProcessImageNameW.argtypes = [
+    wt.HANDLE,
+    wt.DWORD,
+    wt.LPWSTR,
+    ctypes.POINTER(wt.DWORD),
+]
+KERNEL32.CreateJobObjectW.restype = wt.HANDLE
+KERNEL32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wt.LPCWSTR]
+KERNEL32.SetInformationJobObject.argtypes = [wt.HANDLE, ctypes.c_int, ctypes.c_void_p, wt.DWORD]
+KERNEL32.QueryInformationJobObject.argtypes = [
+    wt.HANDLE,
+    ctypes.c_int,
+    ctypes.c_void_p,
+    wt.DWORD,
+    ctypes.POINTER(wt.DWORD),
+]
+KERNEL32.AssignProcessToJobObject.argtypes = [wt.HANDLE, wt.HANDLE]
+KERNEL32.TerminateJobObject.argtypes = [wt.HANDLE, wt.UINT]
+# Undocumented, and the one call that resumes a process started suspended by a
+# `Popen` that has closed its thread's handle.
+NTDLL.NtResumeProcess.argtypes = [wt.HANDLE]
+NTDLL.NtResumeProcess.restype = wt.LONG
 
 # name -> (virtual key, character, control-key state)
 KEYS = {
@@ -468,8 +553,77 @@ def background(attributes: int) -> int:
     return (attributes >> 4) & 0xF
 
 
+def blank(rows: list[list[tuple[str, int]]]) -> bool:
+    """Nothing drawn yet: every cell a space, or never written."""
+    return all(char in (" ", "\0") for row in rows for char, _ in row)
+
+
+def _image_name(pid: int) -> str:
+    """The file name a process was started from, or `?` when it cannot be read."""
+    handle = KERNEL32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return "?"
+    try:
+        size = wt.DWORD(1024)
+        name = ctypes.create_unicode_buffer(size.value)
+        if not KERNEL32.QueryFullProcessImageNameW(handle, 0, name, ctypes.byref(size)):
+            return "?"
+        return Path(name.value).name
+    finally:
+        KERNEL32.CloseHandle(handle)
+
+
+def _job_for(pid: int) -> int:
+    """A kill-on-close job holding the process `pid`, started suspended, which
+    is then let run: whatever it starts is born in the job, so nothing gets
+    out of it before it is in place."""
+    job = KERNEL32.CreateJobObjectW(None, None)
+    _check(job, "CreateJobObjectW")
+    try:
+        limits = JobExtendedLimits()
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        _check(
+            KERNEL32.SetInformationJobObject(
+                job, JOB_EXTENDED_LIMIT_INFORMATION, ctypes.byref(limits), ctypes.sizeof(limits)
+            ),
+            "SetInformationJobObject",
+        )
+        process = KERNEL32.OpenProcess(
+            PROCESS_SET_QUOTA | PROCESS_TERMINATE | PROCESS_SUSPEND_RESUME, False, pid
+        )
+        _check(process, "OpenProcess")
+        try:
+            _check(KERNEL32.AssignProcessToJobObject(job, process), "AssignProcessToJobObject")
+            status = NTDLL.NtResumeProcess(process)
+            if status != 0:
+                raise OSError(f"NtResumeProcess failed: status {status & 0xFFFFFFFF:#x}")
+        finally:
+            KERNEL32.CloseHandle(process)
+    except OSError:
+        KERNEL32.CloseHandle(job)
+        raise
+    return job
+
+
+def _job_processes(job: int) -> list[str]:
+    """What is alive in the job, each as `name pid`. A list past 64 is cut to
+    its first 64 (`ERROR_MORE_DATA` still fills them)."""
+    ids = JobProcessIds()
+    KERNEL32.QueryInformationJobObject(
+        job, JOB_BASIC_PROCESS_ID_LIST, ctypes.byref(ids), ctypes.sizeof(ids), None
+    )
+    return [f"{_image_name(pid)} {pid}" for pid in ids.ProcessIdList[: ids.NumberOfProcessIdsInList]]
+
+
+def ended(code: int | None) -> str:
+    """How a session ended, for a check's text: `Session.close` returns no
+    code for an app it had to stop."""
+    return "was stopped by force" if code is None else f"exited with code {code}"
+
+
 class Session:
-    """The app in its own hidden console, with this process attached to it."""
+    """The app in its own hidden console, with this process attached to it,
+    and the app's whole tree in a job of its own (see the module's notes)."""
 
     def __init__(
         self,
@@ -478,11 +632,18 @@ class Session:
         cwd: Path | None = None,
         no_color: str | None = None,
         size: tuple[int, int] | None = None,
+        startup: float = STARTUP,
     ):
         """`size` — columns and rows the console is started at. The console
         cannot be resized once the app runs in it (see the module's notes), so
         `mode con` shrinks it first and the app is its second command; the
-        exit code is then the app's, handed on by `cmd`."""
+        exit code is then the app's, handed on by `cmd`.
+
+        `startup` — the longest the app has to put up its first frame. It gets
+        `STARTUP` seconds, which every scenario was written against, and a
+        longer `startup` past that for as long as the console stays blank: a
+        first start that migrates a data root draws nothing until it is done.
+        An app that exits meanwhile is reported the moment it does."""
         command = [str(exe), *args]
         if size is not None:
             cols, rows = size
@@ -490,34 +651,88 @@ class Session:
             # its line, and `&&` is one of the words on it.
             resize = ["mode", "con:", f"cols={int(cols)}", f"lines={int(rows)}"]
             command = ["cmd.exe", "/d", "/c", *resize, "&&", *command]
-        startup = subprocess.STARTUPINFO()
-        startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startup.wShowWindow = 0  # SW_HIDE
+        hidden = subprocess.STARTUPINFO()
+        hidden.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        hidden.wShowWindow = 0  # SW_HIDE
         # `NO_COLOR` is the scenario's to decide, not the shell's the probe
         # happens to be run from.
         env = {k: v for k, v in os.environ.items() if k.upper() != "NO_COLOR"}
         if no_color is not None:
             env["NO_COLOR"] = no_color
+        self.job: int | None = None
         self.process = subprocess.Popen(
             command,
             cwd=cwd,
             env=env,
-            creationflags=subprocess.CREATE_NEW_CONSOLE,
-            startupinfo=startup,
+            creationflags=subprocess.CREATE_NEW_CONSOLE | CREATE_SUSPENDED,
+            startupinfo=hidden,
         )
-        time.sleep(STARTUP)
-        if self.process.poll() is not None:
-            raise RuntimeError(
-                f"the app exited at once with code {self.process.returncode}"
-                " (2 — no terminal, or another instance is running)"
-            )
+        self.began = time.monotonic()
+        try:
+            self.job = _job_for(self.process.pid)
+        except OSError:
+            self.process.kill()  # still suspended: it has started nothing
+            raise
+        try:
+            self._wait_for_the_first_frame(startup)
+        except BaseException:
+            KERNEL32.FreeConsole()
+            self._stop("the probe gave up on the start")
+            raise
+
+    def _running_until(self, when: float) -> None:
+        """Waits until `when`, and raises the moment the app exits."""
+        while True:
+            code = self.process.poll()
+            if code is not None:
+                raise RuntimeError(
+                    f"the app exited with code {code} {time.monotonic() - self.began:.1f} s"
+                    " after its start (2 — no terminal, or another instance is running)"
+                )
+            left = when - time.monotonic()
+            if left <= 0:
+                return
+            time.sleep(min(0.1, left))
+
+    def _wait_for_the_first_frame(self, startup: float) -> None:
+        deadline = self.began + startup
+        self._running_until(self.began + min(startup, STARTUP))
         KERNEL32.FreeConsole()
         _check(KERNEL32.AttachConsole(self.process.pid), "AttachConsole")
+        waited = False
+        while time.monotonic() < deadline and blank(read_screen()):
+            self._running_until(min(deadline, time.monotonic() + 0.5))
+            waited = True
+        if waited:
+            time.sleep(SETTLE_REPAINT)  # the rest of the frame that ended the wait
+
+    def _stop(self, why: str) -> list[str]:
+        """Stops whatever is still alive in the app's job, waits for it to be
+        gone (a running copy of the binary cannot be deleted with its scratch
+        directory), and returns what it was — saying so with a `STOP` line
+        when there was anything. The job's handle is closed after: a second
+        call finds nothing."""
+        if self.job is None:
+            return []
+        stopped = _job_processes(self.job)
+        KERNEL32.TerminateJobObject(self.job, 1)
+        gone_by = time.monotonic() + STOP_WAIT
+        while _job_processes(self.job) and time.monotonic() < gone_by:
+            time.sleep(0.1)
+        KERNEL32.CloseHandle(self.job)
+        self.job = None
+        if stopped:
+            print(f"  STOP  {why} — stopped: {', '.join(stopped)}")
+        return stopped
 
     def close(self, esc_first: bool = True) -> int | None:
-        """Quits the app and returns its exit code. `Esc` goes first to close
-        whatever a scenario left open — unless the scenario is about `Ctrl+Q`
-        ending the session on its own."""
+        """Quits the app and returns its exit code — or `None` when it did not
+        quit within `QUIT_WAIT` seconds and its tree was stopped by force, the
+        `cmd` of a sized console and the app under it alike (`ended` words
+        either for a check). Anything the app left running when it did quit
+        is stopped too, and named. `Esc` goes first to close whatever a
+        scenario left open — unless the scenario is about `Ctrl+Q` ending the
+        session on its own."""
         try:
             if esc_first:
                 press("esc")
@@ -526,10 +741,18 @@ class Session:
             pass
         KERNEL32.FreeConsole()
         try:
-            return self.process.wait(timeout=6)
+            code = self.process.wait(timeout=QUIT_WAIT)
         except subprocess.TimeoutExpired:
-            self.process.kill()
+            self._stop(f"the app did not quit within {QUIT_WAIT} s of Ctrl+Q")
+            self.process.wait(timeout=STOP_WAIT)
             return None
+        # The console's host is in the job too, and leaves once the console has
+        # no process in it; what is still there after that, the app left.
+        settled_by = time.monotonic() + LEAVE_WAIT
+        while self.job is not None and _job_processes(self.job) and time.monotonic() < settled_by:
+            time.sleep(0.05)
+        self._stop(f"the app quit with code {code} and left these running")
+        return code
 
 
 class Report:
@@ -699,7 +922,7 @@ def scenario_full_mode(exe: Path, report: Report) -> None:
         press("esc")
     finally:
         code = session.close()
-    report.check(code == 0, f"the app exited with code {code}")
+    report.check(code == 0, f"the app {ended(code)}")
 
 
 def scenario_first_frame(exe: Path, report: Report) -> None:
@@ -729,7 +952,7 @@ def scenario_first_frame(exe: Path, report: Report) -> None:
             report.wide_glyphs("the input box", rows, at_least=5)
         finally:
             code = session.close()
-        report.check(code == 0, f"the app exited with code {code}")
+        report.check(code == 0, f"the app {ended(code)}")
 
         print("second run: the draft is in the very first frame")
         session = Session(copy, [], cwd=root)
@@ -739,7 +962,7 @@ def scenario_first_frame(exe: Path, report: Report) -> None:
             report.wide_glyphs("first frame", rows, at_least=5)
         finally:
             code = session.close()
-        report.check(code == 0, f"the app exited with code {code}")
+        report.check(code == 0, f"the app {ended(code)}")
 
 
 def scenario_mono(exe: Path, report: Report) -> None:
@@ -779,7 +1002,7 @@ def scenario_mono(exe: Path, report: Report) -> None:
         press("esc")
     finally:
         code = session.close()
-    report.check(code == 0, f"the app exited with code {code}")
+    report.check(code == 0, f"the app {ended(code)}")
 
 
 def scenario_no_color(exe: Path, report: Report) -> None:
@@ -804,7 +1027,7 @@ def scenario_no_color(exe: Path, report: Report) -> None:
                 report.coloured(f"{title}, first frame", rows)
         finally:
             code = session.close()
-        report.check(code == 0, f"{title}: the app exited with code {code}")
+        report.check(code == 0, f"{title}: the app {ended(code)}")
 
 
 def scenario_user_theme(exe: Path, report: Report) -> None:
@@ -834,7 +1057,7 @@ def scenario_user_theme(exe: Path, report: Report) -> None:
             press("esc")
         finally:
             code = session.close()
-        report.check(code == 0, f"the app exited with code {code}")
+        report.check(code == 0, f"the app {ended(code)}")
         log = "\n".join(
             path.read_text(encoding="utf-8", errors="replace")
             for path in (root / "data" / "logs").glob("*")
@@ -862,7 +1085,7 @@ def scenario_user_theme(exe: Path, report: Report) -> None:
             press("esc")
         finally:
             code = session.close()
-        report.check(code == 0, f"the app exited with code {code} the second time")
+        report.check(code == 0, f"the second time, the app {ended(code)}")
 
 
 # What the status line says while a message is read aloud, the picker's first
@@ -1070,7 +1293,7 @@ def scenario_gateway(exe: Path, report: Report) -> None:
             press("esc")
         finally:
             code = session.close()
-        report.check(code == 0, f"the app exited with code {code}")
+        report.check(code == 0, f"the app {ended(code)}")
         log = "\n".join(
             path.read_text(encoding="utf-8", errors="replace")
             for path in (root / "data" / "logs").glob("*")
@@ -1105,7 +1328,7 @@ def too_small_for_the_chat(exe: Path, report: Report) -> None:
         report.check(text_of(read_screen()) == shown, "57x2: Enter, a letter and Esc change nothing")
     finally:
         code = session.close(esc_first=False)
-    report.check(code == 0, f"57x2: Ctrl+Q alone ended the session (exit code {code})")
+    report.check(code == 0, f"57x2: Ctrl+Q alone ended the session (the app {ended(code)})")
 
 
 def row_starting(lines: list[str], prefix: str, after: int = -1) -> int | None:
@@ -1137,7 +1360,7 @@ def the_reported_window(exe: Path, report: Report) -> None:
         )
     finally:
         code = session.close()
-    report.check(code == 0, f"57x5: the app exited with code {code}")
+    report.check(code == 0, f"57x5: the app {ended(code)}")
 
 
 def the_ladder(exe: Path, report: Report) -> None:
@@ -1172,7 +1395,7 @@ def the_ladder(exe: Path, report: Report) -> None:
             report.check(lines[-1].strip() != "", f"{at}: the frame is used to its last row")
         finally:
             code = session.close()
-        report.check(code == 0, f"{at}: the app exited with code {code}")
+        report.check(code == 0, f"{at}: the app {ended(code)}")
 
 
 def a_layer_that_does_not_fit(exe: Path, report: Report) -> None:
@@ -1201,7 +1424,7 @@ def a_layer_that_does_not_fit(exe: Path, report: Report) -> None:
             )
     finally:
         code = session.close()
-    report.check(code == 0, f"45x12: the app exited with code {code}")
+    report.check(code == 0, f"45x12: the app {ended(code)}")
 
 
 def under_the_panel(lines: list[str]) -> list[str]:
@@ -1229,7 +1452,7 @@ def the_footers(exe: Path, report: Report) -> None:
         report.check(chats >= 5, f"57x14, the chat list: {chats} chats on screen")
     finally:
         code = session.close()
-    report.check(code == 0, f"57x14: the app exited with code {code}")
+    report.check(code == 0, f"57x14: the app {ended(code)}")
 
     session = Session(exe, ["demo"], size=(46, 12))
     try:
@@ -1244,7 +1467,7 @@ def the_footers(exe: Path, report: Report) -> None:
         report.check("Interface" in shown, "46x12, the settings: the menu to its last section")
     finally:
         code = session.close()
-    report.check(code == 0, f"46x12: the app exited with code {code}")
+    report.check(code == 0, f"46x12: the app {ended(code)}")
 
 
 def the_titles(exe: Path, report: Report) -> None:
@@ -1275,7 +1498,7 @@ def the_titles(exe: Path, report: Report) -> None:
         press("esc", SETTLE_REPAINT)
     finally:
         code = session.close()
-    report.check(code == 0, f"41x12: the app exited with code {code}")
+    report.check(code == 0, f"41x12: the app {ended(code)}")
 
 
 def no_cursor_under_the_help(exe: Path, report: Report) -> None:
@@ -1304,7 +1527,7 @@ def no_cursor_under_the_help(exe: Path, report: Report) -> None:
             report.check(after == before, f"80x24, {where}: the cursor is back {after}")
     finally:
         code = session.close()
-    report.check(code == 0, f"80x24: the app exited with code {code}")
+    report.check(code == 0, f"80x24: the app {ended(code)}")
 
 
 def input_row(rows: list[list[tuple[str, int]]]) -> str:
@@ -1341,7 +1564,7 @@ def scenario_altgr(exe: Path, report: Report) -> None:
         report.check("\u20bd" in search, "AltGr+8 typed into the chat list's search")
     finally:
         code = session.close()
-    report.check(code == 0, f"the app exited with code {code}")
+    report.check(code == 0, f"the app {ended(code)}")
 
 
 # `mindfork keys`: the input box every key starts from, and the line breaks.
@@ -1423,7 +1646,7 @@ def scenario_keys(exe: Path, report: Report) -> None:
             )
         finally:
             code = session.close(esc_first=False)
-        report.check(code == 0, f"Ctrl+Q ended it with code {code}")
+        report.check(code == 0, f"Ctrl+Q ended it (the app {ended(code)})")
         saved = record.read_text(encoding="utf-8") if record.is_file() else ""
         report.check(KEYS_SAMPLE in saved, "the file holds the header")
         report.check(
@@ -1582,7 +1805,7 @@ def scenario_ollama(exe: Path, report: Report) -> None:
             press("esc")
         finally:
             code = session.close()
-        report.check(code == 0, f"the app exited with code {code}")
+        report.check(code == 0, f"the app {ended(code)}")
         cuts = log_lines(root, CUT_LOGGED)
         report.check(not cuts, f"no round told as cut: {cuts}")
         if not window:
@@ -1641,7 +1864,7 @@ def scenario_ollama_cut(exe: Path, report: Report) -> None:
             report.says("the cut-prompt note", rows, (CUT_NOTE,))
         finally:
             code = session.close()
-        report.check(code == 0, f"the app exited with code {code}")
+        report.check(code == 0, f"the app {ended(code)}")
         logged = log_lines(root, CUT_LOGGED)
         for line in logged:
             print(line)
@@ -1713,7 +1936,7 @@ def scenario_lmstudio(exe: Path, report: Report) -> None:
             report.says("the tool's card", rows, (NOTE_CARD,))
         finally:
             code = session.close()
-        report.check(code == 0, f"the app exited with code {code}")
+        report.check(code == 0, f"the app {ended(code)}")
         cuts = log_lines(root, CUT_LOGGED)
         report.check(not cuts, f"no round told as cut: {cuts}")
         logged = log_lines(root, WINDOW_LOGGED)
@@ -1783,7 +2006,7 @@ def scenario_lmstudio_cut(exe: Path, report: Report) -> None:
             report.check("OLLAMA" not in text_of(rows), "no Ollama setting named")
         finally:
             code = session.close()
-        report.check(code == 0, f"the app exited with code {code}")
+        report.check(code == 0, f"the app {ended(code)}")
         logged = log_lines(root, CUT_LOGGED)
         for line in logged:
             print(line)
@@ -1878,7 +2101,7 @@ def scenario_first_run(exe: Path, report: Report) -> None:
             )
         finally:
             code = session.close()
-        report.check(code == 0, f"the app exited with code {code}")
+        report.check(code == 0, f"the app {ended(code)}")
         errors = [line for line in log_lines(root, " ERROR ") if "embed" in line.lower()]
         report.check(not errors, f"no embedder errors in the log: {errors}")
         for line in log_lines(root, "looked for local servers") + log_lines(root, "a local server was picked"):
@@ -1909,7 +2132,7 @@ def scenario_first_run_none(exe: Path, report: Report) -> None:
             report.says("the command's answer", rows, (NOTHING_ANSWERED, "11434", "1234"))
         finally:
             code = session.close()
-        report.check(code == 0, f"the app exited with code {code}")
+        report.check(code == 0, f"the app {ended(code)}")
 
 
 SCENARIOS = {

@@ -1700,10 +1700,16 @@ nothing, and `SetConsoleScreenBufferSize` fails with error 87 — hidden, or min
 not activated, alike. What works is `cmd /d /c mode con: cols=57 lines=5 && app.exe`: the
 console is shrunk by its first command and the app starts in a 57×5 one, its exit code
 handed on by `cmd`. Pass it as an argument **list** — a command string with the quoted
-path nested inside the quoted `/c` argument died at once. This is how
-`tools/console_probe.py` measures a small window (`Session(size=…)`); a resize itself
-still needs a person and a real terminal.
-— *a window too small for the frame says so*.
+path nested inside the quoted `/c` argument died at once. The process the caller then
+holds is that `cmd`, not the app: a `kill()` on a timeout ends the `cmd` and leaves the
+app running in its hidden console, holding whatever it holds — stop the tree (a
+kill-on-close Job Object, the child started suspended so nothing is born outside it; see
+*killing a child is not killing a tree*, below), and never "the app" by name, which
+the owner's own instance answers to. This is how `tools/console_probe.py` measures a
+small window (`Session(size=…)`); a resize itself still needs a person and a real
+terminal.
+— *a window too small for the frame says so*, *the console probe stops the tree it
+started*.
 
 **The console's cursor API does not see a VT hide — read where the cursor is, not whether
 it shows.** `GetConsoleCursorInfo` reported the cursor visible under the "Window too small"
