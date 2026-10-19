@@ -17,6 +17,8 @@ og_image_alt = "Nobody owned this code. It didn't fall apart. And the metrics st
 
 *257K lines of Rust, 754 PRs, zero read diffs, and four months of green metrics. How externalized memory, mutation testing, and CI gates replaced reading the code.*
 
+<img class="cover" src="/images/what-replaces-code-ownership.png" width="2000" height="1000" alt="Nobody owned this code. It didn't fall apart. And the metrics stayed green. Beside it, CLAUDE.md, the file every session loads: 994 KB on Aug 8, 12 KB the next day, under a 30 KB cap since. 124 days, 2,308 commits, 754 PRs, 4,291 tests, 0 Sonar issues.">
+
 As AI writes a growing share of the world's code, the fear in engineering organisations has a name: loss of code ownership. Developers stop knowing what the code does, and when something breaks, nobody can reason about it. There have already been cases where that loss cost a product dearly. This is a story about a product where code ownership never existed in the first place. The product did not fall apart. It ships, it grows, and its quality metrics have stayed green for four months. I want to explain why, with numbers rather than impressions.
 
 In June I started a project I had no business starting. I wanted a terminal AI chat with a memory: notes about you, a knowledge base over your files, and a model of itself that it revisits. I wanted it in Rust, because it had to run on Windows, Linux and a rented GPU pod as one native binary. Behind me were fifteen years of enterprise development on .NET, and no Rust at all: I had read the Rust book once and never written anything complicated in it.
