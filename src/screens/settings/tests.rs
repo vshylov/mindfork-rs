@@ -1098,6 +1098,36 @@ fn interface_has_model_name_toggle() {
     assert!(field_desc(&s, FieldId::IModelName).is_some());
 }
 
+/// The token counter's two notes are toggles of their own (spec §11.3,
+/// §11.6): on by default, and each one turned off leaves the other alone.
+#[test]
+fn interface_has_the_counter_note_toggles() {
+    let mut s = screen();
+    let rows = s.interface_fields();
+    for id in [FieldId::ICounterReasoning, FieldId::ICounterCache] {
+        let row = rows.iter().find(|r| r.id == id).expect("the row is listed");
+        assert!(
+            matches!(row.kind, FieldKind::Toggle(true)),
+            "{id:?} on by default"
+        );
+        assert!(field_desc(&s, id).is_some(), "{id:?} is described");
+    }
+    match s.toggle_field(FieldId::ICounterReasoning) {
+        Some(SettingsIntent::SaveConfig(c)) => {
+            assert!(!c.interface.show_reasoning_tokens);
+            assert!(c.interface.show_cache_share);
+        }
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+    match s.toggle_field(FieldId::ICounterCache) {
+        Some(SettingsIntent::SaveConfig(c)) => {
+            assert!(!c.interface.show_cache_share);
+            assert!(!c.interface.show_reasoning_tokens);
+        }
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+}
+
 /// The input box's row ceiling (`interface.input_max_rows`, spec §11.5): a
 /// described integer row in "Interface" that commits through the editor, and
 /// clamps an out-of-range entry instead of refusing it — `0` would leave a box

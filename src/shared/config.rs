@@ -2074,6 +2074,13 @@ pub struct InterfaceSettings {
     /// than half the window, so the feed stays in view. Read through
     /// [`Self::input_rows_ceiling`], which also bounds a hand-edited value.
     pub input_max_rows: u16,
+    /// Note the reply's reasoning tokens on the token counter at the feed's
+    /// bottom border — `(reasoning 120)`. On by default (spec §11.3, §11.6).
+    pub show_reasoning_tokens: bool,
+    /// Note the share of the conversation the provider read from its cache
+    /// on the token counter — `(cache 97%)`. On by default (spec §11.3,
+    /// §11.6, docs/research/cached-tokens.md).
+    pub show_cache_share: bool,
 }
 
 /// The input box's default row ceiling — the value that was hard-coded before
@@ -2136,6 +2143,8 @@ impl Default for InterfaceSettings {
             auto_title: AutoTitleMode::default(),
             self_model_note_order: NoteOrder::default(),
             input_max_rows: DEFAULT_INPUT_MAX_ROWS,
+            show_reasoning_tokens: true,
+            show_cache_share: true,
         }
     }
 }
@@ -3323,6 +3332,10 @@ mod tests {
         assert_eq!(c.interface.input_max_rows, DEFAULT_INPUT_MAX_ROWS);
         assert_eq!(DEFAULT_INPUT_MAX_ROWS, 6);
         assert_eq!(old.interface.input_max_rows, DEFAULT_INPUT_MAX_ROWS);
+        // The token counter keeps both its notes, as it read before either
+        // could be turned off (spec §11.3) — fresh and under an old section.
+        assert!(c.interface.show_reasoning_tokens && c.interface.show_cache_share);
+        assert!(old.interface.show_reasoning_tokens && old.interface.show_cache_share);
         // Old-terminal compatibility mode is off by default.
         assert!(!c.interface.terminal_compat);
         // Markdown-table row separators are off by default.
@@ -3633,6 +3646,8 @@ mod tests {
                 auto_title: AutoTitleMode::AfterUserMessage,
                 self_model_note_order: NoteOrder::OldestFirst,
                 input_max_rows: 12,
+                show_reasoning_tokens: false,
+                show_cache_share: false,
             },
             ..Default::default()
         };

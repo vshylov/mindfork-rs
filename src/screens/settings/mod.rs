@@ -765,6 +765,10 @@ enum FieldId {
     ICodeBackground,
     /// Show the model's name next to the assistant's header in the feed.
     IModelName,
+    /// Note the reply's reasoning tokens on the token counter (spec §11.3).
+    ICounterReasoning,
+    /// Note the conversation's cached share on the token counter (spec §11.3).
+    ICounterCache,
     /// How many text rows the chat's input box grows to before it scrolls.
     IInputRows,
     /// Which end of the narrative the self-model screen (`F3`) lists observations from.

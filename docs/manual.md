@@ -170,8 +170,11 @@ into a rolling summary — automatically where the engine says how large its win
 is, and on demand with `/compact`. The folded part stays on disk; only what the
 model sees changes.
 
-The status line counts it: `tokens: ~4600` while the number is mindfork's own
-estimate, the engine's exact figure once it answers. Where the provider says how
+The counter at the bottom right corner of the conversation's frame counts it:
+`tokens: ~4600` while the number is mindfork's own estimate, the engine's exact
+figure once it answers. When a reply was reasoned out, the count notes the
+reasoning in it — `tokens: 8414 (reasoning 120)`; the total counts those tokens
+either way. Where the provider says how
 much of the conversation it read from its prompt cache, the count adds the share —
 `tokens: 8414 (cache 99%)`. A high share means the earlier conversation was
 reused rather than processed again, which is faster and, on a cloud, cheaper.
@@ -184,6 +187,8 @@ does. A vLLM server shows no share unless it was
 started with `--enable-prompt-tokens-details`, and LM Studio shows none: it caches,
 but does not say how much. Every request's figures, the background ones included
 (titles, compression, impersonation), are in the log as `round usage` lines.
+Either note can be turned off in *Settings → Interface* (*Reasoning in the token
+counter*, *Cache share in the token counter*); both are on by default.
 
 ### The self-model
 
@@ -352,7 +357,8 @@ Eight sections, and these four are the ones worth a visit early.
 - **Memory** — the context window when the engine cannot say it, what triggers
   compaction, and how much of the knowledge base a turn may pull in.
 - **Interface** — the colour mode and its theme (below), whether the model's
-  name is shown in the reply header, the background of a code block shown
+  name is shown in the reply header, which notes the token counter carries
+  (reasoning and the cache share, both on by default), the background of a code block shown
   without highlighting (`inverted` by default, or `normal` — just its text
   between the ```` ``` ```` lines),
   how tall the input box grows before it scrolls (6 rows by default; it never
@@ -634,8 +640,9 @@ closes it.
 **The chat looks stripped down.** In a window of ten rows or fewer the chat
 gives up its frame a piece at a time to keep four rows of the conversation on
 screen: first the status bar's second row, then the input box's border, then
-the feed's, and below six rows the status bar itself. A window of five rows is
-four rows of the conversation over the `❯` prompt. The keys a border used to
+the feed's — its token counter then moves to the status bar — and below six
+rows the status bar itself. A window of five rows is four rows of the
+conversation over the `❯` prompt. The keys a border used to
 name are all on `F1`; the search's counter stays at the right end of its row.
 Eleven rows and up look as they always did.
 

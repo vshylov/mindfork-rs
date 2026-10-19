@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (51)
+## Entries (52)
 
 - Post-M9: mouse-wheel feed scrolling (done)
 - Post-M9: own markdown renderer (tables + LaTeX + theme) (done)
@@ -63,6 +63,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the colour modes on a real Mac (done)
 - Post-M9: Terminal.app before macOS 26 gets its 256 colours (done)
 - Post-M9: the background of an unhighlighted code block is a setting (done)
+- Post-M9: the token counter moves to the feed's bottom border, its notes become settings (done)
 
 ### Post-M9: mouse-wheel feed scrolling (done)
 - **The mouse wheel scrolls the feed** on par with `PageUp/PageDown`. `ratatui::init()`
@@ -3143,3 +3144,71 @@ one that goes through `set_settings`.
 `message_feed`, the settings screen and `demo_reel`). **4031 unit tests green,
 260 `#[ignore]`**; fmt and clippy are clean. A live run against an engine is not
 needed — a renderer setting, no engine, memory or tool path.
+
+### Post-M9: the token counter moves to the feed's bottom border, its notes become settings (done)
+
+**Why.** The owner's screenshot (2026-10-19): `tokens: 14587 (reasoning 10 · cache
+91%)` was the widest chip in the status pill — a third of a 120-column row — and,
+mid-turn, the reason the corner block shed its hints. Asked for: the counter on the
+feed's frame at the bottom right corner (the top right already holds the model), and
+the reasoning and cache notes switchable, both on by default.
+
+**What.**
+- `widgets/token_counter.rs` — one `TokenCounter` (the turn's figures, `generating`,
+  and `CounterNotes`) for both places that draw it: `forms` gives the full form and
+  the bare total (the notes are what a narrow row gives up), `style` is accent while
+  the turn runs and muted after. The text, `cache_share` and their tests moved here
+  from `status_bar.rs`; the bundle keys stay `ui.status.tokens*`.
+- The feed: `FeedFrame::Bordered` carries `counter`; `render_border` puts it in a
+  right-aligned `title_bottom`, fitted by `fit_counter` (whole, then without notes,
+  then not at all — never a cut number). The scrollbar is drawn on the right border
+  with the corner rows excluded, so the two never meet. `render_border` lost its
+  unused `&self` to stay within clippy's argument count.
+- The status bar: the five counter fields of `StatusModel` became
+  `counter: Option<TokenCounter>`, which the pill draws when handed one.
+- The chat screen: `ChatScreen::token_counter` assembles it once per call, reading
+  the notes from the settings snapshot (`CounterNotes::default` before it arrives);
+  `status_model` takes the frame's `ChatChrome` and hands the pill the counter only
+  under a chrome with no feed border — six and seven rows (spec §11.1.1). One or the
+  other carries it, never both.
+- `interface.show_reasoning_tokens`, `interface.show_cache_share` — booleans,
+  `#[serde(default)]` true, so an old file reads both on and an older binary ignores
+  them; no schema step. Settings → Interface → Appearance, after *Model name in the
+  feed*; `en` and `ru`.
+
+**Decisions** (the owner asked for the outcome; the forks were small and were taken
+by the agent, recorded here).
+- **Two toggles, not one** — the request named both notes; one each costs a row and
+  lets a reader who watches the cache keep it without the reasoning.
+- **A bare feed hands the counter to the pill** rather than losing it: at six and
+  seven rows the bar still has its row, and the counter was there before.
+- **Narrow: notes first, then the counter** — the caption's rule on the other border
+  (`fit_header`), with the row to itself, so nothing is owed a share.
+- **Nothing else moved**: the counter keeps its words, its `~` and its colours.
+
+**Live.** `mindfork demo` in a hidden console (`tools/console_probe.py`'s `Session`,
+a scratch script): at 120×30 the demo reply's `tokens: 512 (reasoning 16)` stands
+once, on the feed's bottom border above the input box, with no counter in the status
+bar; *Reasoning in the token counter* toggled off in Settings → Interface — the
+border reads `tokens: 512`, and back on; at 120×7 the feed is bare and the counter
+is in the status bar, once; exit 0 both times — 12/12 checks. The rendered frames
+read by eye at 120×20, 120×7 and 40×14 (the 40-column border shows `tokens: 14587`
+without its notes). Windows' console host only; Windows Terminal is the owner's look.
+
+**Screenshots.** The four `settings-*` dumps move by the Interface section's field
+count (18 → 20) and nothing else — the chat still shows no counter at rest; the old
+dumps re-rendered byte-identical first (8/8), then the PNGs and SVGs regenerated.
+
+**Mutation check.** 14 mutants behind a run-time switch, one build: each note
+ignoring its setting, the settings read into the wrong note, no narrow form, the
+style inverted, the fit ignoring its padding, the border or the pill never drawing
+it, the pill always carrying it, the screen handing the border none or ignoring the
+settings, the cache default off, the cache row flipping the reasoning setting or
+showing the wrong state — all 14 killed. The swapped-notes mutant was found
+uncovered before the run, and a test was written for it first.
+
+**Tests:** +5 net (+5 `token_counter`, +1 each in `message_feed`, the chat screen
+and the settings screen; four counter tests left `status_bar` with the code and one
+pill test took their place). **4103 unit tests green, 279 `#[ignore]`**; fmt and
+clippy are clean. A live run against an engine is not needed — a rendering and
+settings change, no engine, memory or tool path.

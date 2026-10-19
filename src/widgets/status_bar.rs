@@ -1,6 +1,6 @@
-//! Status bar: server status, a generation indicator, a reply/context token
-//! counter, key hints. See spec §11.1. Model/profile —
-//! later.
+//! Status bar: server status, a generation indicator, key hints — and the
+//! token counter where the feed has no border to carry it (spec §11.1.1,
+//! §11.3). See spec §11.1.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -13,6 +13,7 @@ use crate::shared::server::{ServerStatus, ServerStatuses};
 use crate::shared::theme::Palette;
 use crate::shared::ui;
 use crate::shared::wrap;
+use crate::widgets::token_counter::TokenCounter;
 
 /// The one hotkey whose description is not fixed: `Esc` means "go back", and
 /// where back goes depends on how the chat was reached (see [`EscTarget`]) —
@@ -102,25 +103,19 @@ fn esc_hint_key(model: &StatusModel) -> &'static str {
 /// A state snapshot for the status line — the screen assembles it in one place
 /// ([`ChatScreen::status_model`](crate::screens::chat::ChatScreen)), so a new
 /// indicator adds a field rather than extending the `render`/`height` signatures.
-/// `tokens` — reply tokens (live), `context` — conversation (prompt) tokens (`None`
-/// — unknown), `context_exact` — whether this is the exact number from the server's `usage`
-/// (otherwise an estimate, marked with `~`). `mouse_scroll` — whether mouse capture for
-/// wheel scrolling is on (otherwise native text selection). `background` — a quiet indicator of
+/// `mouse_scroll` — whether mouse capture for wheel scrolling is on (otherwise
+/// native text selection). `background` — a quiet indicator of
 /// the running background tasks, already composed into one label by the caller
 /// (auto-reflection, note/self-model consolidation, history compaction; `None` —
 /// nothing running). See spec §11.1, §11.3.
 pub struct StatusModel<'a> {
     pub statuses: &'a ServerStatuses,
     pub generating: bool,
-    pub tokens: u64,
-    pub context: Option<u64>,
-    pub context_exact: bool,
-    /// Reasoning tokens ("thoughts") in the reply (included in `tokens`); `0` — don't show.
-    pub reasoning: u32,
-    /// How much of `context` the provider read from its cache; shown as a share
-    /// of it, `0%` included — a miss is the signal (docs/research/cached-tokens.md,
-    /// F3). `None` — no figure for this request: not shown.
-    pub cached: Option<u32>,
+    /// The token counter, when the pill is where it goes: only in a window too
+    /// short for the feed's border, whose corner carries it otherwise (spec
+    /// §11.1.1, §11.3). `None` — it is not the bar's to draw. A counter with
+    /// nothing to count yet is not drawn either.
+    pub counter: Option<TokenCounter>,
     pub mouse_scroll: bool,
     pub background: Option<&'a str>,
     /// Speech synthesis is running (`/tts`) — a quiet "speaking" chip. See spec §11.9.
@@ -210,8 +205,8 @@ pub fn height(
 }
 
 /// Builds the status bar's lines. On the left of the **top** row — "state"
-/// (the status pill: server chips, generation indicator, token counter, the
-/// quiet chips), left-aligned. On the right — hotkeys (starting with the mouse
+/// (the status pill: server chips, generation indicator, the quiet chips —
+/// and the token counter in a window with no feed border), left-aligned. On the right — hotkeys (starting with the mouse
 /// toggle `Ctrl+W`, whose description = the current mode), laid out as a neat
 /// right-aligned grid **beside the pill**, at most [`HINT_ROWS_MAX`] rows
 /// deep, columns lined up vertically and an incomplete bottom row landing
@@ -348,8 +343,9 @@ fn keep_order(mouse_pinned: bool, with_stop: bool) -> Vec<usize> {
 /// fits. A block that lost `F1` is refused outright — a legend hiding its own
 /// door to the full list while lesser hints stay would be an artifact of cell
 /// widths, not a priority — and the caller falls back to the `F1`-below row.
-/// Within a turn the pill only grows (the token counter), so hints shed
-/// monotonically — no flicker — and return when the turn's chips leave.
+/// Within a turn the pill only grows (the generation chip; the token counter,
+/// where the pill carries it), so hints shed monotonically — no flicker — and
+/// return when the turn's chips leave.
 fn trim_to_fit(cell_w: &[usize], avail: usize, mouse_pinned: bool, max_rows: usize) -> Vec<usize> {
     let order = keep_order(mouse_pinned, cell_w.len() > STOP_IDX);
     let kept = ui::keep_hints(cell_w, avail, max_rows, order);
@@ -360,8 +356,8 @@ fn trim_to_fit(cell_w: &[usize], avail: usize, mouse_pinned: bool, max_rows: usi
 }
 
 /// The "state" cluster on the left of the top row, chip by chip: the server
-/// chips, generation, the token counter and the quiet background, speaking
-/// and attachment chips. Each chip carries the join drawn before it — the
+/// chips, generation, the token counter (where the pill carries it) and the
+/// quiet background, speaking and attachment chips. Each chip carries the join drawn before it — the
 /// server chips stand two spaces apart, the rest behind a `│` separator — so
 /// that [`fit_pill`] can take a prefix of them and get a pill that ends
 /// where a chip ends.
@@ -406,7 +402,7 @@ fn state_chips(
             palette.accent_style(),
         ));
     }
-    if let Some(counter) = token_counter_span(model, palette, loc) {
+    if let Some(counter) = model.counter.and_then(|c| c.span(palette, loc)) {
         behind_sep(counter);
     }
     // A quiet indicator of the running background tasks (composed by the caller) — muted,
@@ -487,71 +483,6 @@ pub fn cut_chip(chip: Vec<Span<'static>>, width: usize) -> Vec<Span<'static>> {
             (!text.is_empty()).then(|| Span::styled(text, span.style))
         })
         .collect()
-}
-
-/// The counter's annotations, joined into one parenthesis — `(reasoning 120 · cache
-/// 99%)` — or nothing. Reasoning tokens ("thoughts") are included in the total and
-/// shown when there are any; the cache share is of the conversation shown, rounded
-/// **down** so that one missed token never reads as `100%`, and shown whenever the
-/// request reported it, `0%` included (docs/research/cached-tokens.md §4.4, F3).
-fn counter_notes(model: &StatusModel, loc: &'static Locale) -> String {
-    let mut notes = Vec::new();
-    if model.reasoning > 0 {
-        notes.push(loc.tf(
-            "ui.status.tokens.reasoning",
-            &[("n", &model.reasoning.to_string())],
-        ));
-    }
-    if let Some(pct) = cache_share(model.cached, model.context) {
-        notes.push(loc.tf("ui.status.tokens.cache", &[("pct", &pct.to_string())]));
-    }
-    if notes.is_empty() {
-        String::new()
-    } else {
-        format!(" ({})", notes.join(" · "))
-    }
-}
-
-/// The cached share of `context` in whole percent, rounded down; `None` without
-/// both figures or with an empty context. A count above the context (no provider
-/// sends one) reads as `100`.
-fn cache_share(cached: Option<u32>, context: Option<u64>) -> Option<u64> {
-    let context = context.filter(|c| *c > 0)?;
-    Some((u64::from(cached?) * 100 / context).min(100))
-}
-
-/// The combined token counter (conversation + reply): bright during generation (grows
-/// live), muted afterward (the last turn's final result). Marked with `~` while the
-/// conversation (prompt) is a client-side estimate, i.e. before the exact number arrives from the server's `usage`.
-/// `None` — nothing to count yet (the counter is hidden).
-fn token_counter_span(
-    model: &StatusModel,
-    palette: &Palette,
-    loc: &'static Locale,
-) -> Option<Span<'static>> {
-    if model.tokens == 0 && model.context.is_none() {
-        return None;
-    }
-    let total = model.context.unwrap_or(0) + model.tokens;
-    let approx = if model.context.is_some() && !model.context_exact {
-        "~"
-    } else {
-        ""
-    };
-    let reason = counter_notes(model, loc);
-    let label = loc.tf(
-        "ui.status.tokens",
-        &[
-            ("approx", approx),
-            ("total", &total.to_string()),
-            ("reason", &reason),
-        ],
-    );
-    if model.generating {
-        Some(Span::styled(label, palette.accent_style()))
-    } else {
-        Some(Span::styled(label, palette.muted_style()))
-    }
 }
 
 /// Hotkeys: the mouse toggle `Ctrl+W` (description = the current mode) + the fixed ones.
@@ -691,11 +622,13 @@ mod tests {
         StatusModel {
             statuses,
             generating,
-            tokens,
-            context,
-            context_exact,
-            reasoning: 0,
-            cached: None,
+            counter: Some(TokenCounter {
+                generating,
+                tokens,
+                context,
+                context_exact,
+                ..TokenCounter::default()
+            }),
             mouse_scroll,
             background: None,
             speaking: false,
@@ -801,11 +734,7 @@ mod tests {
             let m = StatusModel {
                 statuses,
                 generating,
-                tokens: 0,
-                context: None,
-                context_exact: false,
-                reasoning: 0,
-                cached: None,
+                counter: None,
                 mouse_scroll: false,
                 background: Some("рефлексия"),
                 speaking: false,
@@ -888,108 +817,32 @@ mod tests {
         assert_eq!(span_fg(false, "мышь: выделение"), Some(palette.muted));
     }
 
+    /// The pill carries the counter it is handed — in a window with no feed
+    /// border (spec §11.1.1) — in its own place behind the generation chip,
+    /// and nothing of it when the screen hands it none: the feed's corner
+    /// carries it then (spec §11.3). How it reads is
+    /// `widgets::token_counter`'s.
     #[test]
-    fn token_counter_shows_summed_total() {
+    fn the_pill_carries_the_counter_only_when_handed_one() {
         let line = |tokens, context, exact| flat(&ready(), true, tokens, context, exact, false);
-        // No tokens and no context — the counter is hidden.
+        // Nothing to count — nothing drawn, though a counter was handed.
         assert!(!line(0, None, false).contains("токены"));
-        // Reply only (conversation unknown) — sum = reply, no `~`.
-        assert!(line(42, None, false).contains("токены: 42"));
-        // Sum of conversation and reply; while the conversation is an estimate, marked with `~`.
-        assert!(line(42, Some(1000), false).contains("токены: ~1042"));
-        // The exact number from usage — no `~`.
+        let t = line(42, Some(1000), false);
+        assert!(t.contains("генерация…  │  токены: ~1042"), "{t}");
         assert!(line(42, Some(1000), true).contains("токены: 1042"));
-        // Visible right at the start: conversation present, reply still 0 → sum = conversation.
-        assert!(line(0, Some(1000), false).contains("токены: ~1000"));
-    }
-
-    #[test]
-    fn token_counter_shows_reasoning_when_present() {
+        // Not handed one: the pill has no counter, whatever the turn counted.
         let statuses = ready();
-        let with_reason = |reasoning: u32| -> String {
-            let m = StatusModel {
-                statuses: &statuses,
-                generating: true,
-                tokens: 42,
-                context: Some(1000),
-                context_exact: true,
-                reasoning,
-                cached: None,
-                mouse_scroll: false,
-                background: None,
-                speaking: false,
-                attachments: None,
-                staged_images: None,
-                esc_target: EscTarget::default(),
-                read_only: false,
-                background_run: false,
-            };
-            lines(200, &m, &Palette::default(), ru())
-                .iter()
-                .flat_map(|l| l.spans.iter())
-                .map(|s| s.content.as_ref())
-                .collect()
-        };
-        // Reasoning tokens are shown with a separate annotation (included in the total).
-        assert!(with_reason(300).contains("токены: 1042 (рассужд. 300)"));
-        // Zero reasoning tokens — no annotation.
-        let none = with_reason(0);
-        assert!(none.contains("токены: 1042"));
-        assert!(!none.contains("рассужд"));
-    }
-
-    /// The counter as it reads with the cache figure (docs/research/cached-tokens.md,
-    /// F3): the share of the conversation, `0%` included, joined with reasoning in
-    /// one parenthesis — and nothing where the request reported no figure.
-    #[test]
-    fn token_counter_shows_the_cache_share() {
-        let statuses = ready();
-        let line = |reasoning: u32, cached: Option<u32>, lang| -> String {
-            let mut m = model(&statuses, false, 5, Some(8409), true, false);
-            m.reasoning = reasoning;
-            m.cached = cached;
-            lines(
-                200,
-                &m,
-                &Palette::default(),
-                crate::shared::i18n::locale(lang),
-            )
+        let mut m = model(&statuses, true, 42, Some(1000), true, false);
+        m.counter = None;
+        let text: String = lines(200, &m, &Palette::default(), ru())
             .iter()
             .flat_map(|l| l.spans.iter())
             .map(|s| s.content.as_ref())
-            .collect()
-        };
-        use crate::shared::i18n::Lang::{En, Ru};
-        // `gpt-6.1-sol` warm: 8406 of 8409 is 99.96% — rounded down, never `100%`.
-        assert!(line(0, Some(8406), En).contains("tokens: 8414 (cache 99%)"));
-        assert!(line(0, Some(8406), Ru).contains("токены: 8414 (кэш 99%)"));
-        // A miss is shown: it is the signal.
-        assert!(line(0, Some(0), En).contains("tokens: 8414 (cache 0%)"));
-        // Reasoning and the cache share in one parenthesis.
-        assert!(line(120, Some(8192), En).contains("tokens: 8414 (reasoning 120 · cache 97%)"));
-        assert!(line(120, Some(8192), Ru).contains("(рассужд. 120 · кэш 97%)"));
-        // No figure for the request: no annotation at all.
-        let silent = line(0, None, En);
+            .collect();
         assert!(
-            silent.contains("tokens: 8414") && !silent.contains("cache"),
-            "{silent}"
+            !text.contains("токены") && text.contains("генерация"),
+            "{text}"
         );
-        assert!(!silent.contains('('), "{silent}");
-    }
-
-    /// The share's arithmetic: whole percent, rounded down; nothing without
-    /// both figures or against an empty conversation; a count above the
-    /// conversation capped.
-    #[test]
-    fn the_cache_share_rounds_down_and_needs_both_figures() {
-        assert_eq!(cache_share(Some(8406), Some(8409)), Some(99));
-        assert_eq!(cache_share(Some(8409), Some(8409)), Some(100));
-        assert_eq!(cache_share(Some(7782), Some(9825)), Some(79));
-        assert_eq!(cache_share(Some(0), Some(9825)), Some(0));
-        assert_eq!(cache_share(None, Some(9825)), None);
-        assert_eq!(cache_share(Some(10), None), None);
-        assert_eq!(cache_share(Some(10), Some(0)), None);
-        assert_eq!(cache_share(Some(20), Some(10)), Some(100));
     }
 
     #[test]
@@ -1029,10 +882,14 @@ mod tests {
     fn busy(statuses: &ServerStatuses) -> StatusModel<'_> {
         StatusModel {
             generating: true,
-            tokens: 1218,
-            context: Some(36490),
-            context_exact: true,
-            reasoning: 1218,
+            counter: Some(TokenCounter {
+                generating: true,
+                tokens: 1218,
+                context: Some(36490),
+                context_exact: true,
+                reasoning: 1218,
+                ..TokenCounter::default()
+            }),
             attachments: Some("файлы: 2 (~532)"),
             ..model(statuses, false, 0, None, false, false)
         }
@@ -1278,10 +1135,14 @@ mod tests {
         };
         let m = StatusModel {
             generating: true,
-            tokens: 4732,
-            context: Some(22597),
-            context_exact: true,
-            reasoning: 4732,
+            counter: Some(TokenCounter {
+                generating: true,
+                tokens: 4732,
+                context: Some(22597),
+                context_exact: true,
+                reasoning: 4732,
+                ..TokenCounter::default()
+            }),
             ..model(&statuses, false, 0, None, false, false)
         };
         let r = rows_of(120, &m);
@@ -1414,11 +1275,13 @@ mod tests {
         let m = StatusModel {
             statuses: &all,
             generating: true,
-            tokens: 123,
-            context: Some(456),
-            context_exact: true,
-            reasoning: 0,
-            cached: None,
+            counter: Some(TokenCounter {
+                generating: true,
+                tokens: 123,
+                context: Some(456),
+                context_exact: true,
+                ..TokenCounter::default()
+            }),
             mouse_scroll: true,
             background: Some("рефлексия"),
             speaking: true,

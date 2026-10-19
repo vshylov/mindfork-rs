@@ -31,6 +31,20 @@ split by subsystem.
   from where it stopped, through DeepSeek's prefix completion. It does so in a
   conversation without tool calls, the only kind DeepSeek continues; in one with
   them, `/continue` says so and `/regen` regenerates the reply.
+- **The token counter's notes can be turned off.** *Settings → Interface* has
+  *Reasoning in the token counter* and *Cache share in the token counter*; with
+  either off, the counter leaves that note out — `(reasoning 120)`, `(cache 97%)`.
+  Both are on by default, so the counter reads as before until you change them.
+
+### Changed
+
+- **The token counter moved to the bottom right corner of the conversation's
+  frame.** `tokens: 14587 (reasoning 10 · cache 91%)` used to be the widest item
+  in the status line and pushed key hints out of it for the length of every
+  turn; the frame's bottom edge holds it with room to spare. In a window too
+  narrow for it the notes go first, then the counter — never a cut number. In a
+  window under eight rows, where the conversation has no frame, it stays in the
+  status line.
 
 ### Fixed
 

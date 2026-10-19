@@ -24,6 +24,7 @@ use crate::shared::markdown;
 use crate::shared::theme::Palette;
 use crate::shared::ui::{self, render_scrollbar};
 use crate::shared::wrap;
+use crate::widgets::token_counter::TokenCounter;
 
 /// Gutter rail to the left of every message line: a colored vertical bar +
 /// a space (redesign: "Role rails — colored ▌ in the gutter"). Width — 2 columns.
@@ -475,7 +476,8 @@ impl Default for MessageFeed {
 }
 
 /// What is drawn around the feed's rows (spec §11.1.1): the panel's border,
-/// with the chat's title and the model caption on it — or nothing, in a
+/// with the chat's title and the model caption on its top and the token
+/// counter at its bottom right corner (spec §11.3) — or nothing, in a
 /// window with no rows to spare for a border. A bare feed wraps to the
 /// window's full width, has no scrollbar, and ends on the last line of text
 /// rather than on the padding row under it.
@@ -484,6 +486,8 @@ pub enum FeedFrame<'a> {
     Bordered {
         title: &'a str,
         caption: &'a FeedCaption,
+        /// The token counter; `None` — there is none on this screen.
+        counter: Option<TokenCounter>,
     },
     Bare,
 }
@@ -536,6 +540,17 @@ impl FeedCaption {
 /// The rule is every border's with two titles ([`ui::fit_title_pair`]).
 fn fit_header(title: &str, caption: &FeedCaption, avail: usize) -> (String, Option<String>) {
     ui::fit_title_pair(title, &caption.forms(), avail)
+}
+
+/// The widest of the token counter's `forms` whose cell — the form with a
+/// space on either side — fits in `avail` columns of the bottom border; the
+/// notes are given up first, then the counter (spec §11.3). It has the row to
+/// itself, so nothing else is owed a share of it.
+fn fit_counter(forms: &[String], avail: usize) -> Option<&str> {
+    forms
+        .iter()
+        .map(String::as_str)
+        .find(|form| wrap::str_width(form) + 2 <= avail)
 }
 
 impl MessageFeed {
@@ -932,9 +947,11 @@ impl MessageFeed {
         loc: &'static Locale,
     ) {
         let inner = match header {
-            FeedFrame::Bordered { title, caption } => {
-                self.render_border(frame, area, title, caption, palette)
-            }
+            FeedFrame::Bordered {
+                title,
+                caption,
+                counter,
+            } => Self::render_border(frame, area, title, caption, counter, palette, loc),
             FeedFrame::Bare => area,
         };
         let bare = matches!(header, FeedFrame::Bare);
@@ -1034,14 +1051,16 @@ impl MessageFeed {
     }
 
     /// The bordered feed's panel: rounded, the title with a ◆ marker on the
-    /// left, the caption (model/ctx) on the right. Returns the rows inside.
+    /// left, the caption (model/ctx) on the right, the token counter at the
+    /// bottom right corner. Returns the rows inside.
     fn render_border(
-        &self,
         frame: &mut Frame,
         area: Rect,
         title: &str,
         caption: &FeedCaption,
+        counter: Option<TokenCounter>,
         palette: &Palette,
+        loc: &'static Locale,
     ) -> Rect {
         let glyphs = palette.glyphs();
         let marker = format!(" {} ", glyphs.title_marker);
@@ -1063,6 +1082,18 @@ impl MessageFeed {
         if let Some(cell) = meta_cell {
             block =
                 block.title(Line::from(Span::styled(cell, palette.muted_style())).right_aligned());
+        }
+        // The counter has the bottom row to itself: the corners and one run
+        // of the border before it are all it leaves.
+        if let Some(counter) = counter {
+            let forms = counter.forms(loc);
+            let avail = (area.width as usize).saturating_sub(3);
+            if let Some(form) = fit_counter(&forms, avail) {
+                block = block.title_bottom(
+                    Line::from(Span::styled(format!(" {form} "), counter.style(palette)))
+                        .right_aligned(),
+                );
+            }
         }
         let inner = block.inner(area);
         frame.render_widget(&block, area);
@@ -2329,6 +2360,7 @@ mod tests {
     const PANEL: FeedFrame<'static> = FeedFrame::Bordered {
         title: "Чат",
         caption: &BARE,
+        counter: None,
     };
 
     fn caption(name: &str, detail: Option<&str>) -> FeedCaption {
@@ -4559,6 +4591,7 @@ mod tests {
                 FeedFrame::Bordered {
                     title: "Чат",
                     caption: &caption("gemma-4", Some("16k ctx")),
+                    counter: None,
                 },
                 &messages,
                 &Palette::default(),
@@ -4588,6 +4621,7 @@ mod tests {
         let header = FeedFrame::Bordered {
             title: long,
             caption: &cap,
+            counter: None,
         };
         term.draw(|f| feed.render(f, f.area(), header, &[], &Palette::default(), ru()))
             .unwrap();
@@ -4674,6 +4708,7 @@ mod tests {
         let header = FeedFrame::Bordered {
             title,
             caption: &cap,
+            counter: None,
         };
         let top = |width: u16| -> String {
             let mut feed = MessageFeed::new();
@@ -4703,6 +4738,70 @@ mod tests {
                 "{width}: {row}"
             );
         }
+    }
+
+    /// The token counter sits at the bottom border's right corner (spec
+    /// §11.3), in its turn's style, and fits the row the way a caption does:
+    /// the notes go first, then the counter — never a cut number. The
+    /// scrollbar on the right border leaves the corner row alone.
+    #[test]
+    fn the_counter_sits_at_the_bottom_right_corner() {
+        let counter = TokenCounter {
+            tokens: 10,
+            context: Some(14577),
+            context_exact: true,
+            reasoning: 10,
+            cached: Some(13300),
+            ..TokenCounter::default()
+        };
+        let draw = |width: u16, counter: Option<TokenCounter>, messages: &[FeedMessage]| {
+            let header = FeedFrame::Bordered {
+                title: "Чат",
+                caption: &BARE,
+                counter,
+            };
+            let mut feed = MessageFeed::new();
+            let mut term = Terminal::new(TestBackend::new(width, 6)).unwrap();
+            term.draw(|f| feed.render(f, f.area(), header, messages, &Palette::default(), ru()))
+                .unwrap();
+            term.backend().buffer().clone()
+        };
+        let bottom = |buf: &ratatui::buffer::Buffer| {
+            crate::shared::ui::tests::buffer_rows(buf).pop().unwrap()
+        };
+        let full = " токены: 14587 (рассужд. 10 · кэш 91%) ";
+        let row = bottom(&draw(80, Some(counter), &[]));
+        assert!(row.ends_with(&format!("{full}╯")), "{row}");
+        assert!(row.starts_with("╰─"), "{row}");
+        // Narrower than the full form: the notes go, the number stays whole.
+        let row = bottom(&draw(30, Some(counter), &[]));
+        assert!(row.ends_with(" токены: 14587 ╯"), "{row}");
+        assert!(!row.contains("рассужд"), "{row}");
+        // Narrower than the bare number: no counter, an unbroken border.
+        let row = bottom(&draw(17, Some(counter), &[]));
+        assert!(!row.contains("14587") && row.ends_with("─╯"), "{row}");
+        // No counter, or nothing counted yet: the border as it always was.
+        for none in [None, Some(TokenCounter::default())] {
+            let row = bottom(&draw(80, none, &[]));
+            assert_eq!(row, format!("╰{}╯", "─".repeat(78)));
+        }
+        // Muted after the turn, bright during it.
+        let p = Palette::default();
+        let at = |buf: &ratatui::buffer::Buffer| buf[(70, 5)].style().fg;
+        assert_eq!(at(&draw(80, Some(counter), &[])), Some(p.muted));
+        let live = TokenCounter {
+            generating: true,
+            ..counter
+        };
+        assert_eq!(at(&draw(80, Some(live), &[])), Some(p.accent));
+        // An overflowing feed draws its scrollbar and keeps the counter whole.
+        let many: Vec<FeedMessage> = (0..30)
+            .map(|i| msg(FeedRole::User, &format!("строка {i}"), ""))
+            .collect();
+        let buf = draw(80, Some(counter), &many);
+        assert!(bottom(&buf).ends_with(&format!("{full}╯")));
+        let right: String = (1..5).map(|y| buf[(79, y)].symbol().to_string()).collect();
+        assert!(right.contains('█'), "{right}");
     }
 
     #[test]
