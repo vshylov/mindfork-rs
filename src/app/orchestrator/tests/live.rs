@@ -5882,6 +5882,136 @@ async fn continue_e2e_live() {
     );
 }
 
+/// `/continue` cut **in prose** (docs/lessons.md §9): a reply cancelled after
+/// a couple of hundred characters of a story, then resumed. A server that
+/// restarts instead of continuing cannot hide here the way it can behind
+/// `continue_e2e_live`'s count, which a fresh start repeats byte for byte: a new
+/// story does not open with the words the cut one did, so its opening would be in
+/// the stored reply twice. Asserted: the reply lands in place, holds what both
+/// turns streamed, and holds the cut's opening once.
+///
+/// For DeepSeek's mode, `MINDFORK_ENGINE_DIALECT=deepseek` runs it on that
+/// client, which continues by the beta prefix completion
+/// (docs/research/deepseek-mode.md §4.2). Without the dialect at DeepSeek's URL
+/// it is the control, and red: the config's mode lets `/continue` through, and
+/// `external`'s client sends the cut to `/v1`, which refuses it with a `400`
+/// while tools and thinking are on, and restarts it otherwise — which the last
+/// assertion catches.
+#[tokio::test]
+#[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
+async fn continue_in_prose_e2e_live() {
+    let mut config = no_auto_cfg();
+    if std::env::var("MINDFORK_ENGINE_DIALECT").is_ok_and(|d| d.trim() == "deepseek") {
+        config.engine.mode = crate::shared::config::ServerMode::DeepSeek;
+        config.engine.deepseek.model_name = std::env::var("MINDFORK_ENGINE_MODEL").ok();
+    }
+    let Some((dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live_cfg(config) else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    cmd_tx
+        .send(AppCommand::SendMessage(
+            "Write a story of about four hundred words about a lighthouse keeper who \
+             finds a letter in a bottle. Prose only, no title."
+                .into(),
+        ))
+        .unwrap();
+    // Cut once two hundred characters of the story have streamed.
+    let mut streamed = String::new();
+    let mut cancelled = false;
+    while let Some(ev) = evt_rx.recv().await {
+        match ev {
+            AppEvent::Chunk { text, .. } => {
+                streamed.push_str(&text);
+                if !cancelled && streamed.chars().count() >= 200 {
+                    cmd_tx.send(AppCommand::Cancel).unwrap();
+                    cancelled = true;
+                }
+            }
+            AppEvent::Finished { reason, .. } => {
+                assert_eq!(
+                    reason,
+                    FinishReason::Cancelled,
+                    "the story finished before the cut landed: {streamed:?}"
+                );
+                break;
+            }
+            _ => {}
+        }
+    }
+    assert!(
+        cancelled,
+        "the model never wrote enough to cut: {streamed:?}"
+    );
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatList(_)))
+        .await
+        .unwrap();
+    let cut = streamed.clone();
+
+    cmd_tx.send(AppCommand::ContinueLast).unwrap();
+    let mut resumed = false;
+    let mut errors = Vec::new();
+    while let Some(ev) = evt_rx.recv().await {
+        match ev {
+            AppEvent::GenerationStarted { continuation, .. } => {
+                assert!(continuation, "a text tail must resume by prefill");
+                resumed = true;
+            }
+            AppEvent::Chunk { text, .. } => streamed.push_str(&text),
+            AppEvent::Error(e) => errors.push(e),
+            AppEvent::Finished { reason, .. } => {
+                assert!(
+                    matches!(reason, FinishReason::Stop | FinishReason::Length),
+                    "the resumed turn must end on its own: {reason:?} {errors:?}"
+                );
+                break;
+            }
+            _ => {}
+        }
+    }
+    assert!(resumed, "the continuation never started: {errors:?}");
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let reopened = Storage::open(Paths::with_root(dir.path())).unwrap();
+    let chat = reopened
+        .json()
+        .load_chats()
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    let stored = chat
+        .messages
+        .last()
+        .map(|m| m.text.clone())
+        .unwrap_or_default();
+    let seam = cut.chars().count();
+    println!(
+        "cut ({seam} chars): {cut:?}\nresumed: {:?}",
+        stored.chars().skip(seam).take(240).collect::<String>()
+    );
+    assert_eq!(
+        chat.messages.len(),
+        2,
+        "the continuation must land in place"
+    );
+    assert_eq!(
+        stored, streamed,
+        "the stored reply is what both turns streamed"
+    );
+    let opening: String = cut.trim_start().chars().take(40).collect();
+    assert_eq!(
+        stored.matches(opening.as_str()).count(),
+        1,
+        "the cut's opening is in the reply twice: the server restarted rather than \
+         continued ({opening:?})"
+    );
+}
+
 /// The round limit's final round is answered in prose (spec §6.3). It sends
 /// the request that just produced a call, less the tool list — and on the live
 /// gate Gemma 4 answered exactly that with the next call written out as text,

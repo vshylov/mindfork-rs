@@ -27,6 +27,10 @@ split by subsystem.
   right from the first request. The sampling settings offer only what DeepSeek
   reads. It works for the assistant and for impersonation; DeepSeek has no
   embeddings, so a knowledge base needs another embedder.
+- **`/continue` on DeepSeek.** In the `deepseek` mode an interrupted reply resumes
+  from where it stopped, through DeepSeek's prefix completion. It does so in a
+  conversation without tool calls, the only kind DeepSeek continues; in one with
+  them, `/continue` says so and `/regen` regenerates the reply.
 
 ### Fixed
 
@@ -34,8 +38,8 @@ split by subsystem.
   does not continue a cut reply: with thinking on it refused the request with an
   error, and with thinking off it answered with a new reply from the beginning,
   which the app glued onto the part already written. `/continue` is now refused
-  in the `external` mode at `https://api.deepseek.com` and in the new mode alike,
-  with a note that says why; `/regen` regenerates the reply instead.
+  in the `external` mode at `https://api.deepseek.com`, with a note that says why
+  and points to the `deepseek` mode, which resumes it.
 
 ### Data
 

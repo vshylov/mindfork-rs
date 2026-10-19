@@ -3,7 +3,8 @@
 *Research, 2026-10-19. The roadmap's DeepSeek leftover, F1 (c) of
 [deepseek-api.md](deepseek-api.md) §5. **User's decision, 2026-10-19: F1 (a),
 F2 (a), F3 (a)** (§5), each the recommendation — the mode, in two stages, with
-`/continue` refused in `external` at DeepSeek's host.*
+`/continue` refused in `external` at DeepSeek's host. **Both stages built**
+(§8, §9).*
 
 **Related:** [deepseek-api.md](deepseek-api.md) (the thinking switch, the cache
 figure, and the field-by-field table this builds on),
@@ -192,6 +193,32 @@ defect.
 - A live smoke cuts a reply **in prose**, where a restart cannot pass for an
   echo, and checks that the stored text holds the cut once.
 
+**Measured before building it** (**[live]**, 2026-10-19, both models, streamed,
+with a system message — the app's request shape):
+
+| `/beta` request | Answer |
+|---|---|
+| no tool schemas, a history without tool calls, thinking off or on | `200`, the cut continued, no echo, no reasoning |
+| tool schemas in the request | `400 "Function call should not be used with prefix"` |
+| a tool round in the history, no tool schemas, thinking off | the same `400` |
+| a tool round in the history, thinking on | `400 "The reasoning_content in the thinking mode must be passed back"` |
+| `prefix: true` sent to `/v1` | `400 "prefix is only available when using beta api"` |
+
+So the prefix completion continues **a conversation without tool calls**, and
+only with the schemas left out. The design follows:
+
+- the body drops `tools`/`tool_choice`, sends the switch off and no effort —
+  resuming a visible reply does not re-open the reasoning, as on every other
+  wire (spec §6.4) — and leaves llama.cpp's continuation fields out
+  (`ChatCompletionRequest::with_prefix_completion`);
+- `ServerMode::continues_without_tools_only` (DeepSeek alone): a text tail resumes
+  only when the history the request carries — the chat's from the compaction
+  boundary on, and the turn's own rounds — holds no assistant call and no tool
+  result. `/continue` says so in a note of its own
+  (`ui.cmd.continue_unsupported_deepseek_tools`), and a turn that ends after a
+  tool round is not announced as continuable (`TurnLoop::prefill_resumes`). A
+  tail of tool results is no prefill, and resumes as anywhere.
+
 ## 5. Forks
 
 *User's decision, 2026-10-19: F1 (a), F2 (a), F3 (a), each the recommendation.*
@@ -300,3 +327,35 @@ The live run, both models (every arm **GO**):
 
 The external-path smokes ran on the mode's client (`MINDFORK_ENGINE_DIALECT`);
 `deepseek_live_tests`' two `external` arms stay green beside them.
+
+## 9. What was built, and the live run (2026-10-19) — stage 2
+
+Built as §4.2: `with_prefix_completion` and `continues_by_prefix` on the wire
+(`WireMessage::prefix`), the `/beta` route in `OpenAiClient::send` for a body
+that continues by prefix (`deepseek_beta_base`: `/beta` in place of `/v1`, or
+after a versionless base), `supports_continuation(DeepSeek)`, and the history
+rule above, read by the command, by a finished turn's `continuable` and by the
+interruption notes alike.
+
+Unit tests (4098 green, 279 `#[ignore]`): the body — the last message marked,
+the schemas and reasoning asks gone, nothing else moved, a body with no
+assistant tail left as it came; the route — the cut to `/beta`, the next turn on
+`/v1`; the beta base from three bases; the rule per mode; the command's note on
+a history with a tool result; a running orchestrator in the mode — a plain cut
+announced continuable and resumed by prefill, a cut after a `note_save` round
+announced not continuable and refused with the note.
+
+The live run, both models (every arm **GO**):
+
+| Smoke | `deepseek-flash` | `deepseek-v4-pro` |
+|---|---|---|
+| `continue_in_prose_e2e_live` (the mode's client) | cut at 207 characters mid-sentence ("Tomas had kept the"), resumed " light at Cradle Point for nineteen years…"; the opening once | cut at 204 ("…he had stopped trying"), resumed " to answer. Twenty-one years…"; the opening once |
+| `continue_e2e_live` (the count) | in place, byte-equal | the same |
+| `continue_in_prose_e2e_live`, **control** — `external`'s client at the same URL | **red**: `400 "The reasoning_content in the thinking mode must be passed back"` | — |
+| `deepseek_live_tests` (all four) | green, three runs | green |
+
+Seen once in the runs and not since: one `deepseek-flash` reply to a greeting
+carried a block of DeepSeek's own moderation markup in its content
+(`<ds_safety>` with a classification in Chinese) after "Hi! How can". It is the
+provider's, did not recur in the next three runs of the same smokes, and is left
+as an observation.

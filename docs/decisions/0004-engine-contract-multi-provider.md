@@ -224,7 +224,7 @@ extra architectural work required.
   `settings.json` went 3 → 4 because a new value of an existing enum is a
   breaking change for an older binary. `external` is unchanged and still reaches
   the gateway. Speech and video through the gateway are later stages, not done.
-- **DeepSeek's API — stage 1 done** (2026-10-19,
+- **DeepSeek's API — done, both stages** (2026-10-19,
   [docs/research/deepseek-mode.md](../research/deepseek-mode.md)): a sixth
   `CloudProvider`/eighth `ServerMode` (`deepseek`), served — like xAI — by a plain
   `OpenAiClient` over Chat Completions, told by `for_deepseek` what `external`
@@ -232,9 +232,11 @@ extra architectural work required.
   `{"type": …}` from the first request, a muted turn as the switch alone, and the
   window and the image input read from `GET /models` in DeepSeek's words. No
   contract change; no embeddings, so `apply_embed` shares the `Claude`/`Grok` arm.
-  `settings.json` went 6 → 7 and the chat files 5 → 6, both stamps. `/continue` is
-  refused in the mode and in `external` at DeepSeek's host until stage 2 builds it
-  on DeepSeek's beta prefix completion.
+  `settings.json` went 6 → 7 and the chat files 5 → 6, both stamps. `/continue`
+  is refused in `external` at DeepSeek's host; the mode continues by DeepSeek's
+  beta prefix completion (stage 2), in a conversation without tool calls — the one
+  the route takes. Still no contract change: the route is the client's, and the
+  history rule is `ServerMode`'s.
 - **`shared/api` layout (§2) — done** (after Phase 2, for symmetry with
   `anthropic/`): `backend.rs` → `contract.rs` (provider-agnostic contract);
   `client.rs`+`wire.rs` → `openai/` (with private `wire`, re-exporting

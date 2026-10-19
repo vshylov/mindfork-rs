@@ -593,7 +593,7 @@ the keys for itself:
 | `/rename [title]` · `/clone` · `/copy` | `F2` · `Ctrl+D` · `F5` | this chat: rename, clone, copy the conversation |
 | `/autotitle` | `Ctrl+R` in the list | have the model title this chat |
 | `/regen` · `/retry` · `/takeback` | `Ctrl+R` · `Ctrl+E` | regenerate the last reply / take back the last exchange |
-| `/continue` | — | resume the last interrupted reply from where it stopped — local and external engines, Gemini, and Claude up to the 4.5 generation; through OpenRouter or another gateway, only those same two — Gemini models, and Claude up to 4.5 |
+| `/continue` | — | resume the last interrupted reply from where it stopped — local and external engines, Gemini, and Claude up to the 4.5 generation; DeepSeek in the `deepseek` mode, in a conversation without tool calls; through OpenRouter or another gateway, only Gemini models and Claude up to 4.5 |
 | `/impersonate [text]` | `Ctrl+U` | the model writes your next message, continuing the text you give it |
 | `/stop` | `Esc` | cancel the running generation |
 | `/find [text]` · `/search <text>` | `Ctrl+F` · `Ctrl+G` | find in this conversation / find messages across every chat |

@@ -224,8 +224,11 @@ impl ServerMode {
     /// Anthropic continues on models up to the 4.5 generation and returns a
     /// `400` from 4.6 on ("This model does not support assistant message
     /// prefill", pinned in `continue_probe`) — see
-    /// [`anthropic_model_continues`]; OpenAI cannot; Grok measurably restarts,
-    /// and so does DeepSeek on `/v1` (docs/research/deepseek-mode.md §1).
+    /// [`anthropic_model_continues`]; OpenAI cannot; Grok measurably restarts.
+    /// DeepSeek restarts on `/v1` too, and continues through its beta prefix
+    /// completion, which the `deepseek` client sends — in a conversation with no
+    /// tool call, the one the route takes ([`Self::continues_without_tools_only`],
+    /// docs/research/deepseek-mode.md §4.2).
     ///
     /// `catalogued` — the endpoint published a catalogue entry for the model,
     /// which is what a gateway does and a llama.cpp never does. Through a
@@ -242,10 +245,23 @@ impl ServerMode {
         match self {
             ServerMode::OpenRouter => model.is_some_and(gateway_model_continues),
             ServerMode::External if catalogued => model.is_some_and(gateway_model_continues),
-            ServerMode::Managed | ServerMode::External | ServerMode::Gemini => true,
+            ServerMode::Managed
+            | ServerMode::External
+            | ServerMode::Gemini
+            | ServerMode::DeepSeek => true,
             ServerMode::Claude => model.is_some_and(anthropic_model_continues),
-            ServerMode::OpenAi | ServerMode::Grok | ServerMode::DeepSeek => false,
+            ServerMode::OpenAi | ServerMode::Grok => false,
         }
+    }
+
+    /// Whether a partial reply resumes in this mode only when the request it
+    /// travels in carries **no tool call** — no assistant message with calls,
+    /// and no tool result. DeepSeek's prefix completion refuses one with a
+    /// `400` ("Function call should not be used with prefix"), measured on both
+    /// models, thinking on and off (docs/research/deepseek-mode.md §4.2). A
+    /// tail of tool results is not a prefill, and resumes anywhere.
+    pub fn continues_without_tools_only(self) -> bool {
+        self == ServerMode::DeepSeek
     }
 }
 
@@ -761,8 +777,8 @@ impl EngineSettings {
     /// `200`), or with a `400` about the reasoning when tools and thinking are on.
     /// Neither says "no prefill", so there is no refusal to learn from, and
     /// nothing in its catalogue says so (docs/research/deepseek-mode.md §1,
-    /// fork F2). A proxy in front of DeepSeek
-    /// is not recognised: the `deepseek` mode is the road that knows.
+    /// fork F2). A proxy in front of DeepSeek is not recognised: the `deepseek`
+    /// mode is the road that knows, and the one that continues.
     pub fn supports_continuation(&self, model: Option<&str>, catalogued: bool) -> bool {
         if self.mode == ServerMode::External && is_deepseek_host(self.external.url.as_deref()) {
             return false;
@@ -2774,9 +2790,19 @@ mod tests {
         ] {
             assert!(mode.supports_continuation(None, false), "{mode:?}");
         }
-        for mode in [ServerMode::OpenAi, ServerMode::Grok, ServerMode::DeepSeek] {
+        for mode in [ServerMode::OpenAi, ServerMode::Grok] {
             assert!(
                 !mode.supports_continuation(Some("anything"), false),
+                "{mode:?}"
+            );
+        }
+        // DeepSeek continues through its beta prefix completion, which takes no
+        // history with a tool call; no other mode has that condition.
+        assert!(ServerMode::DeepSeek.supports_continuation(Some("deepseek-flash"), true));
+        for mode in ServerMode::ALL {
+            assert_eq!(
+                mode.continues_without_tools_only(),
+                mode == ServerMode::DeepSeek,
                 "{mode:?}"
             );
         }
@@ -4040,10 +4066,10 @@ mod tests {
         let mut managed = at(Some("https://api.deepseek.com/v1"));
         managed.mode = ServerMode::Managed;
         assert!(managed.supports_continuation(None, false));
-        // The mode of its own refuses too, until stage 2.
-        let mut own = at(None);
+        // The mode of its own continues, by the beta prefix completion.
+        let mut own = at(Some("https://api.deepseek.com/v1"));
         own.mode = ServerMode::DeepSeek;
-        assert!(!own.supports_continuation(Some("deepseek-flash"), true));
+        assert!(own.supports_continuation(Some("deepseek-flash"), true));
     }
 
     /// The `deepseek` sections read back as written, beside the others, and

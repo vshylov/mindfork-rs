@@ -1748,16 +1748,31 @@ async fn continue_refusals_answer_with_the_route_that_works() {
     orch.config.engine.claude.model_name = Some("claude-opus-4-8".into());
     expect_note(&mut orch, "ui.cmd.continue_unsupported");
 
-    // DeepSeek's API restarts a prefill (docs/research/deepseek-mode.md §1):
-    // its own mode refuses with the general note, and `external` at its host
-    // with a note of its own — the general one says external engines continue.
-    orch.config.engine.mode = ServerMode::DeepSeek;
-    orch.config.engine.deepseek.model_name = Some("deepseek-flash".into());
-    expect_note(&mut orch, "ui.cmd.continue_unsupported");
+    // DeepSeek's API restarts a prefill on `/v1` (docs/research/deepseek-mode.md
+    // §1): `external` at its host refuses with a note of its own — the general
+    // one says external engines continue — and its own mode continues by the
+    // beta prefix completion, which refuses a history with a tool call, so a
+    // chat holding one is told so.
     orch.config.engine.mode = ServerMode::External;
     orch.config.engine.external.url = Some("https://api.deepseek.com/v1".into());
     expect_note(&mut orch, "ui.cmd.continue_unsupported_deepseek");
     orch.config.engine.external.url = None;
+    orch.config.engine.mode = ServerMode::DeepSeek;
+    orch.config.engine.deepseek.model_name = Some("deepseek-flash".into());
+    {
+        let chat = orch.chat_mut(chat_id).unwrap();
+        let at = chat.messages.len() - 1;
+        chat.messages
+            .insert(at, Message::new(MessageRole::Tool, "результат"));
+    }
+    assert!(orch.history_carries_tools(chat_id));
+    expect_note(&mut orch, "ui.cmd.continue_unsupported_deepseek_tools");
+    {
+        let chat = orch.chat_mut(chat_id).unwrap();
+        let at = chat.messages.len() - 2;
+        chat.messages.remove(at);
+    }
+    assert!(!orch.history_carries_tools(chat_id));
 
     // Back on a supporting mode with a continuable tail — and a message stored
     // before the bookkeeping existed (`finish: None`) is continuable too
@@ -2466,4 +2481,146 @@ async fn a_sub_agent_call_with_broken_arguments_starts_no_child() {
     assert_eq!(reqs.len(), 2, "no child request");
     assert!(last_tool_result(&reqs[1]).contains("JSON"));
     assert_eq!(last, "done");
+}
+
+/// DeepSeek in its own mode continues by the beta prefix completion, which takes
+/// no history with a tool call (docs/research/deepseek-mode.md §4.2). A length
+/// cut in a plain conversation is announced as continuable and `/continue`
+/// resumes it by prefill; one after a tool round in the same turn is announced
+/// as not continuable, and the command refuses with the note that says why.
+#[tokio::test]
+async fn deepseek_continues_a_reply_only_in_a_conversation_without_tool_calls() {
+    use crate::shared::api::contract::ToolCallDelta;
+    use crate::shared::config::ServerMode;
+    use std::time::Duration;
+
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::default());
+    let deepseek = || {
+        let mut cfg = no_auto_cfg();
+        cfg.engine.mode = ServerMode::DeepSeek;
+        cfg.engine.deepseek.model_name = Some("deepseek-flash".into());
+        cfg
+    };
+
+    // A plain conversation: continuable, and the continuation starts.
+    let backend = Arc::new(MockBackend::sequence(vec![
+        vec![
+            ChatChunk::Text("Нача".into()),
+            ChatChunk::Finished(FinishReason::Length),
+        ],
+        vec![
+            ChatChunk::Text("ло.".into()),
+            ChatChunk::Finished(FinishReason::Stop),
+        ],
+    ])) as Arc<dyn EngineBackend>;
+    let (_dir, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(Some(backend), deepseek());
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    cmd_tx
+        .send(AppCommand::SendMessage("вопрос".into()))
+        .unwrap();
+    let finished = tokio::time::timeout(
+        Duration::from_secs(5),
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. })),
+    )
+    .await
+    .expect("the turn finishes")
+    .unwrap();
+    assert!(
+        matches!(
+            finished,
+            AppEvent::Finished {
+                continuable: true,
+                ..
+            }
+        ),
+        "a plain conversation's cut is continuable on DeepSeek: {finished:?}"
+    );
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatList(_)))
+        .await
+        .unwrap();
+    cmd_tx.send(AppCommand::ContinueLast).unwrap();
+    let started = tokio::time::timeout(
+        Duration::from_secs(5),
+        wait_for(&mut evt_rx, |e| {
+            matches!(e, AppEvent::GenerationStarted { .. } | AppEvent::Error(_))
+        }),
+    )
+    .await
+    .expect("the command answers")
+    .unwrap();
+    assert!(
+        matches!(
+            started,
+            AppEvent::GenerationStarted {
+                continuation: true,
+                ..
+            }
+        ),
+        "the cut resumes by prefill: {started:?}"
+    );
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    // A tool round before the cut: not continuable, and the command says why.
+    let backend = Arc::new(MockBackend::sequence(vec![
+        vec![
+            ChatChunk::ToolCall(ToolCallDelta {
+                thought_signature: None,
+                index: 0,
+                id: Some("c1".into()),
+                name: Some("note_save".into()),
+                arguments: "{\"content\":\"любит чай\"}".into(),
+            }),
+            ChatChunk::Finished(FinishReason::ToolCalls),
+        ],
+        vec![
+            ChatChunk::Text("Запомнил, и".into()),
+            ChatChunk::Finished(FinishReason::Length),
+        ],
+    ])) as Arc<dyn EngineBackend>;
+    let (_dir, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(Some(backend), deepseek());
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    cmd_tx
+        .send(AppCommand::SendMessage("запомни".into()))
+        .unwrap();
+    let finished = tokio::time::timeout(
+        Duration::from_secs(5),
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. })),
+    )
+    .await
+    .expect("the turn finishes")
+    .unwrap();
+    assert!(
+        matches!(
+            finished,
+            AppEvent::Finished {
+                continuable: false,
+                ..
+            }
+        ),
+        "a cut after a tool round is not continuable on DeepSeek: {finished:?}"
+    );
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatList(_)))
+        .await
+        .unwrap();
+    cmd_tx.send(AppCommand::ContinueLast).unwrap();
+    let note = tokio::time::timeout(
+        Duration::from_secs(5),
+        wait_for(&mut evt_rx, |e| {
+            matches!(e, AppEvent::Error(_) | AppEvent::GenerationStarted { .. })
+        }),
+    )
+    .await
+    .expect("the command answers")
+    .unwrap();
+    assert!(
+        matches!(&note, AppEvent::Error(text) if text == loc.t("ui.cmd.continue_unsupported_deepseek_tools")),
+        "the refusal names the tool calls: {note:?}"
+    );
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
 }
