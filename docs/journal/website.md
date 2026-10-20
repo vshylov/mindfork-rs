@@ -1488,3 +1488,49 @@ both on `main` at `88e5ce29`, the merge of the pull request.
   so the page does not jump while it loads (`.prose img` gained `height: auto`,
   which keeps the ratio), and alt text that reads the card out. The dark card
   sits in a light page as a cover would; checked in both themes and at 375 px.
+- **Measured again before Hacker News** (follow-up, branch
+  `docs/article-refresh-hn`). The essay's figures were Friday's (2026-10-16),
+  and by Tuesday the repository had moved 93 commits, 34 pull requests and three
+  releases, so every number was read again on 2026-10-20 at the newest commit,
+  of 2026-10-19: 127 days, 2,401 commits, 788 pull requests, 31 releases, 351
+  files and 262K lines, 4,397 test functions, 667 journal entries, 267 lessons,
+  204K lines on SonarCloud at 0/0/0, and the gate's dispatch of 2026-10-18 (264
+  smokes, 72 minutes of model time inside 36 of wall clock) in place of the
+  16th's; `published` is 2026-10-20. Three of the figures had no definition
+  anywhere, which the essay's own closing line invites a reader to notice, so
+  they have one now:
+  - **The chart is drawn by a script.** `tools/claude_md_chart.py` reads the
+    points from git — the size of CLAUDE.md at the last commit that changed it
+    on or before each Sunday, each commit on its own local date, plus the first
+    commit of the peak size and the last commit of the day after, plus the
+    newest commit's day — and renders the figure with its table. Drawn for
+    2026-10-16 it reproduced the hand-made figure byte for byte, bar the
+    `<desc>`, which now gives the last point in bytes (29,541 rounds to the cap's
+    own 30 KB). `--check` reads the day off the essay's table and compares, so
+    it stays green after the history has moved on; `--self-test` plants dated
+    commits — a mid-week edit, a Sunday that touches another file, two commits of
+    the peak size, two edits on the day after, a commit after midnight in the
+    committer's zone — and runs in `lint`.
+  - **The card too.** The owner's `hero.py`, which had drawn the cover from a
+    scratchpad, is `tools/hero.py`: the cliff takes the chart's points, the
+    numbers row `repo_metrics.py`, the Sonar count SonarCloud's API
+    (`--sonar-issues` offline), and every label is read off the data. Its typed
+    series had 845 KB for Aug 2 where the table says 857, and the label
+    "994 KB" over a point plotted at 995, while the chart's label rounded
+    994,562 bytes to 995 — a reader comparing the two pictures found them a
+    kilobyte apart. One rounding everywhere now: 995 KB.
+  - **Two counters in `repo_metrics.py`** (its entry in quality.md): "25 tests
+    carry a doc comment naming the control arm" had counted lines, and 20 tests
+    carry one; "twelve percent of the entries carry no test count, no GO and no
+    measurement" had no definition, and under the one it has now — no "test"
+    with a number near it, no GO, NO-GO or smoke line, no measurement, probe or
+    live run — it is 74 entries of 667, eleven percent, 54 of them in the first
+    half of their file, which the essay says now in place of "they are the early
+    ones".
+  - Two more that would have drawn a comment: the ignored tests are 279, and
+    CLAUDE.md itself says a handful of them want a clipboard or a terminal
+    rather than a model, so the essay says so; and the trailers name six Claude
+    models and Cursor, not "eight models".
+  `llms.txt` regenerated; `zola check`, `zola build`, `link_check.py`,
+  `doc_index_check.py` and `cyrillic_scan.py` green; the page looked at in both
+  themes at desktop width and at 375 px. No live run: no code of the app changed.

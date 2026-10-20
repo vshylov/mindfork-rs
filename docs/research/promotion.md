@@ -138,7 +138,10 @@ Tried so far:
   - **A copy on mindfork.io** since 2026-10-19,
     [/articles/what-replaces-code-ownership/](https://mindfork.io/articles/what-replaces-code-ownership/):
     the link for Hacker News, whose readers take badly to Medium's pop-ups, and
-    one that sends them to the site rather than away from it.
+    one that sends them to the site rather than away from it. Its figures were
+    read again on 2026-10-20, before the Hacker News post, and its chart and
+    card are drawn from the repository by `tools/claude_md_chart.py` and
+    `tools/hero.py` (the website journal).
 
 One-shot — only after stages 0–1, with the animation and an honest macOS
 answer in hand (both since 2026-10-08). The first of them carries the call for

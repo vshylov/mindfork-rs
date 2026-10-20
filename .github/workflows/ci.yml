@@ -241,6 +241,13 @@ jobs:
       # would otherwise be noticed only when a quoted figure stops matching.
       - name: The repository metrics script's own arms
         run: python3 tools/repo_metrics.py --self-test
+      # The chart in the code-ownership essay — the size of CLAUDE.md at the
+      # last commit of each week, the peak and the day after — is drawn by
+      # tools/claude_md_chart.py from the repository's history, the same points
+      # the essay's card takes. Its self-test plants dated commits in a fixture
+      # repository and checks which commit each point reads.
+      - name: The essay chart's own arms
+        run: python3 tools/claude_md_chart.py --self-test
       - name: Install the toolchain (from rust-toolchain.toml)
         run: rustup show
       # A cache belongs to the branch that wrote it, so with the default
