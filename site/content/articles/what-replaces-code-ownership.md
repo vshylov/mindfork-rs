@@ -1,6 +1,6 @@
 +++
 title = "What replaces code ownership when AI writes the code"
-description = "257K lines of Rust, 754 PRs, zero read diffs, and four months of green metrics. How externalized memory, mutation testing, and CI gates replaced reading the code."
+description = "262K lines of Rust, 788 PRs, zero read diffs, and four months of green metrics. How externalized memory, mutation testing, and CI gates replaced reading the code."
 weight = 10
 
 [extra]
@@ -8,22 +8,22 @@ weight = 10
 # Zola puts into the Atom feed, which carries release news, and an
 # article must not arrive there as news. `page.html` reads it for the
 # byline and for schema.org `datePublished`.
-published = "2026-10-19"
+published = "2026-10-20"
 # The card a link to this page renders as on a social site, in place of
 # the site-wide one (base.html, page.html).
 og_image = "images/what-replaces-code-ownership.png"
-og_image_alt = "Nobody owned this code. It didn't fall apart. And the metrics stayed green. CLAUDE.md grew to 994 KB on Aug 8 and was 12 KB the next day."
+og_image_alt = "Nobody owned this code. It didn't fall apart. And the metrics stayed green. CLAUDE.md grew to 995 KB on Aug 8 and was 12 KB the next day."
 +++
 
-*257K lines of Rust, 754 PRs, zero read diffs, and four months of green metrics. How externalized memory, mutation testing, and CI gates replaced reading the code.*
+*262K lines of Rust, 788 PRs, zero read diffs, and four months of green metrics. How externalized memory, mutation testing, and CI gates replaced reading the code.*
 
-<img class="cover" src="/images/what-replaces-code-ownership.png" width="2000" height="1000" alt="Nobody owned this code. It didn't fall apart. And the metrics stayed green. Beside it, CLAUDE.md, the file every session loads: 994 KB on Aug 8, 12 KB the next day, under a 30 KB cap since. 124 days, 2,308 commits, 754 PRs, 4,291 tests, 0 Sonar issues.">
+<img class="cover" src="/images/what-replaces-code-ownership.png" width="2000" height="1000" alt="Nobody owned this code. It didn't fall apart. And the metrics stayed green. Beside it, CLAUDE.md, the file every session loads: 995 KB on Aug 8, 12 KB the next day, under a 30 KB cap since. 127 days, 2,401 commits, 788 PRs, 4,397 tests, 0 Sonar issues.">
 
 As AI writes a growing share of the world's code, the fear in engineering organisations has a name: loss of code ownership. Developers stop knowing what the code does, and when something breaks, nobody can reason about it. There have already been cases where that loss cost a product dearly. This is a story about a product where code ownership never existed in the first place. The product did not fall apart. It ships, it grows, and its quality metrics have stayed green for four months. I want to explain why, with numbers rather than impressions.
 
 In June I started a project I had no business starting. I wanted a terminal AI chat with a memory: notes about you, a knowledge base over your files, and a model of itself that it revisits. I wanted it in Rust, because it had to run on Windows, Linux and a rented GPU pod as one native binary. Behind me were fifteen years of enterprise development on .NET, and no Rust at all: I had read the Rust book once and never written anything complicated in it.
 
-Four months later the thing exists. It is called mindfork, it is open source, it ships installers for three platforms, and it has had 28 releases. Almost every line was written by an AI coding agent. I know the language well enough to read it, but early on I stopped reviewing the changes the models make, and I have not read most of the code since. By the usual definition, nobody owns this code.
+Four months later the thing exists. It is called mindfork, it is open source, it ships installers for three platforms, and it has had 31 releases. Almost every line was written by an AI coding agent. I know the language well enough to read it, but early on I stopped reviewing the changes the models make, and I have not read most of the code since. By the usual definition, nobody owns this code.
 
 The question people ask is whether it works. The question that interests me is why it did not rot. Anyone who has used a coding agent for longer than a weekend knows the failure mode. The code works, then it works a little less, then every new feature breaks two old ones, and the test suite turns into a pile of green lies. That did not happen here. New features do not break old ones. The static analyzer has reported zero issues for weeks, and keeping it that way costs nothing.
 
@@ -36,10 +36,10 @@ I used no spec framework and no downloaded AGENTS.md. Every rule below grew out 
 Six mechanisms, in the order the article takes them. Each gets its own section below, with the numbers from the repository rather than the principle alone.
 
 - **The owner decides and verifies; the agent owns the code.** Every non-obvious choice comes to me as a list of options with a recommendation, and I pick. Every change to the engine, memory or tools runs against a real model before it merges.
-- **Memory with a budget.** A 30 KB router file that CI keeps small, a journal of 644 entries split by subsystem, a lessons file that counts how often each trap recurred.
-- **Measure, and let the plan lose.** 265 journal entries measure something; 107 record a rejection, whole stages among them.
+- **Memory with a budget.** A 30 KB router file that CI keeps small, a journal of 667 entries split by subsystem, a lessons file that counts how often each trap recurred.
+- **Measure, and let the plan lose.** 281 journal entries measure something; 108 record a rejection, whole stages among them.
 - **Tests that must be able to fail.** Half the source is tests, checked by hand-run mutation testing; every CI gate is tested against a planted violation.
-- **Two gates with different blind spots.** Four thousand unit tests that need no model, and 260 live smokes that need a real one.
+- **Two gates with different blind spots.** Four thousand unit tests that need no model, and 279 ignored tests, nearly all of them smokes that need a real one.
 - **Incident, lesson, rule, gate.** Every guardrail in the repository carries the incident that produced it, and a rule broken twice becomes a CI check.
 
 ## What the product actually is
@@ -58,16 +58,16 @@ Every one of these sits behind a switch the user sets. And every one of them is 
 
 ## The numbers, so you know what we are talking about
 
-Everything below was measured on the main branch on 2026-10-16.
+Everything below was measured on the main branch on 2026-10-20; its newest commit is from 2026-10-19.
 
-- **Time:** 124 days, 2026-06-14 to 2026-10-16.
-- **Commits and pull requests:** 2,308 commits, 754 merged PRs, about six a day, every day.
-- **Code:** 341 Rust files, 257K lines under src, about 54% of them test code.
-- **Tests:** 4,291 test functions, 260 of them live smokes against real models.
-- **SonarCloud:** 199K lines analysed, 0 bugs, 0 vulnerabilities, 0 code smells, 89% coverage, 0.6% duplication.
-- **Documentation:** 7.8 MB of Markdown beside 10.5 MB of source.
-- **Commits that touch only documentation:** 39%.
-- **Models named in commit trailers:** eight, from Opus 4.8 in June to Fable 5.1 and Opus 5.5 in October.
+- **Time:** 127 days, from the first commit on 2026-06-14 to the newest on 2026-10-19.
+- **Commits and pull requests:** 2,401 commits, 788 merged PRs, about six a day, every day.
+- **Code:** 351 Rust files, 262K lines under src, about 54% of them test code.
+- **Tests:** 4,397 test functions, 279 of them marked ignore: smokes that need a real model, and a handful that need a real clipboard or a real terminal.
+- **SonarCloud:** 204K lines analysed, 0 bugs, 0 vulnerabilities, 0 code smells, 89% coverage, 0.6% duplication.
+- **Documentation:** 8.1 MB of Markdown beside 10.7 MB of source.
+- **Commits that touch only documentation:** 40%.
+- **Models named in commit trailers:** six, from Opus 4.8 in June to Fable 5.1 and Opus 5.5 in October, plus Cursor on five commits.
 
 Two of those lines explain most of what follows. More than a third of the commits never touched code. And the documentation is three quarters the size of the codebase it describes, a ratio that has held since the third week. That is not a byproduct of the work. That is the mechanism.
 
@@ -75,7 +75,7 @@ Two of those lines explain most of what follows. More than a third of the commit
 
 I did four things, and the repository shows them better than my memory does.
 
-**I decided the forks.** The agent is required to lay out every non-obvious decision as a list of options with a recommendation, and to put the list to me as a question before it writes code. I pick. The engineering journal records 146 such decisions with a date, and later work cites them like case law: "Keep it opt-in, F2(b) of 2026-07-30 stands."
+**I decided the forks.** The agent is required to lay out every non-obvious decision as a list of options with a recommendation, and to put the list to me as a question before it writes code. I pick. The engineering journal records 153 such decisions with a date, and later work cites them like case law: "Keep it opt-in, F2(b) of 2026-07-30 stands."
 
 Most of the time the recommendation is the best option and I take it. Sometimes it is not. When the agent proposed to refresh a settings hint that named specific models, I said no: a hint that names a model goes stale, so ask the provider for its catalogue instead. That became a feature. The value of the ritual is not that I argue with the agent. It is that the agent has to enumerate the alternatives before it commits to one, and I get to see the whole design space without reading a line of the diff.
 
@@ -95,7 +95,7 @@ An agent has no memory between sessions. Whatever it learned yesterday about thi
 <p class="chart-title" id="claude-md-size-title">The file every session loads grew to 1&nbsp;MB, then became a 30&nbsp;KB router</p>
 <p class="chart-sub">CLAUDE.md size in KB, one point per week, June to October 2026</p>
 <svg viewBox="0 0 720 360" role="img" aria-labelledby="claude-md-size-desc">
-<desc id="claude-md-size-desc">CLAUDE.md grew from 21 KB on June 14 to 995 KB on August 8, fell to 12 KB the next day, and has stayed under the 30 KB cap that CI enforces ever since; it was 29 KB on October 16.</desc>
+<desc id="claude-md-size-desc">CLAUDE.md grew from 21 KB on June 14 to 995 KB on August 8, fell to 12 KB the next day, and has stayed under the 30 KB cap that CI enforces ever since; it was 29,541 bytes on October 19.</desc>
 <line class="grid" x1="72" x2="696" y1="253" y2="253"/>
 <line class="grid" x1="72" x2="696" y1="182" y2="182"/>
 <line class="grid" x1="72" x2="696" y1="111" y2="111"/>
@@ -107,37 +107,38 @@ An agent has no memory between sessions. Whatever it learned yesterday about thi
 <text class="tick" x="62" y="44.5" text-anchor="end">1,000</text>
 <line class="base" x1="72" x2="696" y1="324" y2="324"/>
 <text class="tick" x="72" y="352" text-anchor="start">Jun 14</text>
-<text class="tick minor" x="177.7" y="352" text-anchor="middle">Jul 5</text>
-<text class="tick" x="283.4" y="352" text-anchor="middle">Jul 26</text>
-<text class="tick minor" x="389" y="352" text-anchor="middle">Aug 16</text>
-<text class="tick" x="494.7" y="352" text-anchor="middle">Sep 6</text>
-<text class="tick minor" x="600.4" y="352" text-anchor="middle">Sep 27</text>
-<text class="tick" x="696" y="352" text-anchor="end">Oct 16</text>
+<text class="tick minor" x="175.2" y="352" text-anchor="middle">Jul 5</text>
+<text class="tick" x="278.4" y="352" text-anchor="middle">Jul 26</text>
+<text class="tick minor" x="381.5" y="352" text-anchor="middle">Aug 16</text>
+<text class="tick" x="484.7" y="352" text-anchor="middle">Sep 6</text>
+<text class="tick minor" x="587.9" y="352" text-anchor="middle">Sep 27</text>
+<text class="tick" x="696" y="352" text-anchor="end">Oct 19</text>
 <line class="cap" x1="72" x2="696" y1="315.5" y2="315.5"/>
 <text class="note" x="696" y="307.5" text-anchor="end">30 KB cap in CI</text>
-<path class="series" d="M72 318 L107.2 295.9 L142.5 264.2 L177.7 226.8 L212.9 168.6 L248.1 116.4 L283.4 149.4 L318.6 80.7 L348.8 41.5 L353.8 320.6 L389 317.3 L424.3 318.6 L459.5 316.3 L494.7 315.6 L529.9 315.6 L565.2 315.8 L600.4 315.8 L635.6 315.7 L670.8 315.7 L696 315.7"/>
+<path class="series" d="M72 318 L106.4 295.9 L140.8 264.2 L175.2 226.8 L209.6 168.6 L244 116.4 L278.4 149.4 L312.8 80.7 L342.2 41.5 L347.1 320.6 L381.5 317.3 L415.9 318.6 L450.3 316.3 L484.7 315.6 L519.1 315.6 L553.5 315.8 L587.9 315.8 L622.3 315.7 L656.7 315.7 L691.1 315.5 L696 315.6"/>
 <g class="pt"><circle class="dot" cx="72" cy="318" r="3"/><circle class="hit" cx="72" cy="318" r="12"><title>Jun 14: 21,092 bytes</title></circle></g>
-<g class="pt"><circle class="dot" cx="107.2" cy="295.9" r="3"/><circle class="hit" cx="107.2" cy="295.9" r="12"><title>Jun 21: 99,007 bytes</title></circle></g>
-<g class="pt"><circle class="dot" cx="142.5" cy="264.2" r="3"/><circle class="hit" cx="142.5" cy="264.2" r="12"><title>Jun 28: 210,589 bytes</title></circle></g>
-<g class="pt"><circle class="dot" cx="177.7" cy="226.8" r="3"/><circle class="hit" cx="177.7" cy="226.8" r="12"><title>Jul 5: 342,286 bytes</title></circle></g>
-<g class="pt"><circle class="dot" cx="212.9" cy="168.6" r="3"/><circle class="hit" cx="212.9" cy="168.6" r="12"><title>Jul 12: 547,214 bytes</title></circle></g>
-<g class="pt"><circle class="dot" cx="248.1" cy="116.4" r="3"/><circle class="hit" cx="248.1" cy="116.4" r="12"><title>Jul 19: 730,819 bytes</title></circle></g>
-<g class="pt"><circle class="dot" cx="283.4" cy="149.4" r="3"/><circle class="hit" cx="283.4" cy="149.4" r="12"><title>Jul 26: 614,684 bytes</title></circle></g>
-<g class="pt"><circle class="dot" cx="318.6" cy="80.7" r="3"/><circle class="hit" cx="318.6" cy="80.7" r="12"><title>Aug 2: 856,661 bytes</title></circle></g>
-<g class="pt"><circle class="key" cx="348.8" cy="41.5" r="5.5"/><circle class="hit" cx="348.8" cy="41.5" r="12"><title>Aug 8: 994,562 bytes</title></circle></g>
-<g class="pt"><circle class="key" cx="353.8" cy="320.6" r="5.5"/><circle class="hit" cx="353.8" cy="320.6" r="12"><title>Aug 9: 11,969 bytes</title></circle></g>
-<g class="pt"><circle class="dot" cx="389" cy="317.3" r="3"/><circle class="hit" cx="389" cy="317.3" r="12"><title>Aug 16: 23,758 bytes</title></circle></g>
-<g class="pt"><circle class="dot" cx="424.3" cy="318.6" r="3"/><circle class="hit" cx="424.3" cy="318.6" r="12"><title>Aug 23: 19,123 bytes</title></circle></g>
-<g class="pt"><circle class="dot" cx="459.5" cy="316.3" r="3"/><circle class="hit" cx="459.5" cy="316.3" r="12"><title>Aug 30: 27,169 bytes</title></circle></g>
-<g class="pt"><circle class="dot" cx="494.7" cy="315.6" r="3"/><circle class="hit" cx="494.7" cy="315.6" r="12"><title>Sep 6: 29,530 bytes</title></circle></g>
-<g class="pt"><circle class="dot" cx="529.9" cy="315.6" r="3"/><circle class="hit" cx="529.9" cy="315.6" r="12"><title>Sep 13: 29,435 bytes</title></circle></g>
-<g class="pt"><circle class="dot" cx="565.2" cy="315.8" r="3"/><circle class="hit" cx="565.2" cy="315.8" r="12"><title>Sep 20: 28,947 bytes</title></circle></g>
-<g class="pt"><circle class="dot" cx="600.4" cy="315.8" r="3"/><circle class="hit" cx="600.4" cy="315.8" r="12"><title>Sep 27: 28,750 bytes</title></circle></g>
-<g class="pt"><circle class="dot" cx="635.6" cy="315.7" r="3"/><circle class="hit" cx="635.6" cy="315.7" r="12"><title>Oct 4: 29,338 bytes</title></circle></g>
-<g class="pt"><circle class="dot" cx="670.8" cy="315.7" r="3"/><circle class="hit" cx="670.8" cy="315.7" r="12"><title>Oct 11: 29,263 bytes</title></circle></g>
-<g class="pt"><circle class="dot" cx="696" cy="315.7" r="3"/><circle class="hit" cx="696" cy="315.7" r="12"><title>Oct 16: 29,363 bytes</title></circle></g>
-<text class="label" x="336.8" y="46.5" text-anchor="end">995 KB on Aug 8</text>
-<text class="label lift" x="365.8" y="291.5">12 KB the next day</text>
+<g class="pt"><circle class="dot" cx="106.4" cy="295.9" r="3"/><circle class="hit" cx="106.4" cy="295.9" r="12"><title>Jun 21: 99,007 bytes</title></circle></g>
+<g class="pt"><circle class="dot" cx="140.8" cy="264.2" r="3"/><circle class="hit" cx="140.8" cy="264.2" r="12"><title>Jun 28: 210,589 bytes</title></circle></g>
+<g class="pt"><circle class="dot" cx="175.2" cy="226.8" r="3"/><circle class="hit" cx="175.2" cy="226.8" r="12"><title>Jul 5: 342,286 bytes</title></circle></g>
+<g class="pt"><circle class="dot" cx="209.6" cy="168.6" r="3"/><circle class="hit" cx="209.6" cy="168.6" r="12"><title>Jul 12: 547,214 bytes</title></circle></g>
+<g class="pt"><circle class="dot" cx="244" cy="116.4" r="3"/><circle class="hit" cx="244" cy="116.4" r="12"><title>Jul 19: 730,819 bytes</title></circle></g>
+<g class="pt"><circle class="dot" cx="278.4" cy="149.4" r="3"/><circle class="hit" cx="278.4" cy="149.4" r="12"><title>Jul 26: 614,684 bytes</title></circle></g>
+<g class="pt"><circle class="dot" cx="312.8" cy="80.7" r="3"/><circle class="hit" cx="312.8" cy="80.7" r="12"><title>Aug 2: 856,661 bytes</title></circle></g>
+<g class="pt"><circle class="key" cx="342.2" cy="41.5" r="5.5"/><circle class="hit" cx="342.2" cy="41.5" r="12"><title>Aug 8: 994,562 bytes</title></circle></g>
+<g class="pt"><circle class="key" cx="347.1" cy="320.6" r="5.5"/><circle class="hit" cx="347.1" cy="320.6" r="12"><title>Aug 9: 11,969 bytes</title></circle></g>
+<g class="pt"><circle class="dot" cx="381.5" cy="317.3" r="3"/><circle class="hit" cx="381.5" cy="317.3" r="12"><title>Aug 16: 23,758 bytes</title></circle></g>
+<g class="pt"><circle class="dot" cx="415.9" cy="318.6" r="3"/><circle class="hit" cx="415.9" cy="318.6" r="12"><title>Aug 23: 19,123 bytes</title></circle></g>
+<g class="pt"><circle class="dot" cx="450.3" cy="316.3" r="3"/><circle class="hit" cx="450.3" cy="316.3" r="12"><title>Aug 30: 27,169 bytes</title></circle></g>
+<g class="pt"><circle class="dot" cx="484.7" cy="315.6" r="3"/><circle class="hit" cx="484.7" cy="315.6" r="12"><title>Sep 6: 29,530 bytes</title></circle></g>
+<g class="pt"><circle class="dot" cx="519.1" cy="315.6" r="3"/><circle class="hit" cx="519.1" cy="315.6" r="12"><title>Sep 13: 29,435 bytes</title></circle></g>
+<g class="pt"><circle class="dot" cx="553.5" cy="315.8" r="3"/><circle class="hit" cx="553.5" cy="315.8" r="12"><title>Sep 20: 28,947 bytes</title></circle></g>
+<g class="pt"><circle class="dot" cx="587.9" cy="315.8" r="3"/><circle class="hit" cx="587.9" cy="315.8" r="12"><title>Sep 27: 28,750 bytes</title></circle></g>
+<g class="pt"><circle class="dot" cx="622.3" cy="315.7" r="3"/><circle class="hit" cx="622.3" cy="315.7" r="12"><title>Oct 4: 29,338 bytes</title></circle></g>
+<g class="pt"><circle class="dot" cx="656.7" cy="315.7" r="3"/><circle class="hit" cx="656.7" cy="315.7" r="12"><title>Oct 11: 29,263 bytes</title></circle></g>
+<g class="pt"><circle class="dot" cx="691.1" cy="315.5" r="3"/><circle class="hit" cx="691.1" cy="315.5" r="12"><title>Oct 18: 29,994 bytes</title></circle></g>
+<g class="pt"><circle class="dot" cx="696" cy="315.6" r="3"/><circle class="hit" cx="696" cy="315.6" r="12"><title>Oct 19: 29,541 bytes</title></circle></g>
+<text class="label" x="330.2" y="46.5" text-anchor="end">995 KB on Aug 8</text>
+<text class="label lift" x="359.1" y="291.5">12 KB the next day</text>
 </svg>
 <figcaption>Read from the repository's git history: the size of CLAUDE.md at the last commit of each week, plus the day it peaked and the day after. Hover a point, or open the table below, for the exact bytes.</figcaption>
 </figure>
@@ -163,7 +164,8 @@ An agent has no memory between sessions. Whatever it learned yesterday about thi
 <tr><td>2026-09-27</td><td class="num">28,750</td><td><a href="https://github.com/vshylov/mindfork-rs/commit/d52c8e91879d122afeb99adf3bcfc12e7a258ef5"><code>d52c8e91</code></a></td></tr>
 <tr><td>2026-10-04</td><td class="num">29,338</td><td><a href="https://github.com/vshylov/mindfork-rs/commit/9ec31dfb87fee8b6546029c6bec7b1fa97b28ac7"><code>9ec31dfb</code></a></td></tr>
 <tr><td>2026-10-11</td><td class="num">29,263</td><td><a href="https://github.com/vshylov/mindfork-rs/commit/bc0de0c4d627800e3068cd597ade6358713319ab"><code>bc0de0c4</code></a></td></tr>
-<tr><td>2026-10-16</td><td class="num">29,363</td><td><a href="https://github.com/vshylov/mindfork-rs/commit/475dfc175467fbf1795f614af25aaf9d4cb95475"><code>475dfc17</code></a></td></tr>
+<tr><td>2026-10-18</td><td class="num">29,994</td><td><a href="https://github.com/vshylov/mindfork-rs/commit/2e55308960d71968f68c808197b73019ed615477"><code>2e553089</code></a></td></tr>
+<tr><td>2026-10-19</td><td class="num">29,541</td><td><a href="https://github.com/vshylov/mindfork-rs/commit/5be3435c36f6d72b09ca1c7881348f4135159e93"><code>5be3435c</code></a></td></tr>
 </tbody></table>
 </details>
 
@@ -171,11 +173,11 @@ An agent has no memory between sessions. Whatever it learned yesterday about thi
 
 The fix was not to write less. It was to give the memory a shape and a budget.
 
-- CLAUDE.md became a router: orientation, the standing decisions, and a map that says "if you are working on the engine, read architecture §5 and §6, spec §3 and §6 to §8, and the engine journal." It is capped at 30,000 bytes, and CI fails if it grows past that. Today it sits at 29,363.
-- The journal moved into 16 files split by subsystem, 644 entries today. Each one records what was done, what was measured, what was rejected and why, the test count, and the model that gave the GO.
-- A [lessons file](https://github.com/vshylov/mindfork-rs/blob/main/docs/lessons.md) holds the traps that would bite on an unrelated task: 264 rules, each with the incident that produced it and a count of how many times it recurred.
+- CLAUDE.md became a router: orientation, the standing decisions, and a map that says "if you are working on the engine, read architecture §5 and §6, spec §3 and §6 to §8, and the engine journal." It is capped at 30,000 bytes, and CI fails if it grows past that. Today it sits at 29,541.
+- The journal moved into 16 files split by subsystem, 667 entries today. Each one records what was done, what was measured, what was rejected and why, the test count, and the model that gave the GO.
+- A [lessons file](https://github.com/vshylov/mindfork-rs/blob/main/docs/lessons.md) holds the traps that would bite on an unrelated task: 267 rules, each with the incident that produced it and a count of how many times it recurred.
 - Research documents hold the reasoning before a decision, with claims tagged [code], [measured] or [unverified]. A finished plan moves to a history folder. The outcome becomes an architecture decision record that gets amended, never rewritten.
-- The spec and the architecture document use stable section numbers, and the code cites them: 3,282 references from 305 of the 341 source files. An agent that lands in a file is told which two kilobytes of the spec to read.
+- The spec and the architecture document use stable section numbers, and the code cites them: 3,414 references from 316 of the 351 source files. An agent that lands in a file is told which two kilobytes of the spec to read.
 
 Three separate documents repeat the same sentence: "Read the section, not the file." This is the whole trick. A stateless agent needs an externalised memory, and an externalised memory needs a context budget, or it eats the session it was meant to help.
 
@@ -183,7 +185,7 @@ Three separate documents repeat the same sentence: "Read the section, not the fi
 
 The lessons file has a rule I would put on the wall of any team working with agents: "Assume the measurement will overturn the plan, because it repeatedly has."
 
-A language model's defining weakness is confident, plausible assertion. The plan sounds right. The fix sounds right. The explanation of why the test passes sounds right. The project's answer was to refuse every assertion until it had been measured. The journal has 265 entries that contain the word "measured", 30 that describe a control arm, and 107 that record something rejected.
+A language model's defining weakness is confident, plausible assertion. The plan sounds right. The fix sounds right. The explanation of why the test passes sounds right. The project's answer was to refuse every assertion until it had been measured. The journal has 281 entries that contain the word "measured", 31 that describe a control arm, and 108 that record something rejected.
 
 The first time this happened was day two. The spec had been written around an inference engine called xinfer. A live run of Gemma 4 through it produced incoherent output, and the engine was [replaced with llama.cpp](/articles/engine-as-a-server/) the same day. The spec still carries the historical note.
 
@@ -207,9 +209,9 @@ Agents are very good at writing tests that pass. The lessons file is full of the
 - "A test that waits on an event must bound the wait, or a regression hangs instead of failing." Recorded five times before it became a shared helper that every stub uses.
 - "A gate that passes is indistinguishable from a gate that does nothing." So every CI gate is tested in both directions: a planted violation must turn it red, and a clean tree must keep it green.
 
-The countermeasure is mutation testing, done by hand and done routinely; 117 journal entries describe it. The recipe is written down: every mutant is written into the source at once, each behind a switch read from an environment variable at run time; the project is compiled once, and the test binary is run once per mutant with that variable set. A Rust build of this size takes minutes, so compiling once per mutant would make the check too slow to be routine. A surviving mutant is read twice, because it indicts the fixture as often as the test.
+The countermeasure is mutation testing, done by hand and done routinely; 126 journal entries describe it. The recipe is written down: every mutant is written into the source at once, each behind a switch read from an environment variable at run time; the project is compiled once, and the test binary is run once per mutant with that variable set. A Rust build of this size takes minutes, so compiling once per mutant would make the check too slow to be routine. A surviving mutant is read twice, because it indicts the fixture as often as the test.
 
-You can see the habit in the test names. There are 155 tests with "refuse" in the name, 112 with "does_not", 71 with "says", 57 with "never". Twenty-five tests carry a doc comment naming the control arm and exercise the same code with the defect switched off.
+You can see the habit in the test names. There are 158 tests with "refuse" in the name, 114 with "does_not", 72 with "says", 58 with "never". Twenty tests carry a doc comment naming the control arm and exercise the same code with the defect switched off.
 
 These are tests written by someone who expects to be lied to.
 
@@ -219,7 +221,7 @@ The unit suite runs without a terminal and without a model. A scripted mock engi
 
 Every screen is drawn into an in-memory terminal buffer and read back as text. One test draws every screen and every popup from a window of 0 by 0 upwards, in both languages: 21 states by 493 sizes by 2 locales, and every frame must be either the placeholder or a complete screen with the cursor inside it. Ten committed screenshot dumps must match what the code renders today, byte for byte, or the build goes red. Every storage-format change ships with a golden fixture from the previous version.
 
-The live suite is the other half: 260 tests marked ignore that run only against a real model and a real server, mandatory for anything touching the engine, the memory or the tools. The whole set also runs on rented GPUs as [one dispatch](https://github.com/vshylov/mindfork-rs/actions/runs/38955333678): on 2026-10-16, 253 smokes, mostly on Gemma 4 31B, in four parallel jobs, 65 minutes of model time inside 31 minutes of wall clock, zero failures. The journal records live runs as "Smoke, GO" with the date and the stack, 175 entries so far, or as an explicit "no live run needed", 122 entries.
+The live suite is the other half: 279 tests marked ignore, nearly all of them runnable only against a real model and a real server, mandatory for anything touching the engine, the memory or the tools. The whole set also runs on rented GPUs as [one dispatch](https://github.com/vshylov/mindfork-rs/actions/runs/39143245277): on 2026-10-18, 264 smokes, mostly on Gemma 4 31B, in four parallel jobs, 72 minutes of model time inside 36 minutes of wall clock, zero failures. The journal records live runs as "Smoke, GO" with the date and the stack, 186 entries so far, or as an explicit "no live run needed", 130 entries.
 
 The live runs keep finding what mocks structurally cannot. The client never emitted the usage chunk on llama.cpp, because the server sends it after the finish reason and the stream had stopped reading. A launch with no model file started llama.cpp's router mode, whose health endpoint says OK while every message is a 400. The Linux install script passed 25 local scenarios and five CI images, then failed on the first real GPU pod, because root without CAP_CHOWN cannot restore an archive's owner. One tar flag, found only by a pod.
 
@@ -239,7 +241,7 @@ The guardrail layer is entirely reactive. Every file in the tools directory, eve
 - **Day 31, 2026-07-15.** CI, the release pipeline, a changelog, a pinned toolchain. "Before this the gates rested only on the agent's discipline."
 - **Day 45, 2026-07-29.** A link checker, after 28 broken links when plans moved to the history folder.
 - **Day 52, 2026-08-05.** SonarCloud, blocking the same day, while preparing for an open-source release.
-- **Day 55, 2026-08-08.** The 30 KB router and the journal split, after a 994 KB CLAUDE.md.
+- **Day 55, 2026-08-08.** The 30 KB router and the journal split, after a 995 KB CLAUDE.md.
 - **Day 71, 2026-08-24.** A gate for list scroll state, after one scroll bug was copied into eight lists.
 - **Day 95, 2026-09-17.** A release guard, pinned actions, a static C runtime, after a missing VCRUNTIME140.dll on a clean Windows machine.
 - **Day 117, 2026-10-09.** A layer gate. See the last section.
@@ -256,7 +258,7 @@ People look at the SonarCloud badge and assume there is a campaign behind it. Th
 
 - Stricter gates run upstream. Every pull request runs rustfmt, clippy with warnings as errors on a pinned toolchain, and the full test suite on Linux, Windows and macOS before Sonar sees it. Sonar's Rust rules overlap heavily with clippy, so there is little left to find.
 - The gate judges new code only, and the backlog was paid down once. On 2026-08-06 the agent triaged the initial 114 findings and I decided the classes: 49 wildcard imports accepted because they are the documented convention of the file-splitting playbook, seven complexity findings accepted with a written reason, everything else fixed in four pull requests by area, each verified by extraction rather than rewrite.
-- The remainder is swept weekly. Twenty-four of the 34 entries in the quality journal are a "SonarQube follow-up": a handful of findings read off the main branch, fixed by extracting functions along natural seams, never by clicking Accept, and then mutation-tested.
+- The remainder is swept weekly. Twenty-three of the 40 entries in the quality journal are a "SonarQube follow-up": a handful of findings read off the main branch, fixed by extracting functions along natural seams, never by clicking Accept, and then mutation-tested.
 - Coverage is high because tests are a definition-of-done item, not a separate effort. The project is honest about the accounting: inline test modules count toward the measured lines, the tools directory is excluded, and live-smoke files are named so the coverage tool leaves them out.
 - The job waits for the server's verdict. The first run ever uploaded a report the server later rejected while CI stayed green. Now the job fails if the gate fails.
 
@@ -272,15 +274,15 @@ The method also scales to exactly one owner. It works as long as there is a pers
 
 The evidence is self-graded. The agent that wrote the code also writes the GO, decides whether a failure was a flake, and runs the mutation checks. None of that is a CI gate. The loop is closed by me reading, and by the live stand.
 
-The documents drift. The router says the spec is 496 KB; it is 561. It counts 618 journal entries; the indexes sum to 644. When the coverage condition was switched back on in the Sonar server, nothing in the repository recorded it for two months. No gate checks that a cited section number still exists.
+The documents drift. The router says the spec is 496 KB; it is 575. It counts 618 journal entries; the indexes sum to 667. When the coverage condition was switched back on in the Sonar server, nothing in the repository recorded it for two months. No gate checks that a cited section number still exists.
 
-The lessons are not always read. "A fifth time, with this entry unread," says one of them. At 200 KB the lessons file is becoming what the router was built to prevent.
+The lessons are not always read. "A fifth time, with this entry unread," says one of them. At 203 KB the lessons file is becoming what the router was built to prevent.
 
-The early journal asserts without evidence. Twelve percent of the entries carry no test count, no GO and no measurement. They are the early ones. The discipline was acquired, not original.
+The early journal asserts without evidence. Eleven percent of the entries carry no test count, no GO and no measurement; three in four of them sit in the first half of their journal file, the early ones. The discipline was acquired, not original.
 
 Gates rot when nobody runs them. For several weeks the live smokes ran only on my own GPU and the rented gate sat idle. When I started it again, it did not come back clean. Putting it right took a week: the suite was reworked and split into four parallel jobs, and the nine real defects it surfaced went out as a patch release. The project's own lessons file had already said it: a gate nobody has seen fail is a gate nobody knows works.
 
-And it is expensive in discipline and attention. Nearly eight megabytes of documentation for ten and a half of code. Thirty-nine percent of commits spent on documents. A GPU, rented pods, and a person who merges six pull requests a day and runs the live stand. In money, though, it is cheap: $100 a month for the Claude subscription, and the rented GPU runs came to $5.23 in July, $8.94 in August, $0.99 in September and $98.96 in October, the month the gate was reworked and run many times over, some of them on gpt-oss-120b. Across four months the rented GPUs came to $114, $99 of it in October alone. Three months of a live gate for less than the price of one developer hour is the strongest argument I know for measuring on a real model instead of guessing. The method is reproducible. What it costs is not money but an owner who knows the product cold and has the time to verify behaviour every day.
+And it is expensive in discipline and attention. Eight megabytes of documentation for nearly eleven of code. Forty percent of commits spent on documents. A GPU, rented pods, and a person who merges six pull requests a day and runs the live stand. In money, though, it is cheap: $100 a month for the Claude subscription, and the rented GPU runs came to $5.23 in July, $8.94 in August, $0.99 in September and $98.96 in October, the month the gate was reworked and run many times over, some of them on gpt-oss-120b. Across four months the rented GPUs came to $114, $99 of it in October alone. Three months of a live gate for less than the price of one developer hour is the strongest argument I know for measuring on a real model instead of guessing. The method is reproducible. What it costs is not money but an owner who knows the product cold and has the time to verify behaviour every day.
 
 ## The day the process ran on itself
 
@@ -304,4 +306,4 @@ If you are starting a project with an agent and you do not intend to review ever
 
 None of this requires reading the diffs. All of it requires reading numbers, decisions and behaviour, and being willing to let a measurement throw your plan away. That is what stood in for code ownership here.
 
-Do not take my word for any of it. The repository is public at [github.com/vshylov/mindfork-rs](https://github.com/vshylov/mindfork-rs). Start with [docs/journal](https://github.com/vshylov/mindfork-rs/tree/main/docs/journal) for what was done and measured, [docs/lessons.md](https://github.com/vshylov/mindfork-rs/blob/main/docs/lessons.md) for what went wrong more than once, and [tools](https://github.com/vshylov/mindfork-rs/tree/main/tools) for the gates, including [the script that produced every number in this article](https://github.com/vshylov/mindfork-rs/blob/main/tools/repo_metrics.py). If you find a figure here that the repository does not back, open an issue: that would be the process running on itself one more time. The product itself is on [the home page](/), and [the install guide](/install/) has every way to get it.
+Do not take my word for any of it. The repository is public at [github.com/vshylov/mindfork-rs](https://github.com/vshylov/mindfork-rs). Start with [docs/journal](https://github.com/vshylov/mindfork-rs/tree/main/docs/journal) for what was done and measured, [docs/lessons.md](https://github.com/vshylov/mindfork-rs/blob/main/docs/lessons.md) for what went wrong more than once, and [tools](https://github.com/vshylov/mindfork-rs/tree/main/tools) for the gates, including [the script that produced the repository's numbers in this article](https://github.com/vshylov/mindfork-rs/blob/main/tools/repo_metrics.py) and [the one that drew its chart from git](https://github.com/vshylov/mindfork-rs/blob/main/tools/claude_md_chart.py). If you find a figure here that the repository does not back, open an issue: that would be the process running on itself one more time. The product itself is on [the home page](/), and [the install guide](/install/) has every way to get it.

@@ -1948,6 +1948,23 @@ branch with a trailer of its own.
 internal tooling (AGENTS.md §4). No live run: a script over git and the working
 tree (AGENTS.md §3).
 
+**Follow-up (2026-10-20, branch `docs/article-refresh-hn`).** Two definitions,
+found while the essay was measured again for Hacker News (website.md).
+`control_arm_tests` replaces `control_arm_comments`: the essay had said "25 tests
+carry a doc comment naming the control arm", and 25 was the count of `///` lines
+that say so — a test with two such lines counted twice — while the old counter
+matched one spelling, `The control arm:`, 8 times. The counter now walks up from
+each `#[test]` or `#[tokio::test]` over the attributes to the doc comment and
+counts the test once: 20. `entries_bare` and `entries_bare_first_half` give the
+essay's "entries with no test count, no GO and no measurement" a definition —
+none of "test" with a number within the sentence, `GO`, `NO-GO` or a smoke line,
+and "measur", "probe" or "live run" — 74 of 667, 54 of them in the first half of
+their file. The fixture's journal has four entries now (the third sits on the
+half-way line, so `<` and `<=` differ) and its control-arm test carries
+`#[ignore]` between the doc comment and `#[test]`; 49 numbers checked, and four
+mutants on a copy of the script — no walk over the attributes, the bare test
+inverted, `<=` at the half, the control arm never counted — 4/4 killed.
+
 ### Post-M9: the source-language gate knows test code by shape (done)
 
 `tools/cyrillic_scan.py` allowlists Cyrillic in code position inside test code, where

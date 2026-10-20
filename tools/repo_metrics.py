@@ -28,9 +28,15 @@ What each number means, where it is not obvious:
   CLAUDE.md's Status line, because only ``cargo test`` knows which test
   functions compile on a given platform; ``test_fn_attributes`` is the raw count
   of ``#[test]`` and ``#[tokio::test]`` in the tree, which is larger.
+* ``control_arm_tests`` counts test functions whose doc comment names the
+  control arm — the same code exercised with the defect switched off.
 * The journal census counts ENTRIES (the block under one ``### `` heading) that
   match a pattern, never lines, so an entry that says "measured" five times
   counts once.
+* ``entries_bare`` counts the journal entries that carry no evidence of any
+  kind: no test count (the word "test" with a number near it), no GO, NO-GO or
+  smoke line, and no measurement, probe or live run. ``entries_bare_first_half``
+  says how many of them sit in the first half of their file — the early ones.
 
 Sonar's figures are not here; they live on SonarCloud. Nothing is written. The
 self-test builds a small git repository in a temporary directory — known
@@ -67,7 +73,15 @@ PR_SUBJECT = re.compile(r"Merge pull request #(\d+)")
 VERSION_TAG = re.compile(r"v\d+\.\d+\.\d+")
 RECURRENCE = re.compile(r"Recorded (twice|three times|four times|five times|six times)")
 NAME_WORDS = ("refuse", "does_not", "says_", "never", "stays")
-CONTROL_ARM_COMMENT = "The control arm:"
+TEST_ATTR_LINE = re.compile(r"^\s*#\[(?:tokio::)?test")
+ATTR_LINE = re.compile(r"^\s*#\[")
+DOC_LINE = re.compile(r"^\s*///")
+CONTROL_ARM = re.compile(r"control arm", re.I)
+EVIDENCE = (
+    re.compile(r"tests?[^.\n]{0,40}\d", re.I),  # a test count
+    re.compile(r"\bGO\b|NO-GO|(?i:smoke)"),  # a live run's verdict
+    re.compile(r"measur|probe|live run", re.I),  # a measurement
+)
 CENSUS = {
     "entries_measured": re.compile(r"measured", re.I),
     "entries_rejected": re.compile(r"rejected", re.I),
@@ -175,6 +189,23 @@ def test_lines_of(path: Path, lines: list[str]) -> int:
     return 0
 
 
+def control_arm_tests_of(lines: list[str]) -> int:
+    """Test functions whose doc comment — above the attributes — names the control arm."""
+    count = 0
+    for i, line in enumerate(lines):
+        if not TEST_ATTR_LINE.match(line):
+            continue
+        j = i - 1
+        while j >= 0 and ATTR_LINE.match(lines[j]):
+            j -= 1
+        while j >= 0 and DOC_LINE.match(lines[j]):
+            if CONTROL_ARM.search(lines[j]):
+                count += 1
+                break
+            j -= 1
+    return count
+
+
 def source_tree(root: Path) -> dict:
     files = sorted((root / "src").rglob("*.rs"))
     total = test_lines = ignored = citations = cited_files = control_arms = 0
@@ -186,7 +217,7 @@ def source_tree(root: Path) -> dict:
         test_lines += test_lines_of(path, lines)
         names.extend(TEST_FN.findall(text))
         ignored += len(IGNORE_ATTR.findall(text))
-        control_arms += text.count(CONTROL_ARM_COMMENT)
+        control_arms += control_arm_tests_of(lines)
         hits = sum(1 for line in lines if CITATION.search(line))
         citations += hits
         cited_files += bool(hits)
@@ -201,7 +232,7 @@ def source_tree(root: Path) -> dict:
         "cargo_unit_tests_green": int(status.group(1)) if status else None,
         "cargo_ignored_tests": int(status.group(2)) if status else None,
         "test_names_by_word": {w: sum(1 for n in names if w in n) for w in NAME_WORDS},
-        "control_arm_comments": control_arms,
+        "control_arm_tests": control_arms,
         "doc_citations_in_code": citations,
         "files_with_citations": cited_files,
         KEY_SRC_BYTES: sum(p.stat().st_size for p in files),
@@ -209,17 +240,27 @@ def source_tree(root: Path) -> dict:
 
 
 def journal_census(journal: list[Path]) -> dict:
-    headings = index_sum = 0
+    headings = index_sum = bare = bare_first_half = 0
     census = dict.fromkeys(CENSUS, 0)
     for path in journal:
         text = read(path)
         index_sum += sum(int(n) for n in ENTRIES_INDEX.findall(text))
         entries = re.split(r"^### ", text, flags=re.M)[1:]
         headings += len(entries)
-        for entry in entries:
+        for position, entry in enumerate(entries):
             for key, pattern in CENSUS.items():
                 census[key] += bool(pattern.search(entry))
-    return {"journal_files": len(journal), "journal_headings": headings, "journal_index_sum": index_sum, **census}
+            if not any(pattern.search(entry) for pattern in EVIDENCE):
+                bare += 1
+                bare_first_half += position < len(entries) / 2
+    return {
+        "journal_files": len(journal),
+        "journal_headings": headings,
+        "journal_index_sum": index_sum,
+        **census,
+        "entries_bare": bare,
+        "entries_bare_first_half": bare_first_half,
+    }
 
 
 def documents(root: Path) -> dict:
@@ -272,8 +313,8 @@ mod tests {
     async fn says_what_it_did() {}
 
     /// The control arm: the same path with the defect switched off.
-    #[test]
     #[ignore]
+    #[test]
     fn never_runs_without_a_server() {}
 }
 """
@@ -286,10 +327,12 @@ FIXTURE_CLAUDE_MD = "# Guide\n\nStatus: **12 unit tests green, 3 `#[ignore]`** t
 FIXTURE_LESSONS_MD = "# Lessons\n\n**Rule one.** Recorded twice.\n\n**Rule two.** Text.\n"
 FIXTURE_JOURNAL_MD = """# Alpha
 
-## Entries (2)
+## Entries (4)
 
 - Post-M9: first (done)
 - Post-M9: second (done)
+- Post-M9: third (done)
+- Post-M9: fourth (done)
 
 ### Post-M9: first (done)
 
@@ -299,6 +342,15 @@ green. The user's decision: (a).
 ### Post-M9: second (done)
 
 Rejected after a mutation check with a control arm; no live run needed.
+
+### Post-M9: third (done)
+
+A note that asserts and shows nothing — the third of four, so it sits on the
+half-way line and not before it.
+
+### Post-M9: fourth (done)
+
+Another note that shows nothing.
 """
 FIXTURE_JOURNAL_ADDENDUM = "\nMore words, in a docs-only commit.\n"
 FIXTURE_SMALL_MD = "# A heading\n\nA line of text.\n"
@@ -391,14 +443,14 @@ def expected_fixture_numbers() -> dict:
         "cargo_unit_tests_green": 12,
         "cargo_ignored_tests": 3,
         "test_names_by_word": {"refuse": 1, "does_not": 0, "says_": 1, "never": 1, "stays": 1},
-        "control_arm_comments": 1,
+        "control_arm_tests": 1,
         "doc_citations_in_code": 1,
         "files_with_citations": 1,
         KEY_SRC_BYTES: src_bytes,
         KEY_DOCS_BYTES: docs_bytes,
         "journal_files": 1,
-        "journal_headings": 2,
-        "journal_index_sum": 2,
+        "journal_headings": 4,
+        "journal_index_sum": 4,
         "entries_measured": 1,
         "entries_rejected": 1,
         "entries_with_go": 1,
@@ -407,6 +459,8 @@ def expected_fixture_numbers() -> dict:
         "entries_mutation": 1,
         "entries_control_arm": 1,
         "entries_with_test_count": 1,
+        "entries_bare": 2,
+        "entries_bare_first_half": 0,
         "lessons_rules": 2,
         "lessons_recurrences": {"twice": 1},
         "research_docs": 1,
