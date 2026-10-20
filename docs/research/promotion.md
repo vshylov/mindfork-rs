@@ -142,6 +142,17 @@ Tried so far:
     read again on 2026-10-20, before the Hacker News post, and its chart and
     card are drawn from the repository by `tools/claude_md_chart.py` and
     `tools/hero.py` (the website journal).
+  - **Hacker News refused it on 2026-10-20**: "your account isn't able to
+    submit this site", the restriction newer accounts meet on a domain, with
+    no appeal but a letter to hn@ycombinator.com — sent the same day. r/rust
+    does not take posts from an account this new either.
+  - **Posted on r/ClaudeAI** on 2026-10-20 instead, flair *Claude Code
+    Workflow*, as a text post with the link inside rather than a link post —
+    the shape a new account's spam filter tolerates; it held the post for
+    three minutes and released it:
+    [r/ClaudeAI/comments/1xay0jz](https://www.reddit.com/r/ClaudeAI/comments/1xay0jz/four_months_with_claude_code_on_a_262kline_rust/).
+    The text leads with what that audience lives with — CLAUDE.md eating the
+    session — and discloses that the agent measured the numbers.
 
 One-shot — only after stages 0–1, with the animation and an honest macOS
 answer in hand (both since 2026-10-08). The first of them carries the call for
