@@ -277,20 +277,22 @@ def article_until(figure: str) -> date:
     return date.fromisoformat(days[-1])
 
 
-def write_article(root: Path, until: date) -> int:
+def write_article(root: Path, until: date) -> None:
     text = ARTICLE.read_bytes().decode(UTF8)
     before, figure, after = split_article(text)
     wanted = figure_for(root, until)
     if wanted == figure:
         print(f"unchanged: {ARTICLE.relative_to(ROOT)} (as of {until})")
-        return 0
-    ARTICLE.write_bytes((before + wanted + after).encode(UTF8))
+        return
+    # Written through a file object, bytes out as bytes came in (no newline
+    # translation on Windows, docs/lessons.md on `write_text`).
+    with open(ARTICLE, "wb") as out:
+        out.write((before + wanted + after).encode(UTF8))
     print(f"written: {ARTICLE.relative_to(ROOT)} — the figure as of {until}")
-    return 0
 
 
 def check_article(root: Path) -> int:
-    before, figure, after = split_article(ARTICLE.read_bytes().decode(UTF8))
+    _, figure, _ = split_article(ARTICLE.read_bytes().decode(UTF8))
     until = article_until(figure)
     wanted = figure_for(root, until)
     if wanted == figure:
@@ -308,6 +310,7 @@ def check_article(root: Path) -> int:
 # --- self-test: a fixture repository with dated commits ----------------------------
 
 FIXTURE_IDENTITY = ("-c", "user.name=fixture", "-c", "user.email=fixture@example.com", "-c", "commit.gpgsign=false")
+FIXTURE_OTHER = "README.md"  # the file a commit touches when it leaves CLAUDE.md alone
 
 
 def fixture_commit(root: Path, when: str, message: str, files: dict[str, int]) -> str:
@@ -323,16 +326,16 @@ def fixture_commit(root: Path, when: str, message: str, files: dict[str, int]) -
 def build_fixture(root: Path) -> dict[str, str]:
     git(root, "init", "-q", "-b", "main")
     shas = {}
-    shas["a"] = fixture_commit(root, "2026-06-14T12:00:00+03:00", "a: the first commit, a Sunday", {FILE: 10_000, "README.md": 5})
+    shas["a"] = fixture_commit(root, "2026-06-14T12:00:00+03:00", "a: the first commit, a Sunday", {FILE: 10_000, FIXTURE_OTHER: 5})
     shas["b"] = fixture_commit(root, "2026-06-17T12:00:00+03:00", "b: a mid-week edit", {FILE: 100_000})
-    shas["c"] = fixture_commit(root, "2026-06-21T09:00:00+03:00", "c: a Sunday that touches another file", {"README.md": 6})
+    shas["c"] = fixture_commit(root, "2026-06-21T09:00:00+03:00", "c: a Sunday that touches another file", {FIXTURE_OTHER: 6})
     shas["d"] = fixture_commit(root, "2026-06-22T00:30:00+03:00", "d: after midnight here, Sunday in UTC", {FILE: 70_000})
     shas["e"] = fixture_commit(root, "2026-06-23T10:00:00+03:00", "e: the peak", {FILE: 1_000_000})
     shas["f"] = fixture_commit(root, "2026-06-23T11:00:00+03:00", "f: the peak's size again", {FILE: 1_000_000})
     shas["g"] = fixture_commit(root, "2026-06-24T09:00:00+03:00", "g: the morning after", {FILE: 40_000})
     shas["h"] = fixture_commit(root, "2026-06-24T18:00:00+03:00", "h: the evening after", {FILE: 50_000})
     shas["i"] = fixture_commit(root, "2026-06-28T12:00:00+03:00", "i: a Sunday", {FILE: 60_000})
-    shas["j"] = fixture_commit(root, "2026-07-03T12:00:00+03:00", "j: a Friday, another file", {"README.md": 7})
+    shas["j"] = fixture_commit(root, "2026-07-03T12:00:00+03:00", "j: a Friday, another file", {FIXTURE_OTHER: 7})
     return shas
 
 
@@ -403,7 +406,8 @@ def main(argv: list[str]) -> int:
         return check_article(ROOT)
     until = until or last_commit_day(ROOT)
     if "--write" in flags:
-        return write_article(ROOT, until)
+        write_article(ROOT, until)
+        return 0
     print(render_table(claude_md_points(ROOT, until)))
     return 0
 

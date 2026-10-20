@@ -79,7 +79,7 @@ DOC_LINE = re.compile(r"^\s*///")
 CONTROL_ARM = re.compile(r"control arm", re.I)
 EVIDENCE = (
     re.compile(r"tests?[^.\n]{0,40}\d", re.I),  # a test count
-    re.compile(r"\bGO\b|NO-GO|(?i:smoke)"),  # a live run's verdict
+    re.compile(r"\bGO\b|NO-GO|[Ss]moke"),  # a live run's verdict
     re.compile(r"measur|probe|live run", re.I),  # a measurement
 )
 CENSUS = {

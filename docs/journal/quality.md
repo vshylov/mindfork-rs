@@ -1964,6 +1964,12 @@ half-way line, so `<` and `<=` differ) and its control-arm test carries
 `#[ignore]` between the doc comment and `#[test]`; 49 numbers checked, and four
 mutants on a copy of the script — no walk over the attributes, the bare test
 inverted, `<=` at the half, the control arm never counted — 4/4 killed.
+Sonar's first pass over the pull request failed the gate on one BLOCKER in
+`claude_md_chart.py`: its taint engine read the essay's own text, written back
+around the new figure through `Path.write_bytes`, as path traversal (S2083) —
+the write goes through a file object now — plus five smells (a function that
+always returned 0, two unused names, a literal three times, an inline-flag
+group in a regex) fixed on the branch.
 
 ### Post-M9: the source-language gate knows test code by shape (done)
 
