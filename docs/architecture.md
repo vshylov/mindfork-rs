@@ -617,6 +617,11 @@ src/
 │  ├─ exit_command.rs       /exit | /quit parser — the typed route out, for terminals
 │  │                        that claim both Ctrl+Q and F10 (spec §11.7)
 │  ├─ tts_command.rs        /tts [N|all|stop] parser (speech synthesis, spec §11.9)
+│  ├─ time_row.rs           the time rows (spec §6.2): a dated line per user message,
+│  │                        derived from the stored timestamps when a request is built
+│  │                        (full on the first seen and on a new day, compact within one);
+│  │                        `gap` — a duration in two number-neutral units, which
+│  │                        `get_last_user_message_time` shares
 │  ├─ rag_ingest.rs         scan, read_text, RagProgress (indexing progress types)
 │  ├─ cli.rs                our own micro CLI argument parser (all text lives in locale bundles)
 │  ├─ backup.rs             data backup/restore (zip, transactional, optional AES-256
@@ -1393,7 +1398,15 @@ Details:
   the call. Likewise `build_request` is a wrapper over `build_request_in`, which
   takes the persona, the messages and a `RequestEnv` (attachments, project,
   compaction view) separately — a subagent's request is its own persona over
-  its parent's environment. The subagent run itself is §8's `call_subagent`
+  its parent's environment. `PromptContext.time_rows` carries the clock when the
+  profile switched time rows on (`Profile.companion.time_rows`, spec §6.2): the rows
+  are computed over the whole history (`features::time_row::rows`) and
+  `api_messages` puts each in front of its user message's words — after a merged
+  notification — so nothing about them is stored and the prefix holds. A
+  subagent's request passes `None`. The turn's `TurnInfo.user_times`
+  (`request::user_message_times`) says which user message the turn answers and the
+  one before it — what `get_last_user_message_time` reports; a background task gets
+  `UserMessageTimes::latest`. The subagent run itself is §8's `call_subagent`
   note and [ADR 0010](decisions/0010-subagent-nested-turn.md). A child loop
   carries a `persona` and reports `AppEvent::SubagentProgress` **around** its
   muted `RoundSink` (`report_progress`, at each round's start and each tool's
@@ -2757,7 +2770,7 @@ The tool contract: a read-only snapshot + returned effects (no locks on
 ```mermaid
 flowchart TB
     REG["ToolRegistry<br/>schemas_for = profile ∩ registry · invoke(name,args,ctx)"]
-    CTX["ToolContext (snapshot at the start of the turn)<br/>profile_id, chat_id, system_message,<br/>effective_sampling, last_user_message_at,<br/>storage: Arc&lt;Storage&gt;, engine, embedder, self_model_params"]
+    CTX["ToolContext (snapshot at the start of the turn)<br/>profile_id, chat_id, system_message,<br/>effective_sampling, user_times,<br/>storage: Arc&lt;Storage&gt;, engine, embedder, self_model_params"]
     OUT["ToolOutcome { result: String, effects: Vec&lt;ChatEffect&gt;, wrote: bool, prefill: Option&lt;Prefill&gt; }"]
     EFF["ChatEffect: SetSystemMessage | SetSamplingOverride | AddAttachment"]
 

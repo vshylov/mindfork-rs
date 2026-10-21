@@ -1857,6 +1857,19 @@ impl SettingsScreen {
                         .describe(loc.t("ui.settings.desc.imp_profile")),
                     ],
                 ));
+                // The companion features (spec §10, docs/research/companion-platform.md):
+                // one switch each, every one off until the profile opts in.
+                rows.extend(grouped(
+                    loc.t("ui.settings.group.companion"),
+                    vec![
+                        row(
+                            FieldId::PTimeRows,
+                            loc.t("ui.settings.field.time_rows"),
+                            FieldKind::Toggle(p.companion.time_rows),
+                        )
+                        .describe(loc.t("ui.settings.desc.time_rows")),
+                    ],
+                ));
                 // Tool toggles: laid out by semantic group
                 // (`ToolInfo.group`), with a short description and an honest gate.
                 // The `PTool` index is the position in `tool_catalog()` (the source of

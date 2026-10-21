@@ -40,6 +40,7 @@ fn request_of(chat: &Chat, compaction: &CompactionSettings, history_tools: bool)
             // The workspace block has its own tests below; this shared helper
             // builds requests for chats with no project, where the list is moot.
             offered_tools: &[],
+            time_rows: None,
             loc: ru(),
         },
     )
@@ -72,6 +73,7 @@ fn the_chat_files_block_names_handles_and_staged_names() {
             python_dirs: ("/w/in", "/w/out"),
             history_tools: false,
             offered_tools: &[],
+            time_rows: None,
             loc: ru(),
         },
     );
@@ -101,6 +103,7 @@ fn the_chat_files_block_names_handles_and_staged_names() {
             python_dirs: crate::shared::config::PythonMode::Local.dirs(),
             history_tools: false,
             offered_tools: &[],
+            time_rows: None,
             loc: ru(),
         },
     )
@@ -620,6 +623,191 @@ fn withheld_images_become_markers_that_name_them() {
          You have not seen it — do not describe what it shows; say that you cannot see it.]",
         "the wording the measurement ran with"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Time rows (spec §6.2, docs/research/companion-platform.md C1): a dated line in
+// front of every user message, derived from the stored timestamps — a companion
+// feature the profile switches on.
+// ---------------------------------------------------------------------------
+
+fn utc_clock(at: chrono::DateTime<chrono::Utc>) -> chrono::NaiveDateTime {
+    at.naive_utc()
+}
+
+/// [`request_of`] with time rows on, written in UTC so the test does not depend on
+/// the machine's zone, in English.
+fn request_with_rows(chat: &Chat, compaction: &CompactionSettings) -> ChatRequest {
+    build_request(
+        chat,
+        SamplingConfig::default(),
+        vec![],
+        &PromptContext {
+            attachments: &AttachmentSettings::default(),
+            compaction,
+            indexed: NO_INDEX,
+            files: &[],
+            python_dirs: ("/w/in", "/w/out"),
+            history_tools: false,
+            offered_tools: &[],
+            time_rows: Some(&utc_clock),
+            loc: crate::shared::i18n::locale(crate::shared::i18n::Lang::En),
+        },
+    )
+}
+
+fn stamped(mut m: Message, d: u32, h: u32, min: u32) -> Message {
+    use chrono::TimeZone;
+    m.timestamp = chrono::Utc
+        .with_ymd_and_hms(2026, 10, d, h, min, 0)
+        .unwrap();
+    m
+}
+
+fn interview_chat() -> Chat {
+    let p = Profile::new("X", "You are X.");
+    let mut chat = Chat::from_profile(&p, "c");
+    chat.push_message(stamped(
+        Message::user("the interview is tomorrow"),
+        19,
+        21,
+        10,
+    ));
+    chat.push_message(stamped(Message::assistant("good luck"), 19, 21, 11));
+    chat.push_message(stamped(Message::user("hey, I'm back"), 22, 18, 40));
+    chat
+}
+
+/// The row goes in front of every user message and nowhere else; the assistant's
+/// words are sent as they were.
+#[test]
+fn time_rows_date_every_user_message() {
+    let req = request_with_rows(&interview_chat(), &CompactionSettings::default());
+    let contents: Vec<&str> = req.messages.iter().map(|m| m.content.as_str()).collect();
+    assert_eq!(
+        contents,
+        [
+            "[Monday, 19 October 2026, 21:10]\n\nthe interview is tomorrow",
+            "good luck",
+            "[Thursday, 22 October 2026, 18:40 · 2d 21h after the previous message]\n\nhey, I'm back",
+        ]
+    );
+}
+
+/// Off — the default — the request is exactly what it was before the feature.
+#[test]
+fn without_time_rows_the_messages_are_sent_as_they_are() {
+    let req = request_of(&interview_chat(), &CompactionSettings::default(), false);
+    assert_eq!(req.messages[0].content, "the interview is tomorrow");
+    assert_eq!(req.messages[2].content, "hey, I'm back");
+}
+
+/// A row is derived from timestamps, so the next turn's request repeats every
+/// earlier message byte for byte — the prefix the engine cached still matches
+/// (spec §6.6).
+#[test]
+fn a_new_turn_leaves_earlier_rows_unchanged() {
+    let mut chat = interview_chat();
+    let before = request_with_rows(&chat, &CompactionSettings::default());
+    chat.push_message(stamped(Message::assistant("how did it go?"), 22, 18, 41));
+    chat.push_message(stamped(Message::user("great"), 22, 18, 50));
+    let after = request_with_rows(&chat, &CompactionSettings::default());
+    for (a, b) in before.messages.iter().zip(&after.messages) {
+        assert_eq!(a.content, b.content);
+    }
+    assert_eq!(after.messages[4].content, "[18:50 · 9m later]\n\ngreat");
+}
+
+/// A notification merged into a user message comes first; the row stands
+/// immediately in front of the words it dates.
+#[test]
+fn a_row_follows_a_merged_notification() {
+    let p = Profile::new("X", "You are X.");
+    let mut chat = Chat::from_profile(&p, "c");
+    chat.push_message(stamped(Message::user("delegate"), 19, 10, 0));
+    chat.push_message(stamped(Message::assistant("started"), 19, 10, 1));
+    chat.push_message(stamped(
+        Message::notification(uuid::Uuid::new_v4(), "[note] finished"),
+        19,
+        10,
+        30,
+    ));
+    chat.push_message(stamped(Message::user("thanks"), 19, 10, 40));
+    let req = request_with_rows(&chat, &CompactionSettings::default());
+    assert_eq!(
+        req.messages[2].content,
+        "[note] finished\n\n[10:40 · 10m later]\n\nthanks"
+    );
+}
+
+/// After a compaction the first message the model sees carries the full date.
+#[test]
+fn the_first_message_after_a_summary_carries_the_date() {
+    let mut chat = compacted_chat(5, 6, "Earlier: storage.");
+    for (i, m) in chat.messages.iter_mut().enumerate() {
+        m.timestamp = stamped(Message::user(""), 19, 10, i as u32).timestamp;
+    }
+    let req = request_with_rows(&chat, &CompactionSettings::default());
+    assert_eq!(req.messages.len(), 4);
+    assert_eq!(
+        req.messages[0].content,
+        "[Monday, 19 October 2026, 10:06]\n\nвопрос 3"
+    );
+    assert_eq!(req.messages[2].content, "[10:08]\n\nвопрос 4");
+}
+
+// ---------------------------------------------------------------------------
+// When the user wrote, for `get_last_user_message_time` (spec §9.3): the message
+// the turn answers and the one before it — not "the message just sent", which the
+// tool used to report on every ordinary turn.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn an_ordinary_turn_answers_the_last_user_message() {
+    use crate::app::orchestrator::request::user_message_times;
+    let chat = interview_chat();
+    let times = user_message_times(&chat);
+    assert_eq!(times.answering, Some(chat.messages[2].timestamp));
+    assert_eq!(times.previous, Some(chat.messages[0].timestamp));
+
+    // `/continue` answers the same user message: the partial reply after it changes nothing.
+    let mut continued = chat.clone();
+    continued.push_message(stamped(Message::assistant("so"), 22, 18, 41));
+    assert_eq!(user_message_times(&continued), times);
+}
+
+#[test]
+fn the_first_message_has_no_previous_one() {
+    use crate::app::orchestrator::request::user_message_times;
+    let p = Profile::new("X", "You are X.");
+    let mut chat = Chat::from_profile(&p, "c");
+    assert_eq!(
+        user_message_times(&chat),
+        crate::features::tools::UserMessageTimes::default()
+    );
+    chat.push_message(stamped(Message::assistant("Hello!"), 19, 9, 0));
+    chat.push_message(stamped(Message::user("hi"), 19, 9, 5));
+    let times = user_message_times(&chat);
+    assert_eq!(times.answering, Some(chat.messages[1].timestamp));
+    assert_eq!(times.previous, None);
+}
+
+/// A woken turn answers a notification, not the user: the tool reports when they
+/// last wrote.
+#[test]
+fn a_woken_turn_answers_no_user_message() {
+    use crate::app::orchestrator::request::user_message_times;
+    let mut chat = interview_chat();
+    chat.push_message(stamped(Message::assistant("started"), 22, 18, 41));
+    chat.push_message(stamped(
+        Message::notification(uuid::Uuid::new_v4(), "[note] finished"),
+        22,
+        19,
+        0,
+    ));
+    let times = user_message_times(&chat);
+    assert_eq!(times.answering, None);
+    assert_eq!(times.previous, Some(chat.messages[2].timestamp));
 }
 
 // ---------------------------------------------------------------------------

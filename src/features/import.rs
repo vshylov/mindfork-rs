@@ -267,6 +267,9 @@ fn map_profile(p: &ImProfile) -> Profile {
         enabled_tools: default_tool_ids(),
         known_tools: default_tool_ids(),
         default_sampling: p.sampling.clone(),
+        // Format v1 has no companion features; an imported profile is an
+        // assistant until the user switches one on (spec §10).
+        companion: crate::entities::profile::CompanionFeatures::default(),
         is_hidden: false,
     }
 }

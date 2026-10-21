@@ -146,6 +146,8 @@ pub struct ProfileEdit {
     /// `Some(None)` — remove the profile's sampling defaults.
     pub default_sampling: Option<Option<SamplingConfig>>,
     pub enabled_tools: Option<Vec<ToolId>>,
+    /// The companion features (spec §10), replaced as a whole.
+    pub companion: Option<crate::entities::profile::CompanionFeatures>,
     /// Agent-scaffold language (axis A, docs/history/i18n.md). Editing is allowed only while the
     /// profile has no data yet — the **authoritative** gate check is in the orchestrator, before
     /// applying (`handle_update_profile`), and the UI additionally renders the field
@@ -184,6 +186,9 @@ pub fn apply_edit(profile: &mut Profile, edit: ProfileEdit) -> bool {
     }
     if let Some(tools) = edit.enabled_tools {
         profile.enabled_tools = tools;
+    }
+    if let Some(companion) = edit.companion {
+        profile.companion = companion;
     }
     if let Some(lang) = edit.language {
         profile.language = lang;

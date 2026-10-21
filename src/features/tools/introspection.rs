@@ -333,7 +333,9 @@ impl Tool for SetSystemMessage {
     }
 }
 
-/// `get_last_user_message_time` — the last user message's timestamp + the elapsed time.
+/// `get_last_user_message_time` — when the user wrote before the message being
+/// answered, and the gap to it (spec §9.3); on a turn that answers no message of
+/// theirs, when they last wrote. See [`super::UserMessageTimes`].
 pub struct GetLastUserMessageTime;
 
 #[async_trait::async_trait]
@@ -354,24 +356,11 @@ impl Tool for GetLastUserMessageTime {
         empty_object()
     }
     async fn invoke(&self, ctx: &ToolContext, _args: serde_json::Value) -> Result<ToolOutcome> {
-        let result = match ctx.last_user_message_at {
-            None => ctx
-                .loc
-                .t("tool.get_last_user_message_time.result.none")
-                .to_string(),
-            Some(ts) => {
-                let elapsed = Utc::now().signed_duration_since(ts);
-                let secs = elapsed.num_seconds().max(0);
-                ctx.loc.tf(
-                    "tool.get_last_user_message_time.result.last",
-                    &[
-                        ("ts", &ts.to_rfc3339()),
-                        ("elapsed", &humanize(secs, ctx.loc)),
-                    ],
-                )
-            }
-        };
-        Ok(ToolOutcome::text(result))
+        Ok(ToolOutcome::text(user_times_report(
+            ctx.user_times,
+            Utc::now(),
+            ctx.loc,
+        )))
     }
 }
 
@@ -421,18 +410,46 @@ pub(crate) fn empty_object() -> serde_json::Value {
     serde_json::json!({"type": "object", "properties": {}})
 }
 
-/// A rough human-readable rendering of a duration in seconds (in the language `loc`).
-fn humanize(secs: i64, loc: &crate::shared::i18n::Locale) -> String {
-    let (key, n) = if secs < 60 {
-        ("time.dur.seconds", secs)
-    } else if secs < 3600 {
-        ("time.dur.minutes", secs / 60)
-    } else if secs < 86400 {
-        ("time.dur.hours", secs / 3600)
-    } else {
-        ("time.dur.days", secs / 86400)
+/// What `get_last_user_message_time` says at `now`. Pure, so every arm is tested
+/// without a clock: on an ordinary turn, the previous message and the gap from it to
+/// the one being answered — the number a model asks the tool for — or that the
+/// message being answered is the user's first; on a turn that answers none of
+/// theirs, when they last wrote; with no user message at all, that there is none.
+fn user_times_report(
+    times: super::UserMessageTimes,
+    now: chrono::DateTime<Utc>,
+    loc: &crate::shared::i18n::Locale,
+) -> String {
+    let span = |from: chrono::DateTime<Utc>, to: chrono::DateTime<Utc>| {
+        crate::features::time_row::gap((to - from).num_seconds(), loc)
     };
-    loc.tf(key, &[("n", &n.to_string())])
+    match (times.answering, times.previous) {
+        (Some(answering), Some(previous)) => loc.tf(
+            "tool.get_last_user_message_time.result.previous",
+            &[
+                ("ts", &previous.to_rfc3339()),
+                ("gap", &span(previous, answering)),
+                ("elapsed", &span(answering, now)),
+            ],
+        ),
+        (Some(answering), None) => loc.tf(
+            "tool.get_last_user_message_time.result.first",
+            &[
+                ("ts", &answering.to_rfc3339()),
+                ("elapsed", &span(answering, now)),
+            ],
+        ),
+        (None, Some(previous)) => loc.tf(
+            "tool.get_last_user_message_time.result.last",
+            &[
+                ("ts", &previous.to_rfc3339()),
+                ("elapsed", &span(previous, now)),
+            ],
+        ),
+        (None, None) => loc
+            .t("tool.get_last_user_message_time.result.none")
+            .to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -643,11 +660,57 @@ mod tests {
             .unwrap();
         assert!(none.result.contains("ещё не отправлял"));
 
-        ctx.last_user_message_at = Some(Utc::now());
+        ctx.user_times = super::super::UserMessageTimes::latest(Some(Utc::now()));
         let some = GetLastUserMessageTime
             .invoke(&ctx, serde_json::json!({}))
             .await
             .unwrap();
         assert!(some.result.contains("Последнее сообщение"));
+    }
+
+    /// The defect this replaces: on an ordinary turn the tool answered with the
+    /// message just sent ("7s ago"), so a model that asked was told no time had
+    /// passed (docs/research/companion-platform.md §3.2). It now reports the message
+    /// before the one being answered, and the gap between them.
+    #[test]
+    fn an_ordinary_turn_reports_the_previous_message_and_the_gap() {
+        use chrono::TimeZone;
+        let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::En);
+        let previous = Utc.with_ymd_and_hms(2026, 10, 19, 18, 10, 0).unwrap();
+        let answering = Utc.with_ymd_and_hms(2026, 10, 22, 15, 40, 0).unwrap();
+        let now = answering + chrono::Duration::seconds(7);
+        let report = user_times_report(
+            super::super::UserMessageTimes {
+                answering: Some(answering),
+                previous: Some(previous),
+            },
+            now,
+            loc,
+        );
+        assert_eq!(
+            report,
+            "The user's previous message was sent at 2026-10-19T18:10:00+00:00, 2d 21h before the message you are answering (which was sent 7s ago)."
+        );
+        let first = user_times_report(
+            super::super::UserMessageTimes {
+                answering: Some(answering),
+                previous: None,
+            },
+            now,
+            loc,
+        );
+        assert_eq!(
+            first,
+            "The message you are answering is the user's first in this chat; it was sent at 2026-10-22T15:40:00+00:00, 7s ago."
+        );
+        let woken = user_times_report(
+            super::super::UserMessageTimes::latest(Some(previous)),
+            now,
+            loc,
+        );
+        assert_eq!(
+            woken,
+            "Last user message: 2026-10-19T18:10:00+00:00 (2d 21h ago)."
+        );
     }
 }

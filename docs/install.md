@@ -2144,6 +2144,14 @@ The full set (memory, self-model, notes, RAG, attachments, MCP) additionally
 needs an embedding server in `MINDFORK_EMBED_URL`; smokes whose variable is
 unset are silently skipped.
 
+The companion's time rows (spec §6.2) and `get_last_user_message_time` need only the
+chat engine: a chat is put on disk with its first exchange three days or twenty-five
+minutes in the past, and one real turn is run.
+
+```powershell
+cargo test time_rows_live -- --ignored --nocapture --test-threads=1
+```
+
 ### 7.1. Against an authenticated server (`MINDFORK_ENGINE_KEY`)
 
 The URL variables have optional key companions — `MINDFORK_ENGINE_KEY` and

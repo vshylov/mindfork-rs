@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (107)
+## Entries (108)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -119,6 +119,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: DeepSeek's API — its cache figure, and the thinking switch it refused (done)
 - Post-M9: DeepSeek — a mode of its own, stage 1 (done)
 - Post-M9: DeepSeek — `/continue` by the beta prefix completion, stage 2 (done)
+- Post-M9: the time row, and the user's previous message — the companion track's stage 1 (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -7115,4 +7116,70 @@ mode resumes a cut reply, which `/v1` cannot.
   the leftovers on demand); CHANGELOG *Added*; the status line.
 
 **Gates**: 4098 unit tests green, 279 `#[ignore]`; clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.
+
+### Post-M9: the time row, and the user's previous message — the companion track's stage 1 (done)
+
+The first stage of [companion-platform.md](../research/companion-platform.md) (C1, §9):
+the model is told when every user message was written, and the one tool that sounded as
+if it said so now does.
+
+- **Why** (the research's §2.2, §3.2): no timestamp reached the model and the system
+  prompt carried no date, so it could not tell three days from twenty-five minutes;
+  `get_last_user_message_time` reported the message just sent ("7s ago") on every
+  ordinary turn, and a model that asked was told no time had passed. In the research's
+  probe every model was wrong in one of the two situations without rows, and right in
+  both with a row on every message.
+- **A companion feature, off by default** — the owner's decision of 2026-10-21 (§8
+  there): every companion feature is a switch of its own in the profile, off until the
+  profile opts in. `Profile.companion: CompanionFeatures { time_rows }`, `#[serde(default)]`
+  and skipped while at its default, so a profile that never opts in is written byte for
+  byte as before — no `PROFILES_SCHEMA` step. Settings → Profiles → a *Companion* group,
+  *Time of messages* (`FieldId::PTimeRows`, `ProfileEdit.companion`).
+- **Derived, not stored** (`features/time_row.rs`): `build_request_in` computes the rows
+  from the messages' own timestamps, by the machine's local clock, and `api_messages`
+  puts each in front of its user message's words — after a notification merged with it.
+  The same text on every turn, so the prefix holds (spec §6.6, a unit test builds two
+  turns and compares); the chat file is unchanged; switching off removes every row. The
+  research had said "stored"; deriving buys the same stability without a chat-format
+  step.
+- **The shape, measured before it shipped**: the full form ("[Thursday, 22 October 2026,
+  18:40 · 2d 21h after the previous message]") on the first user message the model sees
+  and wherever the local date changes; the compact one within a day ("[21:35 · 24m
+  later]"); the gap to the message just before, of any role, from two minutes, in the
+  locale's number-neutral units (`time.dur.*`). A probe of exactly these strings through
+  OpenRouter (Gemma 4 31B, Qwen 3.6 27B, Claude Haiku 5.5; 150 replies, judged by Claude
+  Sonnet 5.5): three days later the interview was past in 60 of 60, English and Russian;
+  twenty-five minutes later it was ahead in 58 of 59 graded and past in none; a
+  ten-message evening with a row on each, 0 of 29 imitated the row or talked about the
+  time. Weekday and month names are literal keys (`WEEKDAYS`, `MONTHS`): a key built with
+  `format!` read as dead to the bundle gate, the trap docs/lessons.md §7 already names.
+- **Where rows do not go**: a sub-agent's request (its one message is the parent's,
+  written that instant), impersonation (its own mapping), and — still — the digests the
+  rolling summary and the reflection read, which render no dates (the research's C1
+  names them; left for a later stage).
+- **The tool** (`UserMessageTimes { answering, previous }` replaces
+  `last_user_message_at` in `ToolContext`/`TurnInfo`; `request.rs::user_message_times`):
+  the turn answers the last user-side row — a user message on a sent, regenerated or
+  continued turn, a notification on a woken one. On an ordinary turn the tool reports the
+  previous user message and the gap to the one being answered; on the first, that it is
+  the first; on a woken turn and in a background task, when the user last wrote. A defect
+  fix, so outside any switch.
+- **Live GO** on the gate's weights, llama.cpp b11719 on the 4090: three smokes
+  (`time_rows_live.rs`) — three days later the reply asks how the interview went and says
+  no "tomorrow"; twenty-five minutes later it does not ask; asked how long ago the
+  previous message was, the model calls the tool and says three days. **Gemma 4 31B
+  q4_0**: 3/3 ("How did the interview go?"; "Did the break help clear your head?"; "about
+  3 days"). **Qwen 3.8 27B Q4_K_M**: 3/3 ("I've been wondering how Tuesday went"). **The
+  control, same weights**, the twenty-five-minute case five times each: without rows
+  Gemma asked how it went 5 of 5, Qwen 2 of 5; with rows 0 of 5 both.
+- **A trap on the way** (docs/lessons.md §6): the stand's first port, 8770, refused to
+  bind with `WinError 10013` — it sits in a range Windows had reserved
+  (`netsh int ipv4 show excludedportrange protocol=tcp`: 8768–8967 among others today).
+- **Docs**: spec §6.2, §9.3, §10, §11.6; architecture §3, §5; the manual §3; README;
+  CHANGELOG *Added*/*Fixed*; the research's §3.3 and §9; the roadmap; screenshots
+  `settings-model-*`/`settings-tools-*` redrawn (the section menu counts Profiles' rows,
+  61 → 62; the old dumps re-rendered byte-identical first).
+
+**Gates**: 4125 unit tests green, 282 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.

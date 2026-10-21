@@ -554,6 +554,12 @@ impl SettingsScreen {
         if let FieldId::PTool(idx) = id {
             return self.toggle_profile_tool(idx);
         }
+        // A companion feature — over the selected profile too (spec §10).
+        if id == FieldId::PTimeRows {
+            let p = self.profiles.get_mut(self.profile_idx)?;
+            p.companion.time_rows = !p.companion.time_rows;
+            return Some(self.save_profile());
+        }
         // The selected MCP server's switch — indexed, so not in the access table.
         if id == FieldId::McpEnabled {
             let srv = self.config.mcp.servers.get_mut(self.mcp_server_idx)?;
@@ -943,6 +949,7 @@ impl SettingsScreen {
                 character_names: Some(p.character_names.clone()),
                 default_sampling: Some(p.default_sampling.clone()),
                 enabled_tools: Some(p.enabled_tools.clone()),
+                companion: Some(p.companion),
                 // The scaffold language is always sent; the orchestrator authoritatively
                 // vetoes a switch if the profile has data (matching the current
                 // value is also a no-op). docs/history/i18n.md.

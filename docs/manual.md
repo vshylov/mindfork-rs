@@ -151,6 +151,14 @@ profile at a time.
 `/profile delete` and `/profile system` do the same by typing. Deleting always
 asks first.
 
+The **Companion** group in a profile's settings holds what turns an assistant
+into a companion, one switch per feature and every one off until you turn it
+on. *Time of messages* puts the date and time in front of each of your
+messages as the model reads it — "[Thursday, 22 October 2026, 18:40 · 2d 21h
+after the previous message]", or "[21:35 · 24m later]" within a day — so it
+knows that three days have passed since you said the interview was tomorrow.
+Nothing is added to the chat itself, and the prompt cache is not disturbed.
+
 ### Writing as you
 
 `Ctrl+U` (`/impersonate [text]`) has the model write **your** next message and

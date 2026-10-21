@@ -723,6 +723,7 @@ mod settings;
 mod silent;
 mod subagent;
 mod tasks;
+mod time_rows_live;
 mod title;
 mod tts;
 

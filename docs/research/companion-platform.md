@@ -234,6 +234,28 @@ sampled by hand; the persona with no self-model block; scenarios written for the
 probe. It settles the direction, not the numbers a stage would ship on — each stage
 re-runs its cells as `#[ignore]` smokes on the gate's models.
 
+### 3.3 Stage 1's probe: the shipped form (2026-10-21)
+
+Before stage 1 shipped, the exact strings it writes were asked of the same three
+models through the same route: the full form where the day changes or on the first
+message, the compact one within a day, the gap in the locale's number-neutral units —
+"[Thursday, 22 October 2026, 18:40 · 2d 21h after the previous message]", "[21:35 ·
+24m later]" — and the Russian bundle's forms in a Russian conversation under a
+Russian persona. 150 replies, graded as in §3.2:
+
+| Cell | Gemma 4 31B | Qwen 3.6 27B | Haiku 5.5 |
+|---|---|---|---|
+| S1 three days later, en · ru — the interview over | 10 · 10 | 10 · 10 | 10 · 10 |
+| S4 twenty-five minutes later, en · ru — still ahead | 9 (1 no mention) · 10 | 9 · 10 | 10 · 10 |
+| S5 the long evening — no imitation, no time talk | 10 | 9 | 10 |
+
+None of 59 graded S4 replies read the interview as past; one Qwen run was its
+drafting, ungraded. The compact form is as good as the full one where the full one
+was measured, at about half the tokens. **On the gate's own weights** (llama.cpp
+b11719, the 4090), the S4 case five times each with no tools: without rows Gemma 4 31B
+q4_0 asked how the interview went 5 of 5 and Qwen 3.8 27B Q4_K_M 2 of 5; with the
+compact row, 0 of 5 both. Stage 1's smokes then passed on both (docs/journal/engine.md).
+
 ## 4. What the field does
 
 A survey of the commercial companions (Kindroid, Nomi, Character.AI, Replika, the
@@ -908,9 +930,12 @@ F1 (a) was chosen — each stage a pull request or two, each behind its own prob
 where it touches what the model reads, and every feature a profile switch that is off
 by default:
 
-1. **When it is** — C1: the time row and the tool fix. The probe's S1–S3 become
-   `#[ignore]` smokes on the gate's own models; a chat-format step if the row is a
-   new stored kind (ADR 0006).
+1. **When it is** — C1: the time row and the tool fix. **Built** (branch
+   `feat/companion-time-row`): the rows are derived from the messages' timestamps
+   when a request is built rather than stored, which keeps the prefix as stable and
+   needs no chat-format step; the shipped form was measured first (§3.3); three
+   `#[ignore]` smokes, live GO on Gemma 4 31B and Qwen 3.8 27B. Left for later: dates
+   in the digests the rolling summary and the reflection read.
 2. **What it knows about you** — C2 (a) behind a planted-fact probe with a go/no-go,
    C2 (b), and C3, the memory screen, in the same stage (§7).
 3. **It comes back** — C4 (a) follow-ups with the rules of §7, and C5 (a)

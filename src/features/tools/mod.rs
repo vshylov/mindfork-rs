@@ -55,6 +55,34 @@ use crate::shared::storage::Storage;
 
 pub use introspection::{GET_SAMPLING_ID, SET_SAMPLING_ID};
 
+/// When the user wrote, as `get_last_user_message_time` reports it (spec §9.3).
+///
+/// Two instants, because "the last user message" means two things: on an ordinary
+/// turn it is the message being answered, sent a moment ago, and the question a
+/// model asks the tool is how long before *that* the user last wrote — the gap since
+/// the previous exchange (docs/research/companion-platform.md §2.2). On a turn the
+/// app started (a woken turn, a background task) there is no message being answered,
+/// and the latest one is the answer.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct UserMessageTimes {
+    /// The user message this turn answers — `None` on a turn that answers none of
+    /// theirs (a woken turn, a background task).
+    pub answering: Option<DateTime<Utc>>,
+    /// The user's message before `answering`; on a turn that answers none, the
+    /// user's latest message.
+    pub previous: Option<DateTime<Utc>>,
+}
+
+impl UserMessageTimes {
+    /// A turn that answers no message of the user's: only when they last wrote.
+    pub fn latest(at: Option<DateTime<Utc>>) -> Self {
+        Self {
+            answering: None,
+            previous: at,
+        }
+    }
+}
+
 /// Immutable snapshot of turn state (no shared locks). See spec §9.2.
 #[derive(Clone)]
 pub struct ToolContext {
@@ -66,8 +94,9 @@ pub struct ToolContext {
     pub system_message: String,
     /// Effective sampling (after the priority resolution, §8.3).
     pub effective_sampling: SamplingConfig,
-    /// Timestamp of the last user message (if any).
-    pub last_user_message_at: Option<DateTime<Utc>>,
+    /// When the user wrote: the message this turn answers and the one before it
+    /// (see [`UserMessageTimes`]).
+    pub user_times: UserMessageTimes,
     pub storage: Arc<Storage>,
     /// Chat engine (for `fetch_url`'s summarizer and the like).
     pub engine: Arc<dyn EngineBackend>,
@@ -307,7 +336,7 @@ pub struct TurnInfo {
     pub chat_id: Uuid,
     pub system_message: String,
     pub effective_sampling: SamplingConfig,
-    pub last_user_message_at: Option<DateTime<Utc>>,
+    pub user_times: UserMessageTimes,
     /// Files attached to the chat (a `Chat` snapshot; empty for background tasks).
     pub attachments: std::sync::Arc<[crate::entities::attachment::Attachment]>,
     /// The compacted-away part of the conversation, rendered (a `Chat` snapshot;
@@ -363,7 +392,7 @@ impl ToolContext {
             chat_id: turn.chat_id,
             system_message: turn.system_message,
             effective_sampling: turn.effective_sampling,
-            last_user_message_at: turn.last_user_message_at,
+            user_times: turn.user_times,
             attachments: turn.attachments,
             index_board: deps.index_board,
             embed_configured: deps.embed_configured,
@@ -1209,7 +1238,7 @@ pub(crate) mod testkit {
             chat_id: Uuid::new_v4(),
             system_message: "системное сообщение".into(),
             effective_sampling: SamplingConfig::default(),
-            last_user_message_at: None,
+            user_times: UserMessageTimes::default(),
             // No attachments by default; tests that need them set `ctx.attachments`.
             attachments: std::sync::Arc::from(Vec::new()),
             history: None,

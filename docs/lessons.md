@@ -1685,6 +1685,16 @@ tick (`SPINNER_STEP`, asserted at compile time against `TICK`).
 
 ## 6. Windows and cross-platform
 
+**A port that will not bind with `WinError 10013` is reserved, not taken.** Windows
+(Hyper-V, WinNAT) excludes whole port ranges, and a socket in one fails with "access
+forbidden" while `netstat` shows nothing listening — a hand-started `llama-server` on
+8770 died with "couldn't bind HTTP server socket". `netsh int ipv4 show
+excludedportrange protocol=tcp` lists the ranges; they move between boots, so a stand's
+port that worked last week (8791 for the embedder) can fall inside one today. Pick a
+port outside them — or test with a two-line Python `bind` — before reading the failure
+as a sandbox or a crash.
+— *the time row, and the user's previous message*.
+
 **Windows reports AltGr as Ctrl+Alt.** The right Alt comes with a left Ctrl the system
 synthesizes, so a character typed with AltGr (`@` on a German keyboard, `ą` on a Polish
 one) reaches crossterm with `CONTROL | ALT` — and any text field that types "no `Ctrl`
