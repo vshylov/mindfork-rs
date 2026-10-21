@@ -15,7 +15,7 @@ fn note(text: &str, tags: &[&str], days: i64) -> Note {
     let mut n = Note::new(
         Uuid::new_v4(),
         text,
-        tags.iter().map(|t| t.to_string()).collect(),
+        tags.iter().map(ToString::to_string).collect(),
     );
     n.created_at = Utc::now() - chrono::Duration::days(days);
     n.updated_at = n.created_at;

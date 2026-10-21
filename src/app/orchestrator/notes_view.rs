@@ -4,9 +4,13 @@
 //! projection; the orchestrator owns the storage and answers every request and
 //! every edit with a fresh [`NotesView`].
 
-use super::*;
+use uuid::Uuid;
+
+use super::{Orchestrator, request};
+use crate::app::events::AppEvent;
 use crate::entities::note::{NoteCard, NoteEdit, NoteLinkView, NotesView};
 use crate::features::tools::notes::{SELF_NOTE_TAG, is_self_note};
+use crate::shared::storage::Storage;
 
 /// What the snapshot's second half needs, read off the orchestrator before the
 /// task that embeds the opening is spawned.
