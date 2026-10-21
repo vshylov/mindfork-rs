@@ -329,6 +329,16 @@ effort tiers — have all closed
   change needs no walk over the chats — `/reindex` re-embeds from the chunk
   text the DB already holds — but a change of chunk parameters still would
   ([embedding-model-change-reindex.md](research/embedding-model-change-reindex.md)).
+- **A platform for a companion** — an open track: the owner picked the forks on
+  2026-10-21 ([companion-platform.md](research/companion-platform.md) §8) — every
+  feature a profile switch, off by default; time and memory first, stage 1 the time
+  row. The companion is never told the date or how long since the last exchange —
+  `get_last_user_message_time` reports the message just sent — so each of three
+  models probed misread either a three-day gap or a twenty-five-minute one, and a
+  dated row on every user message settled both for all three. Notes about the person
+  reach the prompt only through `note_recall`, and no screen shows them; nothing but a
+  finished background run can wake the assistant. Twelve candidates, from the time
+  row to a messenger bridge, in a sequence of six stages.
 
 ### Feed and rendering
 
