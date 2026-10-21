@@ -620,6 +620,10 @@ pub(super) fn dispatch_tasks(
             let _ = cmd_tx.send(AppCommand::StopBackgroundTask { kind });
             false
         }
+        TasksIntent::CancelFollowup(id) => {
+            let _ = cmd_tx.send(AppCommand::CancelFollowup(id));
+            false
+        }
         // The screen stays in front until the chat arrives, and is stashed as
         // it goes (`hand_over_to_chat`) — so the previous chat is never shown
         // in between. The chat **already open** is the exception the chat list

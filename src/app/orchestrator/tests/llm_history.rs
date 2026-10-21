@@ -37,6 +37,7 @@ fn land_turn(orch: &mut Orchestrator, chat_id: Uuid, messages: Vec<Message>) {
         continuation: None,
         images_withheld: 0,
         anchor: None,
+        woken: false,
     });
 }
 

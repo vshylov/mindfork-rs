@@ -25,7 +25,7 @@ use ratatui::widgets::Paragraph;
 use uuid::Uuid;
 
 use crate::entities::subagent::{RunOutcome, RunProgressKind};
-use crate::entities::task::{AppTask, BackgroundKind, TaskList, TaskRun};
+use crate::entities::task::{AppTask, BackgroundKind, TaskFollowup, TaskList, TaskRun};
 use crate::screens::awaited_chat::AwaitedChat;
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
@@ -45,6 +45,7 @@ pub(crate) static HELP_SECTION: HelpSection = HelpSection {
         ("Enter", "ui.help.tk_open"),
         ("P", "ui.help.tk_parent"),
         ("F6", "ui.help.tk_stop"),
+        ("Del", "ui.help.tk_cancel_followup"),
         ("Esc", "ui.help.tk_close"),
     ],
     openers: &[],
@@ -81,12 +82,15 @@ pub enum TasksIntent {
     /// Stop one of the app's own silent tasks (`F6` on a task row that is
     /// running or waiting — docs/research/stop-silent-task.md §3.1).
     StopTask(BackgroundKind),
+    /// Cancel a pending follow-up (`Del` twice on its row, spec §9.3.6).
+    CancelFollowup(Uuid),
 }
 
 /// A selectable row: which half of the snapshot, and the index into it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Row {
     Run(usize),
+    Followup(usize),
     App(usize),
 }
 
@@ -95,6 +99,7 @@ enum Row {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Ident {
     Run(Uuid),
+    Followup(Uuid),
     App(BackgroundKind),
 }
 
@@ -126,6 +131,9 @@ pub struct TasksScreen {
     /// stays up for, so the previous chat is never shown in between. See
     /// spec §11.2.
     awaited: AwaitedChat,
+    /// The follow-up a first `Del` asked about; a second `Del` on it cancels,
+    /// any other key forgets the question.
+    confirm_cancel: Option<Uuid>,
 }
 
 impl TasksScreen {
@@ -138,6 +146,7 @@ impl TasksScreen {
             scroll: 0,
             last_drawn: Instant::now(),
             awaited: AwaitedChat::Nothing,
+            confirm_cancel: None,
         }
     }
 
@@ -202,15 +211,24 @@ impl TasksScreen {
             && self.last_drawn.elapsed() >= REPAINT_EVERY
     }
 
-    /// The selectable rows in display order: the runs, then the tasks.
+    /// The selectable rows in display order: the runs, the follow-ups, then
+    /// the tasks.
     fn rows(&self) -> Vec<Row> {
         let Some(list) = &self.list else {
             return Vec::new();
         };
         (0..list.runs.len())
             .map(Row::Run)
+            .chain((0..list.followups.len()).map(Row::Followup))
             .chain((0..list.app.len()).map(Row::App))
             .collect()
+    }
+
+    fn selected_followup(&self) -> Option<&TaskFollowup> {
+        match self.selected_row()? {
+            Row::Followup(i) => self.list.as_ref()?.followups.get(i),
+            _ => None,
+        }
     }
 
     fn selected_row(&self) -> Option<Row> {
@@ -220,7 +238,7 @@ impl TasksScreen {
     fn selected_run(&self) -> Option<&TaskRun> {
         match self.selected_row()? {
             Row::Run(i) => self.list.as_ref()?.runs.get(i),
-            Row::App(_) => None,
+            Row::Followup(_) | Row::App(_) => None,
         }
     }
 
@@ -228,6 +246,7 @@ impl TasksScreen {
         let list = self.list.as_ref()?;
         Some(match row {
             Row::Run(i) => Ident::Run(list.runs.get(i)?.id),
+            Row::Followup(i) => Ident::Followup(list.followups.get(i)?.id),
             Row::App(i) => Ident::App(list.app.get(i)?.kind),
         })
     }
@@ -255,6 +274,7 @@ impl TasksScreen {
                 .get(i)
                 .filter(|t| t.running)
                 .map(|t| Stoppable::Task(t.kind)),
+            Row::Followup(_) => None,
         }
     }
 
@@ -267,6 +287,8 @@ impl TasksScreen {
         // A key while waiting for a chat means the user has moved on (see
         // `AwaitedChat::clear`); `app` sets the wait after this returns.
         self.awaited.clear();
+        // A pending "cancel this follow-up?" is answered by the next key alone.
+        let asked = self.confirm_cancel.take();
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         if key.code == KeyCode::F(10) || (ctrl && keys::hotkey_char(&key) == Some('q')) {
             return Some(TasksIntent::Quit);
@@ -283,7 +305,19 @@ impl TasksScreen {
             KeyCode::PageDown => self.selected = (self.selected + PAGE_STEP).min(last),
             KeyCode::Home => self.selected = 0,
             KeyCode::End => self.selected = last,
-            KeyCode::Enter => return self.selected_run().map(|r| TasksIntent::OpenRun(r.id)),
+            KeyCode::Enter => {
+                if let Some(f) = self.selected_followup() {
+                    return Some(TasksIntent::OpenParent(f.chat));
+                }
+                return self.selected_run().map(|r| TasksIntent::OpenRun(r.id));
+            }
+            KeyCode::Delete => {
+                let id = self.selected_followup()?.id;
+                if asked == Some(id) {
+                    return Some(TasksIntent::CancelFollowup(id));
+                }
+                self.confirm_cancel = Some(id);
+            }
             KeyCode::F(6) => {
                 return self.selected_stoppable().map(|s| match s {
                     Stoppable::Run(id) => TasksIntent::StopRun(id),
@@ -291,6 +325,9 @@ impl TasksScreen {
                 });
             }
             KeyCode::Char(_) if keys::hotkey_char(&key) == Some('p') => {
+                if let Some(f) = self.selected_followup() {
+                    return Some(TasksIntent::OpenParent(f.chat));
+                }
                 return self
                     .selected_run()
                     .map(|r| TasksIntent::OpenParent(r.parent));
@@ -313,6 +350,14 @@ impl TasksScreen {
         }
         if self.selected_stoppable().is_some() {
             hk.push(("F6", loc.t("ui.tasks.hk.stop"), false));
+        }
+        if let Some(f) = self.selected_followup() {
+            hk.push(("Enter", loc.t("ui.tasks.hk.open_chat"), false));
+            if self.confirm_cancel == Some(f.id) {
+                hk.push(("Del", loc.t("ui.tasks.hk.cancel_confirm"), true));
+            } else {
+                hk.push(("Del", loc.t("ui.tasks.hk.cancel"), false));
+            }
         }
         hk.extend([
             ("F1", loc.t("ui.tasks.hk.help"), false),
@@ -452,8 +497,19 @@ impl TasksScreen {
             }
         }
         out.push((Line::default(), None));
+        // The follow-ups, only while there are any: a profile that never turned
+        // the feature on sees the screen it always did.
+        if !list.followups.is_empty() {
+            out.push(header("ui.tasks.sec.followups"));
+            let base = list.runs.len();
+            for (i, f) in list.followups.iter().enumerate() {
+                let selected = self.selected_row() == Some(Row::Followup(i));
+                out.push((self.followup_line(f, width, selected), Some(base + i)));
+            }
+            out.push((Line::default(), None));
+        }
         out.push(header("ui.tasks.sec.app"));
-        let base = list.runs.len();
+        let base = list.runs.len() + list.followups.len();
         let label_w = list
             .app
             .iter()
@@ -528,6 +584,42 @@ impl TasksScreen {
             ));
         }
         Line::from(spans)
+    }
+
+    /// One follow-up's row: when it is due (local time), what about, and the
+    /// conversation it returns to — *paused* while its profile has the switch off.
+    fn followup_line(&self, f: &TaskFollowup, width: usize, selected: bool) -> Line<'static> {
+        let p = &self.palette;
+        let due = f
+            .due_at
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d %H:%M")
+            .to_string();
+        let mut tail = format!("  · {}", f.chat_title);
+        if f.paused {
+            tail.push_str(&format!(" · {}", self.loc.t("ui.tasks.followup_paused")));
+        }
+        let fixed = 2 + wrap::str_width(&due) + 2 + wrap::str_width(&tail);
+        let (about, _) = wrap::truncate_to_width(
+            &f.about.replace('\n', " "),
+            width.saturating_sub(fixed).max(TITLE_MIN),
+        );
+        Line::from(vec![
+            Span::styled(
+                if selected { "▌" } else { " " }.to_string(),
+                p.accent_style(),
+            ),
+            Span::styled(format!(" {due}  "), p.accent_style()),
+            Span::styled(
+                about,
+                if selected {
+                    Style::new().fg(p.text).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::new().fg(p.text)
+                },
+            ),
+            Span::styled(tail, p.muted_style()),
+        ])
     }
 
     /// One silent task's row: the label, and running or idle.
@@ -778,6 +870,7 @@ mod tests {
             runs,
             more_landed: 0,
             app: app_tasks(),
+            followups: Vec::new(),
         }
     }
 
@@ -1227,5 +1320,74 @@ mod tests {
         let mut s = screen(vec![landed("a")]);
         assert_eq!(press(&mut s, KeyCode::F(10)), Some(TasksIntent::Quit));
         assert_eq!(press(&mut s, KeyCode::Esc), Some(TasksIntent::Close));
+    }
+
+    /// A pending follow-up of the conversation "Interview".
+    fn followup(about: &str) -> TaskFollowup {
+        TaskFollowup {
+            id: Uuid::new_v4(),
+            chat: Uuid::new_v4(),
+            chat_title: "Interview".into(),
+            about: about.into(),
+            due_at: Utc::now() + chrono::Duration::hours(3),
+            paused: false,
+        }
+    }
+
+    /// The follow-ups have a section of their own between the runs and the app's
+    /// work, shown only while there are any (spec §9.3.6, §11.10): `Enter` opens
+    /// the conversation, `Del` asks, and only a second `Del` cancels.
+    #[test]
+    fn a_follow_up_is_listed_opened_and_cancelled_on_the_second_del() {
+        let mut s = TasksScreen::new(Palette::default(), en());
+        let mut l = list(vec![landed("a run")]);
+        let f = followup("Ask how the interview went");
+        let mut paused = followup("Call the bank");
+        paused.paused = true;
+        l.followups = vec![f.clone(), paused];
+        s.set_list(l);
+        let text = text_at(&mut s, 120, 24);
+        assert!(text.contains("FOLLOW-UPS"), "{text}");
+        assert!(text.contains("Ask how the interview went"), "{text}");
+        assert!(text.contains("· Interview"), "{text}");
+        assert!(text.contains("paused: Follow-ups are off"), "{text}");
+        let runs = text.find("RUNS").unwrap();
+        let ours = text.find("FOLLOW-UPS").unwrap();
+        let app = text.find("THE APP'S OWN WORK").unwrap();
+        assert!(runs < ours && ours < app, "{text}");
+
+        press(&mut s, KeyCode::Down);
+        assert_eq!(
+            press(&mut s, KeyCode::Enter),
+            Some(TasksIntent::OpenParent(f.chat))
+        );
+        assert!(keys(&s).contains(&"Del"));
+        assert_eq!(
+            press(&mut s, KeyCode::Delete),
+            None,
+            "the first Del only asks"
+        );
+        assert!(text_at(&mut s, 120, 24).contains("again to cancel"));
+        assert_eq!(
+            press(&mut s, KeyCode::Delete),
+            Some(TasksIntent::CancelFollowup(f.id))
+        );
+        // Any other key between the two forgets the question.
+        press(&mut s, KeyCode::Delete);
+        press(&mut s, KeyCode::Down);
+        press(&mut s, KeyCode::Up);
+        assert_eq!(press(&mut s, KeyCode::Delete), None);
+        // On a run row, Del does nothing.
+        press(&mut s, KeyCode::Home);
+        assert_eq!(press(&mut s, KeyCode::Delete), None);
+        assert_eq!(press(&mut s, KeyCode::Delete), None);
+    }
+
+    /// No follow-ups, no section: the screen is what it was before the feature.
+    #[test]
+    fn without_follow_ups_there_is_no_section() {
+        let mut s = TasksScreen::new(Palette::default(), en());
+        s.set_list(list(vec![landed("a run")]));
+        assert!(!text_at(&mut s, 120, 24).contains("FOLLOW-UPS"));
     }
 }

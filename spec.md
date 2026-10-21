@@ -397,6 +397,7 @@ Two-tier (as in attempt #1):
 2. **SQLite** (`data.db`) — notes and RAG (need queries and vector search):
    - `notes(id, profile_id, content, tags, created_at, updated_at)`.
    - `rag_documents(id, profile_id, source, chunk_text, created_at)` + a `sqlite-vec` virtual table for embeddings (linked by `id`/`rowid`).
+   - `followups(id, profile_id, chat_id, about, due_at, created_at, state, closed_at)` — the returns a companion planned, `pending` → `delivered` or `cancelled` ([§9.3.6](#936-follow-ups-the-companion-plans)). Not in the chat file: a chat holds what was said, this what is still to come.
    - **Per-profile isolation** — a mandatory `WHERE profile_id = ?` on every notes/RAG query (a repository invariant).
 
 **Plus a disposable third file, `cache.db`** — the full-text index behind searching chats by content (`Ctrl+F` in the chat list, [§11.2](#112-the-chat-list-an-overlay)). It is deliberately **not** a third tier of user data: everything in it is derived from `chats/*.json`, and that changes the rules. It carries none of the schema-versioning machinery of [§12.2](#122-schema-versioning-and-migration), because a version mismatch or a corrupt file is answered by *deleting the file and rebuilding*, never by a migration step and never by refusing to start — a disposable index must not be able to block startup. So deleting it is a **supported repair** rather than data loss, and it is **excluded from backups** ([§12.3](#123-backup-and-deletion) — the archive's include list is an allowlist of user data), so a restore lands without an index and rebuilds it. It is kept in step by the sole writer of chats: the orchestrator indexes a chat right after saving it, and a startup pass reconciles whatever changed outside the app (import, restore, a hand-edited file, a deleted cache).
@@ -821,6 +822,8 @@ Semantics and signatures — as in attempt #1 (section 9.3 of its specification)
 | `rewrite_current_message` | `{}` | **Control** (opt., off by default) — discard the current (in-progress) message and write it again. See [9.3.3](#933-conversation-control-tools). |
 | `chat_search` | `{ query, top_k? }` | **Optional, off by default** — full-text search across the *other* chats of the profile, grouped by conversation with page addresses. See [9.11](#911-cross-chat-search-chat_search-and-chat_read). |
 | `chat_read` | `{ chat, page? }` | **Optional, off by default** — read another conversation of the profile as a paged transcript. See [9.11](#911-cross-chat-search-chat_search-and-chat_read). |
+| `followup_plan` | `{ when, weekday, about }` | **Companion** — plan a return to this conversation about something the person said; offered only while the profile's *Follow-ups* switch is on. See [9.3.6](#936-follow-ups-the-companion-plans). |
+| `followup_cancel` | `{ id }` | **Companion** — cancel one of this conversation's pending follow-ups. See [9.3.6](#936-follow-ups-the-companion-plans). |
 
 **Concurrent-marked** (`Tool::concurrent()`, [9.2](#92-the-tool-contract); the loop's segments, [6.3](#63-client-side-agentic-loop)) — the readers that hold nothing and change nothing: `fs_read`/`fs_list`, `code_read`/`code_grep`/`code_list`, `attachment_read`/`attachment_search`, `chat_search`/`chat_read`, `history_read`/`history_search`, `get_self_model`/`get_sampling`/`get_llm_name`/`get_llm_history`, and `fetch_url`. Not marked, by name: `web_search` (the keyless chain's throttling under concurrent requests is unmeasured), `note_recall` (it writes vectors inside a read), `youtube_watch`, `python_exec`, `code_edit`/`code_write`/`code_build`/`code_run`/`code_test`, every MCP tool, `call_subagent`/`run_dialogue`, the control pair, and every writer. A registry test pins the marked set to this list and that none of it is dangerous ([9.8](#98-confirmation-for-dangerous-tool-calls)).
 
@@ -1075,6 +1078,64 @@ See
   passage role: stored vectors are all passage-role, so changing only the *query*
   marker alters retrieval without invalidating anything and correctly forces no
   reindex.
+
+#### 9.3.6. Follow-ups the companion plans
+
+**What.** A companion profile with *Follow-ups* on (`Profile.companion.followups`,
+off by default, §10) can plan to come back to something the person said — an
+interview, a trip, a reminder they asked for — and, when the time comes, write to
+them first in that conversation
+([docs/research/companion-platform.md](docs/research/companion-platform.md) C4 (a),
+§3.5; the owner's F5 (a) and F9 (a)). Check-ins on a schedule and a greeting from
+memory (C4 (b), (c)) are not built.
+
+**The tools.** `followup_plan { when, weekday, about }` writes a pending follow-up
+of this conversation to SQLite (`followups`, §5.2): `when` is the person's wall
+clock, `YYYY-MM-DD HH:MM`; `weekday` is the day the model means, and a date it
+contradicts is refused with the next seven days spelled out — gpt-oss put
+"Friday" on a Thursday in 4 of 10 probe runs, and with the check it planned the
+right day in 5 of 5. A time in the past, more than a year ahead, or an unreadable
+one is refused with the time now; a conversation holds at most 5 pending and a
+profile 20. The answer names the time, how far it is, the time now, the id, and
+the conversation's other pending ones, so a duplicate can be noticed.
+`followup_cancel { id }` cancels one of this conversation's. Both are offered only
+while the switch is on (`ToolGate::Followups`), never to a sub-agent, and their
+wording — plan only when the person's own words give a reason, never to keep in
+touch or because they might be away — was measured before it shipped: across
+five models, one plan in 70 runs about a film, a networking question or a bad day
+at work (none in 95 under the first wording), and a plan for an interview, a
+surgery or a reminder asked for in 84 of 95 (§3.5 there).
+
+**Delivery.** The orchestrator keeps the earliest moment a pending follow-up may
+be delivered — due, outside the profile's **quiet hours** (`quiet_from` to
+`quiet_until`, 22 to 8 by default), and on a day under the profile's **cap**
+(`followups_per_day`, 3 by default) — and sleeps until then, at most a minute at a
+time (a follow-up is due by the wall clock, and a monotonic timer stops while the
+machine sleeps). A due follow-up becomes a **notice row** in its conversation —
+a task notification (§9.3.2) marked as a follow-up (`Message.followup`): the time
+now, when it was planned and what about, and when it was due if it is half an hour
+late or more — and is marked delivered, once. One due while the app was closed is
+delivered at the next start; several due in one conversation are rows of their own
+and one wake. A conversation the person is not in is marked unread; a turn running
+in the open one holds the delivery until it ends.
+
+**The wake.** The companion is woken on the open conversation whose last row is a
+follow-up's notice, when nothing is generating and the engine is ready — at the
+delivery, when the person opens that conversation (the owner's F5 (i)), when the
+engine comes up, when the turn that held it ends. On the wire the notice is user
+text (§9.3.2); standing alone it ends with the choice to **write first or answer
+exactly `<silent>`**, added when the request is built and never stored, so a notice
+the person's next message merges with carries no such choice. A woken turn whose
+reply is `<silent>` leaves no trace: the reply is dropped, and when the turn did
+nothing else, the notices it answered go too (§7, rule 2 there). Regenerating a
+reply to a notice is a woken turn again.
+
+**Cancelling.** The person cancels on the tasks screen (§11.10); the model with
+`followup_cancel`; a deleted conversation or profile takes its follow-ups with it;
+taking an exchange back or regenerating it cancels what it planned — every pending
+follow-up of the conversation created at or after its last remaining row. A
+profile whose switch is off keeps its pending ones, listed as paused and delivered
+once the switch is on again.
 
 ### 9.4. Enabling tools
 
@@ -2449,7 +2510,7 @@ A concept carried over in full from attempt #1 (section 10 of its specification)
 
 A profile holds: a unique identifier, a system message, and an **optional greeting message** (some models are more interesting when the assistant speaks first) — a direct requirement from the task.
 
-**Companion features** (`Profile.companion: CompanionFeatures`, settings → "Profiles" → the "Companion" group; [docs/research/companion-platform.md](docs/research/companion-platform.md)): what makes a profile a companion rather than an assistant, **each a switch of its own and every one off by default** — a person may want only an assistant, and an assistant and a companion share one installation (the owner's decision of 2026-10-21, §8 there). The group is written to `profiles.json` only once a feature is on, so a profile that never opts in is written exactly as before and no schema step is needed. Today it holds three: **time rows** (`time_rows`, §6.2) — the date and time in front of every user message the model reads; **notes in the prompt** (`notes_in_prompt`, §6.6) — the profile's notes nearest the conversation's opening; **earlier conversations** (`earlier_chats`, §6.6) — the three conversations before this one, with their addresses when `chat_read` is offered.
+**Companion features** (`Profile.companion: CompanionFeatures`, settings → "Profiles" → the "Companion" group; [docs/research/companion-platform.md](docs/research/companion-platform.md)): what makes a profile a companion rather than an assistant, **each a switch of its own and every one off by default** — a person may want only an assistant, and an assistant and a companion share one installation (the owner's decision of 2026-10-21, §8 there). The group is written to `profiles.json` only once a feature is on, so a profile that never opts in is written exactly as before and no schema step is needed. Today it holds four: **time rows** (`time_rows`, §6.2) — the date and time in front of every user message the model reads; **notes in the prompt** (`notes_in_prompt`, §6.6) — the profile's notes nearest the conversation's opening; **earlier conversations** (`earlier_chats`, §6.6) — the three conversations before this one, with their addresses when `chat_read` is offered; **follow-ups** (`followups`, §9.3.6) — returns the companion plans and makes when they fall due, with the profile's quiet hours (`quiet_from`, `quiet_until`, 22 to 8) and day's cap (`followups_per_day`, 3), which are on from the start.
 
 **Role names** (`Profile.character_names`, settings → "Profiles" → the "Persona" group): what the interlocutors are called in this profile's chats — the feed's headers (in caps: `GAIA` instead of `YOU`) and the labels of the `F5` conversation export (`Gaia:` instead of `User:`). Both fields are **empty by default** — then each surface uses the interface language's own label, so the chat follows axis B until the user overrides it. The names are resolved at render time from the profile (see the exception above), so they can be changed at any point, including for old chats. Whitespace-only counts as unset. Legacy seed values (the pre-i18n Russian placeholders, and the `You`/`Assistant` they were migrated to) were never displayed and are cleared once at startup so the labels don't get stuck in a foreign language.
 
@@ -4316,7 +4377,7 @@ docs/history/external-api-key.md.
 | `F2` | rename the chat |
 | `F5` | copy the entire chat conversation to the clipboard (the active chat / the one selected in the list) |
 | `F6` | on the open transcript of a **background** subagent run: stop the run (§9.3.2; `/subagents stop [n]` is the typed route). Anywhere else the key does nothing and is not advertised |
-| `F7` | the tasks screen: every sub-agent and dialogue run across every chat — running with its position, landed with its outcome — and the app's own background work (§11.10; `/tasks` is the typed route). There: `Enter` opens a run's transcript, `P` its chat, `F6` stops a running background run or one of the app's own tasks (`/tasks stop <kind>` is the typed route to the latter) |
+| `F7` | the tasks screen: every sub-agent and dialogue run across every chat — running with its position, landed with its outcome — and the app's own background work (§11.10; `/tasks` is the typed route). There: `Enter` opens a run's transcript, `P` its chat, `F6` stops a running background run or one of the app's own tasks (`/tasks stop <kind>` is the typed route to the latter); on a companion's follow-up (§9.3.6) `Enter` or `P` opens its conversation and `Del` twice cancels it |
 | `Ctrl+R` | in a chat: regenerate the last response; in the chat list: ask the model to title the selected chat (§11.2) |
 | `Ctrl+U` | write a message as the user (impersonation, §11.8) |
 | `Ctrl+E` | delete the last exchange (the text is returned to the input box) |
@@ -4998,6 +5059,12 @@ doing for me right now, and where did the last thing land* — in two sections:
   background seat ([9.3.2](#93-tools-and-the-agentic-loop)); both are listed —
   a screen whose premise is that nothing the app does is hidden cannot omit
   the run the chat list shows as running — and they differ in one key (below).
+- **Follow-ups** — shown only while there are any: the pending follow-ups a
+  companion planned ([9.3.6](#936-follow-ups-the-companion-plans)), soonest
+  first, cross-profile like the runs — the local time it is due, what about, and
+  the conversation it returns to, *paused* while its profile has the switch off.
+  `Enter` or `P` opens the conversation; `Del` asks, and a second `Del` cancels
+  (`AppCommand::CancelFollowup`) — any other key forgets the question.
 - **The app's own work** — the four silent tasks (reflection, notes
   consolidation, self-model consolidation, history compaction), each
   *running*, *waiting* or *idle*: *waiting* is a slot taken with no stream

@@ -856,3 +856,43 @@ fn observation_query_follows_the_summary_while_one_is_in_force() {
     // The master switch off leaves the summary dormant: the opening again.
     assert_eq!(observation_query(&chat, false), "вопрос 0");
 }
+
+/// A follow-up's notice (spec §9.3.6) standing alone — the woken turn, and its
+/// rows ever after — ends with the choice to write first or stay silent; merged
+/// in front of the person's words it carries no such choice, so a reply to them
+/// is never invited to be `<silent>`.
+#[test]
+fn a_follow_up_notice_offers_silence_only_where_nobody_wrote_after_it() {
+    let mut p = Profile::new("X", "You are X.");
+    p.language = crate::shared::i18n::Lang::En;
+    let mut chat = Chat::from_profile(&p, "c");
+    chat.push_message(Message::user("the interview is tomorrow"));
+    chat.push_message(Message::assistant("good luck"));
+    chat.push_message(Message::followup_notice(
+        uuid::Uuid::new_v4(),
+        "[Follow-up — not a message from the user] ask how it went.",
+    ));
+    // `request_of` words the scaffold in its own locale; the marker is the same in all.
+    let silence = "<silent>";
+
+    // The wake: the notice alone, the choice after it.
+    let req = request_of(&chat, &CompactionSettings::default(), false);
+    let last = &req.messages.last().unwrap().content;
+    assert!(last.starts_with("[Follow-up"), "{last}");
+    assert!(last.contains(silence), "{last}");
+
+    // The reply it woke, replayed: the same text, so the prefix holds.
+    chat.push_message(Message::assistant("how did it go?"));
+    let req = request_of(&chat, &CompactionSettings::default(), false);
+    assert!(req.messages[2].content.contains(silence));
+    assert_eq!(&req.messages[2].content, last);
+
+    // The person wrote instead: merged, and no choice offered.
+    chat.messages.pop();
+    chat.push_message(Message::user("it went fine!"));
+    let req = request_of(&chat, &CompactionSettings::default(), false);
+    let merged = &req.messages.last().unwrap().content;
+    assert!(merged.starts_with("[Follow-up"), "{merged}");
+    assert!(merged.ends_with("it went fine!"), "{merged}");
+    assert!(!merged.contains("<silent>"), "{merged}");
+}

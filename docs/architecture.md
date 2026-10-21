@@ -303,6 +303,10 @@ src/
 │  │  ├─ notes_view.rs      the notes screen's snapshot (AppEvent::NotesView) and its edits
 │  │  │                     (EditNote); what the prompt carries picked as a turn picks it
 │  │  │                     (spec §11.11)
+│  │  ├─ followups.rs       the companion's follow-ups (spec §9.3.6): the next delivery
+│  │  │                     moment (followup_next, the loop's deadline), the notice row,
+│  │  │                     the wake on the open conversation, `<silent>` taken back out,
+│  │  │                     cancels on a take-back or a deleted conversation
 │  │  ├─ request.rs         mapping domain messages to the engine wire format
 │  │  └─ tests/             orchestrator tests, split by feature (mod.rs — fixtures;
 │  │                        generation/chats/profiles/settings/title/impersonation/
@@ -511,6 +515,9 @@ src/
 │  │  │  │                  every pick over NOTES_FLOOR, written before the memory cut
 │  │  │  └─ self_notes.rs   self-note (@self) subsystem: recent/relevant, graph
 │  │  ├─ introspection.rs   get/set_sampling, get/set_system_message, get_last_user_message_time
+│  │  ├─ followups.rs       followup_plan/followup_cancel (spec §9.3.6) — gated by the
+│  │  │                     profile's switch (ToolGate::Followups), withheld from a sub-agent;
+│  │  │                     the weekday check, the pending caps, writes to `followups`
 │  │  ├─ llm.rs             get_llm_name/get_llm_history — the language model's
 │  │  │                     name and the profile's history of model changes
 │  │  │                     (spec §9.14); the naming mirror of self_model.rs
@@ -630,6 +637,9 @@ src/
 │  ├─ exit_command.rs       /exit | /quit parser — the typed route out, for terminals
 │  │                        that claim both Ctrl+Q and F10 (spec §11.7)
 │  ├─ tts_command.rs        /tts [N|all|stop] parser (speech synthesis, spec §11.9)
+│  ├─ followups.rs          the follow-ups' rules (spec §9.3.6), pure: deliverable_at
+│  │                        (quiet hours, the day's cap), parse_when/weekday_named, the
+│  │                        notice and the silence clause, is_silent, the local clock
 │  ├─ time_row.rs           the time rows (spec §6.2): a dated line per user message,
 │  │                        derived from the stored timestamps when a request is built
 │  │                        (full on the first seen and on a new day, compact within one);
@@ -706,6 +716,8 @@ src/
 │  ├─ subagent.rs           SubagentRun/RunKind/RunOutcome — a run's record on its parent chat;
 │  │                        RunProgressKind/SubagentProgress (its position — the status-bar
 │  │                        chip) and ChildView (a transcript's view) — what the screens are told
+│  ├─ followup.rs           Followup/FollowupState/QuietHours — a return the companion planned
+│  │                        (spec §9.3.6); stored in SQLite, not in the chat file
 │  ├─ task.rs               BackgroundKind/AppTask/TaskRun/TaskList — the app's silent tasks and
 │  │                        the tasks screen's snapshot (spec §11.10)
 │  └─ workspace.rs          the code workspace attached to a chat (spec §9.12)
@@ -772,6 +784,8 @@ src/
    │  │  │                 (shared by both vec0 tables)/ensure_*_vec_table/vec_dim/table_exists,
    │  │  │                 shared helpers (row_to_note/parse_uuid/parse_dt/cosine)
    │  │  ├─ notes.rs       notes: insert/list/edit/delete + embeddings/semantics
+   │  │  ├─ followups.rs   the companion's planned returns (`followups`): insert, the
+   │  │  │                 pending ones, close once (delivered/cancelled), the day's count
    │  │  ├─ graph.rs       link graph + supersession + source citation
    │  │  ├─ self_model.rs  self-model: get/upsert/atomic update
    │  │  ├─ attachments.rs chat-scoped semantic index over `/file attach` files
@@ -3812,6 +3826,25 @@ a fresh snapshot; a text edit is re-embedded before the picks are made. The
 `NotesView` arm of `apply_event` only refreshes an open notes screen, and the
 screen-replacing matches leave it alone. An edit never reaches an `@self` note:
 the handler checks the stored note, not the screen.
+
+**The companion's follow-ups** (spec §9.3.6, docs/research/companion-platform.md
+C4 (a)). `followup_plan` writes a row to `followups` during a turn; nothing tells
+the orchestrator — `handle_done` ends every turn with `after_turn_followups`, which
+re-reads the pending rows and keeps `followup_next`, the earliest moment one may be
+delivered under its profile's quiet hours and day's cap (`features::followups::
+deliverable_at`). The loop's `select!` has a branch for it beside the save queue's,
+sleeping until then but never more than a minute (the wall clock, not the
+monotonic one, decides). A delivery closes the row first (`followup_close`, once —
+a cancel in the same instant wins), then pushes a `Message::followup_notice` — a
+task notification with `followup` set — marks a conversation not in view unread,
+and wakes the open one (`maybe_wake_followup`: idle, the last row a follow-up's
+notice, the engine ready), the same check `switch_to`, `handle_chat_status` and the
+turn's end make. `request::api_messages` adds the silence clause to a follow-up
+notice that stands alone, never storing it; `handle_done` drops a woken turn's
+`<silent>` (`GenResult.woken`) and, when nothing else landed, the notices it
+answered. A take-back cancels the conversation's follow-ups created at or after
+its last remaining row; `DeleteChat` and a profile's deletion cancel all of theirs.
+The tasks screen lists the pending ones from `task_list` (`TaskList.followups`).
 
 **The tasks screen** (`screens/tasks.rs`, `ActiveScreen::Tasks`, `F7`/`/tasks`;
 spec §11.10, [research/tasks-screen.md](research/tasks-screen.md)) is the round

@@ -169,6 +169,9 @@ pub(super) struct GenResult {
     /// by (docs/research/prompt-cut-detection.md §3.1). `None` off an external
     /// server and when no round reported a size.
     pub(super) anchor: Option<(u64, super::prompt_cut::PromptAnchor)>,
+    /// The turn was one the app started on a notice (see [`GenSpawn::woken`]) —
+    /// whose `<silent>` is taken back out (spec §9.3.6).
+    pub(super) woken: bool,
 }
 
 /// The exact size of one round, as reported by the server's `usage`.
@@ -397,7 +400,20 @@ impl Orchestrator {
         // A background run whose exchange just left the live messages ends
         // with it (research fork F8).
         self.cancel_orphaned_background_runs(active_id);
-        self.start_generation(active_id, backend, None);
+        self.cancel_orphaned_followups(active_id);
+        // A reply to a notice is redone as the turn it was: nobody typed it, so it
+        // may again choose silence (spec §9.3.6) or be re-asked when empty.
+        let woken = self
+            .chats
+            .iter()
+            .find(|c| c.id == active_id)
+            .and_then(|c| c.messages.last())
+            .is_some_and(Message::is_notification);
+        if woken {
+            self.start_woken_generation(active_id, backend);
+        } else {
+            self.start_generation(active_id, backend, None);
+        }
     }
 
     /// Resumes the last interrupted assistant reply in place (`/continue`,
@@ -583,6 +599,7 @@ impl Orchestrator {
         self.activate(active_id); // rebuild the feed without the deleted exchange
         self.emit_chat_list();
         self.cancel_orphaned_background_runs(active_id);
+        self.cancel_orphaned_followups(active_id);
         let _ = self.evt_tx.send(AppEvent::RestoreInput(user_text));
     }
 
@@ -702,6 +719,7 @@ impl Orchestrator {
                 fs: self.config.tools.fs_enabled,
                 mcp: self.config.mcp.enabled,
                 background: self.config.tools.subagent_background,
+                followups: companion.followups,
                 history: history_upto.is_some(),
                 workspace: workspace.is_some(),
                 // Which slots carry a line, so a `code_test` with nothing to
@@ -1131,10 +1149,20 @@ impl Orchestrator {
         self.note_withheld_images(res.chat_id, res.images_withheld);
         let mut res = res;
         self.carry_inflight_rename(&mut res);
+        // A woken turn that chose silence leaves no trace (spec §9.3.6); the feed,
+        // which streamed the marker, is rebuilt without it below.
+        let silent = res.woken && self.drop_silent_reply(res.chat_id, &mut res.messages);
+        if silent {
+            self.mark_dirty(res.chat_id);
+            if self.active_id == Some(res.chat_id) {
+                self.activate(res.chat_id);
+            }
+        }
         if res.messages.is_empty() && res.effects.is_empty() && res.deleted.is_empty() {
             // A turn that landed nothing still ends the wait of a result
             // that arrived meanwhile (docs/research/background-subagents.md §4.4).
             self.land_pending_runs(res.chat_id);
+            self.after_turn_followups(res.woken, res.chat_id);
             return;
         }
         // Did the model edit the "self-model" via its own tools this turn? If so —
@@ -1260,6 +1288,23 @@ impl Orchestrator {
         self.maybe_auto_reflect(res.chat_id);
         self.maybe_auto_consolidate(res.chat_id);
         self.maybe_auto_self_consolidate(res.chat_id);
+        if silent && self.active_id == Some(res.chat_id) {
+            self.activate(res.chat_id);
+        }
+        self.after_turn_followups(res.woken, res.chat_id);
+    }
+
+    /// The follow-ups' part of a turn's end (spec §9.3.6): the turn may have
+    /// planned or cancelled one, and a delivery it held is due now. The open
+    /// conversation is woken on a notice waiting there — unless this very turn
+    /// was the wake for it and failed, which waits for the next moment instead.
+    fn after_turn_followups(&mut self, woken: bool, chat_id: Uuid) {
+        self.tick_followups();
+        if let Some(open) = self.active_id
+            && !(woken && chat_id == open)
+        {
+            self.maybe_wake_followup(open);
+        }
     }
 
     /// Appends a record to the chat's profile's language-model history when
@@ -1886,6 +1931,7 @@ fn spawn_generation(spawn: GenSpawn) {
             continuation: continuation.map(|c| c.message_id),
             images_withheld: turn.images_withheld,
             anchor: turn.anchor.map(|a| (anchor_epoch, a)),
+            woken,
         }));
     });
 }

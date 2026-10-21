@@ -826,6 +826,7 @@ pub(super) fn gate_hint(gate: ToolGate, loc: &'static Locale) -> &'static str {
         ToolGate::Fs => "ui.settings.gate.fs",
         ToolGate::Mcp => "ui.settings.gate.mcp",
         ToolGate::Background => "ui.settings.gate.background",
+        ToolGate::Followups => "ui.settings.gate.followups",
     })
 }
 
@@ -834,6 +835,10 @@ pub(super) fn gate_hint(gate: ToolGate, loc: &'static Locale) -> &'static str {
 /// switch moved to "Plugins" when the server editor got its own section, so a
 /// single hardcoded "Tools" was wrong for it.
 pub(super) fn gate_warn_note(gate: ToolGate, loc: &'static Locale) -> String {
+    // The follow-up tools wait on a switch of the profile itself, not a global one.
+    if gate == ToolGate::Followups {
+        return loc.t("ui.settings.ui.gate_warn_followups").to_string();
+    }
     let section = loc.t(match gate {
         ToolGate::Mcp => "ui.settings.section.plugins",
         _ => "ui.settings.section.tools",
@@ -1596,6 +1601,10 @@ pub(super) fn is_profile_field(id: FieldId) -> bool {
             | FieldId::PTimeRows
             | FieldId::PNotesInPrompt
             | FieldId::PEarlierChats
+            | FieldId::PFollowups
+            | FieldId::PQuietFrom
+            | FieldId::PQuietUntil
+            | FieldId::PFollowupsPerDay
             | FieldId::PTool(_)
             | FieldId::ProfileSub
             // The impersonation-profile list lives in the config, but it's user data

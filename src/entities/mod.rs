@@ -3,6 +3,7 @@
 pub mod attachment;
 pub mod chat;
 pub mod chat_file;
+pub mod followup;
 pub mod live_turn;
 pub mod message;
 pub mod message_image;

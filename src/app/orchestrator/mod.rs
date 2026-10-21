@@ -36,6 +36,7 @@ mod compaction;
 mod consolidation;
 mod embed_guard;
 mod engines;
+mod followups;
 mod generation;
 mod images;
 mod impersonation;
@@ -257,6 +258,7 @@ pub async fn run(deps: OrchestratorDeps) {
         bg_done_tx,
         consolidate_counts: HashMap::new(),
         self_consolidate_counts: HashMap::new(),
+        followup_next: None,
         saves: SaveQueue::default(),
         restarts: RestartQueue::default(),
         default_language,
@@ -300,10 +302,14 @@ pub async fn run(deps: OrchestratorDeps) {
     // tests call directly, off any runtime, and spawning background work is the
     // loop's business. See [`search`].
     search::spawn_reconcile(orch.storage.clone());
+    // Follow-ups that fell due while the app was closed are delivered now, once
+    // each (spec §9.3.6); the companion is woken on one when the engine is up.
+    orch.tick_followups();
 
     loop {
         let deadline = orch.saves.deadline();
         let restart_deadline = orch.restarts.deadline();
+        let followup_deadline = orch.followup_deadline();
         tokio::select! {
             cmd = cmd_rx.recv() => {
                 match cmd {
@@ -404,6 +410,7 @@ pub async fn run(deps: OrchestratorDeps) {
             }
             _ = sleep_until_opt(deadline) => orch.flush_saves(),
             _ = sleep_until_opt(restart_deadline) => orch.flush_restarts(),
+            _ = sleep_until_opt(followup_deadline) => orch.tick_followups(),
         }
     }
     // The silent tasks were cancelled by the `Quit` arm; their landings —
@@ -750,6 +757,9 @@ struct Orchestrator {
     /// ("sleep", per chat). Self-model-sleep cadence data (not lifecycle —
     /// that's in `bg`). See docs/history/self-model-consolidation.md (stage A1).
     self_consolidate_counts: HashMap<Uuid, u32>,
+    /// The earliest moment a pending follow-up may be delivered (spec §9.3.6) —
+    /// what the loop sleeps until; `None` while none can be. See [`followups`].
+    followup_next: Option<chrono::DateTime<chrono::Utc>>,
     /// Queue for deferred chat saving (debounce; extracted in Phase 3).
     saves: SaveQueue,
     /// Queue for deferred (re)launch of servers on engine-settings edits
@@ -890,6 +900,7 @@ impl Orchestrator {
             AppCommand::DeleteLastExchange => self.handle_delete_last(),
             AppCommand::NewChat { profile_id } => self.handle_new_chat(profile_id),
             AppCommand::SwitchChat(id) => self.handle_switch(id),
+            AppCommand::CancelFollowup(id) => self.handle_cancel_followup(id),
             AppCommand::OpenChatAt {
                 chat,
                 message,

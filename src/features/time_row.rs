@@ -87,6 +87,40 @@ pub fn gap(secs: i64, loc: &Locale) -> String {
     parts.join(" ")
 }
 
+/// A wall-clock day in the profile's language — "Thursday, 22 October 2026" — the
+/// date half of a full row, shared with the follow-up notice (spec §9.3.6).
+pub fn date_text(at: NaiveDateTime, loc: &Locale) -> String {
+    loc.tf(
+        "prompt.time_row.date",
+        &[
+            (
+                "weekday",
+                loc.t(WEEKDAYS[at.weekday().num_days_from_monday() as usize]),
+            ),
+            ("day", &at.day().to_string()),
+            ("month", loc.t(MONTHS[at.month0() as usize])),
+            ("year", &at.year().to_string()),
+        ],
+    )
+}
+
+/// A wall-clock moment in the profile's language — "Thursday, 22 October 2026,
+/// 18:40" — the full row's text without its brackets.
+pub fn moment_text(at: NaiveDateTime, loc: &Locale) -> String {
+    loc.tf(
+        "prompt.followup.moment",
+        &[
+            ("date", &date_text(at, loc)),
+            ("time", &format!("{:02}:{:02}", at.hour(), at.minute())),
+        ],
+    )
+}
+
+/// The weekday names in the profile's language, Monday first.
+pub fn weekday_names(loc: &Locale) -> [&str; 7] {
+    WEEKDAYS.map(|k| loc.t(k))
+}
+
 /// The rows for `messages[from..]`, aligned with that slice: `Some` for every user
 /// message, `None` for every other row.
 ///
@@ -134,18 +168,7 @@ fn row(
         .map(|secs| gap(secs, loc));
     let day_changed = previous.is_none_or(|p| clock(p).date() != now.date());
     if first || day_changed {
-        let date = loc.tf(
-            "prompt.time_row.date",
-            &[
-                (
-                    "weekday",
-                    loc.t(WEEKDAYS[now.weekday().num_days_from_monday() as usize]),
-                ),
-                ("day", &now.day().to_string()),
-                ("month", loc.t(MONTHS[now.month0() as usize])),
-                ("year", &now.year().to_string()),
-            ],
-        );
+        let date = date_text(now, loc);
         match gap_text {
             Some(gap) => loc.tf(
                 "prompt.time_row.full_gap",

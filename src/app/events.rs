@@ -274,6 +274,9 @@ pub enum AppCommand {
     /// (`/notes`, spec §11.11): every note with its links and trace, and what
     /// this conversation's prompt carries. Answered with [`AppEvent::NotesView`].
     RequestNotes,
+    /// Cancels a pending follow-up the companion planned (the tasks screen's `Del`,
+    /// spec §9.3.6, §11.10).
+    CancelFollowup(Uuid),
     /// Apply an edit from the notes screen (text, tags, delete); the
     /// orchestrator answers with a fresh [`AppEvent::NotesView`].
     EditNote(crate::entities::note::NoteEdit),
@@ -431,6 +434,7 @@ impl AppCommand {
             | AppCommand::UpdateSelfModel(_)
             | AppCommand::RequestNotes
             | AppCommand::EditNote(_)
+            | AppCommand::CancelFollowup(_)
             | AppCommand::ConfirmMcpCatalog(_)
             | AppCommand::SetSecret { .. }
             | AppCommand::ReconnectMcpServer(_)

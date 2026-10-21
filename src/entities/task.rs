@@ -119,6 +119,21 @@ pub struct AppTask {
     pub waiting: bool,
 }
 
+/// A follow-up the companion planned, as the tasks screen lists it (spec §9.3.6,
+/// §11.10): pending, with the conversation it returns to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskFollowup {
+    /// The follow-up's id — what `Del` cancels.
+    pub id: Uuid,
+    pub chat: Uuid,
+    pub chat_title: String,
+    pub about: String,
+    pub due_at: DateTime<Utc>,
+    /// Its profile has *Follow-ups* switched off: it stays pending, and is not
+    /// delivered until the switch is on again.
+    pub paused: bool,
+}
+
 /// The tasks screen's snapshot ([`AppEvent::TaskList`](crate::app::events::AppEvent)): the runs — running
 /// first, then landed, each half newest first, the landed half capped — and
 /// the app's own silent tasks.
@@ -130,6 +145,9 @@ pub struct TaskList {
     pub more_landed: usize,
     /// Every [`BackgroundKind`], in one fixed order.
     pub app: Vec<AppTask>,
+    /// The pending follow-ups of every conversation the list shows, soonest
+    /// first (spec §9.3.6).
+    pub followups: Vec<TaskFollowup>,
 }
 
 /// How many landed runs the tasks screen lists (docs/research/tasks-screen.md

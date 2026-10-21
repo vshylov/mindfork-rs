@@ -557,13 +557,17 @@ impl SettingsScreen {
         // A companion feature — over the selected profile too (spec §10).
         if matches!(
             id,
-            FieldId::PTimeRows | FieldId::PNotesInPrompt | FieldId::PEarlierChats
+            FieldId::PTimeRows
+                | FieldId::PNotesInPrompt
+                | FieldId::PEarlierChats
+                | FieldId::PFollowups
         ) {
             let p = self.profiles.get_mut(self.profile_idx)?;
             let c = &mut p.companion;
             let flag = match id {
                 FieldId::PTimeRows => &mut c.time_rows,
                 FieldId::PNotesInPrompt => &mut c.notes_in_prompt,
+                FieldId::PFollowups => &mut c.followups,
                 _ => &mut c.earlier_chats,
             };
             *flag = !*flag;
@@ -813,7 +817,10 @@ impl SettingsScreen {
             | FieldId::PSystem
             | FieldId::PGreeting
             | FieldId::PUserName
-            | FieldId::PAssistantName => {
+            | FieldId::PAssistantName
+            | FieldId::PQuietFrom
+            | FieldId::PQuietUntil
+            | FieldId::PFollowupsPerDay => {
                 return self.apply_profile_text(id, trimmed);
             }
             // Impersonation-profile fields — over `config.impersonation_profiles`.
@@ -889,6 +896,19 @@ impl SettingsScreen {
             // export fall back to their localized labels (spec §5.1).
             FieldId::PUserName => p.character_names.user = text.to_string(),
             FieldId::PAssistantName => p.character_names.assistant = text.to_string(),
+            // The follow-ups' limits (spec §9.3.6): an hour of the day, and a cap
+            // of at least one — a value out of range keeps the previous one.
+            FieldId::PQuietFrom | FieldId::PQuietUntil => match text.parse::<u8>() {
+                Ok(h) if h < 24 => match id {
+                    FieldId::PQuietFrom => p.companion.quiet_from = h,
+                    _ => p.companion.quiet_until = h,
+                },
+                _ => return None,
+            },
+            FieldId::PFollowupsPerDay => match text.parse::<u8>() {
+                Ok(n) if (1..=20).contains(&n) => p.companion.followups_per_day = n,
+                _ => return None,
+            },
             _ => return None,
         }
         Some(self.save_profile())

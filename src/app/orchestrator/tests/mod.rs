@@ -320,6 +320,7 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
         bg_done_tx: unbounded_channel().0,
         consolidate_counts: std::collections::HashMap::new(),
         self_consolidate_counts: std::collections::HashMap::new(),
+        followup_next: None,
         saves: SaveQueue::default(),
         restarts: RestartQueue::default(),
         default_language: crate::shared::i18n::Lang::default(),
@@ -701,6 +702,8 @@ mod confirm;
 mod demo;
 mod dialogue;
 mod files;
+mod followups;
+mod followups_live;
 mod gateway_live;
 mod gateway_live_embed;
 mod gateway_live_speech;

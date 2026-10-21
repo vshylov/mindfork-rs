@@ -1865,6 +1865,7 @@ fn task_list_with(run: crate::app::events::TaskRun) -> AppEvent {
         runs: vec![run],
         more_landed: 0,
         app: Vec::new(),
+        followups: Vec::new(),
     }))
 }
 

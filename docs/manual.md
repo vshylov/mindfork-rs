@@ -119,7 +119,7 @@ delivers `Ctrl+N`).
 | Chat list | `Esc` | `/chats` | every conversation: search, sort, per-profile isolation, subagent transcripts folded under their parent |
 | Settings | `Ctrl+P` | `/settings` | eight sections; the engine, sampling, tools, plugins, memory, data, profiles, interface |
 | Self-model | `F3` | `/self` | what the assistant currently thinks about itself and about you |
-| Tasks | `F7` | `/tasks` | every background run across every chat, and the app's own quiet work |
+| Tasks | `F7` | `/tasks` | every background run across every chat, the follow-ups a companion planned, and the app's own quiet work |
 | Notes | — | `/notes` | what the assistant wrote down about you: read, search, edit, delete — and which notes this conversation's prompt carries |
 | Changes | `F4` | `/changes` | what the assistant changed in the attached project, as a diff |
 | Search | `Ctrl+G` | `/search <text>` | messages across every chat, grouped by conversation |
@@ -171,6 +171,22 @@ conversations before this one, newest first, with how long ago they were — and
 their `chat://` links when the profile has chat reading on, so "let's pick up
 where we left off" opens the right one. Both are chosen once, when the
 conversation begins, and stay the same for the rest of it.
+
+*Follow-ups* lets the companion plan to come back to something you told it: you
+mention the interview tomorrow at 10, and it plans to ask how it went the
+afternoon after; you ask to be reminded on Friday at 9, and it plans that. The
+plan shows in the conversation as its tool call. When the time comes it writes to
+you first in that conversation — a note in the feed says what it planned, and its
+message follows. A conversation you are not in is marked unread and the companion
+writes when you open it. If there is nothing left to say — you already told it how
+the interview went — it stays silent, and the note goes too. It plans only on
+something you said: never to keep you talking, never because you have been away.
+*Quiet hours from* and *until* (22 and 8) hold a follow-up until the morning, and
+*Follow-ups a day* (3) holds the rest for the next day; one that falls due while
+the app is closed arrives once, when you start it again. Every planned follow-up
+is on the tasks screen (`F7`): `Enter` opens its conversation, `Del` twice cancels
+it. Each one costs a request nobody typed, which on a cloud is money — hence the
+cap.
 
 ### Writing as you
 
@@ -332,8 +348,10 @@ derail the answer; the assistant is told and carries on.
 `call_subagent` delegates inside the reply; `start_subagent` and
 `start_dialogue` return at once and keep working after it. `F7` (`/tasks`) lists
 every run across every chat — running with the round and tool it is in, or landed
-with how it ended — with the app's own quiet work below. `Enter` opens a run's
-transcript, `P` its chat, `F6` stops a running one.
+with how it ended — with the follow-ups a companion has planned and the app's own
+quiet work below. `Enter` opens a run's transcript, `P` its chat, `F6` stops a
+running one; on a follow-up, `Enter` opens its conversation and `Del` twice
+cancels it.
 
 When a background run finishes, the assistant reports it in the chat if that chat
 is open and idle; otherwise the chat list marks it unread.
@@ -605,7 +623,7 @@ Typed straight into the input box.
 | `/project build-cmd [line]` · `run-cmd` · `test-cmd` | set the command the assistant may build / run / test with — or, with no argument, show it |
 | `/project clear build\|run\|test` | unset one of those commands (the assistant then has no such tool at all) |
 | `/changes` (`F4`) | what the assistant changed in the attached project, as a diff, with `r` to put one file back |
-| `/tasks` (`F7`) | every background run and the app's own quiet work; `Enter` opens a transcript, `P` its chat, `F6` stops a running one |
+| `/tasks` (`F7`) | every background run, the follow-ups a companion planned, and the app's own quiet work; `Enter` opens a transcript, `P` its chat, `F6` stops a running one, `Del` twice cancels a follow-up |
 | `/notes` | the assistant's notes about you; `Enter` opens one, `E` edits its text, `T` its tags, `Del` deletes it (asks first), `/` searches |
 | `/rag add <path> [-r]` · `/rag remove <path>` | index a file or directory into the knowledge base / remove it |
 | `/rag list` · `/rag rebuild` | show the store's sources / reindex after changing chunking |

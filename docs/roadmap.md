@@ -340,8 +340,12 @@ effort tiers — have all closed
   the prompt*, *Earlier conversations in the prompt*) — relevance alone, since a
   "latest notes" fallback carried the person's news into unrelated answers on five
   models of five (§3.4) — and the notes screen, `/notes`, where the person reads,
-  edits and deletes them and sees which ones a conversation carries. Next, stage 3:
-  follow-ups the companion plans. Twelve candidates in six stages.
+  edits and deletes them and sees which ones a conversation carries. **Stage 3,
+  first half, built**: follow-ups the companion plans (*Follow-ups*) — it comes back
+  to what the person said when the time comes, may stay silent without a trace, and
+  is held by quiet hours and a daily cap that are on from the start (§3.5). Next:
+  the notification that reaches someone not looking (C5 (a)), the stage's second
+  half; then the research instruments. Twelve candidates in six stages.
 
 ### Feed and rendering
 

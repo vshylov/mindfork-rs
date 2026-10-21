@@ -20,6 +20,7 @@ pub mod control;
 pub mod datetime;
 pub mod dialogue;
 pub mod fetch;
+pub mod followups;
 pub mod fs;
 pub mod history;
 pub mod introspection;
@@ -850,6 +851,9 @@ pub struct ToolGates {
     pub mcp: bool,
     /// `tools.subagent_background` — `start_subagent` (spec §9.3.2).
     pub background: bool,
+    /// The profile's *Follow-ups* switch — `followup_plan`/`followup_cancel`
+    /// (spec §9.3.6).
+    pub followups: bool,
     /// Whether **this chat** has a compacted-away range (spec §6.7, S12).
     pub history: bool,
     /// Whether **this chat** has a code project attached (spec §9.12).
@@ -902,6 +906,7 @@ pub fn effective_tool_ids(enabled: &[ToolId], gates: &ToolGates) -> Vec<ToolId> 
                 Some(meta::ToolGate::Fs) => gates.fs,
                 Some(meta::ToolGate::Mcp) => gates.mcp,
                 Some(meta::ToolGate::Background) => gates.background,
+                Some(meta::ToolGate::Followups) => gates.followups,
                 None => true,
             }
         })
@@ -1010,6 +1015,9 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     reg.register(Arc::new(introspection::GetSystemMessage));
     reg.register(Arc::new(introspection::SetSystemMessage));
     reg.register(Arc::new(introspection::GetLastUserMessageTime));
+    // The companion's follow-ups (spec §9.3.6): gated by the profile's switch.
+    reg.register(Arc::new(followups::FollowupPlan));
+    reg.register(Arc::new(followups::FollowupCancel));
     // Language-model introspection (spec §9.14): the LLM's name and the
     // profile's history of model changes — deliberately named `llm_*`, the
     // counterpart of the `self_model` family it must never be confused with.

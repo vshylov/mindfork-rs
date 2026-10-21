@@ -1880,6 +1880,30 @@ impl SettingsScreen {
                             FieldKind::Toggle(p.companion.earlier_chats),
                         )
                         .describe(loc.t("ui.settings.desc.earlier_chats")),
+                        row(
+                            FieldId::PFollowups,
+                            loc.t("ui.settings.field.followups"),
+                            FieldKind::Toggle(p.companion.followups),
+                        )
+                        .describe(loc.t("ui.settings.desc.followups")),
+                        num_field(
+                            FieldId::PQuietFrom,
+                            loc.t("ui.settings.field.quiet_from"),
+                            p.companion.quiet_from,
+                        )
+                        .describe(loc.t("ui.settings.desc.quiet_from")),
+                        num_field(
+                            FieldId::PQuietUntil,
+                            loc.t("ui.settings.field.quiet_until"),
+                            p.companion.quiet_until,
+                        )
+                        .describe(loc.t("ui.settings.desc.quiet_until")),
+                        num_field(
+                            FieldId::PFollowupsPerDay,
+                            loc.t("ui.settings.field.followups_per_day"),
+                            p.companion.followups_per_day,
+                        )
+                        .describe(loc.t("ui.settings.desc.followups_per_day")),
                     ],
                 ));
                 // Tool toggles: laid out by semantic group
@@ -1893,7 +1917,7 @@ impl SettingsScreen {
                 for (idx, info) in indexed {
                     let on = p.enabled_tools.iter().any(|t| t == &info.id);
                     let gate = info.gate;
-                    let gated_off = on && gate.is_some_and(|g| self.gate_disabled(g));
+                    let gated_off = on && gate.is_some_and(|g| self.gate_disabled(g, p));
                     let mut r = row(FieldId::PTool(idx), &info.id, FieldKind::Toggle(on));
                     r.group = loc.get(info.group.i18n_key()).unwrap_or(info.group.title());
                     r.warn = gated_off;
@@ -1980,13 +2004,16 @@ impl SettingsScreen {
 
     /// Whether the tool's global gate is off (then the tool is unavailable to the
     /// model, even if enabled in the profile).
-    pub(super) fn gate_disabled(&self, gate: ToolGate) -> bool {
+    /// Whether `gate` keeps a tool on in `profile` away from the model — a
+    /// global switch, or the profile's own *Follow-ups* switch.
+    pub(super) fn gate_disabled(&self, gate: ToolGate, profile: &Profile) -> bool {
         match gate {
             ToolGate::Web => !self.config.tools.web_enabled,
             ToolGate::Python => !self.config.tools.python_enabled,
             ToolGate::Fs => !self.config.tools.fs_enabled,
             ToolGate::Mcp => !self.config.mcp.enabled,
             ToolGate::Background => !self.config.tools.subagent_background,
+            ToolGate::Followups => !profile.companion.followups,
         }
     }
 

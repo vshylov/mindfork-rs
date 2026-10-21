@@ -38,6 +38,15 @@ split by subsystem.
   the older notes it replaced, edit its text or tags, or delete it (it asks
   first). The screen's first lines say which notes and observations this
   conversation's prompt carries — so "why did it bring that up?" has an answer.
+- **A companion that comes back.** With *Follow-ups* on (Settings → Profiles →
+  *Companion*, off by default), the assistant can plan to return to something you
+  told it — "how did the interview go?" the afternoon after, or the reminder you
+  asked for on Friday at 9 — and writes to you first when the time comes. A
+  conversation you are not in waits until you open it. It plans only on what you
+  said, never to keep you talking; it may decide there is nothing to say, and then
+  nothing appears. Quiet hours (22 to 8) and a cap of three a day are on from the
+  start and can be changed; every planned follow-up is listed on the tasks screen
+  (`F7`), where `Del` twice cancels it.
 
 ### Fixed
 

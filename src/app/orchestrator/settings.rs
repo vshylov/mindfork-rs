@@ -323,6 +323,11 @@ impl Orchestrator {
         self.refresh_engine_slots();
         self.emit_server_status();
         self.relaunch_dead_managed_servers();
+        // An engine that just came up can answer the follow-up waiting in the open
+        // conversation (spec §9.3.6).
+        if let Some(open) = self.active_id {
+            self.maybe_wake_followup(open);
+        }
     }
 
     /// (Re-)raises the embedding server from `config.embed` and emits a status snapshot

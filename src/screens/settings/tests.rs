@@ -1587,6 +1587,13 @@ fn each_memory_switch_flips_its_own_feature() {
                 ..CompanionFeatures::default()
             },
         ),
+        (
+            FieldId::PFollowups,
+            CompanionFeatures {
+                followups: true,
+                ..CompanionFeatures::default()
+            },
+        ),
     ] {
         let mut s = screen();
         goto_section(&mut s, Section::Profiles);
@@ -1600,6 +1607,31 @@ fn each_memory_switch_flips_its_own_feature() {
         }
         assert_eq!(s.profiles[0].companion, on);
     }
+}
+
+/// The follow-ups' limits (spec §9.3.6) take an hour of the day and a cap of
+/// one to twenty; anything else keeps the value there was.
+#[test]
+fn quiet_hours_and_the_cap_take_only_values_in_range() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Profiles);
+    for (id, text, saved) in [
+        (FieldId::PQuietFrom, "23", true),
+        (FieldId::PQuietFrom, "24", false),
+        (FieldId::PQuietUntil, "6", true),
+        (FieldId::PQuietUntil, "x", false),
+        (FieldId::PFollowupsPerDay, "0", false),
+        (FieldId::PFollowupsPerDay, "21", false),
+        (FieldId::PFollowupsPerDay, "5", true),
+    ] {
+        let intent = s.apply_text(id, text);
+        assert_eq!(intent.is_some(), saved, "{id:?} {text}");
+    }
+    let c = s.profiles[0].companion;
+    assert_eq!(
+        (c.quiet_from, c.quiet_until, c.followups_per_day),
+        (23, 6, 5)
+    );
 }
 
 #[test]

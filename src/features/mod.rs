@@ -25,6 +25,7 @@ pub mod doc_extract;
 pub mod exit_command;
 pub mod export_command;
 pub mod file_command;
+pub mod followups;
 pub mod image_command;
 pub mod image_fetch;
 pub mod image_prepare;

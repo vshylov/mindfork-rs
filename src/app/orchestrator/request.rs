@@ -55,10 +55,10 @@ fn api_messages(messages: &[Message], rows: &[Option<String>], loc: &Locale) -> 
     /// delivered in one message, and between a time row and the words it dates.
     const SEP: &str = "\n\n";
     let mut out = Vec::with_capacity(messages.len());
-    let mut pending: Vec<&str> = Vec::new();
+    let mut pending: Vec<&Message> = Vec::new();
     for (i, m) in messages.iter().enumerate() {
         if m.is_notification() {
-            pending.push(&m.text);
+            pending.push(m);
             continue;
         }
         if m.role == MessageRole::User {
@@ -67,22 +67,51 @@ fn api_messages(messages: &[Message], rows: &[Option<String>], loc: &Locale) -> 
                 Some(row) => format!("{row}{SEP}{}", m.text),
                 None => m.text.clone(),
             };
-            let mut parts: Vec<&str> = std::mem::take(&mut pending);
+            let mut parts: Vec<&str> = std::mem::take(&mut pending)
+                .into_iter()
+                .map(|n| n.text.as_str())
+                .collect();
             parts.push(&words);
             out.push(ApiMessage::user(parts.join(SEP)).with_images(images_to_api(&m.images, loc)));
             continue;
         }
         if !pending.is_empty() {
-            out.push(ApiMessage::user(std::mem::take(&mut pending).join(SEP)));
+            out.push(ApiMessage::user(standing_alone(
+                &std::mem::take(&mut pending),
+                loc,
+            )));
         }
         if let Some(api) = message_to_api(m, loc) {
             out.push(api);
         }
     }
     if !pending.is_empty() {
-        out.push(ApiMessage::user(pending.join(SEP)));
+        out.push(ApiMessage::user(standing_alone(&pending, loc)));
     }
     out
+}
+
+/// Notifications no user message follows — the turn the app woke the model for,
+/// and that turn's rows ever after. A follow-up's notice there ends with the
+/// choice to write first or stay silent (spec §9.3.6): where the person wrote
+/// next, the notice merges in front of their words without it, so a reply to
+/// them is never invited to be `<silent>`. Whether a notice stands alone never
+/// changes once a row follows it, so its text — and the prompt's prefix — holds.
+fn standing_alone(notices: &[&Message], loc: &Locale) -> String {
+    let last_followup = notices.iter().rposition(|n| n.is_followup_notice());
+    notices
+        .iter()
+        .enumerate()
+        .map(|(i, n)| match last_followup {
+            Some(at) if at == i => format!(
+                "{} {}",
+                n.text,
+                crate::features::followups::silence_clause(loc)
+            ),
+            _ => n.text.clone(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 /// Replaces every image a request carries with a marker naming it, for an engine that

@@ -38,8 +38,9 @@ pub const START_SUBAGENT_ID: &str = "start_subagent";
 /// nesting — `run_dialogue` and the background twin included, spec §9.13),
 /// the read-back pair over the *parent's* folded history, and the self-model
 /// family — the profile persona's identity, which a persona the parent
-/// composed must not write into. Everything else the turn offers, the
-/// sub-agent gets.
+/// composed must not write into — and the follow-ups, a return the companion
+/// promises the person in its own conversation (spec §9.3.6). Everything else
+/// the turn offers, the sub-agent gets.
 pub fn withheld_from_subagent(id: &str) -> bool {
     id == CALL_SUBAGENT_ID
         || id == START_SUBAGENT_ID
@@ -48,6 +49,8 @@ pub fn withheld_from_subagent(id: &str) -> bool {
         || id == super::history::HISTORY_READ_ID
         || id == super::history::HISTORY_SEARCH_ID
         || super::self_model::is_self_model_tool(id)
+        || id == super::followups::FOLLOWUP_PLAN_ID
+        || id == super::followups::FOLLOWUP_CANCEL_ID
 }
 
 /// The parsed arguments of one call.
