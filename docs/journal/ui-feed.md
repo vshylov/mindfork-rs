@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (54)
+## Entries (55)
 
 - Post-M9: mouse-wheel feed scrolling (done)
 - Post-M9: own markdown renderer (tables + LaTeX + theme) (done)
@@ -66,6 +66,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the token counter moves to the feed's bottom border, its notes become settings (done)
 - Post-M9: the hero screenshot shows the token counter in its place (done)
 - Post-M9: notifications for someone not looking — companion stage 3, C5 (a) (done)
+- Post-M9: Windows Terminal shows OSC 777 only from Preview 1.26, opt-in — a correction (done)
 
 ### Post-M9: mouse-wheel feed scrolling (done)
 - **The mouse wheel scrolls the feed** on par with `PageUp/PageDown`. `ratatui::init()`
@@ -3260,9 +3261,10 @@ terminal that never reports leaves the person "not looking" — one notification
 many beats one missed, and the feature is opt-in and its triggers capped.
 
 **Key decisions (the agent's, inside F6 (a)).**
-- **One escape, never two**: OSC 777 by default — Windows Terminal shows it since
-  its June 2026 change ([microsoft/terminal#7718](https://github.com/microsoft/terminal/issues/7718)),
-  and Ghostty, WezTerm, foot, rxvt-unicode — or OSC 9 for iTerm2 and kitty. A
+- **One escape, never two**: OSC 777 by default — Ghostty, WezTerm, foot,
+  rxvt-unicode, and Windows Terminal (read here as "since its June 2026 change",
+  [microsoft/terminal#7718](https://github.com/microsoft/terminal/issues/7718); in
+  fact from Preview 1.26 and opt-in — the next entry) — or OSC 9 for iTerm2 and kitty. A
   terminal that knows both would show two. OSC 9's text leads with the title, so
   it never begins with a digit that Windows Terminal would read as a ConEmu
   sub-command.
@@ -3302,3 +3304,72 @@ the token a secret that never reaches the config). Screenshot dumps
 **Gates**: 4199 unit tests green, 289 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean. No live run:
 nothing a model reads changed (above).
+
+### Post-M9: Windows Terminal shows OSC 777 only from Preview 1.26, opt-in — a correction (done)
+
+**What.** The owner's first look at *Notify me*, the day it merged: a follow-up came
+due in a conversation left open, the woken reply landed — and Windows Terminal, its
+window minimized, showed no notification. The previous entry had read OSC 777 support
+off the closed issue ([microsoft/terminal#7718](https://github.com/microsoft/terminal/issues/7718),
+merged in June by [#20012](https://github.com/microsoft/terminal/pull/20012)); the
+releases say otherwise. It ships first in **Windows Terminal Preview 1.26.2734.0**
+(2026-10-02), **off by default** — `compatibility.allowOSC777` in a profile turns it
+on, after a bug bash asked for that — with, beside it, `"bellStyle": "notification"`
+for a desktop notification on the bell. Stable 1.25.2733.0 and the 1.24.12741.0 on
+this machine have neither. The app sent the right bytes to a terminal that does not
+read them.
+
+**Measured.** The rest of the path, in a real Windows Terminal 1.24 window (a probe
+reading input the way crossterm 0.29 does — raw mode, `CSI ? 1004 h`, console records —
+while a script minimized and restored the window): a focus-in record at start,
+**focus lost** 4.1 s in as the window minimized, **focus gained** as it came back. So
+the conversation-in-a-minimized-window case is "not looking", as designed; crossterm
+turns those records into `FocusGained`/`FocusLost`. The log of the owner's run has
+`follow-ups delivered` at 21:27:00Z and nothing after it about a notification,
+because nothing logged one.
+
+**Changed.**
+- Every claim corrected: spec §11.12, the manual, the CHANGELOG's unreleased entry,
+  the escape's settings hint (en, ru), `shared::notify`'s docs, the research's C5
+  line. Each names Preview 1.26 and the profile setting, and says 1.24 and 1.25
+  ignore it.
+- **The bell, for Windows Terminal as it is**: the manual, the spec and the bell's
+  hint say `"bellStyle": "all"` (or `"taskbar"`) flashes the taskbar button — a sign
+  that stays on a minimized window, in every version; the default only plays a sound.
+- **The log says what left**: `notification sent` (kind, escape, bell, whether a
+  push, the focus as known) and `notification held: the person is looking`; a focus
+  change at debug. The next "nothing appeared" is read from the log.
+
+**Measured on Preview 1.26** (installed beside the stable one at the owner's
+go-ahead: the release's `msixbundle`, Microsoft-signed; the shared `wt` alias still
+opens 1.24). The same probe, the window minimized, wrote the app's own bytes — OSC
+777 with the ru locale's title and body, then the bell — and a script captured the
+corner where Windows shows a toast; Windows' notification store was read back for
+the terminal's entries only. Four arms:
+
+| `allowOSC777` | `bellStyle` | Toast |
+|---|---|---|
+| unset (default) | default | none — the control |
+| `true` | default | **the title and body as sent** — the ru locale's *Companion · mindfork* / *Wrote to you in «probe B»*, Cyrillic intact |
+| unset | `notification` | "Windows Terminal Preview" / "Activity in tab "mf-notify-C"" |
+| `true` | `notification` | one — the escape's; the bell's is not added |
+
+So on Windows Terminal the escape is the notification worth turning on, and the bell
+as a notification says only which tab; the docs say both. Preview is left with
+`compatibility.allowOSC777` on in its profile defaults.
+
+**The log, tested.** `notification sent` and `notification held` are asserted by a
+test that captures the orchestrator's log on its own thread (a woken reply with no
+focus report: `kind="reply" escape="osc777" bell=true push=false focused=None`; in
+focus with the conversation open: held, and the focus report at debug). Each of the
+three lines removed in turn turns the test red. It came out of SonarCloud's coverage
+gate: a field of a `tracing` call is evaluated only when something listens, so the
+log lines were uncovered until a test listened. The test passed alone and read an
+empty log beside the module's other tests: with one scoped subscriber alive, `tracing`
+lets the first thread to reach a line decide for all, and theirs had none. A second
+subscriber kept alive fixes it (lessons §2); the module ran green five times in a row
+with it, red on the first run without.
+
+**Gates**: 4200 unit tests green, 289 `#[ignore]`; clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean; no screenshot
+dump holds either hint. No live run: nothing a model reads changed.

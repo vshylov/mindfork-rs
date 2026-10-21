@@ -5209,16 +5209,25 @@ reports need `set -g focus-events on`.
 *Notifications*; `shared::notify`):
 
 - **The terminal escape** (`escape`): `osc777` (the default —
-  `ESC ] 777 ; notify ; title ; body BEL`, which Windows Terminal shows since mid-2026,
-  and Ghostty, WezTerm, foot, rxvt-unicode), `osc9` (`ESC ] 9 ; text BEL` — iTerm2,
-  kitty) or `off`. One, never both: a terminal that knows both would show two. A
+  `ESC ] 777 ; notify ; title ; body BEL`, which Ghostty, WezTerm, foot and
+  rxvt-unicode show, and Windows Terminal from Preview 1.26 (2026-10-02) only with
+  `compatibility.allowOSC777` on in its profile — 1.24 and 1.25 ignore it, which the
+  owner's look on 1.24 found; measured on Preview 1.26.2734.0 with the window
+  minimized: a toast with the title and body as sent, and none without the
+  setting), `osc9` (`ESC ] 9 ; text BEL` — iTerm2, kitty) or
+  `off`. One, never both: a terminal that knows both would show two. A
   terminal that knows neither drops it — measured on the Windows console with VT
   processing on, as the app runs it: all four shapes left nothing on screen. Inside
   tmux the escape is wrapped in DCS passthrough, as OSC 52's is, and reaches the
   terminal only with `allow-passthrough on`. Read leniently, like the code-block
   background: a value a newer version adds reads as the default.
 - **The bell** (`bell`, on): `BEL` after the escape — what tmux marks the window
-  with and passes on with no setting at all, the reason it is on by default.
+  with and passes on with no setting at all, the reason it is on by default. What a
+  terminal does with it is its own setting: Windows Terminal plays a sound by
+  default, flashes the taskbar button with `"bellStyle": "all"` (or `"taskbar"`), and
+  from Preview 1.26 shows a desktop notification with `"bellStyle": "notification"` —
+  *"Activity in tab «…»"*, none of the app's words; with that and
+  `compatibility.allowOSC777` both on, one toast arrives, the escape's (measured).
 - **ntfy** (`ntfy_url`, empty by default): a `POST` of the body to the topic's URL,
   the title in its `title` query parameter (UTF-8 where a header is not), the
   token — a stored secret, `SecretKey::NtfyToken`, never in `settings.json` — as a
@@ -5231,7 +5240,10 @@ reports need `set -g focus-events on`.
 
 Every field is cleaned before it is sent: control characters (an escape's own
 terminators among them) and line breaks become spaces, the title cannot carry the
-`;` that would end it early, and each is cut at 200 characters.
+`;` that would end it early, and each is cut at 200 characters. The log says what
+was sent and what was held because the person was looking (`notification sent`,
+`notification held`), so a notification that never appeared can be told from one
+that was never sent.
 
 ## 12. Configuration, portability, migration
 

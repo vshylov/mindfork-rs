@@ -693,6 +693,17 @@ the control; test the threshold itself at the function, over `Storage` and the b
 mock.
 — *the companion's notes in the prompt*.
 
+**A test that reads the log must keep two subscribers alive.** `tracing` decides once,
+for every thread, whether a call site is wanted, and while a single scoped subscriber
+exists it asks only the default of the thread that reaches the line first. A test
+that captured the orchestrator's log with `set_default` passed alone and came back
+**empty** beside its module's other tests: their threads, with no subscriber, reached
+`notification sent` first and switched it off for everyone. A second `Dispatch` kept
+alive for the test (a `NoSubscriber`) makes `tracing` ask every subscriber. The same
+mechanism is why a field of a `tracing` call shows as uncovered: it is evaluated only
+when something listens.
+— *Windows Terminal shows OSC 777 only from Preview 1.26 — a correction*.
+
 ## 3. Measure; do not assume
 
 **Write the user's document from the code, and treat a sentence that cannot be
@@ -728,6 +739,16 @@ shows fewer models than exist, which is indistinguishable from the provider not
 having them. Ask for the maximum, and count the answer against what the provider
 publishes elsewhere.
 — *the model picker, stage 4b*.
+
+**A merged pull request upstream is not a feature the user has — read the release
+notes, and the default.** *Notify me* was documented as "Windows Terminal shows OSC
+777 since mid-2026", read off a closed issue whose fix merged in June. It shipped in
+October, in a **preview**, **off** unless a profile setting turns it on; the stable
+release and the owner's 1.24 ignore it, and the owner's first look found nothing on
+screen. For any claim "terminal/server/provider X supports Y", name the first
+release that ships it, whether that release is stable, and the setting it needs —
+the user's version is what the claim is about.
+— *notifications for someone not looking, the owner's look*.
 
 **"The field is ignored" and "the field selects" can be the same field on two
 servers of the same kind.** A single-model `llama-server` ignores a request's
