@@ -1583,7 +1583,9 @@ impl Orchestrator {
                 chat_id,
                 system_message,
                 effective_sampling: crate::entities::sampling::SamplingConfig::default(),
-                last_user_message_at: last_user,
+                // A background turn answers no message of the user's: what it can
+                // say is when they last wrote.
+                user_times: crate::features::tools::UserMessageTimes::latest(last_user),
                 attachments: std::sync::Arc::from(Vec::new()),
                 history: None,
                 other_chats: std::sync::Arc::from(Vec::new()),

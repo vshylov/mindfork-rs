@@ -1593,6 +1593,7 @@ pub(super) fn is_profile_field(id: FieldId) -> bool {
             | FieldId::PUserName
             | FieldId::PAssistantName
             | FieldId::PImpProfile
+            | FieldId::PTimeRows
             | FieldId::PTool(_)
             | FieldId::ProfileSub
             // The impersonation-profile list lives in the config, but it's user data

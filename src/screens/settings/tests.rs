@@ -1544,6 +1544,29 @@ fn toggling_profile_tool_emits_save_profile() {
     }
 }
 
+/// The time rows switch (a companion feature, spec §10): off on a new profile,
+/// `Space` turns it on and the profile is saved with it, a second `Space` turns it
+/// off again.
+#[test]
+fn toggling_time_rows_saves_the_profile() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Profiles);
+    assert!(!s.profiles[0].companion.time_rows, "off by default");
+    goto_field(&mut s, FieldId::PTimeRows);
+    match s.handle_key(key(KeyCode::Char(' '))) {
+        Some(SettingsIntent::SaveProfile { edit, .. }) => {
+            assert_eq!(edit.companion.map(|c| c.time_rows), Some(true));
+        }
+        other => panic!("expected SaveProfile, got {other:?}"),
+    }
+    match s.handle_key(key(KeyCode::Char(' '))) {
+        Some(SettingsIntent::SaveProfile { edit, .. }) => {
+            assert_eq!(edit.companion.map(|c| c.time_rows), Some(false));
+        }
+        other => panic!("expected SaveProfile, got {other:?}"),
+    }
+}
+
 #[test]
 fn profile_select_cycles() {
     let mut p2 = Profile::new("Второй", "sys2");

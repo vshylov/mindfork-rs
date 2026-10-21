@@ -14,6 +14,24 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Added
+
+- **The time of messages, for a companion.** A profile can now tell the model when
+  each of your messages was written — "[Thursday, 22 October 2026, 18:40 · 2d 21h
+  after the previous message]", or "[21:35 · 24m later]" within a day — so it knows
+  that three days have passed since you said the interview was tomorrow, and that
+  twenty-five minutes have not. Settings → Profiles → *Companion* → *Time of
+  messages*; off by default, since a plain assistant has no use for it. The rows are
+  worked out from the messages' own times when the request is built: nothing is
+  added to your chats, and the prompt cache is not disturbed.
+
+### Fixed
+
+- **`get_last_user_message_time` said "7s ago" on every turn.** It reported the
+  message you had just sent, so a model that asked how long it had been since you
+  last wrote was told that no time had passed. It now reports your previous message
+  and the gap between the two.
+
 ## [0.21.0] — 2026-10-19
 
 **DeepSeek as a provider of its own.** The `deepseek` mode reads what DeepSeek

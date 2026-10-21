@@ -799,6 +799,9 @@ enum FieldId {
     /// The impersonation profile the assistant profile's chats use (a reference by
     /// id; the first option — "no reference", the shared default text). See spec §11.8.
     PImpProfile,
+    /// The profile's time rows (`companion.time_rows`, spec §6.2): a companion
+    /// feature, off by default.
+    PTimeRows,
     /// A profile tool toggle by index in the catalog.
     PTool(usize),
     // Impersonation profiles (the "Impersonation" subsection of "Profiles"; the list

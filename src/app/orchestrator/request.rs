@@ -45,20 +45,30 @@ fn message_to_api(message: &Message, loc: &Locale) -> Option<ApiMessage> {
 /// accepts without relying on consecutive same-role turns — or standing alone
 /// when it is the last user-side row (a turn the app started on it) or an
 /// assistant row follows it.
-fn api_messages(messages: &[Message], loc: &Locale) -> Vec<ApiMessage> {
-    /// Between a notification and the user's words, and between two
-    /// notifications delivered in one message.
+///
+/// `rows` is aligned with `messages` — empty when the profile has no time rows —
+/// and a user message's row goes immediately in front of its words, after any
+/// notification merged with it: the row says when *the user* wrote
+/// ([`crate::features::time_row`], spec §6.2).
+fn api_messages(messages: &[Message], rows: &[Option<String>], loc: &Locale) -> Vec<ApiMessage> {
+    /// Between a notification and the user's words, between two notifications
+    /// delivered in one message, and between a time row and the words it dates.
     const SEP: &str = "\n\n";
     let mut out = Vec::with_capacity(messages.len());
     let mut pending: Vec<&str> = Vec::new();
-    for m in messages {
+    for (i, m) in messages.iter().enumerate() {
         if m.is_notification() {
             pending.push(&m.text);
             continue;
         }
-        if m.role == MessageRole::User && !pending.is_empty() {
-            let mut parts = std::mem::take(&mut pending);
-            parts.push(&m.text);
+        if m.role == MessageRole::User {
+            let words = match rows.get(i).and_then(Option::as_deref) {
+                Some(row) if m.text.is_empty() => row.to_string(),
+                Some(row) => format!("{row}{SEP}{}", m.text),
+                None => m.text.clone(),
+            };
+            let mut parts: Vec<&str> = std::mem::take(&mut pending);
+            parts.push(&words);
             out.push(ApiMessage::user(parts.join(SEP)).with_images(images_to_api(&m.images, loc)));
             continue;
         }
@@ -145,13 +155,42 @@ fn record_to_api(rec: &ToolCallRecord) -> ApiToolCall {
     }
 }
 
-/// Timestamp of the chat's last user message (for `ToolContext`).
+/// Timestamp of the chat's last user message — when the user last wrote, for a
+/// background task, which answers no message of theirs.
 pub(super) fn last_user_message_at(chat: &Chat) -> Option<chrono::DateTime<chrono::Utc>> {
     chat.messages
         .iter()
         .rev()
         .find(|m| m.role == MessageRole::User)
         .map(|m| m.timestamp)
+}
+
+/// When the user wrote, for a turn about to answer `chat` (spec §9.3,
+/// `get_last_user_message_time`): the turn answers the last user-side row — a user
+/// message on a sent, regenerated or continued turn, a task notification on a
+/// woken one. A user message being answered is `answering`, and the user message
+/// before it `previous`; a woken turn answers none of theirs, so `previous` is their
+/// latest message. Before the fix this was one instant — the message just sent —
+/// and the tool answered "7s ago" on every ordinary turn
+/// (docs/research/companion-platform.md §2.2).
+pub(super) fn user_message_times(chat: &Chat) -> crate::features::tools::UserMessageTimes {
+    let mut users = chat
+        .messages
+        .iter()
+        .rev()
+        .filter(|m| m.role == MessageRole::User);
+    let answered = chat
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == MessageRole::User || m.is_notification());
+    match answered {
+        Some(m) if m.role == MessageRole::User => crate::features::tools::UserMessageTimes {
+            answering: users.next().map(|m| m.timestamp),
+            previous: users.next().map(|m| m.timestamp),
+        },
+        _ => crate::features::tools::UserMessageTimes::latest(users.next().map(|m| m.timestamp)),
+    }
 }
 
 /// What the turn's observations are picked by (spec §17.4): the chat's
@@ -204,6 +243,11 @@ pub(super) struct PromptContext<'a> {
     /// That mode's input and output folders as the model must write them (§14 V2):
     /// `/w/in`/`/w/out` in the sandbox, `in`/`out` on the host.
     pub python_dirs: (&'static str, &'static str),
+    /// The clock time rows are written in, when the profile switched them on
+    /// (`Profile.companion.time_rows`, spec §6.2); `None` sends the messages as they
+    /// are. Production passes [`crate::features::time_row::local`]; a test, a fixed
+    /// zone, so its rows do not depend on the machine's.
+    pub time_rows: Option<crate::features::time_row::Clock<'a>>,
     /// Scaffold language (axis A): every injected block is read by the model.
     pub loc: &'a Locale,
 }
@@ -282,10 +326,17 @@ pub(super) fn build_request_in(
     // After the attachments, whose handles it repeats and whose content it does not, and
     // before the project: the same volatility order the other blocks follow (spec §6.6).
     let system = inject_files(system, cx.files, cx.python_dirs, cx.loc);
+    // Derived from the stored timestamps on every build, so a past message's row is
+    // the same text on every turn and the prefix holds (spec §6.6). Computed over the
+    // whole history so the first visible message measures its gap to a folded one.
+    let rows = cx
+        .time_rows
+        .map(|clock| crate::features::time_row::rows(messages, upto, clock, cx.loc))
+        .unwrap_or_default();
     ChatRequest {
         continue_final: false,
         system: inject_workspace(system, env.workspace, cx.offered_tools, cx.loc),
-        messages: api_messages(&messages[upto..], cx.loc),
+        messages: api_messages(&messages[upto..], &rows, cx.loc),
         sampling,
         tools,
     }

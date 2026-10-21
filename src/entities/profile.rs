@@ -63,6 +63,28 @@ pub struct LlmChange {
     pub mode: crate::shared::config::ServerMode,
 }
 
+/// The companion features of a profile (spec §10,
+/// docs/research/companion-platform.md): each a switch of its own, every one off
+/// by default — a profile is an assistant until it opts in, one feature at a time
+/// (the owner's decision of 2026-10-21, §8 there). `profiles.json` omits the whole
+/// group while it is at its default, so a profile that never opts in is written
+/// exactly as before.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CompanionFeatures {
+    /// A dated row in front of every user message the model reads — when it was
+    /// sent, and how long after the previous message (C1 there). Derived from the
+    /// messages' own timestamps when the request is built, never stored.
+    pub time_rows: bool,
+}
+
+impl CompanionFeatures {
+    /// Whether every feature is at its default (off) — the serializer's skip test.
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// The AI interlocutor's profile: system message, names, tools, defaults.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Profile {
@@ -112,6 +134,9 @@ pub struct Profile {
     pub known_tools: Vec<ToolId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_sampling: Option<SamplingConfig>,
+    /// The companion features this profile has switched on (all off by default).
+    #[serde(default, skip_serializing_if = "CompanionFeatures::is_default")]
+    pub companion: CompanionFeatures,
     /// Soft delete.
     #[serde(default)]
     pub is_hidden: bool,
@@ -132,6 +157,7 @@ impl Profile {
             enabled_tools: Vec::new(),
             known_tools: Vec::new(),
             default_sampling: None,
+            companion: CompanionFeatures::default(),
             is_hidden: false,
         }
     }
@@ -177,6 +203,42 @@ mod tests {
         assert_eq!(p.character_names, CharacterNames::default());
         assert!(!p.is_hidden);
         assert!(p.enabled_tools.is_empty());
+    }
+
+    /// The companion features start off, and a profile that never switched one on
+    /// is written without the group — byte-for-byte what an older build writes, so
+    /// a downgrade reads it untouched. A switched-on feature survives the round trip.
+    #[test]
+    fn companion_features_default_off_and_omitted() {
+        let p = Profile::new("X", "s");
+        assert!(!p.companion.time_rows);
+        let json = serde_json::to_value(&p).unwrap();
+        assert!(json.get("companion").is_none(), "{json}");
+
+        let mut on = p.clone();
+        on.companion.time_rows = true;
+        let json = serde_json::to_string(&on).unwrap();
+        assert!(json.contains("\"time_rows\":true"), "{json}");
+        let back: Profile = serde_json::from_str(&json).unwrap();
+        assert!(back.companion.time_rows);
+    }
+
+    /// An older `profiles.json` (no group) reads with every feature off, and a
+    /// group naming a feature this build does not know still reads.
+    #[test]
+    fn companion_features_tolerate_absence_and_unknown_keys() {
+        let raw = format!(
+            r#"{{"id":"{}","name":"X","default_system_message":"s"}}"#,
+            Uuid::nil()
+        );
+        let p: Profile = serde_json::from_str(&raw).unwrap();
+        assert_eq!(p.companion, CompanionFeatures::default());
+        let raw = format!(
+            r#"{{"id":"{}","name":"X","default_system_message":"s","companion":{{"time_rows":true,"later_feature":true}}}}"#,
+            Uuid::nil()
+        );
+        let p: Profile = serde_json::from_str(&raw).unwrap();
+        assert!(p.companion.time_rows);
     }
 
     /// Role names start out unset — the feed/export then use the interface

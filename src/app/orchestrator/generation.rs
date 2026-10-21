@@ -33,8 +33,8 @@ use crate::shared::tokens::estimate_prompt;
 
 use super::Orchestrator;
 use super::request::{
-    PromptContext, RequestEnv, build_request, build_request_in, last_user_message_at,
-    observation_query, withhold_images,
+    PromptContext, RequestEnv, build_request, build_request_in, observation_query,
+    user_message_times, withhold_images,
 };
 
 /// How long the turn waits to learn whether the engine takes images
@@ -659,6 +659,13 @@ impl Orchestrator {
             .find(|p| p.id == profile_id)
             .map(|p| p.enabled_tools.clone())
             .unwrap_or_default();
+        // The profile's time rows (spec §6.2, a companion feature, off by default):
+        // the request dates every user message by the machine's clock.
+        let time_rows = self
+            .profiles
+            .iter()
+            .find(|p| p.id == profile_id)
+            .is_some_and(|p| p.companion.time_rows);
         // Where this chat's verbatim history starts, if compression folded
         // anything away. It decides three things at once, which is the point:
         // what the request carries, whether the summary block is in the prompt,
@@ -855,6 +862,9 @@ impl Orchestrator {
                     // all of the tools switched off; the block describes what
                     // this turn actually has, and nothing else.
                     offered_tools: &allowed,
+                    time_rows: time_rows.then_some(
+                        &crate::features::time_row::local as crate::features::time_row::Clock<'_>,
+                    ),
                     loc: profile_loc,
                 },
             );
@@ -866,7 +876,7 @@ impl Orchestrator {
                 chat_id: active_id,
                 system_message: chat.system_message.clone(),
                 effective_sampling: sampling,
-                last_user_message_at: last_user_message_at(chat),
+                user_times: user_message_times(chat),
                 // The turn's attachment snapshot — what `attachment_read` sees
                 // (spec §9.7). `Arc` — the context is cloned per call and the
                 // texts can be large.
@@ -3464,7 +3474,12 @@ impl TurnLoop<'_> {
         let mut ctx = self.ctx.clone();
         ctx.system_message = parsed.system_message.clone();
         ctx.effective_sampling = sampling.clone();
-        ctx.last_user_message_at = Some(chrono::Utc::now());
+        // The child answers the parent's message, written this instant, and has
+        // no earlier one (spec §9.3.2).
+        ctx.user_times = crate::features::tools::UserMessageTimes {
+            answering: Some(chrono::Utc::now()),
+            previous: None,
+        };
         ctx.history = None;
         ctx.cancel = cancel.clone();
         // Which attached files have an index — the attachment block names
@@ -3517,6 +3532,9 @@ impl TurnLoop<'_> {
                 python_dirs: ctx.python_mode.dirs(),
                 history_tools: false,
                 offered_tools: &allowed,
+                // The child's one message is the parent's, written this instant:
+                // a row would date nothing the child needs (spec §6.2).
+                time_rows: None,
                 loc,
             },
         );
