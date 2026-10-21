@@ -1868,6 +1868,18 @@ impl SettingsScreen {
                             FieldKind::Toggle(p.companion.time_rows),
                         )
                         .describe(loc.t("ui.settings.desc.time_rows")),
+                        row(
+                            FieldId::PNotesInPrompt,
+                            loc.t("ui.settings.field.notes_in_prompt"),
+                            FieldKind::Toggle(p.companion.notes_in_prompt),
+                        )
+                        .describe(loc.t("ui.settings.desc.notes_in_prompt")),
+                        row(
+                            FieldId::PEarlierChats,
+                            loc.t("ui.settings.field.earlier_chats"),
+                            FieldKind::Toggle(p.companion.earlier_chats),
+                        )
+                        .describe(loc.t("ui.settings.desc.earlier_chats")),
                     ],
                 ));
                 // Tool toggles: laid out by semantic group

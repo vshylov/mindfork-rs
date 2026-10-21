@@ -1,7 +1,7 @@
 # A platform for a companion — research and decision points
 
 Status: **research, 2026-10-21; forks decided by the owner the same day (§8);
-nothing is built.** The question was the owner's: what would make mindfork a better
+stage 1 built (#809), stage 2's C2 built (§3.4, §9).** The question was the owner's: what would make mindfork a better
 platform for an AI companion. The document maps what the application already has,
 what it lacks, what the field and the literature say, and what a small live probe
 measured; the decision points and the owner's decisions are in §8, and the sequence in
@@ -255,6 +255,103 @@ was measured, at about half the tokens. **On the gate's own weights** (llama.cpp
 b11719, the 4090), the S4 case five times each with no tools: without rows Gemma 4 31B
 q4_0 asked how the interview went 5 of 5 and Qwen 3.8 27B Q4_K_M 2 of 5; with the
 compact row, 0 of 5 both. Stage 1's smokes then passed on both (docs/journal/engine.md).
+
+### 3.4 Stage 2's probe: the person's notes, and the conversations before (2026-10-21)
+
+F3 (a) was decided "after a planted-fact probe with a go/no-go". The probe planted
+fourteen notes about a fictional person, Alex — an interview at a fintech on Monday,
+a peanut allergy, a sister's knee surgery tomorrow, a half marathon and a sore knee,
+a cat called Pixel, vegetarian since 2023 — plus one superseded note, and opened a
+new conversation eight ways: four touching a fact (*"The interview went better than I
+expected, I think."*, *"Pixel threw up again this morning."*), one touching a fact
+without naming it (*"I can't focus on anything today."*), a greeting (*"Hey, I'm
+back."*), and two about anything else (TCP's handshake, the order of the planets).
+Plus a second-turn case (the greeting, then Pixel) and, for C2 (b), *"Let's pick up
+where we left off last time"* with three earlier conversations listed. Five models
+through OpenRouter — Gemma 4 31B (`deepinfra/fp8`), Qwen 3.8 27B (`deepinfra`),
+gpt-oss-120b, DeepSeek v4.1 flash, Claude Haiku 5.5 — five runs a cell, a companion
+persona, a time row on every message (stage 1, constant across arms), `note_recall`
+and `note_save` offered and served from the planted notes by bge-m3; a Russian subset
+on the two gate models. Claude Sonnet 5.5 graded each reply: used a fact that bears
+on the message beyond what the message says; stated a wrong fact; brought in a
+personal fact that bears on nothing asked; pressure. The scripts stay out of the
+repository, as §3.2's did.
+
+**The floor is the finding.** bge-m3 on a short opening against a one-line fact
+compresses the cosines: the note an opening was about scored 0.489–0.582, the best
+note for an opening about anything else at most 0.380, and the noise in between
+(0.45–0.50) is where the indirect openings landed — *"I can't focus"* put the peanut
+allergy first at 0.501, the sister's surgery nowhere near. On the dev profile's long
+notes and long openings (140 openings, 15 notes, read blind as §3.1's corpus was)
+the scale sits higher: every lead from 0.60 bore on its chat (11 of 11), 11 of 16
+between 0.55 and 0.60, 3 of 25 between 0.50 and 0.55. So the observations' 0.50 on
+the lead does not transfer: on the planted corpus it would have missed two of the
+three direct facts.
+
+Three arms: **A** no block (today: the model may call `note_recall`); **B** the
+observations' shape — notes over 0.50 by the opening, and when none clears it, the
+three latest notes; **C** relevance alone — every note over 0.45, at most four, and
+no block when none clears it. English cells:
+
+| Model | Fact used, the note in C's block (O1, O4, O8) A · B · C | Personal facts in the TCP/planets answers A · B · C | Wrong facts, all cells A · B · C | Its own `note_recall`, all cells A · C |
+|---|---|---|---|---|
+| Gemma 4 31B | 1/15 · 12/15 · **13/15** | 0/10 · 7/10 · **0/10** | 6/45 · 2/44 · 1/45 | 0/45 · 0/45 |
+| Qwen 3.8 27B | 14/14 · 13/14 · 8/10¹ | 0/10 · 8/10 · **0/10** | 6/42 · 5/39 · 6/39 | 32/42 · 17/39 |
+| gpt-oss-120b | 4/15 · 13/14 · **13/14** | 0/10 · 6/10 · **0/10** | 5/45 · 16/42 · 6/44 | 4/45 · 7/44 |
+| DeepSeek v4.1 flash | 11/12 · 11/11 · 12/14 | 2/10 · 9/10 · 2/10 | 3/38 · 8/38 · 3/39 | 33/38 · 29/39 |
+| Haiku 5.5 | 15/15 · 13/14 · 13/15 | 0/10 · 3/10 · **0/10** | 2/44 · 6/44 · 1/45 | 34/44 · 10/45 |
+
+¹ Five of Qwen's fifteen C runs came back from the judge unparsed; the five O4
+replies among them all open with the knee, read by hand.
+
+- **The "latest notes" fallback is a no-go.** It carried Alex's freshest news — the
+  train to Coimbra, the interview — into the answers about TCP and the planets on all
+  five models, 3 to 9 of 10, and most of gpt-oss's wrong facts were its dates (the
+  surgery "tomorrow morning", a past interview "coming up"). The same happened in
+  Russian: Gemma 5 of 5.
+- **Relevance alone helps the models that do not look on their own and costs the
+  others little.** Gemma 4 calls `note_recall` in none of 45 runs: with the block it
+  used the fact 13 of 15, from 1; gpt-oss 13 of 14, from 4; in Russian Gemma 5 of 5,
+  from 0. The unrelated answers stayed clean everywhere — there is no block for them.
+- **The cost.** A block makes a model that searches on its own search less — Haiku
+  34 of 44 → 10 of 45, Qwen 32 of 42 → 17 of 39 — so where the block holds only the
+  noise picks (the indirect opening, the greeting) it can miss what a search would
+  have found: Haiku used a bearing fact there 10 of 15, from 14 of 14. And a noise
+  pick can be brought up: gpt-oss mentioned one in 17 of 44 runs. A trailer inviting
+  the search ("These are only the notes nearest how this conversation began; when it
+  turns to something they do not cover, search the rest with note_recall") brought
+  Haiku's searches back (O3: 1 → 5 of 5) without finding the sister's surgery, which
+  no query of its found either, and cost Gemma on O8; the short trailer stays.
+- **A pick made on the opening does not follow the conversation.** In the second-turn
+  case — the greeting, then Pixel — the block held no cat, and no arm differed from A.
+  That is the price of a prefix that holds (spec §6.6), the observations' too.
+- **Russian Qwen** answered *"Hey, I'm back"* with *"where did you disappear to?"* in 3 of 20
+  runs with a block and none without, which the judge scored as pressure — a greeting
+  idiom the person's own words invited, and a cell of five; noted, not a blocker,
+  since nothing here acts unasked (§7 rule 4 is about initiative).
+
+**C2 (b), the earlier conversations** (*"Let's pick up where we left off"*, three
+earlier conversations, `chat_read` offered and served): the reply took up the latest
+one — the knee, the 18 km decision — **DeepSeek 4 of 4** from 1 of 4 without the list,
+**gpt-oss 4 of 5** from 0, **Haiku 4 of 4** from 0, **Qwen 5 of 5** from 1. Gemma
+named all three and asked which, 5 of 5 with or without it, and with a header saying
+"the latest first" too; in the app, with its thinking on, it read the right one in
+all three smoke runs.
+
+**Decisions (the agent's, inside the owner's F3 (a) and F4 (a)):** C — every note
+over **0.45** in bge-m3's scale (mapped for another embedder like the other gates),
+nearest first, at most **four**, sharing **1 600 characters** by the observations'
+water-filling, no fallback; candidates are notes written before the moment the
+conversation in front of the model began — its first user message, or the first after
+a summary — so the block is the same text every turn and moves with a compaction roll,
+like the observations; the earlier conversations are the three with a user message
+before that moment, newest first by their last message before it, so going back to an
+older conversation moves nothing. Both blocks sit after the project block and before
+the self-model, the order of volatility (spec §6.6). **Live, GO** (docs/journal/notes.md):
+on the gate's weights (llama.cpp b11719, the 4090) Gemma 4 31B q4_0 passed the three
+smokes three times and Qwen 3.8 27B Q4_K_M twice; the control — Gemma, the notes
+switch off — failed the fact smoke 3 of 3; gpt-oss-120b, Haiku 5.5 and DeepSeek v4.1
+flash passed once each through OpenRouter.
 
 ## 4. What the field does
 
@@ -936,7 +1033,11 @@ by default:
    `#[ignore]` smokes, live GO on Gemma 4 31B and Qwen 3.8 27B. Left for later: dates
    in the digests the rolling summary and the reflection read.
 2. **What it knows about you** — C2 (a) behind a planted-fact probe with a go/no-go,
-   C2 (b), and C3, the memory screen, in the same stage (§7).
+   C2 (b), and C3, the memory screen, in the same stage (§7). **C2 built**: the probe
+   (§3.4) said go for notes picked by relevance alone and no-go for a "latest notes"
+   fallback; two profile switches, `notes_in_prompt` and `earlier_chats`, live GO on
+   Gemma 4 31B and Qwen 3.8 27B. C3, the memory screen, is the stage's second pull
+   request.
 3. **It comes back** — C4 (a) follow-ups with the rules of §7, and C5 (a)
    notifications, which cost little and give a follow-up somewhere to go. C4 (b)
    check-ins and C4 (c) a greeting from memory are not in this track (F5).

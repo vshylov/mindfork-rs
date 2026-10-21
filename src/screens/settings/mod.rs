@@ -802,6 +802,11 @@ enum FieldId {
     /// The profile's time rows (`companion.time_rows`, spec §6.2): a companion
     /// feature, off by default.
     PTimeRows,
+    /// The profile's notes in the prompt (`companion.notes_in_prompt`, spec §6.6).
+    PNotesInPrompt,
+    /// The profile's earlier conversations in the prompt
+    /// (`companion.earlier_chats`, spec §6.6).
+    PEarlierChats,
     /// A profile tool toggle by index in the catalog.
     PTool(usize),
     // Impersonation profiles (the "Impersonation" subsection of "Profiles"; the list

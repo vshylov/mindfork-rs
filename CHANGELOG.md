@@ -24,6 +24,15 @@ split by subsystem.
   messages*; off by default, since a plain assistant has no use for it. The rows are
   worked out from the messages' own times when the request is built: nothing is
   added to your chats, and the prompt cache is not disturbed.
+- **What a companion knows about you, from the first message.** Two more switches
+  in Settings → Profiles → *Companion*, both off by default. *Notes in the prompt*
+  puts the notes the assistant wrote about you that are close to how a conversation
+  opens — "The interview went better than I expected" brings the note about the
+  interview and its SQL exercise — so a model that never searches its notes still
+  knows; a conversation about something else gets none. *Earlier conversations in
+  the prompt* lists the three conversations before this one, with links the model
+  can open when chat reading is on, so "let's pick up where we left off" works.
+  Both are chosen once, when the conversation begins, so the prompt cache holds.
 
 ### Fixed
 

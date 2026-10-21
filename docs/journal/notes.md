@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (6)
+## Entries (7)
 
 - Post-M9: notes connectivity — MVP probe (Tier 1, done)
 - Post-M9: notes connectivity — Tier 2 (graph + revision history, done)
@@ -18,6 +18,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: linking the memory organs — Tier 3, Path 1 (cross-organ links) (done)
 - Post-M9: linking the memory organs — Tier 3, Path 2 (output mixing) (done)
 - Post-M9: linking the memory organs — Tier 3, Path 3 (RAG ↔ notes) (done)
+- Post-M9: the companion's notes and earlier conversations in the prompt (done)
 
 ### Post-M9: notes connectivity — MVP probe (Tier 1, done)
 - **A shift of memory from accumulation to integration** per the plan
@@ -261,3 +262,69 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   full chain (search → note → citation) worked.
 - **Deferred**: vec0 as note counts grow; a nudge for `note_cite_source` in
   reflection (currently — in regular turns, where `rag_search` is available).
+
+### Post-M9: the companion's notes and earlier conversations in the prompt (done)
+- **What.** Stage 2's first half of the companion track
+  ([docs/research/companion-platform.md](../research/companion-platform.md) C2, §3.4):
+  two profile switches in `CompanionFeatures`, both off by default (the owner's
+  decision of 2026-10-21, §8 there). `notes_in_prompt` puts a block of the profile's
+  notes — about the person and their world, never the `@self` observations — into
+  `system`; `earlier_chats` lists the three conversations before this one, with
+  their `chat://` addresses when the turn offers `chat_read` (spec §6.6).
+- **Why.** Only `@self` notes ever reached the prompt; a note about the person
+  reached the model only through a `note_recall` it chose to make
+  (research §2.2 finding 2), and Gemma 4 — a gate model — makes none.
+- **The probe decided the shape** (research §3.4: 14 planted notes about one person,
+  eight openings, five models through OpenRouter, Sonnet 5.5 as judge). bge-m3 on a
+  short opening compresses cosines — the note an opening was about scored
+  0.489–0.582, the best note for an unrelated opening at most 0.380 — so the
+  observations' 0.50 on the lead does not transfer. A "latest notes" fallback for an
+  opening near none (the observations' shape) carried the person's freshest news into
+  answers about TCP and the planets on all five models (3–9 of 10) and doubled
+  gpt-oss's wrong dates: **no-go**. Relevance alone — every pick over **0.45**, at most
+  four, no block when none clears — left those answers clean and raised the fact's
+  use where the model does not search: Gemma 4 1/15 → 13/15, gpt-oss 4/15 → 13/14.
+  The cost, recorded: a block makes a searching model search less (Haiku 34/44 →
+  10/45), so a block of noise picks can hide what a search would find. The earlier
+  conversations: "pick up where we left off" taken up 4/4, 4/5, 4/4, 5/5 from 0–1 on
+  four models; Gemma asked which, with or without the list.
+- **Key decisions (the agent's, within F3 (a)/F4 (a)).** One **memory cut**
+  (`features::companion_memory::memory_cut`) — the first user message the request
+  carries, after a summary when one is in force — decides both blocks: notes written
+  before it, conversations with a user message before it ordered by their last
+  message before it. So both blocks are the same text every turn and move with a
+  compaction roll, as the observations do (spec §6.6); a reply in an older chat
+  after the cut moves nothing. The notes use the observations' query
+  (`observation_query`) and water-filling (`fit_observations`, now `pub(crate)`, with
+  `age_label`); cap 1 600 characters. Order in `system`: project → earlier
+  conversations (`PromptContext.earlier_chats`, synchronous) → notes
+  (`generation::inject_prompt_notes`, in the task — it embeds) → self-model. A
+  sub-agent's request carries neither. The trailer names `note_recall` only when
+  offered; a longer one inviting the search was measured and not kept.
+- **Code.** `features/companion_memory.rs` (cut, `earlier_chats`, `render_earlier`,
+  `render_notes`), `features/tools/notes/prompt_notes.rs` (`NOTES_FLOOR`,
+  `notes_for_prompt`), `PromptContext.earlier_chats`, `GenSpawn.prompt_notes`, two
+  settings rows (`PNotesInPrompt`, `PEarlierChats`), `prompt.memory.*` in both
+  bundles; the settings screenshots moved with the field count (Profiles 62 → 64).
+- **Tests.** 8 unit tests (`features::companion_memory`: the cut, the pick and its
+  order, nothing moved by a message after the cut, addresses only with `chat_read`,
+  one-line titles, the cap, every locale) and 4 orchestrator tests over a capturing
+  engine (`tests/companion_memory.rs`: both blocks reach the model and are identical
+  on the next turn; no addresses without `chat_read`; off by default the request is
+  untouched; an opening near no note gets no block), and one settings test (each switch flips
+  its own feature). A trap on the way: the app's
+  embedding guard calibrates the similarity scale against the test `MockEmbedder`
+  and raises the floor, so a note at cosine 0.60 fell under it — the fixtures are
+  spelt in characters sharing one bucket (docs/lessons.md §2). **4138 tests green, 285
+  `#[ignore]`**; fmt, clippy and the repository gates clean.
+- **Smoke — GO** (`tests/companion_memory_live.rs`: the planted fact used, an
+  unrelated question left clean, "pick up where we left off" taken up). On the gate's
+  weights (llama.cpp b11719, RTX 4090, bge-m3 Q8_0 as the embedder): **Gemma 4 31B
+  q4_0 3/3 three times, Qwen 3.8 27B Q4_K_M 3/3 twice**; the control — Gemma with
+  the notes switch off — failed the fact smoke 3 of 3 ("What makes you say that?").
+  In the app Gemma, thinking on, read the latest conversation with `chat_read` in
+  all three runs where the probe's thinking-off route asked. Through OpenRouter:
+  gpt-oss-120b, Claude Haiku 5.5 and DeepSeek v4.1 flash 3/3 each.
+- **Left for later.** C3, the notes screen, is the stage's second pull request. A
+  pick on the opening does not follow the conversation (the second-turn case — the
+  greeting, then the cat — gained nothing); per-message picks would cost the prefix.

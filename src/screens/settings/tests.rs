@@ -1567,6 +1567,41 @@ fn toggling_time_rows_saves_the_profile() {
     }
 }
 
+/// The memory switches (spec §6.6) are switches of their own: each flips its
+/// feature alone and saves the profile.
+#[test]
+fn each_memory_switch_flips_its_own_feature() {
+    use crate::entities::profile::CompanionFeatures;
+    for (id, on) in [
+        (
+            FieldId::PNotesInPrompt,
+            CompanionFeatures {
+                notes_in_prompt: true,
+                ..CompanionFeatures::default()
+            },
+        ),
+        (
+            FieldId::PEarlierChats,
+            CompanionFeatures {
+                earlier_chats: true,
+                ..CompanionFeatures::default()
+            },
+        ),
+    ] {
+        let mut s = screen();
+        goto_section(&mut s, Section::Profiles);
+        assert!(s.profiles[0].companion.is_default(), "off by default");
+        goto_field(&mut s, id);
+        match s.handle_key(key(KeyCode::Char(' '))) {
+            Some(SettingsIntent::SaveProfile { edit, .. }) => {
+                assert_eq!(edit.companion, Some(on), "{id:?}");
+            }
+            other => panic!("expected SaveProfile, got {other:?}"),
+        }
+        assert_eq!(s.profiles[0].companion, on);
+    }
+}
+
 #[test]
 fn profile_select_cycles() {
     let mut p2 = Profile::new("Второй", "sys2");

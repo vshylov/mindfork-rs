@@ -130,8 +130,9 @@ a checkout with a recent stable Rust. On a rented GPU box or in a container, the
   itself and about you (`F3`), notes it writes and links into a graph, and a
   **knowledge base** with semantic retrieval over your own files. Isolated per
   companion profile, all of it on your disk. A profile can also tell the model
-  **when** each of your messages was written, so it knows days have passed
-  (Settings → Profiles → *Companion*, off by default).
+  **when** each of your messages was written, so it knows days have passed, and
+  start each conversation knowing the notes nearest its subject and the
+  conversations before it (Settings → Profiles → *Companion*, each off by default).
 - **Real tools, behind switches you set.** Web search and page fetching, a
   **Python sandbox** (Wasmer/WASIX — no host file access), file access jailed to
   one directory you name, YouTube video understanding, and tools from any **MCP**

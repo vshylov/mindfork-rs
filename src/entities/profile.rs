@@ -76,6 +76,14 @@ pub struct CompanionFeatures {
     /// sent, and how long after the previous message (C1 there). Derived from the
     /// messages' own timestamps when the request is built, never stored.
     pub time_rows: bool,
+    /// A block of the companion's notes — those about the person and their world,
+    /// not its `@self` observations — in the system prompt, picked by the
+    /// conversation's opening (C2 (a) there, spec §6.6).
+    pub notes_in_prompt: bool,
+    /// The titles and ages of the profile's few conversations before this one in
+    /// the system prompt, with their `chat://` addresses when the turn offers
+    /// `chat_read` (C2 (b) there).
+    pub earlier_chats: bool,
 }
 
 impl CompanionFeatures {
@@ -212,6 +220,8 @@ mod tests {
     fn companion_features_default_off_and_omitted() {
         let p = Profile::new("X", "s");
         assert!(!p.companion.time_rows);
+        assert!(!p.companion.notes_in_prompt);
+        assert!(!p.companion.earlier_chats);
         let json = serde_json::to_value(&p).unwrap();
         assert!(json.get("companion").is_none(), "{json}");
 
@@ -221,6 +231,19 @@ mod tests {
         assert!(json.contains("\"time_rows\":true"), "{json}");
         let back: Profile = serde_json::from_str(&json).unwrap();
         assert!(back.companion.time_rows);
+
+        // Each feature is a switch of its own: one on is enough to write the group,
+        // and it comes back alone.
+        for flip in [
+            (|c: &mut CompanionFeatures| c.notes_in_prompt = true) as fn(&mut CompanionFeatures),
+            |c| c.earlier_chats = true,
+        ] {
+            let mut on = p.clone();
+            flip(&mut on.companion);
+            let back: Profile = serde_json::from_str(&serde_json::to_string(&on).unwrap()).unwrap();
+            assert_eq!(back.companion, on.companion);
+            assert!(!back.companion.time_rows);
+        }
     }
 
     /// An older `profiles.json` (no group) reads with every feature off, and a

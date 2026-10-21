@@ -17,6 +17,7 @@ pub mod chat_search_sort;
 pub mod cli;
 pub mod compact_command;
 pub mod compaction;
+pub mod companion_memory;
 pub mod data_migration;
 pub mod data_stats;
 pub mod demo;

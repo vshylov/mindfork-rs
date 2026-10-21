@@ -682,6 +682,17 @@ ports out in sequence. A control on a freed port retries with a fresh one (bound
 only the freed half); a "dead URL" made by dropping a listener has the same window.
 — *the port tests' control survives a stranger on the freed port*.
 
+**An orchestrator test's embedder is not the `MockEmbedder` the function tests use —
+it is the mock under the app's embedding guard, which calibrates the similarity
+scale against it.** A floor read through `similarity_scale()` then moves: a note at
+cosine 0.60 to its query, picked by the function in isolation, fell under the floor
+the running app applied, and the block a test expected never came. Through the app,
+make a fixture as near its query as the mock allows — `a`, `q` and `1` share one of
+its 16 buckets, so "aaaa qq1" is at cosine 1 to "aaaa" — and as far as it allows for
+the control; test the threshold itself at the function, over `Storage` and the bare
+mock.
+— *the companion's notes in the prompt*.
+
 ## 3. Measure; do not assume
 
 **Write the user's document from the code, and treat a sentence that cannot be

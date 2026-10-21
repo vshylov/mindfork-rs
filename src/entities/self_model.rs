@@ -237,8 +237,9 @@ fn stamp_closed(g: &mut Goal) {
 /// day the text is stable — so the "self-model" injection into the system prompt
 /// doesn't change turn to turn (the local model's prefix cache suffers no more
 /// than once a day, beyond actual model edits). A negative difference (hours ahead
-/// due to clock skew) is treated as "today".
-fn age_label(at: DateTime<Utc>, now: DateTime<Utc>, loc: &Locale) -> String {
+/// due to clock skew) is treated as "today". The companion's notes and earlier
+/// conversations in the prompt carry the same labels (`features::companion_memory`).
+pub(crate) fn age_label(at: DateTime<Utc>, now: DateTime<Utc>, loc: &Locale) -> String {
     let days = (now - at).num_days();
     match days {
         d if d <= 0 => loc.t("selfmodel.age.today").to_string(),
@@ -873,8 +874,13 @@ fn fit_parts(items: &[String], sep: &str, budget: usize, loc: &Locale) -> (Strin
 /// [`MIN_OBSERVATION_SHARE`], fewer picks are shown and the "… N more" marker
 /// counts the rest. The lead alone is cut to whatever room there is, since an
 /// absent section would read as "no observations", unless nothing of its text
-/// would fit.
-fn fit_observations(picks: &[(String, &str)], room: usize, loc: &Locale) -> Option<String> {
+/// would fit. The companion's notes block shares its room the same way
+/// (`features::companion_memory`, docs/research/companion-platform.md C2).
+pub(crate) fn fit_observations(
+    picks: &[(String, &str)],
+    room: usize,
+    loc: &Locale,
+) -> Option<String> {
     let line = |age: &str, text: &str| {
         loc.tf("selfmodel.item.obs_prompt", &[("age", age), ("text", text)])
     };

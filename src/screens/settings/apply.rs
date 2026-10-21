@@ -555,9 +555,18 @@ impl SettingsScreen {
             return self.toggle_profile_tool(idx);
         }
         // A companion feature — over the selected profile too (spec §10).
-        if id == FieldId::PTimeRows {
+        if matches!(
+            id,
+            FieldId::PTimeRows | FieldId::PNotesInPrompt | FieldId::PEarlierChats
+        ) {
             let p = self.profiles.get_mut(self.profile_idx)?;
-            p.companion.time_rows = !p.companion.time_rows;
+            let c = &mut p.companion;
+            let flag = match id {
+                FieldId::PTimeRows => &mut c.time_rows,
+                FieldId::PNotesInPrompt => &mut c.notes_in_prompt,
+                _ => &mut c.earlier_chats,
+            };
+            *flag = !*flag;
             return Some(self.save_profile());
         }
         // The selected MCP server's switch — indexed, so not in the access table.

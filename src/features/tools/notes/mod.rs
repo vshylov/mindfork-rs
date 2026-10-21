@@ -126,13 +126,16 @@ mod cite;
 mod edit;
 mod graph;
 mod overview;
+mod prompt_notes;
 mod recall;
 mod save;
 mod self_notes;
 
 // Re-export the whole `notes::*` external surface (tools + pub(crate) helpers),
 // so external `use crate::features::tools::notes::X` sites don't change.
-pub(crate) use self::{cite::*, edit::*, graph::*, overview::*, recall::*, save::*, self_notes::*};
+pub(crate) use self::{
+    cite::*, edit::*, graph::*, overview::*, prompt_notes::*, recall::*, save::*, self_notes::*,
+};
 
 #[cfg(test)]
 mod tests;

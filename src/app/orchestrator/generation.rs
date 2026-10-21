@@ -659,13 +659,16 @@ impl Orchestrator {
             .find(|p| p.id == profile_id)
             .map(|p| p.enabled_tools.clone())
             .unwrap_or_default();
-        // The profile's time rows (spec §6.2, a companion feature, off by default):
-        // the request dates every user message by the machine's clock.
-        let time_rows = self
+        // The profile's companion features (spec §6.2, §6.6), each off by default:
+        // time rows date every user message by the machine's clock; the earlier
+        // conversations and the notes are blocks of the system prompt.
+        let companion = self
             .profiles
             .iter()
             .find(|p| p.id == profile_id)
-            .is_some_and(|p| p.companion.time_rows);
+            .map(|p| p.companion)
+            .unwrap_or_default();
+        let time_rows = companion.time_rows;
         // Where this chat's verbatim history starts, if compression folded
         // anything away. It decides three things at once, which is the point:
         // what the request carries, whether the summary block is in the prompt,
@@ -762,6 +765,31 @@ impl Orchestrator {
         } else {
             Vec::new()
         };
+        // What the companion knew when the conversation in front of the model
+        // began (docs/research/companion-platform.md C2): one cut for both of its
+        // blocks, so each is the same text from turn to turn and the prompt's
+        // prefix holds (spec §6.6). The earlier conversations are rendered here,
+        // over the chats in memory; the notes need the embedder and are picked in
+        // the generation task. Addresses only when the turn can read them.
+        let memory_cut =
+            crate::features::companion_memory::memory_cut(chat_ref, self.config.compaction.enabled);
+        let earlier_block = if companion.earlier_chats {
+            let list =
+                crate::features::companion_memory::earlier_chats(&self.chats, chat_ref, memory_cut);
+            crate::features::companion_memory::render_earlier(
+                &list,
+                chrono::Utc::now(),
+                allowed
+                    .iter()
+                    .any(|t| t == crate::features::tools::chats::CHAT_READ_ID),
+                profile_loc,
+            )
+        } else {
+            None
+        };
+        let notes_recall = allowed
+            .iter()
+            .any(|t| t == crate::features::tools::notes::NOTE_RECALL_ID);
 
         // The profile's "self-model" at the start of the turn. Injection into the
         // system prompt happens only if the profile enabled get_self_model (opt-in);
@@ -865,6 +893,7 @@ impl Orchestrator {
                     time_rows: time_rows.then_some(
                         &crate::features::time_row::local as crate::features::time_row::Clock<'_>,
                     ),
+                    earlier_chats: earlier_block.as_deref(),
                     loc: profile_loc,
                 },
             );
@@ -981,6 +1010,10 @@ impl Orchestrator {
             inject_enabled,
             maintenance_protocol: self.config.self_model.maintenance_protocol,
             observations_by,
+            prompt_notes: companion.notes_in_prompt.then_some(PromptNotes {
+                cut: memory_cut,
+                recall: notes_recall,
+            }),
             engine_mode,
             continuation_supported: self.continuation_supported(),
             history_carries_tools: self.history_carries_tools(active_id),
@@ -1363,6 +1396,17 @@ fn apply_effects(chat: &mut crate::entities::chat::Chat, effects: Vec<ChatEffect
     landed
 }
 
+/// What the generation task needs to put the companion's notes into the system
+/// prompt (docs/research/companion-platform.md C2 (a)).
+#[derive(Debug, Clone, Copy)]
+pub(super) struct PromptNotes {
+    /// Only notes written before this are candidates
+    /// ([`crate::features::companion_memory::memory_cut`]).
+    pub(super) cut: chrono::DateTime<chrono::Utc>,
+    /// The turn offers `note_recall` — then the block says where the rest is.
+    pub(super) recall: bool,
+}
+
 /// Which limit ended a turn — the two are enforced together and the message has
 /// to name the right one, or it sends the user to a setting that was not the
 /// problem (docs/lessons.md §4).
@@ -1421,6 +1465,10 @@ struct GenSpawn {
     /// The query for relevance-based injection of observations: the chat's opening
     /// ([`observation_query`]), so the pick holds from turn to turn.
     observations_by: String,
+    /// The companion's notes block (`Profile.companion.notes_in_prompt`, spec
+    /// §6.6): picked in the task by the same query as the observations. `None` —
+    /// the profile has it off, and the request is what it was without it.
+    prompt_notes: Option<PromptNotes>,
     /// Engine mode and model name — a snapshot for `Message.metadata` (spec §8.3).
     engine_mode: ServerMode,
     /// [`Orchestrator::continuation_supported`], read once when the turn starts:
@@ -1671,6 +1719,7 @@ fn spawn_generation(spawn: GenSpawn) {
         inject_enabled,
         maintenance_protocol,
         observations_by,
+        prompt_notes,
         engine_mode,
         continuation_supported,
         history_carries_tools,
@@ -1693,6 +1742,21 @@ fn spawn_generation(spawn: GenSpawn) {
         // observations; Tier 2). With injection disabled, `inject_self_model`
         // returns system as is.
         {
+            // The companion's notes go in ahead of the self-model, which stays last
+            // (spec §6.6): picked by the same opening, so both hold turn to turn.
+            if let Some(pn) = prompt_notes {
+                request.system = inject_prompt_notes(
+                    request.system.take(),
+                    &ctx.storage,
+                    ctx.embedder.as_ref(),
+                    ctx.profile_id,
+                    &observations_by,
+                    pn,
+                    chrono::Utc::now(),
+                    ctx.loc,
+                )
+                .await;
+            }
             let (recent, pick) = injection_recent(
                 &ctx.storage,
                 ctx.embedder.as_ref(),
@@ -3535,6 +3599,7 @@ impl TurnLoop<'_> {
                 // The child's one message is the parent's, written this instant:
                 // a row would date nothing the child needs (spec §6.2).
                 time_rows: None,
+                earlier_chats: None,
                 loc,
             },
         );
@@ -5882,6 +5947,48 @@ pub(super) async fn injection_recent(
         })
         .collect();
     (segments, pick)
+}
+
+/// Appends the companion's notes block to the system prompt
+/// (`Profile.companion.notes_in_prompt`, docs/research/companion-platform.md
+/// C2 (a)): the notes nearest `query` — the conversation's opening, the same
+/// query the observations are picked by — written before the cut, over the
+/// floor ([`crate::features::tools::notes::notes_for_prompt`]). Nothing over the
+/// floor, no embedder, or no text yet: `system` passes through untouched. Async
+/// (embedding the query), so it runs in the generation task; tested over a temp
+/// store + `MockEmbedder`.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn inject_prompt_notes(
+    system: Option<String>,
+    storage: &crate::shared::storage::Storage,
+    embedder: &dyn crate::shared::api::Embedder,
+    profile_id: Uuid,
+    query: &str,
+    pn: PromptNotes,
+    now: chrono::DateTime<chrono::Utc>,
+    loc: &crate::shared::i18n::Locale,
+) -> Option<String> {
+    use crate::features::companion_memory::{NOTES_SHOWN, render_notes};
+    let notes = crate::features::tools::notes::notes_for_prompt(
+        storage,
+        embedder,
+        profile_id,
+        query,
+        pn.cut,
+        NOTES_SHOWN,
+    )
+    .await;
+    let picks: Vec<(chrono::DateTime<chrono::Utc>, &str)> = notes
+        .iter()
+        .map(|n| (n.updated_at, n.content.as_str()))
+        .collect();
+    let Some(block) = render_notes(&picks, pn.recall, now, loc) else {
+        return system;
+    };
+    Some(match system {
+        Some(s) => format!("{s}\n\n{block}"),
+        None => block,
+    })
 }
 
 /// Mixes the "self-model" into the turn's system prompt (SelfModel MVP, see

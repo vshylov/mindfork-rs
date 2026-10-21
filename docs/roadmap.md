@@ -335,9 +335,12 @@ effort tiers — have all closed
   a dated row on every user message (derived from the timestamps, *Time of
   messages*) and `get_last_user_message_time` reporting the previous message — each
   of three models probed had misread either a three-day gap or a twenty-five-minute
-  one, and the rows settled both. Next, stage 2: notes about the person in the prompt
-  (only `note_recall` reaches them today), the earlier conversations, and a screen for
-  the notes; then follow-ups the companion plans. Twelve candidates in six stages.
+  one, and the rows settled both. **Stage 2, first half built**: the notes nearest the
+  conversation's opening and the three earlier conversations in the prompt (*Notes in
+  the prompt*, *Earlier conversations in the prompt*) — relevance alone, since a
+  "latest notes" fallback carried the person's news into unrelated answers on five
+  models of five (§3.4). Next, the notes screen (C3); then follow-ups the companion
+  plans. Twelve candidates in six stages.
 
 ### Feed and rendering
 

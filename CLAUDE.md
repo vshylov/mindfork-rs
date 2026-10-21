@@ -185,8 +185,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-10-21, version 0.21.0)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **4125 unit tests
-green, 282 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **4138 unit tests
+green, 285 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump and demo-reel regenerators).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -198,12 +198,12 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
-- **A platform for a companion — stage 1, the time row** (2026-10-21): the
-  research and the owner's forks (every companion feature a profile switch, off by
-  default); a dated row on every user message, derived from the timestamps;
-  `get_last_user_message_time` fixed. Live **GO**, Gemma 4 and Qwen 3.8
+- **A platform for a companion — stages 1–2** (2026-10-21): every feature a
+  profile switch, off by default; a dated row on every user message; the notes
+  nearest the opening and the earlier conversations in the prompt, by relevance
+  alone. Live **GO**, Gemma 4 and Qwen 3.8
   ([docs/research/companion-platform.md](docs/research/companion-platform.md),
-  [docs/journal/engine.md](docs/journal/engine.md)).
+  [docs/journal/notes.md](docs/journal/notes.md)).
 - **The token counter on the feed's bottom border** (2026-10-19): out of the
   status pill; its reasoning and cache notes are two settings, both on by default
   ([docs/journal/ui-feed.md](docs/journal/ui-feed.md), spec §11.3).
