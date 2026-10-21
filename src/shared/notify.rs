@@ -9,8 +9,10 @@
 //! owner's look on 1.24 (spec §11.12); OSC 9 (`9;text`) is iTerm2's and kitty's. A terminal that knows neither ignores both, and one that
 //! knows both would show two, so one is sent — OSC 777 unless the person picks the
 //! other. Inside tmux an escape is wrapped in DCS passthrough, as OSC 52's is, and
-//! only reaches the terminal with `allow-passthrough on`; the **bell** needs nothing
-//! — tmux marks the window and passes it on — which is why it is on by default too.
+//! only reaches the terminal with `allow-passthrough all` — `on` passes it from a
+//! pane on screen only, so never to someone in another tmux window (spec §11.12,
+//! measured); the **bell** needs nothing — tmux marks the window and passes it on —
+//! which is why it is on by default too.
 //!
 //! **ntfy** is an HTTP `POST` of the text to a topic's URL; the title rides in the
 //! `title` query parameter, which takes UTF-8 where a header would not. Whoever

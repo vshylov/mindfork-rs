@@ -205,7 +205,9 @@ profile, in Settings → Interface → *Notifications*:
   says only *"Activity in tab"* and the tab's name; the escape's says who wrote and
   where. For the desktop
   notification and the focus reports to pass through tmux, add
-  `set -g allow-passthrough on` and `set -g focus-events on` to `~/.tmux.conf`.
+  `set -g allow-passthrough all` and `set -g focus-events on` to `~/.tmux.conf`.
+  `all`, not `on`: with `on` tmux passes the notification only while the app's
+  window is the one on screen, and drops it while you are in another tmux window.
 - **ntfy topic** — a push to your phone through [ntfy](https://ntfy.sh): a topic's
   URL, on ntfy.sh or your own server, and its token if it needs one (kept
   encrypted, like the API keys). Anyone who knows a public topic's name reads what

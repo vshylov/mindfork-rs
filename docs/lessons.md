@@ -750,6 +750,15 @@ release that ships it, whether that release is stable, and the setting it needs 
 the user's version is what the claim is about.
 — *notifications for someone not looking, the owner's look*.
 
+**Measure a feature in the state it exists for, not in the one easiest to set up.**
+*Notify me* told tmux users to set `allow-passthrough on`, the value guides name for
+passthrough, and it works — while the app's pane is on screen. A notification exists
+for someone not looking, and inside tmux that is someone in another window, where
+`on` drops the escape and only `all` passes it (tmux 3.8, measured: zero
+notifications against one). Before a setting goes into a user's document, run the
+feature with the person where the feature says they are.
+— *notifications for someone not looking, the Linux look*.
+
 **"The field is ignored" and "the field selects" can be the same field on two
 servers of the same kind.** A single-model `llama-server` ignores a request's
 `model` entirely — measured: `no-such-model-xyz` answered `200` from the loaded
