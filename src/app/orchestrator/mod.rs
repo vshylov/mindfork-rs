@@ -45,6 +45,7 @@ mod local_servers;
 mod mcp;
 mod model_name;
 mod notes_view;
+mod notify;
 mod pool;
 mod profiles;
 mod prompt_cut;
@@ -259,6 +260,8 @@ pub async fn run(deps: OrchestratorDeps) {
         consolidate_counts: HashMap::new(),
         self_consolidate_counts: HashMap::new(),
         followup_next: None,
+        focused: None,
+        ntfy_failed_noted: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         saves: SaveQueue::default(),
         restarts: RestartQueue::default(),
         default_language,
@@ -760,6 +763,12 @@ struct Orchestrator {
     /// The earliest moment a pending follow-up may be delivered (spec §9.3.6) —
     /// what the loop sleeps until; `None` while none can be. See [`followups`].
     followup_next: Option<chrono::DateTime<chrono::Utc>>,
+    /// Whether the terminal's window has focus, as the terminal last reported
+    /// (`AppCommand::TerminalFocus`); `None` until it reports — then the person
+    /// is taken as not looking (spec §11.12, [`notify`]).
+    focused: Option<bool>,
+    /// Whether a failed ntfy push has been told this session (it is told once).
+    ntfy_failed_noted: Arc<std::sync::atomic::AtomicBool>,
     /// Queue for deferred chat saving (debounce; extracted in Phase 3).
     saves: SaveQueue,
     /// Queue for deferred (re)launch of servers on engine-settings edits
@@ -901,6 +910,7 @@ impl Orchestrator {
             AppCommand::NewChat { profile_id } => self.handle_new_chat(profile_id),
             AppCommand::SwitchChat(id) => self.handle_switch(id),
             AppCommand::CancelFollowup(id) => self.handle_cancel_followup(id),
+            AppCommand::TerminalFocus(focused) => self.handle_terminal_focus(focused),
             AppCommand::OpenChatAt {
                 chat,
                 message,
@@ -1110,7 +1120,7 @@ impl Orchestrator {
                     .map(SecretKey::External),
             )
             .chain(SearchSlot::ALL.into_iter().map(SecretKey::Search))
-            .chain(std::iter::once(SecretKey::BackupPassword))
+            .chain([SecretKey::BackupPassword, SecretKey::NtfyToken])
             .chain(self.config.mcp.servers.iter().flat_map(|s| {
                 s.env.keys().map(|var| SecretKey::McpEnv {
                     server: s.id.clone(),

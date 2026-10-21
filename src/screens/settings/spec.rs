@@ -88,6 +88,8 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
             toggle(|c| c.interface.show_reasoning_tokens = !c.interface.show_reasoning_tokens)
         }
         ICounterCache => toggle(|c| c.interface.show_cache_share = !c.interface.show_cache_share),
+        INotifyBell => toggle(|c| c.notifications.bell = !c.notifications.bell),
+        INotifyText => toggle(|c| c.notifications.with_text = !c.notifications.with_text),
         ISpell => toggle(|c| c.interface.spellcheck_enabled = !c.interface.spellcheck_enabled),
         IConfirmKeys => {
             toggle(|c| c.interface.confirm_destructive_keys = !c.interface.confirm_destructive_keys)
@@ -188,6 +190,14 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
             |c, loc| {
                 index_menu(&OSC52_MODES, c.interface.clipboard_osc52, |m| {
                     osc52_label(m, loc)
+                })
+            },
+        ),
+        INotifyEscape => choice(
+            |c, dir| c.notifications.escape = c.notifications.escape.cycle(dir),
+            |c, loc| {
+                index_menu(&NotifyEscape::ALL, c.notifications.escape, |e| {
+                    notify_escape_label(e, loc)
                 })
             },
         ),
@@ -730,6 +740,7 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
                 c.interface.input_max_rows = v.clamp(1, u32::from(limit)) as u16;
             }
         }),
+        INtfyUrl => text(|c, t| c.notifications.ntfy_url = t.trim().to_string()),
         IDicts => text(|c, t| {
             c.interface.selected_dictionaries = t
                 .split(',')

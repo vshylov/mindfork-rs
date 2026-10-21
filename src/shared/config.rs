@@ -2717,6 +2717,9 @@ pub struct AppConfig {
     pub tts: TtsSettings,
     /// Video understanding for `youtube_watch` (spec §9.9).
     pub video: VideoSettings,
+    /// How a notification reaches someone not looking — the terminal escape, the
+    /// bell, a ntfy topic (spec §11.12). Whether one is sent is a profile's switch.
+    pub notifications: crate::shared::notify::NotificationSettings,
     /// Last-open chat — restored on the next launch. Written by the
     /// orchestrator (not editable via the settings screen). `None` — no memory
     /// (first launch/the chat was deleted) → the most recent one opens.
@@ -2776,6 +2779,7 @@ impl Default for AppConfig {
             mcp: McpSettings::default(),
             tts: TtsSettings::default(),
             video: VideoSettings::default(),
+            notifications: crate::shared::notify::NotificationSettings::default(),
             last_active_chat: None,
             api_keys: Vec::new(),
         }

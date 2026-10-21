@@ -321,6 +321,8 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
         consolidate_counts: std::collections::HashMap::new(),
         self_consolidate_counts: std::collections::HashMap::new(),
         followup_next: None,
+        focused: None,
+        ntfy_failed_noted: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         saves: SaveQueue::default(),
         restarts: RestartQueue::default(),
         default_language: crate::shared::i18n::Lang::default(),

@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (53)
+## Entries (54)
 
 - Post-M9: mouse-wheel feed scrolling (done)
 - Post-M9: own markdown renderer (tables + LaTeX + theme) (done)
@@ -65,6 +65,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the background of an unhighlighted code block is a setting (done)
 - Post-M9: the token counter moves to the feed's bottom border, its notes become settings (done)
 - Post-M9: the hero screenshot shows the token counter in its place (done)
+- Post-M9: notifications for someone not looking — companion stage 3, C5 (a) (done)
 
 ### Post-M9: mouse-wheel feed scrolling (done)
 - **The mouse wheel scrolls the feed** on par with `PageUp/PageDown`. `ratatui::init()`
@@ -3240,3 +3241,64 @@ release's tag by `release.yml`.
 
 **Gates**: unit tests green; clippy `-D warnings`, fmt, `cyrillic_scan`, `link_check`,
 `doc_index_check` clean. A screenshot-fixture change: no live run.
+
+### Post-M9: notifications for someone not looking — companion stage 3, C5 (a) (done)
+
+**What.** The second half of the companion track's stage 3
+([docs/research/companion-platform.md](../research/companion-platform.md) C5 (a),
+§9; spec §11.12), stacked on the follow-ups: a companion with *Notify me* on
+(`companion.notify`, off by default) makes itself known when it writes unasked and
+the person is not looking — a terminal escape the terminal turns into a desktop
+notification, the bell, and a push to a ntfy topic. The owner's F6 (a):
+notifications now, the messenger bridge a track of its own.
+
+**When.** A woken turn's reply that landed while the terminal is not known to be in
+focus, and a follow-up come due in a conversation the person is not in, whatever
+the focus. The runtime now asks for focus reports (`EnableFocusChange`, lifted on
+exit and in the panic hook) and passes them on (`AppCommand::TerminalFocus`); a
+terminal that never reports leaves the person "not looking" — one notification too
+many beats one missed, and the feature is opt-in and its triggers capped.
+
+**Key decisions (the agent's, inside F6 (a)).**
+- **One escape, never two**: OSC 777 by default — Windows Terminal shows it since
+  its June 2026 change ([microsoft/terminal#7718](https://github.com/microsoft/terminal/issues/7718)),
+  and Ghostty, WezTerm, foot, rxvt-unicode — or OSC 9 for iTerm2 and kitty. A
+  terminal that knows both would show two. OSC 9's text leads with the title, so
+  it never begins with a digit that Windows Terminal would read as a ConEmu
+  sub-command.
+- **The bell is on by default**: inside tmux an escape needs `allow-passthrough on`
+  (wrapped in DCS passthrough as OSC 52's is), while the bell is marked on the
+  window and passed on with no setting — the pod-in-tmux case this audience lives in.
+- **ntfy, with the token in the key store** (`SecretKey::NtfyToken`): a `POST` of the
+  body, the title in the `title` query parameter (UTF-8 where a header is not),
+  15-second timeout, a failure logged and told once a session.
+- **Only who wrote and where, by default** (`with_text` off): a public topic is
+  readable by whoever knows its name, and the settings say so before a topic is set.
+- **Settings once, switch per profile**: how a notification travels is the person's
+  (settings → *Interface* → *Notifications*, `settings.json` → `notifications`);
+  whether a companion sends one is the profile's, like every companion feature.
+  `NotifyEscape` is read leniently (a newer value reads as the default) and is in
+  the stored-enum ledger at schema 7, having arrived with a field of its own.
+
+**Measured.** No model reads anything new, so there is no probe and no live smoke:
+the bytes are pinned by tests, and a push by a listener of the tests' own — no
+outside service was posted to. What a terminal does with the bytes was checked on
+the one at hand: the Windows console, with VT processing on as the app runs it,
+showed nothing of OSC 777, OSC 9, the bell or the tmux-wrapped form; with VT
+processing off it prints them — not a state the app is in. Whether a desktop
+notification appears in Windows Terminal, WezTerm or a tmux on a pod is a look for
+a person.
+
+**Tests.** The escapes' exact bytes (OSC 777, OSC 9, off with and without the bell,
+the tmux wrap, fields cleaned and cut), the lenient read, the push URL, the push
+itself and a refused one against a local listener; the orchestrator — a woken reply
+notifies with no focus report, sends nothing in focus or with the switch off, a
+follow-up waiting elsewhere notifies in focus, and a push reaches the topic with its
+title and, when asked, the words; focus events reach the orchestrator; the
+settings rows (the escape cycles, the bell and the words toggle, the topic is text,
+the token a secret that never reaches the config). Screenshot dumps
+`settings-model-*`/`settings-tools-*` regenerated.
+
+**Gates**: 4199 unit tests green, 289 `#[ignore]`; clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean. No live run:
+nothing a model reads changed (above).

@@ -167,8 +167,9 @@ impl Orchestrator {
             // Cheap and in-memory; without it `web_search` would keep using the
             // keyless chain until the next unrelated settings edit.
             SecretKey::Search(_) => self.rebuild_registry(),
-            // Read at backup/restore time — nothing to restart.
-            SecretKey::BackupPassword => {}
+            // Read at backup/restore time, or when a notification is sent —
+            // nothing to restart.
+            SecretKey::BackupPassword | SecretKey::NtfyToken => {}
         }
         self.emit_settings();
     }

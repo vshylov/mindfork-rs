@@ -238,6 +238,11 @@ pub(super) fn apply_event(
         } => screen.set_subagent_progress(generation_id, run, progress),
         AppEvent::Error(message) => screen.push_error(&message),
         AppEvent::Notice(message) => screen.push_note(&message),
+        // A notification for someone not looking (spec §11.12): written between
+        // frames, which an escape does not disturb.
+        AppEvent::TerminalAttention(seq) => {
+            let _ = crate::shared::notify::write_to(&mut std::io::stdout(), &seq);
+        }
         AppEvent::LocalServers(offers) => screen.offer_local_servers(offers),
         // A roll can finish for a chat the user has since switched away from.
         // Applying it would clear the open chat's own boundary and post the note

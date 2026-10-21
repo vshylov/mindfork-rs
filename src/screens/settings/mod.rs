@@ -31,6 +31,7 @@ use crate::shared::embed_prefix::EmbedConvention;
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
 use crate::shared::mcp::valid_server_id as valid_mcp_server_id;
+use crate::shared::notify::NotifyEscape;
 use crate::shared::osc52::Osc52Mode;
 use crate::shared::secrets::SecretKey;
 use crate::shared::server::{ServerStatus, ServerStatuses};
@@ -751,6 +752,13 @@ enum FieldId {
     IFullTheme,
     /// Hand a copy to the terminal's clipboard too (OSC 52).
     IClipboardOsc52,
+    /// Notifications (spec §11.12): the terminal escape, the bell, a ntfy topic,
+    /// its token (a stored secret), whether the message's words go along.
+    INotifyEscape,
+    INotifyBell,
+    INtfyUrl,
+    INtfyToken,
+    INotifyText,
     /// Automatic chat titling: after the user's message / after the reply / off.
     IAutoTitle,
     /// The interface language (axis B, docs/i18n-ui.md) — independent of the agent language.
@@ -813,6 +821,8 @@ enum FieldId {
     PQuietFrom,
     PQuietUntil,
     PFollowupsPerDay,
+    /// A notification when the companion writes unasked (spec §11.12).
+    PNotify,
     /// A profile tool toggle by index in the catalog.
     PTool(usize),
     // Impersonation profiles (the "Impersonation" subsection of "Profiles"; the list

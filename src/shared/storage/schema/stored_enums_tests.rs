@@ -39,6 +39,7 @@ use crate::shared::config::{
     PythonMode, ServerMode, SpecType, Theme, ThemeMode, TtsMode, VideoProvider, WebProvider,
 };
 use crate::shared::embed_prefix::EmbedConvention;
+use crate::shared::notify::NotifyEscape;
 use crate::shared::osc52::Osc52Mode;
 
 /// Which files hold an enum's values — and so whose schema a new value moves.
@@ -180,6 +181,8 @@ pub(super) fn ledgers() -> Vec<Ledger> {
             2 => [NewestFirst = "newest_first", OldestFirst = "oldest_first"],
         }),
         ledger!(Osc52Mode in Settings { 1 => [Auto = "auto", Always = "always", Off = "off"] }),
+        // Came with a field of its own, which an older reader skips whole.
+        ledger!(NotifyEscape in Settings { 7 => [Osc777 = "osc777", Osc9 = "osc9", Off = "off"] }),
         // --- settings.json, profiles.json and the chat files -----------------
         // `max` is what the 4→5 stamps of both are for.
         ledger!(ReasoningEffort in Sampling {

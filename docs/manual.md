@@ -188,6 +188,25 @@ is on the tasks screen (`F7`): `Enter` opens its conversation, `Del` twice cance
 it. Each one costs a request nobody typed, which on a cloud is money — hence the
 cap.
 
+*Notify me* sends a notification when the companion writes to you on its own and
+you are not looking — the terminal's window is not in focus, or the follow-up is
+waiting in a conversation you are not in. How it reaches you is set once, for every
+profile, in Settings → Interface → *Notifications*:
+
+- **Terminal notification** — a desktop notification the terminal shows: *OSC 777*
+  (Windows Terminal, Ghostty, WezTerm, foot) or *OSC 9* (iTerm2, kitty). A terminal
+  that knows neither ignores it.
+- **Bell** — the terminal's bell with it. Inside tmux this is what works without
+  any setting: tmux marks the window and passes the bell on. For the desktop
+  notification and the focus reports to pass through tmux, add
+  `set -g allow-passthrough on` and `set -g focus-events on` to `~/.tmux.conf`.
+- **ntfy topic** — a push to your phone through [ntfy](https://ntfy.sh): a topic's
+  URL, on ntfy.sh or your own server, and its token if it needs one (kept
+  encrypted, like the API keys). Anyone who knows a public topic's name reads what
+  is sent there, so choose a name nobody can guess.
+- **Message's words** — off, a notification says only who wrote and in which
+  conversation; on, it carries the start of the message.
+
 ### Writing as you
 
 `Ctrl+U` (`/impersonate [text]`) has the model write **your** next message and

@@ -47,6 +47,14 @@ split by subsystem.
   nothing appears. Quiet hours (22 to 8) and a cap of three a day are on from the
   start and can be changed; every planned follow-up is listed on the tasks screen
   (`F7`), where `Del` twice cancels it.
+- **Word from your companion when you are not looking.** *Notify me* (Settings →
+  Profiles → *Companion*, off by default) sends a notification when it writes to
+  you on its own while the terminal is not in focus, or has something for you in a
+  conversation you are not in: a desktop notification through the terminal (OSC
+  777 — Windows Terminal, Ghostty, WezTerm, foot; or OSC 9 — iTerm2, kitty), the
+  terminal's bell, which tmux passes on, and — if you give it a topic — a push to
+  your phone through ntfy. By default only who wrote and where is sent, never what
+  was said. Settings → Interface → *Notifications*.
 
 ### Fixed
 

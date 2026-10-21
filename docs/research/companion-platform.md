@@ -2,7 +2,7 @@
 
 Status: **research, 2026-10-21; forks decided by the owner the same day (§8);
 stage 1 built (#809), stage 2 built — C2 and C3 (§3.4, §9); stage 3 — C4 (a) built
-(§3.5, §9).** The question was the owner's: what would make mindfork a better
+(§3.5, §9), and C5 (a), notifications (§9).** The question was the owner's: what would make mindfork a better
 platform for an AI companion. The document maps what the application already has,
 what it lacks, what the field and the literature say, and what a small live probe
 measured; the decision points and the owner's decisions are in §8, and the sequence in
@@ -1148,6 +1148,15 @@ by default:
    miscounts days; `followup_plan`/`followup_cancel` behind the *Follow-ups* switch,
    quiet hours and a daily cap on by default, a woken turn that may stay silent
    without a trace, and the pending ones on the tasks screen (spec §9.3.6).
+   **C5 (a) built**, the stage's second pull request: *Notify me*, a profile switch,
+   sends a notification when the companion writes unasked and the person is not
+   looking — the terminal's focus reports, or a conversation not in view — as a
+   terminal escape (OSC 777 by default, OSC 9 for iTerm2 and kitty; one, never
+   both), the bell (what tmux passes on with no setting), and a ntfy push with its
+   token in the key store; only who wrote and where unless the person asks for the
+   words (spec §11.12). No model reads anything new, so no probe: the bytes are
+   pinned by tests, a push by a listener of the tests' own, and the Windows console
+   with VT processing on — as the app runs it — showed nothing of any of them.
 4. **The instruments** — C9 history, C8 fork then carry, C10 the drift smoke.
 5. **Characters and voice** — C6 cards; C7 (a) a per-profile voice and replies
    spoken as they land.

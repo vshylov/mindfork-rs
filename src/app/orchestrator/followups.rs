@@ -117,6 +117,10 @@ impl Orchestrator {
         tracing::info!(chats = touched.len(), "follow-ups delivered");
         self.emit_chat_list();
         self.emit_task_list();
+        // A conversation the person is not in waits for them: say so (spec §11.12).
+        for chat in touched.iter().filter(|c| self.active_id != Some(**c)) {
+            self.notify_unasked(*chat, super::notify::Unasked::Waiting);
+        }
         if let Some(open) = self.active_id.filter(|id| touched.contains(id)) {
             // The open feed shows the row at once, then the companion is woken on it.
             self.activate(open);

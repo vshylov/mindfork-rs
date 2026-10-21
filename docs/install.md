@@ -1456,7 +1456,11 @@ without `--mmproj` reports; the projector is a second file, §3.
   means loading twenty gigabytes again. `tmux new -A -s mindfork` attaches to the
   session if it is still there. In the browser terminal `Ctrl+N` and `Ctrl+T`
   belong to the browser and never arrive — type `/new` and `/thoughts` instead
-  (`F1` → *Commands* lists the command behind every key).
+  (`F1` → *Commands* lists the command behind every key). A companion's
+  notifications (manual §3) reach you through tmux as its bell with no setting; the
+  desktop notification and the focus reports need `set -g allow-passthrough on` and
+  `set -g focus-events on` in `~/.tmux.conf`, and a ntfy topic reaches your phone
+  from a pod with no address of its own.
 - **Port 8001 is taken on every RunPod pod** — by the image's own `nginx`
   (`ss -ltnp` shows it), and 8001 is the embedding server's default. `--verify`
   says so and names the way out, and so does the app, which does not start a

@@ -439,6 +439,7 @@ pub(super) fn is_secret_field(id: FieldId) -> bool {
             | FieldId::TtsApiKey
             | FieldId::VideoApiKey
             | FieldId::BackupPassword
+            | FieldId::INtfyToken
     )
 }
 
@@ -1318,6 +1319,16 @@ pub(super) fn video_resolution_label(m: MediaResolution, loc: &'static Locale) -
     .to_string()
 }
 
+/// The notification escape's label (`notifications.escape`, spec §11.12).
+pub(super) fn notify_escape_label(e: NotifyEscape, loc: &'static Locale) -> String {
+    loc.t(match e {
+        NotifyEscape::Osc777 => "ui.settings.choice.notify_osc777",
+        NotifyEscape::Osc9 => "ui.settings.choice.notify_osc9",
+        NotifyEscape::Off => "ui.settings.choice.notify_off",
+    })
+    .to_string()
+}
+
 /// The OSC-52 mode's label (`interface.clipboard_osc52`).
 pub(super) fn osc52_label(m: Osc52Mode, loc: &'static Locale) -> String {
     loc.t(match m {
@@ -1605,6 +1616,7 @@ pub(super) fn is_profile_field(id: FieldId) -> bool {
             | FieldId::PQuietFrom
             | FieldId::PQuietUntil
             | FieldId::PFollowupsPerDay
+            | FieldId::PNotify
             | FieldId::PTool(_)
             | FieldId::ProfileSub
             // The impersonation-profile list lives in the config, but it's user data

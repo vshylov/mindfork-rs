@@ -1152,6 +1152,12 @@ impl Orchestrator {
         // A woken turn that chose silence leaves no trace (spec §9.3.6); the feed,
         // which streamed the marker, is rebuilt without it below.
         let silent = res.woken && self.drop_silent_reply(res.chat_id, &mut res.messages);
+        // What a woken turn wrote, for a notification once it has landed
+        // (spec §11.12) — read before the rows move into the chat.
+        let woken_reply = res
+            .woken
+            .then(|| super::notify::woken_reply_text(&res.messages))
+            .flatten();
         if silent {
             self.mark_dirty(res.chat_id);
             if self.active_id == Some(res.chat_id) {
@@ -1290,6 +1296,9 @@ impl Orchestrator {
         self.maybe_auto_self_consolidate(res.chat_id);
         if silent && self.active_id == Some(res.chat_id) {
             self.activate(res.chat_id);
+        }
+        if let Some(text) = woken_reply {
+            self.notify_unasked(res.chat_id, super::notify::Unasked::Reply(&text));
         }
         self.after_turn_followups(res.woken, res.chat_id);
     }
