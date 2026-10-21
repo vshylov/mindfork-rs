@@ -22,6 +22,7 @@ pub mod logging;
 pub mod markdown;
 pub mod mcp;
 pub mod net;
+pub mod notify;
 pub mod oklab;
 pub mod os_open;
 pub mod osc11;

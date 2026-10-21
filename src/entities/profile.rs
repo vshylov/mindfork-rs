@@ -95,6 +95,9 @@ pub struct CompanionFeatures {
     /// The most follow-ups delivered in one local day; the next waits for the
     /// next day (§7, rules 3 and 5 there).
     pub followups_per_day: u8,
+    /// A notification when the companion writes unasked and the person is not
+    /// looking — the terminal's, and a ntfy push (C5 (a) there, spec §11.12).
+    pub notify: bool,
 }
 
 /// The default quiet hours, 22:00 to 08:00.
@@ -113,6 +116,7 @@ impl Default for CompanionFeatures {
             quiet_from: DEFAULT_QUIET_FROM,
             quiet_until: DEFAULT_QUIET_UNTIL,
             followups_per_day: DEFAULT_FOLLOWUPS_PER_DAY,
+            notify: false,
         }
     }
 }
@@ -281,6 +285,7 @@ mod tests {
             (|c: &mut CompanionFeatures| c.notes_in_prompt = true) as fn(&mut CompanionFeatures),
             |c| c.earlier_chats = true,
             |c| c.followups = true,
+            |c| c.notify = true,
             |c| c.quiet_from = 23,
         ] {
             let mut on = p.clone();

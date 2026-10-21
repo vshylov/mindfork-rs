@@ -407,6 +407,9 @@ pub fn run(
         )),
     );
     enable_key_modes();
+    // Focus reports: a notification is for someone not looking (spec §11.12).
+    // A terminal that does not report focus ignores the request.
+    let _ = execute!(stdout(), ratatui::crossterm::event::EnableFocusChange);
     // Mouse capture is OFF by default: then native mouse text selection works. Feed
     // wheel scrolling is enabled via a toggle (`Ctrl+W`) — it sends
     // `EnableMouseCapture`/`DisableMouseCapture` (see `dispatch`). We augment ratatui's
@@ -423,7 +426,8 @@ pub fn run(
             stdout(),
             EndSynchronizedUpdate,
             DisableMouseCapture,
-            DisableBracketedPaste
+            DisableBracketedPaste,
+            ratatui::crossterm::event::DisableFocusChange
         );
         // Pop the kitty protocol if we pushed it (unix); harmless on an empty stack.
         #[cfg(unix)]
@@ -445,7 +449,8 @@ pub fn run(
         stdout(),
         EndSynchronizedUpdate,
         DisableMouseCapture,
-        DisableBracketedPaste
+        DisableBracketedPaste,
+        ratatui::crossterm::event::DisableFocusChange
     );
     #[cfg(unix)]
     let _ = execute!(stdout(), PopKeyboardEnhancementFlags);

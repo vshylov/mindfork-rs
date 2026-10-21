@@ -922,6 +922,50 @@ fn a_full_theme_nothing_answers_to_is_listed_and_can_be_left() {
     assert!(!options.contains(&"gruvbox".to_string()), "{options:?}");
 }
 
+/// The notifications' group (spec §11.12): the escape cycles, the bell and the
+/// words toggle, the topic is text, and its token is a secret of its own that
+/// never reaches the config.
+#[test]
+fn interface_has_the_notifications_group() {
+    use crate::shared::notify::NotifyEscape;
+    let mut s = screen();
+    let rows = s.interface_fields();
+    for id in [
+        FieldId::INotifyEscape,
+        FieldId::INotifyBell,
+        FieldId::INtfyUrl,
+        FieldId::INtfyToken,
+        FieldId::INotifyText,
+    ] {
+        assert!(rows.iter().any(|r| r.id == id), "{id:?}");
+    }
+    assert!(field_desc(&s, FieldId::INtfyUrl).is_some());
+    match s.cycle_field(FieldId::INotifyEscape, 1) {
+        Some(SettingsIntent::SaveConfig(c)) => {
+            assert_eq!(c.notifications.escape, NotifyEscape::Osc9)
+        }
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+    match s.toggle_field(FieldId::INotifyBell) {
+        Some(SettingsIntent::SaveConfig(c)) => assert!(!c.notifications.bell),
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+    match s.apply_text(FieldId::INtfyUrl, "  https://ntfy.example/t  ") {
+        Some(SettingsIntent::SaveConfig(c)) => {
+            assert_eq!(c.notifications.ntfy_url, "https://ntfy.example/t")
+        }
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+    assert_eq!(
+        s.apply_text(FieldId::INtfyToken, "tk_x"),
+        Some(SettingsIntent::SetSecret {
+            key: SecretKey::NtfyToken,
+            value: "tk_x".into()
+        })
+    );
+    assert!(!serde_json::to_string(&s.config).unwrap().contains("tk_x"));
+}
+
 #[test]
 fn interface_has_the_osc52_choice() {
     let mut s = screen();
@@ -1591,6 +1635,13 @@ fn each_memory_switch_flips_its_own_feature() {
             FieldId::PFollowups,
             CompanionFeatures {
                 followups: true,
+                ..CompanionFeatures::default()
+            },
+        ),
+        (
+            FieldId::PNotify,
+            CompanionFeatures {
+                notify: true,
                 ..CompanionFeatures::default()
             },
         ),

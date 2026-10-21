@@ -62,6 +62,9 @@ pub const SCHEME_PLATFORM_UUID_V1: &str = "platform-uuid-v1";
 /// gate over `*.*` literals — a hyphen is just as unambiguous here.
 pub const BACKUP_PASSWORD_KEY: &str = "backup-password";
 
+/// The machine entry's name for the ntfy access token ([`SecretKey::NtfyToken`]).
+pub const NTFY_TOKEN_KEY: &str = "ntfy-token";
+
 /// One of the settings slots that can point at an **external**
 /// OpenAI-compatible server. Each has a URL of its own, so each has a key of its
 /// own: the common configuration is a cloud gateway for chat beside a local
@@ -155,6 +158,9 @@ pub enum SecretKey {
     Search(SearchSlot),
     /// The backup password (spec §12.3).
     BackupPassword,
+    /// The access token of the ntfy topic notifications are pushed to (spec
+    /// §11.12) — a credential like the rest, so not in `settings.json`.
+    NtfyToken,
     /// The value of one environment variable handed to an MCP server
     /// (docs/history/mcp-server-editor.md §9, S1): the alternative to naming an
     /// OS variable in `env`, and the only one that does not require setting a
@@ -176,6 +182,7 @@ impl SecretKey {
             Self::External(slot) => format!("external-{}", slot.key()),
             Self::Search(slot) => format!("search-{}", slot.key()),
             Self::BackupPassword => BACKUP_PASSWORD_KEY.to_string(),
+            Self::NtfyToken => NTFY_TOKEN_KEY.to_string(),
             Self::McpEnv { server, var } => format!("mcp-{server}-{var}"),
         }
     }

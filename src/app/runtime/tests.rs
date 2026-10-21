@@ -2763,3 +2763,22 @@ fn a_users_theme_is_painted_to_the_edges() {
         }
     });
 }
+
+/// The terminal's focus reports reach the orchestrator — a notification asks
+/// them before it is sent (spec §11.12) — and change nothing on screen.
+#[test]
+fn focus_reports_reach_the_orchestrator() {
+    let mut h = Harness::new();
+    h.drain_commands();
+    assert!(!h.feed(Event::FocusLost));
+    assert!(!h.feed(Event::FocusGained));
+    let focus: Vec<bool> = h
+        .commands()
+        .into_iter()
+        .filter_map(|c| match c {
+            AppCommand::TerminalFocus(f) => Some(f),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(focus, [false, true]);
+}

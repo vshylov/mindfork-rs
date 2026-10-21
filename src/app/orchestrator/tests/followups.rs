@@ -390,3 +390,160 @@ async fn turning_the_switch_on_delivers_what_was_waiting() {
     assert_eq!(state(dir.path(), id), FollowupState::Delivered);
     assert_eq!(backend.requests().len(), 1);
 }
+
+// ---- notifications for someone not looking (spec §11.12) ----
+
+/// The test config with the interface in English — the language a notification
+/// is worded in (axis B).
+fn en_cfg() -> AppConfig {
+    let mut cfg = no_auto_cfg();
+    cfg.interface.language = crate::shared::i18n::Lang::En;
+    cfg
+}
+
+/// Every event the loop has sent so far, drained.
+fn drain(evt_rx: &mut UnboundedReceiver<AppEvent>) -> Vec<AppEvent> {
+    let mut out = Vec::new();
+    while let Ok(ev) = evt_rx.try_recv() {
+        out.push(ev);
+    }
+    out
+}
+
+fn attention(events: &[AppEvent]) -> Vec<String> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            AppEvent::TerminalAttention(seq) => Some(seq.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn a_woken_reply_notifies_when_the_terminal_is_not_known_to_be_in_focus() {
+    let dir = tempfile::tempdir().unwrap();
+    let w = seed(dir.path(), true, |p| p.companion.notify = true);
+    plant(dir.path(), &w, w.interview, -1);
+    let backend = Replying::new("Hey — how did the interview go?");
+    let (cmd_tx, mut evt_rx, handle) = spawn_orch_at(dir.path(), Some(backend), en_cfg());
+    let Some(AppEvent::TerminalAttention(seq)) =
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::TerminalAttention(_))).await
+    else {
+        panic!("no notification");
+    };
+    // OSC 777 with the profile and the conversation — not the message's words,
+    // which stay out by default — and the bell after it.
+    assert_eq!(
+        seq,
+        "\x1b]777;notify;Companion · mindfork;Wrote to you in «Interview»\x07\x07"
+    );
+    quit(cmd_tx, handle).await;
+}
+
+#[tokio::test]
+async fn a_reply_the_person_is_looking_at_or_a_profile_that_did_not_ask_sends_nothing() {
+    for (notify, focused) in [(true, true), (false, false)] {
+        let dir = tempfile::tempdir().unwrap();
+        let w = seed(dir.path(), true, |p| p.companion.notify = notify);
+        plant(dir.path(), &w, w.other, -1);
+        let backend = Replying::new("How did it go?");
+        let (cmd_tx, mut evt_rx, handle) = spawn_orch_at(dir.path(), Some(backend), en_cfg());
+        settle(&mut evt_rx).await;
+        cmd_tx.send(AppCommand::TerminalFocus(focused)).unwrap();
+        // Opening the conversation wakes the companion in front of the person.
+        drain(&mut evt_rx);
+        cmd_tx.send(AppCommand::SwitchChat(w.other)).unwrap();
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+            .await
+            .unwrap();
+        pause().await;
+        let seen = attention(&drain(&mut evt_rx));
+        assert!(
+            seen.is_empty(),
+            "notify={notify} focused={focused}: {seen:?}"
+        );
+        quit(cmd_tx, handle).await;
+    }
+}
+
+/// A follow-up that comes due in a conversation the person is not in is said
+/// whatever the focus: they are elsewhere in the app, or away from it.
+#[tokio::test]
+async fn a_follow_up_waiting_elsewhere_notifies_even_in_focus() {
+    let dir = tempfile::tempdir().unwrap();
+    let w = seed(dir.path(), true, |p| p.companion.notify = true);
+    let mut cfg = en_cfg();
+    cfg.notifications.escape = crate::shared::notify::NotifyEscape::Osc9;
+    cfg.notifications.bell = false;
+    let (cmd_tx, mut evt_rx, handle) = spawn_orch_at(dir.path(), None, cfg);
+    settle(&mut evt_rx).await;
+    cmd_tx.send(AppCommand::TerminalFocus(true)).unwrap();
+    pause().await;
+    plant(dir.path(), &w, w.other, -1);
+    // A turn's end looks at the follow-ups again; a settings edit of the profile
+    // does too — the cheapest way to make the loop look now.
+    let edit = crate::features::profiles::ProfileEdit {
+        name: Some("Companion".into()),
+        ..Default::default()
+    };
+    cmd_tx
+        .send(AppCommand::UpdateProfile {
+            id: w.profile,
+            edit: Box::new(edit),
+        })
+        .unwrap();
+    let Some(AppEvent::TerminalAttention(seq)) =
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::TerminalAttention(_))).await
+    else {
+        panic!("no notification");
+    };
+    assert_eq!(
+        seq,
+        "\x1b]9;Companion · mindfork: Has something for you in «Other»\x07"
+    );
+    quit(cmd_tx, handle).await;
+}
+
+/// The push: a `POST` to the topic with the title in the query — the message's
+/// words in it only when the settings say so.
+#[tokio::test]
+async fn a_woken_reply_is_pushed_to_the_ntfy_topic_with_its_words_when_asked() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (mut sock, _) = listener.accept().await.unwrap();
+        let mut got = Vec::new();
+        let mut buf = vec![0u8; 4096];
+        while !String::from_utf8_lossy(&got).ends_with("how did it go?") {
+            let n = sock.read(&mut buf).await.unwrap();
+            if n == 0 {
+                break;
+            }
+            got.extend_from_slice(&buf[..n]);
+        }
+        sock.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\n{}")
+            .await
+            .unwrap();
+        String::from_utf8_lossy(&got).to_string()
+    });
+    let dir = tempfile::tempdir().unwrap();
+    let w = seed(dir.path(), true, |p| p.companion.notify = true);
+    plant(dir.path(), &w, w.interview, -1);
+    let mut cfg = en_cfg();
+    cfg.notifications.ntfy_url = format!("http://{addr}/mindfork-test");
+    cfg.notifications.with_text = true;
+    let backend = Replying::new("Hey Alex, how did it go?");
+    let (cmd_tx, _evt_rx, handle) = spawn_orch_at(dir.path(), Some(backend), cfg);
+    let request = tokio::time::timeout(std::time::Duration::from_secs(20), server)
+        .await
+        .expect("the push arrives")
+        .unwrap();
+    assert!(
+        request.starts_with("POST /mindfork-test?title=Companion+%C2%B7+mindfork HTTP/1.1"),
+        "{request}"
+    );
+    assert!(request.ends_with("Hey Alex, how did it go?"), "{request}");
+    quit(cmd_tx, handle).await;
+}

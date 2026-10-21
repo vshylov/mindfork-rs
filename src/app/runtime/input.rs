@@ -259,6 +259,14 @@ pub(super) fn process_input_batch(
                     }
                 }
             }
+            // The terminal's window gained or lost focus — the orchestrator asks
+            // it before a notification (spec §11.12).
+            Chunk::Event(Event::FocusGained) => {
+                let _ = cmd_tx.send(AppCommand::TerminalFocus(true));
+            }
+            Chunk::Event(Event::FocusLost) => {
+                let _ = cmd_tx.send(AppCommand::TerminalFocus(false));
+            }
             Chunk::Event(_) => {}
         }
     }

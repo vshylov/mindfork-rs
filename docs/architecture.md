@@ -303,6 +303,9 @@ src/
 │  │  ├─ notes_view.rs      the notes screen's snapshot (AppEvent::NotesView) and its edits
 │  │  │                     (EditNote); what the prompt carries picked as a turn picks it
 │  │  │                     (spec §11.11)
+│  │  ├─ notify.rs          notifications for someone not looking (spec §11.12): whether to
+│  │  │                     send (Notify me, focus, the open chat), the terminal's bytes
+│  │  │                     as AppEvent::TerminalAttention, the ntfy push from a task
 │  │  ├─ followups.rs       the companion's follow-ups (spec §9.3.6): the next delivery
 │  │  │                     moment (followup_next, the loop's deadline), the notice row,
 │  │  │                     the wake on the open conversation, `<silent>` taken back out,
@@ -1015,6 +1018,9 @@ src/
    │                       COLORTERM=truecolor gets the 256 — a last pass of
    │                       ui::finish_frame maps every RGB colour to its nearest
    │                       (cube or grey ramp), read once at startup (spec §11.6)
+   ├─ notify.rs            notifications (spec §11.12): NotificationSettings/NotifyEscape
+   │                       (read leniently), the OSC 777/OSC 9 escape and the bell (tmux
+   │                       passthrough), the ntfy push (title in the query, bearer token)
    ├─ osc11.rs             asking the terminal for its background (OSC 11), so Auto
    │                       can follow it: pure parse/luminance + a two-phase IO half
    │                       (begin in main.rs before Storage::open, harvest in
@@ -3845,6 +3851,20 @@ notice that stands alone, never storing it; `handle_done` drops a woken turn's
 answered. A take-back cancels the conversation's follow-ups created at or after
 its last remaining row; `DeleteChat` and a profile's deletion cancel all of theirs.
 The tasks screen lists the pending ones from `task_list` (`TaskList.followups`).
+
+**Notifications** (spec §11.12, C5 (a)). The runtime turns on the terminal's focus
+reports and passes each to the orchestrator (`AppCommand::TerminalFocus`, kept in
+`Orchestrator.focused`, `None` until the terminal says). `handle_done` reads a woken
+turn's reply text before its rows move into the chat and, once landed, calls
+`notify_unasked(.., Reply)`; `deliver_due_followups` calls it with `Waiting` for
+every conversation it touched that is not the open one. The profile's
+`companion.notify` decides whether anything is sent; a reply is skipped only when
+the terminal reported focus and its conversation is the open one. The terminal's
+half is bytes the orchestrator builds (`shared::notify::sequence`, wrapped for tmux
+by the environment's `TMUX`) and the runtime writes between frames
+(`AppEvent::TerminalAttention`); the ntfy half is a `POST` from a spawned task with
+the token read from the machine entry (`SecretKey::NtfyToken`), a failure told once
+a session (`Orchestrator.ntfy_failed_noted`).
 
 **The tasks screen** (`screens/tasks.rs`, `ActiveScreen::Tasks`, `F7`/`/tasks`;
 spec §11.10, [research/tasks-screen.md](research/tasks-screen.md)) is the round

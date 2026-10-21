@@ -343,9 +343,10 @@ effort tiers — have all closed
   edits and deletes them and sees which ones a conversation carries. **Stage 3,
   first half, built**: follow-ups the companion plans (*Follow-ups*) — it comes back
   to what the person said when the time comes, may stay silent without a trace, and
-  is held by quiet hours and a daily cap that are on from the start (§3.5). Next:
-  the notification that reaches someone not looking (C5 (a)), the stage's second
-  half; then the research instruments. Twelve candidates in six stages.
+  is held by quiet hours and a daily cap that are on from the start (§3.5) — and
+  the notification that reaches someone not looking (*Notify me*: the terminal's
+  escape and bell, a ntfy push). Next, stage 4: the research instruments. Twelve
+  candidates in six stages.
 
 ### Feed and rendering
 

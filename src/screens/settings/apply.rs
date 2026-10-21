@@ -561,6 +561,7 @@ impl SettingsScreen {
                 | FieldId::PNotesInPrompt
                 | FieldId::PEarlierChats
                 | FieldId::PFollowups
+                | FieldId::PNotify
         ) {
             let p = self.profiles.get_mut(self.profile_idx)?;
             let c = &mut p.companion;
@@ -568,6 +569,7 @@ impl SettingsScreen {
                 FieldId::PTimeRows => &mut c.time_rows,
                 FieldId::PNotesInPrompt => &mut c.notes_in_prompt,
                 FieldId::PFollowups => &mut c.followups,
+                FieldId::PNotify => &mut c.notify,
                 _ => &mut c.earlier_chats,
             };
             *flag = !*flag;

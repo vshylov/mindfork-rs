@@ -134,7 +134,8 @@ a checkout with a recent stable Rust. On a rented GPU box or in a container, the
   **when** each of your messages was written, so it knows days have passed, and
   start each conversation knowing the notes nearest its subject and the
   conversations before it, and **come back** to what you told it — "how did the
-  interview go?" — when the time comes, within quiet hours and a daily cap you set
+  interview go?" — when the time comes, within quiet hours and a daily cap you set,
+  with a notification on your desktop or phone (ntfy) when you are not looking
   (Settings → Profiles → *Companion*, each off by default).
 - **Real tools, behind switches you set.** Web search and page fetching, a
   **Python sandbox** (Wasmer/WASIX — no host file access), file access jailed to

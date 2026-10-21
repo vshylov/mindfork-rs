@@ -296,6 +296,7 @@ impl SettingsScreen {
             // engine's key lookup (see `SecretKey::Search`).
             FieldId::TWebTavilyKey => Some(SecretKey::Search(SearchSlot::Tavily)),
             FieldId::BackupPassword => Some(SecretKey::BackupPassword),
+            FieldId::INtfyToken => Some(SecretKey::NtfyToken),
             FieldId::McpEnvSecret(idx) => {
                 let srv = self.config.mcp.servers.get(self.mcp_server_idx)?;
                 let var = srv.env.keys().nth(idx)?;
@@ -1759,6 +1760,49 @@ impl SettingsScreen {
                 .describe(loc.t("ui.settings.desc.copy_tool_results")),
             ],
         ));
+        // How a notification reaches someone not looking (spec §11.12); whether
+        // one is sent is a companion profile's *Notify me*.
+        let n = &self.config.notifications;
+        rows.extend(grouped(
+            loc.t("ui.settings.group.notifications"),
+            vec![
+                row(
+                    FieldId::INotifyEscape,
+                    loc.t("ui.settings.field.notify_escape"),
+                    FieldKind::Choice(notify_escape_label(n.escape, loc)),
+                )
+                .describe(loc.t("ui.settings.desc.notify_escape")),
+                row(
+                    FieldId::INotifyBell,
+                    loc.t("ui.settings.field.notify_bell"),
+                    FieldKind::Toggle(n.bell),
+                )
+                .describe(loc.t("ui.settings.desc.notify_bell")),
+                row(
+                    FieldId::INtfyUrl,
+                    loc.t("ui.settings.field.ntfy_url"),
+                    FieldKind::Text(if n.ntfy_url.trim().is_empty() {
+                        "—".to_string()
+                    } else {
+                        n.ntfy_url.clone()
+                    }),
+                )
+                .describe(loc.t("ui.settings.desc.ntfy_url")),
+                secret_row(
+                    FieldId::INtfyToken,
+                    self.secret_present(Some(&SecretKey::NtfyToken)),
+                    loc.t("ui.settings.field.ntfy_token"),
+                    "ui.settings.desc.ntfy_token",
+                    loc,
+                ),
+                row(
+                    FieldId::INotifyText,
+                    loc.t("ui.settings.field.notify_text"),
+                    FieldKind::Toggle(n.with_text),
+                )
+                .describe(loc.t("ui.settings.desc.notify_text")),
+            ],
+        ));
         rows
     }
 
@@ -1904,6 +1948,12 @@ impl SettingsScreen {
                             p.companion.followups_per_day,
                         )
                         .describe(loc.t("ui.settings.desc.followups_per_day")),
+                        row(
+                            FieldId::PNotify,
+                            loc.t("ui.settings.field.notify"),
+                            FieldKind::Toggle(p.companion.notify),
+                        )
+                        .describe(loc.t("ui.settings.desc.notify")),
                     ],
                 ));
                 // Tool toggles: laid out by semantic group

@@ -277,6 +277,9 @@ pub enum AppCommand {
     /// Cancels a pending follow-up the companion planned (the tasks screen's `Del`,
     /// spec §9.3.6, §11.10).
     CancelFollowup(Uuid),
+    /// The terminal's window gained (`true`) or lost focus — what a notification
+    /// asks before it is sent (spec §11.12).
+    TerminalFocus(bool),
     /// Apply an edit from the notes screen (text, tags, delete); the
     /// orchestrator answers with a fresh [`AppEvent::NotesView`].
     EditNote(crate::entities::note::NoteEdit),
@@ -435,6 +438,7 @@ impl AppCommand {
             | AppCommand::RequestNotes
             | AppCommand::EditNote(_)
             | AppCommand::CancelFollowup(_)
+            | AppCommand::TerminalFocus(_)
             | AppCommand::ConfirmMcpCatalog(_)
             | AppCommand::SetSecret { .. }
             | AppCommand::ReconnectMcpServer(_)
@@ -448,6 +452,9 @@ impl AppCommand {
 /// projection.
 #[derive(Debug, Clone)]
 pub enum AppEvent {
+    /// Bytes for the terminal: a notification's escape and bell, for someone
+    /// not looking (spec §11.12). The runtime writes them between frames.
+    TerminalAttention(String),
     /// The status of one of the servers changed — a snapshot of all of them (chat/
     /// embeddings/impersonation).
     ServerStatus(ServerStatuses),

@@ -2510,7 +2510,7 @@ A concept carried over in full from attempt #1 (section 10 of its specification)
 
 A profile holds: a unique identifier, a system message, and an **optional greeting message** (some models are more interesting when the assistant speaks first) — a direct requirement from the task.
 
-**Companion features** (`Profile.companion: CompanionFeatures`, settings → "Profiles" → the "Companion" group; [docs/research/companion-platform.md](docs/research/companion-platform.md)): what makes a profile a companion rather than an assistant, **each a switch of its own and every one off by default** — a person may want only an assistant, and an assistant and a companion share one installation (the owner's decision of 2026-10-21, §8 there). The group is written to `profiles.json` only once a feature is on, so a profile that never opts in is written exactly as before and no schema step is needed. Today it holds four: **time rows** (`time_rows`, §6.2) — the date and time in front of every user message the model reads; **notes in the prompt** (`notes_in_prompt`, §6.6) — the profile's notes nearest the conversation's opening; **earlier conversations** (`earlier_chats`, §6.6) — the three conversations before this one, with their addresses when `chat_read` is offered; **follow-ups** (`followups`, §9.3.6) — returns the companion plans and makes when they fall due, with the profile's quiet hours (`quiet_from`, `quiet_until`, 22 to 8) and day's cap (`followups_per_day`, 3), which are on from the start.
+**Companion features** (`Profile.companion: CompanionFeatures`, settings → "Profiles" → the "Companion" group; [docs/research/companion-platform.md](docs/research/companion-platform.md)): what makes a profile a companion rather than an assistant, **each a switch of its own and every one off by default** — a person may want only an assistant, and an assistant and a companion share one installation (the owner's decision of 2026-10-21, §8 there). The group is written to `profiles.json` only once a feature is on, so a profile that never opts in is written exactly as before and no schema step is needed. Today it holds five: **time rows** (`time_rows`, §6.2) — the date and time in front of every user message the model reads; **notes in the prompt** (`notes_in_prompt`, §6.6) — the profile's notes nearest the conversation's opening; **earlier conversations** (`earlier_chats`, §6.6) — the three conversations before this one, with their addresses when `chat_read` is offered; **follow-ups** (`followups`, §9.3.6) — returns the companion plans and makes when they fall due, with the profile's quiet hours (`quiet_from`, `quiet_until`, 22 to 8) and day's cap (`followups_per_day`, 3), which are on from the start; **notify me** (`notify`, §11.12) — a notification when it writes unasked and the person is not looking.
 
 **Role names** (`Profile.character_names`, settings → "Profiles" → the "Persona" group): what the interlocutors are called in this profile's chats — the feed's headers (in caps: `GAIA` instead of `YOU`) and the labels of the `F5` conversation export (`Gaia:` instead of `User:`). Both fields are **empty by default** — then each surface uses the interface language's own label, so the chat follows axis B until the user overrides it. The names are resolved at render time from the profile (see the exception above), so they can be changed at any point, including for old chats. Whitespace-only counts as unset. Legacy seed values (the pre-i18n Russian placeholders, and the `You`/`Assistant` they were migrated to) were never displayed and are cleared once at startup so the labels don't get stuck in a foreign language.
 
@@ -3980,7 +3980,9 @@ section and subsection), `Esc` — cancel.
   *Spelling* (spellcheck on/off, dictionary selection), *Behavior*
   (confirming `Ctrl+R`/`Ctrl+E`; **automatic chat titling** — after the user's
   message / after the assistant's reply (default) / off, §11.2), *Conversation
-  copy (F5)* (what's included).
+  copy (F5)* (what's included), *Notifications* (the terminal escape — OSC 777
+  by default, OSC 9 or off — the bell, a ntfy topic and its token, whether the
+  message's words go along; [§11.12](#1112-notifications)).
 
 **Navigation** (a two-level focus: the section menu ↔ the field pane). In one
 sentence: *the arrows change, `Enter` goes in, `Esc` goes out, `Tab` switches section.*
@@ -5185,6 +5187,51 @@ task, since picking what the prompt carries embeds the opening. Every edit is
 what was stored. An edit cannot reach an `@self` note, whatever id it names. A
 reply that arrives while another screen is in front is dropped — it never opens
 the screen.
+
+### 11.12. Notifications
+
+**What.** When a companion with *Notify me* on (`Profile.companion.notify`, off by
+default, §10) writes unasked and the person is not looking, the app says so
+outside itself ([docs/research/companion-platform.md](docs/research/companion-platform.md)
+C5 (a); the owner's F6 (a)): a woken turn's reply ([9.3.6](#936-follow-ups-the-companion-plans),
+§9.3.2) landed while the terminal's window is **not known to be in focus**, or a
+follow-up come due in a conversation the person is not in — whatever the focus,
+since they are elsewhere in the app or away from it. A reply in the open
+conversation of a focused terminal sends nothing.
+
+**Focus.** The runtime asks the terminal for focus reports (`EnableFocusChange`,
+lifted on exit and in the panic hook) and hands each to the orchestrator
+(`AppCommand::TerminalFocus`). A terminal that never reports leaves the person
+"not looking" — a notification too many rather than one missed; inside tmux the
+reports need `set -g focus-events on`.
+
+**How** (`settings.json` → `notifications`, settings → *Interface* →
+*Notifications*; `shared::notify`):
+
+- **The terminal escape** (`escape`): `osc777` (the default —
+  `ESC ] 777 ; notify ; title ; body BEL`, which Windows Terminal shows since mid-2026,
+  and Ghostty, WezTerm, foot, rxvt-unicode), `osc9` (`ESC ] 9 ; text BEL` — iTerm2,
+  kitty) or `off`. One, never both: a terminal that knows both would show two. A
+  terminal that knows neither drops it — measured on the Windows console with VT
+  processing on, as the app runs it: all four shapes left nothing on screen. Inside
+  tmux the escape is wrapped in DCS passthrough, as OSC 52's is, and reaches the
+  terminal only with `allow-passthrough on`. Read leniently, like the code-block
+  background: a value a newer version adds reads as the default.
+- **The bell** (`bell`, on): `BEL` after the escape — what tmux marks the window
+  with and passes on with no setting at all, the reason it is on by default.
+- **ntfy** (`ntfy_url`, empty by default): a `POST` of the body to the topic's URL,
+  the title in its `title` query parameter (UTF-8 where a header is not), the
+  token — a stored secret, `SecretKey::NtfyToken`, never in `settings.json` — as a
+  bearer. Sent from a task with a 15-second timeout; a failure is logged and told
+  once a session, naming the setting.
+- **The words** (`with_text`, off): the title is the profile's name and the app's;
+  the body is *"Wrote to you in «chat»"* or *"Has something for you in «chat»"*,
+  in the interface's language — the start of the message only when this is on. A
+  public topic is readable by whoever knows its name, and the settings say so.
+
+Every field is cleaned before it is sent: control characters (an escape's own
+terminators among them) and line breaks become spaces, the title cannot carry the
+`;` that would end it early, and each is cut at 200 characters.
 
 ## 12. Configuration, portability, migration
 
