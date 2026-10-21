@@ -1,10 +1,11 @@
 # A platform for a companion — research and decision points
 
-Status: **research, 2026-10-21; nothing is built.** The question was the owner's:
-what would make mindfork a better platform for an AI companion. The document maps
-what the application already has, what it lacks, what the field and the literature
-say, and what a small live probe measured; the decision points for the owner are in
-§8, and a sequence in §9.
+Status: **research, 2026-10-21; forks decided by the owner the same day (§8);
+nothing is built.** The question was the owner's: what would make mindfork a better
+platform for an AI companion. The document maps what the application already has,
+what it lacks, what the field and the literature say, and what a small live probe
+measured; the decision points and the owner's decisions are in §8, and the sequence in
+§9.
 
 ## 1. What this is about
 
@@ -871,10 +872,41 @@ here with its date before anything is built (AGENTS.md §1).
   input with the bridge** *(recommended)*. (b) Speech input in the TUI now. (c)
   Nothing.
 
+### User's decision (2026-10-21)
+
+The owner went through the forks one at a time.
+
+- **Across all of them: every companion feature is switchable and off by default**,
+  because a person may want only an AI assistant. The switches live **in the
+  profile, one per feature** — an assistant and a companion share one installation,
+  and a researcher can turn on a single feature for an A/B run, the way a profile
+  already opts into the self-model tools. The `get_last_user_message_time` fix is a
+  defect fix and applies to everyone, outside any switch.
+- **F1: (a)** — time and memory first.
+- **F2: (a)** — a row on every user message, full where the day changes and compact
+  within a day — **off by default**, a profile switch, in place of the "on by
+  default" the fork proposed.
+- **F3: (a)** — notes about the person in a block of their own, behind a profile
+  switch, after a planted-fact probe with a go/no-go.
+- **F4: (a)** — the three earlier conversations, with `chat://` addresses when the
+  profile offers `chat_read`; a switch of its own.
+- **F5: (a) only** — follow-ups the companion plans; a chat not in view is woken when
+  the person opens it (i). Check-ins on a schedule (b) and a greeting from memory (c)
+  are not built in this track.
+- **F6: (a)** — notifications now; the bridge as a track with an ADR; Telegram first
+  behind a channel interface, Matrix second (i).
+- **F7: (a)** — a built-in card reader, keyed lorebooks deferred.
+- **F8: (a)** — all three instruments: the self-model's history, fork then carry, the
+  drift smoke.
+- **F9: (a)** — §7's rules adopted as design constraints of C4 and C5.
+- **F10: (a)** — a per-profile voice and replies spoken as they land (a profile
+  switch, off by default); speech input with the bridge.
+
 ## 9. A sequence
 
-If F1 (a) is chosen — each stage a pull request or two, each behind its own probe
-where it touches what the model reads:
+F1 (a) was chosen — each stage a pull request or two, each behind its own probe
+where it touches what the model reads, and every feature a profile switch that is off
+by default:
 
 1. **When it is** — C1: the time row and the tool fix. The probe's S1–S3 become
    `#[ignore]` smokes on the gate's own models; a chat-format step if the row is a
@@ -882,9 +914,8 @@ where it touches what the model reads:
 2. **What it knows about you** — C2 (a) behind a planted-fact probe with a go/no-go,
    C2 (b), and C3, the memory screen, in the same stage (§7).
 3. **It comes back** — C4 (a) follow-ups with the rules of §7, and C5 (a)
-   notifications, which cost little and give a follow-up somewhere to go; C4 (c)
-   greeting from memory, opt-in. C4 (b) check-ins only after a silence probe per
-   model.
+   notifications, which cost little and give a follow-up somewhere to go. C4 (b)
+   check-ins and C4 (c) a greeting from memory are not in this track (F5).
 4. **The instruments** — C9 history, C8 fork then carry, C10 the drift smoke.
 5. **Characters and voice** — C6 cards; C7 (a) a per-profile voice and replies
    spoken as they land.
@@ -893,10 +924,10 @@ where it touches what the model reads:
    then speech input through its voice messages (C7 (b)).
 
 Stages 1–3 are the companion; 4 is what makes it a research platform; 5–6 are what
-make it a presence. None of it changes what a coding profile or the default install
-does unless the profile asks for it — the time row is the one exception proposed as
-a default, and only because §3.2 measured it harmless on the turns where it is not
-needed.
+make it a presence. None of it changes what an assistant profile or the default
+install does: every feature is a profile switch, off until the profile turns it on
+(the owner's decision, §8) — only the `get_last_user_message_time` fix reaches
+everyone, being a defect fix.
 
 ## 10. Sources
 
