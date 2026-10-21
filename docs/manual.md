@@ -201,7 +201,9 @@ profile, in Settings → Interface → *Notifications*:
   any setting: tmux marks the window and passes the bell on. Windows Terminal only
   plays a sound for it unless told otherwise: `"bellStyle": "all"` in its profile
   also flashes the taskbar button — a sign that stays on a minimized window — and
-  from Preview 1.26 `"bellStyle": "notification"` shows a desktop notification. For the desktop
+  from Preview 1.26 `"bellStyle": "notification"` shows a desktop notification that
+  says only *"Activity in tab"* and the tab's name; the escape's says who wrote and
+  where. For the desktop
   notification and the focus reports to pass through tmux, add
   `set -g allow-passthrough on` and `set -g focus-events on` to `~/.tmux.conf`.
 - **ntfy topic** — a push to your phone through [ntfy](https://ntfy.sh): a topic's

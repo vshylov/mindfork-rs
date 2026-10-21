@@ -1161,7 +1161,9 @@ by default:
    only from Preview 1.26 (2026-10-02), opt-in (`compatibility.allowOSC777`) — the
    June merge this had been read from is not a release. A probe in a real Windows
    Terminal window confirmed the rest of the path: minimizing reports focus lost,
-   restoring focus gained.
+   restoring focus gained. Installed beside it (the owner's go-ahead), Preview
+   1.26.2734.0 with the setting on showed the app's bytes as a toast — title and
+   body as sent, Cyrillic intact — and nothing with it off.
 4. **The instruments** — C9 history, C8 fork then carry, C10 the drift smoke.
 5. **Characters and voice** — C6 cards; C7 (a) a per-profile voice and replies
    spoken as they land.

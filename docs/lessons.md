@@ -693,6 +693,17 @@ the control; test the threshold itself at the function, over `Storage` and the b
 mock.
 — *the companion's notes in the prompt*.
 
+**A test that reads the log must keep two subscribers alive.** `tracing` decides once,
+for every thread, whether a call site is wanted, and while a single scoped subscriber
+exists it asks only the default of the thread that reaches the line first. A test
+that captured the orchestrator's log with `set_default` passed alone and came back
+**empty** beside its module's other tests: their threads, with no subscriber, reached
+`notification sent` first and switched it off for everyone. A second `Dispatch` kept
+alive for the test (a `NoSubscriber`) makes `tracing` ask every subscriber. The same
+mechanism is why a field of a `tracing` call shows as uncovered: it is evaluated only
+when something listens.
+— *Windows Terminal shows OSC 777 only from Preview 1.26 — a correction*.
+
 ## 3. Measure; do not assume
 
 **Write the user's document from the code, and treat a sentence that cannot be

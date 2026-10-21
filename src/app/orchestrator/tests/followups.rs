@@ -467,6 +467,99 @@ async fn a_reply_the_person_is_looking_at_or_a_profile_that_did_not_ask_sends_no
     }
 }
 
+/// A log writer the test reads back.
+#[derive(Clone, Default)]
+struct LogBuf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for LogBuf {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl LogBuf {
+    fn text(&self) -> String {
+        String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
+    }
+}
+
+/// The log says what a notification did — sent, and how, or held because the
+/// person was looking — so one that never appeared on screen is told from one
+/// that was never sent (spec §11.12; the owner's look on Windows Terminal 1.24,
+/// which ignores OSC 777, found nothing in the log either way).
+#[tokio::test]
+async fn the_log_says_whether_a_notification_was_sent_or_held() {
+    let log = LogBuf::default();
+    let writer = log.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || writer.clone())
+        .with_ansi(false)
+        .with_max_level(tracing::Level::DEBUG)
+        .finish();
+    // tracing decides once, for every thread, whether a log line is wanted; while
+    // a single scoped subscriber is alive it asks only the default of the thread
+    // that reaches the line first, so a parallel test's thread, with none, would
+    // switch these lines off here too. A second one kept alive makes it ask all.
+    let _second = tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
+    // The orchestrator runs on this test's thread (a current-thread runtime).
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    // No focus report yet: sent, with how.
+    let dir = tempfile::tempdir().unwrap();
+    let w = seed(dir.path(), true, |p| p.companion.notify = true);
+    plant(dir.path(), &w, w.interview, -1);
+    let backend = Replying::new("Hey — how did the interview go?");
+    let (cmd_tx, mut evt_rx, handle) = spawn_orch_at(dir.path(), Some(backend), en_cfg());
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::TerminalAttention(_)))
+        .await
+        .expect("no notification");
+    quit(cmd_tx, handle).await;
+    let out = log.text();
+    let sent = out
+        .lines()
+        .find(|l| l.contains("notification sent"))
+        .unwrap_or_else(|| panic!("no sent line: {out}"));
+    for field in [
+        "kind=\"reply\"",
+        "escape=\"osc777\"",
+        "bell=true",
+        "push=false",
+        "focused=None",
+    ] {
+        assert!(sent.contains(field), "{field} missing: {sent}");
+    }
+
+    // In focus, the conversation open: held — and the focus report is logged.
+    let dir = tempfile::tempdir().unwrap();
+    let w = seed(dir.path(), true, |p| p.companion.notify = true);
+    plant(dir.path(), &w, w.other, -1);
+    let backend = Replying::new("How did it go?");
+    let (cmd_tx, mut evt_rx, handle) = spawn_orch_at(dir.path(), Some(backend), en_cfg());
+    settle(&mut evt_rx).await;
+    cmd_tx.send(AppCommand::TerminalFocus(true)).unwrap();
+    cmd_tx.send(AppCommand::SwitchChat(w.other)).unwrap();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+        .await
+        .unwrap();
+    pause().await;
+    quit(cmd_tx, handle).await;
+    let out = log.text();
+    assert!(
+        out.lines()
+            .any(|l| l.contains("terminal focus") && l.contains("focused=true")),
+        "{out}"
+    );
+    assert!(
+        out.lines()
+            .any(|l| l.contains("notification held") && l.contains("kind=\"reply\"")),
+        "{out}"
+    );
+}
+
 /// A follow-up that comes due in a conversation the person is not in is said
 /// whatever the focus: they are elsewhere in the app, or away from it.
 #[tokio::test]

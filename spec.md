@@ -5212,7 +5212,9 @@ reports need `set -g focus-events on`.
   `ESC ] 777 ; notify ; title ; body BEL`, which Ghostty, WezTerm, foot and
   rxvt-unicode show, and Windows Terminal from Preview 1.26 (2026-10-02) only with
   `compatibility.allowOSC777` on in its profile — 1.24 and 1.25 ignore it, which the
-  owner's look on 1.24 found), `osc9` (`ESC ] 9 ; text BEL` — iTerm2, kitty) or
+  owner's look on 1.24 found; measured on Preview 1.26.2734.0 with the window
+  minimized: a toast with the title and body as sent, and none without the
+  setting), `osc9` (`ESC ] 9 ; text BEL` — iTerm2, kitty) or
   `off`. One, never both: a terminal that knows both would show two. A
   terminal that knows neither drops it — measured on the Windows console with VT
   processing on, as the app runs it: all four shapes left nothing on screen. Inside
@@ -5223,7 +5225,9 @@ reports need `set -g focus-events on`.
   with and passes on with no setting at all, the reason it is on by default. What a
   terminal does with it is its own setting: Windows Terminal plays a sound by
   default, flashes the taskbar button with `"bellStyle": "all"` (or `"taskbar"`), and
-  from Preview 1.26 shows a desktop notification with `"bellStyle": "notification"`.
+  from Preview 1.26 shows a desktop notification with `"bellStyle": "notification"` —
+  *"Activity in tab «…»"*, none of the app's words; with that and
+  `compatibility.allowOSC777` both on, one toast arrives, the escape's (measured).
 - **ntfy** (`ntfy_url`, empty by default): a `POST` of the body to the topic's URL,
   the title in its `title` query parameter (UTF-8 where a header is not), the
   token — a stored secret, `SecretKey::NtfyToken`, never in `settings.json` — as a

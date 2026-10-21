@@ -3340,10 +3340,36 @@ because nothing logged one.
   push, the focus as known) and `notification held: the person is looking`; a focus
   change at debug. The next "nothing appeared" is read from the log.
 
-**Not done.** No Windows Terminal Preview was installed to watch a toast appear: the
-bytes are the ones #20012 parses (`OSC 777 ; notify ; title ; body`), and installing
-a terminal on the owner's machine is the owner's call.
+**Measured on Preview 1.26** (installed beside the stable one at the owner's
+go-ahead: the release's `msixbundle`, Microsoft-signed; the shared `wt` alias still
+opens 1.24). The same probe, the window minimized, wrote the app's own bytes — OSC
+777 with the ru locale's title and body, then the bell — and a script captured the
+corner where Windows shows a toast; Windows' notification store was read back for
+the terminal's entries only. Four arms:
 
-**Gates**: 4199 unit tests green, 289 `#[ignore]`; clippy `-D warnings`, fmt,
+| `allowOSC777` | `bellStyle` | Toast |
+|---|---|---|
+| unset (default) | default | none — the control |
+| `true` | default | **the title and body as sent** — the ru locale's *Companion · mindfork* / *Wrote to you in «probe B»*, Cyrillic intact |
+| unset | `notification` | "Windows Terminal Preview" / "Activity in tab "mf-notify-C"" |
+| `true` | `notification` | one — the escape's; the bell's is not added |
+
+So on Windows Terminal the escape is the notification worth turning on, and the bell
+as a notification says only which tab; the docs say both. Preview is left with
+`compatibility.allowOSC777` on in its profile defaults.
+
+**The log, tested.** `notification sent` and `notification held` are asserted by a
+test that captures the orchestrator's log on its own thread (a woken reply with no
+focus report: `kind="reply" escape="osc777" bell=true push=false focused=None`; in
+focus with the conversation open: held, and the focus report at debug). Each of the
+three lines removed in turn turns the test red. It came out of SonarCloud's coverage
+gate: a field of a `tracing` call is evaluated only when something listens, so the
+log lines were uncovered until a test listened. The test passed alone and read an
+empty log beside the module's other tests: with one scoped subscriber alive, `tracing`
+lets the first thread to reach a line decide for all, and theirs had none. A second
+subscriber kept alive fixes it (lessons §2); the module ran green five times in a row
+with it, red on the first run without.
+
+**Gates**: 4200 unit tests green, 289 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean; no screenshot
 dump holds either hint. No live run: nothing a model reads changed.
