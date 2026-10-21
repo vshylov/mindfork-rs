@@ -84,6 +84,13 @@ impl Db {
             "DELETE FROM note_rag_links WHERE profile_id = ?1 AND note_id = ?2",
             params![profile_id.to_string(), id.to_string()],
         )?;
+        // And its edges in the graph, either direction: a dangling edge is skipped
+        // by every read that joins the notes, but `note_link_count` would still
+        // count it when a neighbour is revised.
+        conn.execute(
+            "DELETE FROM note_links WHERE profile_id = ?1 AND (from_id = ?2 OR to_id = ?2)",
+            params![profile_id.to_string(), id.to_string()],
+        )?;
         let n = conn.execute(
             "DELETE FROM notes WHERE id = ?1 AND profile_id = ?2",
             params![id.to_string(), profile_id.to_string()],
@@ -105,6 +112,41 @@ impl Db {
             ],
         )?;
         Ok(n > 0)
+    }
+
+    /// Replaces a note's tags (the notes screen, spec §11.11), leaving its text
+    /// and `updated_at` alone — a tag is a label on the note, not a revision of
+    /// what it says. Isolation by `profile_id` in `WHERE`. `false` if the note is
+    /// not found/foreign.
+    pub fn note_set_tags(&self, profile_id: Uuid, id: Uuid, tags: &[String]) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let n = conn.execute(
+            "UPDATE notes SET tags = ?1 WHERE id = ?2 AND profile_id = ?3",
+            params![
+                serde_json::to_string(tags)?,
+                id.to_string(),
+                profile_id.to_string()
+            ],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// The notes `id` superseded — those `note_supersede` or `note_merge`
+    /// replaced with it — oldest first. Hidden from every other read, they are its
+    /// trace (the notes screen, spec §11.11).
+    pub fn note_superseded_by(&self, profile_id: Uuid, id: Uuid) -> Result<Vec<Note>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT n.id, n.profile_id, n.content, n.tags, n.created_at, n.updated_at
+             FROM notes n
+             JOIN note_superseded s ON s.note_id = n.id
+             WHERE s.profile_id = ?1 AND s.superseded_by = ?2 AND n.profile_id = ?1
+             ORDER BY n.created_at",
+        )?;
+        let rows = stmt
+            .query_map(params![profile_id.to_string(), id.to_string()], row_to_note)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
     }
 
     /// Saves/replaces a note's embedding (for semantic search). The vector is a
@@ -455,5 +497,81 @@ mod tests {
         db.note_insert(&note).unwrap();
         assert!(db.note_delete(p, note.id).unwrap());
         assert!(db.note_list(p, None, &[], None).unwrap().is_empty());
+    }
+
+    /// Deleting a note takes its edges with it, both directions: a neighbour's
+    /// link count no longer counts an edge to nothing.
+    #[test]
+    fn note_delete_drops_its_links() {
+        let db = db();
+        let p = Uuid::new_v4();
+        let (a, b, c) = (
+            Note::new(p, "a", vec![]),
+            Note::new(p, "b", vec![]),
+            Note::new(p, "c", vec![]),
+        );
+        for n in [&a, &b, &c] {
+            db.note_insert(n).unwrap();
+        }
+        db.note_link_insert(p, a.id, b.id, "supports").unwrap();
+        db.note_link_insert(p, c.id, a.id, "refines").unwrap();
+        db.note_link_insert(p, b.id, c.id, "relates").unwrap();
+        assert!(db.note_delete(p, a.id).unwrap());
+        assert_eq!(db.note_link_count(p, b.id).unwrap(), 1);
+        assert_eq!(db.note_link_count(p, c.id).unwrap(), 1);
+    }
+
+    /// Tags are replaced in place, the text and `updated_at` untouched, and only
+    /// within the note's own profile.
+    #[test]
+    fn note_set_tags_replaces_the_labels_only() {
+        let db = db();
+        let p = Uuid::new_v4();
+        let n = Note::new(p, "likes tea", vec!["old".into()]);
+        db.note_insert(&n).unwrap();
+        assert!(
+            !db.note_set_tags(Uuid::new_v4(), n.id, &["x".into()])
+                .unwrap()
+        );
+        assert!(
+            db.note_set_tags(p, n.id, &["pref".into(), "drink".into()])
+                .unwrap()
+        );
+        let got = db.note_get(p, n.id).unwrap().unwrap();
+        assert_eq!(got.tags, ["pref", "drink"]);
+        assert_eq!(got.content, "likes tea");
+        assert_eq!(got.updated_at, n.updated_at);
+    }
+
+    /// What a note superseded comes back for it alone, oldest first — and stays
+    /// hidden from the active list.
+    #[test]
+    fn note_superseded_by_lists_the_trace() {
+        let db = db();
+        let p = Uuid::new_v4();
+        let mut old1 = Note::new(p, "lives in Porto", vec![]);
+        old1.created_at = Utc::now() - chrono::Duration::days(30);
+        let old2 = Note::new(p, "lives in Porto, Cedofeita", vec![]);
+        let new = Note::new(p, "moved to Lisbon", vec![]);
+        let other = Note::new(p, "unrelated", vec![]);
+        for n in [&old1, &old2, &new, &other] {
+            db.note_insert(n).unwrap();
+        }
+        db.note_supersede_mark(p, old2.id, new.id).unwrap();
+        db.note_supersede_mark(p, old1.id, new.id).unwrap();
+        let trace: Vec<Uuid> = db
+            .note_superseded_by(p, new.id)
+            .unwrap()
+            .iter()
+            .map(|n| n.id)
+            .collect();
+        assert_eq!(trace, [old1.id, old2.id]);
+        assert!(db.note_superseded_by(p, other.id).unwrap().is_empty());
+        assert!(
+            db.note_superseded_by(Uuid::new_v4(), new.id)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(db.note_list(p, None, &[], None).unwrap().len(), 2);
     }
 }

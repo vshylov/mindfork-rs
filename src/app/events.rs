@@ -270,6 +270,13 @@ pub enum AppCommand {
     /// Apply a manual edit to the active profile's "self-model" (the `F3` UI editor).
     /// The orchestrator applies it, saves, and re-emits the updated `SelfModelView`.
     UpdateSelfModel(crate::entities::self_model::SelfModelEdit),
+    /// Request a snapshot of the active profile's notes for the notes screen
+    /// (`/notes`, spec §11.11): every note with its links and trace, and what
+    /// this conversation's prompt carries. Answered with [`AppEvent::NotesView`].
+    RequestNotes,
+    /// Apply an edit from the notes screen (text, tags, delete); the
+    /// orchestrator answers with a fresh [`AppEvent::NotesView`].
+    EditNote(crate::entities::note::NoteEdit),
     /// Confirm a changed tool catalog for an MCP server (TOFU
     /// reconfirmation from settings): register the held-back tools
     /// and persist the new pin. The argument is the server id. See spec §9.6.
@@ -422,6 +429,8 @@ impl AppCommand {
             | AppCommand::RequestTasks
             | AppCommand::RequestSelfModel
             | AppCommand::UpdateSelfModel(_)
+            | AppCommand::RequestNotes
+            | AppCommand::EditNote(_)
             | AppCommand::ConfirmMcpCatalog(_)
             | AppCommand::SetSecret { .. }
             | AppCommand::ReconnectMcpServer(_)
@@ -755,6 +764,9 @@ pub enum AppEvent {
         model: Box<Option<crate::entities::self_model::SelfModel>>,
         names: CharacterNames,
     },
+    /// The notes screen's snapshot (a reply to `RequestNotes` and to each
+    /// `EditNote`, spec §11.11). `Box` — a large type, don't bloat the enum.
+    NotesView(Box<crate::entities::note::NotesView>),
     /// The "self-model" changed (via background reflection or turn tools) — a signal
     /// **with no snapshot**. If the `F3` screen is open, UI re-requests a fresh snapshot
     /// (`RequestSelfModel`); ignored when the screen is closed. See stage 5 of the

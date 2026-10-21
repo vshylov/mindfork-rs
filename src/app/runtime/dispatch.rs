@@ -214,6 +214,13 @@ pub(super) fn apply_event(
         // The tasks screen's rows: into an open screen, and into one stashed
         // behind a chat opened from it — never opening one (spec §11.10).
         AppEvent::TaskList(list) => apply_task_list(active, back, *list),
+        // Only an open notes screen takes its snapshot: it opens on the command
+        // and asks, so a late reply never opens one (the tasks screen's rule).
+        AppEvent::NotesView(view) => {
+            if let ActiveScreen::Notes(notes) = active {
+                notes.set_view(*view);
+            }
+        }
         // The import runs from the settings screen and its outcome is shown
         // there, on the import row itself — a note in the feed would sit behind
         // the screen the user is standing on.
@@ -444,7 +451,8 @@ fn hand_over_to_chat(active: &mut ActiveScreen, back: &mut Option<Back>, id: Uui
         ActiveScreen::Chat
         | ActiveScreen::Settings(_)
         | ActiveScreen::SelfModel(_)
-        | ActiveScreen::Changes(_) => false,
+        | ActiveScreen::Changes(_)
+        | ActiveScreen::Notes(_) => false,
     };
     if arrived {
         show_chat(active, back, id);
@@ -463,7 +471,8 @@ fn show_chat(active: &mut ActiveScreen, back: &mut Option<Back>, chat: Uuid) {
         | ActiveScreen::ChatList(_)
         | ActiveScreen::Settings(_)
         | ActiveScreen::SelfModel(_)
-        | ActiveScreen::Changes(_) => {}
+        | ActiveScreen::Changes(_)
+        | ActiveScreen::Notes(_) => {}
     }
 }
 
@@ -484,8 +493,11 @@ fn show_self_model(
         ActiveScreen::SelfModel(view) => view.set_model(model, names),
         // A results list the user is reading must not be swapped out from
         // under them by a stale reply to a request they have left behind — and
-        // neither must a diff, or a task list, the user is reading.
-        ActiveScreen::Search(_) | ActiveScreen::Changes(_) | ActiveScreen::Tasks(_) => {}
+        // neither must a diff, a task list or the notes the user is reading.
+        ActiveScreen::Search(_)
+        | ActiveScreen::Changes(_)
+        | ActiveScreen::Tasks(_)
+        | ActiveScreen::Notes(_) => {}
         ActiveScreen::Chat | ActiveScreen::ChatList(_) | ActiveScreen::Settings(_) => {
             *active = ActiveScreen::SelfModel(Box::new(SelfModelScreen::new(
                 model,
@@ -550,8 +562,8 @@ fn show_changes(
         ActiveScreen::Changes(view) => view.set_changes(set),
         // A results list the user is reading must not be swapped out from under
         // them by a stale reply to a request they have left behind — nor a
-        // task list.
-        ActiveScreen::Search(_) | ActiveScreen::Tasks(_) => {}
+        // task list, nor the notes.
+        ActiveScreen::Search(_) | ActiveScreen::Tasks(_) | ActiveScreen::Notes(_) => {}
         ActiveScreen::Chat
         | ActiveScreen::ChatList(_)
         | ActiveScreen::Settings(_)
@@ -626,6 +638,28 @@ pub(super) fn dispatch_tasks(
     }
 }
 
+/// Translates a notes-screen intent (spec §11.11): closing returns to the chat,
+/// `Quit` ends the loop (`true`), an edit goes to the orchestrator — which
+/// applies it and answers with a fresh snapshot, so the screen shows what was
+/// stored rather than what it asked for.
+pub(super) fn dispatch_notes(
+    intent: NotesIntent,
+    cmd_tx: &UnboundedSender<AppCommand>,
+    active: &mut ActiveScreen,
+) -> bool {
+    match intent {
+        NotesIntent::Close => {
+            *active = ActiveScreen::Chat;
+            false
+        }
+        NotesIntent::Quit => true,
+        NotesIntent::Edit(edit) => {
+            let _ = cmd_tx.send(AppCommand::EditNote(edit));
+            false
+        }
+    }
+}
+
 /// Translates a changes-screen intent: closing returns to the chat, `Quit` ends
 /// the loop (`true`), a revert goes to the orchestrator — which does the work
 /// and answers with a fresh change set, so the screen shows the result rather
@@ -690,6 +724,7 @@ pub(super) enum AnyIntent {
     Changes(ChangesIntent),
     Search(SearchIntent),
     Tasks(TasksIntent),
+    Notes(NotesIntent),
 }
 
 /// Dispatches the active screen's intent to the corresponding translator.
@@ -709,6 +744,7 @@ pub(super) fn dispatch_any(
         AnyIntent::Changes(i) => dispatch_changes(i, cmd_tx, active),
         AnyIntent::Search(i) => dispatch_search(i, cmd_tx, screen, active, back),
         AnyIntent::Tasks(i) => dispatch_tasks(i, cmd_tx, screen, active, back),
+        AnyIntent::Notes(i) => dispatch_notes(i, cmd_tx, active),
     }
 }
 
@@ -902,6 +938,15 @@ pub(super) fn dispatch(
             *active =
                 ActiveScreen::Tasks(Box::new(TasksScreen::new(screen.palette(), screen.loc())));
             let _ = cmd_tx.send(AppCommand::RequestTasks);
+            return false;
+        }
+        // The notes screen opens **now**, waiting, the tasks screen's way: what
+        // this conversation's prompt carries is picked by embedding its opening,
+        // which can take a moment (spec §11.11).
+        ChatIntent::OpenNotes => {
+            *active =
+                ActiveScreen::Notes(Box::new(NotesScreen::new(screen.palette(), screen.loc())));
+            let _ = cmd_tx.send(AppCommand::RequestNotes);
             return false;
         }
         // The help overlay never becomes an orchestrator command: it is opened

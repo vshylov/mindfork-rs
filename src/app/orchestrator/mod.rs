@@ -43,6 +43,7 @@ mod llm_history;
 mod local_servers;
 mod mcp;
 mod model_name;
+mod notes_view;
 mod pool;
 mod profiles;
 mod prompt_cut;
@@ -942,6 +943,8 @@ impl Orchestrator {
             AppCommand::RequestTasks => self.emit_task_list(),
             AppCommand::RequestSelfModel => self.handle_request_self_model(),
             AppCommand::UpdateSelfModel(edit) => self.handle_update_self_model(edit),
+            AppCommand::RequestNotes => self.handle_request_notes(),
+            AppCommand::EditNote(edit) => self.handle_edit_note(edit),
             AppCommand::ConfirmMcpCatalog(server) => self.handle_confirm_mcp_catalog(server),
             AppCommand::ReconnectMcpServer(server) => self.handle_reconnect_mcp_server(server),
             AppCommand::SetSecret { key, value } => self.handle_set_secret(key, value),

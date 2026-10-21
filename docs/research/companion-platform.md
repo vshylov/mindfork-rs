@@ -1,7 +1,7 @@
 # A platform for a companion — research and decision points
 
 Status: **research, 2026-10-21; forks decided by the owner the same day (§8);
-stage 1 built (#809), stage 2's C2 built (§3.4, §9).** The question was the owner's: what would make mindfork a better
+stage 1 built (#809), stage 2 built — C2 and C3 (§3.4, §9).** The question was the owner's: what would make mindfork a better
 platform for an AI companion. The document maps what the application already has,
 what it lacks, what the field and the literature say, and what a small live probe
 measured; the decision points and the owner's decisions are in §8, and the sequence in
@@ -1036,8 +1036,10 @@ by default:
    C2 (b), and C3, the memory screen, in the same stage (§7). **C2 built**: the probe
    (§3.4) said go for notes picked by relevance alone and no-go for a "latest notes"
    fallback; two profile switches, `notes_in_prompt` and `earlier_chats`, live GO on
-   Gemma 4 31B and Qwen 3.8 27B. C3, the memory screen, is the stage's second pull
-   request.
+   Gemma 4 31B and Qwen 3.8 27B. **C3 built** in the stage's second pull request:
+   `/notes` — the notes listed, searched, opened with their links and trace, edited
+   and deleted, and the notes and observations this conversation's prompt carries
+   marked (spec §11.11).
 3. **It comes back** — C4 (a) follow-ups with the rules of §7, and C5 (a)
    notifications, which cost little and give a follow-up somewhere to go. C4 (b)
    check-ins and C4 (c) a greeting from memory are not in this track (F5).

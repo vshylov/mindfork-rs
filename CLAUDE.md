@@ -185,7 +185,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-10-21, version 0.21.0)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **4138 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **4160 unit tests
 green, 285 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump and demo-reel regenerators).
 
@@ -201,7 +201,7 @@ being recent is dropped, not shortened.
 - **A platform for a companion — stages 1–2** (2026-10-21): every feature a
   profile switch, off by default; a dated row on every user message; the notes
   nearest the opening and the earlier conversations in the prompt, by relevance
-  alone. Live **GO**, Gemma 4 and Qwen 3.8
+  alone; `/notes` to read and edit them. Live **GO**, Gemma 4 and Qwen 3.8
   ([docs/research/companion-platform.md](docs/research/companion-platform.md),
   [docs/journal/notes.md](docs/journal/notes.md)).
 - **The token counter on the feed's bottom border** (2026-10-19): out of the

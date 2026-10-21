@@ -2500,6 +2500,7 @@ Two main screens + overlays (modals):
 - **The message-level search screen** — a separate screen opened from the chat list's content mode (`Ctrl+G`): the messages matching the query, with `Enter` jumping the feed onto one and highlighting the query inside it; `Esc` from that chat comes back to the results (see [11.2.1](#1121-the-message-level-search-screen)).
 - **The "self-model" screen** — a separate screen (`F3`) for viewing and editing the agent's self-model (see [17.7](#177-ui--the-self-model-screen-f3)).
 - **The tasks screen** — a separate screen (`F7`, `/tasks`): every sub-agent and dialogue run across every chat, running with its position or landed with its outcome, and the app's own background work (see [11.10](#1110-the-tasks-screen-f7)).
+- **The notes screen** — a separate screen (`/notes`): the assistant's notes about the person, readable, searchable and editable, and which of them — and which observations — this conversation's prompt carries (see [11.11](#1111-the-notes-screen-notes)).
 - **Overlays**: the chat list, profile picker when creating a chat, confirmations, the spellcheck-suggestion popup, key-binding help (`F1`), the server startup log.
 - **Token counter** at the right corner of the feed's bottom border ([11.3](#113-the-message-feed);
   in the status bar's pill only where a short window takes that border away,
@@ -4512,8 +4513,8 @@ crossterm sees them — VS Code's integrated terminal claims `Ctrl+P`, `Ctrl+E`,
 the last of which **closes the tab the session runs in**. Typing survives every
 host, so the interface is fully operable by commands plus the safe key subset
 (printable characters, `Enter`, `Esc`, `Backspace`/`Delete`, `Tab`, the arrows,
-`Home`/`End`, `PageUp`/`PageDown`, `Shift`+arrows). Twenty-five commands:
-`/settings` `/local` `/self` `/chats` `/changes` `/tasks [stop <kind>|all]` `/help` · `/new [profile]`
+`Home`/`End`, `PageUp`/`PageDown`, `Shift`+arrows). Twenty-six commands:
+`/settings` `/local` `/self` `/chats` `/changes` `/tasks [stop <kind>|all]` `/notes` `/help` · `/new [profile]`
 `/rename [title]` `/autotitle` `/clone` `/copy` `/regen`·`/retry` `/continue`
 `/takeback` `/impersonate [text]` `/stop` · `/find [text]` `/search <text>`
 `/links` · `/thoughts` `/toolcalls` `/subagents [expand|collapse|stop [n]]` `/mouse`
@@ -5073,6 +5074,50 @@ tick, since *waiting* flips inside the task; a list that is all landed and
 idle repaints on input alone (fork F5).
 Nothing is stored for the screen's sake: closing the app forgets the ordering,
 not the runs.
+
+### 11.11. The notes screen (`/notes`)
+
+The assistant's notes about the person and their world, made readable and
+editable by the person ([docs/research/companion-platform.md](docs/research/companion-platform.md)
+C3; `screens/notes.rs`). Before it a person could not see what the companion
+remembered about them, nor make it forget; with *Notes in the prompt* (§6.6) a
+note now steers a conversation unasked, so the two came in one stage (research
+§7: no memory the person cannot read). No chord — typed only, like `/local`.
+
+- **The list** — every note of the active chat's profile, newest change first:
+  a mark, the note's age (`(5d)`), its text on one line, its tags. The profile's
+  `@self` observations are not here (they are the self-model's, `F3`), and
+  neither is a superseded note.
+- **What this conversation was shown** — the panel's first lines say whether
+  this conversation's prompt carries notes and how many, marking them `◆` in the
+  list (or that none was near enough to its opening, or that *Notes in the
+  prompt* is off for the profile), and list the self-model's observations it
+  carries. They are picked exactly as a turn picks them — the same switches,
+  query and memory cut (`notes_for_prompt`, `injection_recent`) — so the view
+  answers "why did it bring that up?".
+- **`Enter`** opens a note: when it was written and last changed (local date and
+  time), its tags, its whole text, its links to other notes (`→ supports: …`, an
+  observation marked) and the notes it replaced (`note_supersede`,
+  `note_merge`) — kept as its trace, hidden everywhere else. `↑/↓` scroll it,
+  `Esc` returns to the list.
+- **`E`** edits the text in a multiline editor (an emptied text saves nothing);
+  the note is re-embedded, so its search and its pick follow the new words.
+  **`T`** edits the tags, comma-separated; the reserved `@self` is never shown,
+  and dropped if typed, so a note cannot be turned into an observation.
+  **`Del`** asks — `Del` again deletes the note outright, with its vector, its
+  source citations and its links; any other key keeps it. All three act on the
+  selected note or the opened one.
+- **`/`** (or `.`, the same key under a Russian layout) searches the notes'
+  text and tags as you type; `Enter` keeps the search, `Esc` drops it. `Esc` on
+  the list drops a search in force before it closes the screen.
+
+The screen is a projection: it opens at once, says it is reading, and asks
+(`AppCommand::RequestNotes`); the orchestrator answers with a `NotesView` from a
+task, since picking what the prompt carries embeds the opening. Every edit is
+`AppCommand::EditNote` and is answered with a fresh snapshot, so the screen shows
+what was stored. An edit cannot reach an `@self` note, whatever id it names. A
+reply that arrives while another screen is in front is dropped — it never opens
+the screen.
 
 ## 12. Configuration, portability, migration
 

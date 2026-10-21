@@ -712,6 +712,7 @@ mod llm_history;
 mod local_servers;
 mod mcp;
 mod model_name;
+mod notes_view;
 mod parallel;
 mod profiles;
 mod project;

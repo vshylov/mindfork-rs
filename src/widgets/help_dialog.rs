@@ -99,6 +99,8 @@ pub enum HelpContext {
     Search,
     /// The tasks screen (`F7`): every background run and the app's own work.
     Tasks,
+    /// The notes screen (`/notes`): the assistant's notes about the person.
+    Notes,
 }
 
 /// The help dialog's state: the active tab + its content's scroll position
