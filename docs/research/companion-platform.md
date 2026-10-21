@@ -930,8 +930,7 @@ F1 (a) was chosen — each stage a pull request or two, each behind its own prob
 where it touches what the model reads, and every feature a profile switch that is off
 by default:
 
-1. **When it is** — C1: the time row and the tool fix. **Built** (branch
-   `feat/companion-time-row`): the rows are derived from the messages' timestamps
+1. **When it is** — C1: the time row and the tool fix. **Built** (#809): the rows are derived from the messages' timestamps
    when a request is built rather than stored, which keeps the prefix as stable and
    needs no chat-format step; the shipped form was measured first (§3.3); three
    `#[ignore]` smokes, live GO on Gemma 4 31B and Qwen 3.8 27B. Left for later: dates
