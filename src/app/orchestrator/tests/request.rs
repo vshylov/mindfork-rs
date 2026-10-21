@@ -41,6 +41,7 @@ fn request_of(chat: &Chat, compaction: &CompactionSettings, history_tools: bool)
             // builds requests for chats with no project, where the list is moot.
             offered_tools: &[],
             time_rows: None,
+            earlier_chats: None,
             loc: ru(),
         },
     )
@@ -74,6 +75,7 @@ fn the_chat_files_block_names_handles_and_staged_names() {
             history_tools: false,
             offered_tools: &[],
             time_rows: None,
+            earlier_chats: None,
             loc: ru(),
         },
     );
@@ -104,6 +106,7 @@ fn the_chat_files_block_names_handles_and_staged_names() {
             history_tools: false,
             offered_tools: &[],
             time_rows: None,
+            earlier_chats: None,
             loc: ru(),
         },
     )
@@ -651,6 +654,7 @@ fn request_with_rows(chat: &Chat, compaction: &CompactionSettings) -> ChatReques
             history_tools: false,
             offered_tools: &[],
             time_rows: Some(&utc_clock),
+            earlier_chats: None,
             loc: crate::shared::i18n::locale(crate::shared::i18n::Lang::En),
         },
     )

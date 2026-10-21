@@ -500,6 +500,8 @@ src/
 │  │  │  ├─ graph.rs        note_link/note_neighbors (typed link graph)
 │  │  │  ├─ cite.rs         note_cite_source (note→RAG source citation)
 │  │  │  ├─ overview.rs     consolidate_notes + consolidation overviews (user/@self)
+│  │  │  ├─ prompt_notes.rs the notes nearest the opening for the prompt (spec §6.6):
+│  │  │  │                  every pick over NOTES_FLOOR, written before the memory cut
 │  │  │  └─ self_notes.rs   self-note (@self) subsystem: recent/relevant, graph
 │  │  ├─ introspection.rs   get/set_sampling, get/set_system_message, get_last_user_message_time
 │  │  ├─ llm.rs             get_llm_name/get_llm_history — the language model's
@@ -559,6 +561,10 @@ src/
 │  ├─ spellcheck/           check, segment, dict, mod — Hunspell + segmenter + personal dictionary
 │  ├─ profiles.rs           pure profile operations (sanitize_name, ProfileEdit)
 │  ├─ chat_search_sort.rs   chat list filter/sort
+│  ├─ companion_memory.rs   the companion's memory blocks (spec §6.6): the memory cut,
+│  │                        the earlier conversations (picked and rendered over the
+│  │                        chats in memory) and the notes block's render — shared
+│  │                        room by the observations' water-filling
 │  ├─ chat_search.rs        to_fts_query: raw input → a *literal* FTS5 MATCH (every
 │  │                        token quoted, inner quotes doubled; tokens under the
 │  │                        trigram 3-char floor dropped). Pure, tested without a DB
@@ -1403,7 +1409,13 @@ Details:
   are computed over the whole history (`features::time_row::rows`) and
   `api_messages` puts each in front of its user message's words — after a merged
   notification — so nothing about them is stored and the prefix holds. A
-  subagent's request passes `None`. The turn's `TurnInfo.user_times`
+  subagent's request passes `None`. `PromptContext.earlier_chats` carries the
+  rendered earlier conversations (`Profile.companion.earlier_chats`, spec §6.6),
+  appended after the project block; the notes block needs the embedder, so the
+  generation task appends it (`generation::inject_prompt_notes`, from
+  `GenSpawn.prompt_notes`) just before the self-model — both decided by
+  `companion_memory::memory_cut`, so neither moves from turn to turn. A subagent's
+  request carries neither. The turn's `TurnInfo.user_times`
   (`request::user_message_times`) says which user message the turn answers and the
   one before it — what `get_last_user_message_time` reports; a background task gets
   `UserMessageTimes::latest`. The subagent run itself is §8's `call_subagent`

@@ -248,6 +248,12 @@ pub(super) struct PromptContext<'a> {
     /// are. Production passes [`crate::features::time_row::local`]; a test, a fixed
     /// zone, so its rows do not depend on the machine's.
     pub time_rows: Option<crate::features::time_row::Clock<'a>>,
+    /// The profile's conversations before this one, rendered
+    /// (`Profile.companion.earlier_chats`,
+    /// [`crate::features::companion_memory::render_earlier`]); `None` — off, or
+    /// there are none. Appended after the project block, ahead of the notes and
+    /// the self-model the generation task adds (spec §6.6).
+    pub earlier_chats: Option<&'a str>,
     /// Scaffold language (axis A): every injected block is read by the model.
     pub loc: &'a Locale,
 }
@@ -333,9 +339,17 @@ pub(super) fn build_request_in(
         .time_rows
         .map(|clock| crate::features::time_row::rows(messages, upto, clock, cx.loc))
         .unwrap_or_default();
+    let system = inject_workspace(system, env.workspace, cx.offered_tools, cx.loc);
+    // Decided by the conversation's start, so it holds turn to turn like the blocks
+    // above; a companion feature, absent unless the profile turned it on.
+    let system = match (system, cx.earlier_chats) {
+        (system, None) => system,
+        (Some(s), Some(block)) => Some(format!("{s}\n\n{block}")),
+        (None, Some(block)) => Some(block.to_string()),
+    };
     ChatRequest {
         continue_final: false,
-        system: inject_workspace(system, env.workspace, cx.offered_tools, cx.loc),
+        system,
         messages: api_messages(&messages[upto..], &rows, cx.loc),
         sampling,
         tools,

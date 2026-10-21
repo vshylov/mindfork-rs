@@ -159,6 +159,18 @@ after the previous message]", or "[21:35 · 24m later]" within a day — so it
 knows that three days have passed since you said the interview was tomorrow.
 Nothing is added to the chat itself, and the prompt cache is not disturbed.
 
+*Notes in the prompt* gives the model, when a conversation begins, the notes it
+wrote about you that are close to how you opened it — open with "the interview
+went better than I expected" and it already has the note about the interview —
+so a model that never searches its notes on its own still uses them. Only notes
+close enough to the subject are taken, up to four: a conversation about something
+else gets none, so your news does not turn up in an answer about networking. It
+needs an embedding server. *Earlier conversations in the prompt* lists the three
+conversations before this one, newest first, with how long ago they were — and
+their `chat://` links when the profile has chat reading on, so "let's pick up
+where we left off" opens the right one. Both are chosen once, when the
+conversation begins, and stay the same for the rest of it.
+
 ### Writing as you
 
 `Ctrl+U` (`/impersonate [text]`) has the model write **your** next message and
