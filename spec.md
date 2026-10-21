@@ -5203,7 +5203,8 @@ conversation of a focused terminal sends nothing.
 lifted on exit and in the panic hook) and hands each to the orchestrator
 (`AppCommand::TerminalFocus`). A terminal that never reports leaves the person
 "not looking" — a notification too many rather than one missed; inside tmux the
-reports need `set -g focus-events on`.
+reports need `set -g focus-events on` (measured, tmux 3.8: a switch to another tmux
+window reports focus lost, and so does the terminal's window losing focus).
 
 **How** (`settings.json` → `notifications`, settings → *Interface* →
 *Notifications*; `shared::notify`):
@@ -5217,10 +5218,16 @@ reports need `set -g focus-events on`.
   setting), `osc9` (`ESC ] 9 ; text BEL` — iTerm2, kitty) or
   `off`. One, never both: a terminal that knows both would show two. A
   terminal that knows neither drops it — measured on the Windows console with VT
-  processing on, as the app runs it: all four shapes left nothing on screen. Inside
+  processing on, as the app runs it: all four shapes left nothing on screen.
+  Measured on Linux (X11, a session bus, Arch's packages): WezTerm 20260716 and
+  Ghostty 1.3.1 hand OSC 777 to the desktop's notification service with the title
+  and body as sent, whether their window is unfocused, focused or minimized. Inside
   tmux the escape is wrapped in DCS passthrough, as OSC 52's is, and reaches the
-  terminal only with `allow-passthrough on`. Read leniently, like the code-block
-  background: a value a newer version adds reads as the default.
+  terminal only with `allow-passthrough all`: with `on`, tmux passes it from a pane
+  on screen only and drops it while the person is in another tmux window — the case
+  a notification exists for (measured, tmux 3.8; the docs had said `on`). Read
+  leniently, like the code-block background: a value a newer version adds reads as
+  the default.
 - **The bell** (`bell`, on): `BEL` after the escape — what tmux marks the window
   with and passes on with no setting at all, the reason it is on by default. What a
   terminal does with it is its own setting: Windows Terminal plays a sound by

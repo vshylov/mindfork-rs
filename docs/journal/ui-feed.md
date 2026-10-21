@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (55)
+## Entries (56)
 
 - Post-M9: mouse-wheel feed scrolling (done)
 - Post-M9: own markdown renderer (tables + LaTeX + theme) (done)
@@ -67,6 +67,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the hero screenshot shows the token counter in its place (done)
 - Post-M9: notifications for someone not looking — companion stage 3, C5 (a) (done)
 - Post-M9: Windows Terminal shows OSC 777 only from Preview 1.26, opt-in — a correction (done)
+- Post-M9: inside tmux a notification needs `allow-passthrough all` — WezTerm, Ghostty and tmux measured (done)
 
 ### Post-M9: mouse-wheel feed scrolling (done)
 - **The mouse wheel scrolls the feed** on par with `PageUp/PageDown`. `ratatui::init()`
@@ -3269,7 +3270,7 @@ many beats one missed, and the feature is opt-in and its triggers capped.
   it never begins with a digit that Windows Terminal would read as a ConEmu
   sub-command.
 - **The bell is on by default**: inside tmux an escape needs `allow-passthrough on`
-  (wrapped in DCS passthrough as OSC 52's is), while the bell is marked on the
+  (`all`, in fact — the entry on tmux below; wrapped in DCS passthrough as OSC 52's is), while the bell is marked on the
   window and passed on with no setting — the pod-in-tmux case this audience lives in.
 - **ntfy, with the token in the key store** (`SecretKey::NtfyToken`): a `POST` of the
   body, the title in the `title` query parameter (UTF-8 where a header is not),
@@ -3373,3 +3374,58 @@ with it, red on the first run without.
 **Gates**: 4200 unit tests green, 289 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean; no screenshot
 dump holds either hint. No live run: nothing a model reads changed.
+
+### Post-M9: inside tmux a notification needs `allow-passthrough all` — WezTerm, Ghostty and tmux measured (done)
+
+**What.** The owner asked for the look the stage had left open — the Linux terminals
+and tmux — in Docker on this machine. An image from `archlinux:base` and Arch's own
+packages: Xvfb, openbox, a session bus, dunst as the notification service; WezTerm
+20260716-195552, Ghostty 1.3.1, tmux 3.8. A probe in each terminal reads input as
+crossterm does (raw mode, `CSI ? 1004 h`) and, on a trigger, writes the app's own
+bytes — `notify::sequence`: OSC 777 with the ru locale's title and body, then the
+bell, wrapped in DCS passthrough when `$TMUX` is set. Kept per arm: `dbus-monitor`
+on `org.freedesktop.Notifications`, a screenshot, the probe's focus log. tmux was
+also read on the wire: a pty playing the outer terminal recorded what tmux forwards.
+
+**Measured — the terminals.** Both hand the escape to the notification service with
+the title and body as sent, Cyrillic intact, in every window state; neither holds it
+back while focused — the app does that itself (spec §11.12).
+
+| Terminal | Its window | `Notify` calls | Focus report to the app |
+|---|---|---|---|
+| WezTerm | another window active | 1 | lost |
+| WezTerm | focused | 1 | none (stays focused) |
+| WezTerm | minimized | 1 | lost |
+| Ghostty | another window active | 1 | lost |
+| Ghostty | focused | 1 | none (stays focused) |
+| Ghostty | minimized | 1 | lost |
+
+**Measured — tmux 3.8**, every row on the wire, the last three also in WezTerm and
+in Ghostty with the same result:
+
+| `~/.tmux.conf` | The app's tmux window | Escape forwarded | Bell | Focus report |
+|---|---|---|---|---|
+| nothing | on screen | no | yes, the window marked `!` | none |
+| `allow-passthrough on`, `focus-events on` (what the docs advised) | on screen | yes | yes | lost with the terminal's focus |
+| the same | **another tmux window on screen** | **no — zero `Notify`** | yes | lost on the switch |
+| `allow-passthrough all`, `focus-events on` | another tmux window on screen | yes | yes | lost on the switch |
+
+The app did its part in every row: it learned the person was not looking and wrote
+the wrapped escape. tmux dropped it — `on` passes a passthrough from a pane on screen
+only, `all` from any — and a person in another tmux window is exactly who a
+notification is for. The advice had been checked against the visible pane, the
+state that is easiest to set up.
+
+**Changed.** Docs only: the manual (§3), install.md's pod-in-tmux paragraph, spec
+§11.12 (with both measurements), the escape's settings hint (en, ru),
+`shared::notify`'s docs, the CHANGELOG's unreleased entry and the research's C5 line
+now say `allow-passthrough all`, and why not `on`. The bell's role stands, measured:
+tmux passes it on with no setting. A lesson in §3.
+
+**Not done.** foot and rxvt-unicode (OSC 777) and kitty (OSC 9) were not run, nor a
+Wayland session; the probe's bytes are the app's by construction, not by a run of the
+app. The image (`mf-notify-lx`, 2.8 GB) and its scripts stayed outside the repository.
+
+**Gates**: 4200 unit tests green, 289 `#[ignore]`; clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean; no screenshot
+dump holds the hint. No live run: nothing a model reads changed.

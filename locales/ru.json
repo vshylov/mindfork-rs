@@ -2008,7 +2008,7 @@
   "ui.settings.desc.followups_per_day": "Сколько возвращений самое большее доставляется за день (1–20); следующее ждёт другого дня. Каждое стоит запроса, которого никто не набирал. По умолчанию 3.",
   "ui.settings.group.notifications": "Уведомления",
   "ui.settings.field.notify_escape": "Уведомление терминала",
-  "ui.settings.desc.notify_escape": "Escape-последовательность, которую терминал превращает в уведомление рабочего стола, когда компаньон с «Уведомлять меня» пишет, а вы не смотрите. OSC 777 — Ghostty, WezTerm, foot и Windows Terminal начиная с Preview 1.26, если в его профиле включено «compatibility.allowOSC777» (1.24 и 1.25 её пропускают); OSC 9 — iTerm2, kitty. Терминал, не знающий ни одной, её пропускает. Внутри tmux нужна настройка «set -g allow-passthrough on».",
+  "ui.settings.desc.notify_escape": "Escape-последовательность, которую терминал превращает в уведомление рабочего стола, когда компаньон с «Уведомлять меня» пишет, а вы не смотрите. OSC 777 — Ghostty, WezTerm, foot и Windows Terminal начиная с Preview 1.26, если в его профиле включено «compatibility.allowOSC777» (1.24 и 1.25 её пропускают); OSC 9 — iTerm2, kitty. Терминал, не знающий ни одной, её пропускает. Внутри tmux нужна настройка «set -g allow-passthrough all» — с «on» tmux её выбрасывает, пока вы в другом его окне.",
   "ui.settings.choice.notify_osc777": "OSC 777",
   "ui.settings.choice.notify_osc9": "OSC 9",
   "ui.settings.choice.notify_off": "выкл.",

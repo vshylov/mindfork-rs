@@ -1163,7 +1163,11 @@ by default:
    Terminal window confirmed the rest of the path: minimizing reports focus lost,
    restoring focus gained. Installed beside it (the owner's go-ahead), Preview
    1.26.2734.0 with the setting on showed the app's bytes as a toast — title and
-   body as sent, Cyrillic intact — and nothing with it off.
+   body as sent, Cyrillic intact — and nothing with it off. In Docker (X11, a
+   session bus, Arch's packages; the owner's ask), WezTerm 20260716 and Ghostty
+   1.3.1 showed them too, unfocused, focused or minimized; tmux 3.8 with the
+   `allow-passthrough on` the docs advised dropped them while the person was in
+   another tmux window — the case a notification is for — and `all` passes them.
 4. **The instruments** — C9 history, C8 fork then carry, C10 the drift smoke.
 5. **Characters and voice** — C6 cards; C7 (a) a per-profile voice and replies
    spoken as they land.
