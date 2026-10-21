@@ -257,6 +257,8 @@ pub enum ChatIntent {
     /// Open the tasks screen (`F7`, `/tasks`): everything the app is doing in
     /// the background. See spec §11.10.
     OpenTasks,
+    /// Open the notes screen (`/notes`, spec §11.11).
+    OpenNotes,
     /// Open the help dialog (`/help`). `F1` never reaches the screen — the
     /// runtime routes it above every screen and owns the overlay (spec §11.7,
     /// docs/history/help-hotkeys-context.md stage 2).

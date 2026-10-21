@@ -323,6 +323,7 @@ fn handle_key_event(
         ActiveScreen::Search(search) => search.handle_key(key).map(AnyIntent::Search),
         ActiveScreen::Changes(changes) => changes.handle_key(key).map(AnyIntent::Changes),
         ActiveScreen::Tasks(tasks) => tasks.handle_key(key).map(AnyIntent::Tasks),
+        ActiveScreen::Notes(notes) => notes.handle_key(key).map(AnyIntent::Notes),
     };
     if intent.is_some() {
         flush_draft(screen, cmd_tx);

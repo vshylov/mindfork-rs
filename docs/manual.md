@@ -120,6 +120,7 @@ delivers `Ctrl+N`).
 | Settings | `Ctrl+P` | `/settings` | eight sections; the engine, sampling, tools, plugins, memory, data, profiles, interface |
 | Self-model | `F3` | `/self` | what the assistant currently thinks about itself and about you |
 | Tasks | `F7` | `/tasks` | every background run across every chat, and the app's own quiet work |
+| Notes | — | `/notes` | what the assistant wrote down about you: read, search, edit, delete — and which notes this conversation's prompt carries |
 | Changes | `F4` | `/changes` | what the assistant changed in the attached project, as a diff |
 | Search | `Ctrl+G` | `/search <text>` | messages across every chat, grouped by conversation |
 | Help | `F1` | `/help` | the reference |
@@ -220,9 +221,14 @@ by the assistant itself, not by a background job you have to trust — and
 ### Notes
 
 The assistant writes notes for itself and links them into a graph; a note can
-supersede another, and the recall path is semantic rather than keyword. You do
-not manage them; you can read them through the tools' output, and the graph is
-what makes a long acquaintance feel continuous.
+supersede another, and the recall path is semantic rather than keyword; the graph
+is what makes a long acquaintance feel continuous. **`/notes`** shows them to you:
+every note of the profile, newest change first, with a search (`/`); `Enter` opens
+one with its links and the older notes it replaced; `E` edits its text, `T` its
+tags, and `Del` deletes it after asking. The screen's first lines say which notes
+— and which of the self-model's observations — this conversation's prompt carries,
+marked `◆`: what the assistant had in front of it when it brought something up.
+The observations themselves are `F3`'s.
 
 ### The knowledge base
 
@@ -600,6 +606,7 @@ Typed straight into the input box.
 | `/project clear build\|run\|test` | unset one of those commands (the assistant then has no such tool at all) |
 | `/changes` (`F4`) | what the assistant changed in the attached project, as a diff, with `r` to put one file back |
 | `/tasks` (`F7`) | every background run and the app's own quiet work; `Enter` opens a transcript, `P` its chat, `F6` stops a running one |
+| `/notes` | the assistant's notes about you; `Enter` opens one, `E` edits its text, `T` its tags, `Del` deletes it (asks first), `/` searches |
 | `/rag add <path> [-r]` · `/rag remove <path>` | index a file or directory into the knowledge base / remove it |
 | `/rag list` · `/rag rebuild` | show the store's sources / reindex after changing chunking |
 | `/reindex` | re-embed everything with the current embedding model |

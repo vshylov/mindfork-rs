@@ -33,6 +33,11 @@ split by subsystem.
   the prompt* lists the three conversations before this one, with links the model
   can open when chat reading is on, so "let's pick up where we left off" works.
   Both are chosen once, when the conversation begins, so the prompt cache holds.
+- **`/notes` — the notes the assistant keeps about you, in front of you.** Every
+  note of the profile, newest first, with a search; open one to see its links and
+  the older notes it replaced, edit its text or tags, or delete it (it asks
+  first). The screen's first lines say which notes and observations this
+  conversation's prompt carries — so "why did it bring that up?" has an answer.
 
 ### Fixed
 

@@ -46,6 +46,9 @@ pub enum UiCommand {
     /// (spec §11.10). `stop <kind>` stops one of the app's own tasks — the
     /// typed route to `F6` on its row there (docs/research/tasks-stop-command.md).
     Tasks,
+    /// The notes screen: the assistant's notes about the person, readable and
+    /// editable (spec §11.11). No chord — typed only.
+    Notes,
     /// The help/"About" dialog (`F1`).
     Help,
     /// A new chat; the argument picks the profile by name (`Ctrl+N`).
@@ -182,6 +185,7 @@ pub const COMMANDS: &[Spec] = &[
     row(&["/chats"], UiCommand::Chats, Arity::None, "/chats", "ui.help.cmd_chats"),
     row(&["/changes"], UiCommand::Changes, Arity::None, "/changes", "ui.help.cmd_changes"),
     row(&["/tasks"], UiCommand::Tasks, Arity::Subcommand(&["stop"]), "ui.help.k.tasks", "ui.help.cmd_tasks"),
+    row(&["/notes"], UiCommand::Notes, Arity::None, "/notes", "ui.help.cmd_notes"),
     row(&["/help"], UiCommand::Help, Arity::None, "/help", "ui.help.cmd_help"),
     // The conversation.
     row(&["/new"], UiCommand::NewChat, Arity::Optional, "ui.help.k.new", "ui.help.cmd_new"),

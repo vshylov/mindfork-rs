@@ -8,6 +8,7 @@ pub mod awaited_chat;
 pub mod changes;
 pub mod chat;
 pub mod chat_list;
+pub mod notes;
 pub mod search;
 pub mod self_model;
 pub mod settings;

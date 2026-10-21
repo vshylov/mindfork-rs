@@ -300,6 +300,9 @@ src/
 │  │  ├─ background_runs.rs sub-agent runs out in the background: seats, landing by id, the notification (spec §9.3.2)
 │  │  ├─ tasks.rs           the tasks screen's snapshot (AppEvent::TaskList): rows off the seats,
 │  │  │                     the turn's children and the chats' records (spec §11.10)
+│  │  ├─ notes_view.rs      the notes screen's snapshot (AppEvent::NotesView) and its edits
+│  │  │                     (EditNote); what the prompt carries picked as a turn picks it
+│  │  │                     (spec §11.11)
 │  │  ├─ request.rs         mapping domain messages to the engine wire format
 │  │  └─ tests/             orchestrator tests, split by feature (mod.rs — fixtures;
 │  │                        generation/chats/profiles/settings/title/impersonation/
@@ -375,6 +378,10 @@ src/
 │  │                        running with its position, landed with its outcome — and the
 │  │                        app's own silent tasks (F7, /tasks; spec §11.10), → TasksIntent;
 │  │                        `Stoppable`: F6 stops a run's seat or a silent task's slot
+│  ├─ notes.rs              NotesScreen: the profile's notes — list, search, an opened note
+│  │                        with its links and trace, text/tags editors, delete behind a
+│  │                        question — and what this conversation's prompt carries
+│  │                        (/notes; spec §11.11), → NotesIntent
 │  └─ settings/             SettingsScreen: sections (Model/Sampling/Tools/Plugins/
 │     │                     Memory/Data/Profiles/Interface) with field groups; "Plugins" is the
 │     │                     MCP host — master switch, server editor (Ctrl+N/Ctrl+D over
@@ -3792,6 +3799,19 @@ streams. Generation is deliberately
 not a fourth `EscTarget` — this stack could never produce it — so the widget reads
 both halves off the one `StatusModel` the generation chip and the input box's title
 are drawn from, and the three cannot disagree within a frame.
+
+**The notes screen** (`screens/notes.rs`, `ActiveScreen::Notes`, `/notes`; spec
+§11.11) opens the tasks screen's way — at once, waiting, with
+`AppCommand::RequestNotes` — and for its own reason: the snapshot's second half,
+what this conversation's prompt carries, is picked the way a turn picks it, by
+embedding the opening (`notes_view::shown_in_prompt` calls `notes_for_prompt` and
+`generation::injection_recent` with the turn's own switches, query and memory
+cut), so `orchestrator/notes_view.rs` sends the `NotesView` from a task. Edits
+(`AppCommand::EditNote` — text, tags, delete) are applied there and answered with
+a fresh snapshot; a text edit is re-embedded before the picks are made. The
+`NotesView` arm of `apply_event` only refreshes an open notes screen, and the
+screen-replacing matches leave it alone. An edit never reaches an `@self` note:
+the handler checks the stored note, not the screen.
 
 **The tasks screen** (`screens/tasks.rs`, `ActiveScreen::Tasks`, `F7`/`/tasks`;
 spec §11.10, [research/tasks-screen.md](research/tasks-screen.md)) is the round

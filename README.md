@@ -127,7 +127,8 @@ a checkout with a recent stable Rust. On a rented GPU box or in a container, the
   vendor's models — each with its own settings, all configured at once, and
   switching loses nothing.
 - **Memory that persists.** A **self-model** the assistant maintains about
-  itself and about you (`F3`), notes it writes and links into a graph, and a
+  itself and about you (`F3`), notes it writes and links into a graph — yours to
+  read, edit and delete (`/notes`) — and a
   **knowledge base** with semantic retrieval over your own files. Isolated per
   companion profile, all of it on your disk. A profile can also tell the model
   **when** each of your messages was written, so it knows days have passed, and

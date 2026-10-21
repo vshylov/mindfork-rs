@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (74)
+## Entries (75)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -86,6 +86,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: titles and tabs a narrow window used to cut (done)
 - Post-M9: no cursor blinks through the help (done)
 - Post-M9: the About tab says where everything is (done)
+- Post-M9: the notes screen, `/notes` (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -3944,3 +3945,50 @@ paths, too wide for the labels, each under its label. All three exited with code
 UI change otherwise — no engine, memory or tool path is touched.
 
 **Tests**: 3994 green, 257 ignored (+5).
+
+### Post-M9: the notes screen, `/notes` (done)
+- **What.** C3 of the companion track
+  ([docs/research/companion-platform.md](../research/companion-platform.md) §6, §7,
+  §9 stage 2; spec §11.11): a screen for the notes the assistant keeps about the
+  person — list, search, a note opened with its links and the notes it replaced,
+  its text and tags edited, the note deleted — and, at the top, which notes and
+  which observations this conversation's prompt carries. The second pull request
+  of stage 2, stacked on the notes-in-the-prompt one: once a note steers a
+  conversation unasked, the person has to be able to read it (research §7).
+- **Key decisions (the agent's, inside C3 (a)/(b)).** Typed only (`/notes`), no
+  chord — `F3`/`F7` taken, and the owner's C3 named the command. The screen opens
+  at once, waiting, and asks (the tasks screen's shape, not the self-model's open-
+  on-reply), because the snapshot's second half embeds the conversation's opening:
+  `orchestrator/notes_view.rs` picks it with the turn's own switches, query and
+  memory cut (`notes_for_prompt`, `injection_recent`), from a task. One list, the
+  carried notes marked `◆`, rather than a second "this conversation" list that
+  would show them twice; the observations it carries are listed above it,
+  read-only — they are `F3`'s. An opened note shows exact local dates (the list's
+  "5d" reads wrong in a sentence). `Del` asks first — a note is deleted outright,
+  where `F3` deletes an observation on one key; the question takes the footer, as
+  `F3`'s clear does. The reserved `@self` tag is neither shown nor accepted, and the
+  edit handler checks the **stored** note, so no id can reach an observation.
+  `/` — or `.`, the same physical key under a Russian layout — searches text and
+  tags as typed, the settings screen's search keys. A text edit is re-embedded
+  before the picks are made, so the screen shows the pick the next turn will make.
+- **Storage.** `note_set_tags` (labels only, `updated_at` untouched),
+  `note_superseded_by` (a note's trace, oldest first), and `note_delete` now drops
+  the note's graph edges too — a dangling edge was skipped by every read but still
+  counted by `note_link_count`.
+- **Wiring.** `AppCommand::RequestNotes`/`EditNote`, `AppEvent::NotesView`,
+  `entities::note::{NoteCard, NoteLinkView, NotesView, NoteEdit}`,
+  `ActiveScreen::Notes`, `HelpContext::Notes` with its F1 section,
+  `UiCommand::Notes`; the small-window gate draws the list and the delete question
+  at every size.
+- **Tests.** 15 screen tests (waiting, the marks and the prompt line's three
+  wordings, opening and walking back, links and trace drawn, the search by text
+  and tag and the Russian-layout key, both editors, the delete's question, the
+  selection kept by id across a delete, an empty profile offering no key, every
+  hinted key in F1, the smallest size), 3 storage tests, 3 orchestrator tests (the
+  snapshot with its graph and its pick; the switch off; edits stored and answered,
+  an observation untouched), 1 for the tag cleaning. A pure interface change: **no
+  live run** (AGENTS.md §3) — the picks it shows are the C2 functions, live-run
+  there. Driven in a real console (`tools/console_probe.py`, `mindfork demo`): the
+  list, an opened note, the search, the tags editor, the question and F1, all as
+  drawn. **4160 tests green, 285 `#[ignore]`**; fmt, clippy and the repository gates
+  clean.

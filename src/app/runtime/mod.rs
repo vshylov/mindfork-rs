@@ -39,6 +39,7 @@ use crate::features::spellcheck::{SpellChecker, dict};
 use crate::screens::changes::{ChangesIntent, ChangesScreen};
 use crate::screens::chat::{ChatIntent, ChatScreen};
 use crate::screens::chat_list::{ChatListIntent, ChatListScreen};
+use crate::screens::notes::{NotesIntent, NotesScreen};
 use crate::screens::search::{SearchIntent, SearchScreen};
 use crate::screens::self_model::{SelfModelIntent, SelfModelScreen};
 use crate::screens::settings::{SettingsIntent, SettingsScreen};
@@ -74,6 +75,9 @@ enum ActiveScreen {
     /// every sub-agent and dialogue run, and the silent tasks. See spec §11.10,
     /// docs/research/tasks-screen.md.
     Tasks(Box<TasksScreen>),
+    /// The assistant's notes about the person, readable and editable
+    /// (`/notes`). See spec §11.11, docs/research/companion-platform.md C3.
+    Notes(Box<NotesScreen>),
 }
 
 impl ActiveScreen {
@@ -112,6 +116,10 @@ impl ActiveScreen {
                 tasks.set_palette(palette);
                 tasks.set_loc(loc);
             }
+            ActiveScreen::Notes(notes) => {
+                notes.set_palette(palette);
+                notes.set_loc(loc);
+            }
             ActiveScreen::Chat | ActiveScreen::Settings(_) => {}
         }
     }
@@ -126,6 +134,7 @@ impl ActiveScreen {
             ActiveScreen::Chat => chat.handle_paste(text),
             ActiveScreen::ChatList(list) => list.handle_paste(text),
             ActiveScreen::SelfModel(view) => view.handle_paste(text),
+            ActiveScreen::Notes(notes) => notes.handle_paste(text),
             // Read-only results — nothing to paste into.
             ActiveScreen::Search(_) | ActiveScreen::Changes(_) | ActiveScreen::Tasks(_) => {}
         }
@@ -255,7 +264,7 @@ impl HelpOverlay {
 /// code they document (proximity to the `match` is the anti-drift force;
 /// docs/history/help-hotkeys-context.md §6). `help_sections_cover_every_context`
 /// closes the loop [`help_context`] opens: one section per screen.
-pub(super) static HELP_SECTIONS: [&HelpSection; 8] = [
+pub(super) static HELP_SECTIONS: [&HelpSection; 9] = [
     &help_dialog::GLOBAL,
     &crate::screens::chat::HELP_SECTION,
     &crate::widgets::chat_list::HELP_SECTION,
@@ -263,6 +272,7 @@ pub(super) static HELP_SECTIONS: [&HelpSection; 8] = [
     &crate::screens::self_model::HELP_SECTION,
     &crate::screens::changes::HELP_SECTION,
     &crate::screens::tasks::HELP_SECTION,
+    &crate::screens::notes::HELP_SECTION,
     &crate::screens::search::HELP_SECTION,
 ];
 
@@ -279,6 +289,7 @@ fn help_context(active: &ActiveScreen) -> HelpContext {
         ActiveScreen::Search(_) => HelpContext::Search,
         ActiveScreen::Changes(_) => HelpContext::Changes,
         ActiveScreen::Tasks(_) => HelpContext::Tasks,
+        ActiveScreen::Notes(_) => HelpContext::Notes,
     }
 }
 
@@ -1071,6 +1082,7 @@ fn too_small(
         ActiveScreen::Search(search) => search.min_size(),
         ActiveScreen::Changes(changes) => changes.min_size(area),
         ActiveScreen::Tasks(tasks) => tasks.min_size(),
+        ActiveScreen::Notes(notes) => notes.min_size(),
     };
     if help.open.is_some() {
         need = need.max(help_dialog::min_size(screen.loc()));
@@ -1115,6 +1127,7 @@ fn compose_frame(
         ActiveScreen::Search(search) => search.render(frame),
         ActiveScreen::Changes(changes) => changes.render(frame),
         ActiveScreen::Tasks(tasks) => tasks.render(frame),
+        ActiveScreen::Notes(notes) => notes.render(frame),
     }
     if let Some(state) = help.open.as_mut() {
         dim_background(frame, palette);

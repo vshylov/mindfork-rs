@@ -397,6 +397,43 @@ fn tasks(lang: Lang) -> Rig {
     })
 }
 
+/// The notes screen with two notes, one in the conversation's prompt, after
+/// `keys` (spec §11.11).
+fn notes_with(lang: Lang, keys: &'static [KeyEvent]) -> Rig {
+    Rig::over(lang, move |palette, loc| {
+        use crate::entities::note::{Note, NoteCard, NotesView};
+        let card = |text: &str| NoteCard {
+            note: Note::new(Uuid::new_v4(), text, vec!["life".into()]),
+            links: Vec::new(),
+            supersedes: Vec::new(),
+        };
+        let notes = vec![
+            card("The interview at Lumen Pay went well; the SQL part was the hard one."),
+            card("Allergic to peanuts."),
+        ];
+        let mut screen = crate::screens::notes::NotesScreen::new(palette, loc);
+        screen.set_view(NotesView {
+            shown: vec![notes[0].note.id],
+            notes,
+            observations: Vec::new(),
+            notes_in_prompt: true,
+        });
+        for key in keys {
+            let _ = screen.handle_key(*key);
+        }
+        ActiveScreen::Notes(Box::new(screen))
+    })
+}
+
+fn notes(lang: Lang) -> Rig {
+    notes_with(lang, &[])
+}
+
+fn notes_delete(lang: Lang) -> Rig {
+    const DEL: KeyEvent = KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE);
+    notes_with(lang, &[DEL])
+}
+
 // ---------- what a drawn frame has to show ----------
 
 /// The chat's own parts, top to bottom, none standing on another — what the
@@ -651,6 +688,12 @@ const CASES: &[(&str, Build, Check)] = &[
     }),
     ("tasks", tasks, |s, l| {
         panel_is_open(s, l).and_then(|()| shows(s, &[l.t("ui.tasks.title")]))
+    }),
+    ("notes", notes, |s, l| {
+        panel_is_open(s, l).and_then(|()| shows(s, &[l.t("ui.notes.title"), "◆"]))
+    }),
+    ("note delete confirmation", notes_delete, |s, l| {
+        shows(s, &[l.t("ui.notes.title")])
     }),
 ];
 
