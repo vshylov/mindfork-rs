@@ -153,6 +153,13 @@ pub struct Message {
     /// old chats read `None`, and a chat without one serializes as before.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notification: Option<Uuid>,
+    /// The notification is a **follow-up** coming due (spec §9.3.6) rather than a
+    /// run's result: `notification` names the follow-up, and while nothing the
+    /// person wrote follows the row, the request adds the woken turn's choice to
+    /// write first or stay silent. Additive like `notification`: an older binary
+    /// reads the row as a plain task notification.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub followup: bool,
 }
 
 fn default_true() -> bool {
@@ -176,6 +183,7 @@ impl Message {
             tool_name: None,
             images: Vec::new(),
             notification: None,
+            followup: false,
         }
     }
 
@@ -190,6 +198,19 @@ impl Message {
         let mut m = Self::new(MessageRole::System, text);
         m.notification = Some(run);
         m
+    }
+
+    /// A follow-up's notice coming due (see [`Message::followup`]): a notification
+    /// row naming the follow-up `id`.
+    pub fn followup_notice(id: Uuid, text: impl Into<String>) -> Self {
+        let mut m = Self::notification(id, text);
+        m.followup = true;
+        m
+    }
+
+    /// Whether this row is a follow-up's notice.
+    pub fn is_followup_notice(&self) -> bool {
+        self.followup && self.notification.is_some()
     }
 
     /// Whether this row is a task notification — a user-side boundary of the

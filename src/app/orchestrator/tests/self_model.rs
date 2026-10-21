@@ -684,6 +684,7 @@ async fn handle_done_signals_self_model_changed_on_self_model_tool_call() {
         continuation: None,
         images_withheld: 0,
         anchor: None,
+        woken: false,
         id: gen_id,
         chat_id,
         messages: vec![msg],

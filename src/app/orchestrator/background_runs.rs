@@ -441,7 +441,7 @@ impl Orchestrator {
 
     /// The language the chat's profile speaks — what a notification is
     /// worded in, since the model reads it (axis A).
-    fn profile_locale_of(&self, chat_id: Uuid) -> &'static crate::shared::i18n::Locale {
+    pub(super) fn profile_locale_of(&self, chat_id: Uuid) -> &'static crate::shared::i18n::Locale {
         let lang = self
             .chats
             .iter()

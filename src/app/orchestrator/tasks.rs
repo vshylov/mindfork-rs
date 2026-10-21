@@ -104,7 +104,33 @@ impl Orchestrator {
                     }
                 })
                 .collect(),
+            followups: self.followup_rows(),
         }
+    }
+
+    /// The pending follow-ups of the conversations the list shows, soonest
+    /// first (spec §9.3.6) — one whose conversation is gone has no row.
+    fn followup_rows(&self) -> Vec<crate::entities::task::TaskFollowup> {
+        let pending = self.storage.db().followups_pending().unwrap_or_default();
+        pending
+            .into_iter()
+            .filter_map(|f| {
+                let chat = self.chats.iter().find(|c| c.id == f.chat_id)?;
+                let paused = !self
+                    .profiles
+                    .iter()
+                    .find(|p| p.id == chat.profile_id)
+                    .is_some_and(|p| p.companion.followups);
+                Some(crate::entities::task::TaskFollowup {
+                    id: f.id,
+                    chat: chat.id,
+                    chat_title: chat.title.clone(),
+                    about: f.about,
+                    due_at: f.due_at,
+                    paused,
+                })
+            })
+            .collect()
     }
 
     /// A row off a mirror, named after its parent chat. A mirror whose chat

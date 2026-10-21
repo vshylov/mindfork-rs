@@ -28,6 +28,11 @@ pub enum ToolGate {
     /// toggles like any tool, and offered to the model only when the switch
     /// is on — so at the default the request is byte-identical to before.
     Background,
+    /// The profile's *Follow-ups* switch (`Profile.companion.followups`, spec
+    /// §9.3.6): `followup_plan`/`followup_cancel` are in the catalog and the
+    /// profile's toggles like any tool, and offered only while the profile has
+    /// the companion feature on — off by default, so a request is unchanged.
+    Followups,
 }
 
 /// Semantic group of a tool (the group heading in profile toggles). Variant order

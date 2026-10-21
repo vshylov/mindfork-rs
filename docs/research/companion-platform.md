@@ -1,7 +1,8 @@
 # A platform for a companion — research and decision points
 
 Status: **research, 2026-10-21; forks decided by the owner the same day (§8);
-stage 1 built (#809), stage 2 built — C2 and C3 (§3.4, §9).** The question was the owner's: what would make mindfork a better
+stage 1 built (#809), stage 2 built — C2 and C3 (§3.4, §9); stage 3 — C4 (a) built
+(§3.5, §9).** The question was the owner's: what would make mindfork a better
 platform for an AI companion. The document maps what the application already has,
 what it lacks, what the field and the literature say, and what a small live probe
 measured; the decision points and the owner's decisions are in §8, and the sequence in
@@ -352,6 +353,104 @@ on the gate's weights (llama.cpp b11719, the 4090) Gemma 4 31B q4_0 passed the t
 smokes three times and Qwen 3.8 27B Q4_K_M twice; the control — Gemma, the notes
 switch off — failed the fact smoke 3 of 3; gpt-oss-120b, Haiku 5.5 and DeepSeek v4.1
 flash passed once each through OpenRouter.
+
+### 3.5 Stage 3's probe: follow-ups the companion plans (2026-10-21)
+
+C4 (a) puts a tool in the model's hands that acts later, unasked — so before it
+was built two questions were asked of live models: does the model plan a return
+when the person's words give it a reason, and only then (§7, rule 1); and when one
+falls due, does the woken turn write something worth reading, with no pressure,
+and stay silent when the reason has gone (rules 2 and 4).
+
+**Setup.** As in §3.4: five models through OpenRouter — Gemma 4 31B
+(`deepinfra/fp8`), Qwen 3.8 27B (`deepinfra`), gpt-oss-120b, DeepSeek v4.1 flash,
+Claude Haiku 5.5 — five runs a cell, a companion persona, a time row on every user
+message, Monday 19 October 21:10 as "now". Offered: `current_time`, `note_save`,
+`note_recall`, and `followup_plan {when, about}` with `followup_cancel {id}`, served
+as the app serves them — a time in the past refused with the time now. Six
+openings: an interview tomorrow at 10, then good night (P1); a sister's surgery on
+Thursday at 10 (P2); *"Can you remind me on Friday at 9 to call the bank?"* (P3); a
+film the person loved, then good night (N1); TCP's handshake (N2); a bad day at
+work (N3). Three woken cells, the interview conversation and its plan replayed and
+the notice sent as the app sends it: due, nothing said since (W1); the person
+already told how it went (W2); three days late (W3). Claude Sonnet 5.5 graded the
+woken replies — relevant, silent or other; pressure; the notice taken for the
+person; a wrong sense of when — and every cell was read by hand. A Russian subset
+ran on the two gate models; an arm without time rows on the planning cells.
+
+**Planning** — plans made, and of those the right day and time (the window after
+the event; Friday at 9 for P3):
+
+| Cell | Gemma 4 31B | Qwen 3.8 27B | gpt-oss-120b | DeepSeek v4.1 flash | Haiku 5.5 |
+|---|---|---|---|---|---|
+| P1 the interview | 1/5 → **3/5** | 5/5 | 5/5 | 5/5 | 5/5 |
+| P2 the surgery | 0/5 → 0/5 | 5/5 | 5/5, right day 3 → **4** | 5/5 | 5/5 |
+| P3 the reminder asked for | 5/5 | 5/5 | 5/5, right day 2 → **5** | 5/5 | 5/5 |
+| N1–N3, no reason to return | 0/15 → 0/10 | 0/15 → 0/10 | 0/15 → **1/10** | 0/15 → 0/10 | 0/15 → 0/10 |
+
+The arrows are the second wording, the one shipped: a `weekday` beside the date,
+checked against it — a date and a day that disagree are refused with the next seven
+days spelled out — and one more sentence: *"When the user tells you about an event
+that matters to them, plan a follow-up to ask how it went, the way a friend would
+remember to."*
+
+- **Every model planned for a reminder it was asked for, and almost none planned
+  without a reason.** No plan in 95 runs about a film, a networking question or a
+  bad day at work under the first wording; one in 70 under the second — gpt-oss,
+  *"check in about work deadlines after the weekend"*, the kind §7's first rule
+  refuses, and the kind the person sees and cancels.
+- **The weekday check fixes the one model that miscounts.** gpt-oss put Friday on
+  the 22nd, a Thursday, in three of five P3 runs; with the check every refused plan
+  was made again on the right day — 5 of 5. Without time rows it had not known the
+  date at all (right day 0 of 5 on P1, 0 of 4 on P2, 1 of 5 on P3, rarely calling
+  `current_time`); with the check, 3, 5 and 5 of 5, the refusal's "it is now" and
+  week doing what the row would have. A follow-up works best with time rows on,
+  and works without.
+- **Gemma 4 plans when asked, and seldom on its own** — 1 of 5 for the interview,
+  0 for the surgery; the second wording took the interview to 3 of 5 and the
+  surgery nowhere. It promised nothing it did not plan: no reply said it would
+  check in. In Russian, 0 → 1 of 5 for the interview, 3 → 5 of 5 for the
+  reminder. The other four planned for the events 5 of 5, Qwen in Russian too.
+
+**The woken turn** (graded replies):
+
+| Cell | relevant | silent | pressure | the notice taken for the person | a wrong *when* |
+|---|---|---|---|---|---|
+| W1 due, nothing since — en · ru | 25/25 · 9/10 | 0 · 0 | 0 | 0 | 0 · 2 |
+| W2 already told — en · ru | 1/25 · 0/10 | **24/25 · 10/10** | 0 | 0 | 0 |
+| W3 three days late — en | 25/25 | 0 | 0 | 0 | 0 |
+
+- **A due follow-up is a good message and a moot one is silence, on every model.**
+  The only W2 reply that spoke was gpt-oss congratulating on the second round,
+  which the person had just told it about. In W3 every reply put the interview in
+  the past, and most said the follow-up came late — the probe's notice said the app
+  had not been running; the shipped one says only when it was due — none with a
+  guilt line. Two of Qwen's Russian W1 replies said the
+  interview was "yesterday" when it was that morning — a slip of its own date
+  arithmetic, with the notice dated.
+- No reply in 95 was pressure, and none took the notice for the person.
+
+**Decisions (the agent's, inside the owner's F5 (a), F6 (a) and F9 (a)):**
+`followup_plan {when, weekday, about}` and `followup_cancel {id}`, the second
+wording, behind a profile switch of its own (*Follow-ups*, `companion.followups`,
+off) and never offered to a sub-agent; `when` the person's wall clock; at most 5
+pending in a conversation and 20 in a profile; a year ahead at most. Stored in
+SQLite (`followups`), not in the chat file — a chat holds what was said. **Quiet
+hours and a cap are per profile and on by default** — 22 to 8, three a day; a
+follow-up they hold is delivered when they allow, late and saying so. Delivery is a
+notice row (a task notification marked as a follow-up) and a woken turn; a
+conversation not in view is woken when the person opens it (F5 (i)), also when the
+engine comes up and when a turn that held it ends. **The choice to stay silent is
+not stored**: the request adds it while the notice stands alone, so the person's
+next message never arrives behind an invitation to answer `<silent>`; a `<silent>`
+reply is dropped, and with it the notices of a turn that did nothing else. The
+person cancels on the tasks screen (F7), in a section of its own shown only while
+there are any — no `/followups` command; taking an exchange back cancels what it
+planned. C5 (a), the notification that reaches someone not looking, is the stage's
+second pull request. **Live, GO** (docs/journal/tools.md): the four smokes — a
+reminder asked for, an event mentioned, a follow-up due, one already answered — on
+the gate's weights, Gemma 4 31B q4_0 three times and Qwen 3.8 27B Q4_K_M twice; once
+each through OpenRouter on Haiku 5.5, gpt-oss-120b and DeepSeek v4.1 flash.
 
 ## 4. What the field does
 
@@ -1043,6 +1142,12 @@ by default:
 3. **It comes back** — C4 (a) follow-ups with the rules of §7, and C5 (a)
    notifications, which cost little and give a follow-up somewhere to go. C4 (b)
    check-ins and C4 (c) a greeting from memory are not in this track (F5).
+   **C4 (a) built**: the probe (§3.5) said go — a plan for what the person said and
+   almost never for anything else, a good message when one falls due and silence
+   when it is moot, on all five models, with a weekday check for the one that
+   miscounts days; `followup_plan`/`followup_cancel` behind the *Follow-ups* switch,
+   quiet hours and a daily cap on by default, a woken turn that may stay silent
+   without a trace, and the pending ones on the tasks screen (spec §9.3.6).
 4. **The instruments** — C9 history, C8 fork then carry, C10 the drift smoke.
 5. **Characters and voice** — C6 cards; C7 (a) a per-profile voice and replies
    spoken as they land.

@@ -2625,6 +2625,15 @@ the echo filter takes for llama.cpp's echo; cut in prose, where a fresh start ca
 reproduce the cut.
 — *DeepSeek — a mode of its own, stages 1 and 2*.
 
+**A fixture that says "tomorrow" has to be dated in whole days, not "N hours ago".**
+With the time rows on, the model reads the hour a message was written. A woken smoke
+stamped *"Tomorrow at 10 is the interview"* twenty hours before now; run at 22:00,
+that is 02:00 the same day — the interview still ahead — and Haiku's silence was the
+right answer to a story the fixture had not meant to tell. Anchor such a conversation
+to local dates (the evening of the day before yesterday, the interview yesterday) so
+it means the same thing at any hour the smoke runs.
+— *follow-ups the companion plans*.
+
 ## 10. CI and infrastructure
 
 

@@ -69,7 +69,7 @@ pub struct LlmChange {
 /// (the owner's decision of 2026-10-21, §8 there). `profiles.json` omits the whole
 /// group while it is at its default, so a profile that never opts in is written
 /// exactly as before.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CompanionFeatures {
     /// A dated row in front of every user message the model reads — when it was
@@ -84,9 +84,48 @@ pub struct CompanionFeatures {
     /// the system prompt, with their `chat://` addresses when the turn offers
     /// `chat_read` (C2 (b) there).
     pub earlier_chats: bool,
+    /// Follow-ups the companion plans — `followup_plan`/`followup_cancel` offered,
+    /// and a due one delivered as a notice row and a woken turn (C4 (a) there,
+    /// spec §9.3.6).
+    pub followups: bool,
+    /// The quiet hours no follow-up is delivered in, from this local hour…
+    pub quiet_from: u8,
+    /// …up to this one; equal hours mean none. On by default (§7, rule 3 there).
+    pub quiet_until: u8,
+    /// The most follow-ups delivered in one local day; the next waits for the
+    /// next day (§7, rules 3 and 5 there).
+    pub followups_per_day: u8,
+}
+
+/// The default quiet hours, 22:00 to 08:00.
+pub const DEFAULT_QUIET_FROM: u8 = 22;
+pub const DEFAULT_QUIET_UNTIL: u8 = 8;
+/// The default cap of follow-ups delivered a day.
+pub const DEFAULT_FOLLOWUPS_PER_DAY: u8 = 3;
+
+impl Default for CompanionFeatures {
+    fn default() -> Self {
+        Self {
+            time_rows: false,
+            notes_in_prompt: false,
+            earlier_chats: false,
+            followups: false,
+            quiet_from: DEFAULT_QUIET_FROM,
+            quiet_until: DEFAULT_QUIET_UNTIL,
+            followups_per_day: DEFAULT_FOLLOWUPS_PER_DAY,
+        }
+    }
 }
 
 impl CompanionFeatures {
+    /// The quiet hours as the follow-up rules read them.
+    pub fn quiet_hours(&self) -> crate::entities::followup::QuietHours {
+        crate::entities::followup::QuietHours {
+            from: self.quiet_from.min(23),
+            until: self.quiet_until.min(23),
+        }
+    }
+
     /// Whether every feature is at its default (off) — the serializer's skip test.
     pub fn is_default(&self) -> bool {
         *self == Self::default()
@@ -222,6 +261,10 @@ mod tests {
         assert!(!p.companion.time_rows);
         assert!(!p.companion.notes_in_prompt);
         assert!(!p.companion.earlier_chats);
+        assert!(!p.companion.followups);
+        // Quiet hours and the day's cap are on from the start (§7, rule 3).
+        assert_eq!((p.companion.quiet_from, p.companion.quiet_until), (22, 8));
+        assert_eq!(p.companion.followups_per_day, 3);
         let json = serde_json::to_value(&p).unwrap();
         assert!(json.get("companion").is_none(), "{json}");
 
@@ -237,6 +280,8 @@ mod tests {
         for flip in [
             (|c: &mut CompanionFeatures| c.notes_in_prompt = true) as fn(&mut CompanionFeatures),
             |c| c.earlier_chats = true,
+            |c| c.followups = true,
+            |c| c.quiet_from = 23,
         ] {
             let mut on = p.clone();
             flip(&mut on.companion);

@@ -698,6 +698,7 @@ fn start_subagent_is_gated_by_the_setting() {
         fs: true,
         mcp: true,
         background,
+        followups: false,
         history: false,
         workspace: false,
         workspace_commands: Default::default(),

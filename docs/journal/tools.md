@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (92)
+## Entries (93)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -104,6 +104,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the withheld-image notes hold on Qwen (done)
 - Post-M9: the chart smoke sends the tool the app sends (done)
 - Post-M9: a file written beside out/ is named (done)
+- Post-M9: follow-ups the companion plans — companion stage 3, C4 (a) (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -5980,3 +5981,93 @@ nothing about the file.
 
 **Gates**: 4012 unit tests green, 260 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check` clean.
+
+### Post-M9: follow-ups the companion plans — companion stage 3, C4 (a) (done)
+
+**What.** A companion profile with *Follow-ups* on can plan to come back to
+something the person said and write to them first when the time comes — the
+first half of the companion track's stage 3
+([docs/research/companion-platform.md](../research/companion-platform.md) C4 (a),
+§3.5; spec §9.3.6). Two tools, `followup_plan {when, weekday, about}` and
+`followup_cancel {id}`, behind a profile switch of their own
+(`companion.followups`, off by default, `ToolGate::Followups`) and withheld from a
+sub-agent; a `followups` table in SQLite (`CREATE TABLE IF NOT EXISTS`, no schema
+step); the orchestrator's loop sleeps until the next one may be delivered; a
+delivery is a notice row (a task notification with `Message.followup`) and a woken
+turn; the tasks screen lists the pending ones and `Del` twice cancels.
+
+**Why.** Initiative is the most visible form of agency, and mindfork had the hard
+half — the woken turn, the notice row, the unread mark, the muted re-ask of an
+empty first answer — with no trigger but a background run's end. The owner chose
+follow-ups the companion plans (F5 (a)), a conversation not in view woken when
+opened (F5 (i)), and §7's rules as design constraints (F9 (a)).
+
+**Probed first** (§3.5 there; 625 runs through OpenRouter, five models, graded by
+Claude Sonnet 5.5 and read by hand). With nothing to return to — a film, TCP, a bad
+day at work — no plan in 95 runs under the first wording and one in 70 under the
+shipped one. With a reason, the four models other than Gemma 4 planned 5 of 5 for
+an interview, a surgery and a reminder they were asked for; Gemma planned for the
+reminder 5 of 5 and on its own seldom (the interview 1 → 3 of 5 with the shipped
+sentence, the surgery 0). gpt-oss put "Friday" on a Thursday in 3 of 5 runs: a
+`weekday` beside the date, checked against it, refused those and every one was
+planned again right — 5 of 5, and 0–1 → 3–5 of 5 without time rows. Woken: 25 of
+25 relevant when due, 24 of 25 silent when the person had already told, 25 of 25
+relevant three days late, and no pressure in 95.
+
+**Key decisions (the agent's, inside the owner's forks).**
+- **The silence clause is not stored.** The notice row says the time, when it was
+  planned and what about (and when it was due, late by half an hour or more); the
+  request adds *"write first … or reply with exactly `<silent>`"* only while the
+  notice stands alone. A notice the person's next message merges with never invites
+  a `<silent>` reply to them, and whether a notice stands alone never changes once
+  a row follows it — the prefix holds.
+- **Silence leaves no trace.** A woken turn (`GenResult.woken`) whose reply is
+  `<silent>` drops it; when the turn did nothing else, the notices it answered go
+  too. A turn that acted (DeepSeek once planned the second round, then stayed
+  silent) keeps its tool rows and the notice that explains them.
+- **The wake is derived, not stored**: the open conversation's last row being a
+  follow-up's notice is the whole condition, checked at delivery, on opening a
+  conversation, when the engine comes up and when a turn ends — but not after a
+  woken turn of the same conversation that failed, which would loop.
+- **Quiet hours and the cap are per profile, on by default** (22–8, three a day),
+  beside the switch. A follow-up they hold is delivered late and says when it was
+  due; a switch turned off pauses the pending ones (listed as paused).
+- **Delivered once.** The row is closed before the notice is pushed — a cancel in
+  the same instant wins — and one due while the app was closed is delivered at the
+  next start. A take-back cancels what its exchange planned (created at or after
+  the conversation's last remaining row); a deleted conversation or profile takes
+  its own; a regenerated reply to a notice is a woken turn again.
+- **The loop sleeps a minute at most** while anything is pending: a follow-up is
+  due by the wall clock, and tokio's timer does not run while the machine sleeps.
+- **No `/followups`**: the tasks screen has a section, shown only while there are
+  any; the plan itself is visible in the conversation as a tool call.
+
+**Live — GO.** The four `#[ignore]` smokes — a reminder asked for on a named day, an interview
+mentioned then good night, a follow-up due with nothing said since, and one the
+person already answered — on the gate's own weights (llama.cpp b11719, the 4090,
+thinking on): **Gemma 4 31B q4_0 4 of 4, three runs**; **Qwen 3.8 27B Q4_K_M 4 of
+4, two runs**. Through OpenRouter, 4 of 4 on Claude Haiku 5.5, Qwen 3.8, Gemma 4
+31B and gpt-oss-120b. DeepSeek v4.1 flash failed the silent smoke once by doing
+more than it asked: woken on the moot follow-up, it planned a new one for the
+second round the person had mentioned and then answered `<silent>` — so the smoke
+now accepts a turn that acts, keeping its tool rows and the notice, and asks only
+that no reply text appear; rerun, it passed. The first run of the woken smokes
+found a fixture that lied: "tomorrow at 10" stamped 20 hours before a 22:00 run
+lands at 02:00 the same day, so the interview was still ahead and Haiku's silence
+was right — the conversation is now dated in whole days, the interview yesterday.
+
+**Tests.** Unit: the storage (insert, soonest first, closed once, the take-back
+cut), the rules (quiet hours across midnight, the cap moving a delivery, `when` and
+weekday parsing in both languages, the notice, silence), the tools (stored for this
+chat, the weekday refusal with the week, the past/far/bad/full refusals, cancel of
+this chat's only), the request (the clause only standing alone, stable once
+replied), the orchestrator (delivered once and woken, `<silent>` leaves no trace,
+not in view → unread and no wake, opened → woken, switch/quiet/cap each hold it, a
+take-back cancels only what it planned, the tasks screen lists and cancels, a
+deleted conversation cancels, the switch turned on delivers what waited), the settings (switch, ranges) and the tasks screen
+(the section, `Enter`, `Del` twice). Four `#[ignore]` smokes in
+`tests/followups_live.rs`. Screenshot dumps `settings-model-*`/`settings-tools-*`
+regenerated (the section menu's field count).
+
+**Gates**: 4185 unit tests green, 289 `#[ignore]`; clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.

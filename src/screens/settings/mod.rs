@@ -807,6 +807,12 @@ enum FieldId {
     /// The profile's earlier conversations in the prompt
     /// (`companion.earlier_chats`, spec §6.6).
     PEarlierChats,
+    /// The companion's follow-ups (spec §9.3.6) — a switch, then its quiet
+    /// hours and the day's cap.
+    PFollowups,
+    PQuietFrom,
+    PQuietUntil,
+    PFollowupsPerDay,
     /// A profile tool toggle by index in the catalog.
     PTool(usize),
     // Impersonation profiles (the "Impersonation" subsection of "Profiles"; the list

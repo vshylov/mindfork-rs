@@ -353,7 +353,20 @@ fn baseline_ddl(conn: &Connection) -> Result<()> {
          );
          CREATE INDEX IF NOT EXISTS idx_attachment_docs_chat ON attachment_documents(chat_id);
          CREATE INDEX IF NOT EXISTS idx_attachment_docs_att
-             ON attachment_documents(chat_id, attachment_id);",
+             ON attachment_documents(chat_id, attachment_id);
+
+         CREATE TABLE IF NOT EXISTS followups (
+             id          TEXT PRIMARY KEY,
+             profile_id  TEXT NOT NULL,
+             chat_id     TEXT NOT NULL,
+             about       TEXT NOT NULL,
+             due_at      TEXT NOT NULL,
+             created_at  TEXT NOT NULL,
+             state       TEXT NOT NULL,
+             closed_at   TEXT
+         );
+         CREATE INDEX IF NOT EXISTS idx_followups_state ON followups(state);
+         CREATE INDEX IF NOT EXISTS idx_followups_chat ON followups(chat_id);",
     )?;
 
     // The embedding generation each vector was produced under (see the
@@ -600,6 +613,7 @@ fn parse_dt(s: String) -> DateTime<Utc> {
 
 mod attachments;
 mod embed_gen;
+mod followups;
 mod graph;
 mod llm_history;
 mod notes;

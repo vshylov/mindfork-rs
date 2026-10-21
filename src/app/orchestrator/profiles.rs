@@ -141,6 +141,7 @@ impl Orchestrator {
         self.chats.retain(|c| c.profile_id != id);
         for cid in &removed {
             self.saves.forget(*cid);
+            let _ = self.storage.db().followups_cancel_in_chat(*cid, None);
             // The cascade hid these chats — drop them from the content-search
             // index too (same rule as `handle_delete`, see [`super::search`]).
             self.forget_chat_index(*cid);
@@ -149,6 +150,7 @@ impl Orchestrator {
         // Same as in `handle_create_profile`: refresh the settings screen's copy,
         // otherwise it would keep showing (and editing) a deleted profile.
         self.emit_settings();
+        self.refresh_followups();
 
         // If the active chat belonged to the deleted profile — switch away.
         let active_removed = self.active_id.is_some_and(|a| removed.contains(&a));
@@ -224,6 +226,10 @@ impl Orchestrator {
         // Role names live on the profile and are resolved at render time — refresh
         // the feed's copy so a rename applies to the open chat immediately (spec §11.3).
         self.emit_character_names();
+        // The follow-ups' switch, quiet hours and cap may have moved the next
+        // delivery — or released one that is overdue (spec §9.3.6).
+        self.tick_followups();
+        self.emit_task_list();
     }
 
     /// Re-derives the localized defaults of the profile's pristine chats after
