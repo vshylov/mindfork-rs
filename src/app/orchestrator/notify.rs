@@ -39,6 +39,7 @@ impl Orchestrator {
     /// losing focus (only terminals that report it do; until one does, the
     /// person is taken as not looking).
     pub(super) fn handle_terminal_focus(&mut self, focused: bool) {
+        tracing::debug!(focused, "terminal focus");
         self.focused = Some(focused);
     }
 
@@ -56,11 +57,28 @@ impl Orchestrator {
         if !profile.companion.notify {
             return;
         }
+        let kind = match what {
+            Unasked::Reply(_) => "reply",
+            Unasked::Waiting => "waiting",
+        };
         let looking = self.focused == Some(true) && self.active_id == Some(chat_id);
         if matches!(what, Unasked::Reply(_)) && looking {
+            tracing::info!(chat = %chat_id, kind, "notification held: the person is looking");
             return;
         }
         let cfg = &self.config.notifications;
+        let topic = cfg.ntfy_url.trim().to_string();
+        // What left, in the log: a notification that never appeared is then told
+        // from one that was never sent (spec §11.12).
+        tracing::info!(
+            chat = %chat_id,
+            kind,
+            escape = cfg.escape.name(),
+            bell = cfg.bell,
+            push = !topic.is_empty(),
+            focused = ?self.focused,
+            "notification sent"
+        );
         // The person reads it: the interface's language (axis B).
         let loc = self.ui_locale();
         let title = loc.tf("ui.notify.title", &[("name", &profile.name)]);
@@ -79,7 +97,6 @@ impl Orchestrator {
         if !seq.is_empty() {
             let _ = self.evt_tx.send(AppEvent::TerminalAttention(seq));
         }
-        let topic = cfg.ntfy_url.trim().to_string();
         if topic.is_empty() {
             return;
         }

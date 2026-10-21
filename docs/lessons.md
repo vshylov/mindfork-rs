@@ -729,6 +729,16 @@ having them. Ask for the maximum, and count the answer against what the provider
 publishes elsewhere.
 — *the model picker, stage 4b*.
 
+**A merged pull request upstream is not a feature the user has — read the release
+notes, and the default.** *Notify me* was documented as "Windows Terminal shows OSC
+777 since mid-2026", read off a closed issue whose fix merged in June. It shipped in
+October, in a **preview**, **off** unless a profile setting turns it on; the stable
+release and the owner's 1.24 ignore it, and the owner's first look found nothing on
+screen. For any claim "terminal/server/provider X supports Y", name the first
+release that ships it, whether that release is stable, and the setting it needs —
+the user's version is what the claim is about.
+— *notifications for someone not looking, the owner's look*.
+
 **"The field is ignored" and "the field selects" can be the same field on two
 servers of the same kind.** A single-model `llama-server` ignores a request's
 `model` entirely — measured: `no-such-model-xyz` answered `200` from the loaded

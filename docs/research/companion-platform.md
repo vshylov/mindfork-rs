@@ -1157,6 +1157,11 @@ by default:
    words (spec §11.12). No model reads anything new, so no probe: the bytes are
    pinned by tests, a push by a listener of the tests' own, and the Windows console
    with VT processing on — as the app runs it — showed nothing of any of them.
+   The owner's look on Windows Terminal 1.24 found no notification: OSC 777 ships
+   only from Preview 1.26 (2026-10-02), opt-in (`compatibility.allowOSC777`) — the
+   June merge this had been read from is not a release. A probe in a real Windows
+   Terminal window confirmed the rest of the path: minimizing reports focus lost,
+   restoring focus gained.
 4. **The instruments** — C9 history, C8 fork then carry, C10 the drift smoke.
 5. **Characters and voice** — C6 cards; C7 (a) a per-profile voice and replies
    spoken as they land.

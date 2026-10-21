@@ -3,9 +3,10 @@
 //! a terminal escape that the terminal turns into a desktop notification, the
 //! bell, and a push through a self-hosted or public ntfy server.
 //!
-//! **Which escape.** OSC 777 (`notify;title;body`) is what Windows Terminal (since
-//! mid-2026), Ghostty, WezTerm, foot and rxvt-unicode show; OSC 9 (`9;text`) is
-//! iTerm2's and kitty's. A terminal that knows neither ignores both, and one that
+//! **Which escape.** OSC 777 (`notify;title;body`) is what Ghostty, WezTerm, foot
+//! and rxvt-unicode show, and Windows Terminal from Preview 1.26 (2026-10-02) when
+//! its profile has `compatibility.allowOSC777` on — 1.24 and 1.25 ignore it, the
+//! owner's look on 1.24 (spec §11.12); OSC 9 (`9;text`) is iTerm2's and kitty's. A terminal that knows neither ignores both, and one that
 //! knows both would show two, so one is sent — OSC 777 unless the person picks the
 //! other. Inside tmux an escape is wrapped in DCS passthrough, as OSC 52's is, and
 //! only reaches the terminal with `allow-passthrough on`; the **bell** needs nothing
@@ -28,8 +29,8 @@ use serde::Serialize;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NotifyEscape {
-    /// `ESC ] 777 ; notify ; title ; body` — Windows Terminal, Ghostty, WezTerm,
-    /// foot, rxvt-unicode.
+    /// `ESC ] 777 ; notify ; title ; body` — Ghostty, WezTerm, foot, rxvt-unicode,
+    /// and Windows Terminal from Preview 1.26 with `compatibility.allowOSC777` on.
     #[default]
     Osc777,
     /// `ESC ] 9 ; text` — iTerm2, kitty.
