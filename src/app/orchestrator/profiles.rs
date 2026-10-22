@@ -95,6 +95,84 @@ impl Orchestrator {
         self.emit_settings();
     }
 
+    /// Forks the active conversation's profile (`/profile fork`, spec §10;
+    /// docs/research/companion-platform.md C8 (a)): a new profile with every
+    /// setting and the whole memory — copied by the store in one savepoint —
+    /// and none of the chats. The profile is written first and taken back if
+    /// the copy fails, so a fork is either whole or not there.
+    pub(super) fn handle_fork_profile(&mut self, name: Option<String>) {
+        let loc = self.ui_locale();
+        let Some(source) = self
+            .active_profile_id()
+            .and_then(|pid| self.profiles.iter().find(|p| p.id == pid))
+            .cloned()
+        else {
+            let _ = self
+                .evt_tx
+                .send(AppEvent::Notice(loc.t("ui.profile.fork_none").into()));
+            return;
+        };
+        let name =
+            name.unwrap_or_else(|| loc.tf("ui.profile.fork_name", &[("name", &source.name)]));
+        let version = self
+            .storage
+            .db()
+            .self_model_get(source.id)
+            .ok()
+            .flatten()
+            .map(|m| m.version);
+        let Some(fork) =
+            crate::features::profiles::fork(&source, &name, chrono::Utc::now(), version)
+        else {
+            let _ = self
+                .evt_tx
+                .send(AppEvent::Error(loc.t("ui.err.profile_name_empty").into()));
+            return;
+        };
+        let failed =
+            |err: String| AppEvent::Error(loc.tf("ui.err.profile_fork_failed", &[("err", &err)]));
+        if let Err(err) = self.storage.json().upsert_profile(&fork) {
+            let _ = self.evt_tx.send(failed(err.to_string()));
+            return;
+        }
+        let copied = match self.storage.db().profile_fork_copy(source.id, fork.id) {
+            Ok(copied) => copied,
+            Err(err) => {
+                // Take the profile back: the copy left nothing in the store.
+                let json = self.storage.json();
+                if let Ok(mut all) = json.load_profiles() {
+                    all.retain(|p| p.id != fork.id);
+                    let _ = json.save_profiles(&all);
+                }
+                let _ = self.evt_tx.send(failed(format!("{err:#}")));
+                return;
+            }
+        };
+        tracing::info!(
+            from = %source.id,
+            to = %fork.id,
+            notes = copied.notes,
+            links = copied.links,
+            sources = copied.knowledge_sources,
+            chunks = copied.knowledge_chunks,
+            versions = copied.self_model_versions,
+            "profile forked"
+        );
+        let _ = self.evt_tx.send(AppEvent::Notice(loc.tf(
+            "ui.profile.forked",
+            &[
+                ("fork", &fork.name),
+                ("name", &source.name),
+                ("notes", &copied.notes.to_string()),
+                ("sources", &copied.knowledge_sources.to_string()),
+                ("versions", &copied.self_model_versions.to_string()),
+            ],
+        )));
+        self.profiles.push(fork);
+        self.emit_profile_list();
+        self.emit_settings();
+    }
+
     /// Soft-deletes a profile with a cascade: its chats are hidden, and notes/RAG
     /// become unreachable (the profile is hidden). See spec §10, §12.3.
     pub(super) fn handle_delete_profile(&mut self, id: Uuid) {

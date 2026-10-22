@@ -554,6 +554,9 @@ impl ChatScreen {
                     .unwrap_or_else(|| self.loc.t("ui.settings.new_profile_name").to_string()),
             }),
             Ok(ProfileCommand::Delete { name }) => self.confirm_delete_profile(&name),
+            // The default name is the orchestrator's: it knows which profile
+            // the active conversation is with.
+            Ok(ProfileCommand::Fork { name }) => Some(ChatIntent::ForkProfile { name }),
             // Stage 3 (docs/history/commands-stage3.md §3.2): the profile's two text
             // fields, editable without the settings screen.
             Ok(ProfileCommand::System(edit)) => {

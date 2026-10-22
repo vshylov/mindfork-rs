@@ -152,6 +152,13 @@ profile at a time.
 `/profile delete` and `/profile system` do the same by typing. Deleting always
 asks first.
 
+**`/profile fork [name]`** copies the open chat's profile into a new one — every
+setting, and its whole memory: the notes, the knowledge base, the self-model with
+its history — but none of its chats. From then on the two are separate: hand the
+fork to another model and watch how its self-model drifts from the original's (`H`
+on `F3` marks where the fork began). Without a name it is called after the original,
+"— fork".
+
 The **Companion** group in a profile's settings holds what turns an assistant
 into a companion, one switch per feature and every one off until you turn it
 on. *Time of messages* puts the date and time in front of each of your
@@ -693,6 +700,7 @@ the keys for itself:
 | `/thoughts` · `/toolcalls` · `/mouse` · `/emoji` | `Ctrl+T` · `Ctrl+O` · `Ctrl+W` · `Ctrl+B` | the feed and the input box |
 | `/subagents [expand\|collapse\|stop [n]]` | `Ctrl+O` in the list · `F6` | this chat's subagent transcripts; `stop [n]` ends the n-th background run |
 | `/profile list` · `/profile new [name]` · `/profile delete <name>` | `Ctrl+N` · `Ctrl+D` in settings | your companion profiles |
+| `/profile fork [name]` | — | a copy of this chat's profile with its memory, without its chats |
 | `/profile system [text\|clear]` · `/profile greeting [text\|clear]` | the settings editors | this chat's profile: its system message and greeting |
 | `/impersonation list` · `new [name]` · `delete <name>` | `Ctrl+N` · `Ctrl+D` in settings | the personas `Ctrl+U` writes as |
 | `/impersonation use <name\|default>` · `/impersonation system [text\|clear]` | the settings editors | which persona this chat's profile impersonates as, and that persona's own text |

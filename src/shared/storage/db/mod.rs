@@ -628,6 +628,7 @@ fn parse_dt(s: String) -> DateTime<Utc> {
 mod attachments;
 mod embed_gen;
 mod followups;
+mod fork;
 mod graph;
 mod llm_history;
 mod notes;

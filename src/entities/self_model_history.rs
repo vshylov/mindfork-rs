@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use crate::entities::profile::LlmChange;
+use crate::entities::profile::{ForkOrigin, LlmChange};
 use crate::entities::self_model::{GoalStatus, SelfModel};
 use crate::shared::config::ServerMode;
 
@@ -112,15 +112,26 @@ pub struct SelfModelVersion {
 /// What the `F3` screen's history view is handed (spec §17.9): the versions,
 /// oldest first, and what it needs to say who wrote them — the titles of the
 /// conversations they name, and the profile's language-model history for a
-/// version whose author was not recorded.
+/// version whose author was not recorded — and, for a fork, where it began.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SelfModelHistoryView {
     pub versions: Vec<SelfModelVersion>,
     pub chat_titles: HashMap<Uuid, String>,
     pub llm: Vec<LlmChange>,
+    /// The profile is a fork (spec §10): the versions up to its
+    /// `self_model_version` are the ones it shares with the profile it came from.
+    pub forked_from: Option<ForkOrigin>,
 }
 
 impl SelfModelHistoryView {
+    /// Whether `version` came from before the fork — shared with the parent.
+    pub fn shared(&self, version: u64) -> bool {
+        self.forked_from
+            .as_ref()
+            .and_then(|o| o.self_model_version)
+            .is_some_and(|at| version <= at)
+    }
+
     /// The model the profile was talking to at `at`, by its language-model
     /// history: the newest record at or before it. What a version with no
     /// recorded author can honestly be told — the profile's model then, not the

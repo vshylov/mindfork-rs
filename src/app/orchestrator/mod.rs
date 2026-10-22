@@ -935,6 +935,7 @@ impl Orchestrator {
                 self.handle_export_chat(id, format, path.as_deref())
             }
             AppCommand::DeleteProfile(id) => self.handle_delete_profile(id),
+            AppCommand::ForkProfile { name } => self.handle_fork_profile(name),
             AppCommand::UpdateConfig(config) => self.handle_update_config(*config),
             AppCommand::UpdateProfile { id, edit } => self.handle_update_profile(id, *edit),
             AppCommand::RagAdd { path, recursive } => self.handle_rag_add(path, recursive),
@@ -1062,10 +1063,16 @@ impl Orchestrator {
             .map(|c| (c.id, c.title.clone()))
             .collect();
         let llm = db.llm_history(pid).unwrap_or_default();
+        let forked_from = self
+            .profiles
+            .iter()
+            .find(|p| p.id == pid)
+            .and_then(|p| p.forked_from.clone());
         let view = SelfModelHistoryView {
             versions,
             chat_titles,
             llm,
+            forked_from,
         };
         let _ = self.evt_tx.send(AppEvent::SelfModelHistory(Box::new(view)));
     }

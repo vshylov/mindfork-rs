@@ -191,6 +191,27 @@ pub struct Profile {
     /// Soft delete.
     #[serde(default)]
     pub is_hidden: bool,
+    /// Where this profile was forked from (`/profile fork`, spec §10):
+    /// `None` for a profile made any other way, and then `profiles.json`
+    /// omits it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forked_from: Option<ForkOrigin>,
+}
+
+/// The profile a fork was made from, as it was at that moment (spec §10,
+/// docs/research/companion-platform.md C8): the two share their past up to
+/// here — the self-model's versions up to `self_model_version`, the notes, the
+/// knowledge base — and diverge after it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ForkOrigin {
+    pub profile_id: Uuid,
+    /// The parent's name then — it may be renamed or deleted since.
+    pub name: String,
+    pub at: chrono::DateTime<chrono::Utc>,
+    /// The parent's self-model version the fork began from; `None` — the
+    /// parent had no self-model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub self_model_version: Option<u64>,
 }
 
 impl Profile {
@@ -210,6 +231,7 @@ impl Profile {
             default_sampling: None,
             companion: CompanionFeatures::default(),
             is_hidden: false,
+            forked_from: None,
         }
     }
 

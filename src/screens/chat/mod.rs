@@ -322,6 +322,12 @@ pub enum ChatIntent {
     CreateProfile {
         name: String,
     },
+    /// Fork the active conversation's profile (`/profile fork [name]`,
+    /// spec §10): its settings and memory under a new profile, its chats left
+    /// behind. `None` — the default name.
+    ForkProfile {
+        name: Option<String>,
+    },
     /// Delete a companion profile, hiding its chats with it (command
     /// `/profile delete <name>`, confirmed; `Ctrl+D` in the settings screen).
     /// The orchestrator refuses to delete the last one.

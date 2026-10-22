@@ -1,5 +1,5 @@
 //! Parses the profile slash-command (`/profile list`, `/profile new [name]`,
-//! `/profile delete <name>`, `/profile system [text|clear]`,
+//! `/profile delete <name>`, `/profile fork [name]`, `/profile system [text|clear]`,
 //! `/profile greeting [text|clear]`). Pure, testable logic modeled on
 //! [`super::file_command`]: the chat screen calls it on send; a recognized
 //! command turns into an intent, an unrecognized string goes out as a regular
@@ -96,6 +96,10 @@ pub enum ProfileCommand {
     New { name: Option<String> },
     /// Delete a profile by name (an exact match, or an unambiguous prefix).
     Delete { name: String },
+    /// Fork the active conversation's profile (spec §10): a new profile with
+    /// its settings and memory, its chats left behind. `None` — the default
+    /// name, which the orchestrator derives from the profile's.
+    Fork { name: Option<String> },
     /// The active chat's profile's system message (`/profile system [text|clear]`).
     /// Applies to new conversations — a chat snapshots it at creation (spec §5.1).
     System(TextEdit),
@@ -136,6 +140,10 @@ pub fn parse(input: &str, loc: &Locale) -> Option<Result<ProfileCommand, String>
                 loc.tf("ui.profile.err.missing_name", &[("usage", usage)])
             )),
         }
+    } else if sub.eq_ignore_ascii_case("fork") {
+        Some(Ok(ProfileCommand::Fork {
+            name: name_argument(raw),
+        }))
     } else if sub.eq_ignore_ascii_case("system") {
         Some(Ok(ProfileCommand::System(text_edit(raw))))
     } else if sub.eq_ignore_ascii_case("greeting") {
@@ -173,6 +181,13 @@ mod tests {
                 "/profile delete Гайя",
                 ProfileCommand::Delete {
                     name: "Гайя".into(),
+                },
+            ),
+            ("/profile fork", ProfileCommand::Fork { name: None }),
+            (
+                "/profile FORK  Ада  б ",
+                ProfileCommand::Fork {
+                    name: Some("Ада б".into()),
                 },
             ),
             ("/profile system", ProfileCommand::System(TextEdit::Show)),

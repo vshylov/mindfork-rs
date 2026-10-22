@@ -2537,6 +2537,15 @@ Storage invariants:
 - **Soft delete** (`is_hidden`) everywhere: hiding a profile cascades to hide
   its chats and excludes notes/RAG from result sets. There's no physical
   delete.
+- **A fork copies a profile's memory under its own ids** (`/profile fork`,
+  spec §10): `Db::profile_fork_copy` (`db/fork.rs`) writes, in one savepoint,
+  the notes under new ids with their vectors, every link, scar and citation
+  remapped; the knowledge base's sources, and its chunks under new ids and
+  rowids with their `vec0` rows; the self-model and its versions with the
+  `profile_id` inside each JSON rewritten; `llm_history`; and the stale mark.
+  Nothing chat-bound (follow-ups, attachment indexes). The orchestrator writes
+  the profile (`features::profiles::fork`, with `forked_from`) before the copy
+  and removes it from `profiles.json` if the copy fails.
 - **A single writer** — the orchestrator. Chats are saved debounced (800ms,
   `save_deadline` + a `dirty` set); the write is atomic (write-rename), with a
   `.bak` backup.

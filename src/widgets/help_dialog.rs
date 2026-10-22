@@ -313,6 +313,7 @@ pub const HELP_COMMANDS: &[(&str, &str)] = &[
     ("ui.help.k.export", "ui.help.cmd_export"),
     ("/profile list", "ui.help.cmd_profile_list"),
     ("ui.help.k.profile_new", "ui.help.cmd_profile_new"),
+    ("ui.help.k.profile_fork", "ui.help.cmd_profile_fork"),
     ("ui.help.k.profile_delete", "ui.help.cmd_profile_delete"),
     // The profile's two text fields (stage 3) — editable without the settings
     // screen, the reserved word `clear` removing a value.
