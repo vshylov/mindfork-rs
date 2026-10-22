@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (24)
+## Entries (25)
 
 - Post-M9: persisting the input-box draft in the chat file (done)
 - Post-M9: persisting deleted exchanges in the chat file (`Ctrl+E`/`Ctrl+R`) (done)
@@ -36,6 +36,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `zip` 8.6.0 → 9.0.5 — three advisories, and the mode `llama setup` copied (done)
 - Post-M9: the self-model cap left at 0.9.4's default — `SETTINGS_SCHEMA` 5→6 (done)
 - Post-M9: forking a companion — the profile's memory under new ids (done)
+- Post-M9: carrying one companion — `mindfork companion export|import` (done)
 
 ### Post-M9: persisting the input-box draft in the chat file (done)
 - **Unsaved input-box text is stored on the chat and restored on
@@ -1437,5 +1438,62 @@ C9 (#817), whose history it copies. The carry, C8 (b), is the next pull request.
   `forked_from`.
 
 **Gates**: 4243 unit tests green, 291 `#[ignore]`; clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check`
+clean.
+
+### Post-M9: carrying one companion — `mindfork companion export|import` (done)
+
+Stage 4 of the companion platform, C8 (b) ([companion-platform.md](../research/companion-platform.md)
+C8, §9 item 4), stacked on the fork (#818): moving one companion to a fresh machine
+without the rest of the data directory, which `restore` replaces whole.
+
+- **One copy, three uses**: the fork's copy (`db/fork.rs`) now runs over a route of two
+  schemas — `main` into `main` for a fork, vectors and all; an attached file into `main`
+  for a carry (`Db::profile_copy_from`, the source attached `?mode=ro` as `carry_src`,
+  detached afterwards whatever happened). The export copies the live database's profile
+  into a fresh `memory.db`, the import copies that into the live one: the archive holds
+  exactly what a fork copies. A source from an older build may lack a table; that kind
+  of memory is then simply absent. The path goes into a URI with `%`, `?` and `#`
+  escaped and a drive letter's extra `/` — pinned by a test under `a b%c#d`.
+- **No vectors cross**, nor a generation: an embedding generation is a number only its
+  own database can read, and the other machine may run another embedder. The notes are
+  listed by `notes_missing_vectors` and healed on the next semantic path; the chunks
+  carry their text with no generation, which puts them in the `/reindex` queue, and the
+  import marks the profile stale so its search refuses until then.
+- **The archive** (`features/companion_carry.rs`): `companion.json` (kind, format, app
+  and schema versions, time — unencrypted, no user data), `profile.json`, `memory.db`;
+  the two data entries AES-256 with a password, as a backup's. The export defaults to a
+  new file in `backups/`, refuses an existing one, and says whether it encrypted; it
+  takes no lock, since it only reads. The profile is found by id, by name in any case,
+  or by the unambiguous start of a name ("Sol" is exact beside "Solveig"; "So" is refused
+  with both named).
+- **The import** holds the single-instance lock, migrates first, settles the password as
+  `restore` does, and always adds a **new** profile — a second import is a second
+  companion. Refused by name: a backup archive (with `mindfork restore` named), a zip that
+  is neither, an archive from a newer format or schema (its version named), one missing
+  an entry. The profile is written first and taken back if the memory cannot be copied;
+  the decrypted `memory.db` lives under the data root only for the copy.
+- **Measured on real data**: the dev profile — 126 notes, 2 knowledge-base sources, its
+  self-model unrecorded at version 81, 20 model changes — exported by the CLI (named by the
+  start of its Cyrillic name), imported into a fresh root by a second binary: 109 observations with 20
+  superseded, the 20 changes, the one version as `unknown`. The first export picked up the
+  dev settings' stored backup password, and the import in a root with no password
+  refused — as `restore` does; a throwaway password carried it.
+- **Live, GO** (`companion_carry_live`): a companion whose self-model knows Alex throws
+  bowls every Saturday, exported encrypted from one root and imported into another that
+  never saw it; its first conversation there was asked about Alex's hobbies. **Gemma 4
+  31B q4_0 3/3** (from the prompt alone), **Qwen 3.8 27B Q4_K_M 2/2** (after
+  `note_recall`), every reply naming the pottery. llama.cpp b11719 on the 4090.
+- **Tests**: the copy across files — the memory under the new owner, no vector, nothing
+  of the source's profile id, the source byte-identical, the attachment gone afterwards;
+  a file that is no database refused; the URI. The round trip — settings and memory
+  arrive, notes waiting for vectors, the knowledge base stale, no temporary file left, a
+  second import a second profile; a password locking the data and not the manifest,
+  nothing landing on a wrong one; the profile lookup and the refusal to overwrite; a
+  backup and a foreign zip refused by name; a newer archive refused with its version.
+  The CLI's parse of both subcommands, its refusals, and the help topics in both
+  languages.
+
+**Gates**: 4253 unit tests green, 292 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check`
 clean.

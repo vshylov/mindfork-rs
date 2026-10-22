@@ -1207,6 +1207,20 @@ by default:
    timeline export carries. **Live, GO** (docs/journal/storage.md): asked about the
    person's hobbies in its first conversation, the fork answered from the parent's
    self-model — Gemma 4 31B 3/3, Qwen 3.8 27B 2/2.
+   **C8 (b), the carry, built** (#819), stacked on C8 (a). **Decisions (the
+   agent's):** `mindfork companion export <profile> [-o] [-p]` and `import <archive>
+   [-p]`; the archive a zip of an unencrypted manifest with no user data, the profile,
+   and a `memory.db` of the app's own schema holding that profile's memory alone —
+   built and read by the fork's copy across files (`ATTACH` read-only), so the two
+   instruments copy one set; the backup's password machinery and defaults; **no
+   vectors** — the other machine may embed differently, so the notes heal on the next
+   semantic path and the knowledge base is marked for `/reindex`; no chats; an import
+   always a new profile, never an overwrite; export without the single-instance lock,
+   since it only reads, import with it. **Live, GO** (docs/journal/storage.md): a
+   companion exported encrypted from one data root and imported into a fresh one knew
+   the person in its first conversation — Gemma 4 31B 3/3, Qwen 3.8 27B 2/2; and the
+   dev profile's real memory (126 notes, 2 knowledge-base sources, 20 model changes)
+   crossed by the CLI into a fresh root whole.
 5. **Characters and voice** — C6 cards; C7 (a) a per-profile voice and replies
    spoken as they land.
 6. **Reach** — the bridge track: an ADR first (turns addressed to a chat not on

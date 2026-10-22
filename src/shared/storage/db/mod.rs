@@ -638,6 +638,7 @@ mod stats;
 mod timeline;
 
 pub use embed_gen::{ReembedPending, ReembedRow};
+pub use fork::ForkCopy;
 pub use stats::{DbStats, KeyedRow, stats_of_file, stats_of_image};
 pub use timeline::{DbTimeline, ProfileTimeline, timeline_of_file, timeline_of_image};
 

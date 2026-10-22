@@ -473,6 +473,22 @@ documents and self-models are listed the same way, by which side is newer.
 mindfork does not merge copies. When each side holds something, keep both until you
 have decided what to do with what is listed.
 
+#### Carrying one companion — `mindfork companion`
+
+A backup moves everything; to move **one** companion — onto a rented pod, say — take
+it alone, with its whole memory and without its chats:
+
+```bash
+mindfork companion export Sol -o D:\sol.zip --password "a long passphrase"
+mindfork companion import D:\sol.zip --password "a long passphrase"   # on the other machine
+```
+
+The profile is named by its name, the start of it, or its id. The import adds a new
+profile and never replaces one. The search index does not travel — the other machine
+may use another embedder: the notes are indexed again by themselves, and a knowledge
+base needs `/reindex` once in the app. Without `--password` the export uses the backup
+password from the settings, if one is set, and says when the archive is not encrypted.
+
 ### 2.3. External locales (`data/locales/`) — editing text and new languages
 
 All scaffold text (prompts, self-model scaffold, tool results — axis A) and all UI

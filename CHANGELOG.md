@@ -70,6 +70,12 @@ split by subsystem.
   and its history — without its chats. The two go their own ways from there: give
   the fork another model and compare how each one's self-model changes; the
   self-model's history marks where the fork began.
+- **Carry a companion to another machine.** `mindfork companion export <name>` writes
+  one companion — its profile, notes, knowledge base and self-model with its history,
+  without its chats — into an archive, encrypted with a password if you give one;
+  `mindfork companion import <archive>` adds it there as a new profile. The search
+  index is rebuilt on arrival: the notes by themselves, the knowledge base with
+  `/reindex`.
 
 ### Changed
 
