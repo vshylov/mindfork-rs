@@ -3,15 +3,19 @@
 //! a terminal escape that the terminal turns into a desktop notification, the
 //! bell, and a push through a self-hosted or public ntfy server.
 //!
-//! **Which escape.** OSC 777 (`notify;title;body`) is what Ghostty, WezTerm, foot
-//! and rxvt-unicode show, and Windows Terminal from Preview 1.26 (2026-10-02) when
-//! its profile has `compatibility.allowOSC777` on — 1.24 and 1.25 ignore it, the
-//! owner's look on 1.24 (spec §11.12); OSC 9 (`9;text`) is iTerm2's and kitty's. A terminal that knows neither ignores both, and one that
-//! knows both would show two, so one is sent — OSC 777 unless the person picks the
-//! other. Inside tmux an escape is wrapped in DCS passthrough, as OSC 52's is, and
-//! only reaches the terminal with `allow-passthrough all` — `on` passes it from a
-//! pane on screen only, so never to someone in another tmux window (spec §11.12,
-//! measured); the **bell** needs nothing — tmux marks the window and passes it on —
+//! **Which escape.** OSC 777 (`notify;title;body`) is what Ghostty, WezTerm, kitty
+//! and foot show, and Windows Terminal from Preview 1.26 (2026-10-02) when its
+//! profile has `compatibility.allowOSC777` on — 1.24 and 1.25 ignore it, the owner's
+//! look on 1.24 (spec §11.12). OSC 9 (`9;text`) is iTerm2's; kitty, WezTerm, Ghostty
+//! and foot show it too, but as one line, title and body run together, which is why
+//! OSC 777 is the default. rxvt-unicode as shipped shows neither (measured): 777 is
+//! its perl extensions' number, and no extension for `notify` ships with it. A
+//! terminal that knows neither ignores both, and one that knows both would show two,
+//! so one is sent — OSC 777 unless the person picks the other. Inside tmux an
+//! escape is wrapped in DCS passthrough, as OSC 52's is, and only reaches the
+//! terminal with `allow-passthrough all` — `on` passes it from a pane on screen only,
+//! so never to someone in another tmux window (spec §11.12, measured); the **bell**
+//! needs nothing — tmux marks the window and passes it on —
 //! which is why it is on by default too.
 //!
 //! **ntfy** is an HTTP `POST` of the text to a topic's URL; the title rides in the
@@ -31,11 +35,11 @@ use serde::Serialize;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NotifyEscape {
-    /// `ESC ] 777 ; notify ; title ; body` — Ghostty, WezTerm, foot, rxvt-unicode,
-    /// and Windows Terminal from Preview 1.26 with `compatibility.allowOSC777` on.
+    /// `ESC ] 777 ; notify ; title ; body` — Ghostty, WezTerm, kitty, foot, and
+    /// Windows Terminal from Preview 1.26 with `compatibility.allowOSC777` on.
     #[default]
     Osc777,
-    /// `ESC ] 9 ; text` — iTerm2, kitty.
+    /// `ESC ] 9 ; text` — iTerm2; kitty, WezTerm, Ghostty and foot show it as one line.
     Osc9,
     /// No escape (the bell and ntfy still go, when on).
     Off,

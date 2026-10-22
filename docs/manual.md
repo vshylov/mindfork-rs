@@ -194,16 +194,22 @@ waiting in a conversation you are not in. How it reaches you is set once, for ev
 profile, in Settings → Interface → *Notifications*:
 
 - **Terminal notification** — a desktop notification the terminal shows: *OSC 777*
-  (Ghostty, WezTerm, foot; Windows Terminal from Preview 1.26, once
+  (Ghostty, WezTerm, kitty, foot; Windows Terminal from Preview 1.26, once
   `"compatibility.allowOSC777": true` is in its profile — 1.24 and 1.25 ignore it)
-  or *OSC 9* (iTerm2, kitty). A terminal that knows neither ignores it.
+  or *OSC 9* (iTerm2; the others show it too, but as one line). A terminal that
+  knows neither ignores it — rxvt-unicode as shipped among them. foot holds a
+  notification while its window is focused, even one from another tmux window;
+  `inhibit-when-focused=no` under `[desktop-notifications]` in `foot.ini` lets it
+  through.
 - **Bell** — the terminal's bell with it. Inside tmux this is what works without
   any setting: tmux marks the window and passes the bell on. Windows Terminal only
   plays a sound for it unless told otherwise: `"bellStyle": "all"` in its profile
   also flashes the taskbar button — a sign that stays on a minimized window — and
   from Preview 1.26 `"bellStyle": "notification"` shows a desktop notification that
   says only *"Activity in tab"* and the tab's name; the escape's says who wrote and
-  where. For the desktop
+  where. rxvt-unicode turns the bell into a desktop notification with its own
+  `bell-command` extension: `URxvt.perl-ext-common: default,bell-command` and
+  `URxvt.bell-command: notify-send "rxvt-unicode" "bell"` in `~/.Xdefaults`. For the desktop
   notification and the focus reports to pass through tmux, add
   `set -g allow-passthrough all` and `set -g focus-events on` to `~/.tmux.conf`.
   `all`, not `on`: with `on` tmux passes the notification only while the app's
