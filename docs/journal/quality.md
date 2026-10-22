@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (40)
+## Entries (41)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -52,6 +52,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the source-language gate knows test code by shape (done)
 - Post-M9: SonarQube follow-up — the source-language gate's fixtures (done)
 - Post-M9: the console probe stops the tree it started, not the `cmd` in front of it (done)
+- Post-M9: SonarQube follow-up — the companion carry's six contexts (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -2093,3 +2094,34 @@ tree (AGENTS.md §3).
   [lessons.md](../lessons.md) §6, on the `mode con` recipe the trap came from. No
   CHANGELOG entry: internal tooling (AGENTS.md §4). No live run beyond the probe's own: a
   developer tool, no engine path (AGENTS.md §3).
+
+### Post-M9: SonarQube follow-up — the companion carry's six contexts (done)
+
+- **Six open findings on `main`, the gate green** (read through the Sonar MCP on
+  2026-10-22; branch `refactor/sonar-companion-carry-context`). All `rust:S2629`, MAJOR, in
+  `features/companion_carry.rs`, from #819 (`mindfork companion export|import`): an error
+  context built with `.context(loc.t(..).to_string())` or `.context(loc.tf(..))`, so the
+  message was looked up and formatted whether or not anything failed.
+- **Four take the closure form**, `.with_context(|| ..)`: the profiles read on export, the
+  memory copy, the profile written on import, and the profile entry an archive lacks (an
+  `Option`).
+- **Two were `err.context(..)` in an error arm**, after a cleanup: the archive removed when
+  its write fails, the profile taken back when its memory will not copy. Nothing was built
+  in vain there, but the rule matches the call, so each arm became
+  `.inspect_err(|_| cleanup).with_context(|| ..)?` — the cleanup runs first, and only on
+  the failure, as before.
+- **Neither cleanup had a test**, and both were reshaped, so each has one now.
+  `a_failed_export_says_where_and_leaves_nothing`: a 300-character file name no file system
+  takes, so nothing stands at the path and the archive still cannot be created — the error
+  starts "writing …", no archive and no temporary database are left.
+  `an_import_whose_memory_will_not_copy_takes_its_profile_back`: a hand-built archive whose
+  memory entry is not a database — "copying the companion's memory", and the profile
+  written first is gone. It fails with the rollback removed (a `retain(|_| true)` mutant).
+- **Observed and left alone**: two `anyhow::Error::new(e).context(loc.tf(..))` in
+  `features/tools/fetch.rs`, inside `map_err` closures — on the failure path already, and
+  not raised. A lesson in [lessons.md](../lessons.md) §10: the rule's second appearance,
+  after `features/tools/web.rs`.
+- 4257 unit tests green (+2), 293 `#[ignore]`; fmt, clippy and the documentation gates
+  green. No CHANGELOG entry: nothing
+  the user sees changed (AGENTS.md §4). No live run: the same calls in the same order, the
+  error paths measured by the unit tests (AGENTS.md §3).

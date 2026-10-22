@@ -2841,6 +2841,15 @@ one call at a time. What the rule does *not* see blocks just the same — `Path:
 heavy part of both setup paths) — so treat a clean analysis as the floor, not the proof.
 — *SonarQube follow-up — blocking file calls in the two setup paths*.
 
+**`anyhow`'s context is `.with_context(|| ..)` whenever the message is computed.**
+`rust:S2629` flags `.context(loc.t(..).to_string())` and `.context(format!(..))`, because the
+message is built even when nothing fails — and it flags `err.context(..)` inside an error arm
+too, where nothing is wasted. An `if let Err(err) = f() { cleanup; return
+Err(err.context(..)); }` reads as `f().inspect_err(|_| cleanup).with_context(|| ..)?`.
+Clippy does not ask for either. Raised twice so far: `features/tools/web.rs`, `features/companion_carry.rs`.
+— *SonarQube follow-up — blocking file calls in the two setup paths*, *SonarQube
+follow-up — the companion carry's six contexts*.
+
 **On CI, distrust a single run.** Identical code produced Windows test phases of
 359 / 469 / 376 / 386 / 927 s; a controlled local measurement is the trustworthy one. The
 outlier was diagnosed by joining per-test CI timings against local ones — a 3.9x median

@@ -189,7 +189,7 @@ pub fn export(
 ) -> Result<Carried> {
     let profiles = JsonStore::new(paths.clone())
         .load_profiles()
-        .context(loc.t("cli.companion.ctx.profiles").to_string())?;
+        .with_context(|| loc.t("cli.companion.ctx.profiles").to_string())?;
     let profile = find_profile(&profiles, query, loc)?.clone();
     let archive =
         output.unwrap_or_else(|| backup::default_backup_path(paths, "mindfork-companion"));
@@ -221,7 +221,7 @@ pub fn export(
         let live = paths.data_db();
         if live.is_file() {
             db.profile_copy_from(&live, profile.id, profile.id)
-                .context(loc.t("cli.companion.ctx.copy").to_string())?
+                .with_context(|| loc.t("cli.companion.ctx.copy").to_string())?
         } else {
             ForkCopy::default()
         }
@@ -245,13 +245,16 @@ pub fn export(
         zip.finish()?;
         Ok(())
     };
-    if let Err(err) = write() {
-        let _ = fs::remove_file(&archive);
-        return Err(err.context(loc.tf(
-            "cli.companion.ctx.write",
-            &[("path", &archive.display().to_string())],
-        )));
-    }
+    write()
+        .inspect_err(|_| {
+            let _ = fs::remove_file(&archive);
+        })
+        .with_context(|| {
+            loc.tf(
+                "cli.companion.ctx.write",
+                &[("path", &archive.display().to_string())],
+            )
+        })?;
     Ok(Carried {
         name: profile.name,
         profile_id: profile.id,
@@ -301,7 +304,7 @@ pub fn import(
     }
     let carried: Profile = reader
         .with_entry(PROFILE_ENTRY, |stream, _| read_json(stream))?
-        .context(loc.t("cli.companion.err.incomplete").to_string())?;
+        .with_context(|| loc.t("cli.companion.err.incomplete").to_string())?;
 
     let memory = TempDb::beside(paths.root(), "companion-import");
     let found = reader.with_entry(MEMORY_ENTRY, |stream, _| {
@@ -320,20 +323,17 @@ pub fn import(
     storage
         .json()
         .upsert_profile(&profile)
-        .context(loc.t("cli.companion.ctx.profiles").to_string())?;
-    let copy = match storage
+        .with_context(|| loc.t("cli.companion.ctx.profiles").to_string())?;
+    let copy = storage
         .db()
         .profile_copy_from(&memory.0, carried.id, profile.id)
-    {
-        Ok(copy) => copy,
-        Err(err) => {
+        .inspect_err(|_| {
             if let Ok(mut all) = storage.json().load_profiles() {
                 all.retain(|p| p.id != profile.id);
                 let _ = storage.json().save_profiles(&all);
             }
-            return Err(err.context(loc.t("cli.companion.ctx.copy").to_string()));
-        }
-    };
+        })
+        .with_context(|| loc.t("cli.companion.ctx.copy").to_string())?;
     if copy.knowledge_chunks > 0 {
         let db = storage.db();
         let mut stale = db.rag_stale_profiles()?;
@@ -558,5 +558,50 @@ mod tests {
         let (there, storage) = fresh_root(&dir, "b");
         let err = import(&there, &storage, &newer, None, en()).unwrap_err();
         assert!(format!("{err:#}").contains("9.9.9"), "{err:#}");
+    }
+
+    #[test]
+    fn a_failed_export_says_where_and_leaves_nothing() {
+        let (dir, paths, _) = root_with_companion();
+        // A name no file system takes: nothing stands at the path, and the
+        // archive still cannot be created.
+        let out = dir.path().join(format!("{}.zip", "s".repeat(300)));
+        let err = export(&paths, "Sol", Some(out.clone()), None, en()).unwrap_err();
+        assert!(format!("{err:#}").starts_with("writing "), "{err:#}");
+        assert!(!out.exists());
+        let leftovers: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with(".companion"))
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
+    }
+
+    #[test]
+    fn an_import_whose_memory_will_not_copy_takes_its_profile_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let broken = dir.path().join("broken.zip");
+        let options = SimpleFileOptions::default();
+        let mut zip = ZipWriter::new(File::create(&broken).unwrap());
+        zip.start_file(MANIFEST_ENTRY, options).unwrap();
+        zip.write_all(&serde_json::to_vec(&CarryManifest::current()).unwrap())
+            .unwrap();
+        zip.start_file(PROFILE_ENTRY, options).unwrap();
+        zip.write_all(&serde_json::to_vec(&Profile::new("Sol", "")).unwrap())
+            .unwrap();
+        zip.start_file(MEMORY_ENTRY, options).unwrap();
+        zip.write_all(b"not a database").unwrap();
+        zip.finish().unwrap();
+
+        let (there, storage) = fresh_root(&dir, "b");
+        let err = import(&there, &storage, &broken, None, en()).unwrap_err();
+        assert!(
+            format!("{err:#}").starts_with("copying the companion's memory"),
+            "{err:#}"
+        );
+        assert!(
+            storage.json().load_profiles().unwrap().is_empty(),
+            "the profile written first was taken back"
+        );
     }
 }
