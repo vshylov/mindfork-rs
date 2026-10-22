@@ -14,6 +14,9 @@ impl Orchestrator {
     /// needed, and re-emits the settings. The sole writer of `settings.json`.
     pub(super) fn handle_update_config(&mut self, config: AppConfig) {
         let old = std::mem::replace(&mut self.config, config);
+        // The speech settings may be what a spoken reply failed on: the next
+        // failure is news again (spec §11.9).
+        self.auto_speech_failed = false;
         // The "last-open chat" is an orchestrator property, not a value editable on
         // the settings screen. The config snapshot from the UI may carry a stale
         // value (e.g. `None` from startup) — restore the actual one, so an edit to

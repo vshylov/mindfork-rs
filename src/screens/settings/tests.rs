@@ -1645,6 +1645,13 @@ fn each_memory_switch_flips_its_own_feature() {
                 ..CompanionFeatures::default()
             },
         ),
+        (
+            FieldId::PSpeakReplies,
+            CompanionFeatures {
+                speak_replies: true,
+                ..CompanionFeatures::default()
+            },
+        ),
     ] {
         let mut s = screen();
         goto_section(&mut s, Section::Profiles);
@@ -1658,6 +1665,33 @@ fn each_memory_switch_flips_its_own_feature() {
         }
         assert_eq!(s.profiles[0].companion, on);
     }
+}
+
+/// A profile's voice (spec §11.9) is kept under the speech mode in force, the
+/// row is labelled with it, and emptying it hands that mode back to the speech
+/// settings' voice — another mode's voice untouched.
+#[test]
+fn a_profile_voice_is_kept_per_speech_mode() {
+    use crate::shared::config::TtsMode;
+    let mut s = screen();
+    goto_section(&mut s, Section::Profiles);
+    s.config.tts.mode = TtsMode::OpenAi;
+    match s.apply_text(FieldId::PVoice, "nova") {
+        Some(SettingsIntent::SaveProfile { edit, .. }) => {
+            let voices = edit.voices.expect("the voices are saved");
+            assert_eq!(
+                voices.get(&TtsMode::OpenAi).map(String::as_str),
+                Some("nova")
+            );
+        }
+        other => panic!("expected SaveProfile, got {other:?}"),
+    }
+    s.config.tts.mode = TtsMode::Gemini;
+    s.apply_text(FieldId::PVoice, "Kore");
+    assert_eq!(s.profiles[0].voice_for(TtsMode::Gemini), Some("Kore"));
+    s.apply_text(FieldId::PVoice, "");
+    assert_eq!(s.profiles[0].voice_for(TtsMode::Gemini), None);
+    assert_eq!(s.profiles[0].voice_for(TtsMode::OpenAi), Some("nova"));
 }
 
 /// The follow-ups' limits (spec §9.3.6) take an hour of the day and a cap of

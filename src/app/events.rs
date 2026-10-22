@@ -163,6 +163,10 @@ pub enum AppCommand {
     /// self-model and its history — and none of its chats. `None` — the
     /// default name.
     ForkProfile { name: Option<String> },
+    /// Swap the active chat's greeting for its profile's next one (`None`) or
+    /// its `n`th, 1-based (`/greeting [N]`, spec §10) — only while the chat
+    /// holds nothing but a greeting.
+    SwapGreeting { pick: Option<usize> },
     /// Replace the whole config (settings screen). The orchestrator saves it,
     /// restarts the server/registry if needed, and re-emits it. See spec §11.6.
     /// `Box` — `AppConfig` is large, don't bloat the enum.
@@ -365,6 +369,7 @@ impl AppCommand {
             | AppCommand::Impersonate { .. }
             // Changes what the conversation stores.
             | AppCommand::DeleteLastExchange
+            | AppCommand::SwapGreeting { .. }
             // Ends a background run: its record lands as cancelled.
             | AppCommand::StopSubagentRun { .. }
             | AppCommand::Compact

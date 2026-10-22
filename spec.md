@@ -2508,12 +2508,15 @@ A concept carried over in full from attempt #1 (section 10 of its specification)
 - **Editing a profile** doesn't affect already-created chats (they have their own copy of `system_message`). **Exception — role names** (`character_names`): they're display-only, so they're resolved from the profile at render time (the chat's copy is kept but not used) and a rename applies to existing chats immediately.
 - **Deleting a profile** is soft (`is_hidden`), cascading to hide its chats and exclude its notes/RAG.
 - **Forking a profile** (`/profile fork [name]`, the open chat's profile) makes a new one with every setting and the whole memory, and none of the chats — below.
+- **A profile from a character card** (`mindfork import <card>`) — the community's persona format, read as a new profile — below.
 
 A profile holds: a unique identifier, a system message, and an **optional greeting message** (some models are more interesting when the assistant speaks first) — a direct requirement from the task.
 
-**Companion features** (`Profile.companion: CompanionFeatures`, settings → "Profiles" → the "Companion" group; [docs/research/companion-platform.md](docs/research/companion-platform.md)): what makes a profile a companion rather than an assistant, **each a switch of its own and every one off by default** — a person may want only an assistant, and an assistant and a companion share one installation (the owner's decision of 2026-10-21, §8 there). The group is written to `profiles.json` only once a feature is on, so a profile that never opts in is written exactly as before and no schema step is needed. Today it holds five: **time rows** (`time_rows`, §6.2) — the date and time in front of every user message the model reads; **notes in the prompt** (`notes_in_prompt`, §6.6) — the profile's notes nearest the conversation's opening; **earlier conversations** (`earlier_chats`, §6.6) — the three conversations before this one, with their addresses when `chat_read` is offered; **follow-ups** (`followups`, §9.3.6) — returns the companion plans and makes when they fall due, with the profile's quiet hours (`quiet_from`, `quiet_until`, 22 to 8) and day's cap (`followups_per_day`, 3), which are on from the start; **notify me** (`notify`, §11.12) — a notification when it writes unasked and the person is not looking.
+**Companion features** (`Profile.companion: CompanionFeatures`, settings → "Profiles" → the "Companion" group; [docs/research/companion-platform.md](docs/research/companion-platform.md)): what makes a profile a companion rather than an assistant, **each a switch of its own and every one off by default** — a person may want only an assistant, and an assistant and a companion share one installation (the owner's decision of 2026-10-21, §8 there). The group is written to `profiles.json` only once a feature is on, so a profile that never opts in is written exactly as before and no schema step is needed. Today it holds six: **time rows** (`time_rows`, §6.2) — the date and time in front of every user message the model reads; **notes in the prompt** (`notes_in_prompt`, §6.6) — the profile's notes nearest the conversation's opening; **earlier conversations** (`earlier_chats`, §6.6) — the three conversations before this one, with their addresses when `chat_read` is offered; **follow-ups** (`followups`, §9.3.6) — returns the companion plans and makes when they fall due, with the profile's quiet hours (`quiet_from`, `quiet_until`, 22 to 8) and day's cap (`followups_per_day`, 3), which are on from the start; **notify me** (`notify`, §11.12) — a notification when it writes unasked and the person is not looking; **speak replies** (`speak_replies`, §11.9) — each reply in the open conversation spoken as it lands, in the profile's own voice (`Profile.voices`) where it has one.
 
 **Forking a companion** ([docs/research/companion-platform.md](docs/research/companion-platform.md) C8 (a)): the experiment the application's name promises — the same memories handed to two models, and the two selves read as they diverge (with the self-model's history, [§17.9](#179-the-self-models-history)). `/profile fork [name]` copies the open chat's profile: every setting (the system message, the greeting, the tools, the companion switches, the names, the scaffold language) under a new id and the given name, by default the profile's own with "— fork"; and, in one savepoint of `data.db`, its whole memory — the notes with their vectors, links, supersession scars and knowledge-base citations, the knowledge base's sources and chunks with their vectors, the self-model and every version of it, the language-model history. Not the chats, and so not what belongs to a chat — its follow-ups, its attachments' indexes. Notes and chunks get new ids, every reference remapped; a vector is copied rather than recomputed, keeping the embedding generation it was made under, and a knowledge base awaiting a re-embed passes the mark on. The profile is written first and taken back if the copy fails, so a fork is whole or not there. The fork records where it came from — `Profile.forked_from`: the parent's id, its name then, when, and the self-model version they share up to — which `profiles.json` holds only for a fork, so no schema step is needed; the `F3` history draws a line there, above the versions the two share, and `mindfork stats --self-model` carries it. The answer says what came along: the notes, the knowledge-base sources, the self-model's versions. Live **GO**: a conversation with the fork knew what the parent's self-model knew of the person — Gemma 4 31B 3/3, Qwen 3.8 27B 2/2.
+
+**Character cards** ([docs/research/companion-platform.md](docs/research/companion-platform.md) C6, the owner's F7 (a)): `mindfork import <file>` reads the community's persona format as well as its own, told apart by the bytes rather than the name — JSON in any edition (V1's flat fields with Pygmalion's spellings, `chara_card_v2`, `chara_card_v3` and a later `chara_card_v*` read as V3), a PNG carrying the card base64-encoded in a `tEXt`, `zTXt` or `iTXt` chunk (`ccv3` preferred over `chara`, the V2 copy read when the V3 one does not parse; only the chunks' framing is walked — the image is never decoded), and a CHARX zip's `card.json` (its assets are not opened). A companion archive or a backup handed to it is refused with its own command named. A card is untrusted text that becomes the persona, so nothing in it is run, rendered or fetched, and the CLI **shows** what the profile will be before saving it — the system message whole, the creator's notes (never sent to the model), and what had no exact home — and asks; where there is no terminal to ask on, `--yes` is required. An import is always a **new** profile, never an overwrite, and holds the single-instance lock (the neutral import's too: both write `profiles.json`, which a running app would write over). The mapping: the card's name → the profile's name, its nickname or name → the assistant's role name (the person's stays empty); one system message in SillyTavern's order — the card's `system_prompt` with `{{original}}` standing for our own opening line, or that line (*"You are {{char}}. Write {{char}}'s replies…"*), the description, the personality, the scenario, the lorebook's always-on entries (`constant`, or an `@@activate` decorator; disabled ones dropped), the example dialogue, and the card's `post_history_instructions` last, labelled, since nothing is placed after the conversation (F11 (a)); the keyed lorebook entries are counted and left out (F7 (a)). The **example dialogue** is a labelled block of `<example>` exchanges said to have never happened — never real turns — and its other side is a nameless visitor rather than `{{user}}`: with the person's name there, what the examples said became the person's past on some models (gpt-oss-120b *"remembered"* an example's cat in 5 runs of 5, and in none with the visitor; research §3.7). `first_mes` → the greeting; `alternate_greetings` → `Profile.alternate_greetings` (written only when there are some, so no schema step), and **`/greeting [N]`** in a chat that holds nothing but its greeting swaps it for the next, or the `N`th — 1 the main one; once the conversation has begun its opening stays. The scaffold language is the card text's (Cyrillic or Latin), `--language` overrides it; the standard tool set, every companion switch off. **The macros** (`features/persona_macros.rs`, case-insensitive): `{{char}}` is the assistant's role name or else the profile's name, `{{user}}` the person's role name or else the profile language's word for a user; `{{// …}}`, `{{comment: …}}` and `{{hidden_key: …}}` are dropped, `{{reverse: …}}` reversed, `{{random: …}}`/`{{pick: …}}`/`{{roll: N}}` drawn; an unknown macro is left as written. A persona's are substituted **when a request is built** — a turn's, and the reflection's, the consolidation's and the self-model's "sleep" that read the persona — the names as the profile has them now, so a rename applies to every chat as the feed's role names do, and the random ones drawn from the chat's own id, the same on every turn, so the prompt's prefix holds (§6.6) — and only in the persona, never in an attached file or a summary. A greeting's are substituted once, when it is placed: it is a message of the conversation. A persona without `{{` is sent byte for byte as before.
 
 **Role names** (`Profile.character_names`, settings → "Profiles" → the "Persona" group): what the interlocutors are called in this profile's chats — the feed's headers (in caps: `GAIA` instead of `YOU`) and the labels of the `F5` conversation export (`Gaia:` instead of `User:`). Both fields are **empty by default** — then each surface uses the interface language's own label, so the chat follows axis B until the user overrides it. The names are resolved at render time from the profile (see the exception above), so they can be changed at any point, including for old chats. Whitespace-only counts as unset. Legacy seed values (the pre-i18n Russian placeholders, and the `You`/`Assistant` they were migrated to) were never displayed and are cleared once at startup so the labels don't get stuck in a foreign language.
 
@@ -3960,10 +3963,12 @@ section and subsection), `Esc` — cancel.
   from the chat, **`/profile new|delete`** reaches the same two commands for a
   host that claims those keys, and always confirms a deletion — §11.7);
   profile picker, name,
-  the *Persona* group (system message, greeting), the *Companion* group — one
-  switch per companion feature, each off by default (§10; today *Time of
-  messages*, §6.2, and *Notes in the prompt* and *Earlier conversations in the
-  prompt*, §6.6) — and **tool toggles grouped by
+  the *Persona* group (system message, greeting, the role names, the profile's
+  *Voice* under the speech mode in force, §11.9), the *Companion* group — one
+  switch per companion feature, each off by default (§10: *Time of messages*,
+  §6.2; *Notes in the prompt* and *Earlier conversations in the prompt*, §6.6;
+  *Follow-ups* with the quiet hours and the day's cap, §9.3.6; *Notify me*,
+  §11.12; *Speak replies*, §11.9) — and **tool toggles grouped by
   meaning** (`features/tools/meta.rs`: Introspection / Memory and Knowledge /
   Outside World / Files / Utilities / Subagent / Conversation Control /
   Self-Model) with a short inline description and an "on/total" count in the group
@@ -4579,10 +4584,10 @@ crossterm sees them — VS Code's integrated terminal claims `Ctrl+P`, `Ctrl+E`,
 the last of which **closes the tab the session runs in**. Typing survives every
 host, so the interface is fully operable by commands plus the safe key subset
 (printable characters, `Enter`, `Esc`, `Backspace`/`Delete`, `Tab`, the arrows,
-`Home`/`End`, `PageUp`/`PageDown`, `Shift`+arrows). Twenty-six commands:
+`Home`/`End`, `PageUp`/`PageDown`, `Shift`+arrows). Twenty-seven commands:
 `/settings` `/local` `/self` `/chats` `/changes` `/tasks [stop <kind>|all]` `/notes` `/help` · `/new [profile]`
 `/rename [title]` `/autotitle` `/clone` `/copy` `/regen`·`/retry` `/continue`
-`/takeback` `/impersonate [text]` `/stop` · `/find [text]` `/search <text>`
+`/takeback` `/impersonate [text]` `/greeting [N]` `/stop` · `/find [text]` `/search <text>`
 `/links` · `/thoughts` `/toolcalls` `/subagents [expand|collapse|stop [n]]` `/mouse`
 `/emoji`.
 Load-bearing properties:
@@ -5036,6 +5041,33 @@ switching chats and starting generation; **unconditionally** (an invariant, not 
 setting) — deleting an exchange (`Ctrl+E`), regenerating (`Ctrl+R`), and deleting a chat:
 the text being spoken no longer exists. While synthesis/playback is in progress,
 a quiet "♪ speaking" chip is shown in the status bar.
+
+**A companion's own voice, and replies spoken as they land**
+([docs/research/companion-platform.md](docs/research/companion-platform.md) C7 (a), the
+owner's F10 (a)). A profile may have a voice of its own — `Profile.voices`, a map from
+the speech mode to a voice name, since a voice is a provider's name (`onyx` is OpenAI's,
+`Kore` Gemini's) and one chosen under one mode means nothing under another; settings →
+"Profiles" → the "Persona" group, *Voice (mode)*, which edits the voice of the mode in
+force and, in the `openrouter` mode, lists the speech model's voices as the Speech tab's
+row does. Every speech of that profile's chats takes it — `/tts` too — in place of the
+mode's assistant voice (`TtsSettings::with_voice`); the user's voice is the settings'; a
+mode without one speaks in the settings' voice. Written to `profiles.json` only once one
+is set, so no schema step. **Speak replies** (`companion.speak_replies`, a companion
+switch, off by default) speaks each reply as it lands in the **open** conversation — the
+same road as `/tts` on that one message (`Orchestrator::speak_landed_reply`, called at
+the end of `handle_done`): the turn's last assistant message, when it has words and was
+neither stopped (`Cancelled`) nor broken (`Error`); not a `/continue`, which would say the
+reply again from its start, nor a woken turn's silence; a woken turn's reply in the open
+conversation is spoken like any other, and one in a conversation not in view is not
+spoken over the one that is. It interrupts what is being spoken, and the stop points
+above apply. A failure to set speech up (no key, no URL, no sound device) is said once
+and then kept quiet until the settings or a profile change, or speech works again —
+every reply would repeat it; a `/tts` the person types always answers. A reply with
+nothing to say aloud — a code block alone — is passed over in silence. Spoken when the
+reply has landed, not while it streams: the pipeline takes its chunks from a finished
+text. Live **GO**: two companions, one in a voice of its own, each reply spoken unasked —
+a recording speech server heard each asked in its own voice, and the gateway's
+`minimax/speech-2.8-turbo` spoke them in two of its voices, 3/3 each.
 
 ---
 

@@ -29,7 +29,7 @@ Two rules that follow from that:
   and from the code. Loading either whole spends context on twelve chapters to
   use one.
 - **The engineering journal is per area.** What was done, why, what was measured
-  and what was rejected lives in `docs/journal/<area>.md` — 618 entries, split by
+  and what was rejected lives in `docs/journal/<area>.md` — 682 entries, split by
   subsystem. Read the file for the area you are touching; grep across them when
   hunting a specific past decision.
 
@@ -183,10 +183,10 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-10-22, version 0.21.0)
+## Status (2026-10-23, version 0.21.0)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **4257 unit tests
-green, 293 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **4292 unit tests
+green, 296 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump and demo-reel regenerators).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -198,12 +198,13 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
-- **A platform for a companion — stages 1–3, 4 begun** (2026-10-22): every feature
+- **A platform for a companion — stages 1–5** (2026-10-23): every feature
   a profile switch, off by default; dated rows; the notes and earlier conversations
   in the prompt, `/notes`; follow-ups it plans, quiet hours and a cap on, silence
   without a trace; notifications when nobody looks; every self-model version kept
   with its author (`H` on `F3`); `/profile fork`, `mindfork companion export|import`;
-  persona drift measured.
+  persona drift measured; character cards by `mindfork import`, `/greeting`; a
+  voice per profile, replies spoken as they land.
   Live **GO**, Gemma 4 and Qwen 3.8
   ([docs/research/companion-platform.md](docs/research/companion-platform.md),
   [docs/journal/tools.md](docs/journal/tools.md)).
@@ -369,14 +370,6 @@ being recent is dropped, not shortened.
   on Windows/CPU; Linux and a GPU ride on the pod probe
   ([docs/research/cloud-provisioning.md](docs/research/cloud-provisioning.md) §4,
   spec §3.4, [docs/journal/engine.md](docs/journal/engine.md)).
-- **`llama setup` refused CUDA on Linux** — upstream has shipped it since
-  2026-09-14, under a runtime-archive name unlike the Windows one; the name is
-  derived now. The live smoke then caught `--version` logging ahead of itself,
-  which had made the build check skip in silence. Plus backend families
-  (`cuda-12`) and a scan that passes over half-uploaded builds. Live **GO** on
-  Windows; the Linux GPU half rides on the pod probe
-  ([docs/research/cloud-provisioning.md](docs/research/cloud-provisioning.md) §3.1,
-  [docs/journal/engine.md](docs/journal/engine.md)).
 - **The site waits for the release.** The release PR's merge deployed its own
   post 25 min 28 s before the release was public (measured on 0.10.2). `site.yml`
   now holds a deploy while `Cargo.toml` names an unpublished version and runs

@@ -78,7 +78,7 @@ pub(super) fn model_slot(config: &AppConfig, id: FieldId) -> Option<ModelSlot> {
         FieldId::XModelName => Some(ModelSlot::Assistant),
         FieldId::IxModelName => Some(ModelSlot::Impersonation),
         FieldId::EModelName => Some(ModelSlot::Embedder),
-        FieldId::TtsModelName | FieldId::TtsVoice | FieldId::TtsUserVoice
+        FieldId::TtsModelName | FieldId::TtsVoice | FieldId::TtsUserVoice | FieldId::PVoice
             if config.tts.mode == TtsMode::OpenRouter =>
         {
             Some(ModelSlot::Speech)
@@ -94,7 +94,10 @@ pub(super) fn model_slot(config: &AppConfig, id: FieldId) -> Option<ModelSlot> {
 
 /// Whether the row takes a voice rather than a model.
 pub(super) fn is_voice_row(id: FieldId) -> bool {
-    matches!(id, FieldId::TtsVoice | FieldId::TtsUserVoice)
+    matches!(
+        id,
+        FieldId::TtsVoice | FieldId::TtsUserVoice | FieldId::PVoice
+    )
 }
 
 impl SettingsScreen {

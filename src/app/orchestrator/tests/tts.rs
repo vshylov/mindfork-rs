@@ -249,3 +249,113 @@ fn every_command_speaks_on_the_sessions_memo_and_the_switch_as_it_stands() {
         "one memo for the session"
     );
 }
+
+/// A bare orchestrator whose open chat ends with a reply, its profile speaking
+/// replies or not, and speech in a mode with no URL — a setup error that is the
+/// same on every machine, so the attempt shows without a sound device.
+fn with_landed_reply(
+    speak: bool,
+) -> (
+    tempfile::TempDir,
+    Orchestrator,
+    UnboundedReceiver<AppEvent>,
+    Uuid,
+    Uuid,
+) {
+    let (dir, mut orch, rx) = bare_orch_rx();
+    orch.config.tts.mode = TtsMode::External;
+    let mut profile = Profile::new("P", "s");
+    profile.companion.speak_replies = speak;
+    let mut chat = Chat::from_profile(&profile, "c");
+    chat.push_message(Message::user("hi"));
+    let reply = Message::assistant("hello there");
+    let reply_id = reply.id;
+    chat.push_message(reply);
+    let chat_id = chat.id;
+    orch.profiles.push(profile);
+    orch.chats.push(chat);
+    orch.active_id = Some(chat_id);
+    (dir, orch, rx, chat_id, reply_id)
+}
+
+fn errors(rx: &mut UnboundedReceiver<AppEvent>) -> Vec<String> {
+    let mut out = Vec::new();
+    while let Ok(e) = rx.try_recv() {
+        if let AppEvent::Error(m) = e {
+            out.push(m);
+        }
+    }
+    out
+}
+
+/// A profile that speaks its replies tries to speak one that lands; when speech
+/// cannot be set up it says so once — every reply would repeat it — while a
+/// `/tts` the person typed still answers.
+#[test]
+fn a_landed_reply_is_spoken_and_a_setup_failure_said_once() {
+    let (_d, mut orch, mut rx, chat, reply) = with_landed_reply(true);
+    let no_url = orch.ui_locale().t("ui.err.tts_no_url").to_string();
+    orch.speak_landed_reply(chat, reply);
+    assert_eq!(errors(&mut rx), vec![no_url.clone()]);
+    orch.speak_landed_reply(chat, reply);
+    assert!(errors(&mut rx).is_empty(), "said once");
+    orch.handle_tts(TtsScope::Last);
+    assert_eq!(
+        errors(&mut rx),
+        vec![no_url.clone()],
+        "asked for, it answers"
+    );
+    // A settings change may have fixed it: the next failure is news again.
+    orch.auto_speech_failed = false;
+    orch.speak_landed_reply(chat, reply);
+    assert_eq!(errors(&mut rx), vec![no_url]);
+}
+
+/// Off by default; and a reply in a conversation not in view is not spoken
+/// over the one that is.
+#[test]
+fn a_landed_reply_is_not_spoken_when_off_or_out_of_view() {
+    let (_d, mut orch, mut rx, chat, reply) = with_landed_reply(false);
+    orch.speak_landed_reply(chat, reply);
+    assert!(errors(&mut rx).is_empty());
+
+    let (_d, mut orch, mut rx, chat, reply) = with_landed_reply(true);
+    orch.active_id = None;
+    orch.speak_landed_reply(chat, reply);
+    assert!(errors(&mut rx).is_empty());
+}
+
+/// Through a real turn: the reply that lands is the one spoken.
+#[tokio::test]
+async fn a_turn_that_lands_speaks_its_reply() {
+    let dir = tempfile::tempdir().unwrap();
+    let json = crate::shared::storage::JsonStore::new(Paths::with_root(dir.path()));
+    let mut profile = Profile::new("P", "s");
+    profile.companion.speak_replies = true;
+    json.upsert_profile(&profile).unwrap();
+    let chat = Chat::from_profile(&profile, "c");
+    let chat_id = chat.id;
+    json.save_chat(&chat).unwrap();
+    let mut cfg = no_auto_cfg();
+    cfg.tts.mode = TtsMode::External;
+    let backend: Arc<dyn EngineBackend> = Arc::new(MockBackend::scripted(vec![
+        ChatChunk::Text("a reply worth hearing".into()),
+        ChatChunk::Finished(crate::shared::api::FinishReason::Stop),
+    ]));
+    let (tx, mut rx, handle) = spawn_orch_at(dir.path(), Some(backend), cfg);
+    wait_for(&mut rx, |e| matches!(e, AppEvent::ChatActivated { .. })).await;
+    tx.send(AppCommand::SwitchChat(chat_id)).unwrap();
+    tx.send(AppCommand::SendMessage("hi".into())).unwrap();
+    wait_for(&mut rx, |e| matches!(e, AppEvent::Finished { .. })).await;
+    let err = wait_for(&mut rx, |e| matches!(e, AppEvent::Error(_)))
+        .await
+        .expect("the reply was put to speech");
+    let AppEvent::Error(msg) = err else {
+        unreachable!()
+    };
+    let expected =
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::default()).t("ui.err.tts_no_url");
+    assert_eq!(msg, expected);
+    tx.send(AppCommand::Quit).unwrap();
+    let _ = handle.await;
+}

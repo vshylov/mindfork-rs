@@ -287,7 +287,12 @@ src/
 │  │  │                     pass (stat-only walk of `chats/`), and answers a query —
 │  │  │                     escaping it here, since `shared` may not use `features`
 │  │  ├─ tts.rs             speech synthesis: conversation snapshot → chunks →
-│  │  │                     synth/playback pipeline, stop points (§11.9);
+│  │  │                     synth/playback pipeline, stop points (§11.9); one
+│  │  │                     `speak` for `/tts` and for a landed reply a profile
+│  │  │                     speaks (`speak_landed_reply`, `companion.speak_replies`),
+│  │  │                     in the profile's voice for the mode (`Profile.voices`
+│  │  │                     → `TtsSettings::with_voice`), a setup failure of an
+│  │  │                     unasked one said once (`auto_speech_failed`);
 │  │  │                     speech_gateway(): what a client of the OpenRouter gateway's
 │  │  │                     is built with besides the slot's settings — the attribution
 │  │  │                     switch and the session's FormatMemo (Orchestrator.tts_formats)
@@ -686,9 +691,23 @@ src/
 │  │                        the backends are DERIVED from the release's asset names, not
 │  │                        pinned; sha256 from the release, resumable download, one
 │  │                        directory per install under data/llama/ (spec §3.4)
-│  └─ import.rs             import from the neutral mindfork-import format
-│                           (docs/import-format.md): profiles + chats from external
-│                           converters, idempotent (UUIDv5 from keys)
+│  ├─ import.rs             import from the neutral mindfork-import format
+│  │                        (docs/import-format.md): profiles + chats from external
+│  │                        converters, idempotent (UUIDv5 from keys)
+│  ├─ character_card/       character cards (spec §10): `sniff` tells a card from a
+│  │                        mindfork-import file by the bytes — a PNG's `ccv3`/`chara`
+│  │                        text chunk (`png.rs`: the chunk framing only, the image is
+│  │                        never decoded), a CHARX's `card.json`, V1–V3 JSON — and
+│  │                        reads every edition onto one `Card`; `profile.rs` maps it
+│  │                        onto a new profile (one system message in SillyTavern's
+│  │                        order, the examples in a labelled block, always-on lore
+│  │                        kept and keyed lore counted) and renders the preview the
+│  │                        CLI prints before saving. Nothing in a card is run
+│  └─ persona_macros.rs     `{{char}}`/`{{user}}`, the comments, `{{reverse}}` and the
+│                           random macros (`{{random}}`, `{{pick}}`, `{{roll}}`): a
+│                           persona's are substituted when a request is built, the
+│                           random ones drawn from the chat's id so the prefix holds;
+│                           a greeting's once, when it is placed (spec §10)
 │
 ├─ entities/                domain types (no I/O); serde-serializable
 │  ├─ attachment.rs         Attachment/AttachMode/AttachmentInfo — a file attached
@@ -4454,8 +4473,10 @@ Principles:
   the orchestrator and the loop. **The CLI is our own micro-parser,
   `features/cli.rs`** (not `clap`), so that all CLI text (help, parse
   errors, command messages) lives in i18n locale bundles (axis B,
-  docs/history/i18n-cli.md): `import <file>` (import from the neutral
-  mindfork-import format, `features/import.rs`; the former
+  docs/history/i18n-cli.md): `import <file> [--language] [--yes]` (import
+  from the neutral mindfork-import format, `features/import.rs`, or a
+  character card, `features/character_card/` — told apart by the bytes; takes
+  single-instance, since both write `profiles.json`; the former
   `import-lamellama` was removed — it hints at the replacement),
   `backup [-o FILE] [-c 0..9]`/`restore <archive>` (backup/restore,
   `features/backup.rs`; take single-instance), `stats [archive] [--compare

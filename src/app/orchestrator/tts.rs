@@ -13,6 +13,12 @@
 //! generation) and three **unconditional** — deleting an exchange,
 //! regeneration, deleting a chat: the text being spoken no longer exists. See
 //! docs/research/tts.md §7, §8.
+//!
+//! A profile may ask for each reply to be spoken as it lands
+//! (`speak_replies`, [`Orchestrator::speak_landed_reply`]), in a voice of its
+//! own under the active speech mode (`Profile::voices`) — the same road as the
+//! command, on the one message (spec §11.9, docs/research/companion-platform.md
+//! C7 (a)).
 
 use std::time::Duration;
 
@@ -62,18 +68,64 @@ impl Orchestrator {
             self.fail_tts(self.ui_locale().t("ui.err.tts_no_active_chat"));
             return;
         };
+        self.speak(profile_id, &messages, scope, false);
+    }
+
+    /// A reply that just landed in the open conversation, spoken because its
+    /// profile asks for every reply to be (`speak_replies`, spec §11.9) — the
+    /// same road as `/tts` on that one message, so what it says, in which voice
+    /// and how it stops are the command's. A conversation not in view is not
+    /// spoken over the one that is.
+    pub(super) fn speak_landed_reply(&mut self, chat_id: Uuid, reply: Uuid) {
+        if self.active_id != Some(chat_id) {
+            return;
+        }
+        let Some(chat) = self.chats.iter().find(|c| c.id == chat_id) else {
+            return;
+        };
+        let profile_id = chat.profile_id;
+        let wanted = self
+            .profiles
+            .iter()
+            .find(|p| p.id == profile_id)
+            .is_some_and(|p| p.companion.speak_replies);
+        if !wanted {
+            return;
+        }
+        let Some(message) = chat.messages.iter().find(|m| m.id == reply).cloned() else {
+            return;
+        };
+        self.stop_tts();
+        self.speak(profile_id, &[message], TtsScope::Last, true);
+    }
+
+    /// Speaks `messages` (a snapshot) in `profile_id`'s voice. `auto` — a reply
+    /// spoken unasked: a failure to set speech up is said once and then kept
+    /// quiet until the settings change, rather than after every reply, and a
+    /// reply with nothing to say aloud (a code block) is passed over.
+    fn speak(&mut self, profile_id: Uuid, messages: &[Message], scope: TtsScope, auto: bool) {
         // Markers and role prefixes are speech content, so they're in the
         // **profile's** language (axis A, docs/history/i18n.md), not the
         // interface's.
         let speech_loc = self.profile_locale(profile_id);
         let chunks =
-            match build_utterances(&messages, scope, self.config.tts.speak_roles, speech_loc) {
+            match build_utterances(messages, scope, self.config.tts.speak_roles, speech_loc) {
                 Some(text) => text,
+                None if auto => return,
                 None => {
                     self.fail_tts(self.ui_locale().t("ui.err.tts_nothing_to_speak"));
                     return;
                 }
             };
+        // The profile's own voice under the active mode, over the settings'
+        // (spec §11.9).
+        let voice = self
+            .profiles
+            .iter()
+            .find(|p| p.id == profile_id)
+            .and_then(|p| p.voice_for(self.config.tts.mode))
+            .map(str::to_string);
+        let tts = self.config.tts.with_voice(voice.as_deref());
 
         // Build the client from a settings snapshot: in a cloud mode the stored
         // provider key is shared with chat (ADR 0008) — no need to enter it again;
@@ -86,16 +138,18 @@ impl Orchestrator {
         // Two engines: the assistant's and (opt.) the user's — when a separate
         // "User voice" is set (spec §11.9). Both use the same provider → a shared
         // limit.
-        let (engine, user_engine) = match engines_from_config(&self.config.tts, stored, &gateway) {
+        let (engine, user_engine) = match engines_from_config(&tts, stored, &gateway) {
             Ok(pair) => pair,
             Err(err) => {
-                self.fail_tts(self.ui_locale().t(setup_error_key(err)));
+                self.fail_speech(self.ui_locale().t(setup_error_key(err)), auto);
                 return;
             }
         };
         let chunks = chunk_utterances(&chunks, engine.max_input_chars());
         if chunks.is_empty() {
-            self.fail_tts(self.ui_locale().t("ui.err.tts_nothing_to_speak"));
+            if !auto {
+                self.fail_tts(self.ui_locale().t("ui.err.tts_nothing_to_speak"));
+            }
             return;
         }
 
@@ -106,14 +160,15 @@ impl Orchestrator {
         let playback = match Playback::open() {
             Ok(p) => std::sync::Arc::new(p),
             Err(err) => {
-                self.fail_tts(
-                    &self
-                        .ui_locale()
-                        .tf("ui.err.tts_no_audio", &[("err", &err.to_string())]),
-                );
+                let msg = self
+                    .ui_locale()
+                    .tf("ui.err.tts_no_audio", &[("err", &err.to_string())]);
+                self.fail_speech(&msg, auto);
                 return;
             }
         };
+        // Speech works again: a later failure of a spoken reply is news.
+        self.auto_speech_failed = false;
 
         let cancel = CancellationToken::new();
         let task_id = Uuid::new_v4();
@@ -195,6 +250,19 @@ impl Orchestrator {
     /// Reports a speech error as a feed note (interface language, axis B).
     fn fail_tts(&self, msg: &str) {
         let _ = self.evt_tx.send(AppEvent::Error(msg.to_string()));
+    }
+
+    /// [`Self::fail_tts`] for a speech attempt; one the person did not ask for
+    /// (`auto`) says its failure once — every reply would repeat it — and stays
+    /// quiet until the settings or a profile change, or speech works again.
+    fn fail_speech(&mut self, msg: &str, auto: bool) {
+        if auto {
+            if self.auto_speech_failed {
+                return;
+            }
+            self.auto_speech_failed = true;
+        }
+        self.fail_tts(msg);
     }
 }
 

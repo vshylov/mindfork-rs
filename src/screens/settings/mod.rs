@@ -804,6 +804,9 @@ enum FieldId {
     PUserName,
     /// The same for the assistant (`character_names.assistant`).
     PAssistantName,
+    /// The profile's own voice under the active speech mode
+    /// (`Profile::voices`, spec §11.9). Empty — the speech settings' voice.
+    PVoice,
     /// The impersonation profile the assistant profile's chats use (a reference by
     /// id; the first option — "no reference", the shared default text). See spec §11.8.
     PImpProfile,
@@ -823,6 +826,8 @@ enum FieldId {
     PFollowupsPerDay,
     /// A notification when the companion writes unasked (spec §11.12).
     PNotify,
+    /// Each reply spoken as it lands (`companion.speak_replies`, spec §11.9).
+    PSpeakReplies,
     /// A profile tool toggle by index in the catalog.
     PTool(usize),
     // Impersonation profiles (the "Impersonation" subsection of "Profiles"; the list

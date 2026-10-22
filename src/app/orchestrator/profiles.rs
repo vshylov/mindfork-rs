@@ -248,6 +248,8 @@ impl Orchestrator {
     /// Applies profile edits (doesn't touch already-created chats — they have their own
     /// copies, spec §10). Saves and re-emits the profile list/settings.
     pub(super) fn handle_update_profile(&mut self, id: Uuid, mut edit: ProfileEdit) {
+        // A profile's voice may be what a spoken reply failed on (spec §11.9).
+        self.auto_speech_failed = false;
         // The authoritative gate for changing the scaffold language (axis A, docs/history/i18n.md): if the profile
         // already has data, an actual language change is rejected (a safety net on top
         // of the UI's field lock). The language edit is dropped in that case, the rest are applied.

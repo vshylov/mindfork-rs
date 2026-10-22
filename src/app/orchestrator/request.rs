@@ -283,6 +283,11 @@ pub(super) struct PromptContext<'a> {
     /// there are none. Appended after the project block, ahead of the notes and
     /// the self-model the generation task adds (spec §6.6).
     pub earlier_chats: Option<&'a str>,
+    /// What the persona's macros stand for — the profile's names as they are
+    /// now, and the chat's own draw for the random ones (spec §10,
+    /// [`crate::features::persona_macros`]); `None` sends the persona as written
+    /// (a sub-agent's, which is its own).
+    pub names: Option<crate::features::persona_macros::Persona<'a>>,
     /// Scaffold language (axis A): every injected block is read by the model.
     pub loc: &'a Locale,
 }
@@ -347,10 +352,16 @@ pub(super) fn build_request_in(
     tools: Vec<crate::shared::api::ToolSchema>,
     cx: &PromptContext<'_>,
 ) -> ChatRequest {
+    // Only the persona: a macro inside an attached file or a summary is that
+    // text's own and is sent as it stands.
+    let system_message = match cx.names {
+        Some(persona) => crate::features::persona_macros::persona(system_message, persona),
+        None => std::borrow::Cow::Borrowed(system_message),
+    };
     let system = if system_message.trim().is_empty() {
         None
     } else {
-        Some(system_message.to_string())
+        Some(system_message.into_owned())
     };
     let (summary, upto) = match env.compaction {
         Some((s, i)) => (Some(s), i),

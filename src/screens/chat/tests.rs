@@ -6336,3 +6336,35 @@ fn the_local_servers_list_picks_closes_and_lets_quit_through() {
         "nothing to offer, nothing opened"
     );
 }
+
+/// `/greeting [N]` (spec §10): bare — the next greeting; a number — that one;
+/// anything else, and a screen with no chat, answered in the feed.
+mod greeting_command {
+    use super::*;
+
+    #[test]
+    fn bare_and_numbered_reach_the_orchestrator() {
+        let mut c = Cmd::new();
+        assert_eq!(
+            c.run("/greeting"),
+            Some(ChatIntent::Greeting { pick: None })
+        );
+        assert_eq!(
+            c.run("/GREETING 3"),
+            Some(ChatIntent::Greeting { pick: Some(3) })
+        );
+    }
+
+    #[test]
+    fn a_word_or_zero_is_answered_and_no_chat_says_so() {
+        let mut c = Cmd::new();
+        for bad in ["/greeting next", "/greeting 0", "/greeting -1"] {
+            assert_eq!(c.run(bad), None, "{bad}");
+            let note = c.last_note();
+            assert!(note.contains("/greeting"), "{bad}: {note}");
+        }
+        let mut bare = Cmd::bare();
+        assert_eq!(bare.run("/greeting"), None);
+        assert!(!bare.last_note().is_empty());
+    }
+}

@@ -116,6 +116,59 @@ fn default_profile(lang: crate::shared::i18n::Lang) -> Profile {
     profile
 }
 
+/// What `{{char}}` and `{{user}}` stand for in `profile`'s persona and greetings
+/// (spec §10): the character's role name, else the profile's name; the person's
+/// role name, else the profile language's word for a user.
+fn names_of_profile(profile: &Profile) -> (String, String) {
+    let loc = crate::shared::i18n::locale(profile.language);
+    let char = profile
+        .character_names
+        .assistant_name()
+        .unwrap_or(profile.name.trim())
+        .to_string();
+    let user = profile
+        .character_names
+        .user_name()
+        .map(str::to_string)
+        .unwrap_or_else(|| loc.t("prompt.card.user_default").to_string());
+    (char, user)
+}
+
+/// A chat's persona as the model reads it — its macros substituted with the
+/// profile's names now and the chat's own draw (spec §10). What a turn sends,
+/// and what the background tasks that read the persona get, so a reflection
+/// never sees a raw `{{char}}`.
+pub(super) fn persona_text(profile: &Profile, chat: &Chat) -> String {
+    let (char, user) = names_of_profile(profile);
+    crate::features::persona_macros::persona(
+        &chat.system_message,
+        crate::features::persona_macros::Persona {
+            names: crate::features::persona_macros::Names {
+                char: &char,
+                user: &user,
+            },
+            seed: crate::features::persona_macros::seed_of(chat.id),
+        },
+    )
+    .into_owned()
+}
+
+/// A greeting as it is placed in a chat: its names substituted and its random
+/// macros drawn — it becomes a message of the conversation, written once, like
+/// any other.
+pub(super) fn greeting_text(profile: &Profile, greeting: &str) -> String {
+    let (char, user) = names_of_profile(profile);
+    let named = crate::features::persona_macros::names(
+        greeting,
+        crate::features::persona_macros::Names {
+            char: &char,
+            user: &user,
+        },
+    );
+    crate::features::persona_macros::roll(&named, &mut crate::features::persona_macros::below)
+        .into_owned()
+}
+
 /// Orchestrator launch parameters. The orchestrator configures the servers
 /// (chat/embedding) and the tool registry itself from [`AppConfig`] via
 /// [`ServerSupervisor`] — this lets it restart them on settings edits (spec
@@ -255,6 +308,8 @@ pub async fn run(deps: OrchestratorDeps) {
         tts_playback: None,
         tts_done_tx,
         tts_formats: Default::default(),
+        greeting_shown: HashMap::new(),
+        auto_speech_failed: false,
         bg: HashMap::new(),
         bg_done_tx,
         consolidate_counts: HashMap::new(),
@@ -745,6 +800,15 @@ struct Orchestrator {
     /// taught is kept here, for the session
     /// ([`FormatMemo`](crate::shared::tts::FormatMemo)).
     tts_formats: std::sync::Arc<crate::shared::tts::FormatMemo>,
+    /// Which of its profile's greetings a chat opened with was last placed by
+    /// `/greeting` (spec §10), so the next one follows it even when a random
+    /// macro made the text unrecognisable. For the session only: after a
+    /// restart the greeting is recognised by its text, or counts as the first.
+    greeting_shown: HashMap<Uuid, usize>,
+    /// A reply spoken unasked (`speak_replies`) failed to set speech up, and
+    /// said so: the next ones stay quiet until the settings or a profile change,
+    /// or speech works again (spec §11.9).
+    auto_speech_failed: bool,
     /// A registry of "silent" background-task slots (auto-reflection/
     /// consolidation): one slot per [`BackgroundKind`] — a "running" flag
     /// (cancellation token) + a failure streak. Lifecycle — in
@@ -936,6 +1000,7 @@ impl Orchestrator {
             }
             AppCommand::DeleteProfile(id) => self.handle_delete_profile(id),
             AppCommand::ForkProfile { name } => self.handle_fork_profile(name),
+            AppCommand::SwapGreeting { pick } => self.handle_swap_greeting(pick),
             AppCommand::UpdateConfig(config) => self.handle_update_config(*config),
             AppCommand::UpdateProfile { id, edit } => self.handle_update_profile(id, *edit),
             AppCommand::RagAdd { path, recursive } => self.handle_rag_add(path, recursive),
@@ -1256,12 +1321,21 @@ impl Orchestrator {
             .unwrap_or_else(|| default_profile(crate::shared::i18n::Lang::default()));
         let title = crate::shared::i18n::locale(profile.language).t("defaults.chat_title");
         let mut chat = Chat::from_profile(&profile, title);
-        if let Some(greeting) = &profile.greeting
-            && !greeting.is_empty()
-        {
-            chat.push_message(Message::assistant(greeting.clone()));
+        if let Some(greeting) = profile.greeting.as_deref().filter(|g| !g.is_empty()) {
+            chat.push_message(Message::assistant(greeting_text(&profile, greeting)));
         }
         chat
+    }
+
+    /// What `{{char}}` and `{{user}}` stand for in a profile's persona and
+    /// greetings (spec §10): the character's role name, else the profile's
+    /// name; the person's role name, else the profile language's word for a
+    /// user.
+    pub(super) fn persona_names(&self, profile_id: Uuid) -> (String, String) {
+        match self.profiles.iter().find(|p| p.id == profile_id) {
+            Some(profile) => names_of_profile(profile),
+            None => names_of_profile(&default_profile(crate::shared::i18n::Lang::default())),
+        }
     }
 
     fn chat_mut(&mut self, id: Uuid) -> Option<&mut Chat> {

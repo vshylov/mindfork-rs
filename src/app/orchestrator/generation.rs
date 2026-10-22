@@ -686,6 +686,15 @@ impl Orchestrator {
             .map(|p| p.companion)
             .unwrap_or_default();
         let time_rows = companion.time_rows;
+        // What `{{char}}`/`{{user}}` in the persona stand for (spec §10).
+        let (char_name, user_name) = self.persona_names(profile_id);
+        let persona = crate::features::persona_macros::Persona {
+            names: crate::features::persona_macros::Names {
+                char: &char_name,
+                user: &user_name,
+            },
+            seed: crate::features::persona_macros::seed_of(active_id),
+        };
         // Where this chat's verbatim history starts, if compression folded
         // anything away. It decides three things at once, which is the point:
         // what the request carries, whether the summary block is in the prompt,
@@ -912,6 +921,7 @@ impl Orchestrator {
                         &crate::features::time_row::local as crate::features::time_row::Clock<'_>,
                     ),
                     earlier_chats: earlier_block.as_deref(),
+                    names: Some(persona),
                     loc: profile_loc,
                 },
             );
@@ -921,7 +931,12 @@ impl Orchestrator {
             let turn = TurnInfo {
                 profile_id,
                 chat_id: active_id,
-                system_message: chat.system_message.clone(),
+                // The persona as the model read it, macros substituted.
+                system_message: crate::features::persona_macros::persona(
+                    &chat.system_message,
+                    persona,
+                )
+                .into_owned(),
                 effective_sampling: sampling,
                 user_times: user_message_times(chat),
                 // The turn's attachment snapshot — what `attachment_read` sees
@@ -1158,6 +1173,26 @@ impl Orchestrator {
             .woken
             .then(|| super::notify::woken_reply_text(&res.messages))
             .flatten();
+        // The reply to speak if the profile speaks its replies (spec §11.9):
+        // the turn's last assistant message, when it has words and was neither
+        // stopped nor broken. A `/continue` is not spoken again from the start,
+        // and a silence has nothing to say.
+        let to_speak = if silent || res.continuation.is_some() {
+            None
+        } else {
+            res.messages
+                .iter()
+                .rev()
+                .find(|m| m.role == MessageRole::Assistant)
+                .filter(|m| !m.text.trim().is_empty())
+                .filter(|m| {
+                    !matches!(
+                        m.metadata.as_ref().and_then(|md| md.finish),
+                        Some(MessageFinish::Cancelled | MessageFinish::Error)
+                    )
+                })
+                .map(|m| m.id)
+        };
         if silent {
             self.mark_dirty(res.chat_id);
             if self.active_id == Some(res.chat_id) {
@@ -1299,6 +1334,9 @@ impl Orchestrator {
         }
         if let Some(text) = woken_reply {
             self.notify_unasked(res.chat_id, super::notify::Unasked::Reply(&text));
+        }
+        if let Some(reply) = to_speak {
+            self.speak_landed_reply(res.chat_id, reply);
         }
         self.after_turn_followups(res.woken, res.chat_id);
     }
@@ -3655,6 +3693,7 @@ impl TurnLoop<'_> {
                 // a row would date nothing the child needs (spec §6.2).
                 time_rows: None,
                 earlier_chats: None,
+                names: None,
                 loc,
             },
         );

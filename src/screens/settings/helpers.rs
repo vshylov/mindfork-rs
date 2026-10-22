@@ -1608,6 +1608,7 @@ pub(super) fn is_profile_field(id: FieldId) -> bool {
             | FieldId::PGreeting
             | FieldId::PUserName
             | FieldId::PAssistantName
+            | FieldId::PVoice
             | FieldId::PImpProfile
             | FieldId::PTimeRows
             | FieldId::PNotesInPrompt
@@ -1617,6 +1618,7 @@ pub(super) fn is_profile_field(id: FieldId) -> bool {
             | FieldId::PQuietUntil
             | FieldId::PFollowupsPerDay
             | FieldId::PNotify
+            | FieldId::PSpeakReplies
             | FieldId::PTool(_)
             | FieldId::ProfileSub
             // The impersonation-profile list lives in the config, but it's user data

@@ -8,6 +8,7 @@
 
 pub mod attachment_index;
 pub mod backup;
+pub mod character_card;
 pub mod chat_export;
 pub mod chat_files;
 pub mod chat_inputs;
@@ -34,6 +35,7 @@ pub mod impersonation_command;
 pub mod import;
 pub mod llama_setup;
 pub mod mcp_import;
+pub mod persona_macros;
 pub mod profile_command;
 pub mod profiles;
 pub mod project_command;

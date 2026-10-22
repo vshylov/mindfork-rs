@@ -72,6 +72,10 @@ pub enum UiCommand {
     Takeback,
     /// Write a message as the user; the argument seeds it (`Ctrl+U`).
     Impersonate,
+    /// The open chat's greeting swapped for the profile's next one, or its
+    /// `N`th — a character card's alternate greetings (spec §10), offered
+    /// while the chat holds nothing else.
+    Greeting,
     /// Cancel the running generation (`Esc` while generating).
     Stop,
     /// In-feed search; the argument is the query (`Ctrl+F`).
@@ -199,6 +203,7 @@ pub const COMMANDS: &[Spec] = &[
     row(&["/continue"], UiCommand::Continue, Arity::None, "/continue", "ui.help.cmd_continue"),
     row(&["/takeback"], UiCommand::Takeback, Arity::None, "/takeback", "ui.help.cmd_takeback"),
     row(&["/impersonate"], UiCommand::Impersonate, Arity::Optional, "ui.help.k.impersonate", "ui.help.cmd_impersonate"),
+    row(&["/greeting"], UiCommand::Greeting, Arity::Optional, "ui.help.k.greeting", "ui.help.cmd_greeting"),
     row(&["/stop"], UiCommand::Stop, Arity::None, "/stop", "ui.help.cmd_stop"),
     // Finding things.
     row(&["/find"], UiCommand::Find, Arity::Optional, "ui.help.k.find", "ui.help.cmd_find"),

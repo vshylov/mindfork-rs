@@ -76,6 +76,23 @@ split by subsystem.
   `mindfork companion import <archive>` adds it there as a new profile. The search
   index is rebuilt on arrival: the notes by themselves, the knowledge base with
   `/reindex`.
+- **Character cards.** `mindfork import` now also reads the community's character
+  cards — a `.json`, a `.png` with the card inside, or a `.charx` — as a new profile.
+  It shows the system message the profile will get, the card author's notes and what
+  did not fit before it asks to create it; nothing in a card is run. The example
+  dialogue goes in as examples of the character's voice that never happened, so the
+  model does not take them for things you told it; lore that waits for a keyword is
+  not imported yet. A card with several openings starts a chat with the first, and
+  `/greeting` moves to the next before you write anything.
+- **`{{char}}` and `{{user}}` in a persona.** A profile's system message may use the
+  card macros — `{{char}}` and `{{user}}` become the profile's names as they are now,
+  so renaming applies to old chats too, and `{{random:a,b}}` picks once per chat.
+- **A voice for each companion, and replies read aloud as they arrive.** A profile
+  can have a voice of its own (Settings → Profiles → *Voice*), kept per speech mode
+  since voices are each provider's own — so two companions no longer sound the same,
+  in `/tts` as well. *Speak replies* (Settings → Profiles → *Companion*, off by
+  default) reads every reply in the open conversation aloud as it arrives, in that
+  voice.
 
 ### Changed
 
@@ -88,6 +105,9 @@ split by subsystem.
   message you had just sent, so a model that asked how long it had been since you
   last wrote was told that no time had passed. It now reports your previous message
   and the gap between the two.
+- **`mindfork import` could write the profiles while the app was open**, and the app
+  then wrote its own copy over them. It now refuses to run until the app is closed,
+  as `restore` does.
 
 ### Data
 
@@ -97,6 +117,13 @@ split by subsystem.
 - **A forked profile records where it came from** (`forked_from` in
   `profiles.json`; other profiles are written exactly as before). An older version
   reads such a profile, but drops the record the next time it saves the profiles.
+- **A profile's own voice** is kept in `profiles.json` (`voices`, written only once
+  one is set). An older version reads such a profile, but drops the voice the next
+  time it saves the profiles.
+- **A profile from a character card keeps the card's other greetings**
+  (`alternate_greetings` in `profiles.json`, written only when there are some). An
+  older version reads such a profile, but drops them the next time it saves the
+  profiles.
 
 ## [0.21.0] — 2026-10-19
 

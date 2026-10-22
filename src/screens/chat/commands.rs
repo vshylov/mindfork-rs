@@ -149,6 +149,7 @@ impl ChatScreen {
             UiCommand::Regen | UiCommand::Takeback => self.typed_destructive(command, alias),
             UiCommand::Continue => self.typed_continue(alias),
             UiCommand::Impersonate => self.typed_impersonate(argument, alias),
+            UiCommand::Greeting => self.typed_greeting(&argument),
             UiCommand::Stop => self.typed_stop(),
             // Finding things.
             UiCommand::Find => self.typed_find(argument),
@@ -164,6 +165,27 @@ impl ChatScreen {
             UiCommand::Subagents => self.typed_subagents(argument),
             UiCommand::Mouse => self.handle_ctrl_shortcut('w').flatten(),
             UiCommand::Emoji => self.handle_ctrl_shortcut('b').flatten(),
+        }
+    }
+
+    /// `/greeting [N]` — the open chat's greeting swapped for the profile's
+    /// next one, or its `N`th, 1 being the main one (spec §10). Whether the chat
+    /// still holds nothing but its greeting, and how many greetings the profile
+    /// has, are the orchestrator's to judge: it owns both.
+    fn typed_greeting(&mut self, argument: &str) -> Option<ChatIntent> {
+        if self.active_chat.is_none() {
+            return self.note("ui.cmd.no_chat");
+        }
+        if argument.is_empty() {
+            return Some(ChatIntent::Greeting { pick: None });
+        }
+        match argument.parse::<usize>() {
+            Ok(n) if n >= 1 => Some(ChatIntent::Greeting { pick: Some(n) }),
+            _ => {
+                let text = self.loc.tf("ui.greeting.bad_number", &[("arg", argument)]);
+                self.push_note(&text);
+                None
+            }
         }
     }
 
