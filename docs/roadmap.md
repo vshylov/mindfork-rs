@@ -345,8 +345,15 @@ effort tiers — have all closed
   to what the person said when the time comes, may stay silent without a trace, and
   is held by quiet hours and a daily cap that are on from the start (§3.5) — and
   the notification that reaches someone not looking (*Notify me*: the terminal's
-  escape and bell, a ntfy push). Next, stage 4: the research instruments. Twelve
-  candidates in six stages.
+  escape and bell, a ntfy push). **Stage 4 built**: the research instruments — every
+  self-model version kept with its author, `/profile fork` and `mindfork companion
+  export|import`, and a persona-drift smoke whose measurement (§3.6) decided F11 (a):
+  nothing built against drift, the manual's advice instead. **Stage 5, first half,
+  built**: character cards — `mindfork import` reads JSON, PNG and CHARX cards into a
+  new profile, its example dialogue a block whose other side is a nameless visitor,
+  since with the person's name there one model of five took the examples for its
+  shared past (§3.7). Next: a per-profile voice and replies spoken as they land
+  (C7 (a)), then the bridge. Twelve candidates in six stages.
 
 ### Feed and rendering
 

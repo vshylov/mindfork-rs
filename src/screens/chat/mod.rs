@@ -328,6 +328,11 @@ pub enum ChatIntent {
     ForkProfile {
         name: Option<String>,
     },
+    /// Swap the open chat's greeting (`/greeting [N]`, spec §10): `None` —
+    /// the next one, `Some(n)` — the `n`th, 1-based.
+    Greeting {
+        pick: Option<usize>,
+    },
     /// Delete a companion profile, hiding its chats with it (command
     /// `/profile delete <name>`, confirmed; `Ctrl+D` in the settings screen).
     /// The orchestrator refuses to delete the last one.

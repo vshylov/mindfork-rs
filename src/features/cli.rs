@@ -75,9 +75,17 @@ pub enum CliCommand {
         /// Settled like [`Self::Restore`]'s.
         password: Option<String>,
     },
-    /// Import from a mindfork-import format file (`import <file>`).
-    /// Format spec — docs/import-format.md.
-    Import { file: PathBuf },
+    /// Import from a mindfork-import format file, or a character card — JSON,
+    /// PNG or CHARX (`import <file> [--language CODE] [--yes]`). Format spec —
+    /// docs/import-format.md; cards — spec §10.
+    Import {
+        file: PathBuf,
+        /// A card's scaffold language; `None` — read from the card's text.
+        language: Option<String>,
+        /// Create a card's profile without asking (a card is shown first,
+        /// and asked about on a terminal).
+        yes: bool,
+    },
     /// Install the Python sandbox (`sandbox setup [--force] [--enable-python]`).
     SandboxSetup {
         force: bool,
@@ -435,14 +443,33 @@ fn parse_companion_import(toks: &[&str], loc: &Locale) -> Result<CliCommand, Str
 }
 
 fn parse_import(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
-    match single_positional(toks, loc, HelpTopic::Import, "<file>")? {
-        Positional::Help => Ok(CliCommand::Help {
-            topic: Some(HelpTopic::Import),
-        }),
-        Positional::Value(file) => Ok(CliCommand::Import {
-            file: PathBuf::from(file),
-        }),
+    let (mut file, mut language, mut yes) = (None, None, false);
+    let mut i = 0;
+    while i < toks.len() {
+        let a = toks[i];
+        if a == "-h" || a == "--help" {
+            return Ok(CliCommand::Help {
+                topic: Some(HelpTopic::Import),
+            });
+        } else if let Some(v) = opt_value(toks, &mut i, loc, &["-l", "--language"])? {
+            language = Some(v.to_string());
+        } else if a == "-y" || a == "--yes" {
+            yes = true;
+            i += 1;
+        } else if a.starts_with('-') {
+            return Err(unknown_option(loc, a));
+        } else if file.is_none() {
+            file = Some(PathBuf::from(a));
+            i += 1;
+        } else {
+            return Err(unexpected_arg(loc, a));
+        }
     }
+    Ok(CliCommand::Import {
+        file: file.ok_or_else(|| missing_arg(loc, "<file>"))?,
+        language,
+        yes,
+    })
 }
 
 fn parse_sandbox(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
@@ -823,37 +850,6 @@ fn parse_themes_check(toks: &[&str], loc: &Locale) -> Result<CliCommand, String>
     Ok(CliCommand::ThemesCheck { target })
 }
 
-// -------- Parsing a single required positional argument (restore/import) --------
-
-enum Positional<'a> {
-    Help,
-    Value(&'a str),
-}
-
-fn single_positional<'a>(
-    toks: &[&'a str],
-    loc: &Locale,
-    _topic: HelpTopic,
-    arg_name: &str,
-) -> Result<Positional<'a>, String> {
-    let mut value: Option<&'a str> = None;
-    for &a in toks {
-        if a == "-h" || a == "--help" {
-            return Ok(Positional::Help);
-        } else if a.starts_with('-') {
-            return Err(unknown_option(loc, a));
-        } else if value.is_none() {
-            value = Some(a);
-        } else {
-            return Err(unexpected_arg(loc, a));
-        }
-    }
-    match value {
-        Some(v) => Ok(Positional::Value(v)),
-        None => Err(missing_arg(loc, arg_name)),
-    }
-}
-
 // -------- An option with a value: `--opt value` and `--opt=value` (both forms + the short one) --------
 
 /// If `toks[*i]` matches one of `aliases`, extracts the value (the next
@@ -1062,11 +1058,18 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
             ch = loc.t("cli.help.opt.help"),
         ),
         Some(HelpTopic::Import) => format!(
-            "{d}\n\n{usage} mindfork import <FILE>\n\n{arguments}\n\
-             {a:<12}{ca}",
+            "{d}\n\n{usage} mindfork import <FILE> [OPTIONS]\n\n{arguments}\n\
+             {a:<26}{ca}\n\n{options}\n{l:<26}{cl}\n{y:<26}{cy}\n{h:<26}{ch}\n\n{n}",
             d = loc.t("cli.help.cmd.import"),
             a = "  <FILE>",
             ca = loc.t("cli.help.arg.import.file"),
+            l = "  -l, --language <CODE>",
+            cl = loc.t("cli.help.opt.import.language"),
+            y = "  -y, --yes",
+            cy = loc.t("cli.help.opt.import.yes"),
+            h = "  -h, --help",
+            ch = loc.t("cli.help.opt.help"),
+            n = loc.t("cli.help.import.note"),
         ),
         Some(HelpTopic::Sandbox) => format!(
             "{d}\n\n{usage} mindfork sandbox <COMMAND>\n\n{commands}\n{s:<12}{cs}",
@@ -1528,10 +1531,36 @@ mod tests {
         assert_eq!(
             p(&["import", "f.json"]).unwrap(),
             CliCommand::Import {
-                file: PathBuf::from("f.json")
+                file: PathBuf::from("f.json"),
+                language: None,
+                yes: false,
             }
         );
         assert!(p(&["import"]).is_err());
+        assert!(p(&["import", "a.json", "b.json"]).is_err());
+        assert!(p(&["import", "a.json", "--force"]).is_err());
+    }
+
+    /// A card's options, in any order around the file.
+    #[test]
+    fn import_takes_a_cards_language_and_yes() {
+        assert_eq!(
+            p(&["import", "--yes", "card.png", "-l", "ru"]).unwrap(),
+            CliCommand::Import {
+                file: PathBuf::from("card.png"),
+                language: Some("ru".into()),
+                yes: true,
+            }
+        );
+        assert_eq!(
+            p(&["import", "card.charx", "--language", "en", "-y"]).unwrap(),
+            CliCommand::Import {
+                file: PathBuf::from("card.charx"),
+                language: Some("en".into()),
+                yes: true,
+            }
+        );
+        assert!(p(&["import", "card.png", "--language"]).is_err());
     }
 
     #[test]

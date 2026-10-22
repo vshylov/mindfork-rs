@@ -170,8 +170,12 @@ fn real_main(
     }
 
     match command {
-        CliCommand::Import { file } => {
-            run_import(paths, &file, loc)?;
+        CliCommand::Import {
+            file,
+            language,
+            yes,
+        } => {
+            run_import(paths, &file, language.as_deref(), yes, loc)?;
             Ok(ExitCode::SUCCESS)
         }
         CliCommand::CompanionExport {
@@ -1623,14 +1627,122 @@ fn run_companion_import(
     Ok(())
 }
 
-fn run_import(paths: &Paths, file: &Path, loc: &Locale) -> anyhow::Result<()> {
+/// `mindfork import <file>`: a mindfork-import file (docs/import-format.md), or a
+/// character card — JSON, PNG or CHARX (spec §10), told apart by what the file
+/// holds rather than by its name. Both write `profiles.json`, which a running
+/// app would write over from its own copy, so both hold the single-instance
+/// guard.
+fn run_import(
+    paths: &Paths,
+    file: &Path,
+    language: Option<&str>,
+    yes: bool,
+    loc: &Locale,
+) -> anyhow::Result<()> {
+    let _instance = acquire_cli_guard(loc, loc.t("cli.guard.action.import"))?;
+    import_unguarded(paths, file, language, yes, loc)
+}
+
+/// [`run_import`] under a guard the caller holds — or, in a test, none: the
+/// real lock is the running app's.
+fn import_unguarded(
+    paths: &Paths,
+    file: &Path,
+    language: Option<&str>,
+    yes: bool,
+    loc: &Locale,
+) -> anyhow::Result<()> {
+    let ctx = || loc.tf("cli.ctx.import", &[("file", &file.display().to_string())]);
+    let bytes = read_import_file(file, loc).with_context(ctx)?;
+    match features::character_card::sniff(&bytes, loc).with_context(ctx)? {
+        features::character_card::Sniffed::Card(card) => {
+            run_card_import(paths, &card, language, yes, loc)
+        }
+        features::character_card::Sniffed::NotCard => {
+            let result = features::import::parse_import(&String::from_utf8_lossy(&bytes), loc)
+                .with_context(ctx)?;
+            run_neutral_import(paths, result, loc)
+        }
+    }
+}
+
+/// The file `import` reads, refused past [`features::character_card::MAX_FILE_BYTES`].
+fn read_import_file(file: &Path, loc: &Locale) -> anyhow::Result<Vec<u8>> {
+    use std::io::Read;
+    let read = || loc.tf("import.ctx.read", &[("path", &file.display().to_string())]);
+    let f = std::fs::File::open(file).with_context(read)?;
+    let limit = features::character_card::MAX_FILE_BYTES;
+    let mut bytes = Vec::new();
+    f.take(limit + 1)
+        .read_to_end(&mut bytes)
+        .with_context(read)?;
+    if bytes.len() as u64 > limit {
+        bail!(
+            "{}",
+            loc.tf(
+                "import.card.too_large",
+                &[("mb", &(limit / (1024 * 1024)).to_string())]
+            )
+        );
+    }
+    Ok(bytes)
+}
+
+/// A character card into a new profile (spec §10): shown first — the card is
+/// untrusted text that becomes the persona — and created on a yes, or on
+/// `--yes` where there is no terminal to ask on.
+fn run_card_import(
+    paths: &Paths,
+    card: &features::character_card::Card,
+    language: Option<&str>,
+    yes: bool,
+    loc: &Locale,
+) -> anyhow::Result<()> {
+    use features::character_card::profile;
+    let lang = language.map_or_else(|| profile::detect_lang(card), Lang::from_code);
+    let import = profile::to_profile(card, lang);
+    println!("{}", profile::preview(card, &import, loc));
+    if !yes {
+        if !std::io::stdin().is_terminal() {
+            bail!("{}", loc.t("cli.card.needs_yes"));
+        }
+        print!("{} ", loc.t("cli.card.confirm"));
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+        let mut answer = String::new();
+        std::io::stdin().read_line(&mut answer)?;
+        let answer = answer.trim().to_lowercase();
+        let accepted = loc
+            .t("cli.card.yes_words")
+            .split(',')
+            .any(|w| w.trim() == answer);
+        if !accepted {
+            println!("{}", loc.t("cli.card.declined"));
+            return Ok(());
+        }
+    }
+    features::data_migration::run(paths, loc)?;
+    let storage =
+        Storage::open(paths.clone()).with_context(|| loc.t("cli.ctx.open_storage").to_string())?;
+    storage.json().upsert_profile(&import.profile)?;
+    println!(
+        "{}",
+        loc.tf("cli.card.created", &[("name", &import.profile.name)])
+    );
+    Ok(())
+}
+
+/// A parsed mindfork-import file into the data (docs/import-format.md).
+fn run_neutral_import(
+    paths: &Paths,
+    result: features::import::ImportResult,
+    loc: &Locale,
+) -> anyhow::Result<()> {
     // Existing data may need migrating (or be from a newer version) — we
     // migrate before opening storage, as on a regular startup (release-engineering.md §3.4).
     features::data_migration::run(paths, loc)?;
     let storage =
         Storage::open(paths.clone()).with_context(|| loc.t("cli.ctx.open_storage").to_string())?;
-    let result = features::import::import_file(file, loc)
-        .with_context(|| loc.tf("cli.ctx.import", &[("file", &file.display().to_string())]))?;
 
     for profile in &result.profiles {
         storage.json().upsert_profile(profile)?;
@@ -2135,12 +2247,9 @@ mod tests {
     #[test]
     fn import_refuses_settings_it_cannot_read_and_writes_nothing() {
         let (tmp, paths, original) = root_with_a_typo();
-        let err = run_import(
-            &paths,
-            &tmp.path().join("never-read.json"),
-            i18n::locale(Lang::En),
-        )
-        .unwrap_err();
+        let file = tmp.path().join("import-file.json");
+        std::fs::write(&file, r#"{"format":"mindfork-import","version":1}"#).unwrap();
+        let err = import_unguarded(&paths, &file, None, false, i18n::locale(Lang::En)).unwrap_err();
         assert!(err.to_string().contains("unknown variant `drak`"), "{err}");
         assert_settings_untouched(&paths, &original);
         assert!(!paths.profiles_file().exists());
@@ -2295,6 +2404,8 @@ mod tests {
             CliCommand::LlamaInstalled,
             CliCommand::Import {
                 file: PathBuf::from("chats.json"),
+                language: None,
+                yes: false,
             },
         ] {
             assert!(!refuses_tui_launch(&command, false), "{command:?}");

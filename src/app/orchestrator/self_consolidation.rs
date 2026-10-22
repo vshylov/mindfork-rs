@@ -100,7 +100,7 @@ impl Orchestrator {
                 .filter(|id| profile.enabled_tools.iter().any(|t| t == **id))
                 .map(ToString::to_string)
                 .collect();
-            system_message = chat.system_message.clone();
+            system_message = super::persona_text(profile, chat);
             last_user = last_user_message_at(chat);
         }
 

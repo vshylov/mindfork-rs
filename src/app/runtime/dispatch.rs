@@ -827,6 +827,7 @@ pub(super) fn dispatch(
         },
         ChatIntent::DeleteProfile(id) => AppCommand::DeleteProfile(id),
         ChatIntent::ForkProfile { name } => AppCommand::ForkProfile { name },
+        ChatIntent::Greeting { pick } => AppCommand::SwapGreeting { pick },
         // Stage 3: the text subcommands (`/profile system|greeting`,
         // `/impersonation …`) commit through the same two commands the settings
         // screen's editors use (docs/history/commands-stage3.md §3.2–3.3).

@@ -42,6 +42,7 @@ fn request_of(chat: &Chat, compaction: &CompactionSettings, history_tools: bool)
             offered_tools: &[],
             time_rows: None,
             earlier_chats: None,
+            names: None,
             loc: ru(),
         },
     )
@@ -76,6 +77,7 @@ fn the_chat_files_block_names_handles_and_staged_names() {
             offered_tools: &[],
             time_rows: None,
             earlier_chats: None,
+            names: None,
             loc: ru(),
         },
     );
@@ -107,6 +109,7 @@ fn the_chat_files_block_names_handles_and_staged_names() {
             offered_tools: &[],
             time_rows: None,
             earlier_chats: None,
+            names: None,
             loc: ru(),
         },
     )
@@ -655,6 +658,7 @@ fn request_with_rows(chat: &Chat, compaction: &CompactionSettings) -> ChatReques
             offered_tools: &[],
             time_rows: Some(&utc_clock),
             earlier_chats: None,
+            names: None,
             loc: crate::shared::i18n::locale(crate::shared::i18n::Lang::En),
         },
     )

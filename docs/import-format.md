@@ -9,6 +9,11 @@ the app imports it with:
 mindfork import <file.json>
 ```
 
+The same command reads a **character card** — the community's persona format,
+JSON, PNG or CHARX — as a new profile; the file is told apart by what it holds,
+not by its name. A card has a reader of its own rather than a converter, since
+its format is public and everywhere (spec §10).
+
 **The app also emits this format**: `/export json` writes one chat (plus the
 profile it belongs to) as a v1 document with explicit `id`s, so importing it
 back lands on the same entities rather than copies. What an export cannot carry

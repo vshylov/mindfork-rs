@@ -11,8 +11,6 @@
 //! mirror of the `#[serde(default)]` policy of our own schemas).
 
 use std::collections::{HashMap, HashSet};
-use std::fs;
-use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
@@ -234,13 +232,6 @@ pub fn parse_import(json: &str, loc: &Locale) -> Result<ImportResult> {
     })
 }
 
-/// Reads and parses a mindfork-import format file from disk.
-pub fn import_file(path: &Path, loc: &Locale) -> Result<ImportResult> {
-    let bytes = fs::read(path)
-        .with_context(|| loc.tf("import.ctx.read", &[("path", &path.display().to_string())]))?;
-    parse_import(&String::from_utf8_lossy(&bytes), loc)
-}
-
 // ---------- mapping into domain entities ----------
 
 /// A format profile → a mindfork profile. id is derived from `key` (or explicit).
@@ -261,6 +252,7 @@ fn map_profile(p: &ImProfile) -> Profile {
         impersonation_system_message: String::new(),
         character_names: map_characters(p.character_names.as_ref()),
         greeting: p.greeting.clone().filter(|g| !g.is_empty()),
+        alternate_greetings: Vec::new(),
         // Imported profiles get the standard tool set;
         // the "known" registry = the same set (new ones will be added by reconcile_tools,
         // without re-enabling disabled ones). See spec §9.4.
@@ -583,18 +575,10 @@ mod tests {
         assert!(err.contains("c-9") && err.contains("tool"), "{err}");
     }
 
+    /// A leading BOM - what a Windows editor saves - is dropped.
     #[test]
-    fn import_file_tolerates_bom_and_reports_missing() {
-        let dir = tempfile::tempdir().unwrap();
-        // A name without the bundle keys' prefix: the i18n gate scans dotted literals.
-        let path = dir.path().join("import-file.json");
-        let mut bytes = vec![0xEF, 0xBB, 0xBF];
-        bytes.extend_from_slice(FULL.as_bytes());
-        fs::write(&path, &bytes).unwrap();
-        let r = import_file(&path, ru()).unwrap();
+    fn parse_tolerates_a_bom() {
+        let r = parse_import(&format!("\u{feff}{FULL}"), ru()).unwrap();
         assert_eq!(r.profiles.len(), 1);
-
-        let missing = import_file(&dir.path().join("nope.json"), ru());
-        assert!(missing.is_err());
     }
 }

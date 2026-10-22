@@ -175,6 +175,12 @@ pub struct Profile {
     /// The assistant's greeting message (the first message in a new chat).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub greeting: Option<String>,
+    /// Other openings a new chat can begin with instead of [`Self::greeting`]
+    /// — a character card's `alternate_greetings` (spec §10). `/greeting` in a
+    /// chat that holds nothing but its greeting moves to the next. Written only
+    /// when there are some, so a profile without them is written as before.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub alternate_greetings: Vec<String>,
     #[serde(default)]
     pub enabled_tools: Vec<ToolId>,
     /// Tools already "offered" to the profile (the known-tools registry). Needed so
@@ -226,6 +232,7 @@ impl Profile {
             impersonation_system_message: String::new(),
             character_names: CharacterNames::default(),
             greeting: None,
+            alternate_greetings: Vec::new(),
             enabled_tools: Vec::new(),
             known_tools: Vec::new(),
             default_sampling: None,

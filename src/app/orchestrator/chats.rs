@@ -104,6 +104,93 @@ impl Orchestrator {
         self.activate(id);
     }
 
+    /// `/greeting [N]` (spec §10): the active chat's opening swapped for its
+    /// profile's next greeting, or its `n`th — 1 the main one, then the
+    /// alternates in the card's order. Only while the chat holds nothing but a
+    /// greeting, or nothing at all: once the conversation has begun, its
+    /// opening is part of it.
+    pub(super) fn handle_swap_greeting(&mut self, pick: Option<usize>) {
+        let loc = self.ui_locale();
+        let notice = |key: &str| AppEvent::Notice(loc.t(key).to_string());
+        let Some(active) = self.active_id else {
+            return;
+        };
+        let Some(chat) = self.chats.iter().find(|c| c.id == active) else {
+            return;
+        };
+        let Some(profile) = self.profiles.iter().find(|p| p.id == chat.profile_id) else {
+            return;
+        };
+        let greetings: Vec<&str> = profile
+            .greeting
+            .iter()
+            .chain(&profile.alternate_greetings)
+            .map(String::as_str)
+            .filter(|g| !g.trim().is_empty())
+            .collect();
+        let only_a_greeting = match chat.messages.as_slice() {
+            [] => true,
+            [one] => one.role == crate::entities::message::MessageRole::Assistant,
+            _ => false,
+        };
+        let event = if greetings.is_empty() {
+            Err(notice("ui.greeting.none"))
+        } else if !only_a_greeting {
+            Err(notice("ui.greeting.started"))
+        } else {
+            let n = greetings.len();
+            match pick {
+                Some(k) if k > n => Err(AppEvent::Notice(loc.tf(
+                    "ui.greeting.out_of_range",
+                    &[("n", &k.to_string()), ("count", &n.to_string())],
+                ))),
+                Some(k) => Ok(k - 1),
+                None if n == 1 => Err(notice("ui.greeting.only_one")),
+                None => {
+                    // Where the chat stands: what `/greeting` placed this
+                    // session, else the greeting its text is, else the first.
+                    let (char, user) = super::names_of_profile(profile);
+                    let names = crate::features::persona_macros::Names {
+                        char: &char,
+                        user: &user,
+                    };
+                    let current = self.greeting_shown.get(&active).copied().or_else(|| {
+                        let shown = chat.messages.first()?;
+                        greetings.iter().position(|g| {
+                            crate::features::persona_macros::names(g, names) == shown.text
+                        })
+                    });
+                    Ok(current.map_or(1, |i| (i + 1) % n))
+                }
+            }
+        };
+        let target = match event {
+            Ok(target) => target,
+            Err(event) => {
+                let _ = self.evt_tx.send(event);
+                return;
+            }
+        };
+        let count = greetings.len();
+        let text = super::greeting_text(profile, greetings[target]);
+        let Some(chat) = self.chat_mut(active) else {
+            return;
+        };
+        chat.messages.clear();
+        chat.push_message(crate::entities::message::Message::assistant(text));
+        chat.modified_at = Utc::now();
+        self.greeting_shown.insert(active, target);
+        self.mark_dirty(active);
+        self.activate(active);
+        let _ = self.evt_tx.send(AppEvent::Notice(loc.tf(
+            "ui.greeting.swapped",
+            &[
+                ("n", &(target + 1).to_string()),
+                ("count", &count.to_string()),
+            ],
+        )));
+    }
+
     pub(super) fn handle_switch(&mut self, id: Uuid) {
         self.switch_to(id, None);
     }

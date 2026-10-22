@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (25)
+## Entries (26)
 
 - Post-M9: persisting the input-box draft in the chat file (done)
 - Post-M9: persisting deleted exchanges in the chat file (`Ctrl+E`/`Ctrl+R`) (done)
@@ -37,6 +37,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the self-model cap left at 0.9.4's default — `SETTINGS_SCHEMA` 5→6 (done)
 - Post-M9: forking a companion — the profile's memory under new ids (done)
 - Post-M9: carrying one companion — `mindfork companion export|import` (done)
+- Post-M9: character cards — `mindfork import` reads the community's personas (done)
 
 ### Post-M9: persisting the input-box draft in the chat file (done)
 - **Unsaved input-box text is stored on the chat and restored on
@@ -1497,3 +1498,54 @@ without the rest of the data directory, which `restore` replaces whole.
 **Gates**: 4253 unit tests green, 292 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check`
 clean.
+
+### Post-M9: character cards — `mindfork import` reads the community's personas (done)
+
+Stage 5 of the companion platform, C6 ([companion-platform.md](../research/companion-platform.md)
+C6, §3.7, §9 item 5; the owner's F7 (a), a built-in reader with keyed lorebooks
+deferred).
+
+- **One command, two formats, told by the bytes** (`features/character_card/`): a PNG's
+  text chunks walked for `ccv3`, then `chara` — `tEXt`, `zTXt` and `iTXt`, the
+  framing only, no image decoded, a length past the end refused; a CHARX's `card.json`,
+  its assets never opened; JSON of any edition, V1's Pygmalion spellings and `<BOT>`/`<USER>`
+  included. What is not a card falls through to the mindfork-import reader; a
+  companion archive or a backup is refused with its own command named. A V3 `ccv3` that
+  does not parse falls back to the V2 copy; `constant` counts beside `use_regex`,
+  because SillyTavern exports every entry with it set.
+- **Shown before it is saved.** The CLI prints the source, the profile it becomes, the
+  greetings, the lore kept and the lore left out, the example count, where the card's
+  post-history instructions went, the creator's notes, and the whole system message —
+  then asks; `--yes` where stdin is no terminal, `--language` over the guess from the
+  card's script. Always a new profile.
+- **A defect fixed in passing**: the neutral `mindfork import` wrote `profiles.json`
+  without the single-instance lock, and a running app then saved its own copy over the
+  import. Both kinds take the lock now; the import's body is `import_unguarded`, so its
+  test does not take the real app's lock.
+- **The macros** (`features/persona_macros.rs`) are substituted when a request is built,
+  in the persona only — a turn's, and the three background tasks' that read it (a
+  review before the commit found them reading the raw text) — the names as the profile has them now, the random ones from a
+  SplitMix64 seeded by the chat's id, so a turn's prefix is the last turn's. A first
+  version drew the random ones when a chat was created and kept the draw in the chat;
+  the request test caught that a chat made any other way still carried the raw macro,
+  and a seed needs nothing stored. A greeting's macros are substituted once, when it is
+  placed. A persona without `{{` comes back borrowed — the request byte for byte as
+  before.
+- **`/greeting [N]`** swaps the opening of a chat that holds nothing else for the
+  profile's next greeting or its `N`th; which one is shown is remembered for the session,
+  and after a restart recognised by its text.
+- **The probe** (research §3.7) chose how the examples are given. Under a header saying
+  they never happened, gpt-oss-120b still recalled the example's cat and wedding as
+  things the person had told it in 9 answers of 10; with the person's lines given to a
+  nameless visitor, 1 — so the visitor shipped. A closing reminder made Haiku step out
+  of the scene to talk about its prompt.
+- **Live, GO** (`character_card_live`): a PNG card read by the import's own code into a profile; its chat opened with the greeting, `/greeting` moved to the alternate, and asked *"what do you remember about me from our earlier talks?"* no reply named the examples' cat or wedding — **Gemma 4 31B q4_0 3/3** (*"That you're persistent"*), **Qwen 3.8 27B Q4_K_M 2/2** (*"Nothing, Alex. I keep the lamp's log, not our conversations"*, and *"you've climbed the 112 steps"* from the always-on lore). The first run's in-character check asked for the name or the word *lighthouse* and failed on *"I keep the light"* — widened to the light, the keeper or the lamp, and a stock assistant's words refused. llama.cpp b11719 on the 4090. The CLI was run on real files beside a copy of the binary: a valid PNG carrying V2 and V3 (the V3 read), a CHARX, a V1 JSON with `--language ru` (the visitor in its Russian word), a plain picture refused by name, and without `--yes` on a piped stdin nothing written.
+- **Tests**: the PNG chunk walk (both keywords, compressed and international chunks, a
+  picture without a card, a cut file, a lying length); every edition, nulls and stray
+  types, the lorebook's flags and decorators; CHARX and the zips that are something
+  else; the system message's order, our line as `{{original}}`, the visitor, the
+  Russian labels; the macros, the per-chat draw, a borrowed text; the request carrying
+  the names a rename changed, with the same draw; `/greeting` walking, wrapping,
+  picking, refusing; the CLI's options.
+
+**Gates**: 4286 unit tests green, 294 `#[ignore]`; clippy `-D warnings`, fmt, `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check` clean.

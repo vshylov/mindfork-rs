@@ -2073,6 +2073,20 @@ private repository). Profiles, chats, and (optionally) global sampling/interface
 settings are imported; unknown fields are ignored, a file from a newer format
 version is rejected. The command doesn't launch the TUI and exits the process;
 re-running it doesn't create duplicates (deterministic ids from stable keys).
+Close the app first: the import writes the profiles, and refuses while the app
+is running.
+
+A **character card** imports the same way, as a new profile — a `.json`, a
+`.png` with the card inside, or a `.charx`:
+
+```bash
+mindfork import mara.png
+```
+
+It prints the system message the profile will get and asks before creating it;
+`--yes` creates it without asking (and is needed where there is no terminal to
+ask on), `--language ru|en` sets its scaffold language when the guess from the
+card's text is wrong. See docs/manual.md §3 and spec §10.
 
 > The former `import-lamellama <dir>` command has been removed — its role is now
 > played by the "external converter → `mindfork import`" combo.

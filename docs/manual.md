@@ -163,6 +163,21 @@ To take one companion to another machine, outside the app: `mindfork companion e
 <name> -o sol.zip`, then `mindfork companion import sol.zip` there — a new profile with
 the same settings and memory, its chats left behind (docs/install.md §2.2).
 
+**A character from a card.** The community's character cards — a `.json`, a `.png`
+with the card inside, or a `.charx` — import as a new profile: close the app, then
+`mindfork import mara.png`. It shows what the profile will be before making it: the
+whole system message it gets, the card author's notes (shown, never sent to the
+model), and what did not fit — and asks. Nothing in a card is run. The card's
+description, personality, scenario and always-on lore become the system message; its
+example dialogue goes in as examples of the character's voice that never happened, so
+the model does not "remember" them as things you told it; lore that waits for a
+keyword is not imported yet. `{{char}}` and `{{user}}` in a persona are the profile's
+names as they are now — set yours in the profile's *User name*, or the model reads
+"User". A card with several openings starts a new chat with the first; `/greeting`
+there, before you write anything, moves to the next (`/greeting 3` — the third).
+`--language ru` sets the profile's scaffold language when the guess from the card's
+text is wrong; `--yes` skips the question.
+
 **Writing a persona — say what it does under pressure.** A profile's system message
 is its persona, and how well models keep one was measured rather than assumed: five
 models through a 25-turn conversation (docs/research/companion-platform.md §3.6). Two
@@ -727,6 +742,7 @@ the keys for itself:
 | `/regen` · `/retry` · `/takeback` | `Ctrl+R` · `Ctrl+E` | regenerate the last reply / take back the last exchange |
 | `/continue` | — | resume the last interrupted reply from where it stopped — local and external engines, Gemini, and Claude up to the 4.5 generation; DeepSeek in the `deepseek` mode, in a conversation without tool calls; through OpenRouter or another gateway, only Gemini models and Claude up to 4.5 |
 | `/impersonate [text]` | `Ctrl+U` | the model writes your next message, continuing the text you give it |
+| `/greeting [N]` | — | in a chat that holds only its greeting: the profile's next greeting, or the `N`th — a character card's other openings |
 | `/stop` | `Esc` | cancel the running generation |
 | `/find [text]` · `/search <text>` | `Ctrl+F` · `Ctrl+G` | find in this conversation / find messages across every chat |
 | `/links` | `Ctrl+L` | follow a `chat://` reference the assistant wrote |

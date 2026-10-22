@@ -548,6 +548,66 @@ that is the second half of C10, and a fork of its own — F11, decided (a) by th
 the same day: no insert, and the manual tells a persona's author to say what it does
 under pressure.
 
+### 3.7 Stage 5's probe: a card's example dialogue (2026-10-23)
+
+C6 places a character card's example dialogue in the system message rather than in the
+conversation — sent as turns, examples become shared memories that never happened (C6
+above). Whether a labelled block keeps them apart was measured before it shipped.
+
+**Setup.** A card of our own — Mara, who keeps the Grey Rock lighthouse — whose two
+example exchanges hold what the person never said: a grey cat called Pepper, and a
+sister's wedding in Porto that went badly. A new chat: the persona as the system message,
+Mara's greeting, and one question — the leading *"Remember my cat? How do you think she's
+settling in?"* (a leak: naming Pepper or the grey cat) or the open *"What do you remember
+about me from our earlier talks?"* (a leak: the cat, Pepper, Porto, the wedding, the
+sister). The same examples given six ways: **A** the import's first form — `<example>`
+blocks under *"… These exchanges never happened: Alex has not said any of this, and none
+of it is something the two of you share"*; **B** SillyTavern's plain *"Example
+dialogue:"* with the raw `<START>` blocks; **C** the examples as real turns — the
+control; **D** A with the person's lines given to a nameless *Visitor*; **E** A with a
+closing line (*"The examples end here. They were made up to show how Mara writes: nothing
+in them happened, and none of it is about Alex"*); **F** D and E together. Five runs a
+cell at temperature 0.7: Gemma 4 31B q4_0 and Qwen 3.8 27B Q4_K_M on the gate's weights
+(llama.cpp b11719), gpt-oss-120b, Claude Haiku 5.5 and DeepSeek v4.1 flash through
+OpenRouter. Every reply counted as a leak was read.
+
+| Model (leaks of 5: leading · open) | A, labelled | B, plain | C, turns | **D, visitor** | E, closing line | F, D + E |
+|---|---|---|---|---|---|---|
+| Gemma 4 31B | 0 · 0 | 1 · 3 | 0 · 5 | **0 · 0** | — | — |
+| Qwen 3.8 27B | 0 · 0¹ | 3 · 5 | 0 · 5 | **1 · 0** | — | — |
+| gpt-oss-120b | **5 · 4** | 5 · 5 | 2 · 5 | **0 · 1** | 3 · 3 | 0 · 0 |
+| Haiku 5.5 | 2 · 0 | 5 · 0 | 3 · 5 | **0 · 1** | 0 · 0 | 3 · 2 |
+| DeepSeek v4.1 flash | 2 · 1 | 0 · 3 | 0 · 5 | **0 · 0** | 0 · 0 | 0 · 0 |
+
+¹ One of the five open answers was empty — Qwen's thinking used the whole 4 000-token
+budget.
+
+- **Turns are memories.** Asked openly, every model recalled the examples sent as turns
+  as a past they shared with the person, in every run — the control confirms the
+  warning the design started from.
+- **A label is not enough for every model.** Under A's header, gpt-oss-120b told Alex
+  what Alex had told it — *"You told me once about a grey cat you'd taken in — Pepper, I
+  think. And about a wedding in Porto that turned into a bit of a squall"* — in 9 answers
+  of 10. The plain block (B) leaked on the open question for Qwen (5/5), Gemma (3/5)
+  and DeepSeek (3/5).
+- **Who says it matters more than what the header says.** D is A's block with the
+  person's lines given to a nameless visitor: the examples now describe someone else.
+  gpt-oss fell to 0/5 on the leading question and 1/5 on the open one — and that one, *"a
+  sister who paints in the town"*, is a sister of its own making — and every other
+  model to 0–1: the one left on the gate's models is Qwen's *"I remember the grey cat"*
+  to the question that presumes it.
+- **A closing reminder backfires on a careful model.** E helped gpt-oss less than D
+  (3 · 3), and with D and E together Haiku stepped out of the scene to disclaim its prompt
+  — *"I'm working from the example above, not from anything you've told me"* — in five
+  replies of ten: counted as leaks, and a broken character either way.
+- **A leading question pulls hardest.** *"Remember my cat?"* presumes the memory, and
+  under A Haiku and DeepSeek named Pepper in 2 runs of 5 each, Haiku hedging (*"Pepper,
+  you said? I don't have her in my memory"*); under D, neither did.
+
+**Decision (the agent's, inside F7 (a)): D ships** — the visitor in the examples, A's
+header kept, no closing line (spec §10). The live smoke (`character_card_live`) asks the
+open question through the app's own path on every run.
+
 ## 4. What the field does
 
 A survey of the commercial companions (Kindroid, Nomi, Character.AI, Replika, the
@@ -1342,7 +1402,30 @@ by default:
    built against drift; the manual's advice on writing a persona's stance under
    pressure, with the measured sentence as its example.
 5. **Characters and voice** — C6 cards; C7 (a) a per-profile voice and replies
-   spoken as they land.
+   spoken as they land. **C6 built**, the stage's first pull request. **Decisions (the
+   agent's, inside the owner's F7 (a)):** one command, `mindfork import`, for both
+   formats, the file told apart by its bytes — a PNG's text chunk (`ccv3` over `chara`,
+   the V2 copy when the V3 one does not parse), a CHARX's `card.json`, JSON of any
+   edition; a card shown before it is saved — the system message whole, the creator's
+   notes, what had no exact home — and asked about, `--yes` where there is no terminal;
+   always a new profile, under the single-instance lock, which the neutral import now
+   takes too (both write `profiles.json`, and a running app wrote its copy over an
+   import — a defect fixed in passing); one system message in SillyTavern's order, our
+   own opening line where the card has no `system_prompt` and as its `{{original}}`;
+   the example dialogue in a labelled block whose other side is a nameless visitor —
+   what the probe chose (§3.7); the always-on lore kept, the keyed lore counted and
+   deferred (F7 (a)); `post_history_instructions` at the system message's end, labelled,
+   since nothing is placed after the conversation (F11 (a)); the alternate greetings
+   kept on the profile, and **`/greeting [N]`** in a chat that holds only its greeting
+   rather than a random pick, so the person chooses the opening; the macros substituted
+   when a request is built — the names the profile has now, the random ones drawn from
+   the chat's id so the prefix holds — and in a greeting once, when it is placed; for
+   every persona, since one without `{{` is sent byte for byte as before. Not built: the
+   reverse, a profile exported as a card, and a lossless copy of the card kept beside the
+   profile — neither has a reader yet. **Live, GO** (docs/journal/storage.md): a PNG card
+   read by the import's own code into a profile; its chat opened with the greeting,
+   `/greeting` moved to the alternate, and asked what it remembered of earlier talks the
+   companion recalled nothing of the examples — Gemma 4 31B q4_0 3/3, Qwen 3.8 27B Q4_K_M 2/2 (llama.cpp b11719), every reply in character (*"The woman who keeps the light"*), and Qwen using the always-on lore (*"you've climbed the 112 steps more than once"*).
 6. **Reach** — the bridge track: an ADR first (turns addressed to a chat not on
    screen, the tool set of a bridged turn, the messenger's privacy), then Telegram,
    then speech input through its voice messages (C7 (b)).
