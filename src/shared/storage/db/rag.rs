@@ -313,10 +313,8 @@ impl Db {
     }
 
     /// Profiles whose RAG documents predate the current embedding model.
-    // The whole-list read: the hot path uses `rag_is_stale`, and the set is
-    // written wholesale by the guard — this is for a UI consumer ("these
-    // knowledge bases need rebuilding") that does not exist yet.
-    #[allow(dead_code)]
+    // The whole-list read: the hot path uses `rag_is_stale`; a companion's
+    // import adds its profile to the list it reads here.
     pub fn rag_stale_profiles(&self) -> Result<Vec<Uuid>> {
         let conn = self.conn.lock().unwrap();
         read_stale_profiles(&conn)

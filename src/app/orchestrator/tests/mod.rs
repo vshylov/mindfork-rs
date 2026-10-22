@@ -697,6 +697,7 @@ mod background_dialogue;
 mod cached_tokens_live;
 mod chats;
 mod compaction;
+mod companion_carry_live;
 mod companion_memory;
 mod companion_memory_live;
 mod concurrent;

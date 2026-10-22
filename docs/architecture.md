@@ -2545,7 +2545,14 @@ Storage invariants:
   `profile_id` inside each JSON rewritten; `llm_history`; and the stale mark.
   Nothing chat-bound (follow-ups, attachment indexes). The orchestrator writes
   the profile (`features::profiles::fork`, with `forked_from`) before the copy
-  and removes it from `profiles.json` if the copy fails.
+  and removes it from `profiles.json` if the copy fails. **Carrying one**
+  (`mindfork companion export|import`, spec §12.5) is the same copy across
+  files: `Db::profile_copy_from` attaches the other database read-only
+  (`ATTACH … ?mode=ro` as `carry_src`) and copies into `main` with no vectors
+  and no generation, so the notes heal on the next semantic path and the
+  chunks join the `/reindex` queue; `features/companion_carry.rs` packs the
+  profile and a `memory.db` built that way into a zip beside an unencrypted
+  manifest, and unpacks them as a new profile.
 - **A single writer** — the orchestrator. Chats are saved debounced (800ms,
   `save_deadline` + a `dirty` set); the write is atomic (write-rename), with a
   `.bak` backup.

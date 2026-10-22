@@ -159,6 +159,10 @@ fork to another model and watch how its self-model drifts from the original's (`
 on `F3` marks where the fork began). Without a name it is called after the original,
 "— fork".
 
+To take one companion to another machine, outside the app: `mindfork companion export
+<name> -o sol.zip`, then `mindfork companion import sol.zip` there — a new profile with
+the same settings and memory, its chats left behind (docs/install.md §2.2).
+
 The **Companion** group in a profile's settings holds what turns an assistant
 into a companion, one switch per feature and every one off until you turn it
 on. *Time of messages* puts the date and time in front of each of your

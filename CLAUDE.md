@@ -185,8 +185,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-10-22, version 0.21.0)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **4243 unit tests
-green, 291 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **4253 unit tests
+green, 292 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump and demo-reel regenerators).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -202,7 +202,8 @@ being recent is dropped, not shortened.
   a profile switch, off by default; dated rows; the notes and earlier conversations
   in the prompt, `/notes`; follow-ups it plans, quiet hours and a cap on, silence
   without a trace; notifications when nobody looks; every self-model version kept
-  with its author (`H` on `F3`); `/profile fork`. Live **GO**, Gemma 4 and Qwen 3.8
+  with its author (`H` on `F3`); `/profile fork`, `mindfork companion export|import`.
+  Live **GO**, Gemma 4 and Qwen 3.8
   ([docs/research/companion-platform.md](docs/research/companion-platform.md),
   [docs/journal/tools.md](docs/journal/tools.md)).
 - **The token counter on the feed's bottom border** (2026-10-19): out of the

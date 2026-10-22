@@ -60,6 +60,21 @@ pub enum CliCommand {
         /// models — as JSON, with the text.
         self_model: bool,
     },
+    /// Write one companion — its profile and its whole memory — into an
+    /// archive (`companion export <profile> [-o FILE] [-p PASSWORD]`, spec §12.5).
+    CompanionExport {
+        profile: String,
+        output: Option<PathBuf>,
+        /// Encrypt the memory; `None` — fall back to the stored backup password.
+        password: Option<String>,
+    },
+    /// Add a companion from such an archive, as a new profile
+    /// (`companion import <archive> [-p PASSWORD]`).
+    CompanionImport {
+        archive: PathBuf,
+        /// Settled like [`Self::Restore`]'s.
+        password: Option<String>,
+    },
     /// Import from a mindfork-import format file (`import <file>`).
     /// Format spec — docs/import-format.md.
     Import { file: PathBuf },
@@ -166,6 +181,9 @@ pub enum HelpTopic {
     Backup,
     Restore,
     Stats,
+    Companion,
+    CompanionExport,
+    CompanionImport,
     Import,
     Sandbox,
     SandboxSetup,
@@ -197,6 +215,7 @@ pub fn parse(args: &[String], loc: &Locale) -> Result<CliCommand, String> {
         "backup" => parse_backup(rest, loc),
         "restore" => parse_restore(rest, loc),
         "stats" => parse_stats(rest, loc),
+        "companion" => parse_companion(rest, loc),
         "import" => parse_import(rest, loc),
         // The command was removed (stage 1 of the "plugins" track): LameLLaMA
         // import is now done by an external converter that emits a
@@ -342,6 +361,76 @@ fn parse_stats(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
         password: args.password,
         json: args.flags.contains(&JSON),
         self_model,
+    })
+}
+
+fn parse_companion(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
+    let Some((&sub, rest)) = toks.split_first() else {
+        return Err(missing_subcommand(loc, "companion"));
+    };
+    match sub {
+        "-h" | "--help" => Ok(CliCommand::Help {
+            topic: Some(HelpTopic::Companion),
+        }),
+        "export" => parse_companion_export(rest, loc),
+        "import" => parse_companion_import(rest, loc),
+        other if other.starts_with('-') => Err(unknown_option(loc, other)),
+        other => Err(unknown_subcommand(loc, other, "companion")),
+    }
+}
+
+fn parse_companion_export(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
+    let (mut profile, mut output, mut password) = (None, None, None);
+    let mut i = 0;
+    while i < toks.len() {
+        let a = toks[i];
+        if a == "-h" || a == "--help" {
+            return Ok(CliCommand::Help {
+                topic: Some(HelpTopic::CompanionExport),
+            });
+        } else if let Some(v) = opt_value(toks, &mut i, loc, &["-o", "--output"])? {
+            output = Some(PathBuf::from(v));
+        } else if let Some(v) = opt_value(toks, &mut i, loc, &["-p", "--password"])? {
+            password = Some(v.to_string());
+        } else if a.starts_with('-') {
+            return Err(unknown_option(loc, a));
+        } else if profile.is_none() {
+            profile = Some(a.to_string());
+            i += 1;
+        } else {
+            return Err(unexpected_arg(loc, a));
+        }
+    }
+    Ok(CliCommand::CompanionExport {
+        profile: profile.ok_or_else(|| missing_arg(loc, "<profile>"))?,
+        output,
+        password,
+    })
+}
+
+fn parse_companion_import(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
+    let (mut archive, mut password) = (None, None);
+    let mut i = 0;
+    while i < toks.len() {
+        let a = toks[i];
+        if a == "-h" || a == "--help" {
+            return Ok(CliCommand::Help {
+                topic: Some(HelpTopic::CompanionImport),
+            });
+        } else if let Some(v) = opt_value(toks, &mut i, loc, &["-p", "--password"])? {
+            password = Some(v.to_string());
+        } else if a.starts_with('-') {
+            return Err(unknown_option(loc, a));
+        } else if archive.is_none() {
+            archive = Some(PathBuf::from(a));
+            i += 1;
+        } else {
+            return Err(unexpected_arg(loc, a));
+        }
+    }
+    Ok(CliCommand::CompanionImport {
+        archive: archive.ok_or_else(|| missing_arg(loc, "<archive>"))?,
+        password,
     })
 }
 
@@ -866,7 +955,7 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
     match topic {
         None => format!(
             "{about}\n\n{usage} mindfork [COMMAND]\n\n{commands}\n\
-             {dm:<20}{cd}\n{su:<20}{csu}\n{b:<20}{cb}\n{r:<20}{cr}\n{st:<20}{cst}\n{im:<20}{ci}\n{sb:<20}{cs}\n{ll:<20}{cll}\n{lc:<20}{cl}\n{th:<20}{cth}\n{ky:<20}{cky}\n\n\
+             {dm:<20}{cd}\n{su:<20}{csu}\n{b:<20}{cb}\n{r:<20}{cr}\n{st:<20}{cst}\n{co:<20}{cco}\n{im:<20}{ci}\n{sb:<20}{cs}\n{ll:<20}{cll}\n{lc:<20}{cl}\n{th:<20}{cth}\n{ky:<20}{cky}\n\n\
              {options}\n  -h, --help     {oh}\n  -V, --version  {ov}",
             about = loc.t("cli.help.about"),
             dm = "  demo",
@@ -879,6 +968,8 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
             cr = loc.t("cli.help.cmd.restore"),
             st = "  stats",
             cst = loc.t("cli.help.cmd.stats"),
+            co = "  companion",
+            cco = loc.t("cli.help.cmd.companion"),
             im = "  import",
             ci = loc.t("cli.help.cmd.import"),
             sb = "  sandbox",
@@ -936,6 +1027,39 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
             h = "  -h, --help",
             ch = loc.t("cli.help.opt.help"),
             n = loc.t("cli.help.stats.note"),
+        ),
+        Some(HelpTopic::Companion) => format!(
+            "{d}\n\n{usage} mindfork companion <COMMAND>\n\n{commands}\n{e:<12}{ce}\n{i:<12}{ci}\n\n{n}",
+            d = loc.t("cli.help.cmd.companion"),
+            e = "  export",
+            ce = loc.t("cli.help.cmd.companion.export"),
+            i = "  import",
+            ci = loc.t("cli.help.cmd.companion.import"),
+            n = loc.t("cli.help.companion.note"),
+        ),
+        Some(HelpTopic::CompanionExport) => format!(
+            "{d}\n\n{usage} mindfork companion export <PROFILE> [OPTIONS]\n\n\
+             {arguments}\n{a:<30}{ca}\n\n{options}\n{o:<30}{co}\n{p:<30}{cp}\n{h:<30}{ch}",
+            d = loc.t("cli.help.cmd.companion.export"),
+            a = "  <PROFILE>",
+            ca = loc.t("cli.help.arg.companion.profile"),
+            o = "  -o, --output <FILE>",
+            co = loc.t("cli.help.opt.companion.output"),
+            p = "  -p, --password <PASSWORD>",
+            cp = loc.t("cli.help.opt.companion.password"),
+            h = "  -h, --help",
+            ch = loc.t("cli.help.opt.help"),
+        ),
+        Some(HelpTopic::CompanionImport) => format!(
+            "{d}\n\n{usage} mindfork companion import <ARCHIVE> [OPTIONS]\n\n\
+             {arguments}\n{a:<30}{ca}\n\n{options}\n{p:<30}{cp}\n{h:<30}{ch}",
+            d = loc.t("cli.help.cmd.companion.import"),
+            a = "  <ARCHIVE>",
+            ca = loc.t("cli.help.arg.companion.archive"),
+            p = "  -p, --password <PASSWORD>",
+            cp = loc.t("cli.help.opt.restore.password"),
+            h = "  -h, --help",
+            ch = loc.t("cli.help.opt.help"),
         ),
         Some(HelpTopic::Import) => format!(
             "{d}\n\n{usage} mindfork import <FILE>\n\n{arguments}\n\
@@ -1752,6 +1876,95 @@ mod tests {
         assert!(p(&["themes"]).is_err(), "a subcommand is required");
         assert!(p(&["themes", "list"]).is_err());
         assert!(p(&["themes", "--verbose"]).is_err());
+    }
+
+    /// `companion export <profile>` with an output and a password, either
+    /// spelling and order; `companion import <archive>` with a password.
+    #[test]
+    fn companion_export_and_import_parse() {
+        assert_eq!(
+            p(&["companion", "export", "Sol"]).unwrap(),
+            CliCommand::CompanionExport {
+                profile: "Sol".into(),
+                output: None,
+                password: None,
+            }
+        );
+        assert_eq!(
+            p(&[
+                "companion",
+                "export",
+                "-p",
+                "s3cret",
+                "Sol b",
+                "--output=sol.zip"
+            ])
+            .unwrap(),
+            CliCommand::CompanionExport {
+                profile: "Sol b".into(),
+                output: Some(PathBuf::from("sol.zip")),
+                password: Some("s3cret".into()),
+            }
+        );
+        assert_eq!(
+            p(&["companion", "import", "sol.zip", "--password", "s3cret"]).unwrap(),
+            CliCommand::CompanionImport {
+                archive: PathBuf::from("sol.zip"),
+                password: Some("s3cret".into()),
+            }
+        );
+        assert!(p(&["companion"]).is_err(), "a subcommand is required");
+        assert!(
+            p(&["companion", "export"]).is_err(),
+            "the profile is required"
+        );
+        assert!(
+            p(&["companion", "import"]).is_err(),
+            "the archive is required"
+        );
+        assert!(p(&["companion", "export", "a", "b"]).is_err());
+        assert!(p(&["companion", "list"]).is_err());
+        assert!(p(&["companion", "import", "a.zip", "-o", "x"]).is_err());
+    }
+
+    #[test]
+    fn companion_help_is_listed_and_has_its_topics() {
+        for (args, topic) in [
+            (&["companion", "--help"][..], HelpTopic::Companion),
+            (
+                &["companion", "export", "-h"][..],
+                HelpTopic::CompanionExport,
+            ),
+            (
+                &["companion", "import", "a.zip", "--help"][..],
+                HelpTopic::CompanionImport,
+            ),
+        ] {
+            assert_eq!(
+                p(args).unwrap(),
+                CliCommand::Help { topic: Some(topic) },
+                "{args:?}"
+            );
+        }
+        for lang in [Lang::En, Lang::Ru] {
+            let loc = locale(lang);
+            let general = render_help(None, loc);
+            assert!(general.contains("  companion  "), "{lang:?}: {general}");
+            let group = render_help(Some(HelpTopic::Companion), loc);
+            assert!(group.contains("mindfork companion <COMMAND>"), "{group}");
+            assert!(
+                group.contains("/reindex"),
+                "{lang:?}: what a carry leaves to do: {group}"
+            );
+            let export = render_help(Some(HelpTopic::CompanionExport), loc);
+            assert!(export.contains("mindfork companion export <PROFILE> [OPTIONS]"));
+            assert!(export.contains("--password <PASSWORD>  "), "{export}");
+            let import = render_help(Some(HelpTopic::CompanionImport), loc);
+            assert!(import.contains("mindfork companion import <ARCHIVE> [OPTIONS]"));
+            for text in [general, group, export, import] {
+                assert!(!text.contains("cli."), "{lang:?}: a key is showing: {text}");
+            }
+        }
     }
 
     #[test]

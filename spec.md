@@ -5415,6 +5415,49 @@ table an older copy lacks read as empty, the rows written out as stored — but 
 snapshot it **holds the text**: it is the record a researcher reads, and it goes to
 stdout, so where it lands is the person's choice. It takes no `--compare`.
 
+### 12.5. Carrying one companion: `mindfork companion export|import`
+
+A backup carries everything and a restore replaces everything ([§12.3](#123-backup-and-deletion));
+moving **one** companion to a fresh machine — a rented pod, a laptop — without the rest
+of the data directory is its own command
+([docs/research/companion-platform.md](docs/research/companion-platform.md) C8 (b)).
+`mindfork companion export <PROFILE> [-o FILE] [-p PASSWORD]` writes the profile named
+(its name, the unambiguous start of it, or its id) into a zip of three entries:
+
+- `companion.json` — what the archive is (`kind: mindfork-companion`), its format, the
+  app and schema versions, when. **Unencrypted and free of user data**, like a backup's
+  manifest, so "this is a companion" and "this is from a newer version" are said
+  before a password is asked for;
+- `profile.json` — the profile, every setting;
+- `memory.db` — a SQLite database of the app's own schema holding that profile's
+  memory alone: its notes with their links, scars and citations, its knowledge base's
+  sources and chunks, its self-model and every version of it, its language-model
+  history. It is built and read by the fork's copy across files
+  (`Db::profile_copy_from`, the source attached read-only), the same set a fork copies
+  ([§10](#10-ai-companion-profiles)).
+
+**No vectors travel**: the other machine may run another embedder, and an embedding
+generation is a number only its own database can read. The notes are embedded again
+on the next semantic path, as any note missing its vector is; the knowledge base's
+chunks arrive with their text and **wait for `/reindex`**, marked stale so its search
+refuses rather than answers from nothing. Nor do the chats — a companion is carried to
+start anew; its conversations are the backup's — nor anything a chat owns. The data
+entries are encrypted with the backup's machinery when a password is given (the
+stored backup password by default, as for `backup`), and the export says whether the
+archive is encrypted. It only reads the data, so it takes no single-instance lock and
+runs beside the app; it refuses to write over a file.
+
+`mindfork companion import <ARCHIVE> [-p PASSWORD]` adds it **as a new profile**,
+under a new id — importing twice gives two companions that share a past, as a fork
+does, and an import can never overwrite one already there. It holds the
+single-instance lock, migrates the data first as `import` does, settles the password
+as `restore` does, writes the profile and takes it back if the memory cannot be
+copied, and says what to do next (`/reindex`, when a knowledge base came). A backup
+archive is refused by name — it is restored with `restore` — as is an archive from a
+newer format or schema. Live **GO**: a companion exported encrypted from one data root
+and imported into a fresh one knew the person in its first conversation there —
+Gemma 4 31B 3/3, Qwen 3.8 27B 2/2.
+
 ---
 
 ## 13. Security

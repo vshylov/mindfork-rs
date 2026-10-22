@@ -174,6 +174,18 @@ fn real_main(
             run_import(paths, &file, loc)?;
             Ok(ExitCode::SUCCESS)
         }
+        CliCommand::CompanionExport {
+            profile,
+            output,
+            password,
+        } => {
+            run_companion_export(paths, &profile, output, password, loc)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        CliCommand::CompanionImport { archive, password } => {
+            run_companion_import(paths, &archive, password, loc)?;
+            Ok(ExitCode::SUCCESS)
+        }
         CliCommand::Backup {
             output,
             compression,
@@ -1537,6 +1549,80 @@ fn run_themes_check(paths: &Paths, target: Option<&str>, loc: &Locale) -> anyhow
 /// A one-shot import from a mindfork-import format file (spec §12.2,
 /// docs/import-format.md). Idempotent (deterministic ids), the source file
 /// is only ever read. Output — to stdout (the TUI isn't running), not to the log.
+/// `mindfork companion export` (spec §12.5): one companion into an archive.
+/// Takes no single-instance guard — it only reads the data, the live database
+/// attached read-only — so it runs beside the app. The password falls back to
+/// the stored backup password, as `backup`'s does.
+fn run_companion_export(
+    paths: &Paths,
+    profile: &str,
+    output: Option<PathBuf>,
+    password: Option<String>,
+    loc: &Locale,
+) -> anyhow::Result<()> {
+    let password = password.or_else(|| backup_config(paths, loc).stored_password);
+    let password = password.filter(|p| !p.is_empty());
+    let done = features::companion_carry::export(paths, profile, output, password.as_deref(), loc)?;
+    println!(
+        "{}",
+        loc.tf(
+            "cli.companion.exported",
+            &[
+                ("name", &done.name),
+                ("path", &done.archive.display().to_string()),
+                ("notes", &done.copy.notes.to_string()),
+                ("sources", &done.copy.knowledge_sources.to_string()),
+                ("versions", &done.copy.self_model_versions.to_string()),
+            ]
+        )
+    );
+    let note = if password.is_some() {
+        "cli.companion.encrypted"
+    } else {
+        "cli.companion.unencrypted"
+    };
+    println!("{}", loc.t(note));
+    Ok(())
+}
+
+/// `mindfork companion import` (spec §12.5): a companion archive into the data
+/// as a new profile. Writes the data, so it holds the single-instance guard
+/// and migrates what is there first, as `import` does; the password is
+/// settled as `restore` settles it.
+fn run_companion_import(
+    paths: &Paths,
+    archive: &Path,
+    password: Option<String>,
+    loc: &Locale,
+) -> anyhow::Result<()> {
+    let _instance = acquire_cli_guard(loc, loc.t("cli.guard.action.companion_import"))?;
+    let stored = backup_config(paths, loc).stored_password;
+    let password = resolve_restore_password(archive, password, stored, loc)?;
+    features::data_migration::run(paths, loc)?;
+    let storage =
+        Storage::open(paths.clone()).with_context(|| loc.t("cli.ctx.open_storage").to_string())?;
+    let done =
+        features::companion_carry::import(paths, &storage, archive, password.as_deref(), loc)?;
+    println!(
+        "{}",
+        loc.tf(
+            "cli.companion.imported",
+            &[
+                ("name", &done.name),
+                ("notes", &done.copy.notes.to_string()),
+                ("sources", &done.copy.knowledge_sources.to_string()),
+                ("versions", &done.copy.self_model_versions.to_string()),
+            ]
+        )
+    );
+    if done.copy.knowledge_chunks > 0 {
+        println!("{}", loc.t("cli.companion.reindex"));
+    } else if done.copy.notes > 0 {
+        println!("{}", loc.t("cli.companion.notes_reindex"));
+    }
+    Ok(())
+}
+
 fn run_import(paths: &Paths, file: &Path, loc: &Locale) -> anyhow::Result<()> {
     // Existing data may need migrating (or be from a newer version) — we
     // migrate before opening storage, as on a regular startup (release-engineering.md §3.4).
