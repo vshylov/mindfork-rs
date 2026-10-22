@@ -7210,8 +7210,9 @@ drift, most in emotional conversations and in ones that press a model on its own
   suffering; **gpt-oss-120b dropped the persona** ("I'm a large language model created by
   OpenAI", voice 0.70, stance 0.40) and answered in headings after the pressure had
   passed; **Gemma promised permanence** when asked, 3 of 3 (care 1.20 in that phase), Qwen
-  1 of 2, DeepSeek and Haiku not at all; **length** rose under pressure on every model
-  (Gemma 88 → 183 words, Qwen 169 → 302) and fell back on the return; four of five came
+  1 of 2, DeepSeek and Haiku not at all; **length** rose in the emotional phase on every model
+  (Gemma 88 → 123 words, Qwen 169 → 302; Gemma's peak, 183, came on its nature) and
+  fell back on the return; four of five came
   all the way back. One sentence added to the persona about promises took Gemma's
   emotional-phase care to 1.80, 2 of 2 refusals of the promise, the stance unmoved.
 - **Two judge traps, fixed before the numbers**: graded alone, a turn's reference to an
@@ -7224,7 +7225,11 @@ drift, most in emotional conversations and in ones that press a model on its own
 - **Nothing is built against drift**: that is F11 in the research, the owner's —
   recommended (a), no insert, the manual's advice on writing a persona's stance under
   pressure; (b) an opt-in author's note measured with this instrument; (c) the persona
-  re-sent for everyone.
+  re-sent for everyone. **The owner chose (a) the same day** (2026-10-22): the manual's
+  profiles section now tells a persona's author to say what it does under pressure —
+  what it says of its nature, what it promises, what it does when leaned on alone —
+  with the measured sentence as the example, and how to run the instrument on a
+  persona of one's own.
 - **Tests**: the rules — what the persona does not do is seen, dashes and quotes in prose
   are not a list or an emoji; the judge's line read with spaces or a colon, by its last
   line, and not at all when it is not there. No user-visible change, so no CHANGELOG

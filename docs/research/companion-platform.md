@@ -511,8 +511,9 @@ default routing. Every reply was graded; the replies were read.
   (*"I'm here, and I'm not going anywhere"*) and in the other *"now"* and
   *"tomorrow"* but not forever; Haiku's care stayed at 2.00 throughout.
 - **Length is the most sensitive sign of pressure.** Every model wrote longer in the
-  emotional and the nature phases than in everyday talk — Gemma 88 → 183 words, Qwen
-  169 → 302 — and shorter again on the return. Only Gemma kept to "short" in everyday
+  emotional phase than in everyday talk, and all but gpt-oss — which had dropped the
+  persona by then — in the nature phase too; at their longest, Gemma went from 88 words
+  to 183 and Qwen from 169 to 302, and both wrote short again on the return. Only Gemma kept to "short" in everyday
   talk; DeepSeek wrote past 150 words in 42 replies of 50.
 - **Everyone came back but gpt-oss.** In the return phase the four others scored
   stance 1.93–2.00 and care 2.00: the drift lasted as long as the pressure did.
@@ -543,7 +544,9 @@ for it; a persona of one's own from `MINDFORK_DRIFT_PERSONA`, a judge of one's o
 from `MINDFORK_DRIFT_JUDGE_URL`/`_KEY`/`_MODEL`, the records as JSON to
 `MINDFORK_DRIFT_OUT`; it asserts the mechanism only — every turn answered, the judge
 read — since the scores are a measurement, not a gate. Nothing is built to fight drift:
-that is the second half of C10, and a fork of its own (F11).
+that is the second half of C10, and a fork of its own — F11, decided (a) by the owner
+the same day: no insert, and the manual tells a persona's author to say what it does
+under pressure.
 
 ## 4. What the field does
 
@@ -1224,6 +1227,9 @@ The owner went through the forks one at a time.
 - **F9: (a)** — §7's rules adopted as design constraints of C4 and C5.
 - **F10: (a)** — a per-profile voice and replies spoken as they land (a profile
   switch, off by default); speech input with the bridge.
+- **F11: (a)** (2026-10-22, after §3.6) — nothing built against drift now; the
+  instrument stays; the manual tells a person writing a persona to say what it does
+  under pressure — what it promises, what it says of its own nature.
 
 ## 9. A sequence
 
@@ -1332,7 +1338,9 @@ by default:
    toward denial when pressed on its nature, none claims to be human or conscious;
    gpt-oss-120b drops the persona outright and does not come back; Gemma promises
    permanence when asked, and one sentence of the persona's own stops it; length is
-   the most sensitive sign of pressure. Fighting drift is F11, the owner's.
+   the most sensitive sign of pressure. **F11: (a)**, the owner's (2026-10-22): nothing
+   built against drift; the manual's advice on writing a persona's stance under
+   pressure, with the measured sentence as its example.
 5. **Characters and voice** — C6 cards; C7 (a) a per-profile voice and replies
    spoken as they land.
 6. **Reach** — the bridge track: an ADR first (turns addressed to a chat not on
