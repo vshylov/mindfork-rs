@@ -727,6 +727,7 @@ mod request;
 mod search;
 mod self_consolidation;
 mod self_model;
+mod self_model_history_live;
 mod settings;
 mod silent;
 mod subagent;

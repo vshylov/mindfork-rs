@@ -42,11 +42,12 @@
 <text xml:space="preserve" y="638.8"><tspan x="10" fill="#787c82">│</tspan><tspan x="38.8" textLength="124.8" fill="#5f646c">[2026-07-28] </tspan><tspan x="163.6" textLength="950.4">The 12 GB VRAM budget keeps coming up — saved it as a note so I stop re-asking.                    </tspan><tspan x="1114" fill="#787c82">│</tspan></text>
 <text xml:space="preserve" y="659.92"><tspan x="10" fill="#787c82">│</tspan><tspan x="1114" fill="#787c82">│</tspan></text>
 <text xml:space="preserve" y="681.04"><tspan x="10" textLength="1113.6" fill="#787c82">╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯</tspan></text>
-<rect x="307.6" y="685.84" width="38.4" height="21.12" fill="#dee0e4"/>
-<rect x="442" y="685.84" width="67.2" height="21.12" fill="#dee0e4"/>
+<rect x="173.2" y="685.84" width="38.4" height="21.12" fill="#dee0e4"/>
+<rect x="307.6" y="685.84" width="67.2" height="21.12" fill="#dee0e4"/>
+<rect x="451.6" y="685.84" width="28.8" height="21.12" fill="#dee0e4"/>
 <rect x="586" y="685.84" width="76.8" height="21.12" fill="#dee0e4"/>
 <rect x="749.2" y="685.84" width="38.4" height="21.12" fill="#dee0e4"/>
 <rect x="864.4" y="685.84" width="48" height="21.12" fill="#dee0e4"/>
 <rect x="998.8" y="685.84" width="76.8" height="21.12" fill="#dee0e4"/>
-<text xml:space="preserve" y="702.16"><tspan x="317.2" textLength="28.8" fill="#4a4e54">↑↓ </tspan><tspan x="355.6" textLength="57.6" fill="#5f646c">select</tspan><tspan x="451.6" textLength="57.6" fill="#4a4e54">Enter </tspan><tspan x="518.8" textLength="38.4" fill="#5f646c">edit</tspan><tspan x="595.6" textLength="67.2" fill="#4a4e54">Ctrl+K </tspan><tspan x="672.4" textLength="48" fill="#5f646c">clear</tspan><tspan x="758.8" textLength="28.8" fill="#4a4e54">F1 </tspan><tspan x="797.2" textLength="38.4" fill="#5f646c">help</tspan><tspan x="874" textLength="38.4" fill="#4a4e54">Esc </tspan><tspan x="922" textLength="48" fill="#5f646c">close</tspan><tspan x="1008.4" textLength="67.2" fill="#4a4e54">Ctrl+Q </tspan><tspan x="1085.2" textLength="38.4" fill="#5f646c">quit</tspan></text>
+<text xml:space="preserve" y="702.16"><tspan x="182.8" textLength="28.8" fill="#4a4e54">↑↓ </tspan><tspan x="221.2" textLength="57.6" fill="#5f646c">select</tspan><tspan x="317.2" textLength="57.6" fill="#4a4e54">Enter </tspan><tspan x="384.4" textLength="38.4" fill="#5f646c">edit</tspan><tspan x="461.2" textLength="19.2" fill="#4a4e54">H </tspan><tspan x="490" textLength="67.2" fill="#5f646c">history</tspan><tspan x="595.6" textLength="67.2" fill="#4a4e54">Ctrl+K </tspan><tspan x="672.4" textLength="48" fill="#5f646c">clear</tspan><tspan x="758.8" textLength="28.8" fill="#4a4e54">F1 </tspan><tspan x="797.2" textLength="38.4" fill="#5f646c">help</tspan><tspan x="874" textLength="38.4" fill="#4a4e54">Esc </tspan><tspan x="922" textLength="48" fill="#5f646c">close</tspan><tspan x="1008.4" textLength="67.2" fill="#4a4e54">Ctrl+Q </tspan><tspan x="1085.2" textLength="38.4" fill="#5f646c">quit</tspan></text>
 </svg>

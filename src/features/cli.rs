@@ -55,6 +55,10 @@ pub enum CliCommand {
         password: Option<String>,
         /// Print the machine-readable snapshot instead of the text.
         json: bool,
+        /// Print the self-model's timeline instead (`--self-model`, spec
+        /// §17.9): every version with who wrote it, the observations, the
+        /// models — as JSON, with the text.
+        self_model: bool,
     },
     /// Import from a mindfork-import format file (`import <file>`).
     /// Format spec — docs/import-format.md.
@@ -306,7 +310,8 @@ fn parse_restore(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
 
 fn parse_stats(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
     const JSON: &str = "--json";
-    let Some(args) = archive_args(toks, loc, &[JSON], &["--compare"])? else {
+    const SELF_MODEL: &str = "--self-model";
+    let Some(args) = archive_args(toks, loc, &[JSON, SELF_MODEL], &["--compare"])? else {
         return Ok(CliCommand::Help {
             topic: Some(HelpTopic::Stats),
         });
@@ -322,11 +327,21 @@ fn parse_stats(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
             &[],
         ));
     }
+    // The timeline is one copy's record; comparing two is the summary's job.
+    let self_model = args.flags.contains(&SELF_MODEL);
+    if self_model && args.extra.is_some() {
+        return Err(err_line(
+            loc,
+            "cli.parse.stats_self_model_with_compare",
+            &[],
+        ));
+    }
     Ok(CliCommand::Stats {
         archive: args.archive.map(PathBuf::from),
         compare: args.extra.map(PathBuf::from),
         password: args.password,
         json: args.flags.contains(&JSON),
+        self_model,
     })
 }
 
@@ -905,7 +920,8 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
         ),
         Some(HelpTopic::Stats) => format!(
             "{d}\n\n{usage} mindfork stats [ARCHIVE] [OPTIONS]\n\n{arguments}\n\
-             {a:<30}{ca}\n\n{options}\n{c:<30}{cc}\n{p:<30}{cp}\n{j:<30}{cj}\n{h:<30}{ch}\n\n{n}",
+             {a:<30}{ca}\n\n{options}\n{c:<30}{cc}\n{p:<30}{cp}\n{j:<30}{cj}\n{s:<30}{cs}\n\
+             {h:<30}{ch}\n\n{n}",
             d = loc.t("cli.help.cmd.stats"),
             a = "  [ARCHIVE]",
             ca = loc.t("cli.help.arg.stats.archive"),
@@ -915,6 +931,8 @@ pub fn render_help(topic: Option<HelpTopic>, loc: &Locale) -> String {
             cp = loc.t("cli.help.opt.restore.password"),
             j = "  --json",
             cj = loc.t("cli.help.opt.stats.json"),
+            s = "  --self-model",
+            cs = loc.t("cli.help.opt.stats.self_model"),
             h = "  -h, --help",
             ch = loc.t("cli.help.opt.help"),
             n = loc.t("cli.help.stats.note"),
@@ -1265,6 +1283,7 @@ mod tests {
             compare: None,
             password: password.map(str::to_string),
             json,
+            self_model: false,
         };
         assert_eq!(p(&["stats"]).unwrap(), stats(None, None, false));
         assert_eq!(p(&["stats", "--json"]).unwrap(), stats(None, None, true));
@@ -1298,6 +1317,7 @@ mod tests {
                 compare: Some(PathBuf::from(other)),
                 password: password.map(str::to_string),
                 json,
+                self_model: false,
             };
         assert_eq!(
             p(&["stats", "--compare", "b.json"]).unwrap(),
@@ -1355,7 +1375,28 @@ mod tests {
         assert!(topic.contains("--password <PASSWORD>  "), "{topic}");
         assert!(topic.contains("--json"), "{topic}");
         assert!(topic.contains("--compare <OTHER>  "), "{topic}");
+        assert!(topic.contains("--self-model  "), "{topic}");
         assert!(topic.contains("only reads"), "{topic}");
+    }
+
+    /// `--self-model` asks for the timeline of the live data or of an
+    /// archive; it is one copy's record, so it takes no `--compare`.
+    #[test]
+    fn stats_self_model_takes_an_archive_but_no_compare() {
+        let timeline = |archive: Option<&str>| CliCommand::Stats {
+            archive: archive.map(PathBuf::from),
+            compare: None,
+            password: None,
+            json: false,
+            self_model: true,
+        };
+        assert_eq!(p(&["stats", "--self-model"]).unwrap(), timeline(None));
+        assert_eq!(
+            p(&["stats", "a.zip", "--self-model"]).unwrap(),
+            timeline(Some("a.zip"))
+        );
+        let err = p(&["stats", "--self-model", "--compare", "b.zip"]).unwrap_err();
+        assert!(err.contains("--compare"), "{err}");
     }
 
     #[test]

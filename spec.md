@@ -5402,6 +5402,16 @@ every non-zero count. The rules:
 - **There is no merge.** The command ends by saying which copy is safe to keep and
   what keeping only one would lose.
 
+**`--self-model`** prints something else: the self-model's timeline
+([§17.9](#179-the-self-models-history)), as JSON — for every profile, its name, each
+version of its self-model with who wrote it (the kind, the model, its mode, the
+conversation), its observations with what superseded them, and the language models it
+talked to; and the title of every conversation a version names. It reads the way the
+summary does — the live data or an archive, nothing created, migrated or unpacked, a
+table an older copy lacks read as empty, the rows written out as stored — but unlike a
+snapshot it **holds the text**: it is the record a researcher reads, and it goes to
+stdout, so where it lands is the person's choice. It takes no `--compare`.
+
 ---
 
 ## 13. Security
@@ -5571,7 +5581,8 @@ The `SelfModel` entity (`entities/self_model.rs`), one instance per profile:
 
 A `self_models(profile_id PK, data JSON, version, updated_at)` table in SQLite
 ([§5.2](#52-data-storage)). Created with `CREATE TABLE IF NOT EXISTS` — no migration
-needed, old DBs read fine. Storage maintains `version` (incremented on every upsert).
+needed, old DBs read fine. Storage maintains `version` (incremented on every upsert), and
+keeps every version, with who wrote it, in `self_model_versions` ([§17.9](#179-the-self-models-history)).
 
 ### 17.3. Tools
 
@@ -5697,7 +5708,8 @@ for viewing and **manual editing**:
   to change the status / `Del` to delete), the model of the companion (traits/interests as a comma-
   separated list, the relationship dynamic), deleting insights (`Del`), clearing the whole model
   (`Ctrl+K` twice — with confirmation; **`/self clear`** from the chat is the
-  same wipe behind the same confirmation, §11.7);
+  same wipe behind the same confirmation, §11.7) — the model's history goes with it
+  (§17.9); **`H`** opens that history (§17.9);
 - **two named halves, then the observations.** The screen opens with an
   **"Assistant"** header over the self-description and the goals, and heads the
   traits/interests/relationship with **"User"**; where the profile sets a name
@@ -5761,6 +5773,54 @@ the companion, recalls it in a new chat under the same profile (via the injectio
 background auto-reflection updates the model with no explicit request. Possible further directions —
 ranking/configurability of the narrative and deeper metacognitive tools —
 are deliberately deferred (see "out of MVP scope" in [docs/self-model-mvp.md](docs/history/self-model-mvp.md)).
+
+### 17.9. The self-model's history
+
+The model is a snapshot written in place (§17.2), and "how did this self change, and
+under which model" is the question a researcher of agency asks first
+([docs/research/companion-platform.md](docs/research/companion-platform.md) C9). So
+**every write is also kept as a version**: `self_model_versions(rowid, profile_id,
+version, data, written_at, author, model, mode, chat_id)` beside `self_models`, the row
+inserted in the same savepoint that bumps `version` — the two never disagree, and a
+write that fails leaves neither. A version holds the self-description, the goals and the
+model of the user; the observations are `@self` notes ([§17.1](#171-composition-and-location))
+and keep their own history — their dates, and what superseded them.
+
+- **Who wrote a version is recorded when it is written**, not derived afterwards: a
+  turn's tool call (`turn` — the turn's model name and engine mode, and its chat), a
+  background reflection's (`background`, with the chat it reflected over), the person on
+  `F3` (`person`), or the app's own housekeeping — moving the old narrative into notes
+  (`app`). The profile's language-model history ([§9.14](#914-the-language-model-tools-get_llm_name-and-get_llm_history))
+  says which model answered the profile when; a reflection or a person's edit falls
+  between its records. A turn sent before the engine has said what it runs knows no
+  name and records none.
+- **A version found without a record** — written before the history was kept, or by an
+  older build — is recorded as `unknown` by the next write, before that write replaces
+  it; until then the history ends at it. The dev profile's model, at version 81 when the
+  history began, became its first version.
+- **Every version, not one a day**: a version is written only when a write changed
+  something, and the dev profile's 81 would have been about 7 KB of JSON each.
+- **Clearing the model clears its history** (`Ctrl+K` twice on `F3`, `/self clear`):
+  what is cleared is forgotten, and the next write starts the count from 1. A copy is
+  one `mindfork stats --self-model` — or one backup — away.
+
+**On `F3`, `H` opens the history**: newest first, each version with its date and time,
+who wrote it, and the parts of the model it changed from the version before. `Enter`
+opens one: the author in full — the model and its mode, and the conversation by its
+title; for a version with no recorded author, the model the profile was talking to at
+the time, said as only that — then each change (goals matched by id, so a reworded goal
+reads as reworded; list items matched as text) and the model as it was, under the
+profile's names. `←`/`→` step to the older or newer version, `Esc` goes back to the
+list and then to the fields. The view is read-only — a record, not an undo: going back
+to an old version is the next edit of the fields, and that edit is a version too. A
+change while it stands, a reflection's, refreshes it.
+
+**`mindfork stats --self-model [ARCHIVE]`** prints the whole timeline as JSON
+([§12.4](#124-a-summary-of-the-data-mindfork-stats)).
+
+Live **GO** (docs/journal/self-model.md): a real model's tool calls recorded under its
+name and chat, a reflection's as background, the person's edit last — Gemma 4 31B
+three times and Qwen 3.8 27B twice.
 
 ---
 

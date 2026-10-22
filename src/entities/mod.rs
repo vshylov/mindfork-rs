@@ -12,6 +12,7 @@ pub mod profile;
 pub mod rag;
 pub mod sampling;
 pub mod self_model;
+pub mod self_model_history;
 pub mod subagent;
 pub mod task;
 pub mod workspace;

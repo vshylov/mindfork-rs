@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (29)
+## Entries (30)
 
 - Post-M9: SelfModel MVP — agent "self-model" (probe, done)
 - Post-M9: SelfModel Tier 2-A — narrative insights + contradictions in prose (done)
@@ -41,6 +41,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: observations are picked by the chat's opening (done)
 - Post-M9: the observations' room — the labels counted, the room shared (done)
 - Post-M9: a floor under the observations' pick, and a header that says how they were picked (done)
+- Post-M9: the self-model's history — every version, who wrote it, `H` on `F3` (done)
 
 ### Post-M9: SelfModel MVP — agent "self-model" (probe, done)
 - **A trimmed-down Phase 1 from the idea bank** ([docs/self-model.md](../../docs/history/self-model.md)) per
@@ -1328,3 +1329,76 @@ on top of the second (the entry above), since both change `render_for_prompt`.
 
 **Gates**: 4071 unit tests green, 271 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.
+
+### Post-M9: the self-model's history — every version, who wrote it, `H` on `F3` (done)
+
+Stage 4 of the companion platform, the research instruments — C9, the first of its
+three ([companion-platform.md](../research/companion-platform.md) C9, §9 item 4). The
+owner chose F8 (a), all three instruments, on 2026-10-21; the forks inside it are the
+agent's, recorded there.
+
+- **The gap**: the self-model was a snapshot overwritten in place. The dev profile is at
+  version 81; versions 1–80 exist only as the prose scars the narrative kept, and which
+  model wrote any of them — Opus, GPT, Gemini, Grok and Gemma have all answered that
+  profile (`llm_history`, 20 records) — nowhere.
+- **The store** (`shared/storage/db/self_model.rs`): `self_model_versions` beside
+  `self_models`, one row per write, inserted in the same savepoint that bumps `version`
+  (a savepoint, not a transaction, because it nests inside a test fixture's `BEGIN`).
+  `self_model_update`/`self_model_upsert` take the author; there is no other writer.
+  The model a write replaces is first caught up as `unknown` when it has no row — the
+  dev profile's version 81 becomes the history's first, and a gap an older build left
+  is recorded as what that build left. `self_model_history(pid)` ends at the stored
+  model when it is newer than the last row, so a profile not written since the update
+  still has a history of one. `self_model_delete(pid)` is what clearing the model now
+  does — the model and its rows; the count restarts at 1.
+- **The authors** (`entities/self_model_history.rs`): `turn` and `background` from the
+  tools (`ToolContext::self_model_author` — the turn's model name, engine mode and chat,
+  `silent_lane` telling a reflection apart), `person` from `F3`, `app` from the
+  narrative's move into notes, `unknown` for what was found. Read back leniently: a
+  kind or mode this build does not know reads as what is known of it.
+- **What changed** (`self_model_history::changes`): field by field in the screen's
+  order — the self-description, goals matched by id (added, removed, reworded, a status
+  moved), traits and interests matched as text, the relationship.
+- **`H` on `F3`** (`screens/self_model/history.rs`): newest first, each version's date,
+  author and the parts it touched; `Enter` opens one — the author in full (a model's
+  mode and the conversation by title; for an `unknown` one, "the profile was talking to
+  X then" from `llm_history`, said as only that), the changes, the model under the
+  profile's names; `←`/`→` older and newer. A `SelfModelChanged` refreshes it, keeping
+  the version the reader is on by its number. `mindfork demo` seeds four versions by
+  three kinds of author, so the view has something to show; the `F3` captures were
+  redrawn for the footer's new `H`.
+- **The export**: `mindfork stats --self-model [ARCHIVE]` (`db/timeline.rs`,
+  `features/data_stats/timeline.rs`) — per profile its name, every version as stored
+  (the model's JSON, the author's columns), its `@self` notes with what superseded
+  them, its `llm_history`, and the titles of the chats the versions name. Read-only on
+  the same two sources as the summary — the file behind the header check, an archive's
+  image in memory — byte-identical afterwards, and an older database's missing tables
+  read as empty. On the dev data: one version (81, unknown), 109 observations (20
+  superseded), 20 model changes, 159 KB.
+- **Live, GO** (`self_model_history_live`, a new file under `orchestrator/tests/`):
+  a companion's turn asked to record the user and itself, a reflection after every
+  reply, then the person's edit. **Gemma 4 31B q4_0 3/3, Qwen 3.8 27B Q4_K_M 2/2**
+  (llama.cpp b11719, the 4090): both models called `update_user_model` and
+  `update_self_model` every time, each a version under the model's name and the chat;
+  Gemma's reflection wrote one or two background versions in two runs of three, Qwen's
+  none; the person's edit was the last version, numbered without a gap. **The first run
+  was red, and the defect was the smoke's**: it sent the turn before the engine had
+  answered what model it runs, so the turn's versions carried no name while the
+  reflection's, 40 s later, did — the app records what the turn knew, which is the
+  truth. The smoke now waits for `EngineModel` (in one loop with the profile list,
+  which can arrive in either order).
+- **Tests**: every write a version with its author and the model as it stood; the
+  concurrent-writers test extended to fifty versions per thread, none lost; a
+  pre-history model caught up by the first write; an older build's gap; a delete that
+  forgets and restarts the count; a failed history write leaving the model as it was;
+  the field-by-field comparison; the author's columns round-tripping and read
+  leniently; the history view's order, authors, changes, `←`/`→`, `Esc` steps, quit,
+  refresh and empty state; the round trip `H` → command → event, and the refresh on a
+  change; the orchestrator's answer with the chat titles; the timeline over a file, an
+  image, and a database from before the table; the export's names and titles, an
+  archive exporting like its root, a zip that is no backup refused; the CLI flag and
+  its refusal with `--compare`; `stats --self-model` creating no data root.
+
+**Gates**: 4232 unit tests green, 290 `#[ignore]`; clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check`
+clean.

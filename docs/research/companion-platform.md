@@ -1173,6 +1173,27 @@ by default:
    it and holds it while its window is focused; rxvt-unicode 9.31 shows neither
    escape, and its own `bell-command` extension makes the bell a notification.
 4. **The instruments** — C9 history, C8 fork then carry, C10 the drift smoke.
+   **C9 built** (#817), the stage's first pull request. **Decisions (the agent's, inside
+   the owner's F8 (a)):** every version, not one a day — a version is written only when
+   a write changed something, and the dev profile's 81 would have been about 7 KB each;
+   who wrote it recorded at the write rather than joined to `llm_history` afterwards,
+   because a reflection and a person's edit fall between that history's records — the
+   kind (a turn, a background reflection, the person, the app), the model's name and
+   mode, the chat; a model found without a record (written before the history, or by
+   an older build) recorded as of unknown authorship by the next write rather than
+   lost to it; clearing the model clears its history, the count starting again from 1
+   — what a person clears is forgotten, and a copy is one export or backup away; the
+   `F3` view read-only, a record and not an undo; and the timeline exported by
+   `mindfork stats --self-model`, from the live data or an archive, with the text — a
+   snapshot's digests would not show a self changing. The observations keep their own
+   history as notes (dates, supersession), so a version holds the description, the
+   goals and the model of the user, and the export carries the observations beside it
+   (spec §17.9, §12.4). **Live, GO** (docs/journal/self-model.md): a real model's tool
+   calls recorded under its name and chat, a reflection's as background, the person's
+   edit last, numbered without a gap — Gemma 4 31B q4_0 three times, Qwen 3.8 27B
+   Q4_K_M twice, on the gate's weights (llama.cpp b11719). The first run found the
+   smoke's own race: a turn sent before the engine has said its model's name records
+   none, which is the truth — the smoke waits for the name.
 5. **Characters and voice** — C6 cards; C7 (a) a per-profile voice and replies
    spoken as they land.
 6. **Reach** — the bridge track: an ADR first (turns addressed to a chat not on

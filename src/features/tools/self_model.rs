@@ -403,9 +403,12 @@ impl Tool for UpdateSelfModel {
         let mut deltas = SelfModelEditDeltas::default();
         let params = ctx.self_model_params;
         let loc = ctx.loc; // &'static — copy so the closure doesn't borrow ctx
-        let (model, changed) = ctx.storage.db().self_model_update(ctx.profile_id, |m| {
-            apply_self_model_edit(m, &args, params, loc, &mut deltas)
-        })?;
+        let (model, changed) =
+            ctx.storage
+                .db()
+                .self_model_update(ctx.profile_id, &ctx.self_model_author(), |m| {
+                    apply_self_model_edit(m, &args, params, loc, &mut deltas)
+                })?;
 
         // Scars from folded closed goals → self-notes (observations). Best-effort.
         for scar in &deltas.scars {
@@ -658,9 +661,12 @@ impl Tool for UpdateUserModel {
         // the embedding happens after.
         let requested_traits = str_array(&args, "add_traits");
         let mut deltas = UserModelEditDeltas::default();
-        let (model, changed) = ctx.storage.db().self_model_update(ctx.profile_id, |m| {
-            apply_user_model_edit(m, &args, &requested_traits, &mut deltas)
-        })?;
+        let (model, changed) =
+            ctx.storage
+                .db()
+                .self_model_update(ctx.profile_id, &ctx.self_model_author(), |m| {
+                    apply_user_model_edit(m, &args, &requested_traits, &mut deltas)
+                })?;
 
         // Scar → self-note (observation). Best-effort. `note` by itself doesn't
         // count as a model change (it's a separate note), but makes the call

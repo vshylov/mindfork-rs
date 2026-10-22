@@ -270,6 +270,9 @@ pub enum AppCommand {
     /// Apply a manual edit to the active profile's "self-model" (the `F3` UI editor).
     /// The orchestrator applies it, saves, and re-emits the updated `SelfModelView`.
     UpdateSelfModel(crate::entities::self_model::SelfModelEdit),
+    /// Request the active profile's self-model history (`H` on the `F3`
+    /// screen, spec §17.9). Answered with [`AppEvent::SelfModelHistory`].
+    RequestSelfModelHistory,
     /// Request a snapshot of the active profile's notes for the notes screen
     /// (`/notes`, spec §11.11): every note with its links and trace, and what
     /// this conversation's prompt carries. Answered with [`AppEvent::NotesView`].
@@ -435,6 +438,7 @@ impl AppCommand {
             | AppCommand::RequestTasks
             | AppCommand::RequestSelfModel
             | AppCommand::UpdateSelfModel(_)
+            | AppCommand::RequestSelfModelHistory
             | AppCommand::RequestNotes
             | AppCommand::EditNote(_)
             | AppCommand::CancelFollowup(_)
@@ -775,6 +779,11 @@ pub enum AppEvent {
         model: Box<Option<crate::entities::self_model::SelfModel>>,
         names: CharacterNames,
     },
+    /// The active profile's self-model history (a reply to
+    /// `RequestSelfModelHistory`, spec §17.9): every version, oldest first,
+    /// with what the history view needs to say who wrote it. `Box` — a large
+    /// type, don't bloat the enum.
+    SelfModelHistory(Box<crate::entities::self_model_history::SelfModelHistoryView>),
     /// The notes screen's snapshot (a reply to `RequestNotes` and to each
     /// `EditNote`, spec §11.11). `Box` — a large type, don't bloat the enum.
     NotesView(Box<crate::entities::note::NotesView>),

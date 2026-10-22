@@ -208,6 +208,13 @@ pub(super) fn apply_event(
         // The "self-model" changed in the background/via tools — refresh ONLY the open
         // `F3` screen (re-request a fresh snapshot); ignored when closed.
         AppEvent::SelfModelChanged => refresh_self_model_screen(active, cmd_tx),
+        AppEvent::SelfModelHistory(view) => {
+            // Only onto the screen that asked: a reply landing after `Esc`
+            // must not reopen anything.
+            if let ActiveScreen::SelfModel(self_model) = active {
+                self_model.show_history(*view);
+            }
+        }
         AppEvent::TtsActive(on) => screen.set_speaking(on),
         AppEvent::BackgroundTask { kind, active: on } => apply_background_task(screen, kind, on),
         AppEvent::BackgroundRuns { out } => screen.set_background_runs(out),
@@ -519,8 +526,13 @@ fn show_self_model(
 /// the background/via tools — an open `F3` screen re-requests a fresh
 /// snapshot; ignored when closed.
 fn refresh_self_model_screen(active: &ActiveScreen, cmd_tx: &UnboundedSender<AppCommand>) {
-    if matches!(active, ActiveScreen::SelfModel(_)) {
+    if let ActiveScreen::SelfModel(screen) = active {
         let _ = cmd_tx.send(AppCommand::RequestSelfModel);
+        // A change is a new version: a history standing over the fields is
+        // refreshed with them (spec §17.9).
+        if screen.history_open() {
+            let _ = cmd_tx.send(AppCommand::RequestSelfModelHistory);
+        }
     }
 }
 
@@ -1229,6 +1241,11 @@ pub(super) fn dispatch_self_model(
         // the reply `SelfModelView` (see `apply_event`).
         SelfModelIntent::Edit(edit) => {
             let _ = cmd_tx.send(AppCommand::UpdateSelfModel(edit));
+            false
+        }
+        // The history opens on the reply `SelfModelHistory` (see `apply_event`).
+        SelfModelIntent::History => {
+            let _ = cmd_tx.send(AppCommand::RequestSelfModelHistory);
             false
         }
     }

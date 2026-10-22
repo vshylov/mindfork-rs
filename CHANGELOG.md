@@ -58,6 +58,18 @@ split by subsystem.
   taskbar, and — if you give it a topic — a push to
   your phone through ntfy. By default only who wrote and where is sent, never what
   was said. Settings → Interface → *Notifications*.
+- **The self-model's history.** Every change to the self-model is now kept, with who
+  made it — the model by name, in which conversation or in a background reflection,
+  or you. `H` on the self-model screen (`F3`) lists the versions with what each one
+  changed; `Enter` opens one, `←`/`→` step through them.
+  `mindfork stats --self-model` prints the whole timeline as JSON — every version, the
+  observations, and the models the profile talked to — from your data or from a
+  backup archive.
+
+### Changed
+
+- **Clearing the self-model also clears its history** (`Ctrl+K` twice on `F3`, or
+  `/self clear`), and its version count starts again from 1.
 
 ### Fixed
 
@@ -65,6 +77,12 @@ split by subsystem.
   message you had just sent, so a model that asked how long it had been since you
   last wrote was told that no time had passed. It now reports your previous message
   and the gap between the two.
+
+### Data
+
+- **`data.db` gains a table, `self_model_versions`**, for the self-model's history.
+  An older version of the app ignores it. The model you already have becomes the
+  history's first version the next time it is written.
 
 ## [0.21.0] — 2026-10-19
 

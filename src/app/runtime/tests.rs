@@ -2782,3 +2782,71 @@ fn focus_reports_reach_the_orchestrator() {
         .collect();
     assert_eq!(focus, [false, true]);
 }
+
+/// `H` on the `F3` screen asks the orchestrator for the history; the answer
+/// opens it on that screen only, and a change to the model while it stands
+/// refreshes both the fields and the history (spec §17.9).
+#[test]
+fn self_model_history_round_trip() {
+    use crate::entities::self_model_history::SelfModelHistoryView;
+    let mut screen = ChatScreen::new();
+    let mut clip = None;
+    let mut back = None;
+    let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+    let quit = dispatch_self_model(SelfModelIntent::History, &cmd_tx, &mut ActiveScreen::Chat);
+    assert!(!quit);
+    assert!(matches!(
+        cmd_rx.try_recv(),
+        Ok(AppCommand::RequestSelfModelHistory)
+    ));
+
+    // A late answer with the screen closed opens nothing.
+    let mut active = ActiveScreen::Chat;
+    let history = || AppEvent::SelfModelHistory(Box::<SelfModelHistoryView>::default());
+    apply_event(
+        &mut screen,
+        &mut active,
+        &mut back,
+        &mut clip,
+        &cmd_tx,
+        history(),
+    );
+    assert!(matches!(active, ActiveScreen::Chat));
+
+    let mut active = ActiveScreen::SelfModel(Box::new(SelfModelScreen::new(
+        None,
+        Default::default(),
+        screen.palette(),
+        screen.loc(),
+        NoteOrder::default(),
+    )));
+    apply_event(
+        &mut screen,
+        &mut active,
+        &mut back,
+        &mut clip,
+        &cmd_tx,
+        history(),
+    );
+    let ActiveScreen::SelfModel(view) = &active else {
+        panic!("the F3 screen closed");
+    };
+    assert!(view.history_open());
+
+    apply_event(
+        &mut screen,
+        &mut active,
+        &mut back,
+        &mut clip,
+        &cmd_tx,
+        AppEvent::SelfModelChanged,
+    );
+    assert!(matches!(
+        cmd_rx.try_recv(),
+        Ok(AppCommand::RequestSelfModel)
+    ));
+    assert!(matches!(
+        cmd_rx.try_recv(),
+        Ok(AppCommand::RequestSelfModelHistory)
+    ));
+}

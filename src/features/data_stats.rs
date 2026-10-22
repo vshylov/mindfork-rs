@@ -919,9 +919,11 @@ fn size(bytes: u64) -> String {
 
 mod compare;
 mod snapshot;
+mod timeline;
 
 pub use compare::{compare, render_comparison_json, render_comparison_text};
 pub use snapshot::{OtherCopy, other_copy, read_snapshot};
+pub use timeline::{collect_timeline_archive, collect_timeline_root, render_timeline};
 
 #[cfg(test)]
 mod tests;
