@@ -352,8 +352,9 @@ effort tiers — have all closed
   built**: character cards — `mindfork import` reads JSON, PNG and CHARX cards into a
   new profile, its example dialogue a block whose other side is a nameless visitor,
   since with the person's name there one model of five took the examples for its
-  shared past (§3.7). Next: a per-profile voice and replies spoken as they land
-  (C7 (a)), then the bridge. Twelve candidates in six stages.
+  shared past (§3.7). **Stage 5, second half, built**: a voice of the profile's
+  own, per speech mode, and *Speak replies*, which reads each reply aloud as it
+  lands. Next: stage 6, the bridge — an ADR first. Twelve candidates in six stages.
 
 ### Feed and rendering
 

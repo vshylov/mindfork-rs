@@ -1893,6 +1893,21 @@ impl SettingsScreen {
                             FieldKind::Text(p.character_names.assistant.clone()),
                         )
                         .describe(loc.t("ui.settings.desc.assistant_name")),
+                        // The voice is a provider's name, so the row edits the
+                        // one kept for the speech mode in force (spec §11.9).
+                        row(
+                            FieldId::PVoice,
+                            &loc.tf(
+                                "ui.settings.field.profile_voice",
+                                &[("mode", self.config.tts.mode.label())],
+                            ),
+                            FieldKind::Text(
+                                p.voice_for(self.config.tts.mode)
+                                    .unwrap_or_default()
+                                    .to_string(),
+                            ),
+                        )
+                        .describe(loc.t("ui.settings.desc.profile_voice")),
                         row(
                             FieldId::PImpProfile,
                             loc.t("ui.settings.field.imp_profile"),
@@ -1954,6 +1969,12 @@ impl SettingsScreen {
                             FieldKind::Toggle(p.companion.notify),
                         )
                         .describe(loc.t("ui.settings.desc.notify")),
+                        row(
+                            FieldId::PSpeakReplies,
+                            loc.t("ui.settings.field.speak_replies"),
+                            FieldKind::Toggle(p.companion.speak_replies),
+                        )
+                        .describe(loc.t("ui.settings.desc.speak_replies")),
                     ],
                 ));
                 // Tool toggles: laid out by semantic group

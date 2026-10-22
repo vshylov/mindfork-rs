@@ -294,6 +294,7 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
         tts_done_tx: unbounded_channel().0,
         tts_formats: Default::default(),
         greeting_shown: std::collections::HashMap::new(),
+        auto_speech_failed: false,
         storage,
         config,
         registry,
@@ -736,6 +737,7 @@ mod self_model;
 mod self_model_history_live;
 mod settings;
 mod silent;
+mod speak_replies_live;
 mod subagent;
 mod tasks;
 mod time_rows_live;

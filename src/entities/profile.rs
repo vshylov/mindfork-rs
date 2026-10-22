@@ -98,6 +98,9 @@ pub struct CompanionFeatures {
     /// A notification when the companion writes unasked and the person is not
     /// looking — the terminal's, and a ntfy push (C5 (a) there, spec §11.12).
     pub notify: bool,
+    /// Each reply in the open conversation spoken as it lands, in the
+    /// profile's voice ([`Profile::voices`]; C7 (a) there, spec §11.9).
+    pub speak_replies: bool,
 }
 
 /// The default quiet hours, 22:00 to 08:00.
@@ -117,6 +120,7 @@ impl Default for CompanionFeatures {
             quiet_until: DEFAULT_QUIET_UNTIL,
             followups_per_day: DEFAULT_FOLLOWUPS_PER_DAY,
             notify: false,
+            speak_replies: false,
         }
     }
 }
@@ -194,6 +198,12 @@ pub struct Profile {
     /// The companion features this profile has switched on (all off by default).
     #[serde(default, skip_serializing_if = "CompanionFeatures::is_default")]
     pub companion: CompanionFeatures,
+    /// The profile's own voice, per speech mode — a voice is a provider's name
+    /// (`onyx` is OpenAI's, `Kore` Gemini's), so it is kept under the mode it
+    /// was chosen for, and a mode without one speaks in the settings' voice
+    /// (spec §11.9). Written only once one is set.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub voices: std::collections::BTreeMap<crate::shared::config::TtsMode, String>,
     /// Soft delete.
     #[serde(default)]
     pub is_hidden: bool,
@@ -237,9 +247,18 @@ impl Profile {
             known_tools: Vec::new(),
             default_sampling: None,
             companion: CompanionFeatures::default(),
+            voices: std::collections::BTreeMap::new(),
             is_hidden: false,
             forked_from: None,
         }
+    }
+
+    /// The profile's voice under speech mode `mode`, when it has one.
+    pub fn voice_for(&self, mode: crate::shared::config::TtsMode) -> Option<&str> {
+        self.voices
+            .get(&mode)
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty())
     }
 
     /// A short profile card (for the picker overlay, without copying the system
@@ -315,6 +334,7 @@ mod tests {
             |c| c.earlier_chats = true,
             |c| c.followups = true,
             |c| c.notify = true,
+            |c| c.speak_replies = true,
             |c| c.quiet_from = 23,
         ] {
             let mut on = p.clone();
@@ -341,6 +361,24 @@ mod tests {
         );
         let p: Profile = serde_json::from_str(&raw).unwrap();
         assert!(p.companion.time_rows);
+    }
+
+    /// A profile's voices are kept per speech mode under the mode's own name, a
+    /// profile without one is written as before, and a blank voice is none.
+    #[test]
+    fn voices_are_per_mode_and_omitted_when_empty() {
+        use crate::shared::config::TtsMode;
+        let mut p = Profile::new("X", "s");
+        let json = serde_json::to_value(&p).unwrap();
+        assert!(json.get("voices").is_none(), "{json}");
+        p.voices.insert(TtsMode::OpenAi, "nova".into());
+        p.voices.insert(TtsMode::Gemini, "  ".into());
+        let json = serde_json::to_value(&p).unwrap();
+        assert_eq!(json["voices"]["openai"], "nova");
+        let back: Profile = serde_json::from_value(json).unwrap();
+        assert_eq!(back.voice_for(TtsMode::OpenAi), Some("nova"));
+        assert_eq!(back.voice_for(TtsMode::Gemini), None);
+        assert_eq!(back.voice_for(TtsMode::External), None);
     }
 
     /// Role names start out unset — the feed/export then use the interface

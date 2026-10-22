@@ -262,6 +262,7 @@ fn map_profile(p: &ImProfile) -> Profile {
         // Format v1 has no companion features; an imported profile is an
         // assistant until the user switches one on (spec §10).
         companion: crate::entities::profile::CompanionFeatures::default(),
+        voices: std::collections::BTreeMap::new(),
         is_hidden: false,
         forked_from: None,
     }

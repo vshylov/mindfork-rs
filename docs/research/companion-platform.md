@@ -1426,6 +1426,18 @@ by default:
    read by the import's own code into a profile; its chat opened with the greeting,
    `/greeting` moved to the alternate, and asked what it remembered of earlier talks the
    companion recalled nothing of the examples — Gemma 4 31B q4_0 3/3, Qwen 3.8 27B Q4_K_M 2/2 (llama.cpp b11719), every reply in character (*"The woman who keeps the light"*), and Qwen using the always-on lore (*"you've climbed the 112 steps more than once"*).
+   **C7 (a) built**, the stage's second pull request, stacked on C6. **Decisions (the
+   agent's, inside F10 (a)):** the voice kept per speech mode (`Profile.voices`), since a
+   voice is a provider's name and one chosen under one mode means nothing under
+   another; it applies to every speech of the profile's chats, `/tts` included, the
+   person's own voice staying the settings'; *Speak replies* a companion switch, off by
+   default, on the command's own road for the open conversation's landed reply — not a
+   stopped or broken one, not a `/continue`, not a silence; a failure to set speech up
+   said once rather than after every reply; spoken once the reply has landed, not while
+   it streams. **Live, GO** (docs/journal/tools.md): two companions, one in a voice of its
+   own — a recording speech server heard each reply asked in its own profile's voice and
+   the sound card played it, 3/3; OpenRouter's `minimax/speech-2.8-turbo` spoke them in
+   two of its voices, 3/3.
 6. **Reach** — the bridge track: an ADR first (turns addressed to a chat not on
    screen, the tool set of a bridged turn, the messenger's privacy), then Telegram,
    then speech input through its voice messages (C7 (b)).

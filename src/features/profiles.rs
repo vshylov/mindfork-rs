@@ -173,6 +173,8 @@ pub struct ProfileEdit {
     pub enabled_tools: Option<Vec<ToolId>>,
     /// The companion features (spec §10), replaced as a whole.
     pub companion: Option<crate::entities::profile::CompanionFeatures>,
+    /// The profile's voices per speech mode (spec §11.9), replaced as a whole.
+    pub voices: Option<std::collections::BTreeMap<crate::shared::config::TtsMode, String>>,
     /// Agent-scaffold language (axis A, docs/history/i18n.md). Editing is allowed only while the
     /// profile has no data yet — the **authoritative** gate check is in the orchestrator, before
     /// applying (`handle_update_profile`), and the UI additionally renders the field
@@ -214,6 +216,9 @@ pub fn apply_edit(profile: &mut Profile, edit: ProfileEdit) -> bool {
     }
     if let Some(companion) = edit.companion {
         profile.companion = companion;
+    }
+    if let Some(voices) = edit.voices {
+        profile.voices = voices;
     }
     if let Some(lang) = edit.language {
         profile.language = lang;

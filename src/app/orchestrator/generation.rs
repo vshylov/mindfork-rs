@@ -1173,6 +1173,26 @@ impl Orchestrator {
             .woken
             .then(|| super::notify::woken_reply_text(&res.messages))
             .flatten();
+        // The reply to speak if the profile speaks its replies (spec §11.9):
+        // the turn's last assistant message, when it has words and was neither
+        // stopped nor broken. A `/continue` is not spoken again from the start,
+        // and a silence has nothing to say.
+        let to_speak = if silent || res.continuation.is_some() {
+            None
+        } else {
+            res.messages
+                .iter()
+                .rev()
+                .find(|m| m.role == MessageRole::Assistant)
+                .filter(|m| !m.text.trim().is_empty())
+                .filter(|m| {
+                    !matches!(
+                        m.metadata.as_ref().and_then(|md| md.finish),
+                        Some(MessageFinish::Cancelled | MessageFinish::Error)
+                    )
+                })
+                .map(|m| m.id)
+        };
         if silent {
             self.mark_dirty(res.chat_id);
             if self.active_id == Some(res.chat_id) {
@@ -1314,6 +1334,9 @@ impl Orchestrator {
         }
         if let Some(text) = woken_reply {
             self.notify_unasked(res.chat_id, super::notify::Unasked::Reply(&text));
+        }
+        if let Some(reply) = to_speak {
+            self.speak_landed_reply(res.chat_id, reply);
         }
         self.after_turn_followups(res.woken, res.chat_id);
     }

@@ -2404,7 +2404,7 @@ impl Default for VideoSettings {
 /// either NO-GO for Russian (Qwen3-TTS/Supertonic 3) or need their own Rust
 /// frontend (vosk-tts); the primary path is the cloud (OpenAI), external for offline.
 /// See docs/research/tts.md §8.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TtsMode {
     /// OpenAI cloud (`POST /v1/audio/speech`).
@@ -2586,6 +2586,20 @@ impl TtsSettings {
             None => (&self.external.voice, &self.external.user_voice),
         };
         (nonblank(voice), nonblank(user))
+    }
+
+    /// These settings with the active mode's assistant voice replaced by
+    /// `voice` — a profile's own (spec §11.9); `None` or blank keeps the
+    /// settings' voice. The user's voice is left as it is.
+    pub fn with_voice(&self, voice: Option<&str>) -> TtsSettings {
+        let mut out = self.clone();
+        if let Some(v) = voice.map(str::trim).filter(|v| !v.is_empty()) {
+            match out.cloud_mut() {
+                Some(c) => c.voice = Some(v.to_string()),
+                None => out.external.voice = Some(v.to_string()),
+            }
+        }
+        out
     }
 
     /// Active cloud provider's mutable settings (`None` — external).
@@ -2996,6 +3010,27 @@ mod tests {
             .map(|s| SecretKey::External(s).storage_name())
             .collect();
         assert_eq!(names.len(), ExternalSlot::ALL.len());
+    }
+
+    /// A profile's voice replaces the active mode's assistant voice and nothing
+    /// else; none, or a blank one, leaves the settings as they are (spec §11.9).
+    #[test]
+    fn tts_with_voice_replaces_the_active_modes_assistant_voice() {
+        let mut tts = TtsSettings::default();
+        tts.openai.user_voice = Some("echo".into());
+        let v = tts.with_voice(Some("nova"));
+        assert_eq!(v.active_voices(), (Some("nova"), Some("echo")));
+        assert_eq!(
+            v.gemini.voice, tts.gemini.voice,
+            "another mode is untouched"
+        );
+        assert_eq!(tts.with_voice(None), tts);
+        assert_eq!(tts.with_voice(Some("  ")), tts);
+        tts.mode = TtsMode::External;
+        assert_eq!(
+            tts.with_voice(Some("af_bella")).external.voice.as_deref(),
+            Some("af_bella")
+        );
     }
 
     #[test]

@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (93)
+## Entries (94)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -105,6 +105,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the chart smoke sends the tool the app sends (done)
 - Post-M9: a file written beside out/ is named (done)
 - Post-M9: follow-ups the companion plans — companion stage 3, C4 (a) (done)
+- Post-M9: a companion's own voice, and replies spoken as they land — companion stage 5, C7 (a) (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -6071,3 +6072,50 @@ regenerated (the section menu's field count).
 
 **Gates**: 4185 unit tests green, 289 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.
+
+### Post-M9: a companion's own voice, and replies spoken as they land — companion stage 5, C7 (a) (done)
+
+Stage 5 of the companion platform, second half ([companion-platform.md](../research/companion-platform.md)
+C7, §9 item 5; the owner's F10 (a): a per-profile voice and replies spoken as they
+land, a profile switch off by default; speech input with the bridge). Stacked on the
+character cards (#822).
+
+- **The voice is a profile's, per speech mode**: `Profile.voices` maps the mode to a
+  name, because a voice is a provider's own word — `onyx` means nothing to Gemini — so
+  one profile can sound like itself under each mode it is used with, and a mode
+  without one falls back to the Speech tab's voice. `TtsSettings::with_voice` replaces
+  the active mode's assistant voice in a snapshot of the settings; the engines are
+  built from it as before, so nothing in the clients changed. Every speech of the
+  profile's chats takes it, `/tts` included; the user's voice stays the settings'.
+- **Speak replies** (`companion.speak_replies`): `handle_done` picks the turn's last
+  assistant message when it has words and was neither stopped nor broken — not a
+  `/continue`, which would be read again from its start, nor a silence — and
+  `speak_landed_reply` puts it on `/tts`'s road, in the open conversation only. One
+  `speak` serves both; a reply spoken unasked passes over a code block in silence, and
+  its setup failure is said **once**: every reply would otherwise repeat "no API key".
+  The quiet ends when the settings or a profile change, or speech works.
+- **Settings**: *Voice (mode)* in the Persona group, labelled with the mode it edits
+  and listing the speech model's voices in the `openrouter` mode (the Speech tab's
+  picker, one more row on it); *Speak replies* in the Companion group. The role-name
+  rows now say they are what `{{user}}`/`{{char}}` stand for (C6). Screenshot dumps
+  `settings-model-*`/`settings-tools-*` regenerated: the section menu counts the
+  Profiles fields, 71 → 73.
+- **Not built**: speaking while the reply streams — the pipeline takes its chunks from
+  a finished text, and a sentence-by-sentence feed from a stream is its own change;
+  and the greeting of a new chat is not spoken (it is not a reply that landed).
+- **Live, GO** (`speak_replies_live`, a sound card on this machine): two companions,
+  Sol with a voice of its own and Ada with none, each sent a message in its own chat —
+  a speech server of the test's own recorded `["sols-own-voice",
+  "the-settings-voice"]` and the tone played to its end (1.32 s of a 1 s clip and the
+  drain), **3/3**; through OpenRouter, `minimax/speech-2.8-turbo` spoke Sol's reply in
+  `English_radiant_girl` and Ada's in the settings' `English_expressive_narrator`,
+  **3/3**, no error in the feed.
+- **Tests**: the voices' serde (per mode, omitted when empty, a blank one none);
+  `with_voice` (the active mode's assistant voice only, `None`/blank unchanged,
+  external); the settings rows (the switch saves, the voice kept per mode and emptied
+  per mode); the orchestrator (a landed reply put to speech, its setup failure said
+  once while a typed `/tts` still answers, nothing when off or out of view, and
+  through a real turn).
+
+**Gates**: 4292 unit tests green, 296 `#[ignore]`; clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check` clean.

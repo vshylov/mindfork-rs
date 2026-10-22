@@ -287,7 +287,12 @@ src/
 │  │  │                     pass (stat-only walk of `chats/`), and answers a query —
 │  │  │                     escaping it here, since `shared` may not use `features`
 │  │  ├─ tts.rs             speech synthesis: conversation snapshot → chunks →
-│  │  │                     synth/playback pipeline, stop points (§11.9);
+│  │  │                     synth/playback pipeline, stop points (§11.9); one
+│  │  │                     `speak` for `/tts` and for a landed reply a profile
+│  │  │                     speaks (`speak_landed_reply`, `companion.speak_replies`),
+│  │  │                     in the profile's voice for the mode (`Profile.voices`
+│  │  │                     → `TtsSettings::with_voice`), a setup failure of an
+│  │  │                     unasked one said once (`auto_speech_failed`);
 │  │  │                     speech_gateway(): what a client of the OpenRouter gateway's
 │  │  │                     is built with besides the slot's settings — the attribution
 │  │  │                     switch and the session's FormatMemo (Orchestrator.tts_formats)

@@ -87,6 +87,12 @@ split by subsystem.
 - **`{{char}}` and `{{user}}` in a persona.** A profile's system message may use the
   card macros — `{{char}}` and `{{user}}` become the profile's names as they are now,
   so renaming applies to old chats too, and `{{random:a,b}}` picks once per chat.
+- **A voice for each companion, and replies read aloud as they arrive.** A profile
+  can have a voice of its own (Settings → Profiles → *Voice*), kept per speech mode
+  since voices are each provider's own — so two companions no longer sound the same,
+  in `/tts` as well. *Speak replies* (Settings → Profiles → *Companion*, off by
+  default) reads every reply in the open conversation aloud as it arrives, in that
+  voice.
 
 ### Changed
 
@@ -111,6 +117,9 @@ split by subsystem.
 - **A forked profile records where it came from** (`forked_from` in
   `profiles.json`; other profiles are written exactly as before). An older version
   reads such a profile, but drops the record the next time it saves the profiles.
+- **A profile's own voice** is kept in `profiles.json` (`voices`, written only once
+  one is set). An older version reads such a profile, but drops the voice the next
+  time it saves the profiles.
 - **A profile from a character card keeps the card's other greetings**
   (`alternate_greetings` in `profiles.json`, written only when there are some). An
   older version reads such a profile, but drops them the next time it saves the

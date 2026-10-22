@@ -309,6 +309,7 @@ pub async fn run(deps: OrchestratorDeps) {
         tts_done_tx,
         tts_formats: Default::default(),
         greeting_shown: HashMap::new(),
+        auto_speech_failed: false,
         bg: HashMap::new(),
         bg_done_tx,
         consolidate_counts: HashMap::new(),
@@ -804,6 +805,10 @@ struct Orchestrator {
     /// macro made the text unrecognisable. For the session only: after a
     /// restart the greeting is recognised by its text, or counts as the first.
     greeting_shown: HashMap<Uuid, usize>,
+    /// A reply spoken unasked (`speak_replies`) failed to set speech up, and
+    /// said so: the next ones stay quiet until the settings or a profile change,
+    /// or speech works again (spec §11.9).
+    auto_speech_failed: bool,
     /// A registry of "silent" background-task slots (auto-reflection/
     /// consolidation): one slot per [`BackgroundKind`] — a "running" flag
     /// (cancellation token) + a failure streak. Lifecycle — in

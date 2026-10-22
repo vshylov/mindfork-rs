@@ -243,6 +243,9 @@ is on the tasks screen (`F7`): `Enter` opens its conversation, `Del` twice cance
 it. Each one costs a request nobody typed, which on a cloud is money — hence the
 cap.
 
+*Speak replies* reads each reply aloud as it arrives, in the profile's own voice
+(§7).
+
 *Notify me* sends a notification when the companion writes to you on its own and
 you are not looking — the terminal's window is not in focus, or the follow-up is
 waiting in a conversation you are not in. How it reaches you is set once, for every
@@ -473,6 +476,17 @@ without one; when something is missing or refused, the chat shows the gateway's
 own sentence, for instance *"An explicit voice is required for this TTS
 provider."* The speech rate is sent, and a model may ignore it
 ([install.md §4.3](install.md)).
+
+**A companion's own voice.** A profile can have a voice of its own, so two
+companions do not sound alike: Settings → Profiles → *Voice (mode)*, in the
+*Persona* group. A voice is the provider's name for it, so the row edits the voice
+for the speech mode in force (`openai`, `gemini`, …) and keeps each mode's apart; in
+the `openrouter` mode `Enter` lists the speech model's voices. Empty, the profile
+speaks in the Speech tab's voice. **Speak replies**, in the profile's *Companion*
+group, reads every reply aloud as it arrives in the conversation you have open —
+as if you typed `/tts` — in that voice. A reply you stopped is not read; your next
+message's reply, `/tts stop` or switching chats cuts one short. If speech is not
+set up, the chat says so once rather than after every reply.
 
 ## 8. Settings worth knowing
 

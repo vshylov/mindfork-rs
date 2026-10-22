@@ -562,6 +562,7 @@ impl SettingsScreen {
                 | FieldId::PEarlierChats
                 | FieldId::PFollowups
                 | FieldId::PNotify
+                | FieldId::PSpeakReplies
         ) {
             let p = self.profiles.get_mut(self.profile_idx)?;
             let c = &mut p.companion;
@@ -570,6 +571,7 @@ impl SettingsScreen {
                 FieldId::PNotesInPrompt => &mut c.notes_in_prompt,
                 FieldId::PFollowups => &mut c.followups,
                 FieldId::PNotify => &mut c.notify,
+                FieldId::PSpeakReplies => &mut c.speak_replies,
                 _ => &mut c.earlier_chats,
             };
             *flag = !*flag;
@@ -820,6 +822,7 @@ impl SettingsScreen {
             | FieldId::PGreeting
             | FieldId::PUserName
             | FieldId::PAssistantName
+            | FieldId::PVoice
             | FieldId::PQuietFrom
             | FieldId::PQuietUntil
             | FieldId::PFollowupsPerDay => {
@@ -882,6 +885,7 @@ impl SettingsScreen {
     }
 
     pub(super) fn apply_profile_text(&mut self, id: FieldId, text: &str) -> Option<SettingsIntent> {
+        let speech_mode = self.config.tts.mode;
         let p = self.profiles.get_mut(self.profile_idx)?;
         match id {
             FieldId::PName => {
@@ -898,6 +902,15 @@ impl SettingsScreen {
             // export fall back to their localized labels (spec §5.1).
             FieldId::PUserName => p.character_names.user = text.to_string(),
             FieldId::PAssistantName => p.character_names.assistant = text.to_string(),
+            // Kept under the speech mode in force; emptied, the mode falls back
+            // to the speech settings' voice (spec §11.9).
+            FieldId::PVoice => {
+                if text.is_empty() {
+                    p.voices.remove(&speech_mode);
+                } else {
+                    p.voices.insert(speech_mode, text.to_string());
+                }
+            }
             // The follow-ups' limits (spec §9.3.6): an hour of the day, and a cap
             // of at least one — a value out of range keeps the previous one.
             FieldId::PQuietFrom | FieldId::PQuietUntil => match text.parse::<u8>() {
@@ -981,6 +994,7 @@ impl SettingsScreen {
                 default_sampling: Some(p.default_sampling.clone()),
                 enabled_tools: Some(p.enabled_tools.clone()),
                 companion: Some(p.companion),
+                voices: Some(p.voices.clone()),
                 // The scaffold language is always sent; the orchestrator authoritatively
                 // vetoes a switch if the profile has data (matching the current
                 // value is also a no-op). docs/history/i18n.md.
