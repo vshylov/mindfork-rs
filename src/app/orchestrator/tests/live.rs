@@ -2924,7 +2924,10 @@ async fn summary_gate_e2e_live() {
         let storage = Storage::open(Paths::with_root(&root)).unwrap();
         let mut m = crate::entities::self_model::SelfModel::new(pid);
         m.summary = bloated.clone();
-        storage.db().self_model_upsert(&m).unwrap();
+        storage
+            .db()
+            .self_model_upsert(&m, &crate::entities::self_model_history::VersionAuthor::App)
+            .unwrap();
     }
 
     // Turn: ask it to read the self-model and shrink the description.
@@ -3584,7 +3587,13 @@ async fn summary_obs_overlap_e2e_live() {
     let obs_text = "Замечаю за собой склонность отвечать лаконично и по делу, избегая многословия.";
     let mut model = SelfModel::new(profile);
     model.summary = para.to_string();
-    storage.db().self_model_upsert(&model).unwrap();
+    storage
+        .db()
+        .self_model_upsert(
+            &model,
+            &crate::entities::self_model_history::VersionAuthor::App,
+        )
+        .unwrap();
 
     // An observation (@self) with a real embedding in the DB.
     let obs = Note::new(profile, obs_text, vec![SELF_NOTE_TAG.to_string()]);

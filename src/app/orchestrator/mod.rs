@@ -964,6 +964,7 @@ impl Orchestrator {
             AppCommand::RequestTasks => self.emit_task_list(),
             AppCommand::RequestSelfModel => self.handle_request_self_model(),
             AppCommand::UpdateSelfModel(edit) => self.handle_update_self_model(edit),
+            AppCommand::RequestSelfModelHistory => self.handle_request_self_model_history(),
             AppCommand::RequestNotes => self.handle_request_notes(),
             AppCommand::EditNote(edit) => self.handle_edit_note(edit),
             AppCommand::ConfirmMcpCatalog(server) => self.handle_confirm_mcp_catalog(server),
@@ -1035,6 +1036,40 @@ impl Orchestrator {
         self.emit_self_model_view(self.active_profile_id());
     }
 
+    /// Answers the `F3` screen's history view (spec §17.9) with the active
+    /// profile's versions, the titles of the chats they were written in, and
+    /// the profile's language-model history — what a version whose author was
+    /// not recorded can be told. A read error answers an empty history, as a
+    /// missing model answers an empty `F3`.
+    fn handle_request_self_model_history(&self) {
+        use crate::entities::self_model_history::{SelfModelHistoryView, VersionAuthor};
+        let Some(pid) = self.active_profile_id() else {
+            return;
+        };
+        let db = self.storage.db();
+        let versions = db.self_model_history(pid).unwrap_or_else(|err| {
+            tracing::warn!("self-model history: reading failed: {err:#}");
+            Vec::new()
+        });
+        let chat_titles = versions
+            .iter()
+            .filter_map(|v| match &v.author {
+                VersionAuthor::Model {
+                    chat_id: Some(id), ..
+                } => self.chats.iter().find(|c| c.id == *id),
+                _ => None,
+            })
+            .map(|c| (c.id, c.title.clone()))
+            .collect();
+        let llm = db.llm_history(pid).unwrap_or_default();
+        let view = SelfModelHistoryView {
+            versions,
+            chat_titles,
+            llm,
+        };
+        let _ = self.evt_tx.send(AppEvent::SelfModelHistory(Box::new(view)));
+    }
+
     /// Applies a manual edit to the active profile's "self-model" (the `F3`
     /// UI editor): loads it (or creates an empty one), applies the edit,
     /// saves if it changed, then re-emits the updated snapshot (an open
@@ -1054,12 +1089,18 @@ impl Orchestrator {
                 return;
             }
             SelfModelEdit::Clear => {
-                // A full clear wipes both the observation notes (@self) and the blob (below).
+                // A full clear wipes the observation notes (@self), the blob and
+                // the blob's history (spec §17.9): what is cleared is forgotten.
                 for n in
                     crate::features::tools::notes::self_notes_recent(&self.storage, pid, usize::MAX)
                 {
                     let _ = self.storage.db().note_delete(pid, n.id);
                 }
+                if let Err(err) = self.storage.db().self_model_delete(pid) {
+                    tracing::warn!("self-model: clearing failed: {err:#}");
+                }
+                self.emit_self_model_view(Some(pid));
+                return;
             }
             _ => {}
         }
@@ -1072,7 +1113,8 @@ impl Orchestrator {
             crate::entities::self_model::SelfModelParams::from_settings(&self.config.self_model);
         let loc = self.profile_locale(pid);
         let mut scars: Vec<String> = Vec::new();
-        let _ = self.storage.db().self_model_update(pid, |m| {
+        let person = crate::entities::self_model_history::VersionAuthor::Person;
+        let _ = self.storage.db().self_model_update(pid, &person, |m| {
             let mut changed = m.apply_edit(edit);
             scars = m.fold_closed_goals(params.max_closed_goals, loc);
             if !scars.is_empty() {

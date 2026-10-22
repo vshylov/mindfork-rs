@@ -429,6 +429,18 @@ impl ToolContext {
         }
     }
 
+    /// Who a self-model write made by this turn's tools is recorded as (spec
+    /// §17.9): the turn's model, the chat it runs in, and whether it is a
+    /// background task — the app's own silent loops are the ones that reflect.
+    pub fn self_model_author(&self) -> crate::entities::self_model_history::VersionAuthor {
+        crate::entities::self_model_history::VersionAuthor::Model {
+            name: self.model_name.clone(),
+            mode: self.engine_mode,
+            chat_id: (!self.chat_id.is_nil()).then_some(self.chat_id),
+            background: self.silent_lane,
+        }
+    }
+
     /// Re-derives [`Self::inputs`] from the context's own snapshots, carrying the `#N` and
     /// the `/w/in` name the turn has already promised (fork F12,
     /// docs/history/sandbox-file-exchange.md §12 T2–T3).

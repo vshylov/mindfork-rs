@@ -744,11 +744,83 @@ pub fn provision(storage: &Storage) -> anyhow::Result<()> {
     for chat in filler_chats() {
         storage.json().save_chat(&chat)?;
     }
-    storage.db().self_model_upsert(&self_model())?;
+    provision_self_model(storage)?;
     let note = saved_note();
     if storage.db().note_get(note.profile_id, note.id)?.is_none() {
         storage.db().note_insert(&note)?;
     }
+    Ok(())
+}
+
+/// The model the demo's self-model history says wrote it — the one
+/// [`app_config`] runs, so the captures agree with each other.
+const HISTORY_MODEL: &str = "gemma-4-12B-it-Q5_K_M";
+
+/// The self-model, written as the history `H` opens on `F3` shows it grown
+/// (spec §17.9): a turn wrote the first version, a background reflection added
+/// to it, the person rewrote the relationship, and a turn wrote the one that
+/// stands — [`self_model`]. Written once: a root that already holds the model
+/// keeps it and its history, so provisioning stays idempotent.
+fn provision_self_model(storage: &Storage) -> anyhow::Result<()> {
+    use crate::entities::self_model_history::VersionAuthor;
+    let db = storage.db();
+    if db.self_model_get(profile_id())?.is_some() {
+        return Ok(());
+    }
+    let model = |background: bool, chat: Uuid| VersionAuthor::Model {
+        name: Some(HISTORY_MODEL.into()),
+        mode: ServerMode::Managed,
+        chat_id: Some(chat),
+        background,
+    };
+    let full = self_model();
+    // The first version: the two goals since met still open, a shorter
+    // self-description, one trait and one interest.
+    let mut first = full.clone();
+    first.summary = "I run locally and help with practical engineering — model sizing and Rust. I prefer measured numbers to adjectives."
+        .into();
+    first.goals.retain(|g| g.status == GoalStatus::Completed);
+    for g in &mut first.goals {
+        g.status = GoalStatus::Active;
+        g.closed_at = None;
+    }
+    first.user_model.perceived_traits.truncate(1);
+    first.user_model.current_interests.truncate(1);
+    first.user_model.relationship_dynamic = "Collaborative and direct.".into();
+    // A reflection over the trip chat: both goals met, the first new one set,
+    // a trait and an interest noticed.
+    let mut second = first.clone();
+    second.goals = full
+        .goals
+        .iter()
+        .filter(|g| g.status == GoalStatus::Completed)
+        .cloned()
+        .collect();
+    second.goals.insert(0, full.goals[0].clone());
+    second.user_model.perceived_traits.truncate(0);
+    second
+        .user_model
+        .perceived_traits
+        .extend(full.user_model.perceived_traits.iter().take(2).cloned());
+    second.user_model.current_interests.extend(
+        full.user_model
+            .current_interests
+            .iter()
+            .skip(1)
+            .take(1)
+            .cloned(),
+    );
+    // The person's own wording of the relationship.
+    let mut third = second.clone();
+    third.user_model.relationship_dynamic = full.user_model.relationship_dynamic.clone();
+    let trip = filler_chats()
+        .into_iter()
+        .find(|c| c.title.starts_with("Trip notes"))
+        .map_or(chat_id(), |c| c.id);
+    db.self_model_upsert(&first, &model(false, chat_id()))?;
+    db.self_model_upsert(&second, &model(true, trip))?;
+    db.self_model_upsert(&third, &VersionAuthor::Person)?;
+    db.self_model_upsert(&full, &model(false, chat_id()))?;
     Ok(())
 }
 
@@ -908,6 +980,21 @@ mod tests {
 
         let model = storage.db().self_model_get(profile_id()).unwrap();
         assert!(model.is_some(), "F3 must have something to show");
+        // `H` has a history to show — four versions by three kinds of
+        // author, once, ending at the model that stands.
+        use crate::entities::self_model_history::VersionAuthor;
+        let history = storage.db().self_model_history(profile_id()).unwrap();
+        assert_eq!(history.len(), 4, "idempotent: one history after two runs");
+        assert!(matches!(
+            history[1].author,
+            VersionAuthor::Model {
+                background: true,
+                ..
+            }
+        ));
+        assert_eq!(history[2].author, VersionAuthor::Person);
+        assert_eq!(history[3].model.summary, self_model().summary);
+        assert_eq!(history[3].model.goals, self_model().goals);
 
         // The note the showcase's tool card says it saved is there, once.
         let note = saved_note();

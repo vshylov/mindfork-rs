@@ -27,6 +27,10 @@ use crate::shared::wrap::wrap_line;
 use crate::widgets::help_dialog::{HelpContext, HelpSection};
 use crate::widgets::input_box::{InputBox, RenderOpts};
 
+mod history;
+
+use history::{History, HistoryKey};
+
 /// The self-model screen's "Shortcuts" section (`F1`): one row per key
 /// `handle_key` matches — a new arm gets a row here (AGENTS.md §3). The app
 /// layer composes the dialog's tab from the screens' sections
@@ -39,6 +43,8 @@ pub(crate) static HELP_SECTION: HelpSection = HelpSection {
         ("Enter", "ui.help.sm_edit"),
         ("Space", "ui.help.sm_goal"),
         ("Del", "ui.help.sm_delete"),
+        ("H", "ui.help.sm_history"),
+        ("←/→", "ui.help.sm_history_step"),
         ("Ctrl+K Ctrl+K", "ui.help.sm_clear"),
         ("Esc", "ui.help.sm_close"),
     ],
@@ -55,6 +61,9 @@ pub enum SelfModelIntent {
     Quit,
     /// Apply a manual edit (the orchestrator will save and re-emit the snapshot).
     Edit(SelfModelEdit),
+    /// Show the self-model's history (`H`, spec §17.9): the app asks the
+    /// orchestrator, and the answer opens the history view on this screen.
+    History,
 }
 
 /// What the selected row points to (for edit actions).
@@ -116,6 +125,8 @@ pub struct SelfModelScreen {
     /// screen is a full-screen overlay, so settings cannot be edited while it
     /// stands, and every `F3` builds it anew.
     note_order: NoteOrder,
+    /// The history view (`H`, spec §17.9), while it stands over the fields.
+    history: Option<History>,
 }
 
 impl SelfModelScreen {
@@ -137,6 +148,7 @@ impl SelfModelScreen {
             editor: None,
             confirm_clear: false,
             note_order,
+            history: None,
         };
         // Row 0 is the "Assistant" header — a decoration. Land the cursor on
         // the first selectable row instead of highlighting a header on open.
@@ -164,6 +176,23 @@ impl SelfModelScreen {
     /// Updates the interface locale (the `AppEvent::Settings` event).
     pub fn set_loc(&mut self, loc: &'static Locale) {
         self.loc = loc;
+    }
+
+    /// Shows the self-model's history (the `SelfModelHistory` event): opens
+    /// the view, or refreshes the one standing, keeping its selected version.
+    pub fn show_history(
+        &mut self,
+        view: crate::entities::self_model_history::SelfModelHistoryView,
+    ) {
+        match self.history.as_mut() {
+            Some(history) => history.refresh(view),
+            None => self.history = Some(History::new(view)),
+        }
+    }
+
+    /// Whether the history view stands — a change to the model refreshes it too.
+    pub fn history_open(&self) -> bool {
+        self.history.is_some()
     }
 
     /// Builds navigable rows (a view + an action target). The base fields are always
@@ -368,6 +397,16 @@ impl SelfModelScreen {
 
     /// Handles a keypress, returning an intent for `app`.
     pub fn handle_key(&mut self, key: KeyEvent) -> Option<SelfModelIntent> {
+        if let Some(history) = self.history.as_mut() {
+            return match history.handle_key(key) {
+                HistoryKey::Stay => None,
+                HistoryKey::Back => {
+                    self.history = None;
+                    None
+                }
+                HistoryKey::Quit => Some(SelfModelIntent::Quit),
+            };
+        }
         if self.editor.is_some() {
             return self.handle_editor_key(key);
         }
@@ -399,6 +438,7 @@ impl SelfModelScreen {
             KeyCode::Home => self.move_selection(isize::MIN),
             KeyCode::End => self.move_selection(isize::MAX),
             KeyCode::Enter => return self.begin_edit(),
+            KeyCode::Char(_) if phys == 'h' => return Some(SelfModelIntent::History),
             KeyCode::Char(' ') => {
                 if let Some(RowAction::Goal(id)) = self.selected_action() {
                     return Some(SelfModelIntent::Edit(SelfModelEdit::CycleGoalStatus(id)));
@@ -530,6 +570,7 @@ impl SelfModelScreen {
             hk.push(("Del", loc.t("ui.self_model.hk.delete"), true));
         }
         hk.extend([
+            ("H", loc.t("ui.self_model.hk.history"), false),
             ("Ctrl+K", loc.t("ui.self_model.hk.clear"), false),
             ("F1", loc.t("ui.self_model.hk.help"), false),
             ("Esc", loc.t("ui.self_model.hk.close"), false),
@@ -549,6 +590,10 @@ impl SelfModelScreen {
         let area = frame.area();
         let palette = self.palette;
         let loc = self.loc;
+        if let Some(history) = self.history.as_mut() {
+            history.render(frame, &palette, loc, &self.names);
+            return;
+        }
 
         // The hotkey line — below the panel (outside the border), right-aligned
         // and wrapping to as many rows as it needs, like every other screen's
@@ -594,7 +639,7 @@ impl SelfModelScreen {
         let view_h = list_area.height as usize;
         self.scroll = adjust_scroll(self.scroll, sel_start, sel_height, view_h);
 
-        self.draw_visual_rows(frame, list_area, &visual, sel);
+        draw_visual_rows(frame, list_area, &visual, sel, self.scroll, &palette);
 
         // The bottom area (below the panel, outside the border): the clear confirmation or the
         // hotkey grid (computed above).
@@ -609,41 +654,6 @@ impl SelfModelScreen {
         }
 
         self.render_editor_popup(frame, area);
-    }
-
-    /// Draws the visible visual rows. The selected row gets a backdrop across the whole
-    /// row width (the base `Paragraph` colors the whole area) and a `▌` marker; others get an indent.
-    fn draw_visual_rows(
-        &self,
-        frame: &mut Frame,
-        list_area: Rect,
-        visual: &[(usize, Line<'static>)],
-        sel: usize,
-    ) {
-        let palette = self.palette;
-        let view_h = list_area.height as usize;
-        for (offset, (ri, line)) in visual.iter().enumerate().skip(self.scroll).take(view_h) {
-            let y = list_area.y + (offset - self.scroll) as u16;
-            let row = Rect {
-                x: list_area.x,
-                y,
-                width: list_area.width,
-                height: 1,
-            };
-            let selected = *ri == sel;
-            let prefix = if selected {
-                Span::raw("▌ ")
-            } else {
-                Span::raw("  ")
-            };
-            let mut spans = vec![prefix];
-            spans.extend(line.spans.iter().cloned());
-            let mut para = Paragraph::new(Line::from(spans));
-            if selected {
-                para = para.style(Style::new().bg(palette.keycap_bg));
-            }
-            frame.render_widget(para, row);
-        }
     }
 
     /// The editor drawn on top — with a real cursor. Always multiline (text wraps).
@@ -666,11 +676,47 @@ impl SelfModelScreen {
     }
 }
 
+/// Draws the visible visual rows from `scroll` on. The selected row gets a
+/// backdrop across the whole row width (the base `Paragraph` colors the whole
+/// area) and a `▌` marker; others get an indent. Shared with the history view.
+fn draw_visual_rows(
+    frame: &mut Frame,
+    list_area: Rect,
+    visual: &[(usize, Line<'static>)],
+    sel: usize,
+    scroll: usize,
+    palette: &Palette,
+) {
+    let view_h = list_area.height as usize;
+    for (offset, (ri, line)) in visual.iter().enumerate().skip(scroll).take(view_h) {
+        let y = list_area.y + (offset - scroll) as u16;
+        let row = Rect {
+            x: list_area.x,
+            y,
+            width: list_area.width,
+            height: 1,
+        };
+        let selected = *ri == sel;
+        let prefix = if selected {
+            Span::raw("▌ ")
+        } else {
+            Span::raw("  ")
+        };
+        let mut spans = vec![prefix];
+        spans.extend(line.spans.iter().cloned());
+        let mut para = Paragraph::new(Line::from(spans));
+        if selected {
+            para = para.style(Style::new().bg(palette.keycap_bg));
+        }
+        frame.render_widget(para, row);
+    }
+}
+
 /// Expands each logical line into visual rows wrapped to `content_width`,
 /// tracking for every row the index of its logical line; returns the rows
 /// plus where the selected row starts and how many visual rows it takes.
-fn expand_visual_rows(
-    rows: &[(Line<'static>, RowAction)],
+fn expand_visual_rows<A>(
+    rows: &[(Line<'static>, A)],
     sel: usize,
     content_width: usize,
 ) -> (Vec<(usize, Line<'static>)>, usize, usize) {

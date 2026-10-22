@@ -141,8 +141,12 @@ fn real_main(
         compare,
         password,
         json,
+        self_model,
     } = command
     {
+        if self_model {
+            return run_self_model_timeline(paths, archive.as_deref(), password, loc);
+        }
         return run_stats(
             paths,
             archive.as_deref(),
@@ -669,6 +673,36 @@ fn run_stats(
     } else {
         println!("{}", data_stats::render_comparison_text(&comparison, loc));
     }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `mindfork stats --self-model` (spec §12.4, §17.9): the self-model's
+/// timeline of the live data or of an archive, as JSON on stdout. Read like the
+/// summary — nothing created, migrated or unpacked — and an archive's password
+/// settled as `restore` settles it.
+fn run_self_model_timeline(
+    paths: &Paths,
+    archive: Option<&Path>,
+    password: Option<String>,
+    loc: &Locale,
+) -> anyhow::Result<ExitCode> {
+    use crate::features::data_stats;
+    let timeline = match archive {
+        None => data_stats::collect_timeline_root(paths)?,
+        Some(archive) => {
+            let stored = backup_config(paths, loc).stored_password;
+            eprintln!(
+                "{}",
+                loc.tf(
+                    "cli.stats.reading_archive",
+                    &[("path", &archive.display().to_string())]
+                )
+            );
+            let password = resolve_restore_password(archive, password, stored, loc)?;
+            data_stats::collect_timeline_archive(archive, password.as_deref(), loc)?
+        }
+    };
+    println!("{}", data_stats::render_timeline(&timeline));
     Ok(ExitCode::SUCCESS)
 }
 
@@ -2100,15 +2134,18 @@ mod tests {
     fn stats_is_answered_before_the_data_root_is_created() {
         let tmp = tempfile::tempdir().unwrap();
         let paths = Paths::with_root(tmp.path().join("never-created"));
-        let command = CliCommand::Stats {
-            archive: None,
-            compare: None,
-            password: None,
-            json: true,
-        };
-        real_main(command, &paths, i18n::locale(Lang::En), &[]).unwrap();
-        assert!(!paths.root().exists());
-        assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 0);
+        for self_model in [false, true] {
+            let command = CliCommand::Stats {
+                archive: None,
+                compare: None,
+                password: None,
+                json: true,
+                self_model,
+            };
+            real_main(command, &paths, i18n::locale(Lang::En), &[]).unwrap();
+            assert!(!paths.root().exists());
+            assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 0);
+        }
     }
 
     /// "Wrong password" is only the stored password's fault when nobody typed

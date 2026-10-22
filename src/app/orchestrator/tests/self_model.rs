@@ -634,10 +634,14 @@ fn f3_clear_removes_self_notes_and_blob() {
         .unwrap();
     orch.storage
         .db()
-        .self_model_update(pid, |m| {
-            m.summary = "о себе".into();
-            true
-        })
+        .self_model_update(
+            pid,
+            &crate::entities::self_model_history::VersionAuthor::Person,
+            |m| {
+                m.summary = "о себе".into();
+                true
+            },
+        )
         .unwrap();
 
     orch.handle_update_self_model(SelfModelEdit::Clear);
@@ -649,8 +653,28 @@ fn f3_clear_removes_self_notes_and_blob() {
             .unwrap()
             .is_empty()
     );
-    let stored = orch.storage.db().self_model_get(pid).unwrap();
-    assert!(stored.map(|m| m.summary.is_empty()).unwrap_or(true));
+    // The blob is gone, and its history with it (spec §17.9).
+    assert!(orch.storage.db().self_model_get(pid).unwrap().is_none());
+    assert!(
+        orch.storage
+            .db()
+            .self_model_history(pid)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+/// An edit on the `F3` screen is a version of the person's.
+#[test]
+fn f3_edit_is_recorded_as_the_persons_version() {
+    use crate::entities::self_model::SelfModelEdit;
+    use crate::entities::self_model_history::VersionAuthor;
+    let (_d, orch, pid) = orch_with_active_profile();
+    orch.handle_update_self_model(SelfModelEdit::SetSummary("I am Sol.".into()));
+    let history = orch.storage.db().self_model_history(pid).unwrap();
+    assert_eq!(history.len(), 1);
+    assert_eq!(history[0].author, VersionAuthor::Person);
+    assert_eq!(history[0].model.summary, "I am Sol.");
 }
 
 #[tokio::test]
@@ -698,4 +722,67 @@ async fn handle_done_signals_self_model_changed_on_self_model_tool_call() {
         }
     }
     assert!(changed);
+}
+
+/// The history's answer (spec §17.9): every version oldest first, the titles
+/// of the chats a model wrote in, and the profile's model history.
+#[test]
+fn history_request_answers_versions_titles_and_models() {
+    use crate::entities::profile::LlmChange;
+    use crate::entities::self_model_history::VersionAuthor;
+    use crate::shared::config::ServerMode;
+    let (_d, mut orch, mut rx) = bare_orch_rx();
+    let profile = Profile::new("P", "sys");
+    let pid = profile.id;
+    let chat = Chat::from_profile(&profile, "Chess openings");
+    let chat_id = chat.id;
+    orch.profiles.push(profile);
+    orch.chats.push(chat);
+    orch.active_id = Some(chat_id);
+    let db = orch.storage.db();
+    let turn = VersionAuthor::Model {
+        name: Some("gemma-4-31b".into()),
+        mode: ServerMode::External,
+        chat_id: Some(chat_id),
+        background: false,
+    };
+    db.self_model_update(pid, &turn, |m| {
+        m.summary = "I am Sol.".into();
+        true
+    })
+    .unwrap();
+    let gone = VersionAuthor::Model {
+        name: Some("gemma-4-31b".into()),
+        mode: ServerMode::External,
+        chat_id: Some(Uuid::new_v4()),
+        background: true,
+    };
+    db.self_model_update(pid, &gone, |m| {
+        m.add_goal("learn chess");
+        true
+    })
+    .unwrap();
+    db.llm_history_note(
+        pid,
+        &LlmChange {
+            changed_at: chrono::Utc::now(),
+            model: "gemma-4-31b".into(),
+            mode: ServerMode::External,
+        },
+    )
+    .unwrap();
+
+    orch.handle_request_self_model_history();
+    let view = loop {
+        match rx.try_recv().expect("no SelfModelHistory event") {
+            AppEvent::SelfModelHistory(view) => break view,
+            _ => continue,
+        }
+    };
+    let authors: Vec<&VersionAuthor> = view.versions.iter().map(|v| &v.author).collect();
+    assert_eq!(authors, vec![&turn, &gone]);
+    // Only a chat that still exists has a title to show.
+    assert_eq!(view.chat_titles.len(), 1);
+    assert_eq!(view.chat_titles[&chat_id], "Chess openings");
+    assert_eq!(view.llm.len(), 1);
 }

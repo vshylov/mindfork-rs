@@ -580,7 +580,13 @@ async fn summary_obs_overlap_uses_the_calibrated_threshold() {
     let paragraph = "a".repeat(50);
     let mut model = SelfModel::new(profile);
     model.summary = paragraph.clone();
-    storage.db().self_model_upsert(&model).unwrap();
+    storage
+        .db()
+        .self_model_upsert(
+            &model,
+            &crate::entities::self_model_history::VersionAuthor::App,
+        )
+        .unwrap();
     let pv = ctx
         .embedder
         .embed(vec![paragraph], EmbedRole::Passage)
@@ -633,7 +639,13 @@ async fn summary_obs_overlap_surfaces_match_not_unrelated() {
     let p_unrel = "b".repeat(50);
     let mut model = SelfModel::new(profile);
     model.summary = format!("{p_match}\n\n{p_unrel}");
-    storage.db().self_model_upsert(&model).unwrap();
+    storage
+        .db()
+        .self_model_upsert(
+            &model,
+            &crate::entities::self_model_history::VersionAuthor::App,
+        )
+        .unwrap();
 
     // The observation matching P_match: its vector = P_match's embedding (cosine = 1.0).
     let match_vec = ctx
@@ -685,7 +697,13 @@ async fn summary_obs_overlap_soft_degrades() {
     // There's a summary, but no observations → None.
     let mut model = SelfModel::new(profile);
     model.summary = "a".repeat(50);
-    storage.db().self_model_upsert(&model).unwrap();
+    storage
+        .db()
+        .self_model_upsert(
+            &model,
+            &crate::entities::self_model_history::VersionAuthor::App,
+        )
+        .unwrap();
     assert!(
         summary_observation_overlaps(&storage, ctx.embedder.as_ref(), profile, ru())
             .await
@@ -729,7 +747,13 @@ async fn summary_obs_overlap_soft_degrades() {
     // An empty summary → None (even with observations present and a working embedder).
     let mut empty = SelfModel::new(profile);
     empty.summary = String::new();
-    storage.db().self_model_upsert(&empty).unwrap();
+    storage
+        .db()
+        .self_model_upsert(
+            &empty,
+            &crate::entities::self_model_history::VersionAuthor::App,
+        )
+        .unwrap();
     assert!(
         summary_observation_overlaps(&storage, ctx.embedder.as_ref(), profile, ru())
             .await
@@ -758,7 +782,10 @@ fn migrate_self_narrative_moves_and_is_idempotent() {
             created_at: Utc::now(),
         },
     ];
-    storage.db().self_model_upsert(&m).unwrap();
+    storage
+        .db()
+        .self_model_upsert(&m, &crate::entities::self_model_history::VersionAuthor::App)
+        .unwrap();
 
     migrate_self_narrative(&storage, profile);
 

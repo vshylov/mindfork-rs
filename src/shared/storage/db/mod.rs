@@ -305,6 +305,20 @@ fn baseline_ddl(conn: &Connection) -> Result<()> {
              updated_at  TEXT NOT NULL
          );
 
+         CREATE TABLE IF NOT EXISTS self_model_versions (
+             rowid       INTEGER PRIMARY KEY,
+             profile_id  TEXT NOT NULL,
+             version     INTEGER NOT NULL,
+             data        TEXT NOT NULL,
+             written_at  TEXT NOT NULL,
+             author      TEXT NOT NULL,
+             model       TEXT,
+             mode        TEXT,
+             chat_id     TEXT
+         );
+         CREATE INDEX IF NOT EXISTS idx_self_model_versions_profile
+             ON self_model_versions(profile_id);
+
          CREATE TABLE IF NOT EXISTS note_links (
              profile_id  TEXT NOT NULL,
              from_id     TEXT NOT NULL,
@@ -620,9 +634,11 @@ mod notes;
 mod rag;
 mod self_model;
 mod stats;
+mod timeline;
 
 pub use embed_gen::{ReembedPending, ReembedRow};
 pub use stats::{DbStats, KeyedRow, stats_of_file, stats_of_image};
+pub use timeline::{DbTimeline, ProfileTimeline, timeline_of_file, timeline_of_image};
 
 #[cfg(test)]
 mod migrate_tests {

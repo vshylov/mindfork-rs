@@ -267,6 +267,14 @@ summary, goals, traits, and an observation narrative. It is updated between turn
 by the assistant itself, not by a background job you have to trust — and
 `/self clear` wipes it if you want a clean slate. It is per profile.
 
+Every change to it is kept: **`H`** on `F3` lists the versions, newest first, each
+with when it was written, who wrote it — the model by name, in which conversation or
+in a background reflection, or you — and what it changed; `Enter` opens one, and
+`←`/`→` step to the one before or after. Clearing the model clears this history too.
+For a whole timeline to study — every version of every profile, the observations, and
+which models the profile talked to, as JSON — run `mindfork stats --self-model` (add a
+backup archive's path to read one without restoring it).
+
 ### Notes
 
 The assistant writes notes for itself and links them into a graph; a note can

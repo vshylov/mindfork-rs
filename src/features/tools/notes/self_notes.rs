@@ -175,13 +175,17 @@ fn self_edge_line(
 pub(crate) fn migrate_self_narrative(storage: &crate::shared::storage::Storage, profile_id: Uuid) {
     use crate::entities::self_model::NarrativeSegment;
     let mut segments: Vec<NarrativeSegment> = Vec::new();
-    let _ = storage.db().self_model_update(profile_id, |m| {
-        if m.narrative.is_empty() {
-            return false;
-        }
-        segments = std::mem::take(&mut m.narrative);
-        true
-    });
+    let _ = storage.db().self_model_update(
+        profile_id,
+        &crate::entities::self_model_history::VersionAuthor::App,
+        |m| {
+            if m.narrative.is_empty() {
+                return false;
+            }
+            segments = std::mem::take(&mut m.narrative);
+            true
+        },
+    );
     for seg in segments {
         // Preserve the original dates — the "fresh observations" order stays
         // intact after the migration.

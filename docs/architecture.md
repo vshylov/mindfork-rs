@@ -2501,6 +2501,7 @@ flowchart LR
         RAGD["rag_documents (profile_id)"]
         VEC["rag_vectors vec0 (rowid)"]
         SELF["self_models (profile_id PK)"]
+        SMV["self_model_versions (profile_id)<br/>every version, who wrote it, spec §17.9"]
         LLMH["llm_history (profile_id)<br/>dated LLM-change records, spec §9.14"]
     end
     subgraph CACHE["SQLite FTS5 (cache/) — derived, disposable"]
@@ -3307,10 +3308,35 @@ CREATE TABLE IF NOT EXISTS self_models (
 );
 ```
 
-`self_model_get(profile_id)` / `self_model_upsert(&model)` (INSERT OR REPLACE,
-`version`+1). **No migrations:** the model is a JSON blob + `#[serde(default)]`
+`self_model_get(profile_id)` / `self_model_upsert(&model, &author)` (INSERT OR
+REPLACE, `version`+1). **No migrations:** the model is a JSON blob + `#[serde(default)]`
 on new fields, so shape evolution (new fields/tools) reads old records
 without migration — the storage shape hasn't changed at any tier.
+
+**Its history** (spec §17.9) is a second table, one row per write:
+
+```sql
+CREATE TABLE IF NOT EXISTS self_model_versions (
+    rowid      INTEGER PRIMARY KEY,  -- insertion order, kept across VACUUM
+    profile_id TEXT NOT NULL,
+    version    INTEGER NOT NULL,     -- the model's version this row is
+    data       TEXT NOT NULL,        -- the model as written
+    written_at TEXT NOT NULL,
+    author     TEXT NOT NULL,        -- turn | background | person | app | unknown
+    model      TEXT, mode TEXT, chat_id TEXT  -- when a model wrote it
+);
+```
+
+Every writer names its author (`entities::self_model_history::VersionAuthor`): the
+tools take it from the turn (`ToolContext::self_model_author` — the model name, the
+engine mode, the chat, and `silent_lane` for a reflection), the `F3` edit is the
+person's, the narrative drain the app's. `self_model_upsert_conn` writes the model and
+its row in one savepoint, and first records the model it replaces as `unknown` when
+that one has no row — a version from before the history, or from an older build.
+`self_model_history(pid)` reads them oldest first (ending at the stored model when it
+is newer than the last row); `self_model_delete(pid)` drops the model and its rows —
+what clearing it means. `db::timeline` reads the same rows (and the observations and
+`llm_history`) read-only, for `mindfork stats --self-model`, as stored.
 
 ### 9.3 The read ↔ write cycle per turn
 
@@ -3625,6 +3651,13 @@ a fresh snapshot; when the screen is closed, the signal is ignored (it
 doesn't open the screen, unlike `SelfModelView`). Sizes/injection/protocol/
 auto-reflection are fields of the "Self-model" group in the **"Memory"**
 settings section (`Sm*`, `catalog::memory_fields`).
+**The history** (`H`, spec §17.9) is a view inside the same screen
+(`screens/self_model/history.rs`): `SelfModelIntent::History` →
+`AppCommand::RequestSelfModelHistory` → `AppEvent::SelfModelHistory` with a
+`SelfModelHistoryView` — the versions, the titles of the chats they name, the profile's
+`llm_history` — which opens it on an open `F3` only. The comparison of two versions is
+the entity's (`self_model_history::changes`); a `SelfModelChanged` refreshes a
+standing history as well as the fields. Read-only: nothing is restored from it.
 The observation list's **direction** is a display rule of the screen alone
 (`entities::self_model::order_narrative`, by each row's own `created_at`, newest
 first by default): `interface.self_model_note_order` is read once at open, out of
@@ -3638,6 +3671,9 @@ cannot change while `F3` stands. The snapshot's own order (`note_list`,
   data directly through `storage`, `ChatEffect` isn't involved.
 - **Isolated by `profile_id`** — like notes/RAG (a table PK).
 - **No migrations** — a JSON blob + `#[serde(default)]`.
+- **Every write is a version** — the model and its history row land in one
+  savepoint, with the author the writer names; no writer bypasses
+  `self_model_upsert_conn`, so the history cannot miss a write of this build.
 - **Opt-in** — the whole group is off by default; injection and
   auto-reflection are gated by `get_self_model` being enabled in the
   profile.

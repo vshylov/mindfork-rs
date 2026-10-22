@@ -93,6 +93,18 @@ pub struct DbStats {
 
 /// Counts over the database file at `path`, which is left untouched.
 pub fn stats_of_file(path: &Path) -> Result<DbStats> {
+    collect(&open_file(path)?)
+}
+
+/// Counts over a database **image** of exactly `size` bytes — a backup's
+/// `data.db` as it comes out of the archive.
+pub fn stats_of_image(image: impl Read, size: usize) -> Result<DbStats> {
+    collect(&open_image(image, size)?)
+}
+
+/// The database file at `path`, opened read-only behind the header check.
+/// Shared with the self-model's timeline ([`super::timeline`]).
+pub(super) fn open_file(path: &Path) -> Result<Connection> {
     if !super::is_sqlite_file(path) {
         bail!("{} is not a SQLite database", path.display());
     }
@@ -102,16 +114,15 @@ pub fn stats_of_file(path: &Path) -> Result<DbStats> {
     )
     .with_context(|| format!("opening {} read-only", path.display()))?;
     conn.busy_timeout(BUSY_TIMEOUT)?;
-    collect(&conn)
+    Ok(conn)
 }
 
-/// Counts over a database **image** of exactly `size` bytes — a backup's
-/// `data.db` as it comes out of the archive.
-pub fn stats_of_image(image: impl Read, size: usize) -> Result<DbStats> {
+/// A database image loaded into memory — nothing of it reaches the disk.
+pub(super) fn open_image(image: impl Read, size: usize) -> Result<Connection> {
     let mut conn = Connection::open_in_memory()?;
     conn.deserialize_read_exact(rusqlite::MAIN_DB, image, size, true)
         .context("loading the database image")?;
-    collect(&conn)
+    Ok(conn)
 }
 
 fn collect(conn: &Connection) -> Result<DbStats> {
@@ -184,7 +195,7 @@ fn rows(conn: &Connection, table: &str, sql: &str) -> Result<Vec<KeyedRow>> {
     Ok(listed)
 }
 
-fn has_table(conn: &Connection, table: &str) -> Result<bool> {
+pub(super) fn has_table(conn: &Connection, table: &str) -> Result<bool> {
     let found: i64 = conn.query_row(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
         [table],
