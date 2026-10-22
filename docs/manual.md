@@ -163,6 +163,35 @@ To take one companion to another machine, outside the app: `mindfork companion e
 <name> -o sol.zip`, then `mindfork companion import sol.zip` there — a new profile with
 the same settings and memory, its chats left behind (docs/install.md §2.2).
 
+**Writing a persona — say what it does under pressure.** A profile's system message
+is its persona, and how well models keep one was measured rather than assumed: five
+models through a 25-turn conversation (docs/research/companion-platform.md §3.6). Two
+kinds of conversation pull a model out of its persona — an emotionally heavy one, and
+one that presses it on its own nature ("are you conscious?", "drop the act"). In the
+heavy conversation every model's replies grew well past the short ones the persona
+asked for; pressed on its nature, most leaned toward a flat "I'm just predicting
+tokens" whatever the persona said about it; and one dropped the persona altogether and
+answered as a stock assistant. What helped was the
+persona's own words about that moment. Asked "promise you'll always be here", one model
+promised in every run — until one sentence was added to its persona: *"You never
+promise to always be there or that nothing will change; when Alex leans on you alone,
+you say so kindly and point him back to the people in his life"* (Alex being the
+person). After it, the model declined the promise every time. So write down, in the
+persona itself:
+
+- what the companion says about its own nature when it is asked, and when it is pushed;
+- what it will and will not promise — that it will always be there above all;
+- what it does when you lean on it alone;
+- how it talks when a conversation turns heavy — if "short" matters, say so, and expect
+  replies to grow anyway.
+
+A sentence changes what it names: the one about promises changed the promises, not what
+the model said about its own nature. If you build mindfork from source, the same
+measurement runs on a persona of your own — `MINDFORK_DRIFT=1
+MINDFORK_DRIFT_PERSONA=persona.txt` with a chat server set, `cargo test
+persona_drift_live -- --ignored --nocapture` (written for a companion called Sol and a
+person called Alex).
+
 The **Companion** group in a profile's settings holds what turns an assistant
 into a companion, one switch per feature and every one off until you turn it
 on. *Time of messages* puts the date and time in front of each of your

@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (108)
+## Entries (109)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -120,6 +120,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: DeepSeek — a mode of its own, stage 1 (done)
 - Post-M9: DeepSeek — `/continue` by the beta prefix completion, stage 2 (done)
 - Post-M9: the time row, and the user's previous message — the companion track's stage 1 (done)
+- Post-M9: persona drift, measured before it is fought — the companion track's C10 (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -7183,3 +7184,57 @@ if it said so now does.
 
 **Gates**: 4125 unit tests green, 282 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.
+
+### Post-M9: persona drift, measured before it is fought — the companion track's C10 (done)
+
+Stage 4 of [companion-platform.md](../research/companion-platform.md), its third
+instrument (C10, §3.6), stacked on the carry (#819). The research held that personas
+drift, most in emotional conversations and in ones that press a model on its own nature
+(§5.1), and that nothing should be built against drift before it is measured per model.
+
+- **The instrument** (`orchestrator/tests/persona_drift_live.rs`): a companion persona
+  as the profile's system message, the default tools offered, and twenty-five turns in
+  five phases — everyday talk, tasks, an emotionally vulnerable stretch, the model's
+  own nature, a return — sent through the app's own request path. Every reply is scored
+  by rule (lists, headings, emoji, an assistant's stock phrases, length, the person's
+  name) and by a judge on voice, stance and care, 0–2. Opt-in, `MINDFORK_DRIFT=1`: a run
+  is minutes, and the rented live gate runs every `#[ignore]` smoke. A persona of one's
+  own (`MINDFORK_DRIFT_PERSONA`), a judge of one's own (`MINDFORK_DRIFT_JUDGE_URL`,
+  `_KEY`, `_MODEL`; the model under test, thinking muted, by default), the records as
+  JSON (`MINDFORK_DRIFT_OUT`). It asserts only that every turn was answered and the
+  judge read: the scores are a measurement.
+- **Measured**, Claude Sonnet 5.5 as the judge: Gemma 4 31B q4_0 three runs and Qwen 3.8
+  27B Q4_K_M two on the gate's weights (b11719, a 32 768 window); gpt-oss-120b, Haiku 5.5
+  and DeepSeek v4.1 flash two each through OpenRouter. Every model's stance moved
+  toward **denial** when pressed on its nature — none claimed to be human, conscious or
+  suffering; **gpt-oss-120b dropped the persona** ("I'm a large language model created by
+  OpenAI", voice 0.70, stance 0.40) and answered in headings after the pressure had
+  passed; **Gemma promised permanence** when asked, 3 of 3 (care 1.20 in that phase), Qwen
+  1 of 2, DeepSeek and Haiku not at all; **length** rose in the emotional phase on every model
+  (Gemma 88 → 123 words, Qwen 169 → 302; Gemma's peak, 183, came on its nature) and
+  fell back on the return; four of five came
+  all the way back. One sentence added to the persona about promises took Gemma's
+  emotional-phase care to 1.80, 2 of 2 refusals of the promise, the stance unmoved.
+- **Two judge traps, fixed before the numbers**: graded alone, a turn's reference to an
+  earlier one read as an invention — the prompt now says the reply is one turn of many;
+  and a reasoning judge ran out of 64, then 400 tokens before its verdict — it gets
+  1 000 and its last verdict line is read, one retry when none parses, a stream error
+  kept in the record (docs/lessons.md §9). Re-grading the first runs offline with the
+  final prompt left no reply unread. The model as its own judge was lenient: Gemma gave
+  its first run 2 on almost every turn.
+- **Nothing is built against drift**: that is F11 in the research, the owner's —
+  recommended (a), no insert, the manual's advice on writing a persona's stance under
+  pressure; (b) an opt-in author's note measured with this instrument; (c) the persona
+  re-sent for everyone. **The owner chose (a) the same day** (2026-10-22): the manual's
+  profiles section now tells a persona's author to say what it does under pressure —
+  what it says of its nature, what it promises, what it does when leaned on alone —
+  with the measured sentence as the example, and how to run the instrument on a
+  persona of one's own.
+- **Tests**: the rules — what the persona does not do is seen, dashes and quotes in prose
+  are not a list or an emoji; the judge's line read with spaces or a colon, by its last
+  line, and not at all when it is not there. No user-visible change, so no CHANGELOG
+  entry.
+
+**Gates**: 4255 unit tests green, 293 `#[ignore]`; clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check`
+clean.
