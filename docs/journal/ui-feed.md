@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (56)
+## Entries (57)
 
 - Post-M9: mouse-wheel feed scrolling (done)
 - Post-M9: own markdown renderer (tables + LaTeX + theme) (done)
@@ -68,6 +68,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: notifications for someone not looking — companion stage 3, C5 (a) (done)
 - Post-M9: Windows Terminal shows OSC 777 only from Preview 1.26, opt-in — a correction (done)
 - Post-M9: inside tmux a notification needs `allow-passthrough all` — WezTerm, Ghostty and tmux measured (done)
+- Post-M9: kitty, foot, rxvt-unicode and a Wayland session — the rest of the terminals measured (done)
 
 ### Post-M9: mouse-wheel feed scrolling (done)
 - **The mouse wheel scrolls the feed** on par with `PageUp/PageDown`. `ratatui::init()`
@@ -3263,9 +3264,10 @@ many beats one missed, and the feature is opt-in and its triggers capped.
 
 **Key decisions (the agent's, inside F6 (a)).**
 - **One escape, never two**: OSC 777 by default — Ghostty, WezTerm, foot,
-  rxvt-unicode, and Windows Terminal (read here as "since its June 2026 change",
+  rxvt-unicode (not as shipped — a later entry), and Windows Terminal (read here as "since its June 2026 change",
   [microsoft/terminal#7718](https://github.com/microsoft/terminal/issues/7718); in
-  fact from Preview 1.26 and opt-in — the next entry) — or OSC 9 for iTerm2 and kitty. A
+  fact from Preview 1.26 and opt-in — the next entry) — or OSC 9 for iTerm2 and kitty
+  (kitty shows OSC 777 too, and better — a later entry). A
   terminal that knows both would show two. OSC 9's text leads with the title, so
   it never begins with a digit that Windows Terminal would read as a ConEmu
   sub-command.
@@ -3423,8 +3425,84 @@ now say `allow-passthrough all`, and why not `on`. The bell's role stands, measu
 tmux passes it on with no setting. A lesson in §3.
 
 **Not done.** foot and rxvt-unicode (OSC 777) and kitty (OSC 9) were not run, nor a
-Wayland session; the probe's bytes are the app's by construction, not by a run of the
+Wayland session (run next, at the owner's ask — the following entry); the probe's bytes are the app's by construction, not by a run of the
 app. The image (`mf-notify-lx`, 2.8 GB) and its scripts stayed outside the repository.
+
+**Gates**: 4200 unit tests green, 289 `#[ignore]`; clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean; no screenshot
+dump holds the hint. No live run: nothing a model reads changed.
+
+### Post-M9: kitty, foot, rxvt-unicode and a Wayland session — the rest of the terminals measured (done)
+
+**What.** The owner asked to close the direction: foot, rxvt-unicode, kitty (OSC 9)
+and a Wayland session. The same stand grew a layer — foot 1.28.0, rxvt-unicode 9.31,
+kitty 0.49.2, sway 1.12 with grim, wtype, from Arch's repos — and a second driver: sway
+on its headless backend (pixman, no XWayland, `--cap-add SYS_NICE`, which its binary's
+file capability needs inside a container), focus moved with `swaymsg`, a window hidden
+in the scratchpad, `grim` for the screenshot. The same probe now writes either escape,
+each the app's bytes. Every negative arm ran beside a positive control in the same
+container.
+
+**The stand's own trap.** The headless backend has no input devices, so its seat has
+no keyboard and no window ever gets keyboard focus: foot reported "focus out" at
+start and never "in", and showed a notification in its "focused" arm — a terminal
+that thinks it is never focused. A virtual keyboard held open (`wtype -s 3600000`)
+gives the seat one; from then on foot reported in and out on every move, and held
+the focused arm's notification, as its setting says. The arms before that fix were
+thrown away.
+
+**Measured — the escapes**, one `Notify` per arm on the session bus or none:
+
+| Terminal | Display | OSC 777 | OSC 9 | Focused window |
+|---|---|---|---|---|
+| WezTerm 20260716 | X11, Wayland | title and body as sent | one line, as the title | shown |
+| Ghostty 1.3.1 | X11, Wayland | title and body as sent | one line, under "Ghostty" | shown |
+| kitty 0.49.2 | X11, Wayland | title and body as sent | one line, as the title | shown |
+| foot 1.28.0 | Wayland | title and body as sent | one line, as the title | **held** (`inhibit-when-focused`) |
+| rxvt-unicode 9.31 | X11 | **none** | **none** | — |
+
+Every OSC 777 "shown" held for an unfocused, a focused and a minimized (X11) or
+hidden (Wayland) window alike; OSC 9 ran unfocused in each, and kitty's in all three. Through tmux with `allow-passthrough all`, the app's tmux
+window not on screen: kitty showed it (X11 with either escape, Wayland with OSC 777);
+foot held it,
+its own window being focused, and with `-o desktop-notifications.inhibit-when-focused=no`
+showed it.
+
+**rxvt-unicode.** It took both escapes in silence: nothing drawn, nothing on the bus,
+the focus reports working. OSC 777 is the number its perl extensions answer to, and
+of the 25 it ships none handles `notify` — the escape is named after urxvt without
+urxvt showing it. Its `bell-command` extension can turn the bell into a notification:
+given with `-xrm`, it never fired, not even for `touch`; a probe extension of our own
+proved the bell reaches the perl hook; in `~/.Xdefaults`
+(`URxvt.perl-ext-common: default,bell-command`, `URxvt.bell-command: notify-send ...`)
+it fired — one notification per bell, in every window state, and through tmux with
+nothing set. Its text is the command's, not the app's.
+
+**Measured — focus.** With a window opened, moved away from, back and away again:
+
+| Terminal | X11 | Wayland |
+|---|---|---|
+| WezTerm | out, in, out | out, in, out |
+| Ghostty | in, out, in, out | in, out, in, out |
+| kitty | out, in, out | in, out — the first move away is not reported |
+| foot | — | in, out, in, out |
+| rxvt-unicode | out, in, out | — |
+
+WezTerm does not report the focus a window opens with; kitty on Wayland never told
+itself it was focused at first (its `--debug-input` log: the first change is to
+unfocused, and nothing reached the child), and reports every change after one round
+trip. Neither loses a notification: focus unknown counts as not looking.
+
+**Changed.** Docs only: OSC 777's list is Ghostty, WezTerm, kitty, foot (and Windows
+Terminal from Preview 1.26); OSC 9 is iTerm2's, the others running it into one line;
+rxvt-unicode is off the list, with its `bell-command` lines in the manual and spec;
+foot's hold while focused and the setting that lifts it; the two focus quirks in spec
+§11.12. In `shared::notify`'s docs, the escape's hint (en, ru), the CHANGELOG entry
+and research C5 likewise. A note on a §3 lesson.
+
+**Not done.** iTerm2 (OSC 9's own) needs a Mac; the desktops ran dunst under sway
+and openbox, not GNOME's or KDE's notification services. The image
+(`mf-notify-lx3`) and scripts stay outside the repository.
 
 **Gates**: 4200 unit tests green, 289 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean; no screenshot

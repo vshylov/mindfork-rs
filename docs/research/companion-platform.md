@@ -1151,7 +1151,7 @@ by default:
    **C5 (a) built**, the stage's second pull request: *Notify me*, a profile switch,
    sends a notification when the companion writes unasked and the person is not
    looking — the terminal's focus reports, or a conversation not in view — as a
-   terminal escape (OSC 777 by default, OSC 9 for iTerm2 and kitty; one, never
+   terminal escape (OSC 777 by default, OSC 9 for iTerm2; one, never
    both), the bell (what tmux passes on with no setting), and a ntfy push with its
    token in the key store; only who wrote and where unless the person asks for the
    words (spec §11.12). No model reads anything new, so no probe: the bytes are
@@ -1168,6 +1168,10 @@ by default:
    1.3.1 showed them too, unfocused, focused or minimized; tmux 3.8 with the
    `allow-passthrough on` the docs advised dropped them while the person was in
    another tmux window — the case a notification is for — and `all` passes them.
+   Asked for next, the rest: kitty 0.49.2 shows OSC 777 too, with title and body
+   apart (OSC 9 runs them together); foot 1.28.0, on a headless Wayland sway, shows
+   it and holds it while its window is focused; rxvt-unicode 9.31 shows neither
+   escape, and its own `bell-command` extension makes the bell a notification.
 4. **The instruments** — C9 history, C8 fork then carry, C10 the drift smoke.
 5. **Characters and voice** — C6 cards; C7 (a) a per-profile voice and replies
    spoken as they land.

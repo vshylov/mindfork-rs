@@ -51,8 +51,8 @@ split by subsystem.
   Profiles → *Companion*, off by default) sends a notification when it writes to
   you on its own while the terminal is not in focus, or has something for you in a
   conversation you are not in: a desktop notification through the terminal (OSC
-  777 — Ghostty, WezTerm, foot, and Windows Terminal from Preview 1.26 with
-  `compatibility.allowOSC777` on; or OSC 9 — iTerm2, kitty; inside tmux with
+  777 — Ghostty, WezTerm, kitty, foot, and Windows Terminal from Preview 1.26 with
+  `compatibility.allowOSC777` on; or OSC 9 — iTerm2; inside tmux with
   `set -g allow-passthrough all`), the terminal's bell,
   which tmux passes on and Windows Terminal's `"bellStyle": "all"` shows on the
   taskbar, and — if you give it a topic — a push to

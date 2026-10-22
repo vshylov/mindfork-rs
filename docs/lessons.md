@@ -747,8 +747,12 @@ October, in a **preview**, **off** unless a profile setting turns it on; the sta
 release and the owner's 1.24 ignore it, and the owner's first look found nothing on
 screen. For any claim "terminal/server/provider X supports Y", name the first
 release that ships it, whether that release is stable, and the setting it needs —
-the user's version is what the claim is about.
-— *notifications for someone not looking, the owner's look*.
+the user's version is what the claim is about. **Recorded twice**: rxvt-unicode
+was on the same list because the escape is called its — 777 is the number its perl
+extensions answer to — and as shipped it has no extension for `notify` and shows
+nothing (9.31, measured). A protocol's name says who numbered it, not who
+implements it.
+— *notifications for someone not looking, the owner's look; the Linux look*.
 
 **Measure a feature in the state it exists for, not in the one easiest to set up.**
 *Notify me* told tmux users to set `allow-passthrough on`, the value guides name for

@@ -5204,24 +5204,34 @@ lifted on exit and in the panic hook) and hands each to the orchestrator
 (`AppCommand::TerminalFocus`). A terminal that never reports leaves the person
 "not looking" — a notification too many rather than one missed; inside tmux the
 reports need `set -g focus-events on` (measured, tmux 3.8: a switch to another tmux
-window reports focus lost, and so does the terminal's window losing focus).
+window reports focus lost, and so does the terminal's window losing focus). Measured
+on Linux, every terminal below reports focus changes; WezTerm does not report the
+focus a window opens with, and kitty on Wayland misses the first change after its
+window opens — until then the person counts as not looking.
 
 **How** (`settings.json` → `notifications`, settings → *Interface* →
 *Notifications*; `shared::notify`):
 
 - **The terminal escape** (`escape`): `osc777` (the default —
-  `ESC ] 777 ; notify ; title ; body BEL`, which Ghostty, WezTerm, foot and
-  rxvt-unicode show, and Windows Terminal from Preview 1.26 (2026-10-02) only with
+  `ESC ] 777 ; notify ; title ; body BEL`, which Ghostty, WezTerm, kitty and
+  foot show, and Windows Terminal from Preview 1.26 (2026-10-02) only with
   `compatibility.allowOSC777` on in its profile — 1.24 and 1.25 ignore it, which the
   owner's look on 1.24 found; measured on Preview 1.26.2734.0 with the window
   minimized: a toast with the title and body as sent, and none without the
-  setting), `osc9` (`ESC ] 9 ; text BEL` — iTerm2, kitty) or
+  setting), `osc9` (`ESC ] 9 ; text BEL` — iTerm2; kitty, WezTerm, Ghostty and foot
+  show it too, as one line: the whole text as the title, or under Ghostty's name) or
   `off`. One, never both: a terminal that knows both would show two. A
   terminal that knows neither drops it — measured on the Windows console with VT
   processing on, as the app runs it: all four shapes left nothing on screen.
-  Measured on Linux (X11, a session bus, Arch's packages): WezTerm 20260716 and
-  Ghostty 1.3.1 hand OSC 777 to the desktop's notification service with the title
-  and body as sent, whether their window is unfocused, focused or minimized. Inside
+  Measured on Linux (Arch's packages; X11 under Xvfb and Wayland under a headless
+  sway, a session bus, dunst): WezTerm 20260716, Ghostty 1.3.1 and kitty 0.49.2 hand
+  OSC 777 to the desktop's notification service with the title and body as sent,
+  whether their window is unfocused, focused, minimized or hidden. foot 1.28.0
+  (Wayland) does too, but holds it while its own window is focused
+  (`desktop-notifications.inhibit-when-focused`, on by default) — a notification from
+  another tmux window in a focused foot among them; `inhibit-when-focused=no`
+  delivers it. rxvt-unicode 9.31 shows neither escape: 777 is the number its perl
+  extensions answer to, and none for `notify` ships with it. Inside
   tmux the escape is wrapped in DCS passthrough, as OSC 52's is, and reaches the
   terminal only with `allow-passthrough all`: with `on`, tmux passes it from a pane
   on screen only and drops it while the person is in another tmux window — the case
@@ -5235,6 +5245,11 @@ window reports focus lost, and so does the terminal's window losing focus).
   from Preview 1.26 shows a desktop notification with `"bellStyle": "notification"` —
   *"Activity in tab «…»"*, none of the app's words; with that and
   `compatibility.allowOSC777` both on, one toast arrives, the escape's (measured).
+  rxvt-unicode makes it a desktop notification with its own `bell-command`
+  extension — `URxvt.perl-ext-common: default,bell-command` and
+  `URxvt.bell-command: notify-send "rxvt-unicode" "bell"` in `~/.Xdefaults`
+  (measured: one per bell in every window state, and through tmux with no setting;
+  the same two lines given with `-xrm` did not fire).
 - **ntfy** (`ntfy_url`, empty by default): a `POST` of the body to the topic's URL,
   the title in its `title` query parameter (UTF-8 where a header is not), the
   token — a stored secret, `SecretKey::NtfyToken`, never in `settings.json` — as a
