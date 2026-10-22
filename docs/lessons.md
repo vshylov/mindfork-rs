@@ -2257,6 +2257,18 @@ optional*, *`zip` 2.4.2 → 8.6.0 — what a green build does not say about a bu
 
 ## 9. Live runs and model behaviour
 
+**A judge model grading one turn needs the conversation's frame, room to think, and
+its last line read.** Grading the persona-drift replies a turn at a time, Claude
+Sonnet 5.5 took a reply's reference to an earlier turn for an invention and marked it
+down; and given 64 tokens, then 400, a judge that reasons before its verdict ran out
+before the verdict line on 1–2 replies in 25. Say in the prompt that the reply is one
+turn of a longer conversation, give the judge room (1 000 tokens), ask for the verdict
+**last** and read the last line that parses — the stage-2 probe's judge had already
+shown the other half, a parser that picks the wrong JSON. And a model judging its own
+replies is lenient: Gemma scored its own emotional-phase care 1.80 where Sonnet gave
+1.20 — use an outside judge for anything compared across models.
+— *persona drift, measured*.
+
 **A second turn that repeats the first turn's question tests the model's memory, not
 the feature.** A smoke asked for a fact in turn 1 (by paging) and again in turn 2 to
 prove the index built in between; on the third run the model answered turn 2 from its

@@ -720,6 +720,7 @@ mod mcp;
 mod model_name;
 mod notes_view;
 mod parallel;
+mod persona_drift_live;
 mod profile_fork_live;
 mod profiles;
 mod project;
