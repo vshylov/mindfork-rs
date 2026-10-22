@@ -205,30 +205,62 @@ impl History {
             return;
         }
         let rows = self.list_rows(palette, loc);
-        let sel = self.view.versions.len() - 1 - self.selected;
+        let sel = rows
+            .iter()
+            .position(|(_, v)| *v == Some(self.selected))
+            .unwrap_or(0);
         let (visual, sel_start, sel_height) = expand_visual_rows(&rows, sel, width);
         self.list_scroll = adjust_scroll(self.list_scroll, sel_start, sel_height, view_h);
         draw_visual_rows(frame, area, &visual, sel, self.list_scroll, palette);
     }
 
     /// One row per version, newest first: its number, date and author, then —
-    /// muted — what it changed.
-    fn list_rows(&self, palette: &Palette, loc: &'static Locale) -> Vec<(Line<'static>, ())> {
+    /// muted — what it changed. Each row carries the index of its version; a
+    /// fork's history has one more row, carrying none — the line where it
+    /// began, above the versions it shares with the profile it came from.
+    fn list_rows(
+        &self,
+        palette: &Palette,
+        loc: &'static Locale,
+    ) -> Vec<(Line<'static>, Option<usize>)> {
         let versions = &self.view.versions;
-        (0..versions.len())
-            .rev()
-            .map(|i| {
-                let v = &versions[i];
-                let prev = i.checked_sub(1).map(|p| &versions[p]);
-                let line = Line::from(vec![
-                    Span::styled(format!("v{}", v.version), palette.accent_style()),
-                    Span::styled(format!("  {}  ", local(v)), palette.muted_style()),
-                    Span::raw(self.author(v, loc)),
-                    Span::styled(format!(" — {}", areas(prev, v, loc)), palette.muted_style()),
-                ]);
-                (line, ())
-            })
-            .collect()
+        let mut rows = Vec::with_capacity(versions.len() + 1);
+        let mut marked = false;
+        for i in (0..versions.len()).rev() {
+            let v = &versions[i];
+            if !marked && self.view.shared(v.version) {
+                rows.push((self.fork_line(palette, loc), None));
+                marked = true;
+            }
+            let prev = i.checked_sub(1).map(|p| &versions[p]);
+            let line = Line::from(vec![
+                Span::styled(format!("v{}", v.version), palette.accent_style()),
+                Span::styled(format!("  {}  ", local(v)), palette.muted_style()),
+                Span::raw(self.author(v, loc)),
+                Span::styled(format!(" — {}", areas(prev, v, loc)), palette.muted_style()),
+            ]);
+            rows.push((line, Some(i)));
+        }
+        rows
+    }
+
+    /// The line where a fork began: the profile it came from, and when.
+    fn fork_line(&self, palette: &Palette, loc: &'static Locale) -> Line<'static> {
+        let Some(origin) = self.view.forked_from.as_ref() else {
+            return Line::from(String::new());
+        };
+        let date = origin
+            .at
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d %H:%M")
+            .to_string();
+        Line::styled(
+            loc.tf(
+                "ui.self_model.history.forked",
+                &[("name", &origin.name), ("date", &date)],
+            ),
+            palette.muted_style(),
+        )
     }
 
     /// An open version: who wrote it and when, what it changed, then the model
@@ -260,8 +292,15 @@ impl History {
                 label("ui.self_model.history.by"),
                 Span::raw(self.author_full(v, loc)),
             ]),
-            Line::from(String::new()),
         ];
+        if let Some(origin) = self.view.forked_from.as_ref()
+            && self.view.shared(v.version)
+        {
+            out.push(Line::from(dim(
+                loc.tf("ui.self_model.history.shared", &[("name", &origin.name)])
+            )));
+        }
+        out.push(Line::from(String::new()));
         match prev {
             None => out.push(Line::from(dim(loc
                 .t("ui.self_model.history.first")
@@ -544,6 +583,7 @@ mod tests {
                 model: "gpt-6.1-sol".into(),
                 mode: ServerMode::OpenAi,
             }],
+            forked_from: None,
         }
     }
 
@@ -698,6 +738,38 @@ mod tests {
         h.refresh(anew);
         assert_eq!(h.selected, 0);
         assert!(!h.open);
+    }
+
+    /// A fork's history says where it began: a line above the versions it
+    /// shares with the profile it came from, which the cursor steps over, and
+    /// a shared version says so when opened.
+    #[test]
+    fn a_forks_history_marks_where_it_began() {
+        let mut forked = view();
+        forked.forked_from = Some(crate::entities::profile::ForkOrigin {
+            profile_id: Uuid::new_v4(),
+            name: "Sol".into(),
+            at: at(2),
+            self_model_version: Some(2),
+        });
+        let mut s = screen();
+        s.show_history(forked);
+        let shown = text(&mut s);
+        let (p3, mark, p2) = (
+            shown.find("v3").unwrap(),
+            shown.find("forked from «Sol»").unwrap(),
+            shown.find("v2").unwrap(),
+        );
+        assert!(p3 < mark && mark < p2, "{shown}");
+        s.handle_key(key(KeyCode::Down)); // over the line, onto v2
+        s.handle_key(key(KeyCode::Enter));
+        let shown = text(&mut s);
+        assert!(shown.contains("Version 2"), "{shown}");
+        assert!(shown.contains("shared with «Sol»"), "{shown}");
+        s.handle_key(key(KeyCode::Right)); // v3, the fork's own
+        let shown = text(&mut s);
+        assert!(shown.contains("Version 3"), "{shown}");
+        assert!(!shown.contains("shared with"), "{shown}");
     }
 
     #[test]

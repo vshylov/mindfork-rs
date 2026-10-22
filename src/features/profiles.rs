@@ -42,6 +42,31 @@ pub fn create(name: &str, system_message: impl Into<String>) -> Option<Profile> 
     Some(profile)
 }
 
+/// A fork of `source` named `name` (spec §10, `/profile fork`): every setting
+/// copied — the system message, the tools, the companion switches, the
+/// names, the language — under a new id, with where it came from. Its
+/// memory is copied by the store (`Db::profile_fork_copy`); its chats are
+/// not. `None` if the name is empty.
+pub fn fork(
+    source: &Profile,
+    name: &str,
+    at: chrono::DateTime<chrono::Utc>,
+    self_model_version: Option<u64>,
+) -> Option<Profile> {
+    let name = sanitize_name(name)?;
+    let mut fork = source.clone();
+    fork.id = uuid::Uuid::new_v4();
+    fork.name = name;
+    fork.is_hidden = false;
+    fork.forked_from = Some(crate::entities::profile::ForkOrigin {
+        profile_id: source.id,
+        name: source.name.clone(),
+        at,
+        self_model_version,
+    });
+    Some(fork)
+}
+
 /// Reconciles a profile's tools against the current default set: tools previously
 /// unknown to the profile (new in the app) **are enabled** and recorded in the
 /// "known" registry (`known_tools`). Tools the user deliberately disabled
@@ -199,6 +224,52 @@ pub fn apply_edit(profile: &mut Profile, edit: ProfileEdit) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A fork is the source under a new id and name, every setting kept, saying
+    /// where it came from; a deleted source does not make a deleted fork.
+    #[test]
+    fn a_fork_keeps_every_setting_and_names_its_origin() {
+        let mut source = Profile::new("Sol", "You are Sol.");
+        source.greeting = Some("Hi!".into());
+        source.companion.followups = true;
+        source.enabled_tools = vec!["note_save".into()];
+        source.is_hidden = true;
+        let at = chrono::Utc::now();
+        let fork = fork(&source, "  Sol   b ", at, Some(81)).unwrap();
+        assert_ne!(fork.id, source.id);
+        assert_eq!(fork.name, "Sol b");
+        assert!(!fork.is_hidden);
+        assert_eq!(fork.default_system_message, source.default_system_message);
+        assert_eq!(fork.greeting, source.greeting);
+        assert_eq!(fork.companion, source.companion);
+        assert_eq!(fork.enabled_tools, source.enabled_tools);
+        let origin = fork.forked_from.unwrap();
+        assert_eq!(
+            (
+                origin.profile_id,
+                origin.name.as_str(),
+                origin.at,
+                origin.self_model_version
+            ),
+            (source.id, "Sol", at, Some(81))
+        );
+        assert!(super::fork(&source, "   ", at, None).is_none());
+    }
+
+    /// `profiles.json` holds the origin only for a fork, so every other
+    /// profile is written exactly as before.
+    #[test]
+    fn only_a_fork_writes_its_origin() {
+        let plain = Profile::new("Sol", "");
+        let json = serde_json::to_string(&plain).unwrap();
+        assert!(!json.contains("forked_from"), "{json}");
+        let forked = fork(&plain, "Sol b", chrono::Utc::now(), None).unwrap();
+        let json = serde_json::to_string(&forked).unwrap();
+        assert!(json.contains("forked_from"), "{json}");
+        assert!(!json.contains("self_model_version"), "{json}");
+        let back: Profile = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, forked);
+    }
 
     #[test]
     fn sanitize_collapses_and_trims() {

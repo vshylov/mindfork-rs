@@ -52,6 +52,10 @@ pub struct ProfileEntry {
     pub name: Option<String>,
     /// Soft-deleted (`is_hidden`).
     pub deleted: bool,
+    /// Where a fork came from (spec §10), as `profiles.json` holds it: the
+    /// profile, its name then, when, and the self-model version the two share
+    /// up to. `None` — not a fork.
+    pub forked_from: Option<serde_json::Value>,
     #[serde(flatten)]
     pub timeline: ProfileTimeline,
 }
@@ -64,6 +68,8 @@ struct ProfileLite {
     name: String,
     #[serde(default)]
     is_hidden: bool,
+    #[serde(default)]
+    forked_from: Option<serde_json::Value>,
 }
 
 /// What a chat file is read for here.
@@ -180,6 +186,7 @@ fn assemble(
             ProfileEntry {
                 name: profile.map(|p| p.name.clone()),
                 deleted: profile.is_some_and(|p| p.is_hidden),
+                forked_from: profile.and_then(|p| p.forked_from.clone()),
                 timeline,
             }
         })
@@ -256,6 +263,7 @@ mod tests {
         let p = &timeline.profiles[0];
         assert_eq!(p.name.as_deref(), Some("Sol"));
         assert!(!p.deleted);
+        assert!(p.forked_from.is_none());
         assert_eq!(p.timeline.profile_id, profile.id.to_string());
         assert_eq!(p.timeline.versions.len(), 2);
         assert_eq!(
@@ -312,5 +320,28 @@ mod tests {
         zip.finish().unwrap();
         let err = collect_timeline_archive(&archive, None, en()).unwrap_err();
         assert!(format!("{err:#}").contains("other.zip"), "{err:#}");
+    }
+
+    /// A fork's entry says where it came from, and it shares its parent's
+    /// versions up to there.
+    #[test]
+    fn a_fork_says_where_it_came_from() {
+        let (_dir, paths, profile, _) = root();
+        let storage = Storage::open(paths.clone()).unwrap();
+        let fork =
+            crate::features::profiles::fork(&profile, "Ada", chrono::Utc::now(), Some(2)).unwrap();
+        storage.json().upsert_profile(&fork).unwrap();
+        storage.db().profile_fork_copy(profile.id, fork.id).unwrap();
+        drop(storage);
+        let timeline = collect_timeline_root(&paths).unwrap();
+        let entry = timeline
+            .profiles
+            .iter()
+            .find(|p| p.timeline.profile_id == fork.id.to_string())
+            .unwrap();
+        let origin = entry.forked_from.as_ref().unwrap();
+        assert_eq!(origin["profile_id"], profile.id.to_string());
+        assert_eq!(origin["self_model_version"], 2);
+        assert_eq!(entry.timeline.versions.len(), 2);
     }
 }

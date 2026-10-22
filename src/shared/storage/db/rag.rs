@@ -421,7 +421,7 @@ impl Db {
 /// fingerprint: garbage in `meta` must degrade to "nothing recorded", never to a
 /// startup failure. Individual unparseable ids are skipped rather than mapped to
 /// a nil uuid, which would be a real profile id nothing matches.
-fn read_stale_profiles(conn: &Connection) -> Result<Vec<Uuid>> {
+pub(super) fn read_stale_profiles(conn: &Connection) -> Result<Vec<Uuid>> {
     let Some(raw) = meta_get(conn, KEY_RAG_STALE_PROFILES)? else {
         return Ok(Vec::new());
     };
@@ -431,7 +431,7 @@ fn read_stale_profiles(conn: &Connection) -> Result<Vec<Uuid>> {
 
 /// Writes the stale-profile list, removing the key when the list is empty (see
 /// [`meta_del`] — "nothing is stale" is the absence of the key).
-fn write_stale_profiles(conn: &Connection, profiles: &[Uuid]) -> Result<()> {
+pub(super) fn write_stale_profiles(conn: &Connection, profiles: &[Uuid]) -> Result<()> {
     if profiles.is_empty() {
         return meta_del(conn, KEY_RAG_STALE_PROFILES);
     }

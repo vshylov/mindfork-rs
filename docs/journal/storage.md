@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (23)
+## Entries (24)
 
 - Post-M9: persisting the input-box draft in the chat file (done)
 - Post-M9: persisting deleted exchanges in the chat file (`Ctrl+E`/`Ctrl+R`) (done)
@@ -35,6 +35,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: every stored enum names the schema of its values (done)
 - Post-M9: `zip` 8.6.0 → 9.0.5 — three advisories, and the mode `llama setup` copied (done)
 - Post-M9: the self-model cap left at 0.9.4's default — `SETTINGS_SCHEMA` 5→6 (done)
+- Post-M9: forking a companion — the profile's memory under new ids (done)
 
 ### Post-M9: persisting the input-box draft in the chat file (done)
 - **Unsaved input-box text is stored on the chat and restored on
@@ -1385,3 +1386,56 @@ No engine path, so no model run (AGENTS.md §3): a pure JSON step.
 
 **Gates**: 4062 unit tests green, 271 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.
+
+### Post-M9: forking a companion — the profile's memory under new ids (done)
+
+Stage 4 of the companion platform, its second instrument — C8 (a)
+([companion-platform.md](../research/companion-platform.md) C8, §9 item 4), stacked on
+C9 (#817), whose history it copies. The carry, C8 (b), is the next pull request.
+
+- **What it is for**: the experiment the name promises — the same memories handed to
+  two models, the two selves read as they diverge. Until now a profile's memory could
+  only be shared by sharing the profile.
+- **`/profile fork [name]`** (`features/profile_command.rs` → `ChatIntent::ForkProfile`
+  → `AppCommand::ForkProfile` → `Orchestrator::handle_fork_profile`): the open chat's
+  profile, every setting cloned under a new id (`features::profiles::fork`), the name
+  given or the profile's own with "— fork". A command rather than a settings key, by the
+  command-only rule: `Ctrl+N`/`Ctrl+D` belong to a browser tab.
+- **The copy** (`shared/storage/db/fork.rs`, `Db::profile_fork_copy`), one savepoint:
+  notes under new ids with their vectors; links, supersession scars and knowledge-base
+  citations remapped onto them, a reference to a note the profile no longer has dropped;
+  knowledge-base sources, and chunks under new ids and rowids with their `vec0` rows read
+  back as blobs; the self-model and each version with the `profile_id` inside the JSON
+  rewritten (an unrecorded current model recorded as `unknown`, as the store's own write
+  would); `llm_history` in order; the stale mark of a knowledge base awaiting a re-embed.
+  Nothing chat-bound: follow-ups and attachment indexes stay with the chats, which stay
+  with the parent. The vectors are copied, not recomputed — each keeps the generation it
+  was made under, so a foreign vector stays foreign and heals the usual way.
+- **Whole or not there**: the profile is written to `profiles.json` first, and removed
+  again if the copy fails — the savepoint has already left nothing in `data.db`.
+- **Where it came from**: `Profile.forked_from` (`ForkOrigin` — the parent's id, its name
+  then, when, the self-model version they share up to), written only for a fork, so a
+  profile that is not one is written byte for byte as before and no schema step is
+  needed. The `F3` history draws "— forked from «Sol» on … —" above the shared versions,
+  and an opened shared version says so; `mindfork stats --self-model` carries the field.
+- **Live, GO** (`profile_fork_live`): a profile whose self-model knows Alex plays the
+  Sicilian Defence every Sunday, forked by the command; a new conversation with the fork
+  asked about Alex's hobbies. **Gemma 4 31B q4_0 3/3** (twice from the prompt alone,
+  once after `get_self_model`), **Qwen 3.8 27B Q4_K_M 2/2** (after `get_self_model` and
+  `note_recall`, or `note_recall`, `rag_search` and `chat_search`) — every reply named
+  chess and the Sicilian, the fork held one conversation, the parent's self-model was
+  untouched. llama.cpp b11719 on the 4090.
+- **Tests**: the copy — every family under the fork's ids, the superseded note still
+  hidden and its scar pointing at the fork's successor, the link remapped, the vector
+  found, the knowledge base answering a query from the fork's own rows, the self-model
+  and its versions owned by the fork, the two diverging afterwards; an unrecorded model
+  as the fork's last version; an empty profile; the stale mark; a failed copy leaving
+  nothing. The pure fork (settings kept, origin named, a hidden source making a visible
+  fork) and `forked_from` written only for a fork; the command's parse; the
+  orchestrator's fork with its notice and the refusal with no chat open; the history's
+  fork line, the cursor stepping over it, and a shared version saying so; the export's
+  `forked_from`.
+
+**Gates**: 4243 unit tests green, 291 `#[ignore]`; clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check`
+clean.

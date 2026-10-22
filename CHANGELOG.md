@@ -65,6 +65,11 @@ split by subsystem.
   `mindfork stats --self-model` prints the whole timeline as JSON — every version, the
   observations, and the models the profile talked to — from your data or from a
   backup archive.
+- **Fork a companion.** `/profile fork [name]` copies the open chat's profile into a
+  new one — its settings and its whole memory: notes, knowledge base, the self-model
+  and its history — without its chats. The two go their own ways from there: give
+  the fork another model and compare how each one's self-model changes; the
+  self-model's history marks where the fork began.
 
 ### Changed
 
@@ -83,6 +88,9 @@ split by subsystem.
 - **`data.db` gains a table, `self_model_versions`**, for the self-model's history.
   An older version of the app ignores it. The model you already have becomes the
   history's first version the next time it is written.
+- **A forked profile records where it came from** (`forked_from` in
+  `profiles.json`; other profiles are written exactly as before). An older version
+  reads such a profile, but drops the record the next time it saves the profiles.
 
 ## [0.21.0] — 2026-10-19
 

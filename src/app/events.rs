@@ -158,6 +158,11 @@ pub enum AppCommand {
     },
     /// Soft-delete a profile with a cascade onto its chats (notes/RAG are excluded).
     DeleteProfile(Uuid),
+    /// Fork the active conversation's profile (`/profile fork`, spec §10): a
+    /// new profile with its settings and its memory — notes, knowledge base,
+    /// self-model and its history — and none of its chats. `None` — the
+    /// default name.
+    ForkProfile { name: Option<String> },
     /// Replace the whole config (settings screen). The orchestrator saves it,
     /// restarts the server/registry if needed, and re-emits it. See spec §11.6.
     /// `Box` — `AppConfig` is large, don't bloat the enum.
@@ -410,6 +415,7 @@ impl AppCommand {
             | AppCommand::SearchMessages { .. }
             | AppCommand::CreateProfile { .. }
             | AppCommand::DeleteProfile(_)
+            | AppCommand::ForkProfile { .. }
             | AppCommand::UpdateConfig(_)
             // Asking a provider what models it serves is a settings-screen
             // question about an engine, not work in any conversation.

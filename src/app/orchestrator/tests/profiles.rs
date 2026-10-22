@@ -503,3 +503,86 @@ fn language_switch_keeps_user_edited_texts() {
     );
     assert_eq!(chat.system_message, "Ты — Гея.");
 }
+
+/// `/profile fork` (spec §10): the active chat's profile, copied under the
+/// default name with its memory and none of its chats; the store and
+/// `profiles.json` both hold it, and the notice says what came along.
+#[test]
+fn fork_copies_the_active_profile_and_its_memory() {
+    use crate::entities::self_model_history::VersionAuthor;
+    let (_d, mut orch, mut rx) = bare_orch_rx();
+    orch.config.interface.language = crate::shared::i18n::Lang::En;
+    let mut profile = Profile::new("Sol", "You are Sol.");
+    profile.companion.notes_in_prompt = true;
+    let pid = profile.id;
+    let chat = Chat::from_profile(&profile, "t");
+    orch.active_id = Some(chat.id);
+    orch.chats.push(chat);
+    orch.profiles.push(profile.clone());
+    orch.storage.json().upsert_profile(&profile).unwrap();
+    let storage = orch.storage.clone();
+    let db = storage.db();
+    db.note_insert(&crate::entities::note::Note::new(
+        pid,
+        "Alex likes chess",
+        vec![],
+    ))
+    .unwrap();
+    db.self_model_update(pid, &VersionAuthor::Person, |m| {
+        m.summary = "I am Sol.".into();
+        true
+    })
+    .unwrap();
+
+    orch.handle_fork_profile(None);
+
+    assert_eq!(orch.profiles.len(), 2);
+    let fork = orch.profiles[1].clone();
+    assert_eq!(fork.name, "Sol — fork");
+    assert!(fork.companion.notes_in_prompt, "settings come along");
+    let origin = fork.forked_from.clone().unwrap();
+    assert_eq!(
+        (origin.profile_id, origin.self_model_version),
+        (pid, Some(1))
+    );
+    let stored = orch.storage.json().load_profiles().unwrap();
+    assert!(
+        stored
+            .iter()
+            .any(|p| p.id == fork.id && p.forked_from.is_some())
+    );
+    assert_eq!(db.note_list(fork.id, None, &[], None).unwrap().len(), 1);
+    assert_eq!(
+        db.self_model_get(fork.id).unwrap().unwrap().summary,
+        "I am Sol."
+    );
+    assert!(
+        orch.chats.iter().all(|c| c.profile_id == pid),
+        "the chats stay with the source"
+    );
+    let notice = std::iter::from_fn(|| rx.try_recv().ok())
+        .find_map(|e| match e {
+            AppEvent::Notice(text) => Some(text),
+            _ => None,
+        })
+        .expect("a notice answers the command");
+    assert!(notice.contains("notes: 1"), "{notice}");
+    assert!(notice.contains("self-model versions: 1"), "{notice}");
+
+    // A name given is used as given.
+    orch.handle_fork_profile(Some("Ada".into()));
+    assert_eq!(orch.profiles[2].name, "Ada");
+}
+
+/// With no conversation open there is no profile to fork, and it is said.
+#[test]
+fn fork_without_an_open_chat_says_so() {
+    let (_d, mut orch, mut rx) = bare_orch_rx();
+    orch.config.interface.language = crate::shared::i18n::Lang::En;
+    orch.profiles.push(Profile::new("Sol", ""));
+    orch.handle_fork_profile(None);
+    assert_eq!(orch.profiles.len(), 1);
+    let said = std::iter::from_fn(|| rx.try_recv().ok())
+        .any(|e| matches!(e, AppEvent::Notice(text) if text.contains("no profile to fork")));
+    assert!(said);
+}

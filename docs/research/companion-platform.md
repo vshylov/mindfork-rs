@@ -1194,6 +1194,19 @@ by default:
    Q4_K_M twice, on the gate's weights (llama.cpp b11719). The first run found the
    smoke's own race: a turn sent before the engine has said its model's name records
    none, which is the truth — the smoke waits for the name.
+   **C8 (a), the fork, built** (#818), stacked on C9. **Decisions (the agent's):**
+   `/profile fork [name]` on the open chat's profile — a command, not a settings key,
+   by the command-only rule (`Ctrl+N` and `Ctrl+D` are a browser tab's); every setting
+   and the whole memory copied — notes with their vectors, links, scars and citations,
+   the knowledge base with its vectors, the self-model with every version, the model
+   history — and nothing a chat owns, since the fork starts its own conversations; the
+   vectors copied rather than recomputed (same machine, same embedder, each keeping
+   its generation); one savepoint, and the profile taken back if it fails; the fork
+   recording where it came from (`forked_from`, written only for a fork, so no schema
+   step), which the `F3` history marks as a line above the shared versions and the
+   timeline export carries. **Live, GO** (docs/journal/storage.md): asked about the
+   person's hobbies in its first conversation, the fork answered from the parent's
+   self-model — Gemma 4 31B 3/3, Qwen 3.8 27B 2/2.
 5. **Characters and voice** — C6 cards; C7 (a) a per-profile voice and replies
    spoken as they land.
 6. **Reach** — the bridge track: an ADR first (turns addressed to a chat not on

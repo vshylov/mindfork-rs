@@ -719,6 +719,7 @@ mod mcp;
 mod model_name;
 mod notes_view;
 mod parallel;
+mod profile_fork_live;
 mod profiles;
 mod project;
 mod rag;

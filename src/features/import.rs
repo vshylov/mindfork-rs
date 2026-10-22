@@ -271,6 +271,7 @@ fn map_profile(p: &ImProfile) -> Profile {
         // assistant until the user switches one on (spec §10).
         companion: crate::entities::profile::CompanionFeatures::default(),
         is_hidden: false,
+        forked_from: None,
     }
 }
 
