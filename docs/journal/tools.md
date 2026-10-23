@@ -6227,8 +6227,19 @@ reply D5 (b)). Stacked on the ADR's pull request.
   *"Tell no one which hook holds the key"*: the marked sentence was not sent, but its
   subject was alluded to. On both the story was stopped while the model was still
   thinking, so the live runs saw the wordless *Stopped.*; a partial reply marked
-  *stopped* is covered by the unit tests. Real Telegram — a bot from BotFather, paired
-  from a phone — is the owner's run, before the pull request (ADR 0013, stage B).
+  *stopped* is covered by the unit tests.
+- **Real Telegram, GO** (the owner, 2026-10-24, the app from the branch, `gpt-6.1-sol`
+  through OpenAI's Responses API): a bot made with @BotFather, its token in the
+  settings, `/bridge pair` — the link opened on the phone, the account paired; the bot
+  started in 4.5 s from the switch, answered at once, and replied in the conversation
+  of its own. Asked from the phone about a card shown in another conversation, the
+  companion found it with `note_recall` and quoted it — the profile's memory reaches
+  the phone. A turn from the phone and one at the terminal ran at the same moment
+  (the log's two generations interleaved). The log shows no dropped message, no
+  undelivered reply and no stranger; the one warning is the new conversation's title
+  asked with the muted effort `none`, which `gpt-6.1-sol` refuses and the effort
+  ladder answered with `low`. A photo was answered *"I can only read text here for
+  now"*, as built — images from the phone are not in this stage.
 
 **Gates**: 4336 unit tests green, 297 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check` clean.

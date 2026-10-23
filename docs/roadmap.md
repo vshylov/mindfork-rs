@@ -356,8 +356,9 @@ effort tiers — have all closed
   own, per speech mode, and *Speak replies*, which reads each reply aloud as it
   lands. **Stage 6**: the bridge's ADR (0013) accepted, and **stage B built** — a
   profile reachable from Telegram through a bot of its own, a turn from the phone in a
-  seat beside the terminal's, without the dangerous tools. Next: stage C, voice notes
-  in and out; Matrix after. Twelve candidates in six stages.
+  seat beside the terminal's, without the dangerous tools; checked on real Telegram
+  by the owner. Next: photos from the phone, then stage C, voice notes in and out;
+  Matrix after. Twelve candidates in six stages.
 
 ### Feed and rendering
 
