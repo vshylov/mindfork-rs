@@ -62,6 +62,43 @@ pub struct Incoming {
     /// How the sender is named (`@name`), for the terminal.
     pub name: String,
     pub body: Body,
+    /// The album a picture belongs to — an album arrives as one message per
+    /// picture, and [`gather_albums`] makes it one again.
+    pub album: Option<String>,
+}
+
+/// Whose words or pictures a message carries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Author {
+    /// The person's own.
+    Person,
+    /// Forwarded from someone else — named when the messenger names them.
+    Forwarded(Option<String>),
+}
+
+/// One picture of a message, on its way from the messenger to the model.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Picture {
+    /// Not fetched yet: the messenger's own id for the file, and a name for it
+    /// when it came as a file.
+    File { id: String, name: Option<String> },
+    /// Fetched and prepared as `/image attach` prepares one (spec §9.10).
+    Ready(Box<crate::entities::message_image::MessageImage>),
+    /// Could not be had, and why.
+    Failed(PictureError),
+}
+
+/// Why a picture did not reach the model.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PictureError {
+    /// Larger than the image settings take (or a bot may download), in bytes.
+    TooBig { bytes: u64, limit: u64 },
+    /// Not an image this app decodes.
+    Unreadable,
+    /// More pictures than one message may carry (`images.max_count`).
+    TooMany,
+    /// The download failed, in the messenger's or the network's words.
+    Fetch(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,7 +110,15 @@ pub enum Body {
     Forwarded { from: Option<String>, text: String },
     /// `/name arg`.
     Command { name: String, arg: String },
-    /// A photo, a sticker, a voice note — nothing that is read yet.
+    /// Pictures — a photo, an image sent as a file, an album — and the words
+    /// under them.
+    Images {
+        pictures: Vec<Picture>,
+        caption: String,
+        author: Author,
+    },
+    /// A sticker, a voice note, a file that is not an image — nothing that is
+    /// read yet.
     Unsupported,
 }
 
@@ -192,6 +237,38 @@ pub fn pairing_link(handle: &str, code: &str) -> String {
     )
 }
 
+/// An album made one message again: consecutive messages of one sender that
+/// carry the same album id become the first one, holding every picture and
+/// the first caption. Anything else passes through in order.
+pub fn gather_albums(messages: Vec<Incoming>) -> Vec<Incoming> {
+    let mut out: Vec<Incoming> = Vec::new();
+    for m in messages {
+        if let Some(prev) = out.last_mut()
+            && m.album.is_some()
+            && prev.album == m.album
+            && prev.account == m.account
+            && let (
+                Body::Images {
+                    pictures, caption, ..
+                },
+                Body::Images {
+                    pictures: more,
+                    caption: more_caption,
+                    ..
+                },
+            ) = (&mut prev.body, &m.body)
+        {
+            pictures.extend(more.iter().cloned());
+            if caption.is_empty() {
+                caption.clone_from(more_caption);
+            }
+            continue;
+        }
+        out.push(m);
+    }
+    out
+}
+
 /// A forwarded message as the model reads it — in the profile's language:
 /// whose it was, then the text as a quote, so an instruction inside it reads
 /// as something shown, not something asked.
@@ -258,6 +335,51 @@ mod tests {
             pairing_link("@mara_bot", "ABCD2345"),
             "https://t.me/mara_bot?start=ABCD2345"
         );
+    }
+
+    fn picture(id: &str, caption: &str, album: Option<&str>) -> Incoming {
+        Incoming {
+            account: "42".into(),
+            name: "@ann".into(),
+            body: Body::Images {
+                pictures: vec![Picture::File {
+                    id: id.into(),
+                    name: None,
+                }],
+                caption: caption.into(),
+                author: Author::Person,
+            },
+            album: album.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn an_album_is_one_message_again_and_nothing_else_merges() {
+        let text = Incoming {
+            account: "42".into(),
+            name: "@ann".into(),
+            body: Body::Text("and this".into()),
+            album: None,
+        };
+        let got = gather_albums(vec![
+            picture("a", "", Some("g1")),
+            picture("b", "our trip", Some("g1")),
+            picture("c", "", Some("g2")),
+            text.clone(),
+            picture("d", "", None),
+            picture("e", "", None),
+        ]);
+        assert_eq!(got.len(), 5, "{got:#?}");
+        let Body::Images {
+            pictures, caption, ..
+        } = &got[0].body
+        else {
+            panic!()
+        };
+        assert_eq!(pictures.len(), 2);
+        assert_eq!(caption, "our trip", "the caption of whichever had one");
+        assert_eq!(got[2], text);
+        assert_eq!(got[3].album, None, "two loose pictures stay two");
     }
 
     #[test]

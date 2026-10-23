@@ -1452,8 +1452,10 @@ by default:
    sent unasked, the phone answered in character beside a terminal turn, a forwarded
    order to recite the persona declined, `/stop` — and on **real Telegram** (the owner,
    2026-10-24): paired from a phone, answered, the profile's notes recalled from the
-   phone, a phone turn beside a terminal one. Next: photos from the phone, then stage
-   C, voice notes.
+   phone, a phone turn beside a terminal one. **Pictures from the phone built** after
+   it: a photo, an image file or an album reaches the model with its caption, fetched by
+   the bot only for the paired account and prepared as `/image attach` prepares one.
+   Next: stage C, voice notes.
 
 Stages 1–3 are the companion; 4 is what makes it a research platform; 5–6 are what
 make it a presence. None of it changes what an assistant profile or the default

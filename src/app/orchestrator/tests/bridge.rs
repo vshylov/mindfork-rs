@@ -469,7 +469,7 @@ async fn a_forward_reads_as_a_quote_and_the_rest_is_answered_by_the_bridge() {
     fake.sticker(ANN, "ann");
     assert_eq!(
         fake.wait_texts(ANN, 1, 20).await,
-        ["I can only read text here for now."]
+        ["I read text and pictures here; voice notes and other files not yet."]
     );
     fake.say(ANN, "ann", "/help");
     assert!(fake.wait_texts(ANN, 2, 20).await[1].starts_with("Commands:"));
@@ -597,5 +597,108 @@ async fn the_bridged_chat_open_at_the_terminal_shows_the_turn_and_esc_stops_it()
     assert_eq!(backend.requests().len(), 1, "no second turn in the chat");
     b.tx.send(AppCommand::Cancel).unwrap();
     assert_eq!(fake.wait_texts(ANN, 1, 20).await, ["Stopped."]);
+    b.quit().await;
+}
+
+/// A `w`×`h` PNG, every pixel the same.
+fn png(w: u32, h: u32) -> Vec<u8> {
+    let img = image::RgbImage::from_pixel(w, h, image::Rgb([200, 40, 40]));
+    let mut out = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut out, image::ImageFormat::Png).unwrap();
+    out.into_inner()
+}
+
+/// The images and the words of a request's last user message.
+fn last_user_images(req: &crate::shared::api::ChatRequest) -> (usize, String) {
+    let m = req
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == crate::shared::api::contract::ApiRole::User)
+        .unwrap();
+    (m.images.len(), m.content.clone())
+}
+
+#[tokio::test]
+async fn a_photo_reaches_the_model_on_the_persons_message_with_its_caption() {
+    let fake = TelegramFake::start("mara_bot", TOKEN).await;
+    let backend = Held::new("A red square.", None);
+    let Some(b) = start(&fake, backend.clone(), true, |_, _, _| {}).await else {
+        return;
+    };
+    // Larger than the downscale ceiling: prepared as `/image attach` prepares.
+    fake.photo(ANN, "ann", &png(2000, 1000), Some("what is this?"), None);
+    assert_eq!(fake.wait_texts(ANN, 1, 20).await, ["A red square."]);
+    let (images, words) = last_user_images(&backend.requests()[0]);
+    assert_eq!((images, words.as_str()), (1, "what is this?"));
+    let (dir, profile) = b.quit().await;
+    let chat = profile_on_disk(dir.path(), profile).bridge.chat.unwrap();
+    let kept = chat_on_disk(dir.path(), chat);
+    let image = &kept.messages[0].images[0];
+    assert_eq!((image.width, image.height), (1568, 784), "downscaled once");
+    assert_eq!(image.source, "telegram");
+}
+
+#[tokio::test]
+async fn an_album_is_one_message_with_every_picture() {
+    let fake = TelegramFake::start("mara_bot", TOKEN).await;
+    let backend = Held::new("Two pictures.", None);
+    let Some(b) = start(&fake, backend.clone(), true, |_, _, _| {}).await else {
+        return;
+    };
+    fake.photo(ANN, "ann", &png(40, 40), None, Some("g1"));
+    fake.photo(ANN, "ann", &png(50, 50), Some("our trip"), Some("g1"));
+    assert_eq!(fake.wait_texts(ANN, 1, 20).await, ["Two pictures."]);
+    let reqs = backend.requests();
+    assert_eq!(reqs.len(), 1, "one turn for the album");
+    assert_eq!(last_user_images(&reqs[0]), (2, "our trip".to_string()));
+    b.quit().await;
+}
+
+#[tokio::test]
+async fn a_picture_too_large_is_said_and_its_caption_still_answered() {
+    let fake = TelegramFake::start("mara_bot", TOKEN).await;
+    let backend = Held::new("Hello to you too.", None);
+    let Some(b) = start(&fake, backend.clone(), true, |_, cfg, _| {
+        cfg.images.max_bytes = 1000;
+    })
+    .await
+    else {
+        return;
+    };
+    let big = png(800, 800);
+    assert!(big.len() > 1000);
+    fake.photo(ANN, "ann", &big, Some("hello"), None);
+    let texts = fake.wait_texts(ANN, 2, 20).await;
+    assert!(
+        texts[0].starts_with("The picture is too large"),
+        "{texts:?}"
+    );
+    assert_eq!(texts[1], "Hello to you too.");
+    assert_eq!(
+        last_user_images(&backend.requests()[0]),
+        (0, "hello".to_string())
+    );
+    // Not an image at all, sent as one: said, and nothing reaches the model.
+    fake.image_file(ANN, "ann", "x.png", b"not an image");
+    assert!(fake.wait_texts(ANN, 3, 20).await[2].starts_with("I couldn't open the picture"),);
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert_eq!(backend.requests().len(), 1);
+    b.quit().await;
+}
+
+#[tokio::test]
+async fn a_strangers_picture_is_never_downloaded() {
+    let fake = TelegramFake::start("mara_bot", TOKEN).await;
+    let backend = Held::new("Hi.", None);
+    let Some(b) = start(&fake, backend.clone(), true, |_, _, _| {}).await else {
+        return;
+    };
+    fake.photo(EVE, "eve", &png(40, 40), Some("look"), None);
+    fake.say(ANN, "ann", "ping");
+    fake.wait_texts(ANN, 1, 20).await;
+    assert!(fake.files_asked().is_empty(), "{:?}", fake.files_asked());
+    assert!(fake.texts_to(EVE).is_empty());
+    assert_eq!(backend.requests().len(), 1);
     b.quit().await;
 }

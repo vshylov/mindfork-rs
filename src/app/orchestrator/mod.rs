@@ -881,7 +881,7 @@ struct Orchestrator {
     seat_evt_tx: UnboundedSender<(Uuid, AppEvent)>,
     /// What the messenger sent while its chat's turn ran — answered by one
     /// turn when it lands.
-    bridge_waiting: HashMap<Uuid, Vec<String>>,
+    bridge_waiting: HashMap<Uuid, Vec<Message>>,
     /// The bridged chats told the engine was not ready — answered when it is.
     bridge_unanswered: std::collections::HashSet<Uuid>,
 }

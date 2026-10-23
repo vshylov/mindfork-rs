@@ -5354,7 +5354,24 @@ that by lines, and sent again as plain text if Telegram refuses the markup. Thou
 tool cards stay at the terminal. A stopped reply ends *stopped*; a turn with no words
 says why; a silence (§9.3.6) says nothing. The messenger's commands: `/new`, `/stop`, and
 `/start` — with a code, the pairing; bare, a hello; any other is answered with the list.
-A photo, a sticker or a voice note is answered *"I can only read text here for now."*
+A sticker, a voice note or a file that is not an image is answered *"I read text and
+pictures here; voice notes and other files not yet."*
+
+**Pictures.** A photo, an image sent as a file (`image/*`) or an album reaches the model
+on the person's message, its caption as the words — the way `/image attach` puts an
+image on the next message (§9.10). The bot's poller fetches it (`getFile`, then the
+download) **before** the message goes up, so a photo and the question sent after it
+arrive in order; and only the paired account's — the orchestrator keeps the poller told
+who that is, so a stranger's pictures are never downloaded. Each is prepared as an
+attached image is (`features/image_prepare.rs`: png or jpeg, downscaled to
+`images.downscale_px`), within `images.max_bytes` and a bot's 20 MB, at most
+`images.max_count` to a message; an album — one message per picture, the same
+`media_group_id` — is gathered back into one. A picture that does not make it is said to
+the phone in a line: too large (with both sizes), not an image this app reads, more than
+a message takes, or the download's own error; its caption is still answered. A forwarded
+picture's caption is quoted like a forwarded text. A model that takes no images reads
+the marker that says so (§9.10) and tells the person. A change of the image settings
+starts the bots again.
 
 **Unasked.** A follow-up come due in the bridged chat (§9.3.6), or a background run's
 result there (§9.3.2), wakes a seat at once, the chat unopened, and the reply goes to

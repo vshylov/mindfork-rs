@@ -310,8 +310,12 @@ What a reply from the phone cannot do: run code (`python_exec`), write files, ed
 attached project or call an MCP server — whoever holds your phone or your Telegram
 account would otherwise hold those too. Everything else the profile has stays:
 memory, notes, web search, follow-ups. A forwarded message reaches the companion as
-something someone else wrote, not as your request. Text only for now; voice messages
-come later.
+something someone else wrote, not as your request.
+
+Pictures work too: send a photo, an image as a file or an album, with a question in
+its caption, and the companion sees it — when the model it runs on takes images; one
+that does not says it cannot see them. A picture is prepared as `/image attach` would
+prepare it (Settings → Memory → *Images*: how large, how many). Voice messages come later.
 
 **Who can read it.** A chat with a bot is not end-to-end encrypted: Telegram's
 servers see every message, both ways. The conversation itself is stored only on this

@@ -176,6 +176,10 @@ finished reply as a message; thoughts and tool cards stay at the terminal**
   Bot API stub (a local server answering `getMe`, `getUpdates`, `sendChatAction`,
   `sendMessage`), and one run with the owner on real Telegram — a bot from BotFather,
   paired from a phone — before the pull request.
+- **B, second half** — pictures from the phone, which the owner's run of B asked for:
+  a photo, an image file or an album, fetched by the bot for the paired account only and
+  prepared as `/image attach` prepares one, on the person's message with its caption
+  (spec §11.13).
 - **C** — voice (C7 (b)): a voice note transcribed, where the speech is recognised
   decided then with a probe; a reply sent as a voice note when the profile speaks its
   replies (`speak_replies`), the text kept beside it.

@@ -322,8 +322,10 @@ src/
 │  │  │                     **seat** — a messenger's turn beside the terminal's, its mirror,
 │  │  │                     its landing answered to the phone, what waits for it, the wakes
 │  │  ├─ bridge_task.rs     one bot's tasks: the poller (getMe, long-polled getUpdates →
-│  │  │                     `Inbound`) and the sender (`Outbound` → typing…, the reply cut
-│  │  │                     into Telegram's markup, plain text when refused)
+│  │  │                     `Inbound`; an album gathered, the paired account's pictures
+│  │  │                     fetched and prepared before they go up) and the sender
+│  │  │                     (`Outbound` → typing…, the reply cut into Telegram's markup,
+│  │  │                     plain text when refused)
 │  │  ├─ request.rs         mapping domain messages to the engine wire format
 │  │  └─ tests/             orchestrator tests, split by feature (mod.rs — fixtures;
 │  │                        generation/chats/profiles/settings/title/impersonation/
@@ -905,9 +907,10 @@ src/
    │  └─ telegram.rs       telegram_parts: markdown → Telegram's HTML subset, cut between
    │                       blocks into messages ≤ 4096, each with its plain text (§11.13)
    ├─ messenger/           the messengers' wires (ADR 0013): `telegram.rs` — the Bot API
-   │                       client (getMe/getUpdates/sendMessage/sendChatAction; no error
-   │                       carries the token's URL); `telegram_fake.rs` (tests) — a Bot API
-   │                       of the tests' own that a message "from the phone" is put into
+   │                       client (getMe/getUpdates/sendMessage/sendChatAction, getFile and
+   │                       a capped download; no error carries the token's URL);
+   │                       `telegram_fake.rs` (tests) — a Bot API of the tests' own that a
+   │                       message or a photo "from the phone" is put into
    ├─ mcp.rs               minimal MCP client (stdio, tools-only, 2025-11-25 revision):
    │                       McpConnection (transport, testable over a duplex) + McpClient
    │                       (subprocess: kill/exited monitor, Job Object kill-on-close,
