@@ -1255,29 +1255,14 @@ impl Orchestrator {
         )));
     }
 
-    pub(super) fn handle_done(&mut self, res: GenResult) {
+    pub(super) fn handle_done(&mut self, mut res: GenResult) {
         // A messenger's turn lands from its seat (ADR 0013, D1); everything
         // below but the generation gate, the speech and the terminal's
         // notification is the same landing.
-        let seat = self.take_seat(res.id);
-        if seat.is_none() {
-            // Apply only the result of the current generation (protection against
-            // stale ones): finish() transitions to Idle only on a matching id.
-            if !self.gen_state.finish(res.id) {
-                return;
-            }
-            // The turn is over: drop its confirmation sender, so `confirm` really is
-            // `None` between turns as its doc says. Nothing depends on this — a reply
-            // arriving now is dropped by the `generation_id` guard, and the receiver
-            // is gone with the task — but a field that outlives what it describes is
-            // an invitation to reason wrongly about it later.
-            self.confirm = None;
-        }
+        let Some(seat) = self.claim_landing(&mut res) else {
+            return;
+        };
         self.note_withheld_images(res.chat_id, res.images_withheld);
-        let mut res = res;
-        if seat.is_none() {
-            self.carry_inflight_rename(&mut res);
-        }
         // A woken turn that chose silence leaves no trace (spec §9.3.6); the feed,
         // which streamed the marker, is rebuilt without it below.
         let silent = res.woken && self.drop_silent_reply(res.chat_id, &mut res.messages);
@@ -1287,31 +1272,13 @@ impl Orchestrator {
             .then(|| super::notify::woken_reply_text(&res.messages))
             .flatten();
         // What a messenger's turn answers, read before the rows move too.
-        let seat_reply = seat
-            .as_ref()
-            .map(|_| super::bridge::SeatReply::of(&res.messages, silent, res.woken));
-        // The reply to speak if the profile speaks its replies (spec §11.9):
-        // the turn's last assistant message, when it has words and was neither
-        // stopped nor broken. A `/continue` is not spoken again from the start,
-        // and a silence has nothing to say.
+        let seat = seat.map(|s| {
+            let reply = super::bridge::SeatReply::of(&res.messages, silent, res.woken);
+            (s, reply)
+        });
         // A messenger's turn is not spoken at the terminal: its person is not
         // there.
-        let to_speak = if silent || res.continuation.is_some() || seat.is_some() {
-            None
-        } else {
-            res.messages
-                .iter()
-                .rev()
-                .find(|m| m.role == MessageRole::Assistant)
-                .filter(|m| !m.text.trim().is_empty())
-                .filter(|m| {
-                    !matches!(
-                        m.metadata.as_ref().and_then(|md| md.finish),
-                        Some(MessageFinish::Cancelled | MessageFinish::Error)
-                    )
-                })
-                .map(|m| m.id)
-        };
+        let to_speak = spoken_reply(&res, silent || seat.is_some());
         if silent {
             self.mark_dirty(res.chat_id);
             if self.active_id == Some(res.chat_id) {
@@ -1322,9 +1289,7 @@ impl Orchestrator {
             // A turn that landed nothing still ends the wait of a result
             // that arrived meanwhile (docs/research/background-subagents.md §4.4).
             self.land_pending_runs(res.chat_id);
-            if let (Some(seat), Some(reply)) = (seat, seat_reply) {
-                self.answer_seat(seat, reply);
-            }
+            self.land_seat_reply(seat, res.chat_id);
             self.after_turn_followups(res.woken, res.chat_id);
             self.bridge_after_landing(res.chat_id);
             return;
@@ -1461,17 +1426,50 @@ impl Orchestrator {
         if let Some(reply) = to_speak {
             self.speak_landed_reply(res.chat_id, reply);
         }
-        if let (Some(seat), Some(reply)) = (seat, seat_reply) {
-            // The open feed streamed the turn, or was opened on it: rebuilt
-            // from what landed, which is what the terminal's turn leaves too.
-            if self.active_id == Some(res.chat_id) {
-                self.activate(res.chat_id);
-            }
-            self.answer_seat(seat, reply);
-        }
+        self.land_seat_reply(seat, res.chat_id);
         self.after_turn_followups(res.woken, res.chat_id);
         // What the messenger sent while this turn ran is answered now.
         self.bridge_after_landing(res.chat_id);
+    }
+
+    /// The gate in front of a landing. A messenger's turn is found by its seat
+    /// (ADR 0013, D1); the terminal's must be the turn `gen_state` holds — a
+    /// stale result lands nothing (`None`). `Some(seat)` for a landing, the
+    /// seat when it was a messenger's.
+    fn claim_landing(&mut self, res: &mut GenResult) -> Option<Option<super::bridge::Seat>> {
+        if let Some(seat) = self.take_seat(res.id) {
+            return Some(Some(seat));
+        }
+        // Apply only the result of the current generation (protection against
+        // stale ones): finish() transitions to Idle only on a matching id.
+        if !self.gen_state.finish(res.id) {
+            return None;
+        }
+        // The turn is over: drop its confirmation sender, so `confirm` really is
+        // `None` between turns as its doc says. Nothing depends on this — a reply
+        // arriving now is dropped by the `generation_id` guard, and the receiver
+        // is gone with the task — but a field that outlives what it describes is
+        // an invitation to reason wrongly about it later.
+        self.confirm = None;
+        self.carry_inflight_rename(res);
+        Some(None)
+    }
+
+    /// A messenger's landed turn answered to the phone (ADR 0013, D5 (b)).
+    /// The open feed streamed the turn, or was opened on it: it is rebuilt
+    /// from what landed, which is what the terminal's turn leaves too.
+    fn land_seat_reply(
+        &mut self,
+        seat: Option<(super::bridge::Seat, super::bridge::SeatReply)>,
+        chat_id: Uuid,
+    ) {
+        let Some((seat, reply)) = seat else {
+            return;
+        };
+        if self.active_id == Some(chat_id) {
+            self.activate(chat_id);
+        }
+        self.answer_seat(seat, reply);
     }
 
     /// The follow-ups' part of a turn's end (spec §9.3.6): the turn may have
@@ -1570,6 +1568,28 @@ impl Orchestrator {
         }
         let _ = tx.send((call_id, decision));
     }
+}
+
+/// The reply to speak if the profile speaks its replies (spec §11.9): the
+/// turn's last assistant message, when it has words and was neither stopped
+/// nor broken. A `/continue` is not spoken again from the start; `skip` — a
+/// silence, or a messenger's turn — has nothing to say at the terminal.
+fn spoken_reply(res: &GenResult, skip: bool) -> Option<Uuid> {
+    if skip || res.continuation.is_some() {
+        return None;
+    }
+    res.messages
+        .iter()
+        .rev()
+        .find(|m| m.role == MessageRole::Assistant)
+        .filter(|m| !m.text.trim().is_empty())
+        .filter(|m| {
+            !matches!(
+                m.metadata.as_ref().and_then(|md| md.finish),
+                Some(MessageFinish::Cancelled | MessageFinish::Error)
+            )
+        })
+        .map(|m| m.id)
 }
 
 /// `/continue`: the turn's first assistant message finishes the seed in place
