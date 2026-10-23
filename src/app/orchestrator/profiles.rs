@@ -209,6 +209,12 @@ impl Orchestrator {
                 .tf("ui.profile.deleted", &[("name", &name)]),
         ));
         self.profiles.retain(|p| p.id != id);
+        // Its bot stops with it, and its token is not kept for nobody.
+        self.refresh_bridges();
+        let token = crate::shared::secrets::SecretKey::BridgeToken(id).storage_name();
+        if crate::shared::secrets::stored_key(&self.config.api_keys, &token).is_some() {
+            self.store_secret(&token, "");
+        }
         // Remove the deleted profile's chats from memory.
         let removed: Vec<Uuid> = self
             .chats
@@ -310,6 +316,8 @@ impl Orchestrator {
         // delivery — or released one that is overdue (spec §9.3.6).
         self.tick_followups();
         self.emit_task_list();
+        // The bridge's switch may have started or stopped the profile's bot.
+        self.refresh_bridges();
     }
 
     /// Re-derives the localized defaults of the profile's pristine chats after

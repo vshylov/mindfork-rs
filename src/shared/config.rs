@@ -2734,6 +2734,11 @@ pub struct AppConfig {
     /// How a notification reaches someone not looking — the terminal escape, the
     /// bell, a ntfy topic (spec §11.12). Whether one is sent is a profile's switch.
     pub notifications: crate::shared::notify::NotificationSettings,
+    /// The messenger bridge's app-wide part (ADR 0013, spec §11.13): which Bot
+    /// API server the bots talk to. Whether a profile has a bot is its own
+    /// switch; written only when set.
+    #[serde(default, skip_serializing_if = "BridgeSettings::is_default")]
+    pub bridge: BridgeSettings,
     /// Last-open chat — restored on the next launch. Written by the
     /// orchestrator (not editable via the settings screen). `None` — no memory
     /// (first launch/the chat was deleted) → the most recent one opens.
@@ -2746,6 +2751,33 @@ pub struct AppConfig {
     /// the settings screen sends the key itself, not this structure. See `shared::secrets`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub api_keys: Vec<crate::shared::secrets::ApiKeyEntry>,
+}
+
+/// The messenger bridge's settings that are not a profile's (ADR 0013).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BridgeSettings {
+    /// The Bot API server, when it is not Telegram's own
+    /// ([`DEFAULT_API`](crate::shared::messenger::telegram::DEFAULT_API)) — a
+    /// self-hosted `telegram-bot-api`. Not on the settings screen: set in
+    /// `settings.json`, as a server of one's own is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub telegram_api: Option<String>,
+}
+
+impl BridgeSettings {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// The Bot API server the bots talk to.
+    pub fn telegram_api(&self) -> &str {
+        self.telegram_api
+            .as_deref()
+            .map(str::trim)
+            .filter(|u| !u.is_empty())
+            .unwrap_or(crate::shared::messenger::telegram::DEFAULT_API)
+    }
 }
 
 impl Default for AppConfig {
@@ -2794,6 +2826,7 @@ impl Default for AppConfig {
             tts: TtsSettings::default(),
             video: VideoSettings::default(),
             notifications: crate::shared::notify::NotificationSettings::default(),
+            bridge: BridgeSettings::default(),
             last_active_chat: None,
             api_keys: Vec::new(),
         }

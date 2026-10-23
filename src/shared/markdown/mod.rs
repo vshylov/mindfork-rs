@@ -223,6 +223,7 @@ mod latex;
 mod mermaid;
 mod speak;
 mod table;
+mod telegram;
 mod writer;
 
 // The speech extractor (TTS, docs/research/tts.md §5) — a second consumer of
@@ -230,6 +231,7 @@ mod writer;
 // exposed externally.
 #[allow(unused_imports)]
 pub use self::speak::speakable_text;
+pub use self::telegram::telegram_parts;
 
 // Internal wiring: Writer (writer) + highlighting (code) + tables (table) +
 // LaTeX (latex) + diagrams (mermaid) are visible to each other and to mod.rs

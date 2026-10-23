@@ -1445,6 +1445,12 @@ by default:
    the messenger runs in a seat of its own beside the terminal's; one bridged chat per
    profile, `/new` starting the next; the profile's tools without the four dangerous
    families; one bot per profile; *typing…* while the turn runs, then the whole reply.
+   **Stage B built** (spec §11.13): the bot per profile, pairing by a one-time code,
+   the seat beside the terminal's turn, the follow-ups and background results of a
+   bridged chat sent to the phone. **Live, GO** (docs/journal/tools.md) against a Bot
+   API of the test's own: Gemma 4 31B q4_0 3/3, Qwen 3.8 27B Q4_K_M 2/2 — the follow-up
+   sent unasked, the phone answered in character beside a terminal turn, a forwarded
+   order to recite the persona declined, `/stop`. Next: stage C, voice notes.
 
 Stages 1–3 are the companion; 4 is what makes it a research platform; 5–6 are what
 make it a presence. None of it changes what an assistant profile or the default

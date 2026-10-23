@@ -76,6 +76,9 @@ pub enum UiCommand {
     /// `N`th — a character card's alternate greetings (spec §10), offered
     /// while the chat holds nothing else.
     Greeting,
+    /// The open chat's profile's messenger bridge (spec §11.13): its state,
+    /// a pairing code (`pair`), or the account forgotten (`unpair`).
+    Bridge,
     /// Cancel the running generation (`Esc` while generating).
     Stop,
     /// In-feed search; the argument is the query (`Ctrl+F`).
@@ -204,6 +207,7 @@ pub const COMMANDS: &[Spec] = &[
     row(&["/takeback"], UiCommand::Takeback, Arity::None, "/takeback", "ui.help.cmd_takeback"),
     row(&["/impersonate"], UiCommand::Impersonate, Arity::Optional, "ui.help.k.impersonate", "ui.help.cmd_impersonate"),
     row(&["/greeting"], UiCommand::Greeting, Arity::Optional, "ui.help.k.greeting", "ui.help.cmd_greeting"),
+    row(&["/bridge"], UiCommand::Bridge, Arity::Subcommand(&["pair", "unpair"]), "ui.help.k.bridge", "ui.help.cmd_bridge"),
     row(&["/stop"], UiCommand::Stop, Arity::None, "/stop", "ui.help.cmd_stop"),
     // Finding things.
     row(&["/find"], UiCommand::Find, Arity::Optional, "ui.help.k.find", "ui.help.cmd_find"),

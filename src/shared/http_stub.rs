@@ -105,7 +105,7 @@ impl Stub {
 
 /// Reads a request to the end of its body: the head, then as many bytes as
 /// `Content-Length` names.
-async fn whole_request(sock: &mut tokio::net::TcpStream) -> String {
+pub(crate) async fn whole_request(sock: &mut tokio::net::TcpStream) -> String {
     let mut got = Vec::new();
     let mut buf = [0u8; 4096];
     loop {

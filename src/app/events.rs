@@ -341,6 +341,9 @@ pub enum AppCommand {
     UseLocalServer(crate::shared::api::local_servers::LocalOffer),
     /// Shut down (the orchestrator stops).
     Quit,
+    /// `/bridge [pair|unpair]` (spec §11.13): the messenger bridge of the open
+    /// chat's profile — its state, a pairing code, or the account forgotten.
+    Bridge(crate::features::bridge::BridgeAction),
 }
 
 impl AppCommand {
@@ -429,6 +432,9 @@ impl AppCommand {
             // settings, are config questions too.
             | AppCommand::FindLocalServers
             | AppCommand::UseLocalServer(_)
+            // The messenger bridge is the profile's, not this conversation's:
+            // its state, a pairing code, an account forgotten.
+            | AppCommand::Bridge(_)
             | AppCommand::UpdateProfile { .. }
             | AppCommand::RagAdd { .. }
             | AppCommand::RagDelete { .. }

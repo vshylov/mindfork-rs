@@ -2512,7 +2512,7 @@ A concept carried over in full from attempt #1 (section 10 of its specification)
 
 A profile holds: a unique identifier, a system message, and an **optional greeting message** (some models are more interesting when the assistant speaks first) — a direct requirement from the task.
 
-**Companion features** (`Profile.companion: CompanionFeatures`, settings → "Profiles" → the "Companion" group; [docs/research/companion-platform.md](docs/research/companion-platform.md)): what makes a profile a companion rather than an assistant, **each a switch of its own and every one off by default** — a person may want only an assistant, and an assistant and a companion share one installation (the owner's decision of 2026-10-21, §8 there). The group is written to `profiles.json` only once a feature is on, so a profile that never opts in is written exactly as before and no schema step is needed. Today it holds six: **time rows** (`time_rows`, §6.2) — the date and time in front of every user message the model reads; **notes in the prompt** (`notes_in_prompt`, §6.6) — the profile's notes nearest the conversation's opening; **earlier conversations** (`earlier_chats`, §6.6) — the three conversations before this one, with their addresses when `chat_read` is offered; **follow-ups** (`followups`, §9.3.6) — returns the companion plans and makes when they fall due, with the profile's quiet hours (`quiet_from`, `quiet_until`, 22 to 8) and day's cap (`followups_per_day`, 3), which are on from the start; **notify me** (`notify`, §11.12) — a notification when it writes unasked and the person is not looking; **speak replies** (`speak_replies`, §11.9) — each reply in the open conversation spoken as it lands, in the profile's own voice (`Profile.voices`) where it has one.
+**Companion features** (`Profile.companion: CompanionFeatures`, settings → "Profiles" → the "Companion" group; [docs/research/companion-platform.md](docs/research/companion-platform.md)): what makes a profile a companion rather than an assistant, **each a switch of its own and every one off by default** — a person may want only an assistant, and an assistant and a companion share one installation (the owner's decision of 2026-10-21, §8 there). The group is written to `profiles.json` only once a feature is on, so a profile that never opts in is written exactly as before and no schema step is needed. Today it holds seven: **time rows** (`time_rows`, §6.2) — the date and time in front of every user message the model reads; **notes in the prompt** (`notes_in_prompt`, §6.6) — the profile's notes nearest the conversation's opening; **earlier conversations** (`earlier_chats`, §6.6) — the three conversations before this one, with their addresses when `chat_read` is offered; **follow-ups** (`followups`, §9.3.6) — returns the companion plans and makes when they fall due, with the profile's quiet hours (`quiet_from`, `quiet_until`, 22 to 8) and day's cap (`followups_per_day`, 3), which are on from the start; **notify me** (`notify`, §11.12) — a notification when it writes unasked and the person is not looking; **speak replies** (`speak_replies`, §11.9) — each reply in the open conversation spoken as it lands, in the profile's own voice (`Profile.voices`) where it has one; **messenger bridge** (`bridge`, §11.13) — the profile reachable from Telegram through a bot of its own, while the app runs.
 
 **Forking a companion** ([docs/research/companion-platform.md](docs/research/companion-platform.md) C8 (a)): the experiment the application's name promises — the same memories handed to two models, and the two selves read as they diverge (with the self-model's history, [§17.9](#179-the-self-models-history)). `/profile fork [name]` copies the open chat's profile: every setting (the system message, the greeting, the tools, the companion switches, the names, the scaffold language) under a new id and the given name, by default the profile's own with "— fork"; and, in one savepoint of `data.db`, its whole memory — the notes with their vectors, links, supersession scars and knowledge-base citations, the knowledge base's sources and chunks with their vectors, the self-model and every version of it, the language-model history. Not the chats, and so not what belongs to a chat — its follow-ups, its attachments' indexes. Notes and chunks get new ids, every reference remapped; a vector is copied rather than recomputed, keeping the embedding generation it was made under, and a knowledge base awaiting a re-embed passes the mark on. The profile is written first and taken back if the copy fails, so a fork is whole or not there. The fork records where it came from — `Profile.forked_from`: the parent's id, its name then, when, and the self-model version they share up to — which `profiles.json` holds only for a fork, so no schema step is needed; the `F3` history draws a line there, above the versions the two share, and `mindfork stats --self-model` carries it. The answer says what came along: the notes, the knowledge-base sources, the self-model's versions. Live **GO**: a conversation with the fork knew what the parent's self-model knew of the person — Gemma 4 31B 3/3, Qwen 3.8 27B 2/2.
 
@@ -4584,10 +4584,10 @@ crossterm sees them — VS Code's integrated terminal claims `Ctrl+P`, `Ctrl+E`,
 the last of which **closes the tab the session runs in**. Typing survives every
 host, so the interface is fully operable by commands plus the safe key subset
 (printable characters, `Enter`, `Esc`, `Backspace`/`Delete`, `Tab`, the arrows,
-`Home`/`End`, `PageUp`/`PageDown`, `Shift`+arrows). Twenty-seven commands:
+`Home`/`End`, `PageUp`/`PageDown`, `Shift`+arrows). Twenty-eight commands:
 `/settings` `/local` `/self` `/chats` `/changes` `/tasks [stop <kind>|all]` `/notes` `/help` · `/new [profile]`
 `/rename [title]` `/autotitle` `/clone` `/copy` `/regen`·`/retry` `/continue`
-`/takeback` `/impersonate [text]` `/greeting [N]` `/stop` · `/find [text]` `/search <text>`
+`/takeback` `/impersonate [text]` `/greeting [N]` `/bridge [pair|unpair]` `/stop` · `/find [text]` `/search <text>`
 `/links` · `/thoughts` `/toolcalls` `/subagents [expand|collapse|stop [n]]` `/mouse`
 `/emoji`.
 Load-bearing properties:
@@ -5301,6 +5301,82 @@ terminators among them) and line breaks become spaces, the title cannot carry th
 was sent and what was held because the person was looking (`notification sent`,
 `notification held`), so a notification that never appeared can be told from one
 that was never sent.
+
+### 11.13. The messenger bridge
+
+**What.** A profile with *Messenger bridge* on (`Profile.companion.bridge`, off by
+default, §10) and a bot token is reachable from Telegram while the app runs
+([ADR 0013](docs/decisions/0013-messenger-bridge.md);
+[docs/research/companion-platform.md](docs/research/companion-platform.md) C5 (b); the
+owner's F6 (a) and the ADR's D1–D5). One bot per profile (D4): the person makes it with
+Telegram's @BotFather and sets its token in settings → *Profiles* → *Companion* →
+*Telegram bot token* — a stored secret (`SecretKey::BridgeToken(profile)`, bound to the
+machine, never in `profiles.json`). The app polls the bot (`getUpdates`, long polling:
+every call outbound, nothing listens) from the moment the switch and the token are both
+there until either goes, the profile is deleted or the app quits
+(`app/orchestrator/bridge_task.rs`).
+
+**Who.** One account per profile, paired by a one-time code. `/bridge pair` in a chat of
+the profile shows eight characters, good for ten minutes, and a link
+`https://t.me/<bot>?start=<code>` that sends them in one tap; the sender's Telegram user
+id — which never changes, unlike a name — becomes `Profile.bridge.account`, its
+`@name` kept beside it for the settings. A message from any other account is dropped,
+unanswered and unkept, with one log line and no content. `/bridge unpair` forgets the
+account; `/bridge` alone says the state — the bot, the account, the conversation. Only
+private chats are read, never a group, a channel or another bot. A forwarded message
+reaches the model as *"Forwarded from <name>:"* with the text quoted under it — shown,
+never asked.
+
+**Where it lands.** The profile's bridged conversation (`Profile.bridge.chat`, D2): made
+by the first message, marked unread in the list while it is not open, openable like any
+chat. `/new` in Telegram makes the next and sends its greeting; the previous stays in the
+list. What the person types into it at the terminal is answered at the terminal.
+
+**The turn** (D1, `app/orchestrator/bridge.rs`). A message from the phone runs in a
+**seat** of its own beside the terminal's turn, under the shared session budget (§11.6,
+*Sessions*): with one session the two take turns between requests. A chat never has two
+turns — what arrives while its turn runs waits, and one turn answers it all when that
+lands. The landing is the terminal's: title, compaction, reflection, the language-model
+history, follow-ups. The seat's stream reaches the screen only while its chat is open,
+from a mirror a late opening resumes; typing into that chat waits for it (the text goes
+back to the box), `Esc` stops it, as `/stop` in Telegram does, and switching chats does
+not. Its tools (D3): the profile's set less every tool marked dangerous — `python_exec`,
+`fs_write`, the workspace's editing and command tools, every MCP tool — whatever
+`confirm_dangerous` says, since nobody at the terminal can answer a popup; a sub-agent
+inherits the reduced set. The terminal does not speak a seat's reply (§11.9).
+
+**What Telegram shows** (D5 (b)): *typing…* (`sendChatAction`, sent again every four
+seconds) while the turn runs, then the reply whole (`shared/markdown/telegram.rs`):
+markdown as Telegram's HTML subset — bold, italic, strikethrough, code, code blocks,
+links, quotes; a heading bold, a list a line per item, a table a monospaced block — cut
+between top-level blocks into messages of at most 4096 characters, a block longer than
+that by lines, and sent again as plain text if Telegram refuses the markup. Thoughts and
+tool cards stay at the terminal. A stopped reply ends *stopped*; a turn with no words
+says why; a silence (§9.3.6) says nothing. The messenger's commands: `/new`, `/stop`, and
+`/start` — with a code, the pairing; bare, a hello; any other is answered with the list.
+A photo, a sticker or a voice note is answered *"I can only read text here for now."*
+
+**Unasked.** A follow-up come due in the bridged chat (§9.3.6), or a background run's
+result there (§9.3.2), wakes a seat at once, the chat unopened, and the reply goes to
+the phone — within the follow-ups' own quiet hours and day's cap. The bots start before
+the follow-ups that fell due while the app was closed are delivered, so those reach the
+phone too.
+
+**Failures**, each said once in the terminal: a refused token (`401`) stops that bot
+until a new token is set; another program polling the bot, or a webhook set on it
+(`409`), is named in Telegram's words and the bridge goes on trying every thirty
+seconds; a reply that did not reach Telegram is said with its reason and stays in the
+conversation; network errors retry with a back-off, quietly. A message that arrives
+while the engine is not ready is told so, and answered when it is.
+
+**Privacy** (ADR 0013, rule 4). A bot chat is encrypted between each party and
+Telegram's servers, not end to end: Telegram can read every message. The switch's
+description says so before it is on. The history stays on this machine. A fork
+(`/profile fork`) and a carried companion (`mindfork companion export`) take neither
+the bot nor the paired account; a deleted profile's token is removed.
+
+**Server.** Telegram's own Bot API, unless `settings.json` → `bridge.telegram_api`
+names a self-hosted `telegram-bot-api` (not on the settings screen).
 
 ## 12. Configuration, portability, migration
 

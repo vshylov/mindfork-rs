@@ -21,6 +21,7 @@ pub mod keys;
 pub mod logging;
 pub mod markdown;
 pub mod mcp;
+pub mod messenger;
 pub mod net;
 pub mod notify;
 pub mod oklab;

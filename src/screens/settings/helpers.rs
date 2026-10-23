@@ -440,6 +440,7 @@ pub(super) fn is_secret_field(id: FieldId) -> bool {
             | FieldId::VideoApiKey
             | FieldId::BackupPassword
             | FieldId::INtfyToken
+            | FieldId::PBridgeToken
     )
 }
 
@@ -1619,6 +1620,8 @@ pub(super) fn is_profile_field(id: FieldId) -> bool {
             | FieldId::PFollowupsPerDay
             | FieldId::PNotify
             | FieldId::PSpeakReplies
+            | FieldId::PBridge
+            | FieldId::PBridgeToken
             | FieldId::PTool(_)
             | FieldId::ProfileSub
             // The impersonation-profile list lives in the config, but it's user data

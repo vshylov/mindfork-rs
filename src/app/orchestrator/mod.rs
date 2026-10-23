@@ -30,6 +30,8 @@
 mod attachments;
 mod background;
 mod background_runs;
+mod bridge;
+mod bridge_task;
 mod catalogue;
 mod chats;
 mod compaction;
@@ -256,6 +258,10 @@ pub async fn run(deps: OrchestratorDeps) {
     // And for `/file open`: the shell call blocks until the handler has started, and what
     // it answers is addressed to the chat it was asked in (`handle_open_result`).
     let (open_tx, mut open_rx) = unbounded_channel::<OpenResult>();
+    // The messenger bridge (ADR 0013): what the bots read, and the events of
+    // the turns that run in a seat of their own.
+    let (bridge_tx, mut bridge_rx) = unbounded_channel::<crate::features::bridge::Inbound>();
+    let (seat_evt_tx, mut seat_evt_rx) = unbounded_channel::<(Uuid, AppEvent)>();
     let registry = {
         // Nothing is discovered yet at startup; the first landing rebuilds.
         let mut reg = build_registry(&config, storage.json().sandbox_dir(), None);
@@ -321,6 +327,12 @@ pub async fn run(deps: OrchestratorDeps) {
         restarts: RestartQueue::default(),
         default_language,
         extra_tools,
+        bots: HashMap::new(),
+        bridge_tx,
+        seats: HashMap::new(),
+        seat_evt_tx,
+        bridge_waiting: HashMap::new(),
+        bridge_unanswered: Default::default(),
     };
 
     // Bring up the servers from config and emit the startup events/settings.
@@ -360,6 +372,10 @@ pub async fn run(deps: OrchestratorDeps) {
     // tests call directly, off any runtime, and spawning background work is the
     // loop's business. See [`search`].
     search::spawn_reconcile(orch.storage.clone());
+    // The profiles' messenger bots (ADR 0013): started here, on the loop's
+    // runtime, like the index reconcile above — and before the follow-ups
+    // below, so one due in a bridged chat is answered to the phone.
+    orch.refresh_bridges();
     // Follow-ups that fell due while the app was closed are delivered now, once
     // each (spec §9.3.6); the companion is woken on one when the engine is up.
     orch.tick_followups();
@@ -464,6 +480,16 @@ pub async fn run(deps: OrchestratorDeps) {
             res = open_rx.recv() => {
                 if let Some(res) = res {
                     orch.handle_open_result(res);
+                }
+            }
+            inbound = bridge_rx.recv() => {
+                if let Some(inbound) = inbound {
+                    orch.handle_bridge(inbound);
+                }
+            }
+            seat = seat_evt_rx.recv() => {
+                if let Some((generation, event)) = seat {
+                    orch.handle_seat_event(generation, event);
                 }
             }
             _ = sleep_until_opt(deadline) => orch.flush_saves(),
@@ -844,6 +870,20 @@ struct Orchestrator {
     default_language: crate::shared::i18n::Lang,
     /// See [`OrchestratorDeps::extra_tools`]; kept so a rebuild re-registers them.
     extra_tools: Vec<Arc<dyn crate::features::tools::Tool>>,
+    /// The profiles' messenger bots (ADR 0013, D4): one for each profile with
+    /// the switch on and a token. See [`bridge`].
+    bots: HashMap<Uuid, bridge::Bot>,
+    /// The bots' channel: what they read, and their failures.
+    bridge_tx: UnboundedSender<crate::features::bridge::Inbound>,
+    /// The messenger's turns running beside the terminal's, by chat (D1).
+    seats: HashMap<Uuid, bridge::Seat>,
+    /// The seat turns' events, tagged with their turn.
+    seat_evt_tx: UnboundedSender<(Uuid, AppEvent)>,
+    /// What the messenger sent while its chat's turn ran — answered by one
+    /// turn when it lands.
+    bridge_waiting: HashMap<Uuid, Vec<String>>,
+    /// The bridged chats told the engine was not ready — answered when it is.
+    bridge_unanswered: std::collections::HashSet<Uuid>,
 }
 
 impl Orchestrator {
@@ -946,10 +986,15 @@ impl Orchestrator {
                 // §3.1).
                 self.cancel_bg_all();
                 self.mcp.shutdown();
+                // The bots stop polling; a messenger's turn lands cancelled.
+                self.stop_bridges();
                 return true;
             }
             AppCommand::Cancel => {
-                if let Some(token) = self.gen_state.request_cancel() {
+                // `Esc` stops what the open feed shows: a messenger's turn in
+                // the open chat (ADR 0013, D1), else the terminal's own.
+                let seat = self.active_id.is_some_and(|chat| self.stop_seat(chat));
+                if !seat && let Some(token) = self.gen_state.request_cancel() {
                     token.cancel();
                 }
             }
@@ -1040,6 +1085,7 @@ impl Orchestrator {
             AppCommand::ListModels(slot) => self.handle_list_models(slot),
             AppCommand::FindLocalServers => self.find_local_servers(true),
             AppCommand::UseLocalServer(offer) => self.use_local_server(offer),
+            AppCommand::Bridge(action) => self.handle_bridge_action(action),
         }
         false
     }
@@ -1235,6 +1281,7 @@ impl Orchestrator {
             )
             .chain(SearchSlot::ALL.into_iter().map(SecretKey::Search))
             .chain([SecretKey::BackupPassword, SecretKey::NtfyToken])
+            .chain(visible.iter().map(|p| SecretKey::BridgeToken(p.id)))
             .chain(self.config.mcp.servers.iter().flat_map(|s| {
                 s.env.keys().map(|var| SecretKey::McpEnv {
                     server: s.id.clone(),
@@ -1429,6 +1476,11 @@ impl Orchestrator {
     /// from a turn that is not the one in flight is dropped — a cancelled
     /// turn's task can still be filing while the next turn has begun.
     pub(super) fn handle_progress(&mut self, id: Uuid, progress: TurnProgress) {
+        // A messenger's turn keeps a mirror of its own (ADR 0013, D1).
+        if self.seats.values().any(|s| s.generation == id) {
+            self.handle_seat_progress(id, progress);
+            return;
+        }
         let Some(turn) = self.inflight.as_mut().filter(|t| t.generation == id) else {
             return;
         };
@@ -1559,49 +1611,7 @@ impl Orchestrator {
                     return;
                 };
                 apply_step(&mut child.partial, &step);
-                self.forward_child(run, |stream| {
-                    use generation::StreamStep;
-                    match step {
-                        StreamStep::Chunk(text) => AppEvent::Chunk {
-                            generation_id: stream,
-                            text,
-                        },
-                        StreamStep::Thoughts(text) => AppEvent::Thoughts {
-                            generation_id: stream,
-                            text,
-                        },
-                        StreamStep::ToolStarted {
-                            call_id,
-                            name,
-                            arguments,
-                        } => AppEvent::ToolCallStarted {
-                            generation_id: stream,
-                            call_id,
-                            name,
-                            arguments,
-                        },
-                        StreamStep::ToolCall {
-                            call_id,
-                            name,
-                            arguments,
-                            result,
-                            images,
-                        } => AppEvent::ToolCall {
-                            generation_id: stream,
-                            call_id,
-                            name,
-                            arguments,
-                            result,
-                            images,
-                        },
-                        StreamStep::Continue => AppEvent::AssistantContinue {
-                            generation_id: stream,
-                        },
-                        StreamStep::Rewrite => AppEvent::AssistantRewrite {
-                            generation_id: stream,
-                        },
-                    }
-                });
+                self.forward_child(run, |stream| step.into_event(stream));
             }
             TurnProgress::ChildTokens {
                 run,
@@ -1833,6 +1843,9 @@ impl Orchestrator {
         // turn to land (`pending_landings`) has nothing streaming, and saying
         // otherwise would put a stop key on the screen that stops nothing
         // (spec §11.2).
+        // A messenger's turn in this chat streams the same way, under its own
+        // id (ADR 0013, D1); `Esc` on it stops it.
+        let live_turn = live_turn.or_else(|| self.seat_live_turn(id));
         let live_turn = live_turn.or_else(|| {
             self.background_run(id)
                 .filter(|seat| seat.child.run.outcome.is_none())
@@ -1869,6 +1882,7 @@ impl Orchestrator {
                     }
                     messages.extend(rounds);
                 }
+                messages.extend(self.seat_rounds(id));
                 AppEvent::ChatActivated {
                     id,
                     title: chat.title.clone(),

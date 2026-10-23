@@ -58,6 +58,9 @@ pub fn fork(
     fork.id = uuid::Uuid::new_v4();
     fork.name = name;
     fork.is_hidden = false;
+    // The bot is the source's: two profiles polling one bot would refuse each
+    // other, and the paired account is the person's (ADR 0013, D4).
+    fork.bridge = Default::default();
     fork.forked_from = Some(crate::entities::profile::ForkOrigin {
         profile_id: source.id,
         name: source.name.clone(),
@@ -259,6 +262,37 @@ mod tests {
             (source.id, "Sol", at, Some(81))
         );
         assert!(super::fork(&source, "   ", at, None).is_none());
+    }
+
+    /// A fork takes neither the source's bot nor its paired account
+    /// (ADR 0013, D4): two profiles polling one bot would refuse each other.
+    /// The switch stays, and asks for a token of the fork's own.
+    #[test]
+    fn a_fork_takes_neither_the_bot_nor_the_paired_account() {
+        let mut source = Profile::new("Sol", "");
+        source.companion.bridge = true;
+        source.bridge.account = Some("42".into());
+        source.bridge.account_name = Some("@ann".into());
+        source.bridge.chat = Some(uuid::Uuid::new_v4());
+        let fork = fork(&source, "Sol b", chrono::Utc::now(), None).unwrap();
+        assert!(fork.bridge.is_unset());
+        assert!(fork.companion.bridge);
+        let json = serde_json::to_string(&fork).unwrap();
+        assert!(!json.contains("\"bridge\":{"), "{json}");
+    }
+
+    /// The binding is written only once something is in it, and reads back.
+    #[test]
+    fn the_bridge_binding_is_written_only_once_set() {
+        let mut p = Profile::new("Sol", "");
+        let json = serde_json::to_string(&p).unwrap();
+        assert!(!json.contains("\"bridge\""), "{json}");
+        p.bridge.account = Some("42".into());
+        let json = serde_json::to_string(&p).unwrap();
+        assert!(json.contains("\"account\":\"42\""), "{json}");
+        assert!(json.contains("\"channel\":\"telegram\""), "{json}");
+        let back: Profile = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, p);
     }
 
     /// `profiles.json` holds the origin only for a fork, so every other

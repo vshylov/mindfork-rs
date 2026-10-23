@@ -159,7 +159,7 @@ impl Orchestrator {
             return;
         };
         let chat_id = self.background_runs[pos].chat;
-        if self.inflight.as_ref().is_some_and(|t| t.chat == chat_id) {
+        if self.turn_running_in(chat_id) {
             // The seat's row reads as ended meanwhile — and its transcript
             // shows the whole run, last reply included: the mirror is what
             // every read path sees until the record lands (research §5, the
@@ -315,9 +315,16 @@ impl Orchestrator {
     /// user is not looking at keeps its note for their return: no reply
     /// into the void (research fork F2).
     fn maybe_wake(&mut self, chat_id: Uuid) {
-        if !self.config.tools.subagent_background_wake
-            || self.active_id != Some(chat_id)
+        if !self.config.tools.subagent_background_wake {
+            return;
+        }
+        // A bridged chat is answered where its person is (ADR 0013).
+        if self.bridge_wake(chat_id) {
+            return;
+        }
+        if self.active_id != Some(chat_id)
             || !self.gen_state.is_idle()
+            || self.turn_running_in(chat_id)
         {
             return;
         }
