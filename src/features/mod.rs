@@ -8,6 +8,7 @@
 
 pub mod attachment_index;
 pub mod backup;
+pub mod bridge;
 pub mod character_card;
 pub mod chat_export;
 pub mod chat_files;

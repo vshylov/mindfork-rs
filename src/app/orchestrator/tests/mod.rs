@@ -329,6 +329,12 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
         restarts: RestartQueue::default(),
         default_language: crate::shared::i18n::Lang::default(),
         extra_tools: Vec::new(),
+        bots: std::collections::HashMap::new(),
+        bridge_tx: unbounded_channel().0,
+        seats: std::collections::HashMap::new(),
+        seat_evt_tx: unbounded_channel().0,
+        bridge_waiting: std::collections::HashMap::new(),
+        bridge_unanswered: Default::default(),
     };
     (dir, orch, evt_rx)
 }
@@ -696,6 +702,8 @@ fn orch_ready_for_self_consolidation() -> (tempfile::TempDir, Orchestrator, Uuid
 mod attachments;
 mod background;
 mod background_dialogue;
+mod bridge;
+mod bridge_live;
 mod cached_tokens_live;
 mod character_card;
 mod character_card_live;

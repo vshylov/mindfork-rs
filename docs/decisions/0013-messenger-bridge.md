@@ -1,7 +1,8 @@
 # ADR 0013 — The messenger bridge: a seat of its own for a turn whose chat is not on screen, Telegram first
 
 **Status:** accepted (2026-10-23) — the owner chose D1 (a), D2 (a), D3 (a), D4 (a)
-and D5 (b) (*User's decision* below). The track's
+and D5 (b) (*User's decision* below). Stage B built (`feat/messenger-bridge`; spec
+§11.13, [docs/journal/tools.md](../journal/tools.md)). The track's
 design and the forks already decided (F6 (a) with Telegram first, F9 (a), F10 (a)) —
 [docs/research/companion-platform.md](../research/companion-platform.md) C5, §7, §8,
 §9 stage 6. Related: [ADR 0008](0008-api-key-storage.md) (the bot's token is a
@@ -130,15 +131,18 @@ finished reply as a message; thoughts and tool cards stay at the terminal**
 
 ## Rules that are not forks
 
-1. **In-process, against commands and events.** One polling task per bridged profile,
-   started with the app and stopped with it. It talks to the orchestrator in plain
-   data only — an inbound `AppCommand` variant up, an outbound message of the bridge's
-   own channel down — so moving the bridge into a program of its own (research C5 (c))
-   is a serialisation of these two types and a socket, not a redesign. No listening
-   socket now: long polling only. Code: the Bot API client in `shared/messenger/`, the
-   channel interface (`Channel` — Telegram now, Matrix next; an account id is a string,
-   since Matrix's are), pairing, markup and splitting in `features/bridge/`, seats and
-   routing in `app/orchestrator/bridge.rs`.
+1. **In-process, against plain data.** One bot per bridged profile — a poller and a
+   sender, started with the app and stopped with it. They talk to the orchestrator in
+   plain data only, each way on a channel of its own — `Inbound` up, `Outbound` down —
+   so moving the bridge into a program of its own (research C5 (c)) is a serialisation
+   of these two types and a socket, not a redesign. (Built as the orchestrator's own
+   channels, like its other tasks', rather than as an `AppCommand` variant: the
+   commands are what the screen sends.) No listening socket: long polling only. The
+   channel interface is these two types — Telegram now, Matrix next; an account id is
+   a string, since Matrix's are. Code: the Bot API client in `shared/messenger/`, the
+   markup and its cuts in `shared/markdown/telegram.rs`, the pairing, the commands and
+   the reading of Telegram's messages in `features/bridge/`, the bots and the seats in
+   `app/orchestrator/bridge.rs` and `bridge_task.rs`.
 2. **Who may write: one paired account.** A one-time code shown at the terminal, valid
    for ten minutes, with a `t.me/<bot>?start=<code>` link Telegram turns into
    `/start <code>`; the sender's **user id** becomes the profile's allowed account.

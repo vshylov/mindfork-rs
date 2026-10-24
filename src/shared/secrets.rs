@@ -166,6 +166,10 @@ pub enum SecretKey {
     /// OS variable in `env`, and the only one that does not require setting a
     /// variable outside the app.
     McpEnv { server: String, var: String },
+    /// A profile's messenger bot token (ADR 0013, D4): one bot per profile, so
+    /// addressed by the profile. The token is the bot — whoever holds it reads
+    /// and writes as the bot.
+    BridgeToken(uuid::Uuid),
 }
 
 impl SecretKey {
@@ -184,6 +188,7 @@ impl SecretKey {
             Self::BackupPassword => BACKUP_PASSWORD_KEY.to_string(),
             Self::NtfyToken => NTFY_TOKEN_KEY.to_string(),
             Self::McpEnv { server, var } => format!("mcp-{server}-{var}"),
+            Self::BridgeToken(profile) => format!("bridge-{profile}"),
         }
     }
 }

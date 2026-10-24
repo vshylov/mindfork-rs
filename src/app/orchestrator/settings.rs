@@ -14,6 +14,11 @@ impl Orchestrator {
     /// needed, and re-emits the settings. The sole writer of `settings.json`.
     pub(super) fn handle_update_config(&mut self, config: AppConfig) {
         let old = std::mem::replace(&mut self.config, config);
+        // The bots' server may have changed (ADR 0013); a bot whose token and
+        // server are as they were runs on undisturbed.
+        if old.bridge != self.config.bridge {
+            self.refresh_bridges();
+        }
         // The speech settings may be what a spoken reply failed on: the next
         // failure is news again (spec §11.9).
         self.auto_speech_failed = false;
@@ -173,6 +178,9 @@ impl Orchestrator {
             // Read at backup/restore time, or when a notification is sent —
             // nothing to restart.
             SecretKey::BackupPassword | SecretKey::NtfyToken => {}
+            // A profile's bot is started again with its new token, or
+            // stopped when the token was cleared (ADR 0013).
+            SecretKey::BridgeToken(_) => self.refresh_bridges(),
         }
         self.emit_settings();
     }
@@ -331,6 +339,10 @@ impl Orchestrator {
         // conversation (spec §9.3.6).
         if let Some(open) = self.active_id {
             self.maybe_wake_followup(open);
+        }
+        // And the messenger's messages that were told it was not ready.
+        if self.engines.backend_if_ready(self.ui_locale()).is_ok() {
+            self.bridge_engine_ready();
         }
     }
 

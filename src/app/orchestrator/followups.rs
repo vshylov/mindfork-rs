@@ -91,7 +91,8 @@ impl Orchestrator {
 
     /// A turn in the open conversation holds its follow-ups until it ends.
     fn followup_held(&self, f: &Followup) -> bool {
-        self.active_id == Some(f.chat_id) && !self.gen_state.is_idle()
+        (self.active_id == Some(f.chat_id) && !self.gen_state.is_idle())
+            || self.seats.contains_key(&f.chat_id)
     }
 
     /// Delivers every follow-up whose moment has come.
@@ -117,9 +118,18 @@ impl Orchestrator {
         tracing::info!(chats = touched.len(), "follow-ups delivered");
         self.emit_chat_list();
         self.emit_task_list();
-        // A conversation the person is not in waits for them: say so (spec §11.12).
-        for chat in touched.iter().filter(|c| self.active_id != Some(**c)) {
-            self.notify_unasked(*chat, super::notify::Unasked::Waiting);
+        // A conversation the person is not in waits for them: say so (spec §11.12)
+        // — unless it is a bridged one, which is answered now and reaches the
+        // phone (ADR 0013).
+        let away: Vec<Uuid> = touched
+            .iter()
+            .copied()
+            .filter(|c| self.active_id != Some(*c))
+            .collect();
+        for chat in away {
+            if !self.bridge_wake(chat) {
+                self.notify_unasked(chat, super::notify::Unasked::Waiting);
+            }
         }
         if let Some(open) = self.active_id.filter(|id| touched.contains(id)) {
             // The open feed shows the row at once, then the companion is woken on it.
@@ -165,7 +175,10 @@ impl Orchestrator {
     /// ready — quietly otherwise: the notice waits for the next of those moments,
     /// or travels in front of the person's next message.
     pub(super) fn maybe_wake_followup(&mut self, chat_id: Uuid) {
-        if self.active_id != Some(chat_id) || !self.gen_state.is_idle() {
+        if self.active_id != Some(chat_id)
+            || !self.gen_state.is_idle()
+            || self.turn_running_in(chat_id)
+        {
             return;
         }
         let waiting = self
@@ -175,6 +188,10 @@ impl Orchestrator {
             .and_then(|c| c.messages.last())
             .is_some_and(Message::is_followup_notice);
         if !waiting {
+            return;
+        }
+        // A bridged chat's unasked words go to the messenger (ADR 0013, D2).
+        if self.bridge_wake(chat_id) {
             return;
         }
         let Ok(backend) = self.engines.backend_if_ready(self.ui_locale()) else {

@@ -297,6 +297,11 @@ impl SettingsScreen {
             FieldId::TWebTavilyKey => Some(SecretKey::Search(SearchSlot::Tavily)),
             FieldId::BackupPassword => Some(SecretKey::BackupPassword),
             FieldId::INtfyToken => Some(SecretKey::NtfyToken),
+            // One bot per profile (ADR 0013, D4): the token is the selected
+            // profile's.
+            FieldId::PBridgeToken => Some(SecretKey::BridgeToken(
+                self.profiles.get(self.profile_idx)?.id,
+            )),
             FieldId::McpEnvSecret(idx) => {
                 let srv = self.config.mcp.servers.get(self.mcp_server_idx)?;
                 let var = srv.env.keys().nth(idx)?;
@@ -1975,6 +1980,32 @@ impl SettingsScreen {
                             FieldKind::Toggle(p.companion.speak_replies),
                         )
                         .describe(loc.t("ui.settings.desc.speak_replies")),
+                        // The messenger bridge (ADR 0013): who can read what
+                        // passes through it is said before it is on (rule 4),
+                        // and which account it answers, after.
+                        row(
+                            FieldId::PBridge,
+                            loc.t("ui.settings.field.bridge"),
+                            FieldKind::Toggle(p.companion.bridge),
+                        )
+                        .describe(format!(
+                            "{} {}",
+                            loc.t("ui.settings.desc.bridge"),
+                            match &p.bridge.account {
+                                Some(id) => loc.tf(
+                                    "ui.settings.desc.bridge_paired",
+                                    &[("account", p.bridge.account_name.as_deref().unwrap_or(id),)],
+                                ),
+                                None => loc.t("ui.settings.desc.bridge_unpaired").to_string(),
+                            }
+                        )),
+                        secret_row(
+                            FieldId::PBridgeToken,
+                            self.secret_present(Some(&SecretKey::BridgeToken(p.id))),
+                            loc.t("ui.settings.field.bridge_token"),
+                            "ui.settings.desc.bridge_token",
+                            loc,
+                        ),
                     ],
                 ));
                 // Tool toggles: laid out by semantic group

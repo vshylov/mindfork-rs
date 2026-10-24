@@ -141,6 +141,61 @@ pub(super) enum StreamStep {
     Rewrite,
 }
 
+impl StreamStep {
+    /// The step as the screen takes it, under `stream` — the id the feed
+    /// showing it accepts (a sub-agent's transcript, a messenger's turn).
+    pub(super) fn into_event(self, stream: Uuid) -> AppEvent {
+        match self {
+            StreamStep::Chunk(text) => AppEvent::Chunk {
+                generation_id: stream,
+                text,
+            },
+            StreamStep::Thoughts(text) => AppEvent::Thoughts {
+                generation_id: stream,
+                text,
+            },
+            StreamStep::ToolStarted {
+                call_id,
+                name,
+                arguments,
+            } => AppEvent::ToolCallStarted {
+                generation_id: stream,
+                call_id,
+                name,
+                arguments,
+            },
+            StreamStep::ToolCall {
+                call_id,
+                name,
+                arguments,
+                result,
+                images,
+            } => AppEvent::ToolCall {
+                generation_id: stream,
+                call_id,
+                name,
+                arguments,
+                result,
+                images,
+            },
+            StreamStep::Continue => AppEvent::AssistantContinue {
+                generation_id: stream,
+            },
+            StreamStep::Rewrite => AppEvent::AssistantRewrite {
+                generation_id: stream,
+            },
+        }
+    }
+}
+
+/// Which surface a turn answers (ADR 0013): the terminal's one turn, or a
+/// messenger's seat beside it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Surface {
+    Terminal,
+    Bridge,
+}
+
 pub(super) struct GenResult {
     pub(super) id: Uuid,
     pub(super) chat_id: Uuid,
@@ -288,6 +343,12 @@ impl Orchestrator {
         if !self.gen_state.is_idle() {
             return;
         }
+        // A messenger's turn is running in this chat (ADR 0013, D1): the text
+        // goes back to the box rather than start a second turn here.
+        if self.seat_holds_open_chat() {
+            let _ = self.evt_tx.send(AppEvent::RestoreInput(text));
+            return;
+        }
         let text = text.trim().to_string();
         // An empty message is normally nothing to send — unless images are staged, in
         // which case "look at this" with no words is a complete request (spec §9.10).
@@ -360,7 +421,7 @@ impl Orchestrator {
     /// again from the same request. The feed is rebuilt via a re-emit of
     /// `ChatActivated`. Ignored during generation.
     pub(super) fn handle_regenerate(&mut self) {
-        if !self.gen_state.is_idle() {
+        if !self.gen_state.is_idle() || self.seat_holds_open_chat() {
             return;
         }
         // Unconditional (not a setting): the reply being spoken is about to vanish.
@@ -438,7 +499,7 @@ impl Orchestrator {
     }
 
     pub(super) fn handle_continue(&mut self) {
-        if !self.gen_state.is_idle() {
+        if !self.gen_state.is_idle() || self.seat_holds_open_chat() {
             return;
         }
         let Some(active_id) = self.active_id else {
@@ -560,7 +621,7 @@ impl Orchestrator {
     /// input box (`RestoreInput`) so it can be edited and resent.
     /// Ignored during generation.
     pub(super) fn handle_delete_last(&mut self) {
-        if !self.gen_state.is_idle() {
+        if !self.gen_state.is_idle() || self.seat_holds_open_chat() {
             return;
         }
         // Unconditional (not a setting): the exchange being spoken is about to vanish.
@@ -630,7 +691,7 @@ impl Orchestrator {
         backend: Arc<dyn EngineBackend>,
         continuation: Option<ContinuationSeed>,
     ) {
-        self.start_generation_woken(active_id, backend, continuation, false);
+        self.start_generation_woken(active_id, backend, continuation, false, Surface::Terminal);
     }
 
     /// The turn the app starts on a background run's task notification
@@ -641,28 +702,40 @@ impl Orchestrator {
         active_id: Uuid,
         backend: Arc<dyn EngineBackend>,
     ) {
-        self.start_generation_woken(active_id, backend, None, true);
+        self.start_generation_woken(active_id, backend, None, true, Surface::Terminal);
     }
 
-    /// [`Self::start_generation`] with the one flag its two entry points
-    /// differ by.
+    /// A messenger's turn on `chat_id`, in a seat of its own beside the
+    /// terminal's (ADR 0013, D1): the generation id and the token that stops
+    /// it, for the seat the bridge keeps; `None` when the chat is gone.
+    pub(super) fn start_seat_generation(
+        &mut self,
+        chat_id: Uuid,
+        backend: Arc<dyn EngineBackend>,
+        woken: bool,
+    ) -> Option<(Uuid, CancellationToken)> {
+        self.start_generation_woken(chat_id, backend, None, woken, Surface::Bridge)
+    }
+
+    /// [`Self::start_generation`] with the flags its entry points differ by:
+    /// whether the app woke the turn itself, and which surface it answers.
     fn start_generation_woken(
         &mut self,
         active_id: Uuid,
         backend: Arc<dyn EngineBackend>,
         continuation: Option<ContinuationSeed>,
         woken: bool,
-    ) {
+        surface: Surface,
+    ) -> Option<(Uuid, CancellationToken)> {
         // Speech stops per the setting (off by default: listening to the reply
         // while the next one is being written is legitimate). See spec §11.9.
-        if self.config.tts.stop_on_generation_start {
+        // A messenger's turn is not the terminal's, so what plays there stays.
+        if surface == Surface::Terminal && self.config.tts.stop_on_generation_start {
             self.stop_tts();
         }
         // A snapshot at the start of the turn: sampling, available tools, context.
         let sampling = self.effective_sampling(active_id);
-        let Some(chat_ref) = self.chats.iter().find(|c| c.id == active_id) else {
-            return;
-        };
+        let chat_ref = self.chats.iter().find(|c| c.id == active_id)?;
         let profile_id = chat_ref.profile_id;
         let profile_lang = self
             .profiles
@@ -720,7 +793,7 @@ impl Orchestrator {
         // §11 S5): every chat has one, created with its first file.
         let files_dir = self.stored_files_dir(active_id);
         // The effective set = profile ∩ global switches (spec §9.4).
-        let allowed = effective_tool_ids(
+        let mut allowed = effective_tool_ids(
             &enabled,
             &crate::features::tools::ToolGates {
                 web: self.config.tools.web_enabled,
@@ -741,6 +814,14 @@ impl Orchestrator {
                 sampling_endpoint: self.endpoint_sampling_fields(),
             },
         );
+        // A messenger's turn has none of the four dangerous families, whatever
+        // `confirm_dangerous` says (ADR 0013, D3): nobody at the terminal can
+        // answer a popup, and they are what a stolen account would want. Taken
+        // out before anything below reads the set — the schemas, the blocks
+        // that name tools, a sub-agent's inheritance.
+        if surface == Surface::Bridge {
+            allowed.retain(|id| !self.registry.get(id).is_some_and(|tool| tool.danger()));
+        }
         // Does this turn actually offer the read-back tools? A folded range
         // normally implies them, but a profile can have them switched off — and
         // then the summary block must not name them (spec §6.7).
@@ -871,9 +952,7 @@ impl Orchestrator {
         // against.
         let image_names;
         {
-            let Some(chat) = self.chat_mut(active_id) else {
-                return;
-            };
+            let chat = self.chat_mut(active_id)?;
             // What the code may be handed this turn (docs/history/sandbox-file-exchange.md §12
             // T2/T4): the images the conversation carries, and the chat's files as the one
             // numbered list the block shows, the tool resolves and the popup reports.
@@ -994,34 +1073,59 @@ impl Orchestrator {
         request.continue_final = continuation.is_some();
 
         let id = Uuid::new_v4();
-        let _ = self.evt_tx.send(AppEvent::GenerationStarted {
+        let started = AppEvent::GenerationStarted {
             generation_id: id,
             model: model_name.clone(),
             continuation: continuation.is_some(),
-        });
-        self.gen_state.begin(id, cancel.clone());
-        self.inflight = Some(super::InflightTurn {
-            generation: id,
-            chat: active_id,
-            rounds: Vec::new(),
-            partial: Default::default(),
-            children: Vec::new(),
-            continuation: continuation.is_some(),
-        });
+        };
         // The confirmation channel for this turn (fork F8). The sender is kept
         // next to the turn id so a reply arriving for an older turn — the user
         // pressed a key just as the turn was cancelled and a new one began — is
         // dropped instead of unblocking the wrong call.
         let (confirm_tx, confirm_rx) = tokio::sync::mpsc::unbounded_channel();
-        self.confirm = Some((id, confirm_tx));
+        let evt_tx = match surface {
+            Surface::Terminal => {
+                let _ = self.evt_tx.send(started);
+                self.gen_state.begin(id, cancel.clone());
+                self.inflight = Some(super::InflightTurn {
+                    generation: id,
+                    chat: active_id,
+                    rounds: Vec::new(),
+                    partial: Default::default(),
+                    children: Vec::new(),
+                    continuation: continuation.is_some(),
+                });
+                self.confirm = Some((id, confirm_tx));
+                self.evt_tx.clone()
+            }
+            // A seat's events reach the orchestrator, tagged with the turn, and
+            // the screen only while its chat is open (`handle_seat_event`). No
+            // tool of its set asks, so no answer is ever routed in.
+            Surface::Bridge => {
+                drop(confirm_tx);
+                if self.active_id == Some(active_id) {
+                    let _ = self.evt_tx.send(started);
+                }
+                let (seat_tx, mut seat_rx) = tokio::sync::mpsc::unbounded_channel();
+                let forward = self.seat_evt_tx.clone();
+                tokio::spawn(async move {
+                    while let Some(event) = seat_rx.recv().await {
+                        if forward.send((id, event)).is_err() {
+                            return;
+                        }
+                    }
+                });
+                seat_tx
+            }
+        };
         spawn_generation(GenSpawn {
             backend,
             registry: self.registry.clone(),
             ctx,
             request,
             image_names,
-            cancel,
-            confirm_dangerous: self.config.tools.confirm_dangerous,
+            cancel: cancel.clone(),
+            confirm_dangerous: surface == Surface::Terminal && self.config.tools.confirm_dangerous,
             image_cfg: self.config.images,
             confirm_rx,
             id,
@@ -1057,10 +1161,12 @@ impl Orchestrator {
             compaction_enabled: self.config.compaction.enabled,
             continuation,
             woken,
-            evt_tx: self.evt_tx.clone(),
+            seat: surface == Surface::Bridge,
+            evt_tx,
             done_tx: self.done_tx.clone(),
             background: self.background_slots.clone(),
         });
+        Some((id, cancel))
     }
 
     /// Did this turn deliver the conversation's **first** substantive reply?
@@ -1149,50 +1255,30 @@ impl Orchestrator {
         )));
     }
 
-    pub(super) fn handle_done(&mut self, res: GenResult) {
-        // Apply only the result of the current generation (protection against
-        // stale ones): finish() transitions to Idle only on a matching id.
-        if !self.gen_state.finish(res.id) {
+    pub(super) fn handle_done(&mut self, mut res: GenResult) {
+        // A messenger's turn lands from its seat (ADR 0013, D1); everything
+        // below but the generation gate, the speech and the terminal's
+        // notification is the same landing.
+        let Some(seat) = self.claim_landing(&mut res) else {
             return;
-        }
-        // The turn is over: drop its confirmation sender, so `confirm` really is
-        // `None` between turns as its doc says. Nothing depends on this — a reply
-        // arriving now is dropped by the `generation_id` guard, and the receiver
-        // is gone with the task — but a field that outlives what it describes is
-        // an invitation to reason wrongly about it later.
-        self.confirm = None;
+        };
         self.note_withheld_images(res.chat_id, res.images_withheld);
-        let mut res = res;
-        self.carry_inflight_rename(&mut res);
         // A woken turn that chose silence leaves no trace (spec §9.3.6); the feed,
         // which streamed the marker, is rebuilt without it below.
         let silent = res.woken && self.drop_silent_reply(res.chat_id, &mut res.messages);
         // What a woken turn wrote, for a notification once it has landed
         // (spec §11.12) — read before the rows move into the chat.
-        let woken_reply = res
-            .woken
+        let woken_reply = (res.woken && seat.is_none())
             .then(|| super::notify::woken_reply_text(&res.messages))
             .flatten();
-        // The reply to speak if the profile speaks its replies (spec §11.9):
-        // the turn's last assistant message, when it has words and was neither
-        // stopped nor broken. A `/continue` is not spoken again from the start,
-        // and a silence has nothing to say.
-        let to_speak = if silent || res.continuation.is_some() {
-            None
-        } else {
-            res.messages
-                .iter()
-                .rev()
-                .find(|m| m.role == MessageRole::Assistant)
-                .filter(|m| !m.text.trim().is_empty())
-                .filter(|m| {
-                    !matches!(
-                        m.metadata.as_ref().and_then(|md| md.finish),
-                        Some(MessageFinish::Cancelled | MessageFinish::Error)
-                    )
-                })
-                .map(|m| m.id)
-        };
+        // What a messenger's turn answers, read before the rows move too.
+        let seat = seat.map(|s| {
+            let reply = super::bridge::SeatReply::of(&res.messages, silent, res.woken);
+            (s, reply)
+        });
+        // A messenger's turn is not spoken at the terminal: its person is not
+        // there.
+        let to_speak = spoken_reply(&res, silent || seat.is_some());
         if silent {
             self.mark_dirty(res.chat_id);
             if self.active_id == Some(res.chat_id) {
@@ -1203,7 +1289,9 @@ impl Orchestrator {
             // A turn that landed nothing still ends the wait of a result
             // that arrived meanwhile (docs/research/background-subagents.md §4.4).
             self.land_pending_runs(res.chat_id);
+            self.land_seat_reply(seat, res.chat_id);
             self.after_turn_followups(res.woken, res.chat_id);
+            self.bridge_after_landing(res.chat_id);
             return;
         }
         // Did the model edit the "self-model" via its own tools this turn? If so —
@@ -1338,7 +1426,50 @@ impl Orchestrator {
         if let Some(reply) = to_speak {
             self.speak_landed_reply(res.chat_id, reply);
         }
+        self.land_seat_reply(seat, res.chat_id);
         self.after_turn_followups(res.woken, res.chat_id);
+        // What the messenger sent while this turn ran is answered now.
+        self.bridge_after_landing(res.chat_id);
+    }
+
+    /// The gate in front of a landing. A messenger's turn is found by its seat
+    /// (ADR 0013, D1); the terminal's must be the turn `gen_state` holds — a
+    /// stale result lands nothing (`None`). `Some(seat)` for a landing, the
+    /// seat when it was a messenger's.
+    fn claim_landing(&mut self, res: &mut GenResult) -> Option<Option<super::bridge::Seat>> {
+        if let Some(seat) = self.take_seat(res.id) {
+            return Some(Some(seat));
+        }
+        // Apply only the result of the current generation (protection against
+        // stale ones): finish() transitions to Idle only on a matching id.
+        if !self.gen_state.finish(res.id) {
+            return None;
+        }
+        // The turn is over: drop its confirmation sender, so `confirm` really is
+        // `None` between turns as its doc says. Nothing depends on this — a reply
+        // arriving now is dropped by the `generation_id` guard, and the receiver
+        // is gone with the task — but a field that outlives what it describes is
+        // an invitation to reason wrongly about it later.
+        self.confirm = None;
+        self.carry_inflight_rename(res);
+        Some(None)
+    }
+
+    /// A messenger's landed turn answered to the phone (ADR 0013, D5 (b)).
+    /// The open feed streamed the turn, or was opened on it: it is rebuilt
+    /// from what landed, which is what the terminal's turn leaves too.
+    fn land_seat_reply(
+        &mut self,
+        seat: Option<(super::bridge::Seat, super::bridge::SeatReply)>,
+        chat_id: Uuid,
+    ) {
+        let Some((seat, reply)) = seat else {
+            return;
+        };
+        if self.active_id == Some(chat_id) {
+            self.activate(chat_id);
+        }
+        self.answer_seat(seat, reply);
     }
 
     /// The follow-ups' part of a turn's end (spec §9.3.6): the turn may have
@@ -1437,6 +1568,28 @@ impl Orchestrator {
         }
         let _ = tx.send((call_id, decision));
     }
+}
+
+/// The reply to speak if the profile speaks its replies (spec §11.9): the
+/// turn's last assistant message, when it has words and was neither stopped
+/// nor broken. A `/continue` is not spoken again from the start; `skip` — a
+/// silence, or a messenger's turn — has nothing to say at the terminal.
+fn spoken_reply(res: &GenResult, skip: bool) -> Option<Uuid> {
+    if skip || res.continuation.is_some() {
+        return None;
+    }
+    res.messages
+        .iter()
+        .rev()
+        .find(|m| m.role == MessageRole::Assistant)
+        .filter(|m| !m.text.trim().is_empty())
+        .filter(|m| {
+            !matches!(
+                m.metadata.as_ref().and_then(|md| md.finish),
+                Some(MessageFinish::Cancelled | MessageFinish::Error)
+            )
+        })
+        .map(|m| m.id)
 }
 
 /// `/continue`: the turn's first assistant message finishes the seed in place
@@ -1611,6 +1764,9 @@ struct GenSpawn {
     /// (docs/research/background-dialogues.md §3, fork F11), so it gets the
     /// one-shot muted re-ask a dialogue's line gets.
     woken: bool,
+    /// A messenger's turn in a seat of its own (ADR 0013, D1): its stream
+    /// reaches the orchestrator only, which shows it while its chat is open.
+    seat: bool,
     evt_tx: UnboundedSender<AppEvent>,
     done_tx: UnboundedSender<GenMessage>,
     /// The background-run slots (see [`TurnShared::background`]).
@@ -1823,6 +1979,7 @@ fn spawn_generation(spawn: GenSpawn) {
         compaction_summary,
         continuation,
         woken,
+        seat,
         evt_tx,
         done_tx,
         background,
@@ -1906,6 +2063,7 @@ fn spawn_generation(spawn: GenSpawn) {
             ui_loc,
             evt_tx: evt_tx.clone(),
             done_tx: done_tx.clone(),
+            seat,
             compaction_enabled,
             compaction_summary,
         };
@@ -2050,6 +2208,8 @@ struct TurnShared {
     /// The chat's rolling summary, for the dialogue director's brief
     /// (see [`GenSpawn::compaction_summary`]).
     compaction_summary: Option<String>,
+    /// See [`GenSpawn::seat`].
+    seat: bool,
     /// How many background runs are out, against the cap
     /// (`tools.subagent_background_max`) — owned by the orchestrator, taken
     /// by the loop that starts a run, released by the run that ends
@@ -2222,6 +2382,11 @@ struct RoundSink<'a> {
     /// `true` drops a child's stream steps and keeps only the token counter;
     /// the filed messages (`ChildRoundFiled`) carry the transcript's growth.
     mute_steps: bool,
+    /// A messenger's seat (ADR 0013): the turn's own steps reach the
+    /// orchestrator only, which forwards them while the chat is open — one
+    /// channel for the mirror and the screen, so a late opening never shows a
+    /// step twice.
+    seat: bool,
 }
 
 impl RoundSink<'_> {
@@ -2231,7 +2396,9 @@ impl RoundSink<'_> {
                 // The turn's own loop: the screen gets every event as it
                 // always did; the orchestrator mirrors the round's steps.
                 let step = stream_step(&event);
-                let _ = self.evt_tx.send(event);
+                if !(self.seat && step.is_some()) {
+                    let _ = self.evt_tx.send(event);
+                }
                 match step {
                     Some(step) => TurnProgress::OwnStep(step),
                     None => return,
@@ -2404,6 +2571,7 @@ impl TurnLoop<'_> {
             turn: self.shared.id,
             child: self.run_id,
             mute_steps: false,
+            seat: self.shared.seat,
         }
     }
 
@@ -4050,6 +4218,7 @@ pub(super) fn spawn_background_run(
         ui_loc: parts.ui_loc,
         evt_tx,
         done_tx,
+        seat: false,
         compaction_enabled: parts.compaction_enabled,
         compaction_summary: parts.compaction_summary,
         background: parts.background,
@@ -5283,6 +5452,7 @@ impl DialogueCtx<'_> {
             turn: self.shared.id,
             child: Some(run),
             mute_steps: !steps,
+            seat: false,
         };
         // Each context is its own conversation, so there is no last-round
         // floor to raise the estimate with — the request is priced as it is.

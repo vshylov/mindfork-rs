@@ -828,6 +828,10 @@ enum FieldId {
     PNotify,
     /// Each reply spoken as it lands (`companion.speak_replies`, spec §11.9).
     PSpeakReplies,
+    /// The profile's messenger bridge (ADR 0013, spec §11.13): the switch, and
+    /// its bot's token — a secret kept under the profile.
+    PBridge,
+    PBridgeToken,
     /// A profile tool toggle by index in the catalog.
     PTool(usize),
     // Impersonation profiles (the "Impersonation" subsection of "Profiles"; the list

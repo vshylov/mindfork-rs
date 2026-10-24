@@ -317,6 +317,13 @@ src/
 │  │  │                     moment (followup_next, the loop's deadline), the notice row,
 │  │  │                     the wake on the open conversation, `<silent>` taken back out,
 │  │  │                     cancels on a take-back or a deleted conversation
+│  │  ├─ bridge.rs          the messenger bridge (spec §11.13, ADR 0013): a bot per profile
+│  │  │                     (refresh_bridges), the pairing, the bridged chat, and the
+│  │  │                     **seat** — a messenger's turn beside the terminal's, its mirror,
+│  │  │                     its landing answered to the phone, what waits for it, the wakes
+│  │  ├─ bridge_task.rs     one bot's tasks: the poller (getMe, long-polled getUpdates →
+│  │  │                     `Inbound`) and the sender (`Outbound` → typing…, the reply cut
+│  │  │                     into Telegram's markup, plain text when refused)
 │  │  ├─ request.rs         mapping domain messages to the engine wire format
 │  │  └─ tests/             orchestrator tests, split by feature (mod.rs — fixtures;
 │  │                        generation/chats/profiles/settings/title/impersonation/
@@ -657,6 +664,11 @@ src/
 │  │                        `get_last_user_message_time` shares
 │  ├─ rag_ingest.rs         scan, read_text, RagProgress (indexing progress types)
 │  ├─ cli.rs                our own micro CLI argument parser (all text lives in locale bundles)
+│  ├─ bridge/               the messenger bridge below the orchestrator (ADR 0013):
+│  │                        `Inbound`/`Outbound` — the plain data a channel and the
+│  │                        orchestrator exchange — the pairing code, the messenger's
+│  │                        commands, a forward as a quote; `telegram.rs` reads Telegram's
+│  │                        messages into them (private chats only, never a bot)
 │  ├─ backup.rs             data backup/restore (zip, transactional, optional AES-256
 │  │                        password — spec §12.3); reports phase progress through a
 │  │                        callback, the CLI prints it (sandbox_setup's shape)
@@ -888,8 +900,14 @@ src/
    │  │                    with no Text events, so they used to render as nothing):
    │  │                    tags stripped, script/style dropped, entities decoded (§11.4)
    │  ├─ mermaid.rs        ```mermaid → text graphics, whitelist + hard fallback to source
-   │  └─ speak.rs          speakable_text: TTS-ready text (code/mermaid/tables/
-   │                       display-math → a spoken-aside note; §11.9)
+   │  ├─ speak.rs          speakable_text: TTS-ready text (code/mermaid/tables/
+   │  │                    display-math → a spoken-aside note; §11.9)
+   │  └─ telegram.rs       telegram_parts: markdown → Telegram's HTML subset, cut between
+   │                       blocks into messages ≤ 4096, each with its plain text (§11.13)
+   ├─ messenger/           the messengers' wires (ADR 0013): `telegram.rs` — the Bot API
+   │                       client (getMe/getUpdates/sendMessage/sendChatAction; no error
+   │                       carries the token's URL); `telegram_fake.rs` (tests) — a Bot API
+   │                       of the tests' own that a message "from the phone" is put into
    ├─ mcp.rs               minimal MCP client (stdio, tools-only, 2025-11-25 revision):
    │                       McpConnection (transport, testable over a duplex) + McpClient
    │                       (subprocess: kill/exited monitor, Job Object kill-on-close,
@@ -1384,6 +1402,16 @@ Generation itself runs in a **separate `tokio` task**, which streams
 tool effects) to the orchestrator through an internal `done_tx` channel (type
 `GenResult`). The orchestrator — the sole owner of `Chat` — appends the
 messages and applies the effects itself.
+
+`GenState` is the **terminal's** turn. A turn that came from a messenger runs
+in a **seat** beside it (`app/orchestrator/bridge.rs`, ADR 0013, spec §11.13):
+started by `start_seat_generation` (`Surface::Bridge`), it leaves `GenState`,
+the in-flight mirror and the confirmation channel alone, keeps a mirror of its
+own (`Seat.turn`), sends its stream steps to the orchestrator only — which
+forwards them while its chat is open — and lands through the same
+`handle_done`, found by its generation id instead of the `GenState` gate. A
+chat never has two turns: `turn_running_in(chat)` covers both kinds, and what
+a messenger sends meanwhile waits for one turn after the running one lands.
 
 **Client-side agentic loop** (spec §6.3): the server doesn't execute our tools,
 so the orchestrator drives the loop between HTTP rounds.

@@ -1652,6 +1652,13 @@ fn each_memory_switch_flips_its_own_feature() {
                 ..CompanionFeatures::default()
             },
         ),
+        (
+            FieldId::PBridge,
+            CompanionFeatures {
+                bridge: true,
+                ..CompanionFeatures::default()
+            },
+        ),
     ] {
         let mut s = screen();
         goto_section(&mut s, Section::Profiles);
@@ -1665,6 +1672,36 @@ fn each_memory_switch_flips_its_own_feature() {
         }
         assert_eq!(s.profiles[0].companion, on);
     }
+}
+
+/// The bridge's token (ADR 0013, D4) is a secret of the selected profile's
+/// own: a profile's bot is never another's, and the token never reaches the
+/// settings file. The switch's description says who can read what, and which
+/// account is paired.
+#[test]
+fn the_bridge_token_is_the_selected_profiles_secret() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Profiles);
+    let id = s.profiles[0].id;
+    assert_eq!(
+        s.apply_text(FieldId::PBridgeToken, "123:abc"),
+        Some(SettingsIntent::SetSecret {
+            key: SecretKey::BridgeToken(id),
+            value: "123:abc".into()
+        })
+    );
+    assert!(
+        !serde_json::to_string(&s.config)
+            .unwrap()
+            .contains("123:abc")
+    );
+    let desc = field_desc(&s, FieldId::PBridge).expect("described");
+    assert!(desc.contains("@BotFather"), "{desc}");
+    assert!(desc.contains("/bridge pair"), "unpaired: {desc}");
+    s.profiles[0].bridge.account = Some("42".into());
+    s.profiles[0].bridge.account_name = Some("@ann".into());
+    let desc = field_desc(&s, FieldId::PBridge).unwrap();
+    assert!(desc.contains("@ann"), "paired: {desc}");
 }
 
 /// A profile's voice (spec §11.9) is kept under the speech mode in force, the
