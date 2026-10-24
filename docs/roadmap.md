@@ -357,8 +357,8 @@ effort tiers — have all closed
   lands. **Stage 6**: the bridge's ADR (0013) accepted, and **stage B built** — a
   profile reachable from Telegram through a bot of its own, a turn from the phone in a
   seat beside the terminal's, without the dangerous tools; checked on real Telegram
-  by the owner. Next: photos from the phone, then stage C, voice notes in and out;
-  Matrix after. Twelve candidates in six stages.
+  by the owner; pictures from the phone after it. Next: stage C, voice notes in and
+  out; Matrix after. Twelve candidates in six stages.
 
 ### Feed and rendering
 

@@ -102,7 +102,8 @@ split by subsystem.
   that conversation now reaches your phone. Only your account is answered, and a
   reply from the phone cannot run code, write files, edit a project or call an MCP
   server. A chat with a bot is not end-to-end encrypted — Telegram can read it; the
-  settings say so before it is on.
+  settings say so before it is on. Photos, images sent as files and albums reach the
+  companion with their captions, prepared as `/image attach` prepares them.
 
 ### Changed
 

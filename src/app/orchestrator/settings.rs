@@ -14,9 +14,9 @@ impl Orchestrator {
     /// needed, and re-emits the settings. The sole writer of `settings.json`.
     pub(super) fn handle_update_config(&mut self, config: AppConfig) {
         let old = std::mem::replace(&mut self.config, config);
-        // The bots' server may have changed (ADR 0013); a bot whose token and
-        // server are as they were runs on undisturbed.
-        if old.bridge != self.config.bridge {
+        // The bots' server may have changed (ADR 0013), or how they prepare a
+        // picture; a bot whose start is as it was runs on undisturbed.
+        if old.bridge != self.config.bridge || old.images != self.config.images {
             self.refresh_bridges();
         }
         // The speech settings may be what a spoken reply failed on: the next

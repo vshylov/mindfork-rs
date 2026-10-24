@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (95)
+## Entries (96)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -107,6 +107,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: follow-ups the companion plans — companion stage 3, C4 (a) (done)
 - Post-M9: a companion's own voice, and replies spoken as they land — companion stage 5, C7 (a) (done)
 - Post-M9: a companion reachable from Telegram — companion stage 6 B, the bridge (done)
+- Post-M9: pictures from the phone — companion stage 6 B, the bridge's second half (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -6242,4 +6243,61 @@ reply D5 (b)). Stacked on the ADR's pull request.
   now"*, as built — images from the phone are not in this stage.
 
 **Gates**: 4336 unit tests green, 297 `#[ignore]`; clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check` clean.
+
+### Post-M9: pictures from the phone — companion stage 6 B, the bridge's second half (done)
+
+The owner's real-Telegram run of the bridge (the entry before) found the one thing a
+person sends that the bridge did not read: a photo got *"I can only read text here for
+now"*, as built. Asked for next, on top of the bridge's pull request.
+
+- **The wire**: `TgMessage` reads `photo` (the sizes, smallest first — the last is
+  taken), `document` (an image when its `mime_type` is `image/*`), `caption` and
+  `media_group_id`; `TelegramClient::download` is `getFile` then a `GET` of
+  `{api}/file/bot{token}/{path}` — refused before the fetch when `getFile` reports a size
+  above the cap, cut off when the transfer grows past it (`TelegramError::TooBig`), and,
+  like every call, with no URL in its errors: the token is in this one too.
+- **Below the orchestrator**: `Body::Images { pictures, caption, author }`; a `Picture`
+  is a file id, then `Ready(MessageImage)` or `Failed(PictureError)` — too big (both
+  sizes), unreadable, more than a message takes, or the fetch's own error. `Author` says
+  whether the words are the person's or forwarded (a forwarded photo's caption is quoted
+  like a forwarded text). `gather_albums` makes an album one message again: Telegram
+  sends one message per picture with the same `media_group_id`.
+- **Where a picture is fetched — the decision**: in the bot's poller, before its message
+  goes up, not by a round trip through the orchestrator. The poller is sequential, so a
+  photo and the question typed after it arrive in that order — fetched by request, the
+  question would overtake the photo and be answered without it. And only the paired
+  account's: the orchestrator keeps the poller told who that is (a `watch` set at the
+  bot's start, on pairing and on unpairing), so a stranger's twenty megabytes are never
+  downloaded — a test counts `getFile` calls. A picture sent in the moment of pairing,
+  before the poller knew, arrives unfetched and is asked for again.
+- **Prepared as attached**: `features::image_prepare::prepare` on the blocking pool —
+  png or jpeg, downscaled to `images.downscale_px` — within `images.max_bytes` and a
+  bot's 20 MB, at most `images.max_count` to a message; the image is named for its file
+  or `photo.jpg`, its source `telegram`. The image settings join the bot's start key,
+  so changing them starts the bots again.
+- **On the person's message**: the orchestrator puts the ready images on the user row
+  with the caption as its words — what `/image attach` does for the next message — and
+  says in one line to the phone what did not make it; a caption is answered even when
+  its picture was not. A model that takes no images reads the existing marker ("say that
+  you cannot see it", spec §9.10), so the phone hears it from the model. The waiting
+  queue now holds the person's **messages** rather than their texts, made when they
+  arrived: a picture waits with its words, and a time row says when each was sent.
+- **Unsupported** is now a sticker, a voice note or a file that is not an image:
+  *"I read text and pictures here; voice notes and other files not yet."*
+- **Tests**: the download (by path, refused above the cap before and during the
+  transfer, the token in no error); a photo's largest size with its caption and album,
+  an image file versus a PDF, a forwarded photo; albums gathered and nothing else merged.
+  Against `TelegramFake`, now serving `getFile` and files: a photo larger than the
+  ceiling reaches the model on the person's message with its caption and lands
+  1568×784; an album is one turn with both pictures and the caption; a picture over
+  `max_bytes` is said and its caption still answered; a file that is not an image is
+  said and reaches no model; a stranger's photo — no `getFile` at all.
+- **Live, GO** (`bridge_live`, a fifth step: a photo half red, half blue, *"Which two
+  colours do you see in this picture?"*; llama.cpp b11845, two slots, `--mmproj`):
+  **Gemma 4 31B q4_0 3/3** — *"I see red and **blue**. It's a bold choice for a door."*,
+  every earlier step as before; **Qwen 3.8 27B Q4_K_M** **2/2** — *"Two colours, dear — **red** on the left and blue on the right"*, the
+  halves placed right.
+
+**Gates**: 4345 unit tests green, 297 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check` clean.

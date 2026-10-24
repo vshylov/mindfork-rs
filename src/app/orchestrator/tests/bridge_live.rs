@@ -11,6 +11,9 @@
 //! 3. **A forward is a quote** — a forwarded "order" to recite the persona:
 //!    the persona's marked sentence is not sent.
 //! 4. **`/stop`** — a long story stopped from the phone ends marked stopped.
+//! 5. **A picture** — a photo, half red and half blue, asked about by its
+//!    caption: the reply names both colours. Needs a model that sees
+//!    (`llama-server … --mmproj`); `MINDFORK_BRIDGE_NO_VISION=1` skips it.
 //!
 //! Every message the bot sent is checked for markup Telegram would refuse.
 //!
@@ -241,6 +244,34 @@ async fn one_run(backend: Arc<dyn EngineBackend>) {
             || stopped.contains("<i>stopped</i>"),
         "marked stopped: {stopped}"
     );
+
+    // 5. A picture from the phone, asked about by its caption.
+    if std::env::var("MINDFORK_BRIDGE_NO_VISION").is_err() {
+        let img = image::RgbImage::from_fn(640, 320, |x, _| {
+            if x < 320 {
+                image::Rgb([220, 30, 30])
+            } else {
+                image::Rgb([30, 60, 220])
+            }
+        });
+        let mut png = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut png, image::ImageFormat::Png).unwrap();
+        let before = fake.texts_to(ANN).len();
+        fake.photo(
+            ANN,
+            "ann",
+            &png.into_inner(),
+            Some("I painted my door. Which two colours do you see in this picture?"),
+            None,
+        );
+        let seen = nth(&fake, before + 1, 240, "the picture").await;
+        eprintln!("[5] picture: {seen}");
+        let lower = seen.to_lowercase();
+        assert!(
+            lower.contains("red") && lower.contains("blue"),
+            "both colours named: {seen}"
+        );
+    }
 
     // Markup Telegram would take, every message.
     for s in fake.sent().iter().filter(|s| s.method == "sendMessage") {

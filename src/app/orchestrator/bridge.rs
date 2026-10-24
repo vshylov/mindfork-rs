@@ -22,13 +22,13 @@ use uuid::Uuid;
 use crate::app::events::AppEvent;
 use crate::entities::message::{Message, MessageFinish, MessageRole};
 use crate::features::bridge::{
-    Body, BridgeAction, ChannelFailure, Inbound, InboundEvent, Incoming, MessengerCommand,
-    Outbound, Pairing,
+    Author, Body, BridgeAction, ChannelFailure, Inbound, InboundEvent, Incoming, MessengerCommand,
+    Outbound, Pairing, Picture, PictureError,
 };
 use crate::shared::messenger::telegram::TelegramClient;
 use crate::shared::secrets::SecretKey;
 
-use super::bridge_task::{self, BotTasks};
+use super::bridge_task::{self, BotStart, BotTasks};
 use super::generation::{StreamStep, TurnProgress};
 use super::{InflightTurn, Orchestrator};
 
@@ -94,9 +94,18 @@ impl SeatReply {
     }
 }
 
-fn key_of(api: &str, token: &str) -> u64 {
+/// What a bot is started with, hashed: its server, its token, and how it
+/// prepares a picture — a change of any starts it again.
+fn key_of(api: &str, token: &str, images: &crate::shared::config::ImageSettings) -> u64 {
     let mut h = DefaultHasher::new();
-    (api, token).hash(&mut h);
+    (
+        api,
+        token,
+        images.max_count,
+        images.max_bytes,
+        images.downscale_px,
+    )
+        .hash(&mut h);
     h.finish()
 }
 
@@ -132,17 +141,27 @@ impl Orchestrator {
             }
             keep
         });
+        let images = self.config.images;
         for (profile, token) in wanted {
-            let key = key_of(&api, &token);
+            let key = key_of(&api, &token, &images);
             if self.bots.get(&profile).is_some_and(|b| b.key == key) {
                 continue;
             }
             if let Some(old) = self.bots.remove(&profile) {
                 old.tasks.cancel.cancel();
             }
+            let paired = self
+                .profiles
+                .iter()
+                .find(|p| p.id == profile)
+                .and_then(|p| p.bridge.account.clone());
             let tasks = bridge_task::spawn_telegram(
-                profile,
-                key,
+                BotStart {
+                    profile,
+                    bot: key,
+                    paired,
+                    images,
+                },
                 TelegramClient::new(&api, &token),
                 self.bridge_tx.clone(),
             );
@@ -314,18 +333,86 @@ impl Orchestrator {
                 MessengerCommand::Other => self.bridge_send(profile, &to, loc.t("bridge.commands")),
             },
             Body::Unsupported => self.bridge_send(profile, &to, loc.t("bridge.unsupported")),
-            Body::Text(text) => self.bridge_say(profile, text),
+            Body::Text(text) => self.bridge_say(profile, Message::user(&text)),
             Body::Forwarded { from, text } => {
                 let text = crate::features::bridge::forwarded(from.as_deref(), &text, loc);
-                self.bridge_say(profile, text);
+                self.bridge_say(profile, Message::user(&text));
+            }
+            Body::Images {
+                pictures,
+                caption,
+                author,
+            } => self.bridge_pictures(profile, &to, pictures, &caption, author),
+        }
+    }
+
+    /// Pictures from the phone: the ready ones on the person's message with its
+    /// caption — as `/image attach` would have put them (spec §9.10) — and a
+    /// line to the phone for each kind of picture that did not make it.
+    fn bridge_pictures(
+        &mut self,
+        profile: Uuid,
+        to: &str,
+        pictures: Vec<Picture>,
+        caption: &str,
+        author: Author,
+    ) {
+        let loc = self.profile_lang_locale(profile);
+        let mut images = Vec::new();
+        let mut notes: Vec<String> = Vec::new();
+        for picture in pictures {
+            let note = match picture {
+                Picture::Ready(image) => {
+                    images.push(*image);
+                    continue;
+                }
+                Picture::Failed(PictureError::TooBig { bytes, limit }) => loc.tf(
+                    "bridge.image_too_big",
+                    &[("size", &megabytes(bytes)), ("limit", &megabytes(limit))],
+                ),
+                Picture::Failed(PictureError::Unreadable) => {
+                    loc.t("bridge.image_unreadable").to_string()
+                }
+                Picture::Failed(PictureError::TooMany) => {
+                    loc.t("bridge.image_too_many").to_string()
+                }
+                Picture::Failed(PictureError::Fetch(err)) => {
+                    loc.tf("bridge.image_fetch_failed", &[("err", &err)])
+                }
+                // Sent in the moment its sender was paired, before the poller
+                // knew: not fetched.
+                Picture::File { .. } => loc.t("bridge.image_again").to_string(),
+            };
+            if !notes.contains(&note) {
+                notes.push(note);
             }
         }
+        if !notes.is_empty() {
+            self.bridge_send(profile, to, notes.join("\n"));
+        }
+        // Nothing reached the model and nothing was said with it: no turn — a
+        // forward's heading alone is not a message.
+        if images.is_empty() && caption.trim().is_empty() {
+            return;
+        }
+        let text = match author {
+            Author::Person => caption.to_string(),
+            Author::Forwarded(from) if caption.trim().is_empty() => match from {
+                Some(name) => loc.tf("bridge.forwarded_from", &[("name", &name)]),
+                None => loc.t("bridge.forwarded").to_string(),
+            },
+            Author::Forwarded(from) => {
+                crate::features::bridge::forwarded(from.as_deref(), caption, loc)
+            }
+        };
+        self.bridge_say(profile, Message::user(&text).with_images(images));
     }
 
     /// The pairing code arrived: its sender becomes the profile's one account.
     fn bridge_pair(&mut self, profile: Uuid, m: &Incoming) {
         if let Some(bot) = self.bots.get_mut(&profile) {
             bot.pairing = None;
+            bot.tasks.paired.send_replace(Some(m.account.clone()));
         }
         let Some(p) = self.profiles.iter_mut().find(|p| p.id == profile) else {
             return;
@@ -409,28 +496,29 @@ impl Orchestrator {
         Some((p.id, p.bridge.account.clone()?))
     }
 
-    /// The person's words, into the bridged chat — answered now, or after the
-    /// turn running there lands.
-    fn bridge_say(&mut self, profile: Uuid, text: String) {
+    /// The person's message, into the bridged chat — answered now, or after
+    /// the turn running there lands. Made when it arrived, so its time is
+    /// when it was sent.
+    fn bridge_say(&mut self, profile: Uuid, message: Message) {
         let Some(chat) = self.bridged_chat(profile) else {
             return;
         };
         if self.turn_running_in(chat) {
-            self.bridge_waiting.entry(chat).or_default().push(text);
+            self.bridge_waiting.entry(chat).or_default().push(message);
             return;
         }
-        self.push_bridged(chat, vec![text]);
+        self.push_bridged(chat, vec![message]);
         self.start_seat(chat, false);
     }
 
     /// Rows from the messenger appended to `chat`; the open feed rebuilt so
     /// the person at the terminal sees them.
-    fn push_bridged(&mut self, chat: Uuid, texts: Vec<String>) {
+    fn push_bridged(&mut self, chat: Uuid, messages: Vec<Message>) {
         let Some(c) = self.chat_mut(chat) else {
             return;
         };
-        for text in texts {
-            c.push_message(Message::user(&text));
+        for message in messages {
+            c.push_message(message);
         }
         if self.active_id != Some(chat)
             && let Some(c) = self.chat_mut(chat)
@@ -633,8 +721,8 @@ impl Orchestrator {
         if self.turn_running_in(chat) {
             return;
         }
-        if let Some(texts) = self.bridge_waiting.remove(&chat).filter(|t| !t.is_empty()) {
-            self.push_bridged(chat, texts);
+        if let Some(waiting) = self.bridge_waiting.remove(&chat).filter(|t| !t.is_empty()) {
+            self.push_bridged(chat, waiting);
             self.start_seat(chat, false);
             return;
         }
@@ -797,6 +885,9 @@ impl Orchestrator {
                 p.bridge.account = None;
                 p.bridge.account_name = None;
                 let p = p.clone();
+                if let Some(bot) = self.bots.get(&profile) {
+                    bot.tasks.paired.send_replace(None);
+                }
                 if let Err(err) = self.storage.json().upsert_profile(&p) {
                     tracing::warn!(%profile, error = %err, "bridge: the unpairing was not saved");
                 }
@@ -808,4 +899,9 @@ impl Orchestrator {
             }
         }
     }
+}
+
+/// Bytes as megabytes, one decimal — what a person reads a size in.
+fn megabytes(bytes: u64) -> String {
+    format!("{:.1}", bytes as f64 / (1024.0 * 1024.0))
 }

@@ -29,7 +29,7 @@ Two rules that follow from that:
   and from the code. Loading either whole spends context on twelve chapters to
   use one.
 - **The engineering journal is per area.** What was done, why, what was measured
-  and what was rejected lives in `docs/journal/<area>.md` — 683 entries, split by
+  and what was rejected lives in `docs/journal/<area>.md` — 684 entries, split by
   subsystem. Read the file for the area you are touching; grep across them when
   hunting a specific past decision.
 
@@ -185,7 +185,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-10-23, version 0.21.0)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **4336 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **4345 unit tests
 green, 297 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump and demo-reel regenerators).
 
@@ -205,7 +205,7 @@ being recent is dropped, not shortened.
   with its author (`H` on `F3`); `/profile fork`, `mindfork companion export|import`;
   persona drift measured; character cards by `mindfork import`, `/greeting`; a
   voice per profile, replies spoken as they land; reachable from Telegram — a bot
-  per profile, a turn from the phone beside the terminal's (ADR 0013).
+  per profile, a turn from the phone beside the terminal's, pictures too (ADR 0013).
   Live **GO**, Gemma 4 and Qwen 3.8
   ([docs/research/companion-platform.md](docs/research/companion-platform.md),
   [docs/journal/tools.md](docs/journal/tools.md)).

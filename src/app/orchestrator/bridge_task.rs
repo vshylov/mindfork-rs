@@ -3,17 +3,28 @@
 //! and writes to Telegram — *typing…* kept up while a turn runs, a reply cut
 //! into messages in Telegram's markup, sent again as plain text when the
 //! markup is refused. Neither holds anything of the orchestrator's.
+//!
+//! A picture is fetched and prepared here, before its message goes up — the
+//! way `/image attach` prepares one (spec §9.10) — and only the paired
+//! account's: the orchestrator keeps the poller told who that is (a `watch`),
+//! so a stranger's twenty megabytes are never downloaded. The poller is
+//! sequential, so a photo and the question sent after it arrive in order.
 
 use std::collections::BTreeSet;
 use std::time::Duration;
 
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::features::bridge::{ChannelFailure, Inbound, InboundEvent, Outbound};
+use crate::entities::message_image::MessageImage;
+use crate::features::bridge::{
+    Body, ChannelFailure, Inbound, InboundEvent, Incoming, Outbound, Picture, PictureError,
+};
+use crate::shared::config::ImageSettings;
 use crate::shared::messenger::telegram::{
-    MESSAGE_LIMIT, POLL_TIMEOUT_SECS, TelegramClient, TelegramError,
+    FILE_LIMIT, MESSAGE_LIMIT, POLL_TIMEOUT_SECS, TelegramClient, TelegramError,
 };
 
 /// How often *typing…* is sent again: it lasts five seconds.
@@ -29,26 +40,115 @@ const CONFLICT_WAIT: Duration = Duration::from_secs(30);
 pub(super) struct BotTasks {
     pub(super) cancel: CancellationToken,
     pub(super) out: UnboundedSender<Outbound>,
+    /// Who the bot answers — the poller fetches only their pictures.
+    pub(super) paired: watch::Sender<Option<String>>,
 }
 
-/// Starts `profile`'s bot: the poller and the sender, both ended by the
+/// What a bot is started with besides its client.
+pub(super) struct BotStart {
+    pub(super) profile: Uuid,
+    /// The start's tag (see [`Inbound::bot`]).
+    pub(super) bot: u64,
+    /// The paired account, if any.
+    pub(super) paired: Option<String>,
+    /// How a picture is fetched and prepared (`settings.json` → `images`).
+    pub(super) images: ImageSettings,
+}
+
+/// Starts a profile's bot: the poller and the sender, both ended by the
 /// returned token.
 pub(super) fn spawn_telegram(
-    profile: Uuid,
-    bot: u64,
+    start: BotStart,
     client: TelegramClient,
     inbound: UnboundedSender<Inbound>,
 ) -> BotTasks {
     let cancel = CancellationToken::new();
     let (out, out_rx) = unbounded_channel();
+    let (paired, paired_rx) = watch::channel(start.paired);
     let tell = Teller {
         inbound,
-        profile,
-        bot,
+        profile: start.profile,
+        bot: start.bot,
     };
-    tokio::spawn(poll(client.clone(), tell.clone(), cancel.clone()));
+    let fetch = Fetch {
+        client: client.clone(),
+        paired: paired_rx,
+        images: start.images,
+    };
+    tokio::spawn(poll(fetch, tell.clone(), cancel.clone()));
     tokio::spawn(send(client, out_rx, tell, cancel.clone()));
-    BotTasks { cancel, out }
+    BotTasks {
+        cancel,
+        out,
+        paired,
+    }
+}
+
+/// What the poller fetches pictures with.
+struct Fetch {
+    client: TelegramClient,
+    paired: watch::Receiver<Option<String>>,
+    images: ImageSettings,
+}
+
+impl Fetch {
+    /// The pictures of `m` fetched and prepared, when its sender is the paired
+    /// account; anyone else's are left as they came, for the orchestrator to
+    /// drop unread.
+    async fn pictures(&self, m: &mut Incoming) {
+        if self.paired.borrow().as_deref() != Some(m.account.as_str()) {
+            return;
+        }
+        let Body::Images { pictures, .. } = &mut m.body else {
+            return;
+        };
+        let mut taken = 0;
+        for picture in pictures.iter_mut() {
+            let Picture::File { id, name } = picture else {
+                continue;
+            };
+            if taken >= self.images.max_count.max(1) {
+                *picture = Picture::Failed(PictureError::TooMany);
+                continue;
+            }
+            taken += 1;
+            *picture = self.one(id, name.take()).await;
+        }
+    }
+
+    /// One picture: downloaded within the image settings' cap and a bot's,
+    /// then prepared on the blocking pool as an attached image is.
+    async fn one(&self, id: &str, name: Option<String>) -> Picture {
+        let limit = match self.images.max_bytes {
+            0 => FILE_LIMIT,
+            cap => cap.min(FILE_LIMIT),
+        };
+        let bytes = match self.client.download(id, limit).await {
+            Ok(bytes) => bytes,
+            Err(TelegramError::TooBig(bytes)) => {
+                return Picture::Failed(PictureError::TooBig { bytes, limit });
+            }
+            Err(err) => return Picture::Failed(PictureError::Fetch(err.to_string())),
+        };
+        let downscale = self.images.downscale_px;
+        let prepared = tokio::task::spawn_blocking(move || {
+            crate::features::image_prepare::prepare(&bytes, downscale)
+        })
+        .await;
+        match prepared {
+            Ok(Ok(p)) => {
+                use base64::Engine as _;
+                let ext = if p.mime == "image/jpeg" { "jpg" } else { "png" };
+                let name = name.unwrap_or_else(|| format!("photo.{ext}"));
+                let data = base64::engine::general_purpose::STANDARD.encode(&p.bytes);
+                Picture::Ready(Box::new(MessageImage::new(
+                    name, "telegram", p.mime, p.width, p.height, data,
+                )))
+            }
+            Ok(Err(_)) => Picture::Failed(PictureError::Unreadable),
+            Err(err) => Picture::Failed(PictureError::Fetch(err.to_string())),
+        }
+    }
 }
 
 /// What a task says, tagged with its bot.
@@ -77,8 +177,9 @@ async fn pause(cancel: &CancellationToken, d: Duration) -> bool {
     }
 }
 
-async fn poll(client: TelegramClient, teller: Teller, cancel: CancellationToken) {
+async fn poll(fetch: Fetch, teller: Teller, cancel: CancellationToken) {
     let profile = teller.profile;
+    let client = &fetch.client;
     let mut backoff = Duration::from_secs(1);
     // The bot first: its handle is what the pairing link names, and a refused
     // token is said before anything is polled.
@@ -123,6 +224,7 @@ async fn poll(client: TelegramClient, teller: Teller, cancel: CancellationToken)
                         handle: handle.clone(),
                     });
                 }
+                let mut read = Vec::new();
                 for update in updates {
                     offset = Some(update.update_id + 1);
                     if let Some(m) = update
@@ -130,8 +232,17 @@ async fn poll(client: TelegramClient, teller: Teller, cancel: CancellationToken)
                         .as_ref()
                         .and_then(crate::features::bridge::telegram::read_message)
                     {
-                        teller.tell(InboundEvent::Message(m));
+                        read.push(m);
                     }
+                }
+                // An album is one message again; its pictures are fetched
+                // before it goes up, so what follows it waits its turn.
+                for mut m in crate::features::bridge::gather_albums(read) {
+                    tokio::select! {
+                        _ = cancel.cancelled() => return,
+                        _ = fetch.pictures(&mut m) => {}
+                    }
+                    teller.tell(InboundEvent::Message(m));
                 }
                 continue;
             }
