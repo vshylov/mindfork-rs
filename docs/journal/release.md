@@ -5153,7 +5153,8 @@ macos.md §3 and §12 point at the tag.
 ### Post-M9: Pillow 13 for the demo reel — a Python of the job's own (done)
 
 **Why.** Dependabot's security update #826 moves Pillow 12.3.0 → 13.0.0, which
-closes ten open alerts against the old version, one of them critical. Pillow 13
+closes 41 open alerts against the old version, five of them critical (#829's
+Brotli 1.2.1 closes the 42nd — every open alert is in this file). Pillow 13
 dropped Python 3.10 (`Requires-Python >=3.11`, no cp310 wheel). The one place
 `tools/media-requirements.txt` is installed, `release.yml`'s `demo-reel` job,
 ran the system `python3` of `ubuntu-22.04`, which is 3.10 — 0.21.0's job
