@@ -246,10 +246,13 @@ async fn the_switch_quiet_hours_and_the_cap_each_hold_a_due_follow_up() {
     type Edit = fn(&mut Profile, u8);
     let cases: [(&str, bool, Edit); 3] = [
         ("switch off", false, |_, _| {}),
-        // Two hours from this one: a run that starts as the hour turns is
-        // still inside them (a full run at 23:59:5x once delivered it).
+        // Quiet hours are judged at the follow-up's due moment, a minute ago,
+        // which in an hour's first minute is the hour before (runs at 04:00:35
+        // and 12:00:24 delivered it), so they start an hour back; and they end
+        // two hours on, so a run that starts as the hour turns is still inside
+        // them (a full run at 23:59:5x once delivered it).
         ("quiet hours", true, |p, h| {
-            p.companion.quiet_from = h;
+            p.companion.quiet_from = (h + 23) % 24;
             p.companion.quiet_until = (h + 2) % 24;
         }),
         ("cap reached", true, |p, _| {
@@ -260,14 +263,20 @@ async fn the_switch_quiet_hours_and_the_cap_each_hold_a_due_follow_up() {
         let dir = tempfile::tempdir().unwrap();
         let w = seed(dir.path(), switch, |p| edit(p, this_hour));
         if what == "cap reached" {
-            // One delivered already today.
+            // One delivered already on the day the follow-up falls due, and one
+            // today. The cap is counted on the due day first, and in a day's
+            // first minute "a minute ago" is yesterday; the delivery that day
+            // holds it, today's holds the step to the next day.
             let storage = Storage::open(Paths::with_root(dir.path())).unwrap();
-            let f = Followup::new(w.profile, w.interview, "earlier", chrono::Utc::now());
-            storage.db().followup_insert(&f).unwrap();
-            storage
-                .db()
-                .followup_close(f.id, FollowupState::Delivered, chrono::Utc::now())
-                .unwrap();
+            let now = chrono::Utc::now();
+            for at in [now - chrono::Duration::minutes(1), now] {
+                let f = Followup::new(w.profile, w.interview, "earlier", at);
+                storage.db().followup_insert(&f).unwrap();
+                storage
+                    .db()
+                    .followup_close(f.id, FollowupState::Delivered, at)
+                    .unwrap();
+            }
         }
         let id = plant(dir.path(), &w, w.interview, -1);
         let backend = Replying::new("hi");
