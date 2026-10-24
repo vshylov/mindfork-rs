@@ -56,6 +56,8 @@ gh api repos/vshylov/mindfork-rs/traffic/popular/referrers
 gh repo view vshylov/mindfork-rs --json stargazerCount,forkCount
 gh api repos/vshylov/mindfork-rs/releases --jq '.[] | .tag_name + " " + ([.assets[] | select(.name|test("sha256")|not) | .download_count] | add | tostring)'
 curl -s -A "mindfork-research" https://crates.io/api/v1/crates/mindfork | python -c "import sys,json; print(json.load(sys.stdin)['crate']['downloads'])"
+# The site's requests per day (the site account's credentials; read-only, no per-page counts: standard logging is off)
+aws cloudwatch get-metric-statistics --region us-east-1 --namespace AWS/CloudFront --metric-name Requests --dimensions Name=DistributionId,Value=E8EC9ICZSRYKB Name=Region,Value=Global --start-time <from> --end-time <to> --period 86400 --statistics Sum
 ```
 
 ## 3. Diagnosis
@@ -153,6 +155,12 @@ Tried so far:
     [r/ClaudeAI/comments/1xay0jz](https://www.reddit.com/r/ClaudeAI/comments/1xay0jz/four_months_with_claude_code_on_a_262kline_rust/).
     The text leads with what that audience lives with — CLAUDE.md eating the
     session — and discloses that the agent measured the numbers.
+    **Seen, not followed** (2026-10-24, the owner's numbers from Reddit):
+    - about 6,000 views;
+    - 3 upvotes, one of them the owner's;
+    - 7 comments, 3 of them the owner's replies.
+
+    The repository and the site saw almost none of those readers (§7.1).
 
 One-shot — only after stages 0–1, with the animation and an honest macOS
 answer in hand (both since 2026-10-08). The first of them carries the call for
@@ -285,6 +293,7 @@ those.
 | 2026-10-03 (§2) | 340 (4) | github.com 2, mindfork.io 2 | 0 / 0 / 0 | 0 | 0.14.1: 15 | 101 |
 | 2026-10-10 | 559 (17) | github.com 2, mindfork.io 2 | **2** / 0 / 0 | 0 | 0.18.1: 14 (0.18.0: 15) | 172 |
 | 2026-10-17 | 544 (18) | github.com 2, mindfork.io 2 | 2 / 0 / 0 | 0 | 0.18.3: 8, a day old (0.18.2: 22, 0.18.1: 49) | 193 |
+| 2026-10-24 | 411 (13) | github.com 5, **medium.com 3**, mindfork.io 2 | **3** / 0 / 0 | 0 | 0.22.0: 2, hours old (0.21.0: 40) | 233 |
 
 **2026-10-10, the first week of stage 2:**
 - **The first two stars came on 2026-10-08.** Neither is from the owner or from
@@ -327,6 +336,39 @@ those.
 - **The Medium article (§4 stage 2) came out on the day of this measurement**,
   after the last day GitHub's traffic covers. A visit through it would show as
   `medium.com` among the referrers, so 2026-10-24 is its first measure.
+
+**2026-10-24, the essay's week.** The essay went out on Medium (2026-10-17), on
+the site (2026-10-19) and on r/ClaudeAI (2026-10-20). Hacker News refused the
+new account. GitHub's traffic runs to 2026-10-23.
+- **The first new referrer since the baseline:** `medium.com`, 3 views by one
+  visitor. `github.com` rose from 2 to 5 views (4 unique).
+- **A third star**, 2026-10-21 02:59Z — the day after the Reddit post. No
+  referrer names its way in; only the timing points at the post.
+- **The Reddit post was seen, not followed.** It had about 6,000 views and two
+  upvotes from others.
+  - `reddit.com` is not among the repository's referrers. The repository had 4
+    views on 2026-10-20 and 5 on 2026-10-21.
+  - The site's requests, from CloudWatch, did not rise: 1,230 on 2026-10-20 and
+    1,203 on 2026-10-21, against 700–3,100 a day for the two weeks before. That
+    background is mostly crawlers and assets. Reading the article fetches
+    several files, so this rules out hundreds of readers, not dozens.
+  - Reddit counts a view each time the post is shown in a feed, not each click.
+- **The front page** had 8 unique visitors in 14 days, against 7 a week earlier.
+- **Downloads are still the background.**
+  - 0.21.0's 40 are mostly the Linux archive (28), which `packaging.yml`
+    installs.
+  - The Windows zip was downloaded once for each release since 0.18.2. 0.18.1's
+    17 did not recur.
+- **crates.io grew by 40** across four new versions, about ten each, which is
+  the background.
+- **Glama**: no public page, 18 days after the submission.
+- **Captured from now on:** the site's requests per day (§2's commands). Per-page
+  counts would need CloudFront's standard logging, which is off.
+
+So the essay brought impressions, one Medium reader to the repository and
+perhaps one star, but no measurable stream of visits. Its readers are the
+engineers of §4 stage 2's note, not the users §8 names. The one-shot posts
+aimed at those users are still unspent.
 
 ## 8. Decisions (the owner, 2026-10-03)
 
