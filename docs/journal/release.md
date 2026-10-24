@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (81)
+## Entries (82)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -93,6 +93,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Release 0.20.0 (prepared)
 - Release 0.21.0 (prepared)
 - Post-M9: Pillow 13 for the demo reel — a Python of the job's own (done)
+- Release 0.22.0 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -5196,3 +5197,103 @@ a pull request installs that file.
   durations.
 
 No Rust changed and no live stack is involved; the test count is unchanged.
+
+### Release 0.22.0 (prepared)
+
+- **A release PR** per [AGENTS.md §6](../../AGENTS.md), branch `chore/release-0.22.0`:
+  - `Cargo.toml` `0.21.0 → 0.22.0` (+ one line of `Cargo.lock`), and the site's
+    `app_version`;
+  - `CHANGELOG.md`: `[Unreleased]` → `[0.22.0] — 2026-10-24` under a lead paragraph,
+    "A platform for a companion", a **Security** section and a **Data** section filled
+    by measurement, a fresh `[Unreleased]`, and the comparison links;
+  - CLAUDE.md's status heading;
+  - the release's post, and `/llms.txt` regenerated from it;
+  - **the privacy policy brought up to the release** (below);
+  - `BridgeChannel` in the stored-enum ledger, under a kind of its own for
+    `profiles.json` (below).
+
+  Since `v0.21.0`, the pull requests with behaviour — the companion platform's six
+  stages ([research](../research/companion-platform.md) §9):
+  - 809, the time of messages, and `get_last_user_message_time` reporting the
+    previous message (a fix);
+  - 810 notes and earlier conversations in the prompt; 811 `/notes`;
+  - 812 follow-ups; 813–814 notifications;
+  - 817 the self-model's history; 818 `/profile fork`; 819 `mindfork companion
+    export|import`; 820 the persona drift smoke;
+  - 822 character cards and `/greeting`, and `mindfork import` refusing while the app
+    runs (a fix); 823 a voice per profile and *Speak replies*;
+  - 827 the Telegram bridge; 828 pictures from the phone; 830 voice notes, and five
+    dependency advisories.
+
+  The rest moved no behaviour: the 0.21.0 publication's journal (801), a probe fix
+  (802), an action's pin (803), the essay and the site's copy (804–807), the research
+  (808), the documentation of measured terminals (815–816), Sonar's contexts (821),
+  the ADR (825), and the tools' Pillow 13 and Brotli 1.2.1 (826, 829).
+- **A MINOR**: a track of features, §6's rule for `0.x`. No schema constant moved.
+- **The `Data` rubric, by measurement.** Since `v0.21.0` the ledger gained two
+  enums, each with a field of its own that an older reader skips whole —
+  `NotifyEscape` (`notifications.escape`) and `SttMode` (`stt.mode`) — and the
+  profiles gained a third, `BridgeChannel` (`bridge.channel`), which the ledger did
+  not list: it has no kind for a value only `profiles.json` holds. It now has one,
+  `Held::Profiles` at `PROFILES_SCHEMA`, so a second messenger — a new value of an
+  existing enum — will need the file's own step. No value of an existing enum is new.
+  Run on Windows 11 with 0.21.0 built from its tag into a target directory of its own,
+  on a copy of the dev data root (272 chats at schema 6; settings with `stt` and
+  `notifications`; a profile with `companion` and `bridge`; three voice-note rows and
+  two follow-up notices; `followups` and `self_model_versions` in `data.db`), its
+  second profile given `voices`, `forked_from` and `alternate_greetings` by hand:
+  - *Back*: 0.21.0's `mindfork import` with an empty import file — exit 0, *"Import
+    complete: 0 profiles, 0 chats"*. Its `stats --json`: 272 chats, none unreadable.
+    Of the four files hashed before, it rewrote only `settings.json`: the
+    `notifications` and `stt` sections are gone, every other section and the stored
+    keys are byte for byte as they were. `profiles.json`, the voice-note chat and
+    `data.db` are untouched.
+  - *Forward*: 0.22.0 on that root — exit 0, 272 chats, none unreadable, and the two
+    sections written back at their defaults. On the untouched copy, 0.22.0 reads the
+    hand-written profile fields.
+  - So the CHANGELOG says what a trip to 0.21.0 and back costs: the choices in those
+    two sections.
+- **The privacy policy was behind the release.** It said *"Nothing is ever spoken
+  automatically"* — false since *Speak replies* (823) — and *"The application has no
+  speech-to-text, and never sends audio anywhere"* — false since 830 — and named
+  neither ntfy (813) nor Telegram (827). `PRIVACY.md` gains §3.10 *Notifications*,
+  §3.11 *The messenger bridge*, §3.12 *Speech recognition*; §3.4, §2, §4, §7 and §8
+  follow; the effective date is the release's. The Russian translation
+  (`docs/legal/PRIVACY.ru.md`) carries the same, and the site's page and both
+  installer RTFs are regenerated (`site_legal_pages.py`, `wizard_rtf.py`). Each of
+  those pull requests should have brought its part; none did.
+- **A rehearsal, at the owner's request** — Pillow 13 changed a great deal, and
+  `git diff v0.21.0 -- .github packaging tools/release_guard.py tools/demo_reel.py`
+  holds, besides an action's pin (`taiki-e/install-action` 2.87.29), the `demo-reel`
+  job's own Python 3.13 for it (826) — checked in an `ubuntu:22.04` container there,
+  never on the runner. `release_guard.py` accepts `v0.22.0` (158 lines of notes) and
+  `v0.22.0-rc1` (a prerelease, the same notes); `cargo deny check`: ok; `zola build`:
+  ok, `softwareVersion` 0.22.0.
+  - The agent set `v0.22.0-rc1` on the branch head (`4404175b`) and pushed it.
+    `release.yml` (run 40109460973) was green in all eight jobs in **16 min 11 s**
+    (0.21.0: 12 min 05 s). Windows took the longest at 15 min 01 s, then macOS
+    10 min 24 s, Linux 9 min 25 s and the demo 4 min 41 s.
+  - **The demo job** installed `pillow-13.0.0`, `brotli-1.2.1` and `fonttools-4.63.0`
+    on Python 3.13 and drew the six files, each within 1 % of 0.21.0's size.
+  - **The draft**: a prerelease with fifteen assets, the same set as 0.21.0's; every
+    downloaded file matched `sha256sums.txt`; `install.sh` is 0.21.0's byte for byte.
+  - **The reels, frame by frame.** Every GIF and WebP is 1122×966: English 92 frames
+    (25.3 s as GIF, 25.5 s by the WebP's ANMF durations, looping), Russian 82. The
+    dark English GIF against 0.21.0's: the same 92 frame durations, and 91 frames
+    identical to the pixel; frame 90 differs in the self-model screen's footer alone,
+    where 817's `H history` hint now stands. Pillow 13 draws the reel as Pillow 12
+    did.
+  - **The Windows zip**: `mindfork.exe --version` says `mindfork 0.22.0`; 48 entries,
+    as 0.21.0's; its `THIRD-PARTY-NOTICES.md` names `opus-rs` 0.1.39, `ogg` 0.9.2 and
+    `tokio` 1.54.1, and its `PRIVACY.md` is the release's (effective 2026-10-24,
+    §3.12).
+  - The draft and the tag were deleted afterwards (`gh release delete --cleanup-tag`);
+    no `v0.22*` tag or release remains.
+- **The screenshots.** 830 redrew the four `settings-*` frames (the fifth tab). The
+  animated demo is drawn by `release.yml` from the tag.
+- **Live runs behind it**, from the pull requests: every stage GO on Gemma 4 31B and
+  Qwen 3.8 27B against llama.cpp, and the probes on OpenRouter's models
+  (research §3.2–§3.8); notifications seen in Windows Terminal Preview and in
+  WezTerm, Ghostty, kitty, foot, urxvt and tmux; the bridge, its pictures and its
+  voice notes on real Telegram by the owner. The rented live gate was not run for
+  this release.

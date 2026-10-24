@@ -14,6 +14,17 @@ split by subsystem.
 
 ## [Unreleased]
 
+## [0.22.0] — 2026-10-24
+
+**A platform for a companion.** A profile can now be a companion: it knows when you
+last spoke, has your notes and your earlier conversations from the first message,
+comes back to you on its own — within quiet hours and a cap a day — and tells you so
+when you are not looking. It keeps every version of its self-model with who wrote it,
+can be forked and carried to another machine, can be made from a character card,
+speaks in a voice of its own, and answers from your phone through Telegram — text,
+pictures and voice messages. Every one of these is a switch of the profile, off by
+default: an assistant profile, and a fresh install, work as before.
+
 ### Added
 
 - **The time of messages, for a companion.** A profile can now tell the model when
@@ -128,26 +139,41 @@ split by subsystem.
   then wrote its own copy over them. It now refuses to run until the app is closed,
   as `restore` does.
 
+### Security
+
+- **Four advisories published after 0.21.0 no longer apply.** The bundled root
+  certificates no longer trust the distrusted emSign intermediates
+  (`webpki-root-certs` 1.0.11, RUSTSEC-2026-0383), the certificate verifier refuses
+  them too (`rustls-webpki` 0.103.16, RUSTSEC-2026-0382), and `tokio` 1.54.1 and
+  `ctutils` 0.4.5 take two more (RUSTSEC-2026-0386, -0385).
+
 ### Data
 
-- **`data.db` gains a table, `self_model_versions`**, for the self-model's history.
-  An older version of the app ignores it. The model you already have becomes the
-  history's first version the next time it is written.
-- **A forked profile records where it came from** (`forked_from` in
-  `profiles.json`; other profiles are written exactly as before). An older version
-  reads such a profile, but drops the record the next time it saves the profiles.
-- **A profile's own voice** is kept in `profiles.json` (`voices`, written only once
-  one is set). An older version reads such a profile, but drops the voice the next
-  time it saves the profiles.
-- **A profile from a character card keeps the card's other greetings**
-  (`alternate_greetings` in `profiles.json`, written only when there are some). An
-  older version reads such a profile, but drops them the next time it saves the
-  profiles.
-- **A profile's messenger bridge** — the switch (`companion.bridge`) and the paired
-  account and its conversation (`bridge` in `profiles.json`, written only once paired)
-  — and its bot's token, encrypted for this machine like the API keys. An older version
-  reads such a profile, but drops the pairing the next time it saves the profiles.
-  `settings.json` may name a self-hosted Bot API server (`bridge.telegram_api`).
+No schema step: everything below is a new field, section or table, which an older
+version skips. Checked with 0.21.0 on a copy of data this version wrote, holding every
+kind below and 272 chats: it reads all of it, and the one file it rewrites is
+`settings.json`, which it saves at start.
+
+- **`settings.json` gains two sections**, always written: `notifications` (the
+  terminal's escape, the bell, a ntfy topic) and `stt` (speech recognition). 0.21.0
+  drops both when it saves its settings, which it does at start; this version then
+  writes them back at their defaults, so a choice made in them does not survive a trip
+  to 0.21.0 and back. `bridge.telegram_api` (a self-hosted Bot API server) is written
+  only when set. A ntfy token, a bot's token and a recognition server's key are kept
+  with the API keys, encrypted for this machine — 0.21.0 keeps them as they are.
+- **`data.db` gains two tables**: `followups`, the follow-ups a companion planned,
+  and `self_model_versions`, the self-model's history. An older version ignores both.
+  The self-model you already have becomes the history's first version the next time
+  it is written.
+- **`profiles.json`**: a profile's companion switches (`companion`), its own voices
+  (`voices`), where a fork came from (`forked_from`), a card's other greetings
+  (`alternate_greetings`) and its messenger pairing (`bridge`) — each written only when
+  set, so a profile that uses none of them is written as before. An older version
+  reads such a profile, but drops them the next time it saves the profiles.
+- **The chat files**: a follow-up coming due is a notice row (`followup`), which an
+  older version reads as a background run's notice; a message that came as a voice
+  note carries its length (`voice`), which an older version drops if it saves that
+  chat.
 
 ## [0.21.0] — 2026-10-19
 
@@ -3637,7 +3663,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.21.0...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/vshylov/mindfork-rs/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/vshylov/mindfork-rs/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/vshylov/mindfork-rs/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/vshylov/mindfork-rs/compare/v0.18.3...v0.19.0

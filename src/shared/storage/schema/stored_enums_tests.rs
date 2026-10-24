@@ -26,11 +26,12 @@
 use serde::Serialize;
 use serde_json::Value;
 
-use super::{CHAT_SCHEMA, DB_SCHEMA, SETTINGS_SCHEMA};
+use super::{CHAT_SCHEMA, DB_SCHEMA, PROFILES_SCHEMA, SETTINGS_SCHEMA};
 use crate::entities::attachment::AttachMode;
 use crate::entities::chat::DeletedCause;
 use crate::entities::chat_file::FileOrigin;
 use crate::entities::message::{MessageFinish, MessageRole};
+use crate::entities::profile::BridgeChannel;
 use crate::entities::sampling::{ReasoningEffort, Verbosity};
 use crate::entities::self_model::GoalStatus;
 use crate::entities::subagent::{RunKind, RunOutcome};
@@ -56,6 +57,9 @@ pub(super) enum Held {
     Sampling,
     /// The self-model's JSON in `data.db`, versioned by `PRAGMA user_version`.
     SelfModels,
+    /// `profiles.json` alone: a value only a profile holds. A new one needs
+    /// the file's own step, `PROFILES_SCHEMA`.
+    Profiles,
 }
 
 impl Held {
@@ -67,6 +71,7 @@ impl Held {
             Held::Chats => CHAT_SCHEMA,
             Held::Sampling => SETTINGS_SCHEMA.min(CHAT_SCHEMA),
             Held::SelfModels => DB_SCHEMA,
+            Held::Profiles => PROFILES_SCHEMA,
         }
     }
 }
@@ -237,6 +242,10 @@ pub(super) fn ledgers() -> Vec<Ledger> {
             ],
         }),
         // --- data.db ---------------------------------------------------------
+        // --- profiles.json ---------------------------------------------------
+        // Came with `bridge`, which an older reader skips whole (0.22.0). A
+        // second messenger is a new value here, and a step of the file's own.
+        ledger!(BridgeChannel in Profiles { 1 => [Telegram = "telegram"] }),
         ledger!(GoalStatus in SelfModels {
             1 => [Active = "Active", Completed = "Completed", Abandoned = "Abandoned"],
         }),

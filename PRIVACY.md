@@ -1,6 +1,6 @@
 # Privacy policy
 
-Effective **2026-10-19**. It covers three things that are easy to confuse: the
+Effective **2026-10-24**. It covers three things that are easy to confuse: the
 **mindfork application**, the website **mindfork.io**, and the project's
 presence on **GitHub**. They have very different answers, so they are kept
 apart below.
@@ -10,8 +10,9 @@ analytics, no crash reporting, no update check and no account. Nothing it does
 reports back to the author, and there is no server of this project's for it to
 report to. Everything it stores stays in its data folder on your computer (§2),
 apart from the short-lived working files listed in §8. It talks to the network
-for the model you configured, for the tools that are switched on and for the
-setup commands you run — and where it does, your data goes to *that* provider,
+for the model you configured, for the tools and the companion features that are
+switched on — a messenger, notifications — and for the setup commands you run —
+and where it does, your data goes to *that* provider,
 under *their* policy, never through anything of ours.
 
 The rest of this document is the detailed version, written from the code rather
@@ -51,8 +52,8 @@ machine. On Windows the profile's own permissions do that.
 |---|---|---|
 | Settings, and the encrypted secrets map — each stored key labelled with the name of the computer it was entered on | `settings.json` | no |
 | Profiles, system prompts, per-profile tool lists | `profiles.json` | your prompts |
-| Chats | `chats/<uuid>.json` — messages, model thoughts, tool calls and their results, sub-agent transcripts, attached images inline, attachment text; for a reply that came through the OpenRouter gateway, also the name of the provider that served it and what the request cost | **yes** |
-| Notes, the RAG knowledge base and their embedding vectors, the self-model, the record of which model ran when | `data.db` (SQLite) | **yes** |
+| Chats | `chats/<uuid>.json` — messages, model thoughts, tool calls and their results, sub-agent transcripts, attached images inline, attachment text; for a reply that came through the OpenRouter gateway, also the name of the provider that served it and what the request cost; a voice message from the messenger as the words the recogniser heard — never the recording | **yes** |
+| Notes, the RAG knowledge base and their embedding vectors, the self-model and every earlier version of it, the follow-ups a companion planned, the record of which model ran when | `data.db` (SQLite) | **yes** |
 | The full-text search index | `cache.db` (SQLite) | **yes** — derived; delete it and it rebuilds |
 | Pre-images of every project file the assistant edited, for the `F4` diff and revert | `workspace/<chat-id>/` | your source code |
 | Files kept with a chat — what the Python sandbox saved (charts, tables, workbooks), and files you attached with `/file attach` whose original is kept: binaries, and the PDF, DOCX or HTML beside its extracted text | `files/<chat-id>/` | **yes** — your files, and what the code made of them |
@@ -337,11 +338,15 @@ or off, and carries no text of yours (§3.1, "The model list").
 
 ### 3.4 Speech
 
-Nothing is ever spoken automatically: text is sent only when you invoke `/tts`.
-When you do, the **default provider is OpenAI's cloud** (`api.openai.com`), with
-Gemini, the OpenRouter gateway and any OpenAI-compatible server as alternatives.
-What is sent is the message text, flattened out of markdown and split into
-chunks. The audio that comes back is played and is not stored.
+Text is sent for speech when you invoke `/tts`; when a profile has **Speak
+replies** on (off by default), each reply that arrives in the open conversation;
+and, while a profile answers you in a messenger and speaks its replies (§3.11),
+a reply to a voice message, which goes back to you as one. The **default provider
+is OpenAI's cloud** (`api.openai.com`), with Gemini, the OpenRouter gateway and
+any OpenAI-compatible server as alternatives. What is sent is the message text,
+flattened out of markdown — code blocks left out — and split into chunks. The
+audio that comes back is played, or sent to the messenger as a voice message,
+and is not stored.
 
 **Through the OpenRouter gateway** — the speech setting's `openrouter` mode —
 what is read aloud is sent to `openrouter.ai`, or to the base URL you set. A
@@ -359,14 +364,14 @@ asking for the other format. Which format the model answered in is remembered
 until the app is closed, so this happens once for a model in a session — and
 once more if the model later stops taking the format it answered in.
 
-In this mode nothing is sent until you type `/tts` — or until you press `Enter`
+In this mode nothing is sent until you type `/tts` or a profile speaks a reply
+(above) — or until you press `Enter`
 on the Model, Voice or User voice row of the Speech tab, which asks the gateway
 for its list of speech models and carries no text of yours (§3.1, "The model
 list").
 
-The application has no speech-to-text, and never sends audio anywhere. (The
-project's own live tests transcribe synthesized test sentences back through the
-gateway; that is a developer's test run, not the application.)
+Speech going the other way — a voice message you send the companion from a
+messenger — is §3.12.
 
 ### 3.5 Images you attach by URL
 
@@ -439,6 +444,58 @@ to the terminal, and over a remote session it travels the SSH connection to the
 machine you are sitting at. That is the purpose of the feature, and it is worth knowing that the
 text passes through whatever is between you and the host.
 
+### 3.10 Notifications
+
+When a profile has **Notify me** on (off by default) and the companion writes to you
+while you are not looking, the app tells you. The terminal's notification escape
+and its bell stay on this machine — the terminal shows them. If you also give a
+**ntfy topic** (Settings → Interface → *Notifications*, empty by default), the app
+sends a `POST` to that topic's URL — `ntfy.sh` or a server of your own: the title
+is the profile's name and the app's, the body says which conversation it wrote in,
+and **what was said is not sent** unless you turn on *Message's words*, which adds
+the start of the message. A token for the topic, if you set one, goes with it. A
+public ntfy topic is readable by anyone who knows its name, and the settings say so.
+
+### 3.11 The messenger bridge (Telegram)
+
+A profile with **Messenger bridge** on (off by default) and a bot's token you made
+with Telegram's @BotFather is reachable from Telegram while the app runs. The app
+then asks **Telegram's Bot API** (`api.telegram.org`, or the self-hosted server
+named in `bridge.telegram_api`) for the bot's new messages — a request that waits
+on Telegram's side for up to 50 seconds and is made again as soon as it returns,
+for as long as the app runs — and sends the bot's replies there. Every request
+carries the bot's token, as the Bot API requires. Nothing listens on your machine.
+
+- **What Telegram sees.** A chat with a bot is encrypted between each side and
+  Telegram's servers, not end to end: Telegram can read every message, picture and
+  voice message of it, both ways, under [its own policy](https://telegram.org/privacy).
+  The settings say so before the switch is on.
+- **Who is answered.** One account, paired by a code the app shows you. Telegram
+  delivers whatever anyone sends the bot; a message from any other account is
+  dropped — not answered, not kept, its pictures and voice messages never
+  downloaded — and the log gets one line about it, without its content.
+- **What is fetched.** A picture or a voice message from the paired account is
+  downloaded from Telegram's file server (`api.telegram.org/file/…`), for the
+  model and for the recogniser (§3.12). A picture is kept with the message, as an
+  attached one is; a voice message's recording is not kept.
+- **What is sent.** The companion's replies — the text, and a voice message when
+  §3.4 says so — and *typing…* while it writes. Its thoughts, its tool calls and
+  everything else of the conversation stay on this machine, in the conversation's
+  file (§2).
+
+### 3.12 Speech recognition
+
+A voice message that reaches the companion through the messenger (§3.11) is sent
+to be transcribed — to the **speech-recognition provider** you set in Settings →
+Model/server → *Recognition*: OpenAI's cloud by default (`api.openai.com`), the
+OpenRouter gateway (`openrouter.ai`, with the headers of §3.1), or a server of
+your own. The request carries the recording as Telegram sent it (OGG/Opus), the
+name of the model, and the language when you set one, with that provider's key. A
+server that refuses the recording is sent the same recording once more, as WAV.
+The provider processes it under its own terms; what comes back is the text, which
+is your message in the conversation (§2). Nothing is recorded from a microphone on
+this machine.
+
 ## 4. What is off until you turn it on
 
 **Off until you say otherwise:**
@@ -456,7 +513,11 @@ text passes through whatever is between you and the host.
 - reaching **private or loopback addresses** from the web tools;
 - the **confirmation prompt** before a dangerous tool call
   (`tools.confirm_dangerous`) — it is opt-in, so tools you have enabled run
-  without asking.
+  without asking;
+- a profile's **companion features**, each its own switch: the time of messages,
+  notes and earlier conversations in the prompt, follow-ups, **notifications**
+  (and a ntfy topic, empty until you give one — §3.10), **speaking replies** as they
+  arrive (§3.4) and the **messenger bridge** (§3.11).
 
 **On unless you turn them off:**
 
@@ -472,7 +533,9 @@ text passes through whatever is between you and the host.
   or the speech setting is in the `openrouter` mode, or the video tool's
   provider is `openrouter` (§3.1);
 - the cloud as the **default speech provider** — though nothing is spoken until
-  you invoke `/tts`;
+  you invoke `/tts` or turn on a profile's *Speak replies*;
+- the cloud as the **default speech recogniser** — though nothing is sent until a
+  voice message arrives through the messenger bridge (§3.12);
 - the ordinary local tools: notes, the knowledge base, the time, and so on.
 
 ## 5. What the author receives
@@ -513,7 +576,8 @@ excluded from backups.
 ## 7. Secrets, and backups
 
 **Secrets.** Keys you enter in settings — cloud provider keys, external-server
-keys, MCP tokens, a search API key, the backup password — are stored inside
+keys, MCP tokens, a search API key, the backup password, a ntfy token, a
+messenger bot's token — are stored inside
 `settings.json` **encrypted and bound to the machine**: DPAPI on Windows, and on
 Linux a key derived from the host's machine id and your user name, with
 ChaCha20-Poly1305. A settings file copied to another computer therefore carries
@@ -551,6 +615,9 @@ storage but not of everything it can do at your request:
   or a project's `.git/`;
 - `mindfork demo` provisions a throwaway data directory under the system
   temporary folder and removes it on exit;
+- `mindfork companion export` writes one companion — its profile, notes, knowledge
+  base and self-model with its history, without its chats — to an archive at the
+  path you give, encrypted only if you give a password;
 - copying puts text on the operating system clipboard, which other applications
   can read.
 
