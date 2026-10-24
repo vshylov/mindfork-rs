@@ -288,8 +288,14 @@ src/
 │  │  │                     chat right after it is saved + the startup reconciliation
 │  │  │                     pass (stat-only walk of `chats/`), and answers a query —
 │  │  │                     escaping it here, since `shared` may not use `features`
-│  │  ├─ tts.rs             speech synthesis: conversation snapshot → chunks →
-│  │  │                     synth/playback pipeline, stop points (§11.9); one
+│  │  ├─ tts.rs             speech synthesis: conversation snapshot → chunks (a
+│  │  │                     message's blocks packed sentence by sentence, 200 → 300
+│  │  │                     → 400 characters, `chunk_utterances`) → synth/playback
+│  │  │                     pipeline that keeps `LOOKAHEAD` (40 s) of sound queued
+│  │  │                     ahead and logs every chunk's and every run's timings —
+│  │  │                     synthesis, sound, the silence heard (`run_speech`, over a
+│  │  │                     `SpeechQueue`; tests in tts/tests/: pipeline.rs on a paused
+│  │  │                     clock, live.rs `#[ignore]`) — stop points (§11.9); one
 │  │  │                     `speak` for `/tts` and for a landed reply a profile
 │  │  │                     speaks (`speak_landed_reply`, `companion.speak_replies`),
 │  │  │                     in the profile's voice for the mode (`Profile.voices`
@@ -1145,8 +1151,11 @@ src/
    │                       session's `FormatMemo`, and whose answer is read by its
    │                       `Content-Type`) and
    │                       `gemini` client (generateContent + AUDIO), `playback` (rodio
-   │                       queue, lazy device open; `decoder` — a container decoded
-   │                       without gapless trimming). gateway_tests.rs — #[cfg(test)],
+   │                       queue, lazy device open; `SpeechQueue` — what the pipeline
+   │                       plays into — with `ahead`, the sound still queued, from each
+   │                       clip's length and the player's position; a container decoded
+   │                       whole before it is queued, off the runtime's threads;
+   │                       `decoder` — without gapless trimming). gateway_tests.rs — #[cfg(test)],
    │                       against a local stub; gateway_live_tests.rs — #[ignore],
    │                       docs/install.md §7.1. `AudioClip::into_mono` — a clip as mono
    │                       samples, what a voice note is written from. See spec §11.9, §6 below

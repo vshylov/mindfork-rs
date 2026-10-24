@@ -641,6 +641,17 @@ shape after a real delta (an `sse_server` test), not the parser on its own — a
 one arm in every live smoke that must see the failure path fire.
 — *admission by budget*.
 
+**Test a design's claim on the input it is about, not on the easiest one.** The
+speech design said "a short message goes as a single request", and every chunker
+test chunked a single paragraph — while the speech extractor puts each block on a
+line of its own and the chunker cut per line. A structured reply went as 38
+requests, one per heading and list item, and fell silent after its short blocks
+for three months before anyone measured it. The same shape of mistake sat beside
+it: a prefetch bounded by a **count** of items, which hides nothing when the items
+differ in size — a two-second heading cannot hide a paragraph's twenty seconds of
+synthesis. Bound look-ahead by what it is there to hide.
+— *speech without pauses between a reply's blocks*.
+
 **A runtime's drop does not wait for work still queued on its blocking pool.** A test
 dropped a job directory inside `block_on`, dropped the runtime, and then asserted the
 directory was gone — on the belief that `Runtime::drop` waits for `spawn_blocking` work. It

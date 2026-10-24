@@ -2,11 +2,18 @@
 //!
 //! Modeled on [`super::rag`]: command → a data snapshot from the orchestrator
 //! (the sole owner of `Chat`) → a cancellable background task. The task runs as
-//! a **pipeline**: while chunk N plays, N+1 is being synthesized — the first
-//! sound arrives fast, and no more than one chunk is synthesized ahead (we
-//! don't pay for what the user might cut off). The chat isn't mutated,
-//! generation isn't gated: a **snapshot** of the conversation at command time
-//! is spoken.
+//! a **pipeline**: chunks are synthesized one after another while the earlier
+//! ones play, as long as less than [`LOOKAHEAD`] of sound is queued — enough to
+//! hide the next chunk's synthesis, and no more paid for than a stop could
+//! throw away. The chat isn't mutated, generation isn't gated: a **snapshot**
+//! of the conversation at command time is spoken.
+//!
+//! A message's blocks — paragraphs, headings, list items, the note of a
+//! skipped code block — are packed into chunks of a few hundred characters
+//! ([`chunk_utterances`]): one request per block made a short block's sound
+//! too short to hide a long one's synthesis, and the reply fell silent in the
+//! middle (docs/research/tts-pauses.md). Every chunk and every run leaves its
+//! timings in the log — synthesis, sound, and any silence the listener heard.
 //!
 //! Stop points are collected into one helper [`Orchestrator::stop_tts`]
 //! (precedent — `reset_rag_cancel`): two by setting (switching chats, starting
@@ -20,8 +27,10 @@
 //! command, on the one message (spec §11.9, docs/research/companion-platform.md
 //! C7 (a)).
 
+use std::sync::Arc;
 use std::time::Duration;
 
+use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -31,19 +40,40 @@ use crate::features::tts_command::TtsScope;
 use crate::shared::config::SecretSlot;
 use crate::shared::i18n::Locale;
 use crate::shared::tts::{
-    GatewaySpeech, TtsEngine, TtsSetupError, engines_from_config, playback::Playback,
+    GatewaySpeech, TtsEngine, TtsSetupError, engines_from_config,
+    playback::{Playback, SpeechQueue},
 };
 
 use super::Orchestrator;
 
-/// How many chunks to keep in the playback queue (the one playing + one
-/// ready). More — pay for synthesis that might not be needed; less — risk a
-/// pause between chunks.
-const QUEUE_AHEAD: usize = 2;
+/// How much sound to keep queued ahead of the listener: the next chunk is
+/// synthesized as soon as less than this is left. It has to outlast one
+/// chunk's synthesis — a 400-character chunk is ~31 s of sound, and at the
+/// slowest throughput measured (0.9× real time) takes ~34 s — and it bounds
+/// what a stop throws away: this, plus the chunk in flight
+/// (docs/research/tts-pauses.md F2).
+const LOOKAHEAD: Duration = Duration::from_secs(40);
 
 /// Playback-queue poll interval (`rodio` has no async "queue is empty"
-/// notification, and `sleep_until_end` is blocking).
+/// notification, and `sleep_until_end` is blocking). A silence is measured to
+/// this precision.
 const POLL_INTERVAL: Duration = Duration::from_millis(80);
+
+/// A silence shorter than this is a seam between chunks, not a pause anyone
+/// hears; the run's summary counts only the longer ones.
+const AUDIBLE_SILENCE: Duration = Duration::from_millis(250);
+
+/// The soft size of a run's first chunk, in characters: the first sound waits
+/// for its whole synthesis (docs/research/tts-pauses.md F5).
+const FIRST_CHUNK_CHARS: usize = 200;
+
+/// How much each later chunk's soft size grows, up to [`CHUNK_CHARS`]: chunk 2
+/// is made while chunk 1 plays, and a chunk twice as long as the one hiding it
+/// breaks even only at twice real time.
+const CHUNK_STEP_CHARS: usize = 100;
+
+/// The soft size of every chunk once the run is under way.
+const CHUNK_CHARS: usize = 400;
 
 /// Pause after the queue drains — before closing the device (dropping
 /// [`Playback`]). The queue reports empty once the source is exhausted by the
@@ -176,6 +206,12 @@ impl Orchestrator {
         self.tts_gen = Some(task_id);
         self.tts_playback = Some(playback.clone());
         let _ = self.evt_tx.send(AppEvent::TtsActive(true));
+        tracing::info!(
+            chunks = chunks.len(),
+            chars = chunks.iter().map(|(_, c)| c.chars().count()).sum::<usize>(),
+            auto,
+            "speech: a run starts"
+        );
         spawn_tts(TtsTask {
             engine,
             user_engine,
@@ -325,59 +361,104 @@ pub(super) fn build_utterances(
     (!out.is_empty()).then_some(out)
 }
 
-/// Cuts utterances into chunks no longer than `max_chars` characters — on
-/// sentence boundaries (reusing RAG's chunker), so a chunk seam never falls
-/// mid-phrase. Utterances aren't stitched together: a message boundary is both
-/// a natural pause and a cancellation point.
+/// Cuts utterances into chunks for synthesis — packing a message's blocks
+/// together, sentence by sentence, up to a soft size (docs/research/tts-pauses.md
+/// F4, F5).
+///
+/// - **Blocks are packed.** A block — a paragraph, a heading, a list item, the
+///   note of a skipped code block — is one line of the speakable text; the
+///   blocks of one message share chunks, a line break kept where a block ends
+///   (the pause the speech extractor puts there for every engine). So a heading
+///   travels with its paragraph and a list's items go together.
+/// - **A seam falls on a sentence boundary**, reusing RAG's sentence splitter:
+///   a chunk is closed before the sentence that would take it past its size.
+/// - **The size is soft and grows**: the first chunk of the run aims at
+///   [`FIRST_CHUNK_CHARS`], each next one [`CHUNK_STEP_CHARS`] more, up to
+///   [`CHUNK_CHARS`]. A sentence longer than its chunk's size goes whole; only
+///   the provider's hard ceiling, `max_chars`, cuts inside one — by words, then
+///   by characters.
+/// - **Utterances aren't stitched together**: a message boundary is both a
+///   natural pause and a cancellation point, and the next message may be
+///   another voice.
 pub(super) fn chunk_utterances(
     utterances: &[(MessageRole, String)],
     max_chars: usize,
 ) -> Vec<(MessageRole, String)> {
     let max = max_chars.max(1);
-    let mut out = Vec::new();
+    let mut out: Vec<(MessageRole, String)> = Vec::new();
     for (role, utterance) in utterances {
-        for block in utterance.lines() {
-            let block = block.trim();
-            if block.is_empty() {
-                continue;
-            }
-            let mut chunks = Vec::new();
-            pack_sentences(block, max, &mut chunks);
-            // All of the block's chunks inherit the source message's role.
-            out.extend(chunks.into_iter().map(|c| (*role, c)));
+        let mut packer = Packer {
+            role: *role,
+            max,
+            cur: String::new(),
+            chars: 0,
+        };
+        for block in utterance.lines().map(str::trim).filter(|b| !b.is_empty()) {
+            packer.block(block, &mut out);
         }
+        packer.finish(&mut out);
     }
     out
 }
 
-/// Packs a block's sentences into chunks up to `max` characters.
-fn pack_sentences(block: &str, max: usize, out: &mut Vec<String>) {
-    let mut cur = String::new();
-    for sentence in crate::features::tools::rag::split_sentences(block) {
-        append_pieces(&sentence, max, &mut cur, out);
+/// The chunk being built from one utterance ([`chunk_utterances`]).
+struct Packer {
+    role: MessageRole,
+    /// The provider's hard ceiling.
+    max: usize,
+    cur: String,
+    /// `cur`'s length in characters.
+    chars: usize,
+}
+
+impl Packer {
+    /// Adds a block's sentences, a line break before its first.
+    fn block(&mut self, block: &str, out: &mut Vec<(MessageRole, String)>) {
+        let mut sep = '\n';
+        for sentence in crate::features::tools::rag::split_sentences(block) {
+            for piece in split_long(&sentence, self.max) {
+                if self.piece(piece.trim(), sep, out) {
+                    sep = ' ';
+                }
+            }
+        }
     }
-    if !cur.is_empty() {
-        out.push(cur);
+
+    /// Adds a piece of a sentence after `sep`, first closing the chunk if the
+    /// piece would take it past its soft size; `false` for an empty piece.
+    fn piece(&mut self, piece: &str, sep: char, out: &mut Vec<(MessageRole, String)>) -> bool {
+        if piece.is_empty() {
+            return false;
+        }
+        let piece_chars = piece.chars().count();
+        if self.chars > 0 && self.chars + 1 + piece_chars > chunk_size(out.len(), self.max) {
+            out.push((self.role, std::mem::take(&mut self.cur)));
+            self.chars = 0;
+        }
+        if self.chars > 0 {
+            self.cur.push(sep);
+            self.chars += 1;
+        }
+        self.cur.push_str(piece);
+        self.chars += piece_chars;
+        true
+    }
+
+    /// Closes the last chunk.
+    fn finish(self, out: &mut Vec<(MessageRole, String)>) {
+        if self.chars > 0 {
+            out.push((self.role, self.cur));
+        }
     }
 }
 
-/// Appends one sentence's pieces to the chunk being built (`cur`), flushing it
-/// into `out` whenever the next piece would push it past `max` characters.
-fn append_pieces(sentence: &str, max: usize, cur: &mut String, out: &mut Vec<String>) {
-    for piece in split_long(sentence, max) {
-        let piece = piece.trim();
-        if piece.is_empty() {
-            continue;
-        }
-        let extra = if cur.is_empty() { 0 } else { 1 };
-        if !cur.is_empty() && cur.chars().count() + extra + piece.chars().count() > max {
-            out.push(std::mem::take(cur));
-        }
-        if !cur.is_empty() {
-            cur.push(' ');
-        }
-        cur.push_str(piece);
-    }
+/// The soft size of the run's chunk number `index` (from 0), capped by the
+/// provider's ceiling.
+fn chunk_size(index: usize, max: usize) -> usize {
+    FIRST_CHUNK_CHARS
+        .saturating_add(index.saturating_mul(CHUNK_STEP_CHARS))
+        .min(CHUNK_CHARS)
+        .min(max)
 }
 
 /// Cuts by character a sentence that's itself longer than the limit (a rare
@@ -425,7 +506,7 @@ fn split_giant_word(word: &str, max: usize, cur: &mut String, out: &mut Vec<Stri
 }
 
 /// Parameters of the background speech task.
-struct TtsTask {
+struct TtsTask<Q: SpeechQueue> {
     /// The assistant's voice engine (and every utterance's, if a separate user
     /// voice isn't set).
     engine: Box<dyn TtsEngine>,
@@ -437,65 +518,151 @@ struct TtsTask {
     /// The task's generation — the orchestrator uses it to tell its own `done`
     /// apart from a stale one.
     task_id: Uuid,
-    /// The audio device, opened by the handler and shared with the orchestrator
-    /// (`Arc`, for `/tts pause`/`resume`). Its `Arc` is dropped when the task
-    /// finishes.
-    playback: std::sync::Arc<Playback>,
+    /// The queue played into: the audio device, opened by the handler and
+    /// shared with the orchestrator (`Arc`, for `/tts pause`/`resume`). Its
+    /// `Arc` is dropped when the task finishes.
+    playback: Arc<Q>,
     /// The interface language (axis B) — human-facing error text.
     loc: &'static Locale,
     evt_tx: tokio::sync::mpsc::UnboundedSender<AppEvent>,
     done_tx: tokio::sync::mpsc::UnboundedSender<Uuid>,
 }
 
-/// Starts the background speech run: synthesizes chunks into the given
-/// playback queue, holding back synthesis while the queue is full. The device
-/// is already opened by the handler (`Playback::open` — on the `/tts` command,
-/// shared via `Arc`).
-fn spawn_tts(task: TtsTask) {
-    tokio::spawn(async move {
-        for (role, chunk) in &task.chunks {
-            if task.cancel.is_cancelled() {
-                break;
-            }
-            if !synth_chunk(&task, *role, chunk).await {
-                break;
-            }
-        }
+/// One chunk's timings, as the log tells them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ChunkTiming {
+    chars: usize,
+    /// From the request to the whole clip.
+    synth: Duration,
+    /// How long the clip plays.
+    sound: Duration,
+    /// The sound that was still queued when its synthesis began.
+    ahead: Duration,
+    /// How long the listener heard nothing before it: the queue ran dry while
+    /// it was being made. Zero for the run's first chunk — that wait is the
+    /// first sound's, not a pause.
+    silence: Duration,
+}
 
-        // Wait for the queue to finish playing (or for cancellation).
-        while !task.playback.is_drained() && !task.cancel.is_cancelled() {
-            tokio::time::sleep(POLL_INTERVAL).await;
-        }
-        if task.cancel.is_cancelled() {
-            task.playback.stop();
-        } else {
-            // The queue reports "empty" when the source is **exhausted by the
-            // mixer**, not when the sound card has finished playing out its
-            // buffer (measured by a smoke test: a 400 ms clip reports
-            // `is_drained` after ~370 ms). Dropping `Playback` closes the device,
-            // so without this pause the last chunk's tail would be cut off by a
-            // few dozen milliseconds.
-            tokio::time::sleep(DRAIN_TAIL).await;
-        }
+/// What a speech run did, for its summary in the log.
+#[derive(Debug, Default)]
+struct SpeechRun {
+    /// Every chunk queued, in order.
+    chunks: Vec<ChunkTiming>,
+    /// From the start to the first sound queued.
+    first_sound: Option<Duration>,
+    /// Stopped (or failed) before the last chunk played.
+    stopped: bool,
+}
+
+impl SpeechRun {
+    /// The silences long enough to hear ([`AUDIBLE_SILENCE`]).
+    fn audible_silences(&self) -> impl Iterator<Item = Duration> + '_ {
+        self.chunks
+            .iter()
+            .map(|c| c.silence)
+            .filter(|s| *s >= AUDIBLE_SILENCE)
+    }
+}
+
+/// Starts the background speech run on its queue — the audio device, opened
+/// by the handler (`Playback::open` on the `/tts` command, shared via `Arc`) —
+/// and tells the log how it went.
+fn spawn_tts<Q: SpeechQueue>(task: TtsTask<Q>) {
+    tokio::spawn(async move {
+        let run = run_speech(&task).await;
+        let silences: Vec<Duration> = run.audible_silences().collect();
+        tracing::info!(
+            chunks = run.chunks.len(),
+            sound_s = run
+                .chunks
+                .iter()
+                .map(|c| c.sound)
+                .sum::<Duration>()
+                .as_secs(),
+            first_sound_ms = run.first_sound.map(millis),
+            silences = silences.len(),
+            silence_ms = millis(silences.iter().sum()),
+            stopped = run.stopped,
+            "speech: the run ended"
+        );
         let _ = task.done_tx.send(task.task_id);
     });
 }
 
-/// Synthesizes one chunk and enqueues it, first waiting for a queue slot (the
-/// synthesis-ahead-of-playback pipeline — see [`QUEUE_AHEAD`]). Returns `false`
-/// when the run must stop: cancellation, or an error already reported to the
-/// feed.
-async fn synth_chunk(task: &TtsTask, role: MessageRole, chunk: &str) -> bool {
-    let fail = |msg: String| {
-        let _ = task.evt_tx.send(AppEvent::Error(msg));
-    };
+/// Synthesizes the chunks into the queue, holding back while [`LOOKAHEAD`] of
+/// sound is queued, then waits for the queue to play out — or stops it on
+/// cancellation.
+async fn run_speech<Q: SpeechQueue>(task: &TtsTask<Q>) -> SpeechRun {
+    let started = Instant::now();
+    let mut run = SpeechRun::default();
+    let total = task.chunks.len();
+    for (index, (role, chunk)) in task.chunks.iter().enumerate() {
+        if task.cancel.is_cancelled() {
+            break;
+        }
+        let played = run.first_sound.is_some();
+        let Some(timing) = synth_chunk(task, *role, chunk, played).await else {
+            break;
+        };
+        if run.first_sound.is_none() && timing.sound > Duration::ZERO {
+            run.first_sound = Some(started.elapsed());
+        }
+        tracing::info!(
+            chunk = index + 1,
+            of = total,
+            chars = timing.chars,
+            synth_ms = millis(timing.synth),
+            sound_ms = millis(timing.sound),
+            ahead_ms = millis(timing.ahead),
+            silence_ms = millis(timing.silence),
+            "speech: a chunk is queued"
+        );
+        run.chunks.push(timing);
+    }
+    run.stopped = run.chunks.len() < total;
 
-    // Pipeline: don't synthesize further ahead than the queue needs.
-    while task.playback.queued() >= QUEUE_AHEAD && !task.cancel.is_cancelled() {
+    // Wait for the queue to finish playing (or for cancellation).
+    while !task.playback.is_drained() && !task.cancel.is_cancelled() {
         tokio::time::sleep(POLL_INTERVAL).await;
     }
     if task.cancel.is_cancelled() {
-        return false;
+        task.playback.stop();
+        run.stopped = true;
+    } else {
+        // The queue reports "empty" when the source is **exhausted by the
+        // mixer**, not when the sound card has finished playing out its
+        // buffer (measured by a smoke test: a 400 ms clip reports
+        // `is_drained` after ~370 ms). Dropping `Playback` closes the device,
+        // so without this pause the last chunk's tail would be cut off by a
+        // few dozen milliseconds.
+        tokio::time::sleep(DRAIN_TAIL).await;
+    }
+    run
+}
+
+/// Synthesizes one chunk and queues it, first waiting until less than
+/// [`LOOKAHEAD`] of sound is queued. `played` — whether anything was queued
+/// before, so that the queue running dry is a silence rather than the wait
+/// for the first sound. `None` when the run must stop: cancellation, or an
+/// error already reported to the feed.
+async fn synth_chunk<Q: SpeechQueue>(
+    task: &TtsTask<Q>,
+    role: MessageRole,
+    chunk: &str,
+    played: bool,
+) -> Option<ChunkTiming> {
+    let fail = |msg: String| {
+        let _ = task.evt_tx.send(AppEvent::Error(msg));
+    };
+    let queue = task.playback.as_ref();
+
+    // Pipeline: don't synthesize further ahead than the listener needs.
+    while queue.ahead() >= LOOKAHEAD && !task.cancel.is_cancelled() {
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+    if task.cancel.is_cancelled() {
+        return None;
     }
     // User utterances get their own voice, when set; otherwise (and for
     // the assistant) — the main engine.
@@ -503,19 +670,29 @@ async fn synth_chunk(task: &TtsTask, role: MessageRole, chunk: &str) -> bool {
         MessageRole::User => task.user_engine.as_deref().unwrap_or(task.engine.as_ref()),
         _ => task.engine.as_ref(),
     };
-    match active.synthesize(chunk, &task.cancel).await {
-        Ok(clip) if !clip.is_empty() => {
-            if let Err(err) = task.playback.enqueue(clip) {
-                fail(
-                    task.loc
-                        .tf("ui.err.tts_playback", &[("err", &err.to_string())]),
-                );
-                return false;
-            }
-            true
+    let ahead = queue.ahead();
+    let begun = Instant::now();
+    // While the request runs, watch for the queue running dry: from then on
+    // the listener hears nothing. A paused queue is not dry, so `/tts pause`
+    // is never counted as a silence.
+    let dry = |since: &mut Option<Instant>| {
+        if played && since.is_none() && queue.is_drained() {
+            *since = Some(Instant::now());
         }
-        // An empty clip — simply nothing to play (not an error).
-        Ok(_) => true,
+    };
+    let mut dry_since = None;
+    dry(&mut dry_since);
+    let synthesis = active.synthesize(chunk, &task.cancel);
+    tokio::pin!(synthesis);
+    let result = loop {
+        tokio::select! {
+            result = &mut synthesis => break result,
+            () = tokio::time::sleep(POLL_INTERVAL) => dry(&mut dry_since),
+        }
+    };
+    let synth = begun.elapsed();
+    let clip = match result {
+        Ok(clip) => clip,
         Err(err) => {
             // Cancellation isn't an error: the user stopped it themselves.
             if !task.cancel.is_cancelled() {
@@ -524,9 +701,33 @@ async fn synth_chunk(task: &TtsTask, role: MessageRole, chunk: &str) -> bool {
                         .tf("ui.err.tts_synth", &[("err", &err.to_string())]),
                 );
             }
-            false
+            return None;
         }
-    }
+    };
+    dry(&mut dry_since);
+    // An empty clip queues nothing and plays for zero — not an error.
+    let sound = match queue.append(clip).await {
+        Ok(sound) => sound,
+        Err(err) => {
+            fail(
+                task.loc
+                    .tf("ui.err.tts_playback", &[("err", &err.to_string())]),
+            );
+            return None;
+        }
+    };
+    Some(ChunkTiming {
+        chars: chunk.chars().count(),
+        synth,
+        sound,
+        ahead,
+        silence: dry_since.map_or(Duration::ZERO, |since| since.elapsed()),
+    })
+}
+
+/// A duration in whole milliseconds, for the log.
+fn millis(d: Duration) -> u64 {
+    u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
 }
 
 #[cfg(test)]
@@ -704,6 +905,118 @@ mod tests {
         assert_eq!(ch.concat().chars().count(), giant.chars().count());
     }
 
+    /// One assistant utterance of these blocks (lines), as `speakable_text`
+    /// joins them.
+    fn blocks(lines: &[&str]) -> Vec<(MessageRole, String)> {
+        vec![asst(&lines.join("\n"))]
+    }
+
+    /// A paragraph of `n` sentences of `len` characters each (the period
+    /// included), all different.
+    fn paragraph(n: usize, len: usize) -> String {
+        (0..n)
+            .map(|i| format!("{:>width$}.", i, width = len - 1).replace(' ', "ж"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    #[test]
+    fn a_heading_travels_with_its_paragraph() {
+        let body = paragraph(3, 50);
+        let chunks = chunk_texts(&chunk_utterances(&blocks(&["Мой вывод.", &body]), 4096));
+        // The block boundary stays a line break inside the chunk.
+        assert_eq!(chunks, vec![format!("Мой вывод.\n{body}")]);
+    }
+
+    #[test]
+    fn a_lists_items_go_together() {
+        let items = [
+            "Скорость ответа. Нужно разделять:",
+            "ожидание первого видимого токена;",
+            "скорость последующей генерации;",
+            "длительность всей работы.",
+        ];
+        let chunks = chunk_texts(&chunk_utterances(&blocks(&items), 4096));
+        assert_eq!(chunks, vec![items.join("\n")]);
+    }
+
+    /// The note of a skipped code block was a request of its own — a second
+    /// of sound before a paragraph's synthesis. Now it rides with its
+    /// neighbours.
+    #[test]
+    fn the_code_block_note_rides_with_its_neighbours() {
+        let md = "Вот пример.\n\n```rust\nfn main() {}\n```\n\nПосле кода идёт абзац.";
+        let utterances =
+            build_utterances(&[Message::assistant(md)], TtsScope::Last, false, ru()).unwrap();
+        let chunks = chunk_texts(&chunk_utterances(&utterances, 4096));
+        // The extractor closes the note with a period, as every block.
+        let note = ru().t("speak.skip.code");
+        assert_eq!(
+            chunks,
+            vec![format!("Вот пример.\n{note}.\nПосле кода идёт абзац.")]
+        );
+    }
+
+    /// The first chunk is short — the first sound waits for all of it — and
+    /// each next one may be longer, up to the steady size; a chunk is closed
+    /// only when the next sentence would not fit.
+    #[test]
+    fn chunk_sizes_ramp_up_from_a_short_first_chunk() {
+        let text = paragraph(40, 50);
+        let chunks = chunk_texts(&chunk_utterances(&[asst(&text)], 4096));
+        let sizes: Vec<usize> = chunks.iter().map(|c| c.chars().count()).collect();
+        // 50-character sentences and a space between: 3 fit in 200, 5 in 300,
+        // 7 in 400 — then 7 a chunk, and the last 4 of the 40.
+        assert_eq!(sizes, vec![152, 254, 356, 356, 356, 356, 203], "{chunks:?}");
+        for (i, size) in sizes.iter().enumerate() {
+            assert!(*size <= chunk_size(i, 4096), "chunk {i}: {size}");
+        }
+    }
+
+    /// A sentence longer than its chunk's soft size goes whole: only the
+    /// provider's ceiling cuts inside a sentence.
+    #[test]
+    fn a_sentence_longer_than_its_chunk_goes_whole() {
+        let long = format!("{}.", "слово ".repeat(80).trim());
+        assert!(long.chars().count() > CHUNK_CHARS);
+        let chunks = chunk_texts(&chunk_utterances(&blocks(&["Коротко.", &long]), 4096));
+        assert_eq!(chunks, vec!["Коротко.".to_string(), long]);
+    }
+
+    /// Packing loses nothing and reorders nothing: the words come out as they
+    /// went in, across blocks and chunks.
+    #[test]
+    fn packing_keeps_every_word_in_order() {
+        let body = paragraph(12, 70);
+        let lines = ["Заголовок.", &body, "пункт один;", "пункт два.", &body];
+        let source = blocks(&lines);
+        let chunks = chunk_texts(&chunk_utterances(&source, 4096));
+        assert!(chunks.len() > 1, "{chunks:?}");
+        let words_in: Vec<&str> = source[0].1.split_whitespace().collect();
+        let joined = chunks.join(" ");
+        let words_out: Vec<&str> = joined.split_whitespace().collect();
+        assert_eq!(words_out, words_in);
+    }
+
+    /// A reply shaped like the one that fell silent — headings, two lists, a
+    /// code block, long paragraphs — goes in a handful of requests, not one
+    /// per block.
+    #[test]
+    fn a_structured_reply_goes_in_a_handful_of_requests() {
+        let para = paragraph(5, 60);
+        let md = format!(
+            "{para}\n\n### Что не сходится\n\nТри утверждения:\n\n1. Первое.\n2. Второе.\n3. Третье.\n\n\
+             {para}\n\n```python\nprint(1)\n```\n\n{para}\n\n- один;\n- два;\n- три.\n\n### Вывод\n\n{para}"
+        );
+        let utterances =
+            build_utterances(&[Message::assistant(md)], TtsScope::Last, false, ru()).unwrap();
+        let blocks = utterances[0].1.lines().count();
+        let chunks = chunk_utterances(&utterances, 4096);
+        assert_eq!(blocks, 14);
+        assert!(chunks.len() <= 6, "{} chunks: {chunks:?}", chunks.len());
+        assert!(chunks[0].1.chars().count() <= FIRST_CHUNK_CHARS);
+    }
+
     #[test]
     fn setup_error_keys_exist_in_bundle() {
         for err in [
@@ -716,3 +1029,11 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "tts/tests/pipeline.rs"]
+mod pipeline_tests;
+
+#[cfg(test)]
+#[path = "tts/tests/live.rs"]
+mod live_tests;
