@@ -1551,7 +1551,9 @@ by default:
    (`openai`, `openrouter`, `external`), its transcript the person's message marked as
    spoken; a voice note answered by one while the profile speaks its replies, after the
    text. **Live, GO**: Gemma 4 31B 3/3, Qwen 3.8 2/2 — notes in English and Russian
-   heard, answered and heard back. Next: Matrix, later.
+   heard, answered and heard back; and on **real Telegram** (the owner, 2026-10-24):
+   recognition not set up told to the phone and once to the terminal, then notes heard
+   in very noisy surroundings and answered in text and voice. Next: Matrix, later.
 
 Stages 1–3 are the companion; 4 is what makes it a research platform; 5–6 are what
 make it a presence. None of it changes what an assistant profile or the default

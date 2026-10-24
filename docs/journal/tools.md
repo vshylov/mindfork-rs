@@ -6409,6 +6409,16 @@ recognised. The owner started the stage on 2026-10-24.
   Russian), every voice note heard back word for word. `bridge_live` once more on Qwen:
   every step as before.
 
+- **On real Telegram** (the owner, 2026-10-24, the ADR's gate): first with no
+  recogniser key — the phone was told *"I can't listen to voice messages here yet —
+  write it, please"* in the profile's Russian, and the terminal once, *"not heard —
+  speech recognition is not configured: no provider API key"*, the one `WARN` in the
+  app's log. Then with a key, in very noisy surroundings: three notes of 6–8 s heard and
+  answered, each in text and then as a voice note in the profile's voice. The label did
+  what D7 (a) wanted it for: the companion said it saw a transcript, not the sound, and
+  flagged a word it suspected was misheard (*"tebya"* where the person had said *"u
+  tebya"*); told the right words, it put the miss on the recogniser. No WAV retry in the
+  log: the note was taken as Telegram sent it.
 - **A defect of stage B, found reviewing this one.** `handle_update_config` started
   the bots again (on a change of `bridge` or `images`) before it put the stored keys
   back into the config: the settings screen's snapshot holds no secret
