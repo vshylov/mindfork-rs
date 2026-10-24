@@ -25,7 +25,7 @@ use crate::features::tools::meta::{ToolGate, ToolInfo};
 use crate::shared::config::{
     AppConfig, AutoTitleMode, CloudProvider, CloudSettings, FlashAttn, ImpersonationMode,
     ManagedSettings, McpServerConfig, MediaResolution, NoteOrder, PythonMode, SecretSlot,
-    ServerMode, SpecType, Theme, ThemeMode, TtsCloudSettings, TtsMode, VideoProvider,
+    ServerMode, SpecType, SttMode, Theme, ThemeMode, TtsCloudSettings, TtsMode, VideoProvider,
 };
 use crate::shared::embed_prefix::EmbedConvention;
 use crate::shared::i18n::Locale;
@@ -181,14 +181,18 @@ enum ModelTab {
     /// Speech (TTS) — an independent slot: Anthropic has no TTS at all, so the
     /// provider is chosen separately from the chat engine. See spec §11.9.
     Tts,
+    /// Speech recognition — what hears a voice note from the messenger, a slot
+    /// of its own like speech (ADR 0013, stage C; spec §11.13).
+    Stt,
 }
 
 /// i18n keys for [`ModelTab`] tab labels (order = discriminants).
-const MODEL_TAB_KEYS: [&str; 4] = [
+const MODEL_TAB_KEYS: [&str; 5] = [
     "ui.settings.tab.assistant",
     "ui.settings.tab.impersonation",
     "ui.settings.tab.embeddings",
     "ui.settings.tab.tts",
+    "ui.settings.tab.stt",
 ];
 
 impl ModelTab {
@@ -197,11 +201,12 @@ impl ModelTab {
     }
 
     /// All variants (for enumerating fields of all subsections during search).
-    const ALL: [ModelTab; 4] = [
+    const ALL: [ModelTab; 5] = [
         ModelTab::Assistant,
         ModelTab::Impersonation,
         ModelTab::Embeddings,
         ModelTab::Tts,
+        ModelTab::Stt,
     ];
 
     /// Cyclically shifts the tab (←/→ across the tab strip).
@@ -690,6 +695,16 @@ enum FieldId {
     TtsSpeakRoles,
     TtsStopOnSwitch,
     TtsStopOnGeneration,
+    // Speech recognition (the "Recognition" tab of the "Model" section, ADR 0013
+    // stage C).
+    SttMode,
+    SttModelName,
+    /// The recognition provider's API key (a cloud's is shared with chat, ADR
+    /// 0008; `external` has its own).
+    SttApiKey,
+    SttApiKeyEnv,
+    SttUrl,
+    SttLanguage,
     /// The backup password (section "Data"). A secret: the row shows a status,
     /// never the value; editing goes out as [`SettingsIntent::SetSecret`].
     /// See spec §12.3, docs/history/backup-password.md.

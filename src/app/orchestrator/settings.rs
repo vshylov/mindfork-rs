@@ -14,11 +14,6 @@ impl Orchestrator {
     /// needed, and re-emits the settings. The sole writer of `settings.json`.
     pub(super) fn handle_update_config(&mut self, config: AppConfig) {
         let old = std::mem::replace(&mut self.config, config);
-        // The bots' server may have changed (ADR 0013), or how they prepare a
-        // picture; a bot whose start is as it was runs on undisturbed.
-        if old.bridge != self.config.bridge || old.images != self.config.images {
-            self.refresh_bridges();
-        }
         // The speech settings may be what a spoken reply failed on: the next
         // failure is news again (spec §11.9).
         self.auto_speech_failed = false;
@@ -50,6 +45,16 @@ impl Orchestrator {
             self.config = old; // roll back to the previous state
             return;
         }
+        // The bots' server may have changed (ADR 0013), or how they prepare a
+        // picture; a bot whose start is as it was runs on undisturbed. Read
+        // only once the stored keys are back and the file is saved: the screen's snapshot holds
+        // none, and a bot read without its token is a bot stopped.
+        if old.bridge != self.config.bridge || old.images != self.config.images {
+            self.refresh_bridges();
+        }
+        // What the bots hear a voice note with (ADR 0013, stage C) — its key
+        // among the stored ones, for the same reason.
+        self.refresh_hearing();
         // A chat-server settings change (model/mode/port/…) — a restart (spec
         // §11.6), but deferred: the settings screen applies an edit on every field's
         // commit, and the debounce coalesces a series of quick edits into one restart
@@ -162,7 +167,8 @@ impl Orchestrator {
                 ExternalSlot::Chat => self.restarts.mark_chat(),
                 ExternalSlot::Impersonation => self.restarts.mark_impersonation(),
                 ExternalSlot::Embed => self.restarts.mark_embed(),
-                ExternalSlot::Tts => {}
+                // Read for each voice note, from the settings as they stand.
+                ExternalSlot::Tts | ExternalSlot::Stt => {}
             },
             // The value is handed to a child process at spawn time, so it only
             // takes effect on a re-apply — deferred like an engine edit. The
@@ -182,6 +188,9 @@ impl Orchestrator {
             // stopped when the token was cleared (ADR 0013).
             SecretKey::BridgeToken(_) => self.refresh_bridges(),
         }
+        // A provider's key or the recognition slot's own may be what a voice
+        // note is heard with.
+        self.refresh_hearing();
         self.emit_settings();
     }
 

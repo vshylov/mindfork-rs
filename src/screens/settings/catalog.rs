@@ -288,6 +288,7 @@ impl SettingsScreen {
             FieldId::IxApiKey => self.config.impersonation_engine.secret_key(),
             FieldId::EApiKey => self.config.embed.secret_key(),
             FieldId::TtsApiKey => self.config.tts.secret_key(),
+            FieldId::SttApiKey => self.config.stt.secret_key(),
             // The key of whoever watches: Gemini's, or the gateway's — the
             // settings' own answer, like the rows above (spec §9.9).
             FieldId::VideoApiKey => Some(self.config.video.secret_key()),
@@ -836,7 +837,92 @@ impl SettingsScreen {
                 ));
                 rows
             }
+            ModelTab::Stt => self.hearing_fields(sub, loc),
         }
+    }
+
+    /// The recognition tab (ADR 0013, stage C): the mode, the language, then
+    /// the provider's rows — its key a cloud's, shared with chat (ADR 0008), or
+    /// the `external` slot's own.
+    fn hearing_fields(&self, sub: FieldRow, loc: &'static Locale) -> Vec<FieldRow> {
+        let h = &self.config.stt;
+        let mut rows = vec![
+            sub,
+            row(
+                FieldId::SttMode,
+                loc.t("ui.settings.field.mode"),
+                FieldKind::Choice(h.mode.label().to_string()),
+            )
+            .describe(loc.t("ui.settings.desc.stt_mode")),
+            text_row(
+                FieldId::SttLanguage,
+                loc.t("ui.settings.field.stt_language"),
+                &h.language,
+            )
+            .describe(loc.t("ui.settings.desc.stt_language")),
+        ];
+        let engine = match h.mode {
+            SttMode::External => vec![
+                hearing_url_row(FieldId::SttUrl, &h.external.url, loc),
+                text_row(
+                    FieldId::SttModelName,
+                    loc.t("ui.settings.field.model_opt"),
+                    &h.external.model_name,
+                )
+                .describe(loc.t("ui.settings.desc.stt_model_external")),
+                ext_api_key_row(
+                    FieldId::SttApiKey,
+                    self.secret_field_present(FieldId::SttApiKey),
+                    loc,
+                ),
+                text_row(
+                    FieldId::SttApiKeyEnv,
+                    loc.t("ui.settings.field.api_key_env_opt"),
+                    &h.external.api_key_env,
+                )
+                .describe(loc.t(DESC_EXT_API_KEY_ENV)),
+            ],
+            SttMode::OpenAi | SttMode::OpenRouter => {
+                let gateway = h.mode == SttMode::OpenRouter;
+                let none = crate::shared::config::SttCloudSettings::default();
+                let c = h.cloud().unwrap_or(&none);
+                let provider = h.mode.cloud_provider();
+                let name = provider.map(CloudProvider::display_name);
+                let mut section = vec![
+                    text_row(
+                        FieldId::SttModelName,
+                        loc.t("ui.settings.field.model"),
+                        &c.model_name,
+                    )
+                    .describe(loc.t(if gateway {
+                        "ui.settings.desc.stt_model_gateway"
+                    } else {
+                        "ui.settings.desc.stt_model"
+                    })),
+                    api_key_row(
+                        FieldId::SttApiKey,
+                        self.secret_field_present(FieldId::SttApiKey),
+                        name,
+                        loc,
+                    ),
+                    text_row(
+                        FieldId::SttApiKeyEnv,
+                        &api_key_env_label(name, loc),
+                        &c.api_key_env,
+                    )
+                    .describe(loc.t(DESC_API_KEY_ENV)),
+                    text_row(FieldId::SttUrl, loc.t("ui.settings.field.base_url"), &c.url),
+                ];
+                // The provider-wide switch closes the section, as under every
+                // tab whose mode is the gateway.
+                if gateway {
+                    section.extend(provider_wide_rows(provider, &self.config, loc));
+                }
+                section
+            }
+        };
+        rows.extend(grouped(loc.t("ui.settings.group.engine"), engine));
+        rows
     }
 
     pub(super) fn sampling_fields(&self) -> Vec<FieldRow> {

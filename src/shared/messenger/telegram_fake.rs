@@ -1,7 +1,8 @@
 //! A Telegram Bot API of the tests' own (ADR 0013, stage B): a real socket
 //! answering `getMe`, `getUpdates`, `sendChatAction`, `sendMessage`, `getFile`
-//! and a file's download, so the bridge is driven end to end — its poller, its
-//! sender, the markup, a picture's fetch — with no account and no network. A test puts a message "from the phone" with
+//! and a file's download, and `sendVoice` (stage C), so the bridge is driven end
+//! to end — its poller, its sender, the markup, a picture's or a voice note's
+//! fetch, a voice note sent back — with no account and no network. A test puts a message "from the phone" with
 //! [`TelegramFake::say`]; the next poll carries it; everything the bot sends is
 //! kept, in order, for the test to read.
 //!
@@ -33,6 +34,8 @@ struct State {
     files: std::sync::Mutex<HashMap<String, Vec<u8>>>,
     /// The ids `getFile` was asked for, in order.
     files_asked: std::sync::Mutex<Vec<String>>,
+    /// The voice notes the bot sent, by chat, in order: the file's bytes.
+    voices: std::sync::Mutex<Vec<(i64, Vec<u8>)>>,
     arrived: Notify,
     sent_any: Notify,
     next_update: AtomicI64,
@@ -56,6 +59,7 @@ impl TelegramFake {
             sent: Default::default(),
             files: Default::default(),
             files_asked: Default::default(),
+            voices: Default::default(),
             arrived: Notify::new(),
             sent_any: Notify::new(),
             next_update: AtomicI64::new(1),
@@ -65,9 +69,15 @@ impl TelegramFake {
             while let Ok((mut sock, _)) = listener.accept().await {
                 let state = serving.clone();
                 tokio::spawn(async move {
-                    let request = crate::shared::http_stub::whole_request(&mut sock).await;
+                    let raw = crate::shared::http_stub::whole_request_bytes(&mut sock).await;
+                    let request = String::from_utf8_lossy(&raw).to_string();
                     let (status, label, body) = match download(&state, &request) {
                         Some(file) => file,
+                        None if route(&state, &request) == ("sendVoice".to_string(), true) => (
+                            "200 OK",
+                            "application/json",
+                            voice_sent(&state, &raw).into_bytes(),
+                        ),
                         None => {
                             let (status, body) = answer(&state, &request).await;
                             (status, "application/json", body.into_bytes())
@@ -165,6 +175,44 @@ impl TelegramFake {
         self.state.files_asked.lock().unwrap().clone()
     }
 
+    /// A voice note from `from`, `seconds` long — OGG/Opus, as a phone sends it.
+    pub(crate) fn voice(&self, from: i64, username: &str, note: &[u8], seconds: u32) {
+        let id = self.file(note);
+        self.push(serde_json::json!({
+            "message_id": 1, "date": 0,
+            "from": { "id": from, "is_bot": false, "first_name": username, "username": username },
+            "chat": { "id": from, "type": "private" },
+            "voice": { "file_id": id, "file_unique_id": id, "duration": seconds, "mime_type": "audio/ogg" },
+        }));
+    }
+
+    /// The voice notes the bot sent `chat`, in order.
+    pub(crate) fn voices_to(&self, chat: i64) -> Vec<Vec<u8>> {
+        let voices = self.state.voices.lock().unwrap();
+        voices
+            .iter()
+            .filter(|(to, _)| *to == chat)
+            .map(|(_, note)| note.clone())
+            .collect()
+    }
+
+    /// Waits until the bot has sent `chat` `n` voice notes, at most `secs`.
+    pub(crate) async fn wait_voices(&self, chat: i64, n: usize, secs: u64) -> Vec<Vec<u8>> {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(secs);
+        loop {
+            let notified = self.state.sent_any.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            let got = self.voices_to(chat);
+            if got.len() >= n {
+                return got;
+            }
+            if tokio::time::timeout_at(deadline, notified).await.is_err() {
+                return self.voices_to(chat);
+            }
+        }
+    }
+
     /// A sticker — something the bridge does not read.
     pub(crate) fn sticker(&self, from: i64, username: &str) {
         self.push(serde_json::json!({
@@ -206,6 +254,74 @@ impl TelegramFake {
             }
         }
     }
+}
+
+/// `sendVoice`, a multipart form: the voice note kept with its chat, the call
+/// kept as the others are (its fields, without the file), the answer the API's.
+fn voice_sent(state: &State, raw: &[u8]) -> String {
+    let fields = multipart_fields(raw);
+    let field = |name: &str| {
+        fields
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default()
+    };
+    let chat: i64 = String::from_utf8_lossy(&field("chat_id"))
+        .trim()
+        .parse()
+        .unwrap_or(0);
+    let duration: u64 = String::from_utf8_lossy(&field("duration"))
+        .trim()
+        .parse()
+        .unwrap_or(0);
+    state.voices.lock().unwrap().push((chat, field("voice")));
+    state.sent.lock().unwrap().push(Sent {
+        method: "sendVoice".into(),
+        body: serde_json::json!({ "chat_id": chat, "duration": duration }),
+    });
+    state.sent_any.notify_waiters();
+    serde_json::json!({ "ok": true, "result": { "message_id": 1, "date": 0 } }).to_string()
+}
+
+/// The parts of a multipart form, by name, as bytes.
+fn multipart_fields(raw: &[u8]) -> Vec<(String, Vec<u8>)> {
+    let Some(head_end) = raw.windows(4).position(|w| w == b"\r\n\r\n") else {
+        return Vec::new();
+    };
+    let head = String::from_utf8_lossy(&raw[..head_end]);
+    let Some(boundary) = head
+        .lines()
+        .find_map(|l| l.split_once("boundary=").map(|(_, b)| b.trim().to_string()))
+    else {
+        return Vec::new();
+    };
+    let body = &raw[head_end + 4..];
+    let marker = format!("--{boundary}");
+    let marker = marker.as_bytes();
+    let mut starts = Vec::new();
+    let mut at = 0;
+    while let Some(pos) = body[at..].windows(marker.len()).position(|w| w == marker) {
+        starts.push(at + pos);
+        at += pos + marker.len();
+    }
+    starts
+        .windows(2)
+        .filter_map(|pair| {
+            let part = &body[pair[0] + marker.len()..pair[1]];
+            let split = part.windows(4).position(|w| w == b"\r\n\r\n")?;
+            let headers = String::from_utf8_lossy(&part[..split]);
+            let name = headers
+                .split("name=\"")
+                .nth(1)?
+                .split('"')
+                .next()?
+                .to_string();
+            let content = &part[split + 4..];
+            let content = content.strip_suffix(b"\r\n").unwrap_or(content);
+            Some((name, content.to_vec()))
+        })
+        .collect()
 }
 
 /// A file's download — `GET /file/bot<token>/files/<id>` — answered with its

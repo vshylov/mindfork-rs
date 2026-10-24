@@ -83,6 +83,11 @@ pub(super) fn model_slot(config: &AppConfig, id: FieldId) -> Option<ModelSlot> {
         {
             Some(ModelSlot::Speech)
         }
+        // The recognition row, likewise: the gateway lists its transcription
+        // models (ADR 0013, stage C).
+        FieldId::SttModelName if config.stt.mode == SttMode::OpenRouter => {
+            Some(ModelSlot::Transcription)
+        }
         // The video row, likewise: the gateway lists the models that take
         // video, and Gemini's own catalogue says nothing of it.
         FieldId::VideoModel if config.video.provider == VideoProvider::OpenRouter => {
@@ -196,6 +201,16 @@ impl SettingsScreen {
                     format!("{:?}", cfg.video.provider),
                     (section.url.as_deref(), section.api_key_env.as_deref()),
                     Some(cfg.video.secret_key()),
+                )
+            }
+            ModelSlot::Transcription => {
+                let section = cfg.stt.cloud();
+                let url = section.and_then(|c| c.url.as_deref());
+                let env = section.and_then(|c| c.api_key_env.as_deref());
+                (
+                    format!("{:?}", cfg.stt.mode),
+                    (url, env),
+                    cfg.stt.secret_key(),
                 )
             }
             // The model is not part of it: the voices are read out of the one

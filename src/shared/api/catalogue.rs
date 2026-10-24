@@ -74,6 +74,11 @@ pub enum CatalogueShape {
     /// public one does (measured: 21 entries either way,
     /// docs/research/openrouter-mode.md §13).
     OpenRouterSpeech,
+    /// The same gateway's models that **hear speech** — its transcription
+    /// models, under its own filter `?output_modalities=transcription`, which
+    /// the account's list takes as the public one does (measured: 28 entries
+    /// either way, 2026-10-24; ADR 0013 stage C).
+    OpenRouterTranscription,
     /// The same gateway's models that **take video**. Without a key it is the
     /// public list under the gateway's own filter, `?input_modalities=video` —
     /// 85 entries. With one it is the account's whole list: measured, that list
@@ -97,6 +102,8 @@ pub enum ModelRole {
     Embedding,
     /// The endpoint says this model answers with speech.
     Speech,
+    /// The endpoint says this model turns speech into text.
+    Transcription,
     /// The endpoint says this model does something else (Gemini's video, music
     /// and live-only models).
     Other,
@@ -121,6 +128,9 @@ pub enum ModelSlot {
     /// behind it — the gateway's — and its voice rows are filled from the same
     /// answer: a voice belongs to a model ([`CatalogModel::voices`]).
     Speech,
+    /// The model that hears a voice note from the messenger (ADR 0013, stage
+    /// C). One recognition mode has a catalogue behind it — the gateway's.
+    Transcription,
     /// The model that watches a video for `youtube_watch`. One provider of that
     /// slot has a catalogue — the gateway.
     Video,
@@ -283,6 +293,12 @@ impl CatalogueRequest {
                 format!("{base}/models/user?output_modalities=speech")
             }
             CatalogueShape::OpenRouterSpeech => format!("{base}/models?output_modalities=speech"),
+            CatalogueShape::OpenRouterTranscription if self.key.is_some() => {
+                format!("{base}/models/user?output_modalities=transcription")
+            }
+            CatalogueShape::OpenRouterTranscription => {
+                format!("{base}/models?output_modalities=transcription")
+            }
             CatalogueShape::OpenRouterVideo if self.key.is_some() => format!("{base}/models/user"),
             CatalogueShape::OpenRouterVideo => format!("{base}/models?input_modalities=video"),
         }
@@ -479,6 +495,7 @@ pub fn parse(shape: CatalogueShape, body: &str) -> Result<Vec<CatalogModel>, Cat
         CatalogueShape::OpenRouter
         | CatalogueShape::OpenRouterEmbeddings
         | CatalogueShape::OpenRouterSpeech
+        | CatalogueShape::OpenRouterTranscription
         | CatalogueShape::OpenRouterVideo => {
             let list: GatewayList = serde_json::from_str(body).map_err(unreadable)?;
             let mut v: Vec<_> = list
@@ -578,7 +595,7 @@ fn rank(m: &CatalogModel, slot: ModelSlot) -> u8 {
         ),
         // The one catalogue this slot reads says what every entry is for, so
         // there is no name to guess from: the endpoint's order stands.
-        ModelSlot::Speech => 0,
+        ModelSlot::Speech | ModelSlot::Transcription => 0,
         // Gemini first. Every entry listed claims video, and the list is
         // narrowed by that claim alone; that the Gemini family is the one that
         // takes a YouTube **link** — the others go to download it, and refuse —
@@ -605,6 +622,7 @@ pub fn for_slot(models: Vec<CatalogModel>, slot: ModelSlot) -> Vec<CatalogModel>
             (ModelSlot::Assistant | ModelSlot::Impersonation, role) => role == ModelRole::Chat,
             (ModelSlot::Embedder, role) => role == ModelRole::Embedding,
             (ModelSlot::Speech, role) => role == ModelRole::Speech,
+            (ModelSlot::Transcription, role) => role == ModelRole::Transcription,
             // What answers with text and takes video — or has not said what it
             // takes, which is silence.
             (ModelSlot::Video, role) => role == ModelRole::Chat && m.facts.video != Some(false),
@@ -718,6 +736,8 @@ impl GatewayEntry {
             ModelRole::Embedding
         } else if outputs.contains(&"speech") {
             ModelRole::Speech
+        } else if outputs.contains(&"transcription") {
+            ModelRole::Transcription
         } else {
             ModelRole::Other
         };
@@ -1179,6 +1199,47 @@ mod tests {
         parse(CatalogueShape::OpenRouter, GATEWAY_BODY).expect("a catalogue")
     }
 
+    /// `GET /models?output_modalities=transcription`, measured 2026-10-24 (28
+    /// entries) and cut to two, plus a chat model the filter would never let
+    /// through: what turns speech into text is offered for the recognition row
+    /// and for no other.
+    #[test]
+    fn the_gateway_says_which_models_hear_speech() {
+        let body = r#"{"data":[
+            {"id":"openai/gpt-transcribe","created":1790000000,
+             "architecture":{"modality":"audio->transcription","input_modalities":["audio"],
+                             "output_modalities":["transcription"]},
+             "pricing":{"prompt":"0.000075","completion":"0"}},
+            {"id":"mistralai/voxtral-mini-transcribe-3-0","created":1791000000,
+             "architecture":{"input_modalities":["audio"],"output_modalities":["transcription"]}},
+            {"id":"google/gemini-3.8-flash","created":1792000000,
+             "architecture":{"input_modalities":["text","audio"],"output_modalities":["text"]}}
+        ]}"#;
+        let listed = parse(CatalogueShape::OpenRouterTranscription, body).expect("a list");
+        assert_eq!(
+            named(&listed, "openai/gpt-transcribe").role,
+            ModelRole::Transcription
+        );
+        let hearing: Vec<String> = for_slot(listed.clone(), ModelSlot::Transcription)
+            .into_iter()
+            .map(|m| m.id)
+            .collect();
+        assert_eq!(
+            hearing,
+            [
+                "mistralai/voxtral-mini-transcribe-3-0",
+                "openai/gpt-transcribe"
+            ],
+            "newest first, and no chat model"
+        );
+        assert!(
+            for_slot(listed, ModelSlot::Assistant)
+                .iter()
+                .all(|m| m.role != ModelRole::Transcription),
+            "a recogniser does not chat"
+        );
+    }
+
     /// The speech list: what answers with speech is a speech model by the
     /// gateway's word, and is offered for the speech row and no other; its
     /// voices are the ones it lists, in its order. A list that holds what is
@@ -1494,6 +1555,15 @@ mod tests {
         assert_eq!(
             url(CatalogueShape::OpenRouterSpeech, None),
             "https://openrouter.ai/api/v1/models?output_modalities=speech"
+        );
+        // The transcription models, likewise (ADR 0013, stage C).
+        assert_eq!(
+            url(CatalogueShape::OpenRouterTranscription, Some("k")),
+            "https://openrouter.ai/api/v1/models/user?output_modalities=transcription"
+        );
+        assert_eq!(
+            url(CatalogueShape::OpenRouterTranscription, None),
+            "https://openrouter.ai/api/v1/models?output_modalities=transcription"
         );
         // No other shape asks a different route for having a key.
         assert_eq!(

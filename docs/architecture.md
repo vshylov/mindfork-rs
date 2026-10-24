@@ -323,9 +323,15 @@ src/
 │  │  │                     its landing answered to the phone, what waits for it, the wakes
 │  │  ├─ bridge_task.rs     one bot's tasks: the poller (getMe, long-polled getUpdates →
 │  │  │                     `Inbound`; an album gathered, the paired account's pictures
-│  │  │                     fetched and prepared before they go up) and the sender
-│  │  │                     (`Outbound` → typing…, the reply cut into Telegram's markup,
-│  │  │                     plain text when refused)
+│  │  │                     fetched and prepared, and its voice notes fetched and heard
+│  │  │                     by the recognition settings a `watch` keeps current, before
+│  │  │                     they go up) and the sender (`Outbound` → typing… or
+│  │  │                     recording…, the reply cut into Telegram's markup, plain text
+│  │  │                     when refused, a voice note by `sendVoice`)
+│  │  ├─ bridge_voice.rs    voice notes in the bridge (ADR 0013 stage C): what the bots hear
+│  │  │                     with (`hearing`, `refresh_hearing`), a heard note become the
+│  │  │                     person's message marked as spoken, an unheard one said, and a
+│  │  │                     reply to a voice note synthesised and written as one
 │  │  ├─ request.rs         mapping domain messages to the engine wire format
 │  │  └─ tests/             orchestrator tests, split by feature (mod.rs — fixtures;
 │  │                        generation/chats/profiles/settings/title/impersonation/
@@ -908,9 +914,10 @@ src/
    │                       blocks into messages ≤ 4096, each with its plain text (§11.13)
    ├─ messenger/           the messengers' wires (ADR 0013): `telegram.rs` — the Bot API
    │                       client (getMe/getUpdates/sendMessage/sendChatAction, getFile and
-   │                       a capped download; no error carries the token's URL);
+   │                       a capped download, sendVoice; no error carries the token's URL);
    │                       `telegram_fake.rs` (tests) — a Bot API of the tests' own that a
-   │                       message or a photo "from the phone" is put into
+   │                       message, a photo or a voice note "from the phone" is put into,
+   │                       and that keeps the voice notes the bot sends
    ├─ mcp.rs               minimal MCP client (stdio, tools-only, 2025-11-25 revision):
    │                       McpConnection (transport, testable over a duplex) + McpClient
    │                       (subprocess: kill/exited monitor, Job Object kill-on-close,
@@ -1122,6 +1129,15 @@ src/
    │                       local stub answering with the gateway's own measured
    │                       bodies; gateway_live_tests.rs — #[ignore],
    │                       docs/install.md §7.1. Spec §9.9
+   ├─ stt/                 speech recognition, the slot that hears a voice note from the
+   │                       messenger (ADR 0013 stage C, spec §11.13): `Hearing` — the plain
+   │                       data a bot is handed (settings, key, attribution) — and
+   │                       `transcriber` → `Transcriber::transcribe`, one route
+   │                       (`/audio/transcriptions`) in two shapes: a multipart form
+   │                       (OpenAI, a server of the person's own) and the gateway's JSON.
+   │                       The note goes as it came; a `400`/`415`/`422` is asked once more
+   │                       as WAV and remembered in the session's `WavMemo`. tests.rs —
+   │                       against a local stub
    ├─ tts/                 speech synthesis (TTS): `TtsEngine` + `AudioClip` contract,
    │                       `openai` client (`/audio/speech`: `OpenAiTts::cloud`,
    │                       `::external` and `::gateway` — the OpenRouter gateway, whose
@@ -1132,7 +1148,12 @@ src/
    │                       queue, lazy device open; `decoder` — a container decoded
    │                       without gapless trimming). gateway_tests.rs — #[cfg(test)],
    │                       against a local stub; gateway_live_tests.rs — #[ignore],
-   │                       docs/install.md §7.1. See spec §11.9, §6 below
+   │                       docs/install.md §7.1. `AudioClip::into_mono` — a clip as mono
+   │                       samples, what a voice note is written from. See spec §11.9, §6 below
+   ├─ voice_note.rs        voice notes, OGG/Opus mono, in Rust (`opus-rs` + `ogg`, no C):
+   │                       `encode` (a rate Opus does not take raised to one it does),
+   │                       `decode` (to 16 kHz, the pre-skip dropped), `wav`, `resample`
+   │                       (ADR 0013 stage C, rule 1)
    ├─ sandbox.rs           SandboxRunner (behind a trait) + two runners: WasmerSandbox,
    │                       the `wasmer` sidecar for sandbox mode (WASIX isolation, §8; runs
    │                       only the packed image, refuses an unpacked site-packages), and

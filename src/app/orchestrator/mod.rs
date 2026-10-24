@@ -32,6 +32,7 @@ mod background;
 mod background_runs;
 mod bridge;
 mod bridge_task;
+mod bridge_voice;
 mod catalogue;
 mod chats;
 mod compaction;
@@ -316,6 +317,8 @@ pub async fn run(deps: OrchestratorDeps) {
         tts_formats: Default::default(),
         greeting_shown: HashMap::new(),
         auto_speech_failed: false,
+        stt_memo: Default::default(),
+        stt_failed: false,
         bg: HashMap::new(),
         bg_done_tx,
         consolidate_counts: HashMap::new(),
@@ -835,6 +838,13 @@ struct Orchestrator {
     /// said so: the next ones stay quiet until the settings or a profile change,
     /// or speech works again (spec §11.9).
     auto_speech_failed: bool,
+    /// Which recognition servers wanted a voice note as WAV, for the session
+    /// ([`WavMemo`](crate::shared::stt::WavMemo), ADR 0013 stage C).
+    stt_memo: std::sync::Arc<crate::shared::stt::WavMemo>,
+    /// A voice note from the messenger was not heard for the settings' or the
+    /// recogniser's sake, and the terminal was told: the next ones stay quiet
+    /// until the settings change.
+    stt_failed: bool,
     /// A registry of "silent" background-task slots (auto-reflection/
     /// consolidation): one slot per [`BackgroundKind`] — a "running" flag
     /// (cancellation token) + a failure streak. Lifecycle — in

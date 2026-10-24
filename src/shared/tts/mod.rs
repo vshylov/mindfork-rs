@@ -67,6 +67,35 @@ pub enum AudioClip {
 }
 
 impl AudioClip {
+    /// The clip's sound as mono 16-bit samples and their rate — what a voice
+    /// note is written from (ADR 0013, stage C). A container is decoded as
+    /// playback decodes it; channels are averaged.
+    pub fn into_mono(self) -> Result<(Vec<i16>, u32)> {
+        match self {
+            AudioClip::Pcm {
+                sample_rate,
+                channels,
+                bytes,
+            } => {
+                let samples: Vec<i16> = bytes
+                    .chunks_exact(2)
+                    .map(|b| i16::from_le_bytes([b[0], b[1]]))
+                    .collect();
+                Ok((downmix(&samples, channels), sample_rate))
+            }
+            AudioClip::Encoded(bytes) => {
+                use rodio::Source;
+                let source = playback::decoder(bytes)?;
+                let rate = source.sample_rate().get();
+                let channels = source.channels().get();
+                let samples: Vec<i16> = source
+                    .map(|s| (s.clamp(-1.0, 1.0) * 32_767.0) as i16)
+                    .collect();
+                Ok((downmix(&samples, channels), rate))
+            }
+        }
+    }
+
     /// Whether the clip is empty (nothing to play).
     pub fn is_empty(&self) -> bool {
         match self {
@@ -74,6 +103,20 @@ impl AudioClip {
             AudioClip::Encoded(bytes) => bytes.is_empty(),
         }
     }
+}
+
+/// Interleaved samples of `channels` averaged into one.
+fn downmix(samples: &[i16], channels: u16) -> Vec<i16> {
+    if channels <= 1 {
+        return samples.to_vec();
+    }
+    samples
+        .chunks(usize::from(channels))
+        .map(|frame| {
+            let sum: i32 = frame.iter().map(|s| i32::from(*s)).sum();
+            (sum / frame.len() as i32) as i16
+        })
+        .collect()
 }
 
 /// A speech-synthesis provider. Implementations are thin HTTP clients (see the
@@ -214,7 +257,7 @@ fn build_engine(
 /// refuses ([`TtsSetupError::ApiKey`]), an external server simply sends no
 /// authorization. The mirror of `app::supervisor::resolve_api_key`, kept separate
 /// because that one lives above this layer and returns a *localizable* error.
-fn resolve_key(stored: Option<String>, api_key_env: Option<&str>) -> Option<String> {
+pub(crate) fn resolve_key(stored: Option<String>, api_key_env: Option<&str>) -> Option<String> {
     stored
         .filter(|k| !k.trim().is_empty())
         .or_else(|| env_key(api_key_env))
@@ -231,7 +274,7 @@ fn env_key(var: Option<&str>) -> Option<String> {
 
 /// A non-empty string, or `None` (an empty field in settings is stored as
 /// `Some("")`).
-fn non_empty(value: Option<String>) -> Option<String> {
+pub(crate) fn non_empty(value: Option<String>) -> Option<String> {
     value
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())

@@ -658,6 +658,9 @@ pub fn named_key_env_vars(cfg: &AppConfig) -> Vec<String> {
             cfg.tts.gemini.api_key_env.clone(),
             cfg.tts.openrouter.api_key_env.clone(),
             cfg.tts.external.api_key_env.clone(),
+            cfg.stt.openai.api_key_env.clone(),
+            cfg.stt.openrouter.api_key_env.clone(),
+            cfg.stt.external.api_key_env.clone(),
             cfg.tools.web_tavily_key_env.clone(),
             cfg.video.api_key_env.clone(),
             cfg.video.openrouter.api_key_env.clone(),
@@ -2615,6 +2618,153 @@ impl TtsSettings {
     }
 }
 
+/// Default OpenAI speech-recognition model: of OpenAI's four it heard Russian full
+/// of English terms best, every term among them, in under a second a note; and
+/// it does not stop at a pause as `gpt-4o-transcribe` does
+/// (docs/research/companion-platform.md §3.8).
+pub const DEFAULT_STT_OPENAI_MODEL: &str = "gpt-transcribe";
+
+/// Speech-recognition mode — a slot of its own, like the speech slot it mirrors
+/// (ADR 0013, stage C, D6 (a)): what hears a voice note from the messenger. No
+/// Gemini mode: its transcription model answered `generateContent` with no
+/// text, and both of its models are reachable through the gateway (§3.8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SttMode {
+    /// OpenAI cloud (`POST /v1/audio/transcriptions`).
+    #[default]
+    OpenAi,
+    /// The OpenRouter gateway's `POST /audio/transcriptions`: some thirty
+    /// models of a dozen vendors behind the key every slot of this provider
+    /// shares.
+    #[serde(rename = "openrouter")]
+    OpenRouter,
+    /// Any server with OpenAI's transcription API — vLLM, speaches, LocalAI,
+    /// whisper.cpp's server — for a note nothing beyond the messenger hears.
+    External,
+}
+
+impl SttMode {
+    /// All variants in UI-cycle order (Choice field).
+    pub const ALL: [SttMode; 3] = [SttMode::OpenAi, SttMode::OpenRouter, SttMode::External];
+
+    /// UI label (Choice field).
+    pub fn label(self) -> &'static str {
+        match self {
+            SttMode::OpenAi => "openai",
+            SttMode::OpenRouter => "openrouter",
+            SttMode::External => "external",
+        }
+    }
+
+    /// The mode's cloud provider (`None` — external): the stored key it reads
+    /// is that provider's, shared with chat (ADR 0008).
+    pub fn cloud_provider(self) -> Option<CloudProvider> {
+        match self {
+            SttMode::OpenAi => Some(CloudProvider::OpenAi),
+            SttMode::OpenRouter => Some(CloudProvider::OpenRouter),
+            SttMode::External => None,
+        }
+    }
+
+    /// Cyclic iteration honoring direction (`dir` = +1/-1).
+    pub fn cycle(self, dir: i32) -> Self {
+        let idx = Self::ALL.iter().position(|x| *x == self).unwrap_or(0) as i32;
+        let n = Self::ALL.len() as i32;
+        Self::ALL[(((idx + dir) % n + n) % n) as usize]
+    }
+}
+
+/// A cloud recogniser's section (OpenAI, the gateway): kept per provider, so
+/// switching modes loses neither.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SttCloudSettings {
+    /// The provider's transcription model.
+    pub model_name: Option<String>,
+    /// Env-variable name carrying the API key (a fallback if no key was entered
+    /// in settings).
+    pub api_key_env: Option<String>,
+    /// Override of the provider's base URL (optional).
+    pub url: Option<String>,
+}
+
+/// A server of the person's own with OpenAI's transcription API.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SttExternalSettings {
+    /// Server URL (e.g. `http://127.0.0.1:8000/v1`).
+    pub url: Option<String>,
+    /// Model name (optional where the server serves one).
+    pub model_name: Option<String>,
+    /// Env-variable name carrying a Bearer key (optional; a local server
+    /// doesn't need one).
+    pub api_key_env: Option<String>,
+}
+
+/// Speech recognition: what hears a voice note from the messenger (ADR 0013,
+/// stage C; spec §11.13). All via `#[serde(default)]` — a `settings.json`
+/// without the section reads as the defaults (ADR 0006 F12).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SttSettings {
+    pub mode: SttMode,
+    pub openai: SttCloudSettings,
+    /// The gateway's section. No default model: a default that names a model
+    /// ages, and the gateway's list is one keypress away.
+    pub openrouter: SttCloudSettings,
+    pub external: SttExternalSettings,
+    /// The language the person speaks (`ru`, `en`, …), for a model that needs
+    /// telling; empty — the recogniser detects it. Never taken from the
+    /// messenger: a client's language is not the note's, and a wrong hint made
+    /// Whisper translate (§3.8, rule 2).
+    pub language: Option<String>,
+}
+
+impl Default for SttSettings {
+    fn default() -> Self {
+        Self {
+            mode: SttMode::default(),
+            openai: SttCloudSettings {
+                model_name: Some(DEFAULT_STT_OPENAI_MODEL.into()),
+                ..Default::default()
+            },
+            openrouter: SttCloudSettings::default(),
+            external: SttExternalSettings::default(),
+            language: None,
+        }
+    }
+}
+
+impl SttSettings {
+    /// Active cloud provider's settings (`None` — external).
+    pub fn cloud(&self) -> Option<&SttCloudSettings> {
+        match self.mode {
+            SttMode::OpenAi => Some(&self.openai),
+            SttMode::OpenRouter => Some(&self.openrouter),
+            SttMode::External => None,
+        }
+    }
+
+    /// Active cloud provider's mutable settings (`None` — external).
+    pub fn cloud_mut(&mut self) -> Option<&mut SttCloudSettings> {
+        match self.mode {
+            SttMode::OpenAi => Some(&mut self.openai),
+            SttMode::OpenRouter => Some(&mut self.openrouter),
+            SttMode::External => None,
+        }
+    }
+}
+
+impl SecretSlot for SttSettings {
+    fn provider(&self) -> Option<CloudProvider> {
+        self.mode.cloud_provider()
+    }
+    fn external_slot(&self) -> Option<ExternalSlot> {
+        (self.mode == SttMode::External).then_some(ExternalSlot::Stt)
+    }
+}
+
 /// What to include when copying the whole chat conversation to the clipboard (`F5`,
 /// spec §11.2). By default only message text is copied (`Default` — all flags
 /// `false`); optionally "thoughts" (CoT), tool-call parameters
@@ -2729,6 +2879,9 @@ pub struct AppConfig {
     pub mcp: McpSettings,
     /// Speaking chat messages aloud (the `/tts` command, spec §11.9).
     pub tts: TtsSettings,
+    /// Speech recognition: what hears a voice note from the messenger (ADR 0013,
+    /// stage C).
+    pub stt: SttSettings,
     /// Video understanding for `youtube_watch` (spec §9.9).
     pub video: VideoSettings,
     /// How a notification reaches someone not looking — the terminal escape, the
@@ -2824,6 +2977,7 @@ impl Default for AppConfig {
             copy: CopySettings::default(),
             mcp: McpSettings::default(),
             tts: TtsSettings::default(),
+            stt: SttSettings::default(),
             video: VideoSettings::default(),
             notifications: crate::shared::notify::NotificationSettings::default(),
             bridge: BridgeSettings::default(),
@@ -4512,6 +4666,54 @@ mod tests {
             serde_json::from_str(r#"{"mode":"gemini","gemini":{"voice":"Puck"}}"#).unwrap();
         assert_eq!(old.openrouter, TtsCloudSettings::default());
         assert_eq!(old.gemini.voice.as_deref(), Some("Puck"));
+    }
+
+    /// The recognition slot (ADR 0013, stage C): OpenAI with its default model,
+    /// the gateway's section empty, no language; a cloud mode reads the
+    /// provider's key, `external` a key of its own; a file written before the
+    /// section existed reads it as the defaults.
+    #[test]
+    fn the_recognition_slot_starts_on_openai_and_reads_the_right_key() {
+        let stt = SttSettings::default();
+        assert_eq!(stt.mode, SttMode::OpenAi);
+        assert_eq!(
+            stt.openai.model_name.as_deref(),
+            Some(DEFAULT_STT_OPENAI_MODEL)
+        );
+        assert_eq!(stt.openrouter, SttCloudSettings::default());
+        assert_eq!(stt.language, None);
+        let key = |mode| {
+            SttSettings {
+                mode,
+                ..SttSettings::default()
+            }
+            .secret_key()
+        };
+        assert_eq!(
+            key(SttMode::OpenAi),
+            Some(SecretKey::Provider(CloudProvider::OpenAi))
+        );
+        assert_eq!(
+            key(SttMode::OpenRouter),
+            Some(SecretKey::Provider(CloudProvider::OpenRouter))
+        );
+        assert_eq!(
+            key(SttMode::External),
+            Some(SecretKey::External(ExternalSlot::Stt))
+        );
+        let old: AppConfig = serde_json::from_str(r#"{"tts":{"mode":"gemini"}}"#).unwrap();
+        assert_eq!(old.stt, SttSettings::default());
+        let mut mode = SttMode::OpenAi;
+        let mut seen = Vec::new();
+        for _ in 0..SttMode::ALL.len() {
+            seen.push(mode);
+            mode = mode.cycle(1);
+        }
+        assert_eq!(seen, SttMode::ALL);
+        assert_eq!(SttMode::OpenAi.cycle(-1), SttMode::External);
+        let mut cfg = AppConfig::default();
+        cfg.stt.external.api_key_env = Some("MY_STT_KEY".into());
+        assert!(named_key_env_vars(&cfg).contains(&"MY_STT_KEY".to_string()));
     }
 
     /// Every speech mode cycles through every other, both ways, and each cloud

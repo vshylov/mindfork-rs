@@ -55,6 +55,9 @@ pub(super) const DESC_GATEWAY_ATTRIBUTION: &str = "ui.settings.desc.gateway_attr
 pub(super) const DESC_EXTERNAL_IS_GATEWAY: &str = "ui.settings.desc.external_is_gateway";
 /// The same under the speech slot's `external` URL, where it has more to say.
 pub(super) const DESC_SPEECH_EXTERNAL_IS_GATEWAY: &str = "ui.settings.desc.tts_external_is_gateway";
+/// The same under the recognition slot's `external` URL.
+pub(super) const DESC_HEARING_EXTERNAL_IS_GATEWAY: &str =
+    "ui.settings.desc.stt_external_is_gateway";
 /// Key: the profile's scaffold language (axis A).
 pub(super) const DESC_PROFILE_LANGUAGE: &str = "ui.settings.desc.profile_language";
 /// Key: `-ngl` for the assistant engine (text differs from impersonation).
@@ -425,6 +428,17 @@ pub(super) fn speech_url_row(id: FieldId, url: &Option<String>, loc: &'static Lo
     }
 }
 
+/// The recognition slot's `external` address row: the gateway's address says
+/// there is a mode for it, since an external server is sent the note in a form
+/// and the gateway takes it in JSON (ADR 0013, stage C).
+pub(super) fn hearing_url_row(id: FieldId, url: &Option<String>, loc: &'static Locale) -> FieldRow {
+    let row = text_row(id, "URL (external)", url);
+    match url.as_deref() {
+        Some(u) if is_gateway_url(u) => row.describe(loc.t(DESC_HEARING_EXTERNAL_IS_GATEWAY)),
+        _ => row,
+    }
+}
+
 /// An input field holding a **secret** itself — a cloud API key or the backup
 /// password (not an env-variable name)? Such fields have special behavior: an
 /// empty seed, a masked editor, a commit as a separate intent, and `Del` as
@@ -437,6 +451,7 @@ pub(super) fn is_secret_field(id: FieldId) -> bool {
             | FieldId::IxApiKey
             | FieldId::EApiKey
             | FieldId::TtsApiKey
+            | FieldId::SttApiKey
             | FieldId::VideoApiKey
             | FieldId::BackupPassword
             | FieldId::INtfyToken

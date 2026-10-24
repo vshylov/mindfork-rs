@@ -608,6 +608,97 @@ budget.
 header kept, no closing line (spec §10). The live smoke (`character_card_live`) asks the
 open question through the app's own path on every run.
 
+### 3.8 Stage 6 C's probe: where a voice note is heard (2026-10-24)
+
+ADR 0013 left one question of stage C to a probe: where the speech of a voice note from
+the phone is recognised. Measured before the design: which recognisers take a note as
+Telegram sends it, how well they hear Russian and English, how fast, and whether the
+application can write a voice note of its own and read one without a C library.
+
+**Setup.** Sixteen notes, 4.6 minutes, each turned into what Telegram sends — OGG/Opus,
+48 kHz mono, 32 kbps — by ffmpeg: four of Russian crowd speech recorded on phones
+(SberDevices Golos, seven short requests a note, 27–30 s), four of Russian read speech
+(Russian LibriSpeech, 4–8 s), four of English (LibriSpeech *test-other*, the harder
+half, three utterances a note, 10–33 s), and four synthetic Russian notes full of
+English terms the way this project's owner talks (OpenAI `gpt-4o-mini-tts`, four
+voices; in Russian, *"I launched llama-server on the forty-ninety, Gemma 4 … fit in
+Q4"*). Word error rate pooled per set, after lower case, Russian *yo* read as *ye*
+and no punctuation; for the
+synthetic set also the sixteen terms heard (GitHub, Sonar, `llama-server`, 4090, Gemma,
+Q4, Telegram, long polling, `docker build`, `Cargo.lock`, tokio, …). The crowd set's
+references spell numbers as words and every recogniser writes digits, so its rates are
+high for all and compare across rows only. No language named (the second table names
+it). The time is the request's, from this machine.
+
+| Recogniser | Takes OGG as sent | ru crowd | ru read | en | ru + terms | terms | median s | $ / min |
+|---|---|---|---|---|---|---|---|---|
+| OpenAI `gpt-transcribe` | yes | 23.2 % | 19.0 % | 2.2 % | **13.0 %** | **16/16** | 0.8 | 0.0045 |
+| OpenAI `gpt-4o-mini-transcribe` | yes | 28.6 % | 14.3 % | 3.1 % | 19.5 % | 14/16 | 0.8 | by tokens |
+| OpenAI `gpt-4o-transcribe` | yes | 67.0 %¹ | 23.8 % | 0.9 % | 23.4 % | 16/16 | 1.0 | by tokens |
+| OpenAI `whisper-1` | yes | 27.7 % | 31.0 % | 2.7 % | 26.0 % | 14/16 | 1.4 | 0.006 |
+| gateway `elevenlabs/scribe-v2` | yes | 18.8 % | **7.1 %** | 1.8 % | 18.2 % | 15/16 | 1.1 | 0.0037 |
+| gateway `mistralai/voxtral-mini-transcribe-3-0` | yes | 25.0 % | 14.3 % | 1.8 % | 18.2 % | 14/16 | 0.8 | 0.0035 |
+| gateway `nvidia/parakeet-tdt-0.6b-v3` | yes | 14.3 % | 19.0 % | 2.7 % | 32.5 % | 13/16 | 0.6 | 0.0015 |
+| gateway `google/gemini-3.5-transcribe` | yes | 24.1 % | 19.0 % | 3.6 % | 27.3 % | 16/16 | 2.5 | by tokens |
+| gateway `qwen/qwen3-asr-1.7b` | yes | 27.7 % | 28.6 % | 2.2 % | 16.9 % | 14/16 | 0.9² | 0.0005 |
+| gateway `openai/whisper-large-v3-turbo` | yes | 44.6 %³ | 21.4 % | 3.6 % | 24.7 % | 14/16 | 1.1 | 0.0002 |
+| gateway `deepgram/nova-3` | yes | 100 %³ | 102 % | 4.0 % | 97 % | 1/16 | 0.6 | 0.0043 |
+| Gemini `gemini-3.8-flash`, told to transcribe | yes | **13.4 %** | 11.9 % | 0.9 % | 15.6 % | 16/16 | **7.8**² | by tokens |
+| Gemini `gemini-3.5-transcribe` | — | empty⁴ | | | | | | |
+| local: Whisper large-v3-turbo, vLLM 0.31, RTX 4090 | yes | 26.8 % | 21.4 % | 4.0 % | 27.3 % | 14/16 | **0.26** | — |
+| local: Gemma 4 E2B, llama.cpp b11845 | **no — WAV** | 33.9 % | 38.1 % | 4.0 % | 26.0 % | 13/16 | 1.8 | — |
+
+¹ It stops at the first pause of a note made of several requests — the first request
+alone (*"Set the illumination to minimum."*, in Russian) of a 27-second note — in four
+crowd notes of four, and once spelled *film* the Ukrainian way. ² Slow tails: Qwen's slowest note took 22 s, Gemini's 46 s
+(a thinking model). ³ The language misheard: the gateway's Whisper wrote the first crowd
+note in Slovak-looking Latin letters (*"Ustanoví ilumináciu na mínimum"*); nova-3 heard
+every Russian note as English and returned nothing. ⁴ Through `generateContent` it
+answered with no text, then the free-tier quota refused it (`429`); through the gateway
+the same model works. The gateway's prices are its own list's, per second of audio.
+
+**Naming the language** (the note's own — what a hint would be at best):
+
+| Recogniser | ru crowd, no hint → hint | Russian notes with a *wrong* hint (`en`) |
+|---|---|---|
+| gateway `deepgram/nova-3` | 100 % → **21.4 %** | — |
+| gateway `openai/whisper-large-v3-turbo` | 44.6 % → **27.7 %** | — |
+| local Whisper turbo (vLLM) | 26.8 % → 26.8 % | **broken**: a crowd note came back as a line of dashes, the mixed note translated (*"I today launched Lama server in 4090"*) |
+| OpenAI `gpt-transcribe`, `scribe-v2`, `voxtral-mini` | ± 3 points | unchanged — they ignore it |
+
+**The audio, in Rust.** `opus-rs` 0.1.39 — a pure-Rust port of libopus 1.6, no C and no
+dependencies — with the `ogg` crate wrote OGG/Opus voice notes that ffmpeg decodes
+without a complaint: a 7.9-second reply synthesised as 24 kHz samples (31 KB, encoded in
+98 ms) and a 31.6-second English note (encoded in 0.3 s). `gpt-transcribe` heard the
+reply word for word and the English note exactly as it heard ffmpeg's encoding of it.
+The other way, a Telegram-shaped note decoded to 16 kHz WAV (12.1 s, in 17 ms) went to
+Gemma 4 E2B on llama.cpp — which refuses OGG — and came back whole, in
+Russian: *"today I launched llama server on 4090 gemma 4 at 31 billion fit in q4
+context 131000"*. OpenAI's
+speech endpoint asked for `opus` answers with OGG/Opus at 48 kHz mono — the voice-note
+format itself.
+
+- **Every recogniser that speaks the transcription API takes the note as Telegram sends
+  it.** OpenAI's endpoint (multipart, `voice.ogg`), the gateway's (JSON, `format:
+  "ogg"`), Gemini's `generateContent` (`audio/ogg`) and vLLM's Whisper all took
+  OGG/Opus; only llama.cpp's chat endpoint wants WAV, MP3 or FLAC.
+- **The cloud is quick and cheap.** Under 1.5 s a note at the median on OpenAI and most
+  of the gateway's models, under a cent a minute on every one priced per second.
+- **The best Russian is not one model.** Gemini 3.8 Flash heard the crowd best, but at
+  eight seconds a note; ElevenLabs' Scribe read speech best; `gpt-transcribe` heard the
+  owner-like notes best, every term among them. A gateway picker serves every taste.
+- **Two traps worth a rule.** `gpt-4o-transcribe` drops everything after a pause; a
+  wrong language hint makes Whisper translate or give up — and Telegram's
+  `language_code` is the client's language, not the note's.
+- **A local recogniser is a server the person runs**: vLLM's Whisper heard about as well
+  as OpenAI's `whisper-1`, five times faster, through the same API — no managed sidecar
+  is needed for the person who wants nothing beyond Telegram to hear the note. Gemma 4
+  E2B, the small model llama.cpp can hear with, came last on Russian, and llama.cpp still
+  calls its audio experimental.
+
+Scripts in the session's scratchpad, not committed (`fetch.py`, `probe.py`, `score.py`,
+an `opus-rs` encoder); the design is ADR 0013, stage C.
+
 ## 4. What the field does
 
 A survey of the commercial companions (Kindroid, Nomi, Character.AI, Replika, the
@@ -1455,7 +1546,12 @@ by default:
    phone, a phone turn beside a terminal one. **Pictures from the phone built** after
    it: a photo, an image file or an album reaches the model with its caption, fetched by
    the bot only for the paired account and prepared as `/image attach` prepares one.
-   Next: stage C, voice notes.
+   **Stage C built — voice notes** (§3.8 the probe; the owner's D6 (a), D7 (a), D8 (b),
+   D9 (a)): a voice note from the phone heard by a speech-recognition slot of its own
+   (`openai`, `openrouter`, `external`), its transcript the person's message marked as
+   spoken; a voice note answered by one while the profile speaks its replies, after the
+   text. **Live, GO**: Gemma 4 31B 3/3, Qwen 3.8 2/2 — notes in English and Russian
+   heard, answered and heard back. Next: Matrix, later.
 
 Stages 1–3 are the companion; 4 is what makes it a research platform; 5–6 are what
 make it a presence. None of it changes what an assistant profile or the default

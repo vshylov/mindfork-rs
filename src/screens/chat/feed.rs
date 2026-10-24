@@ -191,6 +191,7 @@ impl ChatScreen {
             message_ids: Vec::new(),
             // A user message has no model behind it, in the feed or on disk.
             model: None,
+            voice: None,
         });
         self.mark_feed_changed();
         // User-initiated: you sent it, you want to see it (§4).
@@ -210,6 +211,7 @@ impl ChatScreen {
             streaming: true,
             message_ids: Vec::new(),
             model: self.gen_model.clone(),
+            voice: None,
         });
         self.mark_feed_changed();
         // User-initiated (you pressed send/regenerate): show the new reply (§4).
@@ -233,6 +235,7 @@ impl ChatScreen {
                 streaming: true,
                 message_ids: Vec::new(),
                 model: self.gen_model.clone(),
+                voice: None,
             });
         }
         self.mark_feed_changed();
@@ -376,6 +379,7 @@ impl ChatScreen {
             // Same turn, same model — and the same answer the second message's
             // own metadata will carry once it is stored.
             model: self.gen_model.clone(),
+            voice: None,
         });
         self.mark_feed_changed();
         // Arrives on its own (the model chose to write another message) — §4.
@@ -421,6 +425,7 @@ impl ChatScreen {
                 streaming: true,
                 message_ids: Vec::new(),
                 model: self.gen_model.clone(),
+                voice: None,
             });
         }
     }

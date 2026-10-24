@@ -104,6 +104,14 @@ split by subsystem.
   server. A chat with a bot is not end-to-end encrypted — Telegram can read it; the
   settings say so before it is on. Photos, images sent as files and albums reach the
   companion with their captions, prepared as `/image attach` prepares them.
+- **Voice messages from the phone, and replies in voice.** Talk to the companion in
+  Telegram: what you said is heard by the speech recognition you pick in Settings →
+  Model/server → *Recognition* — OpenAI (`gpt-transcribe` by default), any of
+  OpenRouter's recognisers, or a server of your own such as Whisper on vLLM — and
+  answered; the conversation keeps the words, marked as a voice message, not the
+  recording. When the profile speaks its replies, a voice message is answered with one,
+  in the profile's voice, after the text. Voice messages are read and written in the
+  app itself — nothing to install.
 
 ### Changed
 

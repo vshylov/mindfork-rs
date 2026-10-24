@@ -357,8 +357,9 @@ effort tiers — have all closed
   lands. **Stage 6**: the bridge's ADR (0013) accepted, and **stage B built** — a
   profile reachable from Telegram through a bot of its own, a turn from the phone in a
   seat beside the terminal's, without the dangerous tools; checked on real Telegram
-  by the owner; pictures from the phone after it. Next: stage C, voice notes in and
-  out; Matrix after. Twelve candidates in six stages.
+  by the owner; pictures from the phone after it; **stage C built** — voice notes
+  heard by a speech-recognition slot of its own, a voice note answered by one. Next:
+  Matrix. Twelve candidates in six stages.
 
 ### Feed and rendering
 
@@ -525,8 +526,11 @@ effort tiers — have all closed
   native Gemini multi-speaker (one request, several voices — today two
   requests, which works on every provider) and per-speaker voices over a
   dialogue transcript; OS TTS.
-- **Voice input (STT)** — **idea**; the other half of "voice", and nothing
-  exists yet.
+- **Voice input (STT)** — **half built**: a speech-recognition slot exists
+  (Settings → Model/server → *Recognition*, ADR 0013 stage C) and hears voice notes
+  from the messenger. Speaking into the terminal — a key that records from the
+  microphone (`cpal`, which `rodio` already pulls in) — is the half left
+  (research companion-platform.md C7 (b)).
 
 ### Localization
 

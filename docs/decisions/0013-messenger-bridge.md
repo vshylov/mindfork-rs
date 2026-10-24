@@ -2,7 +2,9 @@
 
 **Status:** accepted (2026-10-23) — the owner chose D1 (a), D2 (a), D3 (a), D4 (a)
 and D5 (b) (*User's decision* below). Stage B built (`feat/messenger-bridge`; spec
-§11.13, [docs/journal/tools.md](../journal/tools.md)). The track's
+§11.13, [docs/journal/tools.md](../journal/tools.md)); stage C's forks (D6–D9) decided
+by the owner on 2026-10-24 after a probe — D6 (a), D7 (a), D8 (b), D9 (a) (*Stage C*
+below) — and built (`feat/bridge-voice`; spec §11.13). The track's
 design and the forks already decided (F6 (a) with Telegram first, F9 (a), F10 (a)) —
 [docs/research/companion-platform.md](../research/companion-platform.md) C5, §7, §8,
 §9 stage 6. Related: [ADR 0008](0008-api-key-storage.md) (the bot's token is a
@@ -185,6 +187,113 @@ finished reply as a message; thoughts and tool cards stay at the terminal**
   replies (`speak_replies`), the text kept beside it.
 - **Later** — Matrix, for end-to-end encryption and for people Telegram does not
   reach (research C5, *Channels*).
+
+## Stage C — voice notes (decided 2026-10-24)
+
+The probe that was to decide where speech is recognised is research §3.8. What it
+found that shapes the forks below:
+
+- Every recogniser that speaks the transcription API took a note as Telegram sends it
+  (OGG/Opus, 48 kHz mono): OpenAI's, eleven of the gateway's, Gemini's
+  `generateContent`, Whisper served by vLLM. Only llama.cpp's chat endpoint wants WAV.
+- The cloud answers a note in about a second, for under a cent a minute. On Russian no
+  one model is best: Gemini 3.8 Flash heard crowd speech best but took 8 s a note (46 s
+  at worst); ElevenLabs Scribe read speech best; OpenAI's `gpt-transcribe` heard
+  Russian full of English terms best, all sixteen of them.
+- A local Whisper (vLLM, an RTX 4090) heard Russian about as well as OpenAI's
+  `whisper-1`, five times faster, through the same API. Gemma 4 E2B, the small model
+  llama.cpp hears with, came last.
+- Two traps: `gpt-4o-transcribe` drops everything after a pause; a wrong language hint
+  makes Whisper translate the note into English or give up.
+- `opus-rs` (a pure-Rust port of libopus 1.6, no C) with the `ogg` crate writes a voice
+  note ffmpeg and `gpt-transcribe` read without a fault, and reads Telegram's back into
+  samples.
+
+### Forks
+
+**D6. Where a voice note is heard.**
+(a) **A speech-recognition slot of its own, built like the speech slot (ADR 0009)**
+*(recommended)*. Modes: `openai` (OpenAI's `/audio/transcriptions`, default model
+`gpt-transcribe`); `openrouter` (the gateway's, no default model — a picker over its
+transcription list, 28 models on 2026-10-24); `external` (any server with that API:
+vLLM, speaches, LocalAI, whisper.cpp's server — for a person who wants nothing beyond
+Telegram to hear the note). A cloud mode uses the provider's stored key, as the speech
+slot does (ADR 0008); `external` has a key of its own. No Gemini mode: its transcription
+model answered `generateContent` with no text, and its chat model with eight seconds a
+note — both are reachable through the gateway.
+(b) **The chat model hears the note**: the audio goes into the turn for an engine that
+takes audio. No second provider, but most engines cannot (neither of the gate's models,
+Claude, DeepSeek); the chat would keep sound rather than words, so search, notes and
+compaction would have nothing to read, and every later turn would send the audio again.
+(c) **A local recogniser the application starts**: a second `llama-server` with Gemma
+4 E2B. Offline, but it came last on Russian, llama.cpp calls its audio experimental,
+and a local Whisper is already reachable through (a)'s `external`.
+
+**D7. What a voice note becomes in the chat.**
+(a) **The transcript, as the person's message, marked as spoken; the recording not
+kept** *(recommended)*. The terminal shows the mark and the length (*🎤 0:12*); the
+model reads the words under a short label (*voice message, transcribed*), so a misheard
+word reads as the recogniser's, not the person's.
+(b) (a), with the recording kept beside the chat, playable at the terminal.
+(c) The transcript unmarked, as if typed.
+
+**D8. When the companion answers with a voice note** (only while the profile speaks its
+replies, `speak_replies`).
+(a) Every reply in the bridged chat, and what it writes there unasked — stage C as this
+ADR first wrote it.
+(b) **A voice note is answered by a voice note, a typed message by text**
+*(recommended)*: the person picks the medium each time — a voice note on the move, text
+in a meeting — and unasked messages stay text.
+(c) A switch of the messenger's own beside `speak_replies`.
+
+**D9. How the voice and the text of a reply go together.**
+(a) **The text at once, the voice note when it is ready** *(recommended)*: the reply is
+not held back for the synthesis, which takes seconds for a long one; if the synthesis
+fails, the text has already arrived.
+(b) The voice note with the text as its caption: one message, but a caption holds 1024
+characters, so a longer reply still needs a second message, and nothing arrives until
+the voice is ready.
+(c) The voice note alone; the text only at the terminal.
+
+### User's decision (2026-10-24)
+
+- **D6: (a)** — a speech-recognition slot of its own: `openai`, `openrouter`, `external`.
+- **D7: (a)** — the transcript as the person's message, marked as spoken; the
+  recording not kept.
+- **D8: (b)** — a voice note answered by a voice note, a typed message by text.
+- **D9: (a)** — the text at once, the voice note when it is ready.
+
+### Rules that are not forks
+
+1. **One road for the sound, in Rust.** A note goes to the recogniser as Telegram sent
+   it. A server that refuses it gets the same note once more as 16 kHz WAV, decoded in
+   process, and that is remembered for the session — as a refused effort is
+   (`shared/api/effort.rs`). A reply is synthesised as the terminal would speak it — the
+   same text, code blocks passed over, the profile's voice — and every speech mode's
+   answer is made into samples, then written once as OGG/Opus 48 kHz mono, the format
+   Telegram shows as a voice message. The codec is `opus-rs` with `ogg`: nothing to
+   install, nothing in C.
+2. **No language hint unless one is set.** The recogniser detects the language. A
+   setting may name the one the person speaks, for a model that needs it (the gateway's
+   Whisper and nova-3 did); Telegram's `language_code` is never used — it is the
+   client's language, and a wrong hint made Whisper translate.
+3. **Voice notes only.** A `voice` message; an audio file and a round video stay
+   unsupported in this stage.
+4. **Failures are said where they matter.** With no recognition set up, or a refusal,
+   the person is told in one line in the messenger, and the terminal says why once. A
+   synthesis that fails costs the voice note only: the text has gone, and the terminal
+   says why once (`speak_replies`' rule).
+5. **What the person is told first** gains a line: the recogniser hears the note too,
+   and the setting names which provider.
+6. **The message's mark is a field written only when set**, so a chat without voice
+   notes is written as before.
+
+### Live gate
+
+An `#[ignore]` smoke through the test's Bot API: a synthesised note sent from the
+phone's side, heard by a live recogniser, answered by the gate's model, and — with
+`speak_replies` on — sent back as a voice note that the stub hears back through a
+recogniser. Then the owner on real Telegram.
 
 ## Consequences
 

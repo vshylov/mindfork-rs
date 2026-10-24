@@ -160,6 +160,20 @@ pub struct Message {
     /// reads the row as a plain task notification.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub followup: bool,
+    /// The person's words came as a **voice note** from the messenger and are
+    /// the recogniser's transcript (ADR 0013, stage C, D7 (a)): the feed marks
+    /// the row with its length, and the request labels it so a misheard word
+    /// reads as the recogniser's. The recording itself is not kept. Additive
+    /// (ADR 0006 F12): old chats read `None`, and a chat without one serializes
+    /// as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice: Option<VoiceMark>,
+}
+
+/// What is kept of a voice note: how long it was.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VoiceMark {
+    pub seconds: u32,
 }
 
 fn default_true() -> bool {
@@ -184,6 +198,7 @@ impl Message {
             images: Vec::new(),
             notification: None,
             followup: false,
+            voice: None,
         }
     }
 
@@ -229,6 +244,13 @@ impl Message {
 
     pub fn assistant(text: impl Into<String>) -> Self {
         Self::new(MessageRole::Assistant, text)
+    }
+
+    /// A user message that came as a voice note `seconds` long (see
+    /// [`Message::voice`]).
+    pub fn with_voice(mut self, seconds: u32) -> Self {
+        self.voice = Some(VoiceMark { seconds });
+        self
     }
 }
 

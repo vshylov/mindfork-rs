@@ -80,11 +80,19 @@ pub enum ExternalSlot {
     Embed,
     /// `tts.external` — the speech server (ADR 0009).
     Tts,
+    /// `stt.external` — the speech-recognition server (ADR 0013, stage C).
+    Stt,
 }
 
 impl ExternalSlot {
     /// Every slot, for enumerating the presence list.
-    pub const ALL: [ExternalSlot; 4] = [Self::Chat, Self::Impersonation, Self::Embed, Self::Tts];
+    pub const ALL: [ExternalSlot; 5] = [
+        Self::Chat,
+        Self::Impersonation,
+        Self::Embed,
+        Self::Tts,
+        Self::Stt,
+    ];
 
     /// The slot's part of the storage name (see [`SecretKey::storage_name`]).
     fn key(self) -> &'static str {
@@ -93,6 +101,7 @@ impl ExternalSlot {
             Self::Impersonation => "impersonation",
             Self::Embed => "embed",
             Self::Tts => "tts",
+            Self::Stt => "stt",
         }
     }
 }
@@ -655,6 +664,10 @@ mod tests {
         assert_eq!(
             SecretKey::External(ExternalSlot::Tts).storage_name(),
             "external-tts"
+        );
+        assert_eq!(
+            SecretKey::External(ExternalSlot::Stt).storage_name(),
+            "external-stt"
         );
     }
 

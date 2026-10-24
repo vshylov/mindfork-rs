@@ -36,7 +36,8 @@ use crate::entities::self_model::GoalStatus;
 use crate::entities::subagent::{RunKind, RunOutcome};
 use crate::shared::config::{
     AutoTitleMode, CodeBlockBackground, FlashAttn, ImpersonationMode, MediaResolution, NoteOrder,
-    PythonMode, ServerMode, SpecType, Theme, ThemeMode, TtsMode, VideoProvider, WebProvider,
+    PythonMode, ServerMode, SpecType, SttMode, Theme, ThemeMode, TtsMode, VideoProvider,
+    WebProvider,
 };
 use crate::shared::embed_prefix::EmbedConvention;
 use crate::shared::notify::NotifyEscape;
@@ -183,6 +184,10 @@ pub(super) fn ledgers() -> Vec<Ledger> {
         ledger!(Osc52Mode in Settings { 1 => [Auto = "auto", Always = "always", Off = "off"] }),
         // Came with a field of its own, which an older reader skips whole.
         ledger!(NotifyEscape in Settings { 7 => [Osc777 = "osc777", Osc9 = "osc9", Off = "off"] }),
+        // Came with the `stt` section, which an older reader skips whole.
+        ledger!(SttMode in Settings {
+            7 => [OpenAi = "openai", OpenRouter = "openrouter", External = "external"],
+        }),
         // --- settings.json, profiles.json and the chat files -----------------
         // `max` is what the 4→5 stamps of both are for.
         ledger!(ReasoningEffort in Sampling {
