@@ -150,6 +150,7 @@ impl ChatScreen {
             UiCommand::Continue => self.typed_continue(alias),
             UiCommand::Impersonate => self.typed_impersonate(argument, alias),
             UiCommand::Greeting => self.typed_greeting(&argument),
+            UiCommand::Bridge => self.typed_bridge(&argument),
             UiCommand::Stop => self.typed_stop(),
             // Finding things.
             UiCommand::Find => self.typed_find(argument),
@@ -187,6 +188,18 @@ impl ChatScreen {
                 None
             }
         }
+    }
+
+    /// `/bridge [pair|unpair]` — the open chat's profile's messenger bridge
+    /// (spec §11.13). The parser closed the word over its set; what the bridge
+    /// is doing is the orchestrator's to say.
+    fn typed_bridge(&mut self, argument: &str) -> Option<ChatIntent> {
+        if self.active_chat.is_none() {
+            return self.note("ui.cmd.no_chat");
+        }
+        crate::features::bridge::BridgeAction::parse(argument)
+            .ok()
+            .map(ChatIntent::Bridge)
     }
 
     /// `/settings` — `Ctrl+P` silently does nothing until the first `Settings`

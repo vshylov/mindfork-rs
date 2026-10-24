@@ -333,6 +333,9 @@ pub enum ChatIntent {
     Greeting {
         pick: Option<usize>,
     },
+    /// The open chat's profile's messenger bridge (`/bridge [pair|unpair]`,
+    /// spec §11.13).
+    Bridge(crate::features::bridge::BridgeAction),
     /// Delete a companion profile, hiding its chats with it (command
     /// `/profile delete <name>`, confirmed; `Ctrl+D` in the settings screen).
     /// The orchestrator refuses to delete the last one.

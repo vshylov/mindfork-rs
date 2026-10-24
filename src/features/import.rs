@@ -265,6 +265,7 @@ fn map_profile(p: &ImProfile) -> Profile {
         voices: std::collections::BTreeMap::new(),
         is_hidden: false,
         forked_from: None,
+        bridge: Default::default(),
     }
 }
 

@@ -279,6 +279,50 @@ profile, in Settings → Interface → *Notifications*:
 - **Message's words** — off, a notification says only who wrote and in which
   conversation; on, it carries the start of the message.
 
+### Talking from your phone (Telegram)
+
+*Messenger bridge (Telegram)* in the *Companion* group makes the profile a contact
+in Telegram while the app runs — on a pod, that is the app in `tmux`. Each profile is
+a bot of its own, so a companion has its own name and picture there.
+
+1. In Telegram, write to **@BotFather**, send `/newbot`, give the bot a name and a
+   username, and copy the token it answers with. `/setuserpic` there gives the bot a
+   picture.
+2. In Settings → Profiles → the profile → *Companion*: turn on *Messenger bridge*
+   and paste the token into *Telegram bot token* (it is kept encrypted for this
+   machine, like the API keys).
+3. In a chat of that profile, type `/bridge pair`. The app shows a code and a link;
+   open the link on your phone (or send the bot `/start` and the code) within ten
+   minutes. From then on the bot answers your account and nobody else's — a message
+   from anyone else gets no answer and is not kept.
+
+Your messages land in a conversation of their own in the chat list, marked unread
+until you open it; `/new` in Telegram starts the next one. While a reply is being
+written you see *typing…*, then the whole reply. The terminal is not held: a message
+from the phone is answered while the app works on something else at the terminal —
+on a server with one slot the two take turns, so the phone's reply may wait for the
+terminal's current request. Messages you send while a reply is being written are
+answered together after it. `/stop` in Telegram stops a reply, and so does `Esc` in
+that conversation at the terminal. When the companion writes on its own — a follow-up,
+a background run finishing — in that conversation, it writes to your phone.
+
+What a reply from the phone cannot do: run code (`python_exec`), write files, edit an
+attached project or call an MCP server — whoever holds your phone or your Telegram
+account would otherwise hold those too. Everything else the profile has stays:
+memory, notes, web search, follow-ups. A forwarded message reaches the companion as
+something someone else wrote, not as your request.
+
+Pictures work too: send a photo, an image as a file or an album, with a question in
+its caption, and the companion sees it — when the model it runs on takes images; one
+that does not says it cannot see them. A picture is prepared as `/image attach` would
+prepare it (Settings → Memory → *Images*: how large, how many). Voice messages come later.
+
+**Who can read it.** A chat with a bot is not end-to-end encrypted: Telegram's
+servers see every message, both ways. The conversation itself is stored only on this
+machine. The token is the bot — anyone with it reads and writes as the bot — and a
+forked or carried companion does not take it, or your account. `/bridge` says what
+the bridge is doing; `/bridge unpair` forgets your account.
+
 ### Writing as you
 
 `Ctrl+U` (`/impersonate [text]`) has the model write **your** next message and
@@ -757,6 +801,7 @@ the keys for itself:
 | `/continue` | — | resume the last interrupted reply from where it stopped — local and external engines, Gemini, and Claude up to the 4.5 generation; DeepSeek in the `deepseek` mode, in a conversation without tool calls; through OpenRouter or another gateway, only Gemini models and Claude up to 4.5 |
 | `/impersonate [text]` | `Ctrl+U` | the model writes your next message, continuing the text you give it |
 | `/greeting [N]` | — | in a chat that holds only its greeting: the profile's next greeting, or the `N`th — a character card's other openings |
+| `/bridge [pair\|unpair]` | — | this profile's Telegram bridge: what it is doing / a code to pair your account / forget the account |
 | `/stop` | `Esc` | cancel the running generation |
 | `/find [text]` · `/search <text>` | `Ctrl+F` · `Ctrl+G` | find in this conversation / find messages across every chat |
 | `/links` | `Ctrl+L` | follow a `chat://` reference the assistant wrote |

@@ -1440,7 +1440,22 @@ by default:
    two of its voices, 3/3.
 6. **Reach** — the bridge track: an ADR first (turns addressed to a chat not on
    screen, the tool set of a bridged turn, the messenger's privacy), then Telegram,
-   then speech input through its voice messages (C7 (b)).
+   then speech input through its voice messages (C7 (b)). **The ADR is
+   [0013](../decisions/0013-messenger-bridge.md)**, accepted 2026-10-23: a turn from
+   the messenger runs in a seat of its own beside the terminal's; one bridged chat per
+   profile, `/new` starting the next; the profile's tools without the four dangerous
+   families; one bot per profile; *typing…* while the turn runs, then the whole reply.
+   **Stage B built** (spec §11.13): the bot per profile, pairing by a one-time code,
+   the seat beside the terminal's turn, the follow-ups and background results of a
+   bridged chat sent to the phone. **Live, GO** (docs/journal/tools.md) against a Bot
+   API of the test's own: Gemma 4 31B q4_0 3/3, Qwen 3.8 27B Q4_K_M 2/2 — the follow-up
+   sent unasked, the phone answered in character beside a terminal turn, a forwarded
+   order to recite the persona declined, `/stop` — and on **real Telegram** (the owner,
+   2026-10-24): paired from a phone, answered, the profile's notes recalled from the
+   phone, a phone turn beside a terminal one. **Pictures from the phone built** after
+   it: a photo, an image file or an album reaches the model with its caption, fetched by
+   the bot only for the paired account and prepared as `/image attach` prepares one.
+   Next: stage C, voice notes.
 
 Stages 1–3 are the companion; 4 is what makes it a research platform; 5–6 are what
 make it a presence. None of it changes what an assistant profile or the default

@@ -93,6 +93,17 @@ split by subsystem.
   in `/tts` as well. *Speak replies* (Settings → Profiles → *Companion*, off by
   default) reads every reply in the open conversation aloud as it arrives, in that
   voice.
+- **Talk to a companion from your phone, through Telegram.** *Messenger bridge* in
+  Settings → Profiles → *Companion* (off by default) makes the profile a Telegram bot
+  of its own while the app runs: make the bot with @BotFather, paste its token, type
+  `/bridge pair` and open the link on your phone. Your messages get a conversation of
+  their own, answered while the terminal does something else; *typing…*, then the
+  whole reply; `/new` and `/stop` in Telegram. A follow-up the companion planned in
+  that conversation now reaches your phone. Only your account is answered, and a
+  reply from the phone cannot run code, write files, edit a project or call an MCP
+  server. A chat with a bot is not end-to-end encrypted — Telegram can read it; the
+  settings say so before it is on. Photos, images sent as files and albums reach the
+  companion with their captions, prepared as `/image attach` prepares them.
 
 ### Changed
 
@@ -124,6 +135,11 @@ split by subsystem.
   (`alternate_greetings` in `profiles.json`, written only when there are some). An
   older version reads such a profile, but drops them the next time it saves the
   profiles.
+- **A profile's messenger bridge** — the switch (`companion.bridge`) and the paired
+  account and its conversation (`bridge` in `profiles.json`, written only once paired)
+  — and its bot's token, encrypted for this machine like the API keys. An older version
+  reads such a profile, but drops the pairing the next time it saves the profiles.
+  `settings.json` may name a self-hosted Bot API server (`bridge.telegram_api`).
 
 ## [0.21.0] — 2026-10-19
 

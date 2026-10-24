@@ -246,9 +246,11 @@ async fn the_switch_quiet_hours_and_the_cap_each_hold_a_due_follow_up() {
     type Edit = fn(&mut Profile, u8);
     let cases: [(&str, bool, Edit); 3] = [
         ("switch off", false, |_, _| {}),
+        // Two hours from this one: a run that starts as the hour turns is
+        // still inside them (a full run at 23:59:5x once delivered it).
         ("quiet hours", true, |p, h| {
             p.companion.quiet_from = h;
-            p.companion.quiet_until = (h + 1) % 24;
+            p.companion.quiet_until = (h + 2) % 24;
         }),
         ("cap reached", true, |p, _| {
             p.companion.followups_per_day = 1

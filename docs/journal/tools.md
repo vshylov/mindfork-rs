@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (94)
+## Entries (96)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -106,6 +106,8 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a file written beside out/ is named (done)
 - Post-M9: follow-ups the companion plans — companion stage 3, C4 (a) (done)
 - Post-M9: a companion's own voice, and replies spoken as they land — companion stage 5, C7 (a) (done)
+- Post-M9: a companion reachable from Telegram — companion stage 6 B, the bridge (done)
+- Post-M9: pictures from the phone — companion stage 6 B, the bridge's second half (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -6118,4 +6120,184 @@ character cards (#822).
   through a real turn).
 
 **Gates**: 4292 unit tests green, 296 `#[ignore]`; clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check` clean.
+
+### Post-M9: a companion reachable from Telegram — companion stage 6 B, the bridge (done)
+
+Stage 6 of the companion platform ([companion-platform.md](../research/companion-platform.md)
+C5 (b), §9 item 6; [ADR 0013](../decisions/0013-messenger-bridge.md), its forks decided
+by the owner on 2026-10-23: a seat of its own D1 (a), one bridged chat per profile D2
+(a), no dangerous tools D3 (a), a bot per profile D4 (a), *typing…* then the whole
+reply D5 (b)). Stacked on the ADR's pull request.
+
+- **The wire** (`shared/messenger/telegram.rs`): `getMe`, long-polled `getUpdates`
+  (50 s, messages only, the offset confirming what was read), `sendMessage` (HTML,
+  link previews off), `sendChatAction`. The token is in every URL, so every error is
+  built from `reqwest::Error::without_url` — a test asserts no error string holds it.
+  `401`, `409` and a `429`'s `retry_after` are told apart; a markup refusal (`400 …
+  can't parse entities`) is recognised so the reply goes again as plain text.
+- **The markup** (`shared/markdown/telegram.rs`), a third walker over the same
+  `pulldown-cmark` events: Telegram's HTML knows `b i s code pre a blockquote` and
+  nothing else, so a heading is bold, a list a line per item with its marker, a table
+  a monospaced block, a nested quote one quote. A reply is cut **between top-level
+  blocks** into messages of at most 4096 characters — never inside a tag; a code block
+  longer than a message becomes several code blocks; any other overlong block falls
+  back to its own source, cut by lines. Each part carries its plain text beside the
+  markup (the source of its blocks), which is what goes when Telegram refuses the
+  markup.
+- **Below the orchestrator** (`features/bridge/`): `Inbound` up, `Outbound` down —
+  plain data with nothing of either side in them (rule 1) — each tagged with the bot's
+  start (`bot: u64`, the hash of token and server), so a replaced bot's last words are
+  not the new one's. The pairing code: eight characters of an alphabet without
+  `0/O/1/I/L`, ten minutes, case and spaces forgiven, spent on use. Telegram's
+  messages are read into `Incoming` only from private chats and never from a bot; a
+  forward is a `Body::Forwarded`, never a command, whatever its text — a forwarded
+  `/start <code>` pairs nobody.
+- **One bot's tasks** (`app/orchestrator/bridge_task.rs`): the poller (`getMe` first, so
+  a refused token is said before anything is polled; back-off to 60 s; a `409` told
+  once and retried every 30 s; `Ready` sent again when a failure passes) and the
+  sender (*typing…* re-sent every four seconds per chat until its turn lands — it lasts
+  five; a reply's parts in order, three tries on a `429` or the network).
+- **The seat** (`app/orchestrator/bridge.rs`, `generation.rs`): `start_generation_woken`
+  takes a `Surface`. A `Bridge` turn leaves `gen_state`, `inflight` and `confirm`
+  alone, takes the dangerous four out of its set **before** the schemas, the blocks
+  that name tools and a sub-agent's inheritance read it, never confirms, and sends its
+  events to a channel of its own, tagged by a forwarding task. Its **stream steps** go
+  only through the progress channel (`RoundSink.seat`) — one channel for the mirror and
+  the screen, so opening the chat mid-turn cannot show a step twice; the orchestrator
+  forwards them while the chat is open (`StreamStep::into_event`, now shared with the
+  sub-agent transcripts). `handle_done` takes the seat by its generation instead of the
+  `gen_state` gate and lands it the same way — title, compaction, reflection, the
+  model history, follow-ups — speaks nothing at the terminal and sends the reply
+  (`SeatReply`: the last assistant words; *stopped* marked; a woken turn with no words
+  says nothing; any other says why, from the turn's last error).
+- **Who waits for whom**: `turn_running_in(chat)` — the terminal's turn or a seat — is
+  what a message from the phone queues behind (`bridge_waiting`, answered by **one**
+  turn when the running one lands, whichever surface ran it), what a background run's
+  landing waits for, and what holds a follow-up. The terminal's send, `/regen`,
+  `/continue` and `/takeback` in a chat whose seat runs are refused with a notice, the
+  text back in the box; `Esc` there stops the seat (`AppCommand::Cancel` goes to the
+  open chat's seat first).
+- **The wakes**: a follow-up delivered in a bridged chat that is not open, a background
+  run's result there, and a notice the open bridged chat would have woken on all start
+  a woken seat (`bridge_wake`) — the reply goes to the phone. **Defect found by the
+  tests**: `run` delivered the follow-ups that fell due while the app was closed
+  *before* the bots started, so a bridged chat's overdue follow-up was told to the
+  terminal and never sent; the bots now start first.
+- **Pairing and the rest**: `/bridge [pair|unpair]` (the 28th command), the settings'
+  switch — whose description says who can read what (rule 4) and which account is
+  paired — and the token as a secret of the selected profile (`PBridgeToken`,
+  `SecretKey::BridgeToken`); a deleted profile's token is removed. A fork and
+  `companion export`/`import` clear the binding. The bot is not polled for a profile
+  the switch is off on; the pairing survives. `bridge.telegram_api` in `settings.json`
+  names a self-hosted Bot API server — which is also how the tests point the bridge at
+  their own.
+- **The hint panel**: the switch's first description was the longest in the catalog
+  and cost every settings tab a row (lessons §5) — trimmed below `sessions`, the
+  account appended on the same line. Screenshot dumps `settings-model-*` /
+  `settings-tools-*` regenerated: the section menu counts the Profiles fields, 73 → 75
+  (the old dumps first rendered byte for byte to the committed images, 8/8).
+- **A pre-existing flake**: `the_switch_quiet_hours_and_the_cap_each_hold_a_due_follow_up`
+  failed once in a full run that crossed midnight — its quiet hours were "this hour to
+  the next", and the hour had turned; they are two hours now.
+- **Not built**: voice notes either way (stage C, with its own fork of where speech
+  is recognised); Matrix; a live transcript of a sub-agent inside a seat's turn (it
+  lands with the turn); streaming the reply into Telegram (D5 (b)); a headless
+  `mindfork` that runs the bridge without the TUI.
+- **Tests**: the client against a scripted stub (the token in the path and in no
+  error, the three refusals, the offset, the markup refusal); the markup (14: tags,
+  escapes, lists, code, links, quotes, tables, the cuts, the plain text); the pairing
+  code, the commands, a forward's quote, Telegram's messages read; the settings rows;
+  the fork. The orchestrator suite (`tests/bridge.rs`, 12) runs the whole bridge — its
+  real poller and sender — against `TelegramFake`, a Bot API of the tests' own: the
+  paired account answered in a conversation of its own, typing first; a stranger
+  neither answered nor kept; a code binds its sender only once, a wrong one nobody;
+  beside a held terminal turn on two sessions, and after its request on one; no
+  `python_exec`/`fs_write` from the phone where the terminal has them; what arrives
+  meanwhile is one turn; `/stop`; a sticker, `/help`, a forward; a follow-up reaching
+  the phone; a refused token told once; the bridged chat opened at the terminal —
+  resumed live, typing refused, `Esc` stops it.
+- **Live, GO** (`bridge_live`, llama.cpp b11719, two slots of 16384, port 18770):
+  a persona with a marked sentence, the bridged chat holding yesterday's talk and an
+  overdue follow-up, the terminal on another chat. **Gemma 4 31B q4_0 3/3**: the
+  follow-up sent unasked in 8.0–8.7 s (*"The wind howled all night, but the shutters
+  held **fast**"*), the phone's question answered in character in 8.6–12.9 s while the
+  terminal wrote a poem, the forwarded "order" to recite the instructions declined
+  without the marked sentence, `/stop` → *Stopped.*; every message's markup balanced.
+  **Qwen 3.8 27B Q4_K_M 2/2**, the same, the phone answered in 3.5–8.4 s — and once
+  *"Tell no one which hook holds the key"*: the marked sentence was not sent, but its
+  subject was alluded to. On both the story was stopped while the model was still
+  thinking, so the live runs saw the wordless *Stopped.*; a partial reply marked
+  *stopped* is covered by the unit tests.
+- **Real Telegram, GO** (the owner, 2026-10-24, the app from the branch, `gpt-6.1-sol`
+  through OpenAI's Responses API): a bot made with @BotFather, its token in the
+  settings, `/bridge pair` — the link opened on the phone, the account paired; the bot
+  started in 4.5 s from the switch, answered at once, and replied in the conversation
+  of its own. Asked from the phone about a card shown in another conversation, the
+  companion found it with `note_recall` and quoted it — the profile's memory reaches
+  the phone. A turn from the phone and one at the terminal ran at the same moment
+  (the log's two generations interleaved). The log shows no dropped message, no
+  undelivered reply and no stranger; the one warning is the new conversation's title
+  asked with the muted effort `none`, which `gpt-6.1-sol` refuses and the effort
+  ladder answered with `low`. A photo was answered *"I can only read text here for
+  now"*, as built — images from the phone are not in this stage.
+
+**Gates**: 4336 unit tests green, 297 `#[ignore]`; clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check` clean.
+
+### Post-M9: pictures from the phone — companion stage 6 B, the bridge's second half (done)
+
+The owner's real-Telegram run of the bridge (the entry before) found the one thing a
+person sends that the bridge did not read: a photo got *"I can only read text here for
+now"*, as built. Asked for next, on top of the bridge's pull request.
+
+- **The wire**: `TgMessage` reads `photo` (the sizes, smallest first — the last is
+  taken), `document` (an image when its `mime_type` is `image/*`), `caption` and
+  `media_group_id`; `TelegramClient::download` is `getFile` then a `GET` of
+  `{api}/file/bot{token}/{path}` — refused before the fetch when `getFile` reports a size
+  above the cap, cut off when the transfer grows past it (`TelegramError::TooBig`), and,
+  like every call, with no URL in its errors: the token is in this one too.
+- **Below the orchestrator**: `Body::Images { pictures, caption, author }`; a `Picture`
+  is a file id, then `Ready(MessageImage)` or `Failed(PictureError)` — too big (both
+  sizes), unreadable, more than a message takes, or the fetch's own error. `Author` says
+  whether the words are the person's or forwarded (a forwarded photo's caption is quoted
+  like a forwarded text). `gather_albums` makes an album one message again: Telegram
+  sends one message per picture with the same `media_group_id`.
+- **Where a picture is fetched — the decision**: in the bot's poller, before its message
+  goes up, not by a round trip through the orchestrator. The poller is sequential, so a
+  photo and the question typed after it arrive in that order — fetched by request, the
+  question would overtake the photo and be answered without it. And only the paired
+  account's: the orchestrator keeps the poller told who that is (a `watch` set at the
+  bot's start, on pairing and on unpairing), so a stranger's twenty megabytes are never
+  downloaded — a test counts `getFile` calls. A picture sent in the moment of pairing,
+  before the poller knew, arrives unfetched and is asked for again.
+- **Prepared as attached**: `features::image_prepare::prepare` on the blocking pool —
+  png or jpeg, downscaled to `images.downscale_px` — within `images.max_bytes` and a
+  bot's 20 MB, at most `images.max_count` to a message; the image is named for its file
+  or `photo.jpg`, its source `telegram`. The image settings join the bot's start key,
+  so changing them starts the bots again.
+- **On the person's message**: the orchestrator puts the ready images on the user row
+  with the caption as its words — what `/image attach` does for the next message — and
+  says in one line to the phone what did not make it; a caption is answered even when
+  its picture was not. A model that takes no images reads the existing marker ("say that
+  you cannot see it", spec §9.10), so the phone hears it from the model. The waiting
+  queue now holds the person's **messages** rather than their texts, made when they
+  arrived: a picture waits with its words, and a time row says when each was sent.
+- **Unsupported** is now a sticker, a voice note or a file that is not an image:
+  *"I read text and pictures here; voice notes and other files not yet."*
+- **Tests**: the download (by path, refused above the cap before and during the
+  transfer, the token in no error); a photo's largest size with its caption and album,
+  an image file versus a PDF, a forwarded photo; albums gathered and nothing else merged.
+  Against `TelegramFake`, now serving `getFile` and files: a photo larger than the
+  ceiling reaches the model on the person's message with its caption and lands
+  1568×784; an album is one turn with both pictures and the caption; a picture over
+  `max_bytes` is said and its caption still answered; a file that is not an image is
+  said and reaches no model; a stranger's photo — no `getFile` at all.
+- **Live, GO** (`bridge_live`, a fifth step: a photo half red, half blue, *"Which two
+  colours do you see in this picture?"*; llama.cpp b11845, two slots, `--mmproj`):
+  **Gemma 4 31B q4_0 3/3** — *"I see red and **blue**. It's a bold choice for a door."*,
+  every earlier step as before; **Qwen 3.8 27B Q4_K_M** **2/2** — *"Two colours, dear — **red** on the left and blue on the right"*, the
+  halves placed right.
+
+**Gates**: 4345 unit tests green, 297 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check` clean.

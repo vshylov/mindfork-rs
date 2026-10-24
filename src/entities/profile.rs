@@ -101,6 +101,10 @@ pub struct CompanionFeatures {
     /// Each reply in the open conversation spoken as it lands, in the
     /// profile's voice ([`Profile::voices`]; C7 (a) there, spec §11.9).
     pub speak_replies: bool,
+    /// A messenger bot of its own: the profile is reachable from the paired
+    /// account while the app runs ([`Profile::bridge`]; C5 (b) there, ADR 0013,
+    /// spec §11.13). Off, the bot is not polled; the pairing is kept.
+    pub bridge: bool,
 }
 
 /// The default quiet hours, 22:00 to 08:00.
@@ -121,6 +125,7 @@ impl Default for CompanionFeatures {
             followups_per_day: DEFAULT_FOLLOWUPS_PER_DAY,
             notify: false,
             speak_replies: false,
+            bridge: false,
         }
     }
 }
@@ -212,6 +217,44 @@ pub struct Profile {
     /// omits it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forked_from: Option<ForkOrigin>,
+    /// The messenger account this profile answers and the conversation it
+    /// reaches (ADR 0013, spec §11.13). Written only once paired; a fork and a
+    /// carried companion take none of it (D4 there).
+    #[serde(default, skip_serializing_if = "BridgeBinding::is_unset")]
+    pub bridge: BridgeBinding,
+}
+
+/// The messenger a profile's bridge speaks (ADR 0013): Telegram now.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BridgeChannel {
+    #[default]
+    Telegram,
+}
+
+/// A profile's tie to a messenger (ADR 0013, rule 2 and D2): the one account
+/// allowed to write, and the conversation its messages reach.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BridgeBinding {
+    pub channel: BridgeChannel,
+    /// The paired account's id in the messenger — Telegram's user id, as text,
+    /// since a Matrix id is one. `None` until a pairing code is sent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
+    /// How the account was named when it paired (`@name`), for the settings.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_name: Option<String>,
+    /// The bridged conversation; `None` until the first message makes one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chat: Option<uuid::Uuid>,
+}
+
+impl BridgeBinding {
+    /// Nothing paired and no chat: the profile is written without the field.
+    pub fn is_unset(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// The profile a fork was made from, as it was at that moment (spec §10,
@@ -250,6 +293,7 @@ impl Profile {
             voices: std::collections::BTreeMap::new(),
             is_hidden: false,
             forked_from: None,
+            bridge: BridgeBinding::default(),
         }
     }
 

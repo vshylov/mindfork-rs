@@ -29,7 +29,7 @@ Two rules that follow from that:
   and from the code. Loading either whole spends context on twelve chapters to
   use one.
 - **The engineering journal is per area.** What was done, why, what was measured
-  and what was rejected lives in `docs/journal/<area>.md` — 682 entries, split by
+  and what was rejected lives in `docs/journal/<area>.md` — 684 entries, split by
   subsystem. Read the file for the area you are touching; grep across them when
   hunting a specific past decision.
 
@@ -70,7 +70,7 @@ multi-provider inference · 0005 Python sandbox as a `wasmer`/WASIX sidecar ·
 neutral import format · 0008 API keys with machine-bound encryption · 0009
 message speech (TTS) · 0010 the subagent as a nested turn · 0011 the
 directed dialogue as a scripted multi-context run · 0012 concurrent tool calls
-in a round.
+in a round · 0013 the messenger bridge.
 
 ## Key architectural decisions
 
@@ -185,8 +185,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-10-23, version 0.21.0)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **4292 unit tests
-green, 296 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **4345 unit tests
+green, 297 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump and demo-reel regenerators).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -198,13 +198,14 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
-- **A platform for a companion — stages 1–5** (2026-10-23): every feature
+- **A platform for a companion — stages 1–6 B** (2026-10-24): every feature
   a profile switch, off by default; dated rows; the notes and earlier conversations
   in the prompt, `/notes`; follow-ups it plans, quiet hours and a cap on, silence
   without a trace; notifications when nobody looks; every self-model version kept
   with its author (`H` on `F3`); `/profile fork`, `mindfork companion export|import`;
   persona drift measured; character cards by `mindfork import`, `/greeting`; a
-  voice per profile, replies spoken as they land.
+  voice per profile, replies spoken as they land; reachable from Telegram — a bot
+  per profile, a turn from the phone beside the terminal's, pictures too (ADR 0013).
   Live **GO**, Gemma 4 and Qwen 3.8
   ([docs/research/companion-platform.md](docs/research/companion-platform.md),
   [docs/journal/tools.md](docs/journal/tools.md)).

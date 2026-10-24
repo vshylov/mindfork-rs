@@ -190,7 +190,10 @@ pub fn export(
     let profiles = JsonStore::new(paths.clone())
         .load_profiles()
         .with_context(|| loc.t("cli.companion.ctx.profiles").to_string())?;
-    let profile = find_profile(&profiles, query, loc)?.clone();
+    let mut profile = find_profile(&profiles, query, loc)?.clone();
+    // The bot stays behind with its token, and the paired account is the
+    // person's, not the companion's (ADR 0013, D4).
+    profile.bridge = Default::default();
     let archive =
         output.unwrap_or_else(|| backup::default_backup_path(paths, "mindfork-companion"));
     if archive.exists() {
@@ -320,6 +323,7 @@ pub fn import(
     let mut profile = carried.clone();
     profile.id = Uuid::new_v4();
     profile.is_hidden = false;
+    profile.bridge = Default::default();
     storage
         .json()
         .upsert_profile(&profile)
@@ -374,6 +378,11 @@ mod tests {
         let storage = Storage::open(paths.clone()).unwrap();
         let mut sol = Profile::new("Sol", "You are Sol.");
         sol.companion.followups = true;
+        // Paired to a messenger: the pairing is the person's, and stays
+        // behind (ADR 0013, D4).
+        sol.companion.bridge = true;
+        sol.bridge.account = Some("42".into());
+        sol.bridge.chat = Some(Uuid::new_v4());
         storage.json().upsert_profile(&sol).unwrap();
         storage
             .json()
@@ -429,6 +438,12 @@ mod tests {
             ),
             (1, 1, 2)
         );
+        // The archive itself holds no account: an archive travels.
+        let mut zip = zip::ZipArchive::new(File::open(&out).unwrap()).unwrap();
+        let mut carried = String::new();
+        std::io::Read::read_to_string(&mut zip.by_name(PROFILE_ENTRY).unwrap(), &mut carried)
+            .unwrap();
+        assert!(!carried.contains("\"account\""), "{carried}");
 
         let (there, storage) = fresh_root(&dir, "b");
         let imported = import(&there, &storage, &out, None, en()).unwrap();
@@ -440,6 +455,10 @@ mod tests {
             .unwrap();
         assert_eq!(landed.name, "Sol");
         assert!(landed.companion.followups, "the settings came along");
+        assert!(
+            landed.bridge.is_unset(),
+            "the messenger pairing stayed behind"
+        );
         let db = storage.db();
         assert_eq!(db.note_list(landed.id, None, &[], None).unwrap().len(), 1);
         let model = db.self_model_get(landed.id).unwrap().unwrap();

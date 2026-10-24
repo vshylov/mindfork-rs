@@ -563,6 +563,7 @@ impl SettingsScreen {
                 | FieldId::PFollowups
                 | FieldId::PNotify
                 | FieldId::PSpeakReplies
+                | FieldId::PBridge
         ) {
             let p = self.profiles.get_mut(self.profile_idx)?;
             let c = &mut p.companion;
@@ -572,6 +573,7 @@ impl SettingsScreen {
                 FieldId::PFollowups => &mut c.followups,
                 FieldId::PNotify => &mut c.notify,
                 FieldId::PSpeakReplies => &mut c.speak_replies,
+                FieldId::PBridge => &mut c.bridge,
                 _ => &mut c.earlier_chats,
             };
             *flag = !*flag;

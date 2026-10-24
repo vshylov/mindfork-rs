@@ -354,7 +354,11 @@ effort tiers — have all closed
   since with the person's name there one model of five took the examples for its
   shared past (§3.7). **Stage 5, second half, built**: a voice of the profile's
   own, per speech mode, and *Speak replies*, which reads each reply aloud as it
-  lands. Next: stage 6, the bridge — an ADR first. Twelve candidates in six stages.
+  lands. **Stage 6**: the bridge's ADR (0013) accepted, and **stage B built** — a
+  profile reachable from Telegram through a bot of its own, a turn from the phone in a
+  seat beside the terminal's, without the dangerous tools; checked on real Telegram
+  by the owner; pictures from the phone after it. Next: stage C, voice notes in and
+  out; Matrix after. Twelve candidates in six stages.
 
 ### Feed and rendering
 
