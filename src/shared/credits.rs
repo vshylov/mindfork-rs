@@ -212,7 +212,7 @@ pub const COMPONENTS: &[(&str, &str, &str)] = &[
     ("sys-locale", "0.3.2", "MIT OR Apache-2.0"),
     ("tar", "0.4.46", "MIT OR Apache-2.0"),
     ("thiserror", "2.0.21", "MIT OR Apache-2.0"),
-    ("tokio", "1.53.1", "MIT"),
+    ("tokio", "1.54.1", "MIT"),
     ("tokio-util", "0.7.19", "MIT"),
     ("tracing", "0.1.44", "MIT"),
     ("tracing-appender", "0.2.5", "MIT"),
