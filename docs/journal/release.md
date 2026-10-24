@@ -5297,3 +5297,62 @@ No Rust changed and no live stack is involved; the test count is unchanged.
   WezTerm, Ghostty, kitty, foot, urxvt and tmux; the bridge, its pictures and its
   voice notes on real Telegram by the owner. The rented live gate was not run for
   this release.
+- **The draft, checked before anyone else could see it** (§6 step 5).
+  - The owner merged 831 (`6bee4337`, 16:39:15Z) and set `v0.22.0` on `6bee4337`,
+    which was `origin/main`.
+  - `release.yml` (run 40112594790) was green in all eight jobs in **14 min 17 s**
+    (the rehearsal: 16 min 11 s; 0.21.0: 12 min 05 s). macOS took the longest at
+    13 min 00 s, then Windows 10 min 36 s, Linux 9 min 27 s, and the demo 3 min 53 s.
+  - It left a draft that was not a prerelease, with fifteen assets — the same set as
+    0.21.0's. Its notes were the `[0.22.0]` section, compared as text with what
+    `release_guard.py --tag v0.22.0` cuts.
+  - **The six animation files and `install.sh` carry the rehearsal's digests**, so
+    the reels are the ones checked frame by frame there (Pillow 13, the dark English
+    GIF 0.21.0's to the pixel but for the self-model footer's `H history`).
+  - **The released Windows binary.** The zip matched `sha256sums.txt`; its
+    `mindfork.exe` says `mindfork 0.22.0`, and the archive has 48 entries, as 0.21.0's.
+- **The release's subject, on the released binary.**
+  - A copy of the dev data root (without the sandbox, the backups, the logs and the
+    CUDA cache: 272 chats at schema 6, the companion's profile with its bridge, voice
+    notes and follow-up notices) beside the zip's `mindfork.exe`. `mindfork import`
+    with an empty import file: exit 0, no `pre-migrate-*.zip` — there is no step —
+    and `settings.json`, `profiles.json` and `data.db` hash as before. `stats --json`:
+    272 chats, none unreadable, the newest schema 6.
+  - **Not the TUI on that copy.** Its profile has the bridge on and the owner's bot
+    token, readable on this machine: a second app would poll the same bot and take
+    the owner's updates (`getUpdates` confirms them). The interface was seen in
+    `mindfork demo` instead, whose data is thrown away: `console_probe`'s `Session`
+    drove the zip's binary to *Model/server* → *Recognition* — the fifth tab, the
+    `openai` mode, `gpt-transcribe`, the *Language (opt.)* row. The app exited 0.
+  - The copies were deleted afterwards: they held real chats.
+  - **Seen on the way, older than this release**: the hint under the *Model/server*
+    tab strip says *"Switch between assistant and impersonation settings"*, for five
+    tabs.
+- **Not run this time**: a live turn on the released binary, `console_probe`'s
+  `first-frame`, `small-window`, `full-mode` and `keys` on the zip's binary, the
+  attestations, the macOS archive's inspection, and the installer and the packages
+  beyond what their jobs install.
+- **Published, and the numbers of it.**
+  - **Published at 16:56:50Z by the agent, at the owner's explicit request** — AGENTS.md
+    §6 leaves that step to the owner, and the owner said to take it. It went out
+    2 min 44 s after the draft appeared (16:54:06Z).
+  - `crates-io.yml` (run 40113874196) ran 16:56:51Z → 16:59:12Z. `mindfork 0.22.0` was
+    on the registry at 16:59:06Z (4 825 530 bytes), **2 min 16 s** after the
+    publication.
+  - `Site` (run 40114047254) started 2 s after `crates.io` completed and deployed at
+    16:59:45Z — **2 min 55 s after the publication** (0.21.0: 3 min 01 s). The hold on
+    the merge had shown as before (run 40112556017): "Is this version out?" green, the
+    build and the deploy skipped.
+  - From outside:
+    - the post answers 200 at `/blog/mindfork-0-22-0/`;
+    - the home page's and the install page's structured data say
+      `"softwareVersion": "0.22.0"`;
+    - the blog's index, `/llms.txt`, the Atom feed and the sitemap list the post;
+    - the privacy page carries §3.12, *Speech recognition*;
+    - `releases/latest` resolves to `v0.22.0`;
+    - `mindfork.io/demo/mindfork-demo-dark-en.gif` is the draft's, byte for byte.
+- **The package managers.** `aur.yml` (run 40113874161) built and installed
+  `mindfork-rs-bin` 0.22.0 (`installed: mindfork 0.22.0`) and stopped at its notice,
+  because there is no key. At 17:00Z, Scoop's bucket and the tap's formula still named
+  0.21.0. The Excavator picks a release up within four hours, and the tap's schedule
+  (`23 */6`) next fires at 18:23Z. Neither was waited for.
