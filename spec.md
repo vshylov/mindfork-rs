@@ -5043,10 +5043,18 @@ as less than **40 s of sound** is queued — enough to hide the next chunk's syn
 slowest throughput measured, and no more paid for than a stop could throw away. Through 0.22.0
 the look-ahead was one *clip* and a reply went as one request per block: a heading's two seconds
 could not hide the next paragraph's twenty of synthesis, and the reply fell silent in the middle.
+**A stalled request is asked again**: once a chunk's request has run longer than the sound
+that was queued when it began — and at least 10 s, or every run's first chunk would go twice —
+the same chunk is asked for a second time and the first answer that is not a refusal is kept;
+the other request is dropped, closing its connection. Never a third; a refusal waits for the
+other request, and both refused is the later refusal. One request took 153 s where 3–15 s is
+usual — a two-minute silence the look-ahead could not hide. Speech nobody waits for (a Telegram
+voice note, sent whole) keeps one request per chunk.
 Every chunk leaves a line in the log — characters, synthesis time, sound, the sound queued when
 it began, and the **silence** the listener heard before it (read from the queue running dry, so
-`/tts pause` is not one) — and every run a summary: chunks, sound, the first sound's latency, the
-audible silences (≥ 250 ms) and whether it was stopped. Playback — a `rodio` queue inside the
+`/tts pause` is not one) and whether it was asked twice; a second request is logged when it
+goes, and so is which of the two answered; and every run a summary: chunks, sound, the first sound's latency, the audible silences
+(≥ 250 ms), the chunks asked twice and whether it was stopped. Playback — a `rodio` queue inside the
 process; when no audio device is available (headless/CI/no sound card) → a "audio unavailable"
 note, not a panic. Contract: `AppCommand::Tts(TtsScope)`/`TtsStop`,
 `AppEvent::TtsActive(bool)`.

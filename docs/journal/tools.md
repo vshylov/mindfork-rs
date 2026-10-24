@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (99)
+## Entries (100)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -111,6 +111,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the follow-up hold test, read at the due minute (done)
 - Post-M9: voice notes from the phone, and replies in voice — companion stage 6 C (done)
 - Post-M9: speech without pauses between a reply's blocks (done)
+- Post-M9: a stalled speech request asked again (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -6506,4 +6507,49 @@ F1–F9 the agent's, on that instruction).
   121.5 s a few seconds, at a second paid request for that chunk.
 
 **Gates**: 4388 unit tests green, 299 `#[ignore]`; clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check` clean.
+
+### Post-M9: a stalled speech request asked again (done)
+
+The previous entry's live run found a request that took 153.5 s where 3–15 s is
+usual — 121.5 s of silence no look-ahead hides, chunks being made one at a time. The
+owner, 2026-10-24: "a second request when a chunk's synthesis takes longer than the
+sound queued; take the first answer", a pull request of its own on top of
+`fix/tts-pauses` ([tts-pauses.md](../research/tts-pauses.md) §6, F10–F14, the agent's
+sub-decisions).
+
+- **`synthesize_hedged`**: the chunk's request runs while the caller's tick keeps
+  watching for the queue running dry; once it has run for `max(sound queued when it
+  began, HEDGE_FLOOR)` — 10 s, without which every run's first chunk would go twice —
+  the same chunk is asked again, once. The first answer that is not a refusal is kept
+  and the other request **dropped**, which closes its connection; a refusal waits for
+  the other request, both refused is the later refusal; a stop ends both. Telegram
+  voice notes keep one request per chunk (F14): nobody hears a silence in a note sent
+  whole.
+- **The log**: `speech: a chunk's synthesis stalled; asking again` (how long it had
+  run), `speech: a chunk asked twice is answered` (`by` which request, `ok`, after how
+  long), `hedged` on the chunk's line and `hedges` in the run's summary — an extra
+  request on the bill can be found.
+- **Tests** (+7): on the paused clock — a 120 s stall asked again at the floor, its
+  silence 11 s where it would have been 118, the second request's answer kept; a slow
+  chunk the queue covers not asked twice; the first chunk under the floor not asked
+  twice, past it asked; the original kept when it answers first; a refusal waiting
+  for the other request, two refusals ending the run with the later one; a stop ending
+  both; the session's 38 measured chunks asked for **once each**; the log lines. And
+  through the real `OpenAiTts` client against a socket that never answers the first
+  request: the second answer kept and the first connection **closed** (the server
+  reads its end). Fifteen consecutive runs of the speech tests, no flake —
+  `select!` takes ready branches in random order, so no test puts two events on one
+  instant (the floor-length chunk of the earlier tests moved to 9 s for it).
+- **Mutation check**, six mutants, all killed: floor 0, the queued sound ignored,
+  never asked again, a third request, a refusal ending at once, the loser leaked
+  instead of dropped (caught only by the socket test).
+- **Live, GO** (`gpt-4o-mini-tts`, `onyx`, the sound on the clock): the smoke's reply
+  — 5 requests, no silence, nothing asked twice (a 16.9 s chunk with 39.9 s queued
+  was covered, so not asked again); the owner's reply — 15 chunks, **no silence in
+  390 s of speech**, four 17–32 s chunks covered by the queue, the first chunk asked
+  twice at the floor and answered at 11.0 s. The smoke now also fails a request that
+  outlasted both the queue and the floor and was asked once.
+
+**Gates**: 4395 unit tests green, 299 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check` clean.

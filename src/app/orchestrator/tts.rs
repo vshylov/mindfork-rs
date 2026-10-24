@@ -15,6 +15,11 @@
 //! middle (docs/research/tts-pauses.md). Every chunk and every run leaves its
 //! timings in the log — synthesis, sound, and any silence the listener heard.
 //!
+//! A request that outlasts the sound queued when it began — a provider stall,
+//! measured once at 153 s where 3–15 s is usual — is asked a second time, and
+//! the first answer is kept ([`synthesize_hedged`], docs/research/tts-pauses.md
+//! §6).
+//!
 //! Stop points are collected into one helper [`Orchestrator::stop_tts`]
 //! (precedent — `reset_rag_cancel`): two by setting (switching chats, starting
 //! generation) and three **unconditional** — deleting an exchange,
@@ -40,7 +45,7 @@ use crate::features::tts_command::TtsScope;
 use crate::shared::config::SecretSlot;
 use crate::shared::i18n::Locale;
 use crate::shared::tts::{
-    GatewaySpeech, TtsEngine, TtsSetupError, engines_from_config,
+    AudioClip, GatewaySpeech, TtsEngine, TtsSetupError, engines_from_config,
     playback::{Playback, SpeechQueue},
 };
 
@@ -74,6 +79,12 @@ const CHUNK_STEP_CHARS: usize = 100;
 
 /// The soft size of every chunk once the run is under way.
 const CHUNK_CHARS: usize = 400;
+
+/// The least a request runs before it is asked a second time, whatever was
+/// queued: past what a chunk takes at the provider's usual speed (2.7–15 s
+/// measured), far short of a stall (153 s). Without it a run's first chunk —
+/// nothing queued — would always go twice (docs/research/tts-pauses.md F10).
+const HEDGE_FLOOR: Duration = Duration::from_secs(10);
 
 /// Pause after the queue drains — before closing the device (dropping
 /// [`Playback`]). The queue reports empty once the source is exhausted by the
@@ -542,6 +553,8 @@ struct ChunkTiming {
     /// it was being made. Zero for the run's first chunk — that wait is the
     /// first sound's, not a pause.
     silence: Duration,
+    /// Its synthesis stalled and it was asked for a second time.
+    hedged: bool,
 }
 
 /// What a speech run did, for its summary in the log.
@@ -583,6 +596,7 @@ fn spawn_tts<Q: SpeechQueue>(task: TtsTask<Q>) {
             first_sound_ms = run.first_sound.map(millis),
             silences = silences.len(),
             silence_ms = millis(silences.iter().sum()),
+            hedges = run.chunks.iter().filter(|c| c.hedged).count(),
             stopped = run.stopped,
             "speech: the run ended"
         );
@@ -616,6 +630,7 @@ async fn run_speech<Q: SpeechQueue>(task: &TtsTask<Q>) -> SpeechRun {
             sound_ms = millis(timing.sound),
             ahead_ms = millis(timing.ahead),
             silence_ms = millis(timing.silence),
+            hedged = timing.hedged,
             "speech: a chunk is queued"
         );
         run.chunks.push(timing);
@@ -682,14 +697,13 @@ async fn synth_chunk<Q: SpeechQueue>(
     };
     let mut dry_since = None;
     dry(&mut dry_since);
-    let synthesis = active.synthesize(chunk, &task.cancel);
-    tokio::pin!(synthesis);
-    let result = loop {
-        tokio::select! {
-            result = &mut synthesis => break result,
-            () = tokio::time::sleep(POLL_INTERVAL) => dry(&mut dry_since),
-        }
-    };
+    // Asked again once the request outlasts what was queued — the listener
+    // hears nothing from then on — but never before the floor.
+    let hedge_at = ahead.max(HEDGE_FLOOR);
+    let (result, hedged) = synthesize_hedged(active, chunk, &task.cancel, hedge_at, || {
+        dry(&mut dry_since);
+    })
+    .await;
     let synth = begun.elapsed();
     let clip = match result {
         Ok(clip) => clip,
@@ -722,7 +736,78 @@ async fn synth_chunk<Q: SpeechQueue>(
         sound,
         ahead,
         silence: dry_since.map_or(Duration::ZERO, |since| since.elapsed()),
+        hedged,
     })
+}
+
+/// One request in flight: what `TtsEngine::synthesize` returns.
+type Synthesis<'a> =
+    std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<AudioClip>> + Send + 'a>>;
+
+/// Synthesizes `chunk`, asking a second time once the first request has run
+/// for `hedge_at`, and keeps the first answer that is not a refusal; the other
+/// request is dropped, which closes its connection. A refusal while the other
+/// runs waits for it; both refused — the later refusal. Never a third request.
+/// `tick` runs every [`POLL_INTERVAL`] meanwhile. `true` beside the answer when
+/// the second request was sent (docs/research/tts-pauses.md F10–F12).
+async fn synthesize_hedged(
+    engine: &dyn TtsEngine,
+    chunk: &str,
+    cancel: &CancellationToken,
+    hedge_at: Duration,
+    mut tick: impl FnMut(),
+) -> (anyhow::Result<AudioClip>, bool) {
+    let begun = Instant::now();
+    let mut first: Option<Synthesis<'_>> = Some(engine.synthesize(chunk, cancel));
+    let mut second: Option<Synthesis<'_>> = None;
+    let mut hedged = false;
+    loop {
+        // Which request answered, and with what.
+        let (from_first, result) = tokio::select! {
+            result = async { first.as_mut().expect("guarded").await }, if first.is_some() => (true, result),
+            result = async { second.as_mut().expect("guarded").await }, if second.is_some() => (false, result),
+            () = tokio::time::sleep(POLL_INTERVAL) => {
+                tick();
+                if !hedged && begun.elapsed() >= hedge_at && !cancel.is_cancelled() {
+                    tracing::info!(
+                        chars = chunk.chars().count(),
+                        waited_ms = millis(begun.elapsed()),
+                        "speech: a chunk's synthesis stalled; asking again"
+                    );
+                    second = Some(engine.synthesize(chunk, cancel));
+                    hedged = true;
+                }
+                continue;
+            }
+        };
+        if from_first {
+            first = None;
+        } else {
+            second = None;
+        }
+        let other_runs = first.is_some() || second.is_some();
+        match result {
+            Err(err) if other_runs && !cancel.is_cancelled() => {
+                tracing::info!(error = %err, "speech: one of a chunk's two requests was refused; waiting for the other");
+            }
+            result => {
+                if hedged {
+                    // Whether the second request paid for itself.
+                    tracing::info!(
+                        by = if from_first {
+                            "the first request"
+                        } else {
+                            "the second request"
+                        },
+                        ok = result.is_ok(),
+                        waited_ms = millis(begun.elapsed()),
+                        "speech: a chunk asked twice is answered"
+                    );
+                }
+                return (result, hedged);
+            }
+        }
+    }
 }
 
 /// A duration in whole milliseconds, for the log.

@@ -112,16 +112,17 @@ async fn a_structured_reply_plays_without_a_silence_live() {
         .expect("the run ends within ten minutes");
 
     eprintln!("{model}/{voice}: {blocks} blocks in {requests} requests");
-    eprintln!("chunk  chars  synth_s  sound_s  ahead_s  silence_s");
+    eprintln!("chunk  chars  synth_s  sound_s  ahead_s  silence_s  asked");
     for (i, c) in run.chunks.iter().enumerate() {
         eprintln!(
-            "{:>5}  {:>5}  {:>7.2}  {:>7.2}  {:>7.2}  {:>9.2}",
+            "{:>5}  {:>5}  {:>7.2}  {:>7.2}  {:>7.2}  {:>9.2}  {}",
             i + 1,
             c.chars,
             c.synth.as_secs_f64(),
             c.sound.as_secs_f64(),
             c.ahead.as_secs_f64(),
-            c.silence.as_secs_f64()
+            c.silence.as_secs_f64(),
+            if c.hedged { "twice" } else { "once" }
         );
     }
     if let Ok(event) = events.try_recv() {
@@ -151,6 +152,16 @@ async fn a_structured_reply_plays_without_a_silence_live() {
             c.synth,
             c.ahead
         );
+        // And a request that outlasted both what was queued and the floor was
+        // asked for a second time (docs/research/tts-pauses.md §6).
+        if c.synth > c.ahead.max(HEDGE_FLOOR) + 2 * POLL_INTERVAL {
+            assert!(
+                c.hedged,
+                "chunk {}: stalled for {:?} and asked once",
+                i + 1,
+                c.synth
+            );
+        }
         eprintln!(
             "NOTE: chunk {} took {:.1} s to make with {:.1} s queued: {:.1} s of silence, the provider's",
             i + 1,
@@ -160,9 +171,10 @@ async fn a_structured_reply_plays_without_a_silence_live() {
         );
     }
     let silences = run.audible_silences().count();
+    let hedges = run.chunks.iter().filter(|c| c.hedged).count();
     let sound: Duration = run.chunks.iter().map(|c| c.sound).sum();
     eprintln!(
-        "GO: first sound after {:.2} s, {:.0} s of speech, {silences} silence(s), none the pipeline's",
+        "GO: first sound after {:.2} s, {:.0} s of speech, {silences} silence(s), none the pipeline's; {hedges} chunk(s) asked twice",
         run.first_sound.unwrap_or_default().as_secs_f64(),
         sound.as_secs_f64()
     );

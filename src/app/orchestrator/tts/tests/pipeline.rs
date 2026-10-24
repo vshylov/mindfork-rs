@@ -80,11 +80,13 @@ impl SpeechQueue for ClockQueue {
 }
 
 /// An engine that answers request `i` after `script[i].0` with `script[i].1`
-/// of sound — or refuses request `fail_at`.
+/// of sound — or, for a request in `refused`, refuses after `script[i].0`.
+/// Requests are counted in the order they are made, a second request for a
+/// stalled chunk included.
 struct ScriptEngine {
     script: Vec<(Duration, Duration)>,
     calls: AtomicUsize,
-    fail_at: Option<usize>,
+    refused: Vec<usize>,
 }
 
 #[async_trait::async_trait]
@@ -95,13 +97,13 @@ impl TtsEngine for ScriptEngine {
         cancel: &CancellationToken,
     ) -> anyhow::Result<AudioClip> {
         let i = self.calls.fetch_add(1, Ordering::SeqCst);
-        if self.fail_at == Some(i) {
-            anyhow::bail!("the provider refused");
-        }
         let (synth, length) = self.script[i];
         tokio::select! {
             () = cancel.cancelled() => anyhow::bail!("speech synthesis cancelled"),
             () = tokio::time::sleep(synth) => {}
+        }
+        if self.refused.contains(&i) {
+            anyhow::bail!("the provider refused request {i}");
         }
         Ok(sound(u64::try_from(length.as_millis()).unwrap()))
     }
@@ -111,11 +113,22 @@ impl TtsEngine for ScriptEngine {
     }
 }
 
-/// A run over `script` — `(synthesis ms, sound ms)` per chunk — into `queue`,
-/// and the feed's end of its events.
+/// A run over `script` — `(synthesis ms, sound ms)` per request, one request
+/// per chunk — into `queue`, and the feed's end of its events.
 fn task(
     script: &[(u64, u64)],
-    fail_at: Option<usize>,
+    refused: &[usize],
+    queue: Arc<ClockQueue>,
+) -> (TtsTask<ClockQueue>, UnboundedReceiver<AppEvent>) {
+    chunks_task(script.len(), script, refused, queue)
+}
+
+/// [`task`] over `chunks` chunks, the script naming every request in the
+/// order made — a stalled chunk's second request too.
+fn chunks_task(
+    chunks: usize,
+    script: &[(u64, u64)],
+    refused: &[usize],
     queue: Arc<ClockQueue>,
 ) -> (TtsTask<ClockQueue>, UnboundedReceiver<AppEvent>) {
     let (evt_tx, evt_rx) = unbounded_channel();
@@ -126,12 +139,12 @@ fn task(
             .map(|(s, l)| (Duration::from_millis(*s), Duration::from_millis(*l)))
             .collect(),
         calls: AtomicUsize::new(0),
-        fail_at,
+        refused: refused.to_vec(),
     };
     let task = TtsTask {
         engine: Box::new(engine),
         user_engine: None,
-        chunks: (0..script.len())
+        chunks: (0..chunks)
             .map(|i| (MessageRole::Assistant, format!("chunk {i}.")))
             .collect(),
         cancel: CancellationToken::new(),
@@ -204,7 +217,7 @@ const SESSION: [(u64, u64); 38] = [
 #[tokio::test(start_paused = true)]
 async fn the_sessions_reply_plays_without_a_silence() {
     let queue = Arc::new(ClockQueue::default());
-    let (task, _events) = task(&SESSION, None, queue.clone());
+    let (task, _events) = task(&SESSION, &[], queue.clone());
     let run = bounded(&task).await;
     assert_eq!(run.chunks.len(), 38);
     assert!(!run.stopped);
@@ -220,6 +233,12 @@ async fn the_sessions_reply_plays_without_a_silence() {
         "silences before these chunks: {silences:?}"
     );
     assert_eq!(run.first_sound, Some(Duration::from_millis(4243)));
+    // At the provider's measured speeds nothing is asked for twice: the
+    // slowest chunk (26.7 s) began with more than that queued.
+    assert!(
+        run.chunks.iter().all(|c| !c.hedged),
+        "a chunk was asked twice"
+    );
     // And the queue's own record agrees: every clip starts where the one
     // before it ends.
     let clips = queue.clips.lock().unwrap();
@@ -235,14 +254,15 @@ async fn the_sessions_reply_plays_without_a_silence() {
 #[tokio::test(start_paused = true)]
 async fn a_silence_is_measured_from_the_dry_queue_to_the_next_clip() {
     let queue = Arc::new(ClockQueue::default());
-    // Two seconds of sound, then a chunk that takes ten to make.
-    let (task, _events) = task(&[(1_000, 2_000), (10_000, 1_000)], None, queue);
+    // Two seconds of sound, then a chunk that takes nine to make — under the
+    // floor, so it is not asked for twice.
+    let (task, _events) = task(&[(1_000, 2_000), (9_000, 1_000)], &[], queue);
     let run = bounded(&task).await;
     assert_eq!(run.chunks[0].silence, Duration::ZERO);
     let silence = run.chunks[1].silence;
-    // Dry at 3 s, the clip in at 11 s.
-    let off = silence.abs_diff(Duration::from_secs(8));
-    assert!(off <= POLL_INTERVAL, "{silence:?}, not ~8 s");
+    // Dry at 3 s, the clip in at 10 s.
+    let off = silence.abs_diff(Duration::from_secs(7));
+    assert!(off <= POLL_INTERVAL, "{silence:?}, not ~7 s");
     assert_eq!(run.audible_silences().count(), 1);
     assert_eq!(run.first_sound, Some(Duration::from_secs(1)));
 }
@@ -255,7 +275,7 @@ async fn synthesis_waits_once_the_lookahead_is_queued() {
     let queue = Arc::new(ClockQueue::default());
     // Quick to make, thirty seconds each.
     let script = [(100, 30_000); 8];
-    let (task, _events) = task(&script, None, queue);
+    let (task, _events) = task(&script, &[], queue);
     let run = bounded(&task).await;
     for (i, chunk) in run.chunks.iter().enumerate() {
         assert!(
@@ -282,7 +302,7 @@ async fn a_stopped_run_stops_the_queue_in_silence() {
     let queue = Arc::new(ClockQueue::default());
     let (task, mut events) = task(
         &[(1_000, 5_000), (60_000, 5_000), (1_000, 5_000)],
-        None,
+        &[],
         queue.clone(),
     );
     let cancel = task.cancel.clone();
@@ -307,7 +327,7 @@ async fn a_refused_chunk_ends_the_run_and_says_why() {
     let queue = Arc::new(ClockQueue::default());
     let (task, mut events) = task(
         &[(1_000, 5_000), (1_000, 5_000), (1_000, 5_000)],
-        Some(1),
+        &[1],
         queue.clone(),
     );
     let run = bounded(&task).await;
@@ -355,16 +375,23 @@ async fn the_log_tells_each_chunk_and_the_runs_silences() {
     // The run is spawned on this test's thread (a current-thread runtime).
     let _guard = tracing::subscriber::set_default(subscriber);
 
-    let queue = Arc::new(ClockQueue::default());
-    let (mut task, _events) = task(&[(1_000, 2_000), (10_000, 1_000)], None, queue);
-    let (done_tx, mut done_rx) = unbounded_channel();
-    task.done_tx = done_tx;
-    let id = task.task_id;
-    spawn_tts(task);
-    let done = tokio::time::timeout(Duration::from_secs(3_600), done_rx.recv())
-        .await
-        .expect("the run ends");
-    assert_eq!(done, Some(id));
+    // Two runs, one after the other: one with a silence, one with a stall.
+    let runs = [
+        (2, vec![(1_000, 2_000), (9_000, 1_000)]),
+        (2, vec![(1_000, 2_000), (120_000, 5_000), (3_000, 4_000)]),
+    ];
+    for (chunks, script) in runs {
+        let queue = Arc::new(ClockQueue::default());
+        let (mut task, _events) = chunks_task(chunks, &script, &[], queue);
+        let (done_tx, mut done_rx) = unbounded_channel();
+        task.done_tx = done_tx;
+        let id = task.task_id;
+        spawn_tts(task);
+        let done = tokio::time::timeout(Duration::from_secs(3_600), done_rx.recv())
+            .await
+            .expect("the run ends");
+        assert_eq!(done, Some(id));
+    }
 
     let out = String::from_utf8_lossy(&log.0.lock().unwrap()).into_owned();
     let line = |what: &str, n: usize| -> String {
@@ -381,15 +408,17 @@ async fn the_log_tells_each_chunk_and_the_runs_silences() {
         "synth_ms=1000",
         "sound_ms=2000",
         "silence_ms=0",
+        "hedged=false",
     ] {
         assert!(first.contains(field), "{field} missing: {first}");
     }
     let second = line("speech: a chunk is queued", 1);
     for field in [
         "chunk=2",
-        "synth_ms=10000",
+        "synth_ms=9000",
         "sound_ms=1000",
         "ahead_ms=2000",
+        "hedged=false",
     ] {
         assert!(second.contains(field), "{field} missing: {second}");
     }
@@ -399,16 +428,232 @@ async fn the_log_tells_each_chunk_and_the_runs_silences() {
         "sound_s=3",
         "first_sound_ms=1000",
         "silences=1",
+        "hedges=0",
         "stopped=false",
     ] {
         assert!(ended.contains(field), "{field} missing: {ended}");
     }
-    // The silence itself: dry at 3 s, the clip in at 11 s, to the poll.
+    // The stalled run: the second request is told when it goes, on the
+    // chunk's line, and in the summary — a bill's extra request can be found.
+    let stalled = line("speech: a chunk's synthesis stalled; asking again", 0);
+    assert!(stalled.contains("waited_ms=10000"), "{stalled}");
+    let answered = line("speech: a chunk asked twice is answered", 0);
+    for field in ["by=\"the second request\"", "ok=true", "waited_ms=13000"] {
+        assert!(answered.contains(field), "{field} missing: {answered}");
+    }
+    let hedged = line("speech: a chunk is queued", 3);
+    assert!(hedged.contains("hedged=true"), "{hedged}");
+    let ended_stalled = line("speech: the run ended", 1);
+    assert!(ended_stalled.contains("hedges=1"), "{ended_stalled}");
+    // The silence itself: dry at 3 s, the clip in at 10 s, to the poll.
     let silence: u64 = ended
         .split("silence_ms=")
         .nth(1)
         .and_then(|rest| rest.split_whitespace().next())
         .and_then(|n| n.parse().ok())
         .unwrap_or_else(|| panic!("no silence_ms: {ended}"));
-    assert!((7_920..=8_080).contains(&silence), "{silence} ms: {ended}");
+    assert!((6_920..=7_080).contains(&silence), "{silence} ms: {ended}");
+}
+
+/// A request that outlasts the sound queued when it began — a provider stall,
+/// measured once at 153 s — is asked a second time, and the first answer is
+/// kept: the 118 s of silence it would have made become 11.
+#[tokio::test(start_paused = true)]
+async fn a_stalled_chunk_is_asked_again_and_the_first_answer_kept() {
+    let queue = Arc::new(ClockQueue::default());
+    // Chunk 1 begins at 1 s with 2 s queued; its request stalls for 120 s.
+    // Asked again at the floor (10 s), the second request answers in 3.
+    let script = [(1_000, 2_000), (120_000, 5_000), (3_000, 4_000)];
+    let (task, mut events) = chunks_task(2, &script, &[], queue);
+    let run = bounded(&task).await;
+    assert!(!run.stopped);
+    assert!(!run.chunks[0].hedged);
+    let stalled = run.chunks[1];
+    assert!(stalled.hedged, "the stalled chunk was asked again");
+    // The second request's answer, not the stalled one's.
+    assert_eq!(stalled.sound, Duration::from_secs(4));
+    // Dry at 3 s; asked again at 11 s (to the poll), answered at 14 s.
+    let off = stalled.silence.abs_diff(Duration::from_secs(11));
+    assert!(off <= 2 * POLL_INTERVAL, "{:?}, not ~11 s", stalled.silence);
+    assert!(
+        stalled.synth < Duration::from_secs(14),
+        "{:?}",
+        stalled.synth
+    );
+    assert!(events.try_recv().is_err(), "nothing said to the feed");
+}
+
+/// The rule is the user's: a request is asked again only once it outlasts
+/// what was queued when it began. A slow chunk that the queue still covers is
+/// not.
+#[tokio::test(start_paused = true)]
+async fn a_slow_chunk_the_queue_covers_is_not_asked_twice() {
+    let queue = Arc::new(ClockQueue::default());
+    // Chunk 1 begins with 30 s queued and takes 25 s: slow, and covered.
+    let (task, _events) = task(&[(1_000, 30_000), (25_000, 10_000)], &[], queue);
+    let run = bounded(&task).await;
+    assert_eq!(run.chunks.len(), 2);
+    assert!(run.chunks.iter().all(|c| !c.hedged), "{:?}", run.chunks);
+    assert!(run.chunks[1].silence.is_zero());
+}
+
+/// The floor: with nothing queued — the run's first chunk — a request is not
+/// asked again before 10 s; past them, it is.
+#[tokio::test(start_paused = true)]
+async fn the_first_chunk_waits_for_the_floor_before_asking_again() {
+    let queue = Arc::new(ClockQueue::default());
+    let (task, _events) = chunks_task(1, &[(9_000, 2_000)], &[], queue);
+    let run = bounded(&task).await;
+    assert!(!run.chunks[0].hedged, "9 s is under the floor");
+
+    let queue = Arc::new(ClockQueue::default());
+    let (task, _events) = chunks_task(1, &[(30_000, 2_000), (2_000, 3_000)], &[], queue);
+    let run = bounded(&task).await;
+    assert!(run.chunks[0].hedged, "30 s is past it");
+    assert_eq!(
+        run.chunks[0].sound,
+        Duration::from_secs(3),
+        "the second answered first"
+    );
+    assert_eq!(run.first_sound, Some(Duration::from_secs(12)));
+}
+
+/// The first answer wins whichever request gives it: a stalled request that
+/// answers before the second is kept.
+#[tokio::test(start_paused = true)]
+async fn the_original_request_wins_if_it_answers_first() {
+    let queue = Arc::new(ClockQueue::default());
+    // Asked again at 10 s; the original answers at 12 s, the second would at 40.
+    let (task, _events) = chunks_task(1, &[(12_000, 2_000), (30_000, 9_000)], &[], queue);
+    let run = bounded(&task).await;
+    assert!(run.chunks[0].hedged);
+    assert_eq!(
+        run.chunks[0].sound,
+        Duration::from_secs(2),
+        "the original's answer"
+    );
+    assert_eq!(run.first_sound, Some(Duration::from_secs(12)));
+}
+
+/// A refusal while the other request runs waits for the other; only both
+/// refused end the run — with the later refusal's words.
+#[tokio::test(start_paused = true)]
+async fn one_refusal_waits_for_the_other_and_two_end_the_run() {
+    // The second request is refused at once; the stalled first answers at 50 s.
+    let queue = Arc::new(ClockQueue::default());
+    let (task, mut events) = chunks_task(1, &[(50_000, 2_000), (100, 0)], &[1], queue);
+    let run = bounded(&task).await;
+    assert!(!run.stopped, "the other request answered");
+    assert_eq!(run.chunks[0].sound, Duration::from_secs(2));
+    assert!(events.try_recv().is_err(), "nothing said to the feed");
+
+    // Both refused: the first at 30 s, the second at 40 s (asked at 10).
+    let queue = Arc::new(ClockQueue::default());
+    let (task, mut events) = chunks_task(1, &[(30_000, 2_000), (30_000, 2_000)], &[0, 1], queue);
+    let run = bounded(&task).await;
+    assert!(run.stopped);
+    assert!(run.chunks.is_empty());
+    match events.try_recv() {
+        Ok(AppEvent::Error(msg)) => assert!(msg.contains("refused request 1"), "{msg}"),
+        other => panic!("expected the later refusal in the feed, got {other:?}"),
+    }
+}
+
+/// A stop ends both requests, in silence.
+#[tokio::test(start_paused = true)]
+async fn a_stop_ends_both_requests() {
+    let queue = Arc::new(ClockQueue::default());
+    let (task, mut events) = chunks_task(1, &[(60_000, 2_000), (60_000, 2_000)], &[], queue);
+    let cancel = task.cancel.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(15)).await;
+        cancel.cancel();
+    });
+    let started = Instant::now();
+    let run = bounded(&task).await;
+    assert!(run.stopped);
+    assert!(run.chunks.is_empty());
+    assert!(
+        started.elapsed() < Duration::from_secs(16),
+        "{:?}",
+        started.elapsed()
+    );
+    assert!(events.try_recv().is_err(), "nothing said to the feed");
+}
+
+/// Through the real client, against a server that never answers the first
+/// request: the second is sent at `hedge_at`, its answer kept, and the first
+/// request's connection **closed** — so the provider stops making what nobody
+/// will hear. Real sockets, so a real clock, bounded everywhere.
+#[tokio::test]
+async fn a_stalled_request_is_dropped_on_the_wire_when_the_second_answers() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    use crate::shared::http_stub::whole_request;
+    use crate::shared::tts::openai::OpenAiTts;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/v1", listener.local_addr().unwrap());
+    let bound = Duration::from_secs(10);
+    let server = tokio::spawn(async move {
+        // The first request: read, never answered.
+        let (mut stalled, _) = tokio::time::timeout(bound, listener.accept())
+            .await
+            .expect("the first request")
+            .unwrap();
+        let first = whole_request(&mut stalled).await;
+        // The second: answered with a second of raw PCM.
+        let (mut answered, _) = tokio::time::timeout(bound, listener.accept())
+            .await
+            .expect("the second request")
+            .unwrap();
+        let second = whole_request(&mut answered).await;
+        let pcm = vec![0u8; 48_000];
+        let head = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: audio/pcm\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            pcm.len()
+        );
+        answered.write_all(head.as_bytes()).await.unwrap();
+        answered.write_all(&pcm).await.unwrap();
+        answered.flush().await.unwrap();
+        // The client must hang up on the first: a read sees the end.
+        let mut buf = [0u8; 64];
+        let hung_up = tokio::time::timeout(bound, stalled.read(&mut buf)).await;
+        (first, second, hung_up.map(|r| r.map_err(|e| e.kind())))
+    });
+
+    let engine = OpenAiTts::cloud(url, "test-key".into(), "tts-model".into(), None, None, 1.0);
+    let cancel = CancellationToken::new();
+    let mut ticks = 0;
+    let (result, hedged) = tokio::time::timeout(
+        bound,
+        synthesize_hedged(
+            &engine,
+            "Проверка.",
+            &cancel,
+            Duration::from_millis(300),
+            || {
+                ticks += 1;
+            },
+        ),
+    )
+    .await
+    .expect("an answer within the bound");
+    assert!(hedged, "the second request was sent");
+    assert!(ticks > 0, "the caller's tick ran while it waited");
+    match result.expect("the second request's answer") {
+        AudioClip::Pcm { bytes, .. } => assert_eq!(bytes.len(), 48_000),
+        other => panic!("raw PCM expected, got {other:?}"),
+    }
+    let (first, second, hung_up) = server.await.unwrap();
+    assert_eq!(
+        crate::shared::http_stub::body_of(&first),
+        crate::shared::http_stub::body_of(&second),
+        "the same chunk asked twice"
+    );
+    assert_eq!(
+        hung_up,
+        Ok(Ok(0)),
+        "the stalled request's connection was closed"
+    );
 }

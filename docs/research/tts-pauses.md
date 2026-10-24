@@ -4,7 +4,9 @@
 for all three changes proposed after the diagnosis: look-ahead by seconds of
 audio, the speech timings in the log, and short blocks packed together (a heading
 with its paragraph, a list's items together), "the full cycle to a PR". The
-sub-decisions below (F1–F9) are the agent's, taken on that instruction.
+sub-decisions below (F1–F9) are the agent's, taken on that instruction. The live
+run found a provider stall no look-ahead hides; a second request for a stalled
+chunk followed, at the owner's word, in `fix/tts-stalled-chunk` (§6, F10–F14).
 
 Related: [tts.md](tts.md) (the speech research; §13 "grown pauses"), spec §11.9,
 [docs/journal/tools.md](../journal/tools.md).
@@ -155,9 +157,50 @@ for 12.3 s of sound, so the first sound came late, as it would have before), onc
 at its usual speed (first sound 2.7 s, 113 s of speech). The tightest margin was
 the ramp's second chunk: made in 12.45 s with 12.75 s queued.
 
-**Not built, proposed: a second request for a stalled one.** When a chunk's
-synthesis outlasts the sound queued when it began — the listener is about to
-hear nothing — ask for the same chunk again and take whichever answer comes
-first, cancelling the other. It would have turned the 121.5 s into a few seconds,
-at the price of a second paid request for that chunk alone. It changes what is
-paid for, so it is the owner's call, and a change of its own.
+**Proposed: a second request for a stalled one.** When a chunk's synthesis
+outlasts the sound queued when it began — the listener is about to hear nothing
+— ask for the same chunk again and take whichever answer comes first, cancelling
+the other. It would have turned the 121.5 s into a few seconds, at the price of a
+second paid request for that chunk alone. It changes what is paid for, so it was
+the owner's call, and a change of its own (§6).
+
+## 6. A stalled chunk asked for again
+
+The owner, 2026-10-24, after §5: "a second request when a chunk's synthesis
+takes longer than the sound queued; take the first answer" — a pull request of
+its own on top of `fix/tts-pauses`, the full cycle. Sub-decisions the agent's:
+
+**F10 — when.** When the request has run longer than the sound that was queued
+when it began — from then on the listener hears nothing — and **not before 10 s**
+of it. Without the floor the first chunk of every run (nothing queued) and every
+chunk after a silence would always go twice. 10 s is past what a chunk takes at
+the provider's usual speed (2.7–15 s measured for up to 400 characters, the first
+chunk's 200 at 2.7 s) and far short of a stall (153.5 s).
+
+**F11 — how many.** One more, never a third: a provider that stalls twice for
+one chunk is having a bad minute, and a third request pays for it again.
+
+**F12 — which answer.** The first that is **not a refusal**; the other request is
+dropped, which closes its connection, so the provider stops making it. A refusal
+while the other request runs waits for the other; both refused — the later
+refusal is told, as one refusal was before. Cancellation (a stop) ends both.
+
+**F13 — the log.** A line when the second request goes (`speech: a chunk's
+synthesis stalled; asking again`, how long the first had run), a line when one
+answers (`speech: a chunk asked twice is answered`, `by` the first request or the
+second — whether the second paid for itself), `hedged` on the chunk's line,
+`hedges` in the run's summary — so a bill's extra request can be found in the log.
+
+**Live** (2026-10-24, `gpt-4o-mini-tts`, `onyx`, the sound on the clock): the
+smoke's reply — 5 requests, no silence, **no chunk asked twice** (one took 16.9 s
+with 39.9 s queued: covered, so not asked again). The owner's reply — 15 chunks,
+**no silence in 390 s of speech**; four chunks took 17–32 s, each covered by the
+~40 s queued; the first chunk was asked twice — its request still running at the
+10 s floor with nothing queued — and answered at 11.0 s (which request answered was
+not logged yet; it is now). Through the real client against a server that never
+answers the first request, that request's connection is closed the moment the
+second answers (`a_stalled_request_is_dropped_on_the_wire_when_the_second_answers`).
+
+**F14 — where.** Speech the listener waits for only. A Telegram voice note is sent
+whole when it is ready; nobody hears a silence in it, so it keeps one request per
+chunk.

@@ -292,7 +292,10 @@ src/
 │  │  │                     message's blocks packed sentence by sentence, 200 → 300
 │  │  │                     → 400 characters, `chunk_utterances`) → synth/playback
 │  │  │                     pipeline that keeps `LOOKAHEAD` (40 s) of sound queued
-│  │  │                     ahead and logs every chunk's and every run's timings —
+│  │  │                     ahead, asks a stalled chunk a second time
+│  │  │                     (`synthesize_hedged`: past what was queued, ≥ 10 s; the
+│  │  │                     first answer kept, the other dropped) and logs every
+│  │  │                     chunk's and every run's timings —
 │  │  │                     synthesis, sound, the silence heard (`run_speech`, over a
 │  │  │                     `SpeechQueue`; tests in tts/tests/: pipeline.rs on a paused
 │  │  │                     clock, live.rs `#[ignore]`) — stop points (§11.9); one
