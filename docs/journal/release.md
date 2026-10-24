@@ -5172,7 +5172,9 @@ a pull request installs that file.
   x86_64 manylinux and Windows, plus a pure-Python wheel where one is published.
   Pillow's 83 hashes — a Dependabot pull request lists every file of the version,
   the source archive included — are cut to the six wheels the rule names, and
-  fontTools' two cp310 hashes are dropped. The header says why the job has a
+  fontTools' two cp310 hashes are dropped. Brotli 1.2.1 came in by #829, merged
+  first with 143 hashes; `main` was merged into this branch and they are cut to
+  the rule's six — each one among #829's. The header says why the job has a
   Python of its own and that a Dependabot pull request has to be cut back.
 - [demo-reel.md](../research/demo-reel.md) §3.6 says which Python the job runs.
 - Pillow 13's removals — saving an I-mode PNG, `fromarray`'s type-changing
@@ -5184,10 +5186,11 @@ a pull request installs that file.
   branch's is refused — `No matching distribution found for pillow==13.0.0`,
   exit 1. That is the defect, reproduced.
 - Python 3.13.17 from the archive `setup-python` downloads for ubuntu-22.04
-  (`actions/python-versions`, installed by its own `setup.sh`). `main`'s file,
-  the branch's, and the branch's with Brotli 1.2.1 cut to the same rule (#829's
-  version) each install with `--require-hashes`, and `tools/demo_reel.py` draws
-  the three reels in 36–38 s, exit 0.
+  (`actions/python-versions`, installed by its own `setup.sh`). Three files each
+  install with `--require-hashes`: `main`'s, the branch's before Brotli moved,
+  and the branch's with Brotli 1.2.1 cut to the rule. With each,
+  `tools/demo_reel.py` draws the three reels in 36–38 s, exit 0. Run again on the
+  file as merged, after #829: the same.
 - The six files are **byte-identical** across the three: Pillow 12.3.0 vs
   13.0.0, Brotli 1.2.0 vs 1.2.1 — the same 92, 82 and 92 frames, pixels and
   durations.
