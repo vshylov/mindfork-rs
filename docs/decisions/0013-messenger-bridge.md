@@ -2,8 +2,9 @@
 
 **Status:** accepted (2026-10-23) — the owner chose D1 (a), D2 (a), D3 (a), D4 (a)
 and D5 (b) (*User's decision* below). Stage B built (`feat/messenger-bridge`; spec
-§11.13, [docs/journal/tools.md](../journal/tools.md)); stage C's forks (D6–D9) proposed
-2026-10-24 after a probe (*Stage C* below). The track's
+§11.13, [docs/journal/tools.md](../journal/tools.md)); stage C's forks (D6–D9) decided
+by the owner on 2026-10-24 after a probe — D6 (a), D7 (a), D8 (b), D9 (a) (*Stage C*
+below). The track's
 design and the forks already decided (F6 (a) with Telegram first, F9 (a), F10 (a)) —
 [docs/research/companion-platform.md](../research/companion-platform.md) C5, §7, §8,
 §9 stage 6. Related: [ADR 0008](0008-api-key-storage.md) (the bot's token is a
@@ -187,7 +188,7 @@ finished reply as a message; thoughts and tool cards stay at the terminal**
 - **Later** — Matrix, for end-to-end encryption and for people Telegram does not
   reach (research C5, *Channels*).
 
-## Stage C — voice notes (proposed 2026-10-24)
+## Stage C — voice notes (decided 2026-10-24)
 
 The probe that was to decide where speech is recognised is research §3.8. What it
 found that shapes the forks below:
@@ -253,6 +254,14 @@ fails, the text has already arrived.
 characters, so a longer reply still needs a second message, and nothing arrives until
 the voice is ready.
 (c) The voice note alone; the text only at the terminal.
+
+### User's decision (2026-10-24)
+
+- **D6: (a)** — a speech-recognition slot of its own: `openai`, `openrouter`, `external`.
+- **D7: (a)** — the transcript as the person's message, marked as spoken; the
+  recording not kept.
+- **D8: (b)** — a voice note answered by a voice note, a typed message by text.
+- **D9: (a)** — the text at once, the voice note when it is ready.
 
 ### Rules that are not forks
 
