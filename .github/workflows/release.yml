@@ -246,6 +246,14 @@ jobs:
           && sudo apt-get install -y --no-install-recommends libasound2-dev fonts-dejavu-core fonts-wqy-microhei
       - name: Play the reels
         run: cargo test --locked dump_demo_reel -- --ignored
+      # A Python of its own, not the runner's: ubuntu-22.04's `python3` is 3.10,
+      # which Pillow 13 dropped (`Requires-Python >=3.11`, no cp310 wheel), so
+      # the step below would find nothing to install and the release would go
+      # out without its animation. 3.13 is the newest the file's hashes name.
+      - name: Python 3.13
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.13"
       # Exact versions, and only the wheels the file's hashes name.
       - name: Python packages (hash-pinned)
         timeout-minutes: 5
