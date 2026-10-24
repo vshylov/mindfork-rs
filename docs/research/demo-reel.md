@@ -142,7 +142,11 @@ interface change, and the animation always shows the released version.
   the job rather than shipping as tofu.
 - **Pinned Python.** Pillow, fontTools and Brotli install from
   `tools/media-requirements.txt` with `--require-hashes`: what draws a release
-  asset is pinned the way the workflow's actions and nfpm are.
+  asset is pinned the way the workflow's actions and nfpm are. Since Pillow 13
+  (2026-10-24) the job brings a Python 3.13 of its own (`actions/setup-python`):
+  Pillow 13 dropped 3.10, the `python3` of `ubuntu-22.04` that §8 measured on, and
+  the file's hashes name CPython 3.11–3.13 wheels
+  ([journal](../journal/release.md), "Pillow 13 for the demo reel").
 - **The site takes it from the newest release that has it.** `site.yml`'s deploy
   asks the API for the newest published, non-prerelease release whose assets
   include `mindfork-demo-*` and downloads them into `site/static/demo/`; a

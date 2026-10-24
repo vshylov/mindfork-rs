@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (80)
+## Entries (81)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -92,6 +92,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Release 0.19.0 (prepared)
 - Release 0.20.0 (prepared)
 - Release 0.21.0 (prepared)
+- Post-M9: Pillow 13 for the demo reel — a Python of the job's own (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -5148,3 +5149,50 @@ macos.md §3 and §12 point at the tag.
   stopped at its notice, because there is no key. At 03:24Z, Scoop's bucket and the tap's
   formula still named 0.20.0. The Excavator picks a release up within four hours, and
   the tap's schedule (`23 */6`) next fires at 06:23Z. Neither was waited for.
+
+### Post-M9: Pillow 13 for the demo reel — a Python of the job's own (done)
+
+**Why.** Dependabot's security update #826 moves Pillow 12.3.0 → 13.0.0, which
+closes 41 open alerts against the old version, five of them critical (#829's
+Brotli 1.2.1 closes the 42nd — every open alert is in this file). Pillow 13
+dropped Python 3.10 (`Requires-Python >=3.11`, no cp310 wheel). The one place
+`tools/media-requirements.txt` is installed, `release.yml`'s `demo-reel` job,
+ran the system `python3` of `ubuntu-22.04`, which is 3.10 — 0.21.0's job
+downloaded `pillow-12.3.0-cp310-…`. Merged as it stood, the next release's pip
+step would have found nothing to install. The job is `continue-on-error`, so the
+release would have gone out without its animation and the site kept 0.21.0's.
+The pull request's own checks were green and could not have shown it: no job on
+a pull request installs that file.
+
+**What.**
+- `demo-reel` gets `actions/setup-python` v7.1.0, pinned to its commit like every
+  action, with Python 3.13, before the pip step. The runner stays `ubuntu-22.04`,
+  so the fallback faces the reel's glyphs were checked against do not move.
+- `tools/media-requirements.txt`: the rule names CPython 3.11–3.13 wheels on
+  x86_64 manylinux and Windows, plus a pure-Python wheel where one is published.
+  Pillow's 83 hashes — a Dependabot pull request lists every file of the version,
+  the source archive included — are cut to the six wheels the rule names, and
+  fontTools' two cp310 hashes are dropped. Brotli 1.2.1 came in by #829, merged
+  first with 143 hashes; `main` was merged into this branch and they are cut to
+  the rule's six — each one among #829's. The header says why the job has a
+  Python of its own and that a Dependabot pull request has to be cut back.
+- [demo-reel.md](../research/demo-reel.md) §3.6 says which Python the job runs.
+- Pillow 13's removals — saving an I-mode PNG, `fromarray`'s type-changing
+  `mode`, `get_child_images` on `Image`, `Image._show`, `ImageCms`'s product
+  fields, `ExifTags.IFD.Makernote` — none is used under `tools/`.
+
+**Checked in an `ubuntu:22.04` container**, as the runner, on today's reel dumps:
+- Control: `main`'s file on the system Python 3.10.12 (pip 22.0.2) installs; the
+  branch's is refused — `No matching distribution found for pillow==13.0.0`,
+  exit 1. That is the defect, reproduced.
+- Python 3.13.17 from the archive `setup-python` downloads for ubuntu-22.04
+  (`actions/python-versions`, installed by its own `setup.sh`). Three files each
+  install with `--require-hashes`: `main`'s, the branch's before Brotli moved,
+  and the branch's with Brotli 1.2.1 cut to the rule. With each,
+  `tools/demo_reel.py` draws the three reels in 36–38 s, exit 0. Run again on the
+  file as merged, after #829: the same.
+- The six files are **byte-identical** across the three: Pillow 12.3.0 vs
+  13.0.0, Brotli 1.2.0 vs 1.2.1 — the same 92, 82 and 92 frames, pixels and
+  durations.
+
+No Rust changed and no live stack is involved; the test count is unchanged.

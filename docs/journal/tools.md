@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (96)
+## Entries (97)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -108,6 +108,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a companion's own voice, and replies spoken as they land — companion stage 5, C7 (a) (done)
 - Post-M9: a companion reachable from Telegram — companion stage 6 B, the bridge (done)
 - Post-M9: pictures from the phone — companion stage 6 B, the bridge's second half (done)
+- Post-M9: the follow-up hold test, read at the due minute (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -6301,3 +6302,33 @@ now"*, as built. Asked for next, on top of the bridge's pull request.
 
 **Gates**: 4345 unit tests green, 297 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check` clean.
+
+### Post-M9: the follow-up hold test, read at the due minute (done)
+
+**Why.** `the_switch_quiet_hours_and_the_cap_each_hold_a_due_follow_up` failed again
+with the two hours the Telegram bridge gave it: at 04:00:35 UTC on Windows (#829's
+first run) and at 12:00:24 and 12:00:38 on Linux and macOS (#826) — *"quiet hours:
+left Delivered, right Pending"*. The bridge's reading, the hour turning during the
+run, was half of it. Quiet hours and the cap are judged at the follow-up's **due**
+moment (`deliverable_at(due, …)`, spec §9.3.6), and the test plants it a minute
+ago. In an hour's first minute that minute is in the hour before, outside "this
+hour to two on", so it was delivered. The cap case has the same edge, a day wide:
+in the first minute after local midnight the due minute is yesterday, with no
+delivery counted, while the "one delivered already" was today.
+
+**What.** Test only. The quiet hours start an hour back, `(h + 23) % 24` to
+`(h + 2) % 24`, and the cap case records a delivery a minute ago as well as now, so
+the due day and the day after both have theirs. The product is as specified: a
+follow-up whose due moment fell outside the quiet hours is delivered when the app
+next looks, even inside them — "one due while the app was closed is delivered at
+the next start". It rode in #826 (Pillow 13), which it blocked, as the first fix
+rode in the bridge's PR.
+
+**Checked** without waiting for an hour to turn. A scratch test, since removed,
+fed `deliverable_at` the CI's moments — due 11:59:24 and checked at 12:00:24, due
+23:59:30 and checked at 00:00:30. The old fixture delivered at both (the control,
+red) and the new one held (until 14:00, and until two days on); the hour turning
+mid-run, `h` read at 11:59:59, still held. The follow-up tests: 25/25, three runs.
+
+**Gates**: 4345 unit tests green, 297 `#[ignore]` (unchanged); clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check` clean.
