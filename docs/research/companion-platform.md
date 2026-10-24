@@ -1440,7 +1440,11 @@ by default:
    two of its voices, 3/3.
 6. **Reach** — the bridge track: an ADR first (turns addressed to a chat not on
    screen, the tool set of a bridged turn, the messenger's privacy), then Telegram,
-   then speech input through its voice messages (C7 (b)).
+   then speech input through its voice messages (C7 (b)). **The ADR is
+   [0013](../decisions/0013-messenger-bridge.md)**, accepted 2026-10-23: a turn from
+   the messenger runs in a seat of its own beside the terminal's; one bridged chat per
+   profile, `/new` starting the next; the profile's tools without the four dangerous
+   families; one bot per profile; *typing…* while the turn runs, then the whole reply.
 
 Stages 1–3 are the companion; 4 is what makes it a research platform; 5–6 are what
 make it a presence. None of it changes what an assistant profile or the default
