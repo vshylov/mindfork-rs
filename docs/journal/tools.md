@@ -6409,5 +6409,16 @@ recognised. The owner started the stage on 2026-10-24.
   Russian), every voice note heard back word for word. `bridge_live` once more on Qwen:
   every step as before.
 
-**Gates**: 4369 unit tests green, 298 `#[ignore]`; clippy `-D warnings`, fmt,
+- **A defect of stage B, found reviewing this one.** `handle_update_config` started
+  the bots again (on a change of `bridge` or `images`) before it put the stored keys
+  back into the config: the settings screen's snapshot holds no secret
+  (`emit_settings` clears them), so every bot was read without its token and stopped —
+  an image setting changed, and the phone went unanswered until the next profile or
+  key edit. The new `refresh_hearing` had the same order, and would have heard every
+  note after a settings edit with no key. Both now run after the keys are back and
+  the file is saved. The test sends the screen's own snapshot, an image setting
+  changed: red before (no answer), green after, the recogniser asked with its key.
+  `Hearing`'s `Debug` prints no key.
+
+**Gates**: 4372 unit tests green, 298 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.

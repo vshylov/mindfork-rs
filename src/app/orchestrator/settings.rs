@@ -14,13 +14,6 @@ impl Orchestrator {
     /// needed, and re-emits the settings. The sole writer of `settings.json`.
     pub(super) fn handle_update_config(&mut self, config: AppConfig) {
         let old = std::mem::replace(&mut self.config, config);
-        // The bots' server may have changed (ADR 0013), or how they prepare a
-        // picture; a bot whose start is as it was runs on undisturbed.
-        if old.bridge != self.config.bridge || old.images != self.config.images {
-            self.refresh_bridges();
-        }
-        // What the bots hear a voice note with (ADR 0013, stage C).
-        self.refresh_hearing();
         // The speech settings may be what a spoken reply failed on: the next
         // failure is news again (spec §11.9).
         self.auto_speech_failed = false;
@@ -52,6 +45,16 @@ impl Orchestrator {
             self.config = old; // roll back to the previous state
             return;
         }
+        // The bots' server may have changed (ADR 0013), or how they prepare a
+        // picture; a bot whose start is as it was runs on undisturbed. Read
+        // only once the stored keys are back and the file is saved: the screen's snapshot holds
+        // none, and a bot read without its token is a bot stopped.
+        if old.bridge != self.config.bridge || old.images != self.config.images {
+            self.refresh_bridges();
+        }
+        // What the bots hear a voice note with (ADR 0013, stage C) — its key
+        // among the stored ones, for the same reason.
+        self.refresh_hearing();
         // A chat-server settings change (model/mode/port/…) — a restart (spec
         // §11.6), but deferred: the settings screen applies an edit on every field's
         // commit, and the debounce coalesces a series of quick edits into one restart

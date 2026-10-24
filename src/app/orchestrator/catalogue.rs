@@ -529,6 +529,21 @@ mod tests {
         assert_eq!(asked, ["openrouter"]);
     }
 
+    /// The recognition row asks the gateway for its transcription models, and
+    /// no other recognition mode asks anybody (ADR 0013, stage C).
+    #[test]
+    fn the_recognition_slot_asks_the_gateway_for_its_transcription_models() {
+        let asked = gateway(ModelSlot::Transcription, None, None).expect("a request");
+        assert_eq!(asked.shape, CatalogueShape::OpenRouterTranscription);
+        assert_eq!(asked.base, GATEWAY_BASE);
+        let with_a_list: Vec<&str> = SttMode::ALL
+            .into_iter()
+            .filter(|mode| hearing_mode(*mode).is_some())
+            .map(SttMode::label)
+            .collect();
+        assert_eq!(with_a_list, ["openrouter"]);
+    }
+
     /// The video row asks the gateway for the models that take video, and
     /// Gemini's own provider asks nobody.
     #[test]

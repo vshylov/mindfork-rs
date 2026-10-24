@@ -203,3 +203,11 @@ fn a_plain_text_answer_is_the_words() {
         Err(SttError::Network(_))
     ));
 }
+
+#[test]
+fn the_key_is_never_printed() {
+    let h = hearing(SttMode::OpenAi, "http://127.0.0.1:1/v1");
+    let printed = format!("{h:?}");
+    assert!(!printed.contains("sk-test"), "{printed}");
+    assert!(printed.contains("<redacted>"));
+}

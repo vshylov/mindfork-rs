@@ -887,3 +887,56 @@ async fn a_voice_note_nobody_can_hear_is_said_to_the_phone_and_told_once_at_the_
     assert!(backend.requests().is_empty(), "no turn");
     b.quit().await;
 }
+
+/// The settings screen's snapshot carries no secret (`emit_settings` clears
+/// them): an edit from it must not cost the bots their tokens, nor the
+/// recogniser its key. Both were read before the stored keys were put back —
+/// an image setting changed stopped every bot, and any edit left a voice note
+/// heard with no key.
+#[tokio::test]
+async fn an_edit_from_the_settings_screen_keeps_the_bots_and_the_recognisers_key() {
+    let fake = TelegramFake::start("mara_bot", TOKEN).await;
+    let backend = Held::new("Still here.", None);
+    let (stt, _tts) = voice_servers("still there").await;
+    let Some(mut b) = start(&fake, backend.clone(), true, |_, cfg, _| {
+        cfg.stt.mode = crate::shared::config::SttMode::External;
+        cfg.stt.external.url = Some(stt.url.clone());
+        crate::shared::secrets::put_key(
+            &mut cfg.api_keys,
+            &SecretKey::External(crate::shared::secrets::ExternalSlot::Stt).storage_name(),
+            "stt-secret",
+            || "test".into(),
+        )
+        .unwrap();
+    })
+    .await
+    else {
+        return;
+    };
+    // The screen's copy, as it arrives: no secrets. An image setting changed —
+    // the bots' start key — so the bots are started again.
+    let AppEvent::Settings { config, .. } =
+        event(&mut b.rx, |e| matches!(e, AppEvent::Settings { .. })).await
+    else {
+        unreachable!()
+    };
+    let mut edited = *config;
+    assert!(edited.api_keys.is_empty(), "the screen never sees a secret");
+    edited.images.max_count += 1;
+    b.tx.send(AppCommand::UpdateConfig(Box::new(edited)))
+        .unwrap();
+    event(&mut b.rx, |e| matches!(e, AppEvent::Settings { .. })).await;
+    fake.voice(ANN, "ann", &phone_note(), 2);
+    assert_eq!(
+        fake.wait_texts(ANN, 1, 20).await,
+        ["Still here."],
+        "the bot still answers"
+    );
+    let asked = stt.requests();
+    assert!(
+        asked[0].to_ascii_lowercase().contains("bearer stt-secret"),
+        "the recogniser's own key: {:.300}",
+        asked[0]
+    );
+    b.quit().await;
+}

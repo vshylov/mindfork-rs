@@ -32,7 +32,7 @@ const TIMEOUT: Duration = Duration::from_secs(180);
 /// What a channel is handed to hear its notes with — plain data, so the
 /// bridge can move into a program of its own (ADR 0013, rule 1): the slot's
 /// settings, the key they read, and the gateway's attribution switch.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Clone, PartialEq, Default)]
 pub struct Hearing {
     pub stt: SttSettings,
     /// The stored key of whatever the active mode reads (the provider's, shared
@@ -40,6 +40,18 @@ pub struct Hearing {
     pub key: Option<String>,
     /// `openrouter.attribution`: the gateway is told which application asks.
     pub attribution: bool,
+}
+
+/// The key is never printed — a log line must not hold it (the video slot's
+/// `VideoConfig` precedent).
+impl std::fmt::Debug for Hearing {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Hearing")
+            .field("stt", &self.stt)
+            .field("key", &self.key.as_ref().map(|_| "<redacted>"))
+            .field("attribution", &self.attribution)
+            .finish()
+    }
 }
 
 /// Why recognition isn't set up. Structured, so the message is built in the
