@@ -14,6 +14,22 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Long silences in the middle of a spoken reply.** A reply read aloud could fall
+  silent for ten or twenty seconds after a heading, a list or a code block: every
+  block went to the speech provider on its own, and the paragraph after a short
+  block was only started when that block began to play. Blocks are now packed
+  together — a heading with its paragraph, a list's items together — and speech is
+  made up to forty seconds ahead, so the reply plays through, and the first sound
+  comes as soon as before or sooner. The log now shows every piece's timings and any
+  silence the listener heard.
+- **Minutes of silence when the speech provider stalls.** A request to the provider
+  can hang — one took two and a half minutes where a few seconds is usual — and the
+  reply went quiet until it answered. A piece that is late is now asked for a second
+  time, and whichever answer comes first is played; the extra request is paid for only
+  when a piece stalls, and the log says when it happened.
+
 ## [0.22.0] — 2026-10-24
 
 **A platform for a companion.** A profile can now be a companion: it knows when you

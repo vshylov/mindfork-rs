@@ -5029,10 +5029,32 @@ server that streams an MP3 can write such a tag.
 
 **Execution.** The orchestrator (the owner of `Chat`) takes a **snapshot** of the conversation
 at the moment of the command — so the command also works during generation — and starts
-a cancellable background task. The text is cut into chunks along sentence boundaries (per the
-provider's limit: OpenAI 4096, Gemini/OpenRouter/External 2000 characters) — a short message goes as a
-**single request**; the task runs as a **pipeline**: while chunk N is playing, N+1 is
-synthesized (the first sound arrives quickly). Playback — a `rodio` queue inside the
+a cancellable background task. The text is cut into chunks
+([docs/research/tts-pauses.md](docs/research/tts-pauses.md)): a message's blocks — paragraphs,
+headings, list items, the note of a skipped code block — are **packed together**, sentence by
+sentence, a line break kept where a block ends, so a heading travels with its paragraph and a
+list's items go together; a chunk is closed before the sentence that would take it past its
+**soft size** — 200 characters for the run's first chunk (the first sound waits for all of it),
+300 for the second, 400 from then on. A sentence longer than that goes whole; only the provider's
+hard limit (OpenAI 4096, Gemini/OpenRouter/External 2000 characters) cuts inside one. Messages
+are never packed together (a boundary, and maybe another voice). The task runs as a
+**pipeline**: chunks are synthesized one after another while the earlier ones play, for as long
+as less than **40 s of sound** is queued — enough to hide the next chunk's synthesis even at the
+slowest throughput measured, and no more paid for than a stop could throw away. Through 0.22.0
+the look-ahead was one *clip* and a reply went as one request per block: a heading's two seconds
+could not hide the next paragraph's twenty of synthesis, and the reply fell silent in the middle.
+**A stalled request is asked again**: once a chunk's request has run longer than the sound
+that was queued when it began — and at least 10 s, or every run's first chunk would go twice —
+the same chunk is asked for a second time and the first answer that is not a refusal is kept;
+the other request is dropped, closing its connection. Never a third; a refusal waits for the
+other request, and both refused is the later refusal. One request took 153 s where 3–15 s is
+usual — a two-minute silence the look-ahead could not hide. Speech nobody waits for (a Telegram
+voice note, sent whole) keeps one request per chunk.
+Every chunk leaves a line in the log — characters, synthesis time, sound, the sound queued when
+it began, and the **silence** the listener heard before it (read from the queue running dry, so
+`/tts pause` is not one) and whether it was asked twice; a second request is logged when it
+goes, and so is which of the two answered; and every run a summary: chunks, sound, the first sound's latency, the audible silences
+(≥ 250 ms), the chunks asked twice and whether it was stopped. Playback — a `rodio` queue inside the
 process; when no audio device is available (headless/CI/no sound card) → a "audio unavailable"
 note, not a panic. Contract: `AppCommand::Tts(TtsScope)`/`TtsStop`,
 `AppEvent::TtsActive(bool)`.

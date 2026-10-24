@@ -992,6 +992,13 @@ for rare messages > 4096 characters. This distinguishes the cloud
 integration from the local one, where a per-sentence pipeline was needed
 for a fast first sound.
 
+> **Later (2026-10-24):** what was built cut per **block**, not per message —
+> every paragraph, heading and list item a request of its own — with one clip
+> of look-ahead, and a structured reply fell silent after its short blocks.
+> Blocks are now packed (200 → 400 characters, a soft size, since the clip is
+> read whole before it plays) and synthesized 40 s of sound ahead:
+> [tts-pauses.md](tts-pauses.md).
+
 **ElevenLabs / Azure — not tested, rejected on a product argument** (the
 user's decision): "users of the app won't want to sign up for a
 third-party service just for speech." OpenAI has no such drawback — a

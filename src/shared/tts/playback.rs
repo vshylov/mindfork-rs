@@ -13,14 +13,38 @@
 //!    `/tts` command (not at app startup), and an open failure is an `Err`,
 //!    not a panic (headless/CI/a machine with no sound card → graceful
 //!    degradation, like `UnavailableEmbedder`, ADR 0002).
+//!
+//! The queue knows **how much sound it still holds** ([`Playback::ahead`]):
+//! the pipeline synthesizes ahead by seconds of audio, not by clips, since a
+//! two-second heading and a thirty-second paragraph are one clip each
+//! (docs/research/tts-pauses.md F1, F9).
 
+use std::collections::VecDeque;
 use std::io::Cursor;
 use std::num::NonZero;
+use std::sync::{Mutex, PoisonError};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
-use rodio::{DeviceSinkBuilder, MixerDeviceSink, Player};
+use rodio::{DeviceSinkBuilder, MixerDeviceSink, Player, Source};
 
 use super::AudioClip;
+
+/// What the speech pipeline plays into: the sound card's queue
+/// ([`Playback`]), or a test's clock.
+#[async_trait::async_trait]
+pub trait SpeechQueue: Send + Sync + 'static {
+    /// Puts a clip at the end of the queue; its length. An empty clip queues
+    /// nothing and is zero long.
+    async fn append(&self, clip: AudioClip) -> Result<Duration>;
+    /// The sound queued and not yet played — the clip that is playing counted
+    /// from where it is. It does not shrink while playback is paused.
+    fn ahead(&self) -> Duration;
+    /// Whether everything queued has played.
+    fn is_drained(&self) -> bool;
+    /// Stops at once and drops the queue.
+    fn stop(&self);
+}
 
 /// An open audio device with a playback queue.
 ///
@@ -28,9 +52,67 @@ use super::AudioClip;
 /// right inside the speech background tokio task — no dedicated audio thread
 /// is needed. On drop the device closes, the queue vanishes along with the task.
 pub struct Playback {
-    /// Keeps the device alive: dropping it stops the sound.
-    _sink: MixerDeviceSink,
+    /// Keeps the device alive: dropping it stops the sound. `None` only in a
+    /// test, whose player is pulled by hand.
+    _sink: Option<MixerDeviceSink>,
     player: Player,
+    /// The length of every clip appended, oldest first. The player counts
+    /// what it still holds (`len`), so the last that many are the clips still
+    /// queued; the older ones are dropped as they are found played.
+    lengths: Mutex<VecDeque<Duration>>,
+}
+
+/// A clip as the player takes it: interleaved samples at a rate.
+struct Decoded {
+    channels: NonZero<u16>,
+    rate: NonZero<u32>,
+    samples: Vec<f32>,
+}
+
+impl Decoded {
+    /// A clip's sound, or `None` for a clip with nothing in it. A container
+    /// is decoded **whole** here — the only way to know its length, since a
+    /// streamed MP3's header may count none of its frames, or half
+    /// ([`decoder`]); a length of zero would let the pipeline synthesize
+    /// everything ahead.
+    fn from_clip(clip: AudioClip) -> Result<Option<Self>> {
+        let decoded = match clip {
+            AudioClip::Pcm {
+                sample_rate,
+                channels,
+                bytes,
+            } => {
+                // Raw PCM bypasses the decoder: s16le → f32 and straight into the buffer.
+                let samples = pcm_s16le_to_f32(&bytes);
+                if samples.is_empty() {
+                    return Ok(None);
+                }
+                Decoded {
+                    channels: NonZero::new(channels).context("zero channel count")?,
+                    rate: NonZero::new(sample_rate).context("zero sample rate")?,
+                    samples,
+                }
+            }
+            AudioClip::Encoded(bytes) => {
+                if bytes.is_empty() {
+                    return Ok(None);
+                }
+                let source = decoder(bytes)?;
+                Decoded {
+                    channels: source.channels(),
+                    rate: source.sample_rate(),
+                    samples: source.collect(),
+                }
+            }
+        };
+        Ok((!decoded.samples.is_empty()).then_some(decoded))
+    }
+
+    /// How long the clip plays.
+    fn length(&self) -> Duration {
+        let frames = self.samples.len() as f64 / f64::from(self.channels.get());
+        Duration::from_secs_f64(frames / f64::from(self.rate.get()))
+    }
 }
 
 impl Playback {
@@ -45,45 +127,62 @@ impl Playback {
         sink.log_on_drop(false);
         let player = Player::connect_new(sink.mixer());
         Ok(Self {
-            _sink: sink,
+            _sink: Some(sink),
             player,
+            lengths: Mutex::new(VecDeque::new()),
         })
     }
 
-    /// Puts a clip at the end of the queue. It starts playing once the
-    /// previous ones finish.
-    pub fn enqueue(&self, clip: AudioClip) -> Result<()> {
-        match clip {
-            AudioClip::Pcm {
-                sample_rate,
-                channels,
-                bytes,
-            } => {
-                // Raw PCM bypasses the decoder: s16le → f32 and straight into the buffer.
-                let samples = pcm_s16le_to_f32(&bytes);
-                if samples.is_empty() {
-                    return Ok(());
-                }
-                let rate = NonZero::new(sample_rate).context("zero sample rate")?;
-                let ch = NonZero::new(channels).context("zero channel count")?;
-                self.player
-                    .append(rodio::buffer::SamplesBuffer::new(ch, rate, samples));
-            }
-            AudioClip::Encoded(bytes) => {
-                if bytes.is_empty() {
-                    return Ok(());
-                }
-                self.player.append(decoder(bytes)?);
-            }
-        }
-        Ok(())
+    /// A queue with no device behind it, and the end its sound comes out of —
+    /// a test plays it by pulling samples.
+    #[cfg(test)]
+    fn detached() -> (Self, rodio::queue::SourcesQueueOutput) {
+        let (player, output) = Player::new();
+        let playback = Self {
+            _sink: None,
+            player,
+            lengths: Mutex::new(VecDeque::new()),
+        };
+        (playback, output)
     }
 
-    /// How many clips are still queued (including the one playing). The
-    /// pipeline uses this to hold back synthesizing the next chunk, so it
-    /// doesn't synthesize everything ahead of time.
-    pub fn queued(&self) -> usize {
-        self.player.len()
+    /// Puts a clip at the end of the queue, decoding it on the caller's
+    /// thread; its length. It starts playing once the previous ones finish.
+    /// The pipeline goes through [`SpeechQueue::append`], which decodes off
+    /// the runtime's threads; this is the tests' door.
+    #[cfg(test)]
+    pub fn enqueue(&self, clip: AudioClip) -> Result<Duration> {
+        Ok(self.append_decoded(Decoded::from_clip(clip)?))
+    }
+
+    fn append_decoded(&self, decoded: Option<Decoded>) -> Duration {
+        let Some(decoded) = decoded else {
+            return Duration::ZERO;
+        };
+        let length = decoded.length();
+        let mut lengths = self.lengths.lock().unwrap_or_else(PoisonError::into_inner);
+        self.player.append(rodio::buffer::SamplesBuffer::new(
+            decoded.channels,
+            decoded.rate,
+            decoded.samples,
+        ));
+        lengths.push_back(length);
+        length
+    }
+
+    /// The sound still queued: the clips the player holds, less how far into
+    /// the first of them it is. Right after a clip is appended to an empty
+    /// queue the player may still report the position it reached in the clip
+    /// before (it updates every 5 ms), which reads as less sound than there is
+    /// — the safe side: one chunk synthesized early.
+    pub fn ahead(&self) -> Duration {
+        let mut lengths = self.lengths.lock().unwrap_or_else(PoisonError::into_inner);
+        let held = self.player.len();
+        while lengths.len() > held {
+            lengths.pop_front();
+        }
+        let queued: Duration = lengths.iter().sum();
+        queued.saturating_sub(self.player.get_pos())
     }
 
     /// Whether everything has played (the queue is empty).
@@ -108,6 +207,31 @@ impl Playback {
     /// an already-playing player is a no-op).
     pub fn resume(&self) {
         self.player.play();
+    }
+}
+
+#[async_trait::async_trait]
+impl SpeechQueue for Playback {
+    /// A clip of minutes is milliseconds to seconds of decoding (more in a
+    /// debug build), so it is decoded on the blocking pool and only appended
+    /// here.
+    async fn append(&self, clip: AudioClip) -> Result<Duration> {
+        let decoded = tokio::task::spawn_blocking(move || Decoded::from_clip(clip))
+            .await
+            .context("decoding a speech clip")??;
+        Ok(self.append_decoded(decoded))
+    }
+
+    fn ahead(&self) -> Duration {
+        Playback::ahead(self)
+    }
+
+    fn is_drained(&self) -> bool {
+        Playback::is_drained(self)
+    }
+
+    fn stop(&self) {
+        Playback::stop(self);
     }
 }
 
@@ -230,6 +354,89 @@ mod tests {
         }
     }
 
+    /// `rate` Hz mono PCM of silence, `millis` long.
+    fn silence(rate: u32, millis: u32) -> AudioClip {
+        AudioClip::Pcm {
+            sample_rate: rate,
+            channels: 1,
+            bytes: vec![0; (rate * millis / 1000 * 2) as usize],
+        }
+    }
+
+    /// A clip's length is what it plays for, whatever its rate and channels —
+    /// and a container's is read from its decoded sound.
+    #[test]
+    fn a_clip_is_as_long_as_it_plays() {
+        let length = |clip| {
+            Decoded::from_clip(clip)
+                .unwrap()
+                .map_or(Duration::ZERO, |d| d.length())
+        };
+        assert_eq!(length(silence(24_000, 1_500)), Duration::from_millis(1_500));
+        // Stereo at 44.1 kHz: a second is 88 200 samples.
+        let stereo = AudioClip::Pcm {
+            sample_rate: 44_100,
+            channels: 2,
+            bytes: vec![0; 44_100 * 2 * 2],
+        };
+        assert_eq!(length(stereo), Duration::from_secs(1));
+        // An MP3 of 40 frames of 1152 samples at 44.1 kHz, whose tag claims one
+        // frame: the sound decides, not the tag.
+        let mp3 = length(AudioClip::Encoded(streamed_mp3(40, 1)));
+        let expected = Duration::from_secs_f64(40.0 * PER_FRAME as f64 / 44_100.0);
+        assert_eq!(mp3, expected);
+        // Nothing in it: no clip, zero long.
+        assert_eq!(length(AudioClip::Encoded(Vec::new())), Duration::ZERO);
+        assert_eq!(length(silence(24_000, 0)), Duration::ZERO);
+    }
+
+    /// `ahead` is the sound still queued: every clip held, less how far into
+    /// the first one the player is — read here by pulling the samples a sound
+    /// card would.
+    #[test]
+    fn ahead_is_the_sound_still_queued() {
+        let (playback, mut card) = Playback::detached();
+        let near = |got: Duration, want_ms: u64| {
+            let diff = got.as_millis().abs_diff(u128::from(want_ms));
+            assert!(diff <= 10, "{got:?}, not ~{want_ms} ms");
+        };
+        assert_eq!(playback.ahead(), Duration::ZERO);
+        // Two seconds at 1 kHz: one sample is a millisecond.
+        assert_eq!(
+            playback.enqueue(silence(1_000, 1_000)).unwrap(),
+            Duration::from_secs(1)
+        );
+        assert_eq!(
+            playback.enqueue(silence(1_000, 1_000)).unwrap(),
+            Duration::from_secs(1)
+        );
+        near(playback.ahead(), 2_000);
+        card.by_ref().take(500).for_each(drop);
+        near(playback.ahead(), 1_500);
+        // Into the second clip: the first is gone from the count.
+        card.by_ref().take(1_000).for_each(drop);
+        near(playback.ahead(), 500);
+        assert!(!playback.is_drained());
+        // Past the end: nothing ahead, and the queue is drained.
+        card.by_ref().take(600).for_each(drop);
+        assert_eq!(playback.ahead(), Duration::ZERO);
+        assert!(playback.is_drained());
+    }
+
+    /// While paused nothing is played, so nothing ahead is used up — the
+    /// pipeline holds its synthesis back by the same count.
+    #[test]
+    fn a_paused_queue_keeps_what_is_ahead() {
+        let (playback, mut card) = Playback::detached();
+        playback.enqueue(silence(1_000, 1_000)).unwrap();
+        card.by_ref().take(200).for_each(drop);
+        let before = playback.ahead();
+        playback.pause();
+        card.by_ref().take(500).for_each(drop);
+        let diff = playback.ahead().as_millis().abs_diff(before.as_millis());
+        assert!(diff <= 10, "{before:?} became {:?}", playback.ahead());
+    }
+
     /// A live playback smoke (needs a sound card): synthesize a 440 Hz tone
     /// in the same format the clouds send (PCM s16le 24 kHz mono), queue it,
     /// and wait for it to finish. Checks the riskiest seam — PCM→rodio
@@ -259,14 +466,15 @@ mod tests {
             return;
         };
         let started = std::time::Instant::now();
-        playback
+        let length = playback
             .enqueue(AudioClip::Pcm {
                 sample_rate: rate,
                 channels: 1,
                 bytes,
             })
             .expect("PCM should be accepted by the queue");
-        assert_eq!(playback.queued(), 1, "the clip is queued");
+        assert_eq!(length, Duration::from_millis(400), "the clip's length");
+        assert!(!playback.is_drained(), "the clip is queued");
         while !playback.is_drained() && started.elapsed() < std::time::Duration::from_secs(5) {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
@@ -289,9 +497,12 @@ mod tests {
         match Playback::open() {
             Ok(p) => {
                 assert!(p.is_drained(), "a fresh queue is empty");
-                assert_eq!(p.queued(), 0);
+                assert_eq!(p.ahead(), Duration::ZERO);
                 // An empty clip isn't queued and doesn't crash the player.
-                p.enqueue(AudioClip::Encoded(Vec::new())).unwrap();
+                assert_eq!(
+                    p.enqueue(AudioClip::Encoded(Vec::new())).unwrap(),
+                    Duration::ZERO
+                );
                 p.stop();
             }
             Err(err) => {

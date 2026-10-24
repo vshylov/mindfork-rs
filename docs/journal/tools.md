@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (98)
+## Entries (100)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -110,6 +110,8 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: pictures from the phone — companion stage 6 B, the bridge's second half (done)
 - Post-M9: the follow-up hold test, read at the due minute (done)
 - Post-M9: voice notes from the phone, and replies in voice — companion stage 6 C (done)
+- Post-M9: speech without pauses between a reply's blocks (done)
+- Post-M9: a stalled speech request asked again (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -6432,3 +6434,122 @@ recognised. The owner started the stage on 2026-10-24.
 
 **Gates**: 4372 unit tests green, 298 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.
+
+### Post-M9: speech without pauses between a reply's blocks (done)
+
+The owner, 2026-10-24: with *Speak replies* on, a reply sometimes fell silent in the
+middle — most around lists and code blocks; the last session had one long silence and
+two short. Asked to read the log, then to build all three changes the diagnosis
+proposed, "the full cycle to a PR" ([tts-pauses.md](../research/tts-pauses.md); forks
+F1–F9 the agent's, on that instruction).
+
+- **The log had nothing.** The session's 26 minutes held the turn's rounds and the
+  embedder and not one line from speech — no synthesis time, no sound, no silence. The
+  diagnosis was a reproduction: the session's reply through `build_utterances` →
+  `chunk_utterances`, every chunk synthesized by the owner's settings
+  (`gpt-4o-mini-tts`, `onyx`) and timed.
+- **Two defects, one symptom.** 38 chunks, one per block: `speakable_text` ends every
+  block with a line break and the chunker packed sentences within a line only — while
+  the design (spec §11.9, research §13) said a short message is one request, and every
+  chunker test chunked a single paragraph. And one *clip* of look-ahead: chunk N+1 was
+  asked for as N began to play, so a heading's 1–4 s had to hide a paragraph's 10–27 s
+  of synthesis (throughput 6.7× real time down to 0.9×). Simulated on the measured
+  times: six silences, 43.8 s in 397 s of speech — 21.7 s after a list's last item,
+  11.0 s and 8.8 s after two headings.
+- **Look-ahead by seconds of sound** (F1–F3): the next chunk is asked for while less
+  than `LOOKAHEAD` (40 s) is queued, one request at a time. `Playback::ahead` is every
+  clip still held less the player's position in the first; a container is now decoded
+  whole before it is queued (F9) — a streamed MP3's header cannot be trusted for its
+  length — on the blocking pool. The pipeline (`run_speech`) plays into a `SpeechQueue`:
+  the sound card's queue, or a test's clock.
+- **Blocks packed** (F4, F5): sentences packed greedily across a message's blocks, a
+  line break kept where a block ends; soft sizes 200 → 300 → 400 characters (the first
+  sound waits for the first chunk whole); a longer sentence goes whole, only the
+  provider's ceiling cuts inside one; messages are never packed together. The session's
+  reply: 38 requests → 15. The bridge's voice notes take the same chunker (F8).
+- **The log** (F7): `speech: a run starts` (chunks, characters), `speech: a chunk is
+  queued` per chunk (characters, synthesis, sound, sound ahead when it began,
+  silence), `speech: the run ended` (chunks, sound, first sound, audible silences
+  ≥ 250 ms and their total, stopped). A silence is read from the queue found dry,
+  polled every 80 ms while a chunk is made — a paused queue is not dry, so `/tts pause`
+  is never one.
+- **Not built**: playing a chunk while it downloads (F6); and a second request for a
+  stalled one — proposed below.
+- **Tests** (+16): the chunker (a heading with its paragraph, a list's items, the code
+  block's note between its neighbours, the 200 → 300 → 400 ramp, a long sentence
+  whole, every word kept in order, a structured reply in at most six requests); the
+  player without a device (`Playback::detached`, pulled by hand: a clip's length for
+  PCM, stereo and an MP3 whose tag lies; `ahead` as samples are played; nothing used
+  up while paused); the pipeline on a paused clock over a scripted engine and a
+  `ClockQueue` — **the session's 38 chunks at their measured timings play without a
+  silence**, a silence measured from the dry queue, synthesis held at the bound, a
+  stop, a refusal, and the log lines' fields. Every run is bounded: the first mutation
+  run found a test that hung on a look-ahead of zero instead of failing.
+- **Mutation check**, nine mutants, all killed: look-ahead 0 and 5 s, a space for the
+  block's line break, no ramp, per-block packing (the old chunker), the first chunk's
+  wait counted as silence, no watch while a chunk is made, `ahead` ignoring the
+  position, `ahead` keeping played clips.
+- **Live, GO** (`a_structured_reply_plays_without_a_silence_live`, `gpt-4o-mini-tts`
+  `onyx`; the sound played on the clock): 16 blocks → 5 requests, no silence, twice —
+  once with OpenAI slow (the first chunk 18.3 s for 12.3 s of sound), once at its
+  usual speed (first sound 2.7 s, 113 s of speech); the ramp's second chunk was made in
+  12.45 s with 12.75 s queued, the tightest margin. **The session's own reply** through
+  the new pipeline: 15 requests, first sound 2.7 s (was 4.2 s), a chunk made slower
+  than it sounds (35.2 s for 28.5 s) hidden — and one request that took **153.5 s**,
+  a 121.5 s silence no look-ahead can hide, chunks being made one at a time; the log
+  named it in one line. The smoke therefore fails only a silence that is the
+  pipeline's (a chunk made faster than the sound queued when it began) and reports
+  the provider's. Also green on this machine's sound card: `plays_generated_tone_live`,
+  `two_companions_speak_their_replies_in_their_own_voices_live` (the real
+  `Playback` through the new append), `openai_synthesizes_russian_speech_live`.
+- **Proposed, for the owner**: when a chunk's synthesis outlasts the sound queued
+  when it began, ask for it again and take the first answer — it would have made the
+  121.5 s a few seconds, at a second paid request for that chunk.
+
+**Gates**: 4388 unit tests green, 299 `#[ignore]`; clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check` clean.
+
+### Post-M9: a stalled speech request asked again (done)
+
+The previous entry's live run found a request that took 153.5 s where 3–15 s is
+usual — 121.5 s of silence no look-ahead hides, chunks being made one at a time. The
+owner, 2026-10-24: "a second request when a chunk's synthesis takes longer than the
+sound queued; take the first answer", a pull request of its own on top of
+`fix/tts-pauses` ([tts-pauses.md](../research/tts-pauses.md) §6, F10–F14, the agent's
+sub-decisions).
+
+- **`synthesize_hedged`**: the chunk's request runs while the caller's tick keeps
+  watching for the queue running dry; once it has run for `max(sound queued when it
+  began, HEDGE_FLOOR)` — 10 s, without which every run's first chunk would go twice —
+  the same chunk is asked again, once. The first answer that is not a refusal is kept
+  and the other request **dropped**, which closes its connection; a refusal waits for
+  the other request, both refused is the later refusal; a stop ends both. Telegram
+  voice notes keep one request per chunk (F14): nobody hears a silence in a note sent
+  whole.
+- **The log**: `speech: a chunk's synthesis stalled; asking again` (how long it had
+  run), `speech: a chunk asked twice is answered` (`by` which request, `ok`, after how
+  long), `hedged` on the chunk's line and `hedges` in the run's summary — an extra
+  request on the bill can be found.
+- **Tests** (+7): on the paused clock — a 120 s stall asked again at the floor, its
+  silence 11 s where it would have been 118, the second request's answer kept; a slow
+  chunk the queue covers not asked twice; the first chunk under the floor not asked
+  twice, past it asked; the original kept when it answers first; a refusal waiting
+  for the other request, two refusals ending the run with the later one; a stop ending
+  both; the session's 38 measured chunks asked for **once each**; the log lines. And
+  through the real `OpenAiTts` client against a socket that never answers the first
+  request: the second answer kept and the first connection **closed** (the server
+  reads its end). Fifteen consecutive runs of the speech tests, no flake —
+  `select!` takes ready branches in random order, so no test puts two events on one
+  instant (the floor-length chunk of the earlier tests moved to 9 s for it).
+- **Mutation check**, six mutants, all killed: floor 0, the queued sound ignored,
+  never asked again, a third request, a refusal ending at once, the loser leaked
+  instead of dropped (caught only by the socket test).
+- **Live, GO** (`gpt-4o-mini-tts`, `onyx`, the sound on the clock): the smoke's reply
+  — 5 requests, no silence, nothing asked twice (a 16.9 s chunk with 39.9 s queued
+  was covered, so not asked again); the owner's reply — 15 chunks, **no silence in
+  390 s of speech**, four 17–32 s chunks covered by the queue, the first chunk asked
+  twice at the floor and answered at 11.0 s. The smoke now also fails a request that
+  outlasted both the queue and the floor and was asked once.
+
+**Gates**: 4395 unit tests green, 299 `#[ignore]`; clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check` clean.
