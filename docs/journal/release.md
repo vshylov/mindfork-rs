@@ -5262,14 +5262,33 @@ No Rust changed and no live stack is involved; the test count is unchanged.
   (`docs/legal/PRIVACY.ru.md`) carries the same, and the site's page and both
   installer RTFs are regenerated (`site_legal_pages.py`, `wizard_rtf.py`). Each of
   those pull requests should have brought its part; none did.
-- **No rehearsal run.** `git diff v0.21.0 -- .github packaging tools/release_guard.py
-  tools/demo_reel.py` holds an action's pin (`taiki-e/install-action` 2.87.29) and, in
-  `release.yml`, the `demo-reel` job's own Python 3.13 for Pillow 13 (826) — checked
-  in an `ubuntu:22.04` container there, never on the runner. The job is not a gate: if
-  it fails, the release goes out without its animation and the site keeps 0.21.0's.
-  A `v0.22.0-rc1` tag on the branch head would run it; that is the owner's to set.
-  `release_guard.py --tag v0.22.0` accepts the tag and cuts 158 lines of notes.
-  `cargo deny check`: ok. `zola build`: ok, `softwareVersion` 0.22.0.
+- **A rehearsal, at the owner's request** — Pillow 13 changed a great deal, and
+  `git diff v0.21.0 -- .github packaging tools/release_guard.py tools/demo_reel.py`
+  holds, besides an action's pin (`taiki-e/install-action` 2.87.29), the `demo-reel`
+  job's own Python 3.13 for it (826) — checked in an `ubuntu:22.04` container there,
+  never on the runner. `release_guard.py` accepts `v0.22.0` (158 lines of notes) and
+  `v0.22.0-rc1` (a prerelease, the same notes); `cargo deny check`: ok; `zola build`:
+  ok, `softwareVersion` 0.22.0.
+  - The agent set `v0.22.0-rc1` on the branch head (`4404175b`) and pushed it.
+    `release.yml` (run 40109460973) was green in all eight jobs in **16 min 11 s**
+    (0.21.0: 12 min 05 s). Windows took the longest at 15 min 01 s, then macOS
+    10 min 24 s, Linux 9 min 25 s and the demo 4 min 41 s.
+  - **The demo job** installed `pillow-13.0.0`, `brotli-1.2.1` and `fonttools-4.63.0`
+    on Python 3.13 and drew the six files, each within 1 % of 0.21.0's size.
+  - **The draft**: a prerelease with fifteen assets, the same set as 0.21.0's; every
+    downloaded file matched `sha256sums.txt`; `install.sh` is 0.21.0's byte for byte.
+  - **The reels, frame by frame.** Every GIF and WebP is 1122×966: English 92 frames
+    (25.3 s as GIF, 25.5 s by the WebP's ANMF durations, looping), Russian 82. The
+    dark English GIF against 0.21.0's: the same 92 frame durations, and 91 frames
+    identical to the pixel; frame 90 differs in the self-model screen's footer alone,
+    where 817's `H history` hint now stands. Pillow 13 draws the reel as Pillow 12
+    did.
+  - **The Windows zip**: `mindfork.exe --version` says `mindfork 0.22.0`; 48 entries,
+    as 0.21.0's; its `THIRD-PARTY-NOTICES.md` names `opus-rs` 0.1.39, `ogg` 0.9.2 and
+    `tokio` 1.54.1, and its `PRIVACY.md` is the release's (effective 2026-10-24,
+    §3.12).
+  - The draft and the tag were deleted afterwards (`gh release delete --cleanup-tag`);
+    no `v0.22*` tag or release remains.
 - **The screenshots.** 830 redrew the four `settings-*` frames (the fifth tab). The
   animated demo is drawn by `release.yml` from the tag.
 - **Live runs behind it**, from the pull requests: every stage GO on Gemma 4 31B and
