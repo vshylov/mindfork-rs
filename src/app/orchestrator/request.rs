@@ -16,9 +16,10 @@ use crate::shared::i18n::Locale;
 fn message_to_api(message: &Message, loc: &Locale) -> Option<ApiMessage> {
     match message.role {
         MessageRole::System => None,
-        MessageRole::User => {
-            Some(ApiMessage::user(&message.text).with_images(images_to_api(&message.images, loc)))
-        }
+        MessageRole::User => Some(
+            ApiMessage::user(user_words(message, loc))
+                .with_images(images_to_api(&message.images, loc)),
+        ),
         MessageRole::Assistant => {
             if message.tool_calls.is_empty() {
                 Some(ApiMessage::assistant(&message.text))
@@ -62,10 +63,11 @@ fn api_messages(messages: &[Message], rows: &[Option<String>], loc: &Locale) -> 
             continue;
         }
         if m.role == MessageRole::User {
+            let said = user_words(m, loc);
             let words = match rows.get(i).and_then(Option::as_deref) {
-                Some(row) if m.text.is_empty() => row.to_string(),
-                Some(row) => format!("{row}{SEP}{}", m.text),
-                None => m.text.clone(),
+                Some(row) if said.is_empty() => row.to_string(),
+                Some(row) => format!("{row}{SEP}{said}"),
+                None => said,
             };
             let mut parts: Vec<&str> = std::mem::take(&mut pending)
                 .into_iter()
@@ -89,6 +91,21 @@ fn api_messages(messages: &[Message], rows: &[Option<String>], loc: &Locale) -> 
         out.push(ApiMessage::user(standing_alone(&pending, loc)));
     }
     out
+}
+
+/// A user message's words as the model reads them: a voice note's transcript
+/// under a label that says it was heard by a recogniser, so a misheard word
+/// reads as the recogniser's, not the person's (ADR 0013, stage C, D7 (a)).
+fn user_words(m: &Message, loc: &Locale) -> String {
+    match m.voice {
+        Some(_) => format!(
+            "{}
+{}",
+            loc.t("prompt.voice_note"),
+            m.text
+        ),
+        None => m.text.clone(),
+    }
 }
 
 /// Notifications no user message follows — the turn the app woke the model for,
@@ -678,4 +695,28 @@ fn fence_width(text: &str) -> usize {
         width += 1;
     }
     width
+}
+
+#[cfg(test)]
+mod voice_tests {
+    use super::*;
+
+    /// A voice note's transcript reaches the model under its label, after any
+    /// time row; a typed message as it was typed.
+    #[test]
+    fn a_transcript_is_labelled_and_typed_words_are_not() {
+        let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::En);
+        let typed = Message::user("see you at nine");
+        let spoken = Message::user("remind me about the dentist").with_voice(4);
+        let rows = vec![None, Some("[Fri 10:00]".to_string())];
+        let out = api_messages(&[typed, spoken], &rows, loc);
+        assert_eq!(out[0].content, "see you at nine");
+        assert_eq!(
+            out[1].content,
+            format!(
+                "[Fri 10:00]\n\n{}\nremind me about the dentist",
+                loc.t("prompt.voice_note")
+            )
+        );
+    }
 }

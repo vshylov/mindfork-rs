@@ -189,6 +189,8 @@ pub const COMPONENTS: &[(&str, &str, &str)] = &[
     ("ignore", "0.4.33", "MIT OR Unlicense"),
     ("image", "0.25.10", "MIT OR Apache-2.0"),
     ("mermaid-text", "0.57.0", "MIT"),
+    ("ogg", "0.9.2", "BSD-3-Clause"),
+    ("opus-rs", "0.1.39", "BSD-3-Clause"),
     ("pdf-extract", "0.12.1", "MIT"),
     ("percent-encoding", "2.3.2", "MIT OR Apache-2.0"),
     ("pulldown-cmark", "0.13.4", "MIT"),

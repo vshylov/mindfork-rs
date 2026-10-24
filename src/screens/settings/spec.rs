@@ -512,6 +512,39 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
             Some(NumKind::Float),
         ),
         TtsSpeakRoles => toggle(|c| c.tts.speak_roles = !c.tts.speak_roles),
+        // ── Speech recognition (ADR 0013, stage C) ───────────────────
+        SttMode => choice(
+            |c, dir| c.stt.mode = c.stt.mode.cycle(dir),
+            |c, _loc| {
+                index_menu(&crate::shared::config::SttMode::ALL, c.stt.mode, |m| {
+                    m.label().to_string()
+                })
+            },
+        ),
+        // Routed by mode, as the speech rows are: external — its own section,
+        // a cloud — the active provider's.
+        SttModelName => text(|c, t| {
+            if c.stt.mode == crate::shared::config::SttMode::External {
+                c.stt.external.model_name = opt(t);
+            } else if let Some(cl) = c.stt.cloud_mut() {
+                cl.model_name = opt(t);
+            }
+        }),
+        SttApiKeyEnv => text(|c, t| {
+            if c.stt.mode == crate::shared::config::SttMode::External {
+                c.stt.external.api_key_env = opt(t);
+            } else if let Some(cl) = c.stt.cloud_mut() {
+                cl.api_key_env = opt(t);
+            }
+        }),
+        SttUrl => text(|c, t| {
+            if c.stt.mode == crate::shared::config::SttMode::External {
+                c.stt.external.url = opt(t);
+            } else if let Some(cl) = c.stt.cloud_mut() {
+                cl.url = opt(t);
+            }
+        }),
+        SttLanguage => text(|c, t| c.stt.language = opt(t)),
         TtsStopOnSwitch => toggle(|c| c.tts.stop_on_chat_switch = !c.tts.stop_on_chat_switch),
         TtsStopOnGeneration => {
             toggle(|c| c.tts.stop_on_generation_start = !c.tts.stop_on_generation_start)

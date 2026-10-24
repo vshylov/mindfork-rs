@@ -596,7 +596,8 @@ impl SettingsScreen {
             ModelTab::Embeddings => (&self.statuses.embed, loc.t("ui.settings.chip.embeddings")),
             // Speech has no server/probe: clients are stateless, built per call
             // (docs/research/tts.md §8) — there's nothing for a chip to show.
-            ModelTab::Tts => return Vec::new(),
+            // Nor has recognition, for the same reason (ADR 0013, stage C).
+            ModelTab::Tts | ModelTab::Stt => return Vec::new(),
         };
         server_status_chip(status, label, loc, palette)
     }

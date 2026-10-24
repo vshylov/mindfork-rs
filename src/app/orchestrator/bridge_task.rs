@@ -7,10 +7,14 @@
 //! A picture is fetched and prepared here, before its message goes up — the
 //! way `/image attach` prepares one (spec §9.10) — and only the paired
 //! account's: the orchestrator keeps the poller told who that is (a `watch`),
-//! so a stranger's twenty megabytes are never downloaded. The poller is
-//! sequential, so a photo and the question sent after it arrive in order.
+//! so a stranger's twenty megabytes are never downloaded. A voice note is
+//! fetched and heard here too, by the recogniser the orchestrator keeps the
+//! poller told of (another `watch`, ADR 0013 stage C). The poller is
+//! sequential, so a photo or a voice note and the question sent after it
+//! arrive in order.
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
@@ -20,12 +24,14 @@ use uuid::Uuid;
 
 use crate::entities::message_image::MessageImage;
 use crate::features::bridge::{
-    Body, ChannelFailure, Inbound, InboundEvent, Incoming, Outbound, Picture, PictureError,
+    Body, ChannelFailure, Inbound, InboundEvent, Incoming, Outbound, Picture, PictureError, Voice,
+    VoiceError,
 };
 use crate::shared::config::ImageSettings;
 use crate::shared::messenger::telegram::{
     FILE_LIMIT, MESSAGE_LIMIT, POLL_TIMEOUT_SECS, TelegramClient, TelegramError,
 };
+use crate::shared::stt::{Hearing, SttError, WavMemo};
 
 /// How often *typing…* is sent again: it lasts five seconds.
 const TYPING_EVERY: Duration = Duration::from_secs(4);
@@ -40,8 +46,11 @@ const CONFLICT_WAIT: Duration = Duration::from_secs(30);
 pub(super) struct BotTasks {
     pub(super) cancel: CancellationToken,
     pub(super) out: UnboundedSender<Outbound>,
-    /// Who the bot answers — the poller fetches only their pictures.
+    /// Who the bot answers — the poller fetches only their pictures and voice
+    /// notes.
     pub(super) paired: watch::Sender<Option<String>>,
+    /// What hears a voice note: the recognition settings as they stand.
+    pub(super) hearing: watch::Sender<Hearing>,
 }
 
 /// What a bot is started with besides its client.
@@ -53,6 +62,10 @@ pub(super) struct BotStart {
     pub(super) paired: Option<String>,
     /// How a picture is fetched and prepared (`settings.json` → `images`).
     pub(super) images: ImageSettings,
+    /// What hears a voice note, and the session's memo of the servers that
+    /// want WAV.
+    pub(super) hearing: Hearing,
+    pub(super) memo: Arc<WavMemo>,
 }
 
 /// Starts a profile's bot: the poller and the sender, both ended by the
@@ -65,6 +78,7 @@ pub(super) fn spawn_telegram(
     let cancel = CancellationToken::new();
     let (out, out_rx) = unbounded_channel();
     let (paired, paired_rx) = watch::channel(start.paired);
+    let (hearing, hearing_rx) = watch::channel(start.hearing);
     let tell = Teller {
         inbound,
         profile: start.profile,
@@ -74,6 +88,8 @@ pub(super) fn spawn_telegram(
         client: client.clone(),
         paired: paired_rx,
         images: start.images,
+        hearing: hearing_rx,
+        memo: start.memo,
     };
     tokio::spawn(poll(fetch, tell.clone(), cancel.clone()));
     tokio::spawn(send(client, out_rx, tell, cancel.clone()));
@@ -81,6 +97,7 @@ pub(super) fn spawn_telegram(
         cancel,
         out,
         paired,
+        hearing,
     }
 }
 
@@ -89,14 +106,63 @@ struct Fetch {
     client: TelegramClient,
     paired: watch::Receiver<Option<String>>,
     images: ImageSettings,
+    hearing: watch::Receiver<Hearing>,
+    memo: Arc<WavMemo>,
 }
 
 impl Fetch {
+    /// Whether `m` is the paired account's: only theirs is ever downloaded.
+    fn is_paired(&self, m: &Incoming) -> bool {
+        self.paired.borrow().as_deref() == Some(m.account.as_str())
+    }
+
+    /// The voice note of `m` fetched and heard, when its sender is the paired
+    /// account; anyone else's is left as it came.
+    async fn voice(&self, m: &mut Incoming) {
+        if !self.is_paired(m) {
+            return;
+        }
+        let Body::Voice { voice, .. } = &mut m.body else {
+            return;
+        };
+        let Voice::File { id, seconds } = voice else {
+            return;
+        };
+        let seconds = *seconds;
+        *voice = match self.hear(id).await {
+            Ok(text) => Voice::Heard { text, seconds },
+            Err(error) => Voice::Failed { error, seconds },
+        };
+    }
+
+    /// One note: a recogniser built from the settings as they stand, the note
+    /// downloaded within a bot's cap, then heard.
+    async fn hear(&self, id: &str) -> Result<String, VoiceError> {
+        let hearing = self.hearing.borrow().clone();
+        let transcriber = crate::shared::stt::transcriber(&hearing, self.memo.clone())
+            .map_err(VoiceError::NotSetUp)?;
+        let note = match self.client.download(id, FILE_LIMIT).await {
+            Ok(note) => note,
+            Err(TelegramError::TooBig(bytes)) => {
+                return Err(VoiceError::TooBig {
+                    bytes,
+                    limit: FILE_LIMIT,
+                });
+            }
+            Err(err) => return Err(VoiceError::Fetch(err.to_string())),
+        };
+        match transcriber.transcribe(&note).await {
+            Ok(text) => Ok(text),
+            Err(SttError::Nothing) => Err(VoiceError::Nothing),
+            Err(err) => Err(VoiceError::Unheard(err.to_string())),
+        }
+    }
+
     /// The pictures of `m` fetched and prepared, when its sender is the paired
     /// account; anyone else's are left as they came, for the orchestrator to
     /// drop unread.
     async fn pictures(&self, m: &mut Incoming) {
-        if self.paired.borrow().as_deref() != Some(m.account.as_str()) {
+        if !self.is_paired(m) {
             return;
         }
         let Body::Images { pictures, .. } = &mut m.body else {
@@ -240,7 +306,10 @@ async fn poll(fetch: Fetch, teller: Teller, cancel: CancellationToken) {
                 for mut m in crate::features::bridge::gather_albums(read) {
                     tokio::select! {
                         _ = cancel.cancelled() => return,
-                        _ = fetch.pictures(&mut m) => {}
+                        _ = async {
+                            fetch.pictures(&mut m).await;
+                            fetch.voice(&mut m).await;
+                        } => {}
                     }
                     teller.tell(InboundEvent::Message(m));
                 }
@@ -282,6 +351,7 @@ async fn send(
 ) {
     let profile = teller.profile;
     let mut typing: BTreeSet<i64> = BTreeSet::new();
+    let mut recording: BTreeSet<i64> = BTreeSet::new();
     let mut tick = tokio::time::interval(TYPING_EVERY);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
@@ -290,6 +360,9 @@ async fn send(
             _ = tick.tick() => {
                 for chat in &typing {
                     let _ = client.send_typing(*chat).await;
+                }
+                for chat in &recording {
+                    let _ = client.send_recording(*chat).await;
                 }
             }
             msg = out.recv() => {
@@ -314,8 +387,56 @@ async fn send(
                             )));
                         }
                     }
+                    Outbound::Recording { to, on } => {
+                        let Ok(chat) = to.parse::<i64>() else { continue };
+                        if on {
+                            if recording.insert(chat) {
+                                let _ = client.send_recording(chat).await;
+                            }
+                        } else {
+                            recording.remove(&chat);
+                        }
+                    }
+                    Outbound::Voice { to, note, seconds } => {
+                        let Ok(chat) = to.parse::<i64>() else { continue };
+                        recording.remove(&chat);
+                        if let Err(err) = deliver_voice(&client, chat, note, seconds).await {
+                            tracing::warn!(%profile, error = %err, "bridge: a voice note was not delivered");
+                            teller.tell(InboundEvent::Failed(ChannelFailure::Unvoiced(
+                                err.to_string(),
+                            )));
+                        }
+                    }
                 }
             }
+        }
+    }
+}
+
+/// A reply's voice note, after the wait Telegram asks for when it says so, and
+/// once more after a network failure.
+async fn deliver_voice(
+    client: &TelegramClient,
+    chat: i64,
+    note: Vec<u8>,
+    seconds: u32,
+) -> Result<(), TelegramError> {
+    let mut tries = 0;
+    loop {
+        match client.send_voice(chat, note.clone(), seconds).await {
+            Ok(()) => return Ok(()),
+            Err(TelegramError::Refused {
+                retry_after: Some(secs),
+                ..
+            }) if tries < 3 => {
+                tries += 1;
+                tokio::time::sleep(Duration::from_secs(secs)).await;
+            }
+            Err(TelegramError::Network(_)) if tries < 2 => {
+                tries += 1;
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+            Err(err) => return Err(err),
         }
     }
 }

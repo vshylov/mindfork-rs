@@ -37,6 +37,7 @@ pub mod session_budget;
 #[cfg(test)]
 pub mod shot;
 pub mod storage;
+pub mod stt;
 pub mod text_decode;
 pub mod theme;
 pub mod title;
@@ -45,4 +46,5 @@ pub mod tts;
 pub mod ui;
 pub mod user_theme;
 pub mod video;
+pub mod voice_note;
 pub mod wrap;

@@ -172,7 +172,15 @@ regex = "1.12.4"
 # new system dependency — ALSA on Linux (`libasound2-dev` at build time).
 # See docs/research/tts.md §6.
 rodio = { version = "0.22.0", default-features = false, features = ["playback", "wav", "mp3"] }
-reqwest = { version = "0.13.4", default-features = false, features = ["json", "stream", "rustls", "form"] }
+# Voice notes — OGG/Opus, what Telegram sends and shows as a voice message (ADR 0013,
+# stage C): a reply written as one, a note decoded to WAV for a recogniser that takes
+# nothing else. A pure-Rust port of libopus 1.6 with no dependencies, and the OGG
+# container; nothing to install and nothing in C (research companion-platform.md §3.8).
+opus-rs = "0.1.39"
+ogg = "0.9.2"
+# `multipart` — a file in a form: a voice note to a transcription API, and to Telegram's
+# `sendVoice`.
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "stream", "rustls", "form", "multipart"] }
 # `serialize` — `Connection::deserialize_read_exact`: `mindfork stats <archive>` reads a
 # backup's `data.db` from the zip entry straight into memory, so no decrypted copy of an
 # encrypted backup's database ever lands on disk (docs/history/data-stats.md F5). A module of

@@ -295,6 +295,8 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
         tts_formats: Default::default(),
         greeting_shown: std::collections::HashMap::new(),
         auto_speech_failed: false,
+        stt_memo: Default::default(),
+        stt_failed: false,
         storage,
         config,
         registry,

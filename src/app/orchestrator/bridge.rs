@@ -34,11 +34,11 @@ use super::{InflightTurn, Orchestrator};
 
 /// One profile's bot, as the orchestrator holds it.
 pub(super) struct Bot {
-    tasks: BotTasks,
+    pub(super) tasks: BotTasks,
     /// What the bot was started with — its token and server, hashed. A change
     /// of either starts it again; the hash also tags what its tasks send, so a
     /// replaced bot's last words are not taken for the new one's.
-    key: u64,
+    pub(super) key: u64,
     /// The bot's handle, once it answered: what the pairing link names.
     handle: Option<String>,
     /// The failure last told, so each is told once (rule 6).
@@ -63,6 +63,9 @@ pub(super) struct Seat {
     last_error: Option<String>,
     /// Stopped by `/stop` or `Esc`.
     stopped: bool,
+    /// The turn answers a voice note: its reply goes back as one too, while
+    /// the profile speaks its replies (ADR 0013 stage C, D8 (b)).
+    voiced: bool,
 }
 
 /// What a landed seat turn leaves to say.
@@ -161,6 +164,8 @@ impl Orchestrator {
                     bot: key,
                     paired,
                     images,
+                    hearing: self.hearing(),
+                    memo: self.stt_memo.clone(),
                 },
                 TelegramClient::new(&api, &token),
                 self.bridge_tx.clone(),
@@ -196,7 +201,7 @@ impl Orchestrator {
         }
     }
 
-    fn bridge_send(&self, profile: Uuid, to: &str, text: impl Into<String>) {
+    pub(super) fn bridge_send(&self, profile: Uuid, to: &str, text: impl Into<String>) {
         self.bridge_out(
             profile,
             Outbound::Send {
@@ -214,7 +219,10 @@ impl Orchestrator {
             .unwrap_or_default()
     }
 
-    fn profile_lang_locale(&self, profile: Uuid) -> &'static crate::shared::i18n::Locale {
+    pub(super) fn profile_lang_locale(
+        &self,
+        profile: Uuid,
+    ) -> &'static crate::shared::i18n::Locale {
         crate::shared::i18n::locale(
             self.profiles
                 .iter()
@@ -263,6 +271,10 @@ impl Orchestrator {
             ),
             ChannelFailure::Undelivered(err) => loc.tf(
                 "ui.bridge.err.undelivered",
+                &[("profile", &name), ("err", err)],
+            ),
+            ChannelFailure::Unvoiced(err) => loc.tf(
+                "ui.bridge.err.unvoiced",
                 &[("profile", &name), ("err", err)],
             ),
         };
@@ -343,6 +355,11 @@ impl Orchestrator {
                 caption,
                 author,
             } => self.bridge_pictures(profile, &to, pictures, &caption, author),
+            Body::Voice {
+                voice,
+                caption,
+                author,
+            } => self.bridge_voice_note(profile, &to, voice, &caption, author),
         }
     }
 
@@ -499,7 +516,7 @@ impl Orchestrator {
     /// The person's message, into the bridged chat — answered now, or after
     /// the turn running there lands. Made when it arrived, so its time is
     /// when it was sent.
-    fn bridge_say(&mut self, profile: Uuid, message: Message) {
+    pub(super) fn bridge_say(&mut self, profile: Uuid, message: Message) {
         let Some(chat) = self.bridged_chat(profile) else {
             return;
         };
@@ -561,6 +578,7 @@ impl Orchestrator {
             .iter()
             .find(|c| c.id == chat)
             .is_some_and(|c| crate::features::rename_chat::is_first_user_message(&c.messages));
+        let voiced = self.answers_voice(chat, woken);
         let Some((generation, cancel)) = self.start_seat_generation(chat, backend, woken) else {
             return;
         };
@@ -588,6 +606,7 @@ impl Orchestrator {
                 },
                 last_error: None,
                 stopped: false,
+                voiced,
             },
         );
         self.emit_chat_list();
@@ -697,6 +716,8 @@ impl Orchestrator {
         }
         let loc = self.profile_lang_locale(seat.profile);
         let stopped = seat.stopped || reply.finish == Some(MessageFinish::Cancelled);
+        // The words a voice note says back: a whole reply, to a voice note.
+        let spoken = reply.text.clone().filter(|_| seat.voiced && !stopped);
         let text = match reply.text {
             Some(text) if stopped => format!("{text}\n\n_{}_", loc.t("bridge.stopped_mark")),
             Some(text) => text,
@@ -713,6 +734,9 @@ impl Orchestrator {
             ),
         };
         self.bridge_send(seat.profile, &seat.to, text);
+        if let Some(words) = spoken {
+            self.bridge_voice_reply(seat.profile, &seat.to, &words);
+        }
     }
 
     /// After any turn lands in `chat`: what the messenger sent meanwhile is
@@ -902,6 +926,6 @@ impl Orchestrator {
 }
 
 /// Bytes as megabytes, one decimal — what a person reads a size in.
-fn megabytes(bytes: u64) -> String {
+pub(super) fn megabytes(bytes: u64) -> String {
     format!("{:.1}", bytes as f64 / (1024.0 * 1024.0))
 }

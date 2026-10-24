@@ -16,7 +16,7 @@ use crate::shared::api::catalogue::{
     self, CatalogueError, CatalogueRequest, CatalogueShape, ModelSlot,
 };
 use crate::shared::config::{
-    CloudSettings, ExternalSettings, ImpersonationMode, ServerMode, TtsMode, VideoProvider,
+    CloudSettings, ExternalSettings, ImpersonationMode, ServerMode, SttMode, TtsMode, VideoProvider,
 };
 
 use super::Orchestrator;
@@ -76,12 +76,19 @@ impl Orchestrator {
         };
         let speech = of_the_gateway(&cfg.tts.openrouter.url, &cfg.tts.openrouter.api_key_env);
         let video = of_the_gateway(&cfg.video.openrouter.url, &cfg.video.openrouter.api_key_env);
+        let hearing = of_the_gateway(&cfg.stt.openrouter.url, &cfg.stt.openrouter.api_key_env);
         let (mode, external, cloud, secret) = match slot {
             ModelSlot::Speech => (
                 speech_mode(cfg.tts.mode).ok_or(CatalogueError::NotConfigured)?,
                 &cfg.engine.external,
                 Some(&speech),
                 cfg.tts.secret_key(),
+            ),
+            ModelSlot::Transcription => (
+                hearing_mode(cfg.stt.mode).ok_or(CatalogueError::NotConfigured)?,
+                &cfg.engine.external,
+                Some(&hearing),
+                cfg.stt.secret_key(),
             ),
             ModelSlot::Video => (
                 video_mode(cfg.video.provider).ok_or(CatalogueError::NotConfigured)?,
@@ -161,6 +168,17 @@ fn speech_mode(mode: TtsMode) -> Option<ServerMode> {
     }
 }
 
+/// The recognition slot's mode as the [`ServerMode`] whose catalogue it reads,
+/// or `None`: OpenAI's list says nothing of what a model does, and a server of
+/// the person's own serves one model or names none. The gateway publishes its
+/// transcription models as a list (ADR 0013, stage C).
+fn hearing_mode(mode: SttMode) -> Option<ServerMode> {
+    match mode {
+        SttMode::OpenRouter => Some(ServerMode::OpenRouter),
+        SttMode::OpenAi | SttMode::External => None,
+    }
+}
+
 /// The video slot's provider as the [`ServerMode`] whose catalogue it reads, or
 /// `None` where there is none to read: Gemini's own list calls everything that
 /// generates content a chat model and says nothing of video, so that row stays
@@ -217,6 +235,7 @@ fn source(
             let shape = match slot {
                 ModelSlot::Embedder => CatalogueShape::OpenRouterEmbeddings,
                 ModelSlot::Speech => CatalogueShape::OpenRouterSpeech,
+                ModelSlot::Transcription => CatalogueShape::OpenRouterTranscription,
                 ModelSlot::Video => CatalogueShape::OpenRouterVideo,
                 ModelSlot::Assistant | ModelSlot::Impersonation => CatalogueShape::OpenRouter,
             };

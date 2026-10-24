@@ -106,11 +106,18 @@ impl Stub {
 /// Reads a request to the end of its body: the head, then as many bytes as
 /// `Content-Length` names.
 pub(crate) async fn whole_request(sock: &mut tokio::net::TcpStream) -> String {
+    String::from_utf8_lossy(&whole_request_bytes(sock).await).to_string()
+}
+
+/// [`whole_request`] as it came, for a body that is not text.
+pub(crate) async fn whole_request_bytes(sock: &mut tokio::net::TcpStream) -> Vec<u8> {
     let mut got = Vec::new();
     let mut buf = [0u8; 4096];
     loop {
-        let text = String::from_utf8_lossy(&got).to_string();
-        if let Some((head, body)) = text.split_once("\r\n\r\n") {
+        // Counted in bytes: a body that is not text (a voice note) grows in a
+        // lossy decoding and would seem whole before it is.
+        if let Some(end) = got.windows(4).position(|w| w == b"\r\n\r\n") {
+            let head = String::from_utf8_lossy(&got[..end]).to_string();
             let wanted = head
                 .lines()
                 .find_map(|l| {
@@ -119,12 +126,12 @@ pub(crate) async fn whole_request(sock: &mut tokio::net::TcpStream) -> String {
                         .then(|| value.trim().parse::<usize>().ok())?
                 })
                 .unwrap_or(0);
-            if body.len() >= wanted {
-                return text;
+            if got.len() - (end + 4) >= wanted {
+                return got;
             }
         }
         match sock.read(&mut buf).await {
-            Ok(0) | Err(_) => return String::from_utf8_lossy(&got).to_string(),
+            Ok(0) | Err(_) => return got,
             Ok(n) => got.extend_from_slice(&buf[..n]),
         }
     }

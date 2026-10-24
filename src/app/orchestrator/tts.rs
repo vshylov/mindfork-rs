@@ -255,7 +255,7 @@ impl Orchestrator {
     /// [`Self::fail_tts`] for a speech attempt; one the person did not ask for
     /// (`auto`) says its failure once — every reply would repeat it — and stays
     /// quiet until the settings or a profile change, or speech works again.
-    fn fail_speech(&mut self, msg: &str, auto: bool) {
+    pub(super) fn fail_speech(&mut self, msg: &str, auto: bool) {
         if auto {
             if self.auto_speech_failed {
                 return;
@@ -267,7 +267,7 @@ impl Orchestrator {
 }
 
 /// Bundle key for a structured speech-setup error.
-fn setup_error_key(err: TtsSetupError) -> &'static str {
+pub(super) fn setup_error_key(err: TtsSetupError) -> &'static str {
     match err {
         TtsSetupError::Model => "ui.err.tts_no_model",
         TtsSetupError::ApiKey => "ui.err.tts_no_api_key",

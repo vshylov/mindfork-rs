@@ -1337,6 +1337,100 @@ fn tts_toggles_and_mode_are_saved() {
 }
 
 #[test]
+fn model_subsection_fifth_tab_is_recognition_with_mode_driven_fields() {
+    // The fifth tab — "Recognition" (ADR 0013, stage C): what hears a voice
+    // note from the messenger. A cloud mode reads the provider's key, shared
+    // with chat; `external` has a URL and a key of its own.
+    let mut s = screen();
+    s.handle_key(key(KeyCode::Enter)); // ModelSub (tab strip)
+    for _ in 0..4 {
+        s.handle_key(key(KeyCode::Right));
+    }
+    assert_eq!(s.model_sub, ModelTab::Stt);
+    let ids: Vec<FieldId> = s.fields().iter().map(|f| f.id).collect();
+    for id in [
+        FieldId::SttMode,
+        FieldId::SttLanguage,
+        FieldId::SttModelName,
+        FieldId::SttApiKey,
+        FieldId::SttApiKeyEnv,
+        FieldId::SttUrl,
+    ] {
+        assert!(ids.contains(&id), "{id:?} in {ids:?}");
+    }
+    assert_eq!(
+        s.secret_field_key(FieldId::SttApiKey),
+        Some(SecretKey::Provider(
+            crate::shared::config::CloudProvider::OpenAi
+        )),
+        "the OpenAI key, shared with chat"
+    );
+    assert!(
+        s.fields().iter().any(|f| f.id == FieldId::SttModelName
+            && matches!(&f.kind, FieldKind::Text(m)
+                if m == crate::shared::config::DEFAULT_STT_OPENAI_MODEL)),
+        "the default model shown"
+    );
+    s.config.stt.mode = crate::shared::config::SttMode::External;
+    assert_eq!(
+        s.secret_field_key(FieldId::SttApiKey),
+        Some(SecretKey::External(ExternalSlot::Stt))
+    );
+    // The gateway's model row has the gateway's list behind it; OpenAI's does not.
+    s.config.stt.mode = crate::shared::config::SttMode::OpenRouter;
+    assert_eq!(
+        super::picker::model_slot(&s.config, FieldId::SttModelName),
+        Some(crate::shared::api::catalogue::ModelSlot::Transcription)
+    );
+    s.config.stt.mode = crate::shared::config::SttMode::OpenAi;
+    assert_eq!(
+        super::picker::model_slot(&s.config, FieldId::SttModelName),
+        None
+    );
+}
+
+#[test]
+fn recognition_mode_language_and_external_rows_are_saved() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Model);
+    s.model_sub = ModelTab::Stt;
+    goto_field(&mut s, FieldId::SttMode);
+    s.handle_key(key(KeyCode::Right));
+    assert_eq!(
+        s.config.stt.mode,
+        crate::shared::config::SttMode::OpenRouter,
+        "the mode cycle follows SttMode::ALL"
+    );
+    // The model row edits the active section: the gateway's, not OpenAI's.
+    let spec = super::spec::field_spec(FieldId::SttModelName).unwrap();
+    let super::spec::Access::Text(set) = spec.access else {
+        panic!("a text row")
+    };
+    set(&mut s.config, "mistralai/voxtral-mini-transcribe-3-0");
+    assert_eq!(
+        s.config.stt.openrouter.model_name.as_deref(),
+        Some("mistralai/voxtral-mini-transcribe-3-0")
+    );
+    assert_eq!(
+        s.config.stt.openai.model_name.as_deref(),
+        Some(crate::shared::config::DEFAULT_STT_OPENAI_MODEL)
+    );
+    let super::spec::Access::Text(lang) = super::spec::field_spec(FieldId::SttLanguage)
+        .unwrap()
+        .access
+    else {
+        panic!("a text row")
+    };
+    lang(&mut s.config, "ru");
+    assert_eq!(s.config.stt.language.as_deref(), Some("ru"));
+    lang(&mut s.config, "");
+    assert_eq!(s.config.stt.language, None, "empty — detect it");
+    // Recognition rows have descriptions (the bottom panel + the search trap).
+    assert!(field_desc(&s, FieldId::SttMode).is_some());
+    assert!(field_desc(&s, FieldId::SttLanguage).is_some());
+}
+
+#[test]
 fn section_counts_sum_matches_search_index() {
     // Section parameter counters are tied to the selected modes and derived from
     // the same index as search: the sum of section counters is identically equal to

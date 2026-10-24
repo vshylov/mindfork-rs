@@ -19,6 +19,8 @@ impl Orchestrator {
         if old.bridge != self.config.bridge || old.images != self.config.images {
             self.refresh_bridges();
         }
+        // What the bots hear a voice note with (ADR 0013, stage C).
+        self.refresh_hearing();
         // The speech settings may be what a spoken reply failed on: the next
         // failure is news again (spec §11.9).
         self.auto_speech_failed = false;
@@ -162,7 +164,8 @@ impl Orchestrator {
                 ExternalSlot::Chat => self.restarts.mark_chat(),
                 ExternalSlot::Impersonation => self.restarts.mark_impersonation(),
                 ExternalSlot::Embed => self.restarts.mark_embed(),
-                ExternalSlot::Tts => {}
+                // Read for each voice note, from the settings as they stand.
+                ExternalSlot::Tts | ExternalSlot::Stt => {}
             },
             // The value is handed to a child process at spawn time, so it only
             // takes effect on a re-apply — deferred like an engine edit. The
@@ -182,6 +185,9 @@ impl Orchestrator {
             // stopped when the token was cleared (ADR 0013).
             SecretKey::BridgeToken(_) => self.refresh_bridges(),
         }
+        // A provider's key or the recognition slot's own may be what a voice
+        // note is heard with.
+        self.refresh_hearing();
         self.emit_settings();
     }
 

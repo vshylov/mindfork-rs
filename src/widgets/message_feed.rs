@@ -118,6 +118,10 @@ pub struct FeedMessage {
     /// message will record, so the header does not change under the reader when
     /// the turn ends.
     pub model: Option<String>,
+    /// How long the voice note was, for a user message that came as one from
+    /// the messenger (`Message::voice`, ADR 0013 stage C): drawn beside the
+    /// role header.
+    pub voice: Option<u32>,
 }
 
 impl FeedMessage {
@@ -133,6 +137,7 @@ impl FeedMessage {
             streaming: false,
             message_ids: Vec::new(),
             model: None,
+            voice: None,
         }
     }
 
@@ -146,6 +151,7 @@ impl FeedMessage {
             streaming: false,
             message_ids: Vec::new(),
             model: None,
+            voice: None,
         }
     }
 
@@ -195,6 +201,7 @@ impl FeedMessage {
                 .as_ref()
                 .and_then(|meta| meta.model.clone())
                 .filter(|m| !m.is_empty()),
+            voice: msg.voice.map(|v| v.seconds),
         })
     }
 
@@ -1327,6 +1334,7 @@ fn build_message_block(
     let glyphs = palette.glyphs();
     match item.role {
         FeedRole::User => {
+            let voice = item.voice.map(|s| voice_mark(s, loc));
             body.push(role_header(
                 &format!(
                     "{} {}",
@@ -1334,7 +1342,7 @@ fn build_message_block(
                     role_name(names.user_name(), "ui.feed.role.user", loc)
                 ),
                 palette.user_soft,
-                None,
+                voice.as_deref(),
                 palette,
             ));
             content_from = body.len();
@@ -1696,6 +1704,7 @@ fn message_fingerprint(item: &FeedMessage) -> u64 {
     // Drawn into the header line, so a bubble that learns its model name (the
     // streaming one, on the next activation) has to be rebuilt.
     item.model.hash(&mut h);
+    item.voice.hash(&mut h);
     item.tools.len().hash(&mut h);
     for tc in &item.tools {
         tc.name.hash(&mut h);
@@ -1717,9 +1726,16 @@ fn role_name(custom: Option<&str>, key: &str, loc: &'static Locale) -> String {
     }
 }
 
+/// A voice note's mark beside the person's header: its length, `m:ss`.
+fn voice_mark(seconds: u32, loc: &'static Locale) -> String {
+    let time = format!("{}:{:02}", seconds / 60, seconds % 60);
+    loc.tf("ui.feed.voice", &[("time", &time)])
+}
+
 /// A role-header line: icon + name in caps, colored with the role's "soft"
 /// variant, optionally followed by `model` — the model that wrote the message
-/// (`interface.show_model_name`, spec §11.3).
+/// (`interface.show_model_name`, spec §11.3) — or, on the person's header, a
+/// voice note's mark (ADR 0013, stage C).
 ///
 /// The name rides the header rather than a line of its own: it is an attribute
 /// of the bubble, and a second line would cost a row in every assistant message.
@@ -2379,6 +2395,7 @@ mod tests {
             streaming: false,
             message_ids: vec![Uuid::new_v4()],
             model: None,
+            voice: None,
         }
     }
 
@@ -2530,6 +2547,26 @@ mod tests {
             pill_row.contains("multimodal)") && pill_row.contains("детали · "),
             "the pill follows the header on its row: {pill_row:?}"
         );
+    }
+
+    #[test]
+    fn a_voice_note_is_marked_beside_the_persons_header() {
+        let mut m = Message::user("remind me about the dentist").with_voice(75);
+        let item = FeedMessage::from_message(&m).unwrap();
+        assert_eq!(item.voice, Some(75));
+        let en = crate::shared::i18n::locale(crate::shared::i18n::Lang::En);
+        let mut feed = MessageFeed::new();
+        let lines = feed.build_lines(&[item], &Palette::default(), 80, en);
+        let header = lines
+            .iter()
+            .map(|l| joined(std::slice::from_ref(l)))
+            .find(|l| l.contains("YOU"))
+            .unwrap();
+        assert!(header.contains("voice message 1:15"), "{header}");
+        m.voice = None;
+        let typed = FeedMessage::from_message(&m).unwrap();
+        let all = joined(&feed.build_lines(&[typed], &Palette::default(), 80, en));
+        assert!(!all.contains("voice message"), "{all}");
     }
 
     #[test]
