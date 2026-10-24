@@ -469,7 +469,7 @@ async fn a_forward_reads_as_a_quote_and_the_rest_is_answered_by_the_bridge() {
     fake.sticker(ANN, "ann");
     assert_eq!(
         fake.wait_texts(ANN, 1, 20).await,
-        ["I read text and pictures here; voice notes and other files not yet."]
+        ["I read text, pictures and voice messages here; other files not yet."]
     );
     fake.say(ANN, "ann", "/help");
     assert!(fake.wait_texts(ANN, 2, 20).await[1].starts_with("Commands:"));
@@ -700,5 +700,243 @@ async fn a_strangers_picture_is_never_downloaded() {
     assert!(fake.files_asked().is_empty(), "{:?}", fake.files_asked());
     assert!(fake.texts_to(EVE).is_empty());
     assert_eq!(backend.requests().len(), 1);
+    b.quit().await;
+}
+
+// ---------- voice notes (ADR 0013, stage C) ----------
+
+/// A short OGG/Opus note, as a phone sends one: a tone the stub recogniser
+/// "hears" as whatever its script says.
+fn phone_note() -> Vec<u8> {
+    let samples: Vec<i16> = (0..24_000)
+        .map(|i| ((i as f64 / 24_000.0 * 300.0 * std::f64::consts::TAU).sin() * 8_000.0) as i16)
+        .collect();
+    crate::shared::voice_note::encode(&samples, 24_000).unwrap()
+}
+
+/// A recogniser and a speech server of the test's own: the first hears every
+/// note as `heard`, the second answers every request with a WAV.
+async fn voice_servers(
+    heard: &str,
+) -> (
+    crate::shared::http_stub::Stub,
+    crate::shared::http_stub::Stub,
+) {
+    use crate::shared::http_stub::{Stub, answered, json};
+    let body = serde_json::json!({ "text": heard }).to_string();
+    let stt = Stub::serving(vec![json(&body), json(&body), json(&body)]).await;
+    let samples: Vec<i16> = (0..12_000).map(|i| ((i % 40) as i16 - 20) * 300).collect();
+    let wav = crate::shared::voice_note::wav(&samples, 24_000);
+    let tts = Stub::serving(vec![
+        answered("audio/wav", &wav),
+        answered("audio/wav", &wav),
+    ])
+    .await;
+    (stt, tts)
+}
+
+/// The two servers named in the settings: recognition and speech both
+/// `external`, at the stubs.
+fn hear_and_speak(cfg: &mut AppConfig, stt: &str, tts: &str) {
+    cfg.stt.mode = crate::shared::config::SttMode::External;
+    cfg.stt.external.url = Some(stt.into());
+    cfg.tts.mode = crate::shared::config::TtsMode::External;
+    cfg.tts.external.url = Some(tts.into());
+}
+
+#[tokio::test]
+async fn a_voice_note_is_heard_and_answered_in_text_then_in_voice() {
+    let fake = TelegramFake::start("mara_bot", TOKEN).await;
+    let backend = Held::new("I'll remind you about the dentist.", None);
+    let (stt, tts) = voice_servers("remind me about the dentist").await;
+    let Some(b) = start(&fake, backend.clone(), true, |p, cfg, _| {
+        p.companion.speak_replies = true;
+        hear_and_speak(cfg, &stt.url, &tts.url);
+    })
+    .await
+    else {
+        return;
+    };
+    fake.voice(ANN, "ann", &phone_note(), 4);
+    assert_eq!(
+        fake.wait_texts(ANN, 1, 20).await,
+        ["I'll remind you about the dentist."],
+        "the text first, whole (D9 (a))"
+    );
+    let voices = fake.wait_voices(ANN, 1, 20).await;
+    assert_eq!(voices.len(), 1, "then the voice note (D8 (b))");
+    let back = crate::shared::voice_note::decode(&voices[0]).expect("an OGG/Opus note");
+    assert!(back.len() > 4_000, "about half a second: {}", back.len());
+    let methods: Vec<String> = fake.sent().into_iter().map(|s| s.method).collect();
+    let text_at = methods.iter().position(|m| m == "sendMessage").unwrap();
+    let voice_at = methods.iter().position(|m| m == "sendVoice").unwrap();
+    assert!(text_at < voice_at, "{methods:?}");
+    assert!(
+        fake.sent()
+            .iter()
+            .any(|s| s.method == "sendChatAction" && s.body["action"] == "record_voice"),
+        "recording… while the voice is made"
+    );
+    // The recogniser was sent the note as the phone sent it.
+    assert!(stt.requests()[0].contains("voice.ogg"));
+    // The model read the transcript under its label.
+    let words = last_user(&backend.requests()[0]);
+    assert!(
+        words.starts_with("(A voice message, transcribed by speech recognition"),
+        "{words}"
+    );
+    assert!(words.ends_with("remind me about the dentist"), "{words}");
+    let (dir, profile) = b.quit().await;
+    let chat = profile_on_disk(dir.path(), profile).bridge.chat.unwrap();
+    let kept = &chat_on_disk(dir.path(), chat).messages[0];
+    assert_eq!(
+        kept.text, "remind me about the dentist",
+        "the words, unlabelled"
+    );
+    assert_eq!(
+        kept.voice.map(|v| v.seconds),
+        Some(4),
+        "marked as spoken (D7 (a))"
+    );
+}
+
+#[tokio::test]
+async fn a_typed_message_is_answered_in_text_alone_and_so_is_a_voice_note_when_replies_are_not_spoken()
+ {
+    let fake = TelegramFake::start("mara_bot", TOKEN).await;
+    let backend = Held::new("Sure.", None);
+    let (stt, tts) = voice_servers("are you there").await;
+    let Some(mut b) = start(&fake, backend.clone(), true, |p, cfg, _| {
+        p.companion.speak_replies = true;
+        hear_and_speak(cfg, &stt.url, &tts.url);
+    })
+    .await
+    else {
+        return;
+    };
+    fake.say(ANN, "ann", "are you there?");
+    fake.wait_texts(ANN, 1, 20).await;
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    assert!(fake.voices_to(ANN).is_empty(), "typed — answered in text");
+    assert!(tts.requests().is_empty(), "nothing was synthesised");
+    // The profile stops speaking its replies: a voice note is answered in text.
+    let mut companion = profile_on_disk(b.dir.path(), b.profile).companion;
+    companion.speak_replies = false;
+    let edit = crate::features::profiles::ProfileEdit {
+        companion: Some(companion),
+        ..Default::default()
+    };
+    b.tx.send(AppCommand::UpdateProfile {
+        id: b.profile,
+        edit: Box::new(edit),
+    })
+    .unwrap();
+    event(&mut b.rx, |e| matches!(e, AppEvent::ProfileList(_))).await;
+    fake.voice(ANN, "ann", &phone_note(), 2);
+    assert_eq!(fake.wait_texts(ANN, 2, 20).await.len(), 2);
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    assert!(fake.voices_to(ANN).is_empty());
+    assert!(tts.requests().is_empty());
+    b.quit().await;
+}
+
+#[tokio::test]
+async fn a_voice_note_nobody_can_hear_is_said_to_the_phone_and_told_once_at_the_terminal() {
+    let fake = TelegramFake::start("mara_bot", TOKEN).await;
+    let backend = Held::new("Hi.", None);
+    let Some(mut b) = start(&fake, backend.clone(), true, |_, cfg, _| {
+        // `external` with no address: recognition is not set up.
+        cfg.stt.mode = crate::shared::config::SttMode::External;
+    })
+    .await
+    else {
+        return;
+    };
+    fake.voice(ANN, "ann", &phone_note(), 3);
+    let told = event(
+        &mut b.rx,
+        |e| matches!(e, AppEvent::Error(t) if t.contains("not heard")),
+    )
+    .await;
+    let AppEvent::Error(told) = told else {
+        unreachable!()
+    };
+    assert!(told.contains("set the server URL"), "{told}");
+    assert_eq!(
+        fake.wait_texts(ANN, 1, 20).await,
+        ["I can't listen to voice messages here yet — write it, please."]
+    );
+    fake.voice(ANN, "ann", &phone_note(), 3);
+    assert_eq!(
+        fake.wait_texts(ANN, 2, 20).await.len(),
+        2,
+        "the phone told each time"
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let mut again = 0;
+    while let Ok(e) = b.rx.try_recv() {
+        if matches!(e, AppEvent::Error(ref t) if t.contains("not heard")) {
+            again += 1;
+        }
+    }
+    assert_eq!(again, 0, "the terminal is told once");
+    assert!(
+        fake.files_asked().is_empty(),
+        "nothing downloaded for nothing to hear it"
+    );
+    assert!(backend.requests().is_empty(), "no turn");
+    b.quit().await;
+}
+
+/// The settings screen's snapshot carries no secret (`emit_settings` clears
+/// them): an edit from it must not cost the bots their tokens, nor the
+/// recogniser its key. Both were read before the stored keys were put back —
+/// an image setting changed stopped every bot, and any edit left a voice note
+/// heard with no key.
+#[tokio::test]
+async fn an_edit_from_the_settings_screen_keeps_the_bots_and_the_recognisers_key() {
+    let fake = TelegramFake::start("mara_bot", TOKEN).await;
+    let backend = Held::new("Still here.", None);
+    let (stt, _tts) = voice_servers("still there").await;
+    let Some(mut b) = start(&fake, backend.clone(), true, |_, cfg, _| {
+        cfg.stt.mode = crate::shared::config::SttMode::External;
+        cfg.stt.external.url = Some(stt.url.clone());
+        crate::shared::secrets::put_key(
+            &mut cfg.api_keys,
+            &SecretKey::External(crate::shared::secrets::ExternalSlot::Stt).storage_name(),
+            "stt-secret",
+            || "test".into(),
+        )
+        .unwrap();
+    })
+    .await
+    else {
+        return;
+    };
+    // The screen's copy, as it arrives: no secrets. An image setting changed —
+    // the bots' start key — so the bots are started again.
+    let AppEvent::Settings { config, .. } =
+        event(&mut b.rx, |e| matches!(e, AppEvent::Settings { .. })).await
+    else {
+        unreachable!()
+    };
+    let mut edited = *config;
+    assert!(edited.api_keys.is_empty(), "the screen never sees a secret");
+    edited.images.max_count += 1;
+    b.tx.send(AppCommand::UpdateConfig(Box::new(edited)))
+        .unwrap();
+    event(&mut b.rx, |e| matches!(e, AppEvent::Settings { .. })).await;
+    fake.voice(ANN, "ann", &phone_note(), 2);
+    assert_eq!(
+        fake.wait_texts(ANN, 1, 20).await,
+        ["Still here."],
+        "the bot still answers"
+    );
+    let asked = stt.requests();
+    assert!(
+        asked[0].to_ascii_lowercase().contains("bearer stt-secret"),
+        "the recogniser's own key: {:.300}",
+        asked[0]
+    );
     b.quit().await;
 }

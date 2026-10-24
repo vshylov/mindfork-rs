@@ -1,5 +1,6 @@
 //! The Telegram Bot API, as much of it as the bridge uses (ADR 0013):
-//! `getMe`, `getUpdates` (long polling), `sendMessage` and `sendChatAction`.
+//! `getMe`, `getUpdates` (long polling), `sendMessage`, `sendChatAction`,
+//! `getFile` with the download, and `sendVoice`.
 //!
 //! Long polling only: every call is an outbound HTTPS request, so a pod behind
 //! NAT needs no address of its own, and nothing here listens. The token is part
@@ -111,6 +112,18 @@ pub struct TgMessage {
     /// each carrying the same id.
     #[serde(default)]
     pub media_group_id: Option<String>,
+    /// A voice note recorded in the app: OGG/Opus.
+    #[serde(default)]
+    pub voice: Option<TgVoice>,
+}
+
+/// A voice note, as Telegram describes it.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TgVoice {
+    pub file_id: String,
+    /// Its length in seconds, as the sender's app measured it.
+    #[serde(default)]
+    pub duration: u32,
 }
 
 /// One size of a photo. Its size in bytes is read where it is downloaded
@@ -255,6 +268,12 @@ impl TelegramClient {
             .send()
             .await
             .map_err(|e| TelegramError::Network(e.without_url().to_string()))?;
+        Self::answer(resp).await
+    }
+
+    /// An answer read as the API's envelope: the result, or the refusal told
+    /// apart.
+    async fn answer<T: DeserializeOwned>(resp: reqwest::Response) -> Result<T, TelegramError> {
         let status = resp.status().as_u16();
         let bytes = resp
             .bytes()
@@ -392,13 +411,50 @@ impl TelegramClient {
     /// Shows *typing…* in `chat` — for five seconds at most, or until the
     /// bot's next message.
     pub async fn send_typing(&self, chat: i64) -> Result<(), TelegramError> {
+        self.send_action(chat, "typing").await
+    }
+
+    /// Shows *recording a voice message…* in `chat`, as long as
+    /// [`Self::send_typing`] shows its own.
+    pub async fn send_recording(&self, chat: i64) -> Result<(), TelegramError> {
+        self.send_action(chat, "record_voice").await
+    }
+
+    async fn send_action(&self, chat: i64, action: &str) -> Result<(), TelegramError> {
         self.call::<bool>(
             "sendChatAction",
-            serde_json::json!({ "chat_id": chat, "action": "typing" }),
+            serde_json::json!({ "chat_id": chat, "action": action }),
             CALL_TIMEOUT,
         )
         .await
         .map(|_| ())
+    }
+
+    /// Sends `note` — OGG/Opus, which Telegram shows as a voice message — to
+    /// `chat`, `seconds` long.
+    pub async fn send_voice(
+        &self,
+        chat: i64,
+        note: Vec<u8>,
+        seconds: u32,
+    ) -> Result<(), TelegramError> {
+        let file = reqwest::multipart::Part::bytes(note)
+            .file_name("voice.ogg")
+            .mime_str("audio/ogg")
+            .map_err(|e| TelegramError::Network(e.without_url().to_string()))?;
+        let form = reqwest::multipart::Form::new()
+            .text("chat_id", chat.to_string())
+            .text("duration", seconds.to_string())
+            .part("voice", file);
+        let resp = self
+            .http
+            .post(format!("{}/sendVoice", self.base))
+            .multipart(form)
+            .timeout(DOWNLOAD_TIMEOUT)
+            .send()
+            .await
+            .map_err(|e| TelegramError::Network(e.without_url().to_string()))?;
+        Self::answer::<serde_json::Value>(resp).await.map(|_| ())
     }
 }
 
@@ -527,6 +583,36 @@ mod tests {
             5,
             "the refused one was never fetched: {asked:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_voice_note_goes_up_as_a_file_and_comes_down_with_its_length() {
+        let stub = Stub::serving(vec![
+            json(r#"{"ok":true,"result":{"message_id":3}}"#),
+            json(r#"{"ok":true,"result":true}"#),
+            json(
+                r#"{"ok":true,"result":[{"update_id":1,"message":{"message_id":1,"date":0,
+                "from":{"id":42,"is_bot":false,"first_name":"Ann"},"chat":{"id":42,"type":"private"},
+                "voice":{"file_id":"v1","file_unique_id":"u","duration":12,"mime_type":"audio/ogg"}}}]}"#,
+            ),
+        ])
+        .await;
+        let c = client(&stub);
+        c.send_voice(42, b"OggS-note".to_vec(), 7).await.unwrap();
+        c.send_recording(42).await.unwrap();
+        let ups = c.get_updates(None, 0).await.unwrap();
+        let voice = ups[0].message.as_ref().unwrap().voice.as_ref().unwrap();
+        assert_eq!((voice.file_id.as_str(), voice.duration), ("v1", 12));
+        let reqs = stub.requests();
+        assert!(
+            reqs[0]
+                .to_ascii_lowercase()
+                .starts_with("post /v1/bot123:secret/sendvoice")
+        );
+        assert!(reqs[0].contains("filename=\"voice.ogg\""));
+        assert!(reqs[0].contains("audio/ogg") && reqs[0].contains("OggS-note"));
+        assert!(reqs[0].contains("name=\"duration\"\r\n\r\n7"));
+        assert_eq!(stub.bodies()[0]["action"], "record_voice");
     }
 
     #[test]

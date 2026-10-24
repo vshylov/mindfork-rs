@@ -295,6 +295,8 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
         tts_formats: Default::default(),
         greeting_shown: std::collections::HashMap::new(),
         auto_speech_failed: false,
+        stt_memo: Default::default(),
+        stt_failed: false,
         storage,
         config,
         registry,
@@ -751,6 +753,7 @@ mod tasks;
 mod time_rows_live;
 mod title;
 mod tts;
+mod voice_live;
 
 /// A tool that made a request of its own and reports the engine's timing of
 /// it — the page summary's shape (docs/research/page-summary-usage.md §3.2)

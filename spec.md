@@ -3727,8 +3727,10 @@ every section/subsection (matching against label/group/description; a breadcrumb
 Subsection › Group › Field  value"), `↑/↓` to select, `Enter` — jump to the field (switching
 section and subsection), `Esc` — cancel.
 
-- **Model/server** — a tab strip **Assistant │ Impersonation │ Embeddings** (three
-  of the app's servers, mirroring the status-bar chips); on the right of the section
+- **Model/server** — a tab strip **Assistant │ Impersonation │ Embeddings │ Speech │
+  Recognition** (the first three the app's servers, mirroring the status-bar chips; the
+  speech slot is §11.9's, the recognition slot — what hears a voice note from the
+  messenger — §11.13's); on the right of the section
   header — a **status chip** for the active subsection's server (`● ready` / `◐ connecting…`
   / `✕ not configured` / no connection with a reason): tweak the engine and see the effect
   without leaving to the chat. Mode (managed/external/openai/gemini/claude/grok/deepseek/openrouter —
@@ -3882,7 +3884,7 @@ section and subsection), `Esc` — cancel.
 
   **Name the app to OpenRouter** (`openrouter.attribution`, on by default) is a
   switch in the *Provider* group of every tab whose mode is `openrouter` — **one**
-  field under four tabs, the Speech tab among them, and once more at the end of
+  field under five tabs, the Speech and Recognition tabs among them, and once more at the end of
   the Tools section's video group while its provider is `openrouter` — because
   it is the provider's and not a slot's. On,
   every request to the gateway — chat, embeddings, speech, a video, the key
@@ -5354,8 +5356,8 @@ that by lines, and sent again as plain text if Telegram refuses the markup. Thou
 tool cards stay at the terminal. A stopped reply ends *stopped*; a turn with no words
 says why; a silence (§9.3.6) says nothing. The messenger's commands: `/new`, `/stop`, and
 `/start` — with a code, the pairing; bare, a hello; any other is answered with the list.
-A sticker, a voice note or a file that is not an image is answered *"I read text and
-pictures here; voice notes and other files not yet."*
+A sticker, an audio file, a round video or a file that is not an image is answered *"I
+read text, pictures and voice messages here; other files not yet."*
 
 **Pictures.** A photo, an image sent as a file (`image/*`) or an album reaches the model
 on the person's message, its caption as the words — the way `/image attach` puts an
@@ -5373,6 +5375,44 @@ picture's caption is quoted like a forwarded text. A model that takes no images 
 the marker that says so (§9.10) and tells the person. A change of the image settings
 starts the bots again.
 
+**Voice notes** (stage C; the owner's D6–D9). A voice note (`voice`, OGG/Opus) from the
+paired account is fetched by the poller as a picture is — before the message goes up,
+so it and what follows arrive in order — and heard there by the **speech-recognition
+slot** (`settings.json` → `stt`; settings → *Model/server* → *Recognition*;
+`shared/stt/`): `openai` (OpenAI's `/audio/transcriptions`, default model
+`gpt-transcribe`), `openrouter` (the gateway's route, no default model — the picker lists
+its transcription models, `?output_modalities=transcription`) or `external` (any server
+with that API: vLLM, speaches, LocalAI, whisper.cpp's server — a key of its own). A cloud
+mode reads the provider's stored key, shared with chat (ADR 0008); the orchestrator keeps
+every bot told of the settings as they stand (a `watch`), so an edit needs no restart.
+The note goes as Telegram sent it; a server that refuses it (`400`, `415`, `422`) is sent
+it once more as 16 kHz WAV, decoded in process (`shared/voice_note.rs`: `opus-rs`, a
+pure-Rust port of libopus, and `ogg`), and that server is remembered as one that wants
+WAV for the session. No language is named unless `stt.language` is set: the recogniser
+detects it, and Telegram's `language_code` — the client's language, not the note's — is
+never used, since a wrong hint made Whisper translate the note
+([research §3.8](docs/research/companion-platform.md)). The transcript is the person's
+message (D7 (a)), marked as spoken (`Message.voice`, the note's length; additive, ADR
+0006 F12): the feed shows *voice message 0:12* beside the person's header, the model reads
+the words under *(A voice message, transcribed by speech recognition — a word may be
+misheard.)*, in the profile's language, and the recording is not kept. A caption follows
+the transcript; a forwarded note is quoted as a forwarded text is. A note that is not
+heard is said to the phone in a line — recognition not set up, too large, the download's
+error, the recogniser's refusal, nothing heard — and, when it is the settings' or the
+recogniser's doing, told once in the terminal until the settings or a key change; its
+caption is still answered. A stranger's note is never downloaded.
+
+**Answered by voice** (D8 (b), D9 (a)). While the profile speaks its replies
+(`speak_replies`, §11.9), a turn that answers a voice note — the person's last message
+one, and the turn not woken by the app — sends its reply as text at once, then, with
+*recording a voice message…* shown, as a voice note (`sendVoice`): synthesised as the
+terminal would speak it (§11.9 — code blocks passed over, the profile's voice under the
+speech mode), every chunk made mono at one rate, and written once as OGG/Opus at 48 kHz,
+whatever the speech mode answered in. A typed message, a follow-up, a background result,
+a stopped reply: text only. A reply with nothing to say aloud goes as text alone; a
+synthesis or a `sendVoice` that fails costs the voice note only, said once in the
+terminal.
+
 **Unasked.** A follow-up come due in the bridged chat (§9.3.6), or a background run's
 result there (§9.3.2), wakes a seat at once, the chat unopened, and the reply goes to
 the phone — within the follow-ups' own quiet hours and day's cap. The bots start before
@@ -5387,8 +5427,9 @@ conversation; network errors retry with a back-off, quietly. A message that arri
 while the engine is not ready is told so, and answered when it is.
 
 **Privacy** (ADR 0013, rule 4). A bot chat is encrypted between each party and
-Telegram's servers, not end to end: Telegram can read every message. The switch's
-description says so before it is on. The history stays on this machine. A fork
+Telegram's servers, not end to end: Telegram can read every message. A voice note is
+heard by the recognition slot's provider too. The switch's description says both before
+it is on. The history stays on this machine. A fork
 (`/profile fork`) and a carried companion (`mindfork companion export`) take neither
 the bot nor the paired account; a deleted profile's token is removed.
 

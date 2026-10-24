@@ -4,7 +4,7 @@
 
 use crate::shared::messenger::telegram::{TgMessage, forward_name};
 
-use super::{Author, Body, Incoming, Picture, split_command};
+use super::{Author, Body, Incoming, Picture, Voice, split_command};
 
 /// `m` as the bridge reads it; `None` for what is never answered — a group, a
 /// channel, another bot, a message with no sender.
@@ -18,6 +18,14 @@ pub fn read_message(m: &TgMessage) -> Option<Incoming> {
         None => Author::Person,
     };
     let body = match (&m.text, picture(m)) {
+        _ if let Some(voice) = &m.voice => Body::Voice {
+            voice: Voice::File {
+                id: voice.file_id.clone(),
+                seconds: voice.duration,
+            },
+            caption: m.caption.clone().unwrap_or_default(),
+            author,
+        },
         (_, Some(picture)) => Body::Images {
             pictures: vec![picture],
             caption: m.caption.clone().unwrap_or_default(),
@@ -169,6 +177,43 @@ mod tests {
             got.body,
             Body::Images { author: Author::Forwarded(Some(ref n)), .. } if n == "Eve"
         ));
+    }
+
+    #[test]
+    fn a_voice_note_is_its_file_and_length_and_a_forwarded_one_keeps_its_origin() {
+        let own = read_message(&private(serde_json::json!({
+            "voice": {"file_id": "v1", "file_unique_id": "u1", "duration": 9, "mime_type": "audio/ogg"}
+        })))
+        .unwrap();
+        assert_eq!(
+            own.body,
+            Body::Voice {
+                voice: Voice::File {
+                    id: "v1".into(),
+                    seconds: 9
+                },
+                caption: String::new(),
+                author: Author::Person,
+            }
+        );
+        let fwd = read_message(&private(serde_json::json!({
+            "voice": {"file_id": "v2", "file_unique_id": "u2", "duration": 3},
+            "forward_origin": {"type": "hidden_user", "sender_user_name": "Eve", "date": 0}
+        })))
+        .unwrap();
+        assert!(matches!(
+            fwd.body,
+            Body::Voice { author: Author::Forwarded(Some(ref n)), .. } if n == "Eve"
+        ));
+        let audio = read_message(&private(serde_json::json!({
+            "audio": {"file_id": "a", "file_unique_id": "u", "duration": 200}
+        })))
+        .unwrap();
+        assert_eq!(
+            audio.body,
+            Body::Unsupported,
+            "an audio file is not a voice note"
+        );
     }
 
     #[test]

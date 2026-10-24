@@ -51,6 +51,9 @@ pub enum ChannelFailure {
     Conflict(String),
     /// A reply could not be delivered; the conversation keeps it.
     Undelivered(String),
+    /// A reply went as text only: its voice note could not be made or sent
+    /// (ADR 0013, stage C, D9 (a) — the text had gone already).
+    Unvoiced(String),
 }
 
 /// A message, as the bridge reads it.
@@ -88,6 +91,33 @@ pub enum Picture {
     Failed(PictureError),
 }
 
+/// A voice note, on its way from the messenger to the model (ADR 0013, stage
+/// C): fetched and heard by the channel's task, as a picture is fetched there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Voice {
+    /// Not fetched yet: the messenger's own id for the file.
+    File { id: String, seconds: u32 },
+    /// What the recogniser heard.
+    Heard { text: String, seconds: u32 },
+    /// Not heard, and why.
+    Failed { error: VoiceError, seconds: u32 },
+}
+
+/// Why a voice note did not reach the model.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VoiceError {
+    /// Speech recognition is not set up, and what is missing.
+    NotSetUp(crate::shared::stt::SttSetupError),
+    /// Larger than a bot may download, in bytes.
+    TooBig { bytes: u64, limit: u64 },
+    /// The download failed, in the messenger's or the network's words.
+    Fetch(String),
+    /// The recogniser refused it or did not answer, in its words.
+    Unheard(String),
+    /// The recogniser heard no words in it.
+    Nothing,
+}
+
 /// Why a picture did not reach the model.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PictureError {
@@ -117,7 +147,13 @@ pub enum Body {
         caption: String,
         author: Author,
     },
-    /// A sticker, a voice note, a file that is not an image — nothing that is
+    /// A voice note — heard, or not and why — and the words under it.
+    Voice {
+        voice: Voice,
+        caption: String,
+        author: Author,
+    },
+    /// A sticker, an audio file, a file that is not an image — nothing that is
     /// read yet.
     Unsupported,
 }
@@ -130,6 +166,15 @@ pub enum Outbound {
     Typing { to: String, on: bool },
     /// A message, in markdown: the channel renders and splits it.
     Send { to: String, text: String },
+    /// *recording a voice message…* on while a reply's voice note is made, off
+    /// when it goes (or fails).
+    Recording { to: String, on: bool },
+    /// A voice note — OGG/Opus — `seconds` long (ADR 0013, stage C).
+    Voice {
+        to: String,
+        note: Vec<u8>,
+        seconds: u32,
+    },
 }
 
 /// The messenger's commands (rule 5). Everything else stays at the terminal.
