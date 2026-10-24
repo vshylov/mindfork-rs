@@ -1546,7 +1546,12 @@ by default:
    phone, a phone turn beside a terminal one. **Pictures from the phone built** after
    it: a photo, an image file or an album reaches the model with its caption, fetched by
    the bot only for the paired account and prepared as `/image attach` prepares one.
-   Next: stage C, voice notes.
+   **Stage C built — voice notes** (§3.8 the probe; the owner's D6 (a), D7 (a), D8 (b),
+   D9 (a)): a voice note from the phone heard by a speech-recognition slot of its own
+   (`openai`, `openrouter`, `external`), its transcript the person's message marked as
+   spoken; a voice note answered by one while the profile speaks its replies, after the
+   text. **Live, GO**: Gemma 4 31B 3/3, Qwen 3.8 2/2 — notes in English and Russian
+   heard, answered and heard back. Next: Matrix, later.
 
 Stages 1–3 are the companion; 4 is what makes it a research platform; 5–6 are what
 make it a presence. None of it changes what an assistant profile or the default

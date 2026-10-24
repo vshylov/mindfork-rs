@@ -315,10 +315,33 @@ something someone else wrote, not as your request.
 Pictures work too: send a photo, an image as a file or an album, with a question in
 its caption, and the companion sees it — when the model it runs on takes images; one
 that does not says it cannot see them. A picture is prepared as `/image attach` would
-prepare it (Settings → Memory → *Images*: how large, how many). Voice messages come later.
+prepare it (Settings → Memory → *Images*: how large, how many).
+
+**Voice messages.** Hold the microphone in Telegram and talk: the companion reads
+what you said and answers it. The words are heard by the speech recognition you pick
+in Settings → Model/server → *Recognition*:
+
+- `openai` — OpenAI's recogniser, `gpt-transcribe` unless you name another, on the
+  OpenAI key you already use for chat;
+- `openrouter` — any of the gateway's thirty-odd recognisers (Enter on *Model* lists
+  them), on your OpenRouter key;
+- `external` — a server of your own with OpenAI's transcription API: Whisper served by
+  vLLM, speaches, LocalAI or whisper.cpp's server — for a voice message nobody but
+  Telegram and you should hear.
+
+The recogniser works out the language by itself; set *Language* (`ru`, `en`) only for
+a model that keeps mishearing it. What it heard is your message in the conversation,
+marked *voice message 0:12* — the recording itself is not kept — and the companion
+knows it was spoken, so a misheard word reads as the recogniser's.
+
+When the profile speaks its replies (*Speak replies*, the same switch that reads them
+aloud at the terminal), a voice message is answered with one: the text arrives first,
+then *recording a voice message…*, then the reply in the profile's voice. A typed
+message is answered in text, and so is what the companion writes on its own.
 
 **Who can read it.** A chat with a bot is not end-to-end encrypted: Telegram's
-servers see every message, both ways. The conversation itself is stored only on this
+servers see every message, both ways, and a voice message is heard by the recogniser
+you picked too. The conversation itself is stored only on this
 machine. The token is the bot — anyone with it reads and writes as the bot — and a
 forked or carried companion does not take it, or your account. `/bridge` says what
 the bridge is doing; `/bridge unpair` forgets your account.

@@ -753,6 +753,7 @@ mod tasks;
 mod time_rows_live;
 mod title;
 mod tts;
+mod voice_live;
 
 /// A tool that made a request of its own and reports the engine's timing of
 /// it — the page summary's shape (docs/research/page-summary-usage.md §3.2)

@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (97)
+## Entries (98)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -109,6 +109,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a companion reachable from Telegram — companion stage 6 B, the bridge (done)
 - Post-M9: pictures from the phone — companion stage 6 B, the bridge's second half (done)
 - Post-M9: the follow-up hold test, read at the due minute (done)
+- Post-M9: voice notes from the phone, and replies in voice — companion stage 6 C (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -6332,3 +6333,81 @@ mid-run, `h` read at 11:59:59, still held. The follow-up tests: 25/25, three run
 
 **Gates**: 4345 unit tests green, 297 `#[ignore]` (unchanged); clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check` clean.
+
+### Post-M9: voice notes from the phone, and replies in voice — companion stage 6 C (done)
+
+ADR 0013 left one question of stage C to a probe: where a voice note's speech is
+recognised. The owner started the stage on 2026-10-24.
+
+- **The probe** (research §3.8): sixteen Telegram-shaped notes (OGG/Opus 48 kHz mono,
+  32 kbps; Russian crowd and read speech, English *test-other*, Russian full of English
+  terms), fifteen recognisers. Every transcription API took the note as sent — OpenAI's,
+  eleven of the gateway's, Gemini's `generateContent`, vLLM's Whisper; only llama.cpp's
+  chat endpoint wants WAV. About a second a note in the cloud, under a cent a minute. No
+  one model best on Russian: Gemini 3.8 Flash on crowd speech (13.4 %, but 8 s a note),
+  ElevenLabs Scribe on read speech (7.1 %), `gpt-transcribe` on the owner-like notes
+  (13.0 %, 16/16 terms). Traps: `gpt-4o-transcribe` drops everything after a pause (4/4
+  crowd notes); a wrong language hint makes Whisper translate or give up, and two models
+  need a right one (nova-3 100 % → 21 %). `opus-rs` + `ogg` wrote a note `gpt-transcribe`
+  heard word for word and read a phone's note back for llama.cpp.
+- **The owner's forks**: D6 (a) a recognition slot of its own (`openai`, `openrouter`,
+  `external`); D7 (a) the transcript as the person's message, marked as spoken, the
+  recording not kept; D8 (b) a voice note answered by a voice note, a typed message by
+  text; D9 (a) the text at once, the voice note when it is ready.
+- **`shared/stt/`**: `Hearing` (the settings, the key, the attribution switch — plain
+  data a bot is handed) → `transcriber` → `Transcriber::transcribe`. OpenAI and an
+  external server get a multipart form (`voice.ogg`, `audio/ogg`), the gateway JSON
+  (`input_audio.format: "ogg"`). A `400`/`415`/`422` is asked once more as 16 kHz WAV;
+  a WAV that is heard is kept in the session's `WavMemo`, so a whisper.cpp server pays
+  the refused request once. A refusal WAV does not cure is told as the server said it.
+  An answer of whitespace is `Nothing`.
+- **`shared/voice_note.rs`**: `encode` (20 ms frames, 32 kbps VoIP, pre-skip 312, the
+  last page's granule marking where the sound ends; a rate Opus does not take is raised
+  linearly to the next it does), `decode` (16 kHz, the pre-skip dropped), `wav`,
+  `resample`. `AudioClip::into_mono` turns any speech mode's answer — raw PCM, or a WAV
+  or MP3 through playback's decoder — into mono samples.
+- **The bridge**: the poller fetches the paired account's `voice` and hears it before
+  the message goes up, by the settings a second `watch` keeps current
+  (`refresh_hearing` on every settings or key edit); a stranger's is never downloaded,
+  and nothing is downloaded when recognition is not set up. `Body::Voice` →
+  `bridge_voice_note`: the transcript (a caption under it, a forward quoted) becomes
+  `Message::user(..).with_voice(seconds)`; an unheard note is said to the phone in one
+  line, and told once in the terminal (`stt_failed`) when it is the settings' or the
+  recogniser's doing. The seat records whether it answers a voice note (the chat's last
+  row a person's voice note, the turn not woken); `answer_seat` sends the text, then
+  `bridge_voice_reply` builds the utterances `/tts` would speak, synthesises them off
+  the orchestrator, makes them one mono stream at one rate, encodes it and sends
+  `Outbound::Voice` — with `Outbound::Recording` (*record_voice*) while it is made. A
+  failure is `ChannelFailure::Unvoiced`, told once.
+- **The model's side**: `request::user_words` puts *(A voice message, transcribed by
+  speech recognition — a word may be misheard.)* above a transcript, in the profile's
+  language; the stored message keeps the words alone. The feed draws *voice message
+  m:ss* beside the person's header.
+- **Settings**: Model/server → *Recognition*, the fifth tab — mode, language, model
+  (the gateway's transcription list, `CatalogueShape::OpenRouterTranscription`,
+  `ModelRole::Transcription`, `ModelSlot::Transcription`), key, URL. `stt` is a new
+  section of `#[serde(default)]` fields and `SttMode` came with it: a ledger entry at
+  settings schema 7, no step. `ExternalSlot::Stt` → `external-stt`. The bridge switch's
+  description now says the recogniser hears a voice note too. Screenshots of settings
+  redrawn: *Model/server* 39 → 45, the fifth tab.
+- **Tests**: the codec (an OGG stream ffmpeg would read, the length back, a 22.05 kHz
+  input written at 24, refusals); the client against a stub (both shapes, the WAV
+  retry remembered, a refusal told in the server's words, nothing heard, what is
+  missing named before anything is sent); `sendVoice` and `record_voice`; the settings
+  tab, its key slot and its picker; the catalogue's transcription list. Against
+  `TelegramFake`, now serving `sendVoice` from a multipart form: a voice note heard,
+  answered in text then in voice, the transcript labelled for the model and marked on
+  disk; a typed message answered in text, and a voice note too once the profile stops
+  speaking its replies; a note nobody can hear said to the phone each time and to the
+  terminal once, nothing downloaded, no turn. `http_stub::whole_request` now counts a
+  body's bytes, not its lossy text.
+- **Live, GO** (`voice_live`: Ann's note synthesised by the gateway's
+  `google/gemini-3.8-flash-lite-tts` in `Kore`, written by our encoder; heard by
+  `openai/gpt-transcribe`; Mara answers in `Charon`; her voice note heard back; llama.cpp
+  b11845): **Gemma 4 31B q4_0 3/3** and **Qwen 3.8 27B Q4_K_M 2/2** — every transcript
+  exact and marked, every reply naming the cat in its language (Pumpkin, and *Tykovka* in
+  Russian), every voice note heard back word for word. `bridge_live` once more on Qwen:
+  every step as before.
+
+**Gates**: 4369 unit tests green, 298 `#[ignore]`; clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.

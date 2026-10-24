@@ -4,7 +4,7 @@
 and D5 (b) (*User's decision* below). Stage B built (`feat/messenger-bridge`; spec
 §11.13, [docs/journal/tools.md](../journal/tools.md)); stage C's forks (D6–D9) decided
 by the owner on 2026-10-24 after a probe — D6 (a), D7 (a), D8 (b), D9 (a) (*Stage C*
-below). The track's
+below) — and built (`feat/bridge-voice`; spec §11.13). The track's
 design and the forks already decided (F6 (a) with Telegram first, F9 (a), F10 (a)) —
 [docs/research/companion-platform.md](../research/companion-platform.md) C5, §7, §8,
 §9 stage 6. Related: [ADR 0008](0008-api-key-storage.md) (the bot's token is a

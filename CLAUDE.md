@@ -185,8 +185,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-10-23, version 0.21.0)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **4345 unit tests
-green, 297 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **4369 unit tests
+green, 298 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump and demo-reel regenerators).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -198,14 +198,15 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
-- **A platform for a companion — stages 1–6 B** (2026-10-24): every feature
+- **A platform for a companion — stages 1–6 C** (2026-10-24): every feature
   a profile switch, off by default; dated rows; the notes and earlier conversations
   in the prompt, `/notes`; follow-ups it plans, quiet hours and a cap on, silence
   without a trace; notifications when nobody looks; every self-model version kept
   with its author (`H` on `F3`); `/profile fork`, `mindfork companion export|import`;
   persona drift measured; character cards by `mindfork import`, `/greeting`; a
   voice per profile, replies spoken as they land; reachable from Telegram — a bot
-  per profile, a turn from the phone beside the terminal's, pictures too (ADR 0013).
+  per profile, a turn from the phone beside the terminal's, pictures and voice notes,
+  a voice note answered by one (ADR 0013).
   Live **GO**, Gemma 4 and Qwen 3.8
   ([docs/research/companion-platform.md](docs/research/companion-platform.md),
   [docs/journal/tools.md](docs/journal/tools.md)).
