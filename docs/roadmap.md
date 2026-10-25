@@ -471,6 +471,21 @@ effort tiers — have all closed
 
 ### Chats, search and data
 
+- **Importing chats exported from ChatGPT, Claude, Gemini, Grok and DeepSeek**
+  — **idea**, researched 2026-10-25, forks decided by the owner the same day
+  ([cloud-chat-import.md](research/cloud-chat-import.md) §7). The decisions:
+  - **Built-in readers** behind `mindfork import`, which recognizes the source
+    by content and writes nothing before a preview.
+  - **The branch the person last saw**, with the rest counted.
+  - **A profile per source**, with `--profile` for any other.
+  - **Images inline**, and other files as the chat's files.
+  - **Imported chats reflected on** like any other.
+  - **No import filters.**
+  - **The order:** ChatGPT and Claude first.
+
+  Next is a probe on the owner's exports from all five services. None of the
+  five formats is documented, and ChatGPT's changed roughly every two months in
+  2026.
 - **Merging two copies of the data** — **idea**. `mindfork stats --compare`
   says what each copy holds that the other lacks and deliberately stops there
   (G8, [data-stats.md §5](history/data-stats.md), spec §12.4): a chat file
@@ -504,7 +519,9 @@ effort tiers — have all closed
   with one structural obstacle (`search.rs::group_hits`) and a clean way past
   it (store the message's position in the index). Cost and payoff both grow
   linearly: ×10 is ~365 ms and ~70 MB. Revisit at ~1000 chats, or a release
-  parse over ~300 ms.
+  parse over ~300 ms. A cloud-history import would cross that line at once:
+  one ChatGPT account of 2,808 conversations is 155 MB of JSON
+  ([cloud-chat-import.md](research/cloud-chat-import.md) §5, F9).
 - **`/export json` carries no tool calls and no sub-agent transcripts** —
   **deferred**. The `mindfork-import` v1 document has no place for them; every
   such export says so, and `md` keeps everything
