@@ -1,7 +1,20 @@
 # Importing chats exported from ChatGPT, Claude, Gemini, Grok and DeepSeek
 
-Status: **research, pre-decision** (2026-10-25). Nothing is built. The forks
-(§7) wait for the owner. **No real export was opened for this document.** Every
+Status: **research; forks decided by the owner on 2026-10-25** (§7). The
+decisions:
+- **As recommended:** F1 (a), F2 (a), F3 (a) with (b) as a flag, F4 (a),
+  F5 (a), F8 (b).
+- **Against the recommendation:**
+  - **F6 (b) for images:** inline in the chat.
+  - **F7 (b):** an imported chat is reflected on like any chat.
+  - **F9 (a):** import everything, with no filters.
+- **Clarified for F6:** files that are not images become the chat's files
+  (F6 a).
+
+Nothing is built. Next is the probe (§8, stage 0) on the owner's own exports.
+The owner has accounts with all five services.
+
+**No real export was opened for this document.** Every
 format below comes from three kinds of evidence: the current code of parsers
 written against real exports, redacted samples attached to their issues, and
 the services' own help pages. Each claim is marked where it rests on one source,
@@ -568,7 +581,7 @@ Four facts in the code decide more than any field:
 
 ## 6. Design
 
-The shape this document recommends, before the forks:
+The shape of the import, with the owner's decisions (§7) applied:
 
 1. **`mindfork import <path>`, one command.** The path is an export ZIP, several
    ZIPs, a Claude manifest, an unpacked folder, or one JSON file. The source is
@@ -588,8 +601,12 @@ The shape this document recommends, before the forks:
    - **Shown as text:** the answer, its sources as a short list, and code with
      its output as fenced blocks.
    - **Dropped and counted:** memory writes, hidden context and tool chatter.
-5. **Files the export carries become the chat's files** on disk, with a
-   placeholder line in the message. They are never inline images.
+5. **Images the export carries go inline,** as `MessageImage`s on their
+   message, downscaled as an attached image is (`features::image_prepare`).
+   This is the owner's F6 (b).
+   - **Other files become the chat's files** on disk, with a placeholder line in
+     the message.
+   - **An image whose bytes the export lacks** becomes a placeholder line too.
 6. **A preview before anything is written**: conversations, messages, branches
    dropped, files found and missing, nodes of kinds the reader did not know,
    date range. The import proceeds on a yes, or on `--yes`, as cards do.
@@ -620,7 +637,8 @@ The shape this document recommends, before the forks:
     answers better. Rule 7 of §6 is what makes (a) affordable.
   - **(a) is a decision ADR 0007 §3 did not make,** so it needs an ADR of its
     own.
-  - **Recommended: (a).**
+  - **Recommended: (a). Owner's decision 2026-10-25: (a).** The ADR is written
+    in stage 1.
 - **F2 — which services, in what order.**
   - (a) **The two largest first:** ChatGPT and Claude in stage 1, DeepSeek and
     Grok (both small readers) in stage 2, Google (AI Studio, then Takeout) in
@@ -632,7 +650,7 @@ The shape this document recommends, before the forks:
     audience. They are also the two that every importing client and Gemini's
     own import cover (§4). Takeout's activity log (no titles, no model,
     localized verbs) is the weakest data of the six and goes last.
-  - **Recommended: (a).**
+  - **Recommended: (a). Owner's decision 2026-10-25: (a).**
 - **F3 — which profile the chats land in.**
   - (a) **A new profile per source** ("ChatGPT", "Claude"…). Its system message
     is empty, and it has no self-model tools and no companion switches.
@@ -640,7 +658,8 @@ The shape this document recommends, before the forks:
   - (c) **A profile per custom GPT, project or Gem.** Mostly impossible: Claude
     and Grok exports do not link chats to projects, and ChatGPT's carry project
     ids without names.
-  - **Recommended: (a) by default, with (b) as a flag.**
+  - **Recommended: (a) by default, with (b) as a flag. Owner's decision
+    2026-10-25: (a) with (b) as a flag.**
 - **F4 — branches.**
   - (a) **Only the branch last seen**, with the count of the others in the
     preview.
@@ -649,13 +668,14 @@ The shape this document recommends, before the forks:
     the list a meaning it does not have, and reflection reads its causes.
   - Every linear precedent takes the current path. The flattening alternative
     is Open WebUI's interleaving, the defect the survey found most often (§4).
-  - **Recommended: (a), with (b) behind a flag in a later stage if asked for.**
+  - **Recommended: (a), with (b) behind a flag in a later stage if asked for.
+    Owner's decision 2026-10-25: (a).**
 - **F5 — tool activity.**
   - (a) **As text**: what the app showed (§6, item 4).
   - (b) **As `ToolCallRecord`s.** The feed's tool view would show them, but
     they are replayed to the model as calls of tools it does not have (§5).
   - (c) **Dropped.**
-  - **Recommended: (a).**
+  - **Recommended: (a). Owner's decision 2026-10-25: (a).**
 - **F6 — images and files.**
   - (a) **The chat's files** on disk (a new `FileOrigin::Imported`, so a schema
     step), with a placeholder line in the message. Claude's extracted text also
@@ -664,14 +684,41 @@ The shape this document recommends, before the forks:
     them when the chat is continued, but every chat file and the startup parse
     grow.
   - (c) **Names only.**
-  - **Recommended: (a).**
+  - **Recommended: (a). Owner's decision 2026-10-25: (b) for images, (a) for
+    every other file**, asked separately. What follows from that:
+    - **Images are kept, not sent, depending on their message.** An image on a
+      user message is replayed to a model that sees images. An image on an
+      assistant reply — the images ChatGPT and Grok generated — is kept and
+      shown but never sent: `request.rs` sends images on user and tool
+      messages only. It costs file size, and nothing in the request.
+    - **A model without vision is already handled.** Images are withheld, with
+      a note by name (`request.rs::withhold_images`,
+      [history-images-no-vision.md](history-images-no-vision.md)).
+    - **The startup parse grows by the images' bytes** (§5, fact 1). With
+      F9 (a) nothing bounds it, so the probe measures it with the images in
+      (§8).
 - **F7 — the self-model and the companion.**
   - (a) An imported chat is **marked as already reflected on**: the watermark is
     set at its end, so the self-model never learns from another assistant's
     past. In a profile of its own (F3 a) it never reaches a companion's
     "earlier conversations" either.
   - (b) **Treated as any chat.**
-  - **Recommended: (a).**
+  - **Recommended: (a). Owner's decision 2026-10-25: (b).** What follows from
+    that:
+    - **No reflection by default.** The default profile per source (F3 a) has no
+      self-model tools, so reflection never runs there. It runs where
+      `--profile` puts the chats into a profile that has them.
+    - **Reflection waits for a new turn.** It is checked when a turn completes
+      in that chat (`reflection.rs::maybe_auto_reflect`), so an imported chat
+      nobody continues is never read.
+    - **The first reflection's window is the whole imported history.** The
+      digest is capped: past its budget it keeps the start and the end and
+      drops the middle (`rename_chat.rs::build_conversation_digest`,
+      `truncate_middle`). The request cannot overflow, but the middle of a long
+      import is not read.
+    - **The companion's memory sees imported chats too.** In such a profile,
+      "earlier conversations" (`companion_memory.rs`) lists them as that
+      profile's past.
 - **F8 — importing again.** A newer export of the same account lands on the
   same chats (UUIDv5 of source + conversation id).
   - (a) **Overwrite.** This is what the neutral import does today, and it would
@@ -681,13 +728,18 @@ The shape this document recommends, before the forks:
     a new optional field holding source, id, source time and the message count
     at import.
   - (c) **Only new conversations.**
-  - **Recommended: (b).**
+  - **Recommended: (b). Owner's decision 2026-10-25: (b).**
 - **F9 — a very large account.**
   - (a) **Import everything** and accept the startup cost the probe measures.
   - (b) **Filters:** `--since DATE`, `--limit N`.
   - (c) **Make the orchestrator lazy first,** the deferred roadmap track.
   - **Recommended: (a) + (b), with (c) opened only if the probe's
-    heavy-account import costs more than about a second at startup in release.**
+    heavy-account import costs more than about a second at startup in release.
+    Owner's decision 2026-10-25: (a)** — everything is imported, with no
+    `--since` and no `--limit`, and the startup cost is accepted as it comes.
+    - **The probe still measures the cost** (§8), images included (F6 b).
+    - **The number goes to the roadmap's lazy-orchestrator item,** which stays
+      deferred and keeps its own trigger.
 
 Not forks, decided by the shape above:
 - **Personal files are never read.** That means `user.json`,
@@ -701,8 +753,10 @@ Not forks, decided by the shape above:
 ## 8. Stages and the probe
 
 **Stage 0 — the probe** (`spike/cloud-chat-import-probe`).
-- **The exports:** the owner requests one from each service where they have an
-  account. The agent cannot: each request is an action on the owner's account.
+- **The exports:** the owner requests one from each of the five services, and
+  has an account with each. For Google that means both Takeout's Gemini Apps
+  activity, as JSON, and the AI Studio folder. The agent cannot request them:
+  each request is an action on the owner's account.
 - **The reader:** a throwaway one per source, counting:
   - conversations, and messages on the chosen branch;
   - branches left out;
@@ -712,21 +766,32 @@ Not forks, decided by the shape above:
   - models.
 - **The startup measurement:** the release startup parse with the whole import
   in a copy of the data, against the same copy without it.
+  - **Images inline (F6 b):** the import is measured with its images inline,
+    along with the chat files' total size.
+  - **The record:** the number goes to the roadmap's lazy-orchestrator item
+    (F9 a).
 - **GO, per source**:
   - ≥ 99% of conversations read without error;
   - for five conversations chosen by the owner, the imported branch matches what
     the service's app shows;
   - one imported chat continued live, on Gemma 4 and on one cloud model, answers
     with the imported context.
-- **The project-wide check:** the startup cost of the largest account decides
-  F9 (c).
 - **On a NO-GO:** a source is dropped from the track, or kept as text-only.
 
-**Stage 1 — the frame, ChatGPT and Claude** (if F2 a):
-- recognition, the import document, the preview, the dedicated profile;
-- the branch, thoughts, model names and files;
+**Stage 1 — the frame, ChatGPT and Claude** (F2 a):
+- recognition, the import document, the preview, the dedicated profile and
+  `--profile`;
+- the branch, thoughts, model names, tool activity as text;
+- images inline, and other files as the chat's files;
 - re-import protection;
 - the ADR.
+
+Two changes to stored data come with stage 1:
+- **`FileOrigin::Imported`** is a new value of a stored enum. It needs a schema
+  step and the previous release's refusal (docs/lessons.md §8,
+  `stored_enums_tests.rs`).
+- **The chat's "imported from" stamp** (F8 b) is a new optional field. It is
+  additive under ADR 0006.
 
 **Stage 2 — DeepSeek and Grok.**
 

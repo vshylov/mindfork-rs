@@ -472,15 +472,20 @@ effort tiers — have all closed
 ### Chats, search and data
 
 - **Importing chats exported from ChatGPT, Claude, Gemini, Grok and DeepSeek**
-  — **idea**, researched 2026-10-25; the forks wait for the owner
-  ([cloud-chat-import.md](research/cloud-chat-import.md)). The research
-  recommends:
+  — **idea**, researched 2026-10-25, forks decided by the owner the same day
+  ([cloud-chat-import.md](research/cloud-chat-import.md) §7). The decisions:
   - **Built-in readers** behind `mindfork import`, which recognizes the source
     by content and writes nothing before a preview.
   - **The branch the person last saw**, with the rest counted.
-  - **A profile per source**, kept out of the self-model.
-  - **A probe first**, on the owner's own exports. None of the five formats is
-    documented; ChatGPT's changed roughly every two months in 2026.
+  - **A profile per source**, with `--profile` for any other.
+  - **Images inline**, and other files as the chat's files.
+  - **Imported chats reflected on** like any other.
+  - **No import filters.**
+  - **The order:** ChatGPT and Claude first.
+
+  Next is a probe on the owner's exports from all five services. None of the
+  five formats is documented, and ChatGPT's changed roughly every two months in
+  2026.
 - **Merging two copies of the data** — **idea**. `mindfork stats --compare`
   says what each copy holds that the other lacks and deliberately stops there
   (G8, [data-stats.md §5](history/data-stats.md), spec §12.4): a chat file
