@@ -259,7 +259,7 @@ jobs:
       # Saving only from `main` keeps one copy per job; a pull request still
       # *restores* it, because GitHub lets a branch read its base branch's
       # caches.
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # Bounded on both sides, after 2026-08-19. The runner image's apt mirror
@@ -344,7 +344,7 @@ jobs:
       # branch read its *base*). Every PR therefore paid a full cold build and
       # then spent 1m51s saving 445 MB to its own `refs/pull/N/merge`, which no
       # other run could ever restore and which dies with the PR.
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # ALSA is only needed for the Linux build (rodio/cpal); on Windows — pure windows-rs.
@@ -428,7 +428,7 @@ jobs:
       # Save only from `main` (see the comment in `lint`). This job's cache is
       # the largest of the three — it holds both the instrumented and the plain
       # build — so it is also the one that most needs to exist exactly once.
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # Bounded (timeout + apt options) — see the comment on the `lint` job's copy.
