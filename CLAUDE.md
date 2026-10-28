@@ -259,16 +259,15 @@ being recent is dropped, not shortened.
   and checked by every release (`aur.yml`) and **blocked**: the AUR's registration
   is closed, so no user doc names it yet ([docs/research/package-managers.md](docs/research/package-managers.md),
   [docs/journal/release.md](docs/journal/release.md)).
-- **Promotion — making mindfork findable** (opened 2026-10-03): the plan and its
-  baseline ([docs/research/promotion.md](docs/research/promotion.md)). Its first
-  code track: a ~25 s animated demo **generated from code** — a scripted turn
+- **An animated demo generated from code** (2026-10-03): a ~25 s scripted turn
   played through the runtime's own path, drawn to GIF/WebP by
   `tools/demo_reel.py` in every release (English and Russian), played by mindfork.io
   ([docs/research/demo-reel.md](docs/research/demo-reel.md),
-  [docs/journal/release.md](docs/journal/release.md)). macOS: researched, probe
-  GO on Apple Silicon runners, forks decided; stages 1–2 built — secrets, the lock,
-  the keys, CI on macOS, the `aarch64-macos` archive, `install.sh`, a Homebrew tap;
-  stage 3, a rented Mac day, done — defects in §14.7 ([docs/research/macos.md](docs/research/macos.md)).
+  [docs/journal/release.md](docs/journal/release.md)).
+- **macOS** (a preview since 0.15.0): researched, probe GO on Apple Silicon runners,
+  forks decided; stages 1–2 built — secrets, the lock, the keys, CI on macOS, the
+  `aarch64-macos` archive, `install.sh`, a Homebrew tap; stage 3, a rented Mac day,
+  done — defects in §14.7 ([docs/research/macos.md](docs/research/macos.md)).
 - **A pod's failures say what they are** — a managed server that dies shows the
   error it logged (a CUDA build newer than the driver names `cuda-12`), a port
   another program holds is refused, one death is one relaunch. Live **GO**

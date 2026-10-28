@@ -23,9 +23,8 @@ Nothing here should be built before that.
 
 ## 1. Why
 
-- **What the audience has.** Advanced users and AI researchers
-  ([promotion.md](promotion.md)) have years of conversations in the cloud
-  apps. mindfork continues a
+- **What the audience has.** Advanced users and AI researchers have years of
+  conversations in the cloud apps. mindfork continues a
   conversation with any model: a local Gemma on a rented pod, or the same cloud
   model through its API. Today it starts every one of those conversations empty.
 - **There is no API for this history.** An API key reaches the platform, not

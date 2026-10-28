@@ -1950,7 +1950,7 @@ internal tooling (AGENTS.md §4). No live run: a script over git and the working
 tree (AGENTS.md §3).
 
 **Follow-up (2026-10-20, branch `docs/article-refresh-hn`).** Two definitions,
-found while the essay was measured again for Hacker News (website.md).
+found while the essay was measured again (website.md).
 `control_arm_tests` replaces `control_arm_comments`: the essay had said "25 tests
 carry a doc comment naming the control arm", and 25 was the count of `///` lines
 that say so — a test with two such lines counted twice — while the old counter

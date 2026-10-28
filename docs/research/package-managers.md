@@ -4,8 +4,7 @@ Status: **built and checked 2026-10-03** — the Scoop bucket is live
 (`vshylov/scoop-bucket`). **The AUR package is ready and blocked**: the AUR has
 closed new-account registration (§4), so it has no account to be published
 from; every release still builds and checks it, and the user-facing documents
-do not mention it until it is published. Part of the promotion plan's stage 1,
-the friction of a first try ([promotion.md §4](promotion.md)).
+do not mention it until it is published.
 
 ## 1. Why these two, and why now
 

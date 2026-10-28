@@ -383,8 +383,7 @@ exist to protect. Against (c): a fixed cap wastes the room a young profile has
 **Recommendation: (a).** §3.4 gives the correctness argument D5 lacked, since a
 mature profile at 1200 shows 7% of its pick and one trait. But a stored 1200
 cannot be told from a chosen one. The installations it would reach are those of
-0.9.0–0.9.4 (July 15–26), which predate the project's first steps towards an
-audience (promotion.md).
+0.9.0–0.9.4 (July 15–26), released while the repository was still private.
 
 ### F. A floor under the relevance pick
 

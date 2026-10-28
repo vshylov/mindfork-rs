@@ -26,8 +26,8 @@ stay the user's property.
 
 **For whom.** The audience the owner named on 2026-10-09: advanced users and AI
 researchers, often on rented pods, with two uses — testing how agentic language
-models are, and creative work (stories, poems, dialogues)
-([promotion.md §8](promotion.md)). Not casual users and not a GUI. That gives the
+models are, and creative work (stories, poems, dialogues). Not casual users and
+not a GUI. That gives the
 lens for every candidate below: a companion feature is worth building here when it
 is an **instrument** — for watching a model's agency and self-model over time, or for
 character work — and when it fits a terminal on a pod.
@@ -1566,7 +1566,7 @@ everyone, being a defect fix.
 **In the repository.** spec §6.4, §6.6, §9.3, §9.3.2, §9.11, §9.14, §10, §11.9, §17;
 architecture §9.9; [background-subagents.md](background-subagents.md) §4.4 and F2;
 [prompt-caching.md](prompt-caching.md) §2.2; [self-model-prompts.md](self-model-prompts.md);
-[promotion.md](promotion.md) §8; [the self-model idea bank](../history/self-model.md);
+[the self-model idea bank](../history/self-model.md);
 [self-model-observations.md](../history/self-model-observations.md);
 ADR [0006](../decisions/0006-data-schema-versioning.md),
 [0007](../decisions/0007-plugins-mcp-host-import-format.md),

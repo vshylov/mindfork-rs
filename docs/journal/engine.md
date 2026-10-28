@@ -6313,8 +6313,7 @@ CHANGELOG (Fixed); lessons §3 (a probe's output is not its verdict).
 ### Post-M9: the slow-prefill note is for a llama-server — Ollama sends llama.cpp's timings (done)
 
 - **Found by the README's Ollama recipe, run live** (branch
-  `fix/prefill-note-llama-server`; the recipe is the promotion plan's stage 1,
-  [promotion.md](../research/promotion.md) §4). Ollama 0.35.1 in Docker on the
+  `fix/prefill-note-llama-server`). Ollama 0.35.1 in Docker on the
   4090, `gemma4:e4b`, mindfork set up by `setup --set` alone. The first reply,
   "Paris", came with a note: *This server processes prompts at 124 tokens/s
   … Launch it with -b 256 -ub 256.* Both halves were wrong for Ollama. It takes
@@ -6453,8 +6452,8 @@ CHANGELOG (Fixed); lessons §3 (a probe's output is not its verdict).
 
 ### Post-M9: LM Studio, a server the app knows by name (done)
 
-Stage 1 of [local-servers.md](../research/local-servers.md); the promotion
-plan's LM Studio recipe waited for a live run, and this is it.
+Stage 1 of [local-servers.md](../research/local-servers.md); the LM Studio
+recipe waited for a live run, and this is it.
 
 - **Measured** (LM Studio 1.1.7, `gemma-4-E4B` Q4_1 imported with
   `lms import --copy`, the 4090):
@@ -6495,7 +6494,7 @@ plan's LM Studio recipe waited for a live run, and this is it.
 ### Post-M9: the engineless chat offers a local Ollama or LM Studio (done)
 
 Stage 2 of [local-servers.md](../research/local-servers.md) (§9 has the detail),
-stacked on the LM Studio stage; the promotion plan's idea for its stage 1.
+stacked on the LM Studio stage.
 
 - **What it does**:
   - A chat whose engine is `NotConfigured` looks at Ollama (`11434`) and LM
