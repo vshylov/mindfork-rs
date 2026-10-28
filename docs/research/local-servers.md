@@ -2,16 +2,15 @@
 
 Status: **built, both stages** — stage 1 in §8, stage 2 in §9; forks decided
 by the owner on 2026-10-06 — F1 (a), F2 (a), F3 (b) with the command named
-`/local`, F4 (a), F5 (b), F6 (a) (§5). Stage 1 of the promotion plan ([promotion.md](promotion.md) §4) has two open items, and
-this document takes both: "the engineless chat offers a server it finds on
-`localhost:11434` or `:1234`", and an LM Studio recipe, which waited for a live
-run. The run is §2; it found that LM Studio works through the external mode
+`/local`, F4 (a), F5 (b), F6 (a) (§5). This document takes two open items: the
+engineless chat offering a server it finds on `localhost:11434` or `:1234`, and
+an LM Studio recipe, which waited for a live run. The run is §2; it found that LM Studio works through the external mode
 today, and three things that do not.
 
 ## 1. Why
 
-The audience the one-shot channels reach — r/LocalLLaMA above all — already
-runs Ollama or LM Studio. What a fresh install shows them today:
+Most people who run local models already run Ollama or LM Studio. What a fresh
+install shows them today:
 
 - **A chat that is not configured.** The default mode is `managed` with no
   model (`ServerMode::Managed` is `#[default]`, `shared/config.rs`), so the chat

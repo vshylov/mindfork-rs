@@ -2,8 +2,7 @@
 
 Status: **built** (branch `feat/ollama-window`); forks decided by the owner on
 2026-10-05 — F1 (a), F2 (a), F3 (a), each the recommendation (§4). The live run
-is §7. The promotion
-plan's Ollama recipe ([promotion.md](promotion.md) §4, stage 1) asks the user
+is §7. The Ollama recipe ([install.md](../install.md) §3) asks the user
 to type the window twice — once into Ollama, once into mindfork — because the
 app cannot ask Ollama for it. This document is how it can.
 
@@ -124,7 +123,7 @@ What follows from the table:
   here. Run and designed in [local-servers.md](local-servers.md), which reads
   it from `/api/v1/models`.
 - **The engineless chat offering a server it finds** on `localhost:11434` or
-  `:1234` — the promotion plan's idea, a track of its own: stage 2 of
+  `:1234` — a track of its own: stage 2 of
   [local-servers.md](local-servers.md).
 
 ## 6. Tests and the live run

@@ -3377,8 +3377,8 @@ every reversible check first. Full record —
 ### Post-M9: the animated demo — stage 1 (a reel played through the runtime, GIF and WebP) (done)
 
 - **Why** (branch `feat/demo-reel`, design [demo-reel.md](../research/demo-reel.md)):
-  the promotion plan's storefront asks for an animation, and the owner ruled out a
-  recording made by hand — the application changes every few days, and a recording
+  the README and the site showed only stills, and the owner ruled out a recording
+  made by hand — the application changes every few days, and a recording
   is stale within a week. The demo-screenshots plan had left this as its optional
   stage 4 ("replaying the scripted stream frame by frame"), and the public-release
   audit as "a demo recording".
@@ -3467,7 +3467,7 @@ every reversible check first. Full record —
 ### Post-M9: the animated demo — stage 3 (the Russian reel) (done)
 
 - **What** (branch `feat/demo-reel-ru`, [demo-reel.md §9](../research/demo-reel.md)):
-  a Russian reel for an article in Russian (Habr), published with the others as
+  a Russian reel, published with the others as
   `mindfork-demo-dark-ru.{gif,webp}` — 82 frames, 24.1 s; GIF 1 056 KB, WebP
   923 KB. The interface's language alone would have been half of it: the showcase
   conversation is English, so the reel takes its showcase by its language.
@@ -3496,7 +3496,7 @@ every reversible check first. Full record —
 ### Post-M9: Scoop and the AUR — two package managers before winget (done)
 
 - **Why** (branch `feat/package-managers`, [package-managers.md](../research/package-managers.md)):
-  the promotion plan's stage 1 — the friction of a first try. winget waits for a
+  to lower the friction of a first try. winget waits for a
   signed installer and the signing for reputation; Scoop takes the portable zip
   and asks for no signature, and the AUR needs only the Arch package every
   release already builds.
@@ -3784,11 +3784,10 @@ at CI's severity. No live run: packaging only.
 
 ### Post-M9: the README leads with the self-model and plays the animation (done)
 
-- **Why** (branch `docs/readme-animation`, the promotion plan's stage 0,
-  [promotion.md](../research/promotion.md) §4): the README led with the
+- **Why** (branch `docs/readme-animation`): the README led with the
   category — "a terminal AI chat written in Rust" — which a dozen projects
   share, showed a still, and asked a visitor to read through four install
-  routes and a paragraph on OpenRouter before the first command. The plan's
+  routes and a paragraph on OpenRouter before the first command. The new
   order is hook → animation → install → features, and the animation could be
   embedded only once a release carried it; 0.15.0 is the first.
 - **The first line is the differentiator**: "a terminal AI chat with a memory
@@ -4814,8 +4813,8 @@ macos.md §3 and §12 point at the tag.
   Since `v0.18.3`: two pull requests with behaviour — 773, the provider's cache share in
   the token counter, and 774, `MINDFORK_MODEL` and `MINDFORK_EMBED_MODEL` on their own —
   and 778, `zip` 9.0.5 with the special bits dropped from what `llama setup` unpacks. The
-  rest moved no behaviour of the app: the repository's numbers (771), the promotion plan's
-  second week (772), the source-language gate by shape and its Sonar follow-up (775, 777),
+  rest moved no behaviour of the app: the repository's numbers (771), the
+  source-language gate by shape and its Sonar follow-up (775, 777),
   and the stored enums' ledger (776).
 - **A MINOR**: the cache share is a feature, §6's rule for `0.x`.
 - **The release is stacked on 778.** Its PR was the first to run `cargo deny check

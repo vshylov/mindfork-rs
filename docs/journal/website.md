@@ -1391,8 +1391,7 @@ both on `main` at `88e5ce29`, the merge of the pull request.
 
 ### Post-M9: website — the hero leads with the self-model, and the Ollama recipe (done)
 
-- **Why** (branch `docs/site-hero-ollama`, the promotion plan's stage 0 and
-  stage 1, [promotion.md](../research/promotion.md) §4). The hero said "An AI
+- **Why** (branch `docs/site-hero-ollama`). The hero said "An AI
   chat that lives in your terminal", the category of a dozen projects; what no
   other one does is the memory and the self-model, which the README's first line
   now leads with. The *at a glance* panel and the description still said
@@ -1430,19 +1429,17 @@ both on `main` at `88e5ce29`, the merge of the pull request.
     reply ended in advice to launch llama-server with `-b 256 -ub 256`, drawn
     from Ollama's timings with the model's load in them
     ([engine.md](engine.md), *the slow-prefill note is for a llama-server*).
-- **LM Studio** is in the plan's item and not in the recipe: it was not run, and
+- **LM Studio** is not in the recipe: it was not run, and
   a recipe that was not run is the kind this project does not publish.
 - `llms.txt` regenerated; `zola check --skip-external-links` (the CI's form)
   passes.
 
 ### Post-M9: website — the essay on what replaced code ownership (done)
 
-- **Why** (branch `docs/article-code-ownership`,
-  [promotion.md](../research/promotion.md) §4 stage 2). The owner's essay on how
+- **Why** (branch `docs/article-code-ownership`). The owner's essay on how
   the project is built — how a codebase whose owner reads no diffs stayed
-  coherent — came out on Medium on 2026-10-17. For Hacker News it needed a home
-  without Medium's pop-ups and sign-in prompts: it is now the tenth article,
-  `/articles/what-replaces-code-ownership/`.
+  coherent — came out on Medium on 2026-10-17; it is now also the site's tenth
+  article, `/articles/what-replaces-code-ownership/`.
 - **The owner's text, unchanged** apart from what a page on this site needs:
   links to the repository files it names (the router and its gate, the lessons,
   the PR template, AGENTS.md, the Sonar configuration, the layer gate, the
@@ -1488,7 +1485,7 @@ both on `main` at `88e5ce29`, the merge of the pull request.
   so the page does not jump while it loads (`.prose img` gained `height: auto`,
   which keeps the ratio), and alt text that reads the card out. The dark card
   sits in a light page as a cover would; checked in both themes and at 375 px.
-- **Measured again before Hacker News** (follow-up, branch
+- **Measured again** (follow-up, branch
   `docs/article-refresh-hn`). The essay's figures were Friday's (2026-10-16),
   and by Tuesday the repository had moved 93 commits, 34 pull requests and three
   releases, so every number was read again on 2026-10-20 at the newest commit,

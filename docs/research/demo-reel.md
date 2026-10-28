@@ -1,7 +1,6 @@
 # The animated demo — a reel generated from code
 
-Status: **design accepted 2026-10-03** (its shape is the promotion plan's §6,
-[promotion.md](promotion.md)); **stage 1 — the MVP probe — GO** (the owner,
+Status: **design accepted 2026-10-03**; **stage 1 — the MVP probe — GO** (the owner,
 2026-10-03, after one round of review, §7); **stage 2 — publication —
 implemented** (§8); **stage 3 — the Russian variant — implemented** (§9);
 the code blocks are drawn on the **normal background** (the owner, 2026-10-16, §10).
@@ -9,9 +8,9 @@ the code blocks are drawn on the **normal background** (the owner, 2026-10-16, �
 ## 1. Context and goal
 
 The README and the site show still screenshots; a terminal application is
-judged by how it feels in motion. The promotion plan's storefront stage asks
-for an animation, and two earlier documents already left room for one: the
-demo-screenshots plan's optional stage 4, "replaying the scripted stream frame
+judged by how it feels in motion. Two earlier documents already left room for
+an animation: the demo-screenshots plan's optional stage 4, "replaying the
+scripted stream frame
 by frame into an APNG/GIF" ([demo-screenshots.md §4](../history/demo-screenshots.md)),
 and the public-release audit's "a demo recording"
 ([public-release-readiness.md §2.4](public-release-readiness.md)).
@@ -165,7 +164,7 @@ interface change, and the animation always shows the released version.
   README points at; the pages pass excludes it.
 - **The README's embed waited for the first release that carries the files.**
   Merged before, it would have been a broken image on the repository's front
-  page; it landed with the README's rework (promotion plan §4, stage 0) on
+  page; it landed with the README's rework on
   2026-10-05, after 0.15.0: the dark GIF from mindfork.io in either theme, as
   the README's stills are, and the dark still for a reader who asked for less
   motion.
@@ -183,7 +182,7 @@ serve` shows the page as a deploy would.
 - **Stage 2 — publication.** CI at release, the site's embed; the light look
   came with it, since the site follows the visitor's theme. The README's embed
   follows the first release that carries the files (§3.6).
-- **Stage 3 — the Russian variant**, for Habr. More than the interface's
+- **Stage 3 — the Russian variant.** More than the interface's
   language: the showcase conversation itself is English, so a Russian reel needs
   the fixture's exchange and self-model in Russian (test-only data). Published
   with the others as `mindfork-demo-dark-ru.{gif,webp}`; the site does not show
