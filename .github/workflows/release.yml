@@ -76,7 +76,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: Install the toolchain (from rust-toolchain.toml)
         run: rustup show
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
       # ALSA is only needed by the Linux build (rodio/cpal — speech playback /tts).
       - name: System dependencies (ALSA)
         if: runner.os == 'Linux'
@@ -234,7 +234,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: Install the toolchain (from rust-toolchain.toml)
         run: rustup show
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6  # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
       # ALSA for the build (rodio/cpal); DejaVu and WenQuanYi Micro Hei for the
       # glyphs JetBrains Mono lacks — between them every one the reel draws
       # (`✦ ⚒ ⟳ ∝ ₖ ᵥ ＋`, checked in an ubuntu:22.04 container), where Noto CJK
