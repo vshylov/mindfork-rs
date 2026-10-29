@@ -24,6 +24,11 @@ use crate::shared::api::http;
 use crate::shared::api::local_servers::{LmStudioModels, OllamaVersion};
 use crate::shared::api::thoughts::{Piece, ThoughtsParser};
 
+/// Spike only (spike/image-generation-probe): re-home a tool's images into a user
+/// message on any endpoint, as a gateway gets them — the image-generation probe's
+/// control arm (docs/research/image-generation.md §11).
+pub static PROBE_REHOME: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// A client to an OpenAI-compatible inference server (local/external `llama-server`,
 /// vLLM, LM Studio…; optionally a proxy with a Bearer key). Clouds now use
 /// their own protocols (OpenAI → Responses, Gemini → native, Claude → Anthropic), so
@@ -549,7 +554,10 @@ impl OpenAiClient {
         }
         // A gateway by name needs no catalogue to be one; everything else is one
         // only once its catalogue has answered for the model.
-        if self.gateway.is_none() && self.model_capabilities().await.is_none() {
+        if self.gateway.is_none()
+            && !PROBE_REHOME.load(std::sync::atomic::Ordering::Relaxed)
+            && self.model_capabilities().await.is_none()
+        {
             return req;
         }
         match wire::rehome_tool_images(&req.messages) {

@@ -725,6 +725,7 @@ mod gateway_live;
 mod gateway_live_embed;
 mod gateway_live_speech;
 mod generation;
+mod image_probe;
 mod images;
 mod impersonation;
 mod live;
