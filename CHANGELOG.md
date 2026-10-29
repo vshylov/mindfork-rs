@@ -27,6 +27,12 @@ split by subsystem.
   after the provider refuses a picture the assistant draws nothing more in that turn
   and asks you what to change. OpenAI's `gpt-image-2.5-flare` is the default, at
   about a cent and a half a picture.
+- **Pictures drawn from Telegram come back to the phone.** Ask the companion for a
+  picture through its Telegram bot and it arrives as a photo after the reply's
+  words, named as the chat's file it is kept as, so the next message can ask for a
+  change to it. A picture larger than Telegram takes as a photo is sent as a smaller
+  copy; the original stays in the chat's files. A photo that does not go through is
+  said in the chat and at the terminal.
 
 ### Fixed
 

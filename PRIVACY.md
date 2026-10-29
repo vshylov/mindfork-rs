@@ -478,8 +478,10 @@ carries the bot's token, as the Bot API requires. Nothing listens on your machin
   downloaded from Telegram's file server (`api.telegram.org/file/…`), for the
   model and for the recogniser (§3.12). A picture is kept with the message, as an
   attached one is; a voice message's recording is not kept.
-- **What is sent.** The companion's replies — the text, and a voice message when
-  §3.4 says so — and *typing…* while it writes. Its thoughts, its tool calls and
+- **What is sent.** The companion's replies — the text, a voice message when
+  §3.4 says so, and each picture a reply from the phone drew (§3.13), as a photo
+  under its file's name or, when Telegram would not take the original, a smaller
+  copy — and *typing…* while it writes. Its thoughts, its tool calls and
   everything else of the conversation stay on this machine, in the conversation's
   file (§2).
 

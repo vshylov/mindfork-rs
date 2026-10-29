@@ -317,6 +317,14 @@ its caption, and the companion sees it — when the model it runs on takes image
 that does not says it cannot see them. A picture is prepared as `/image attach` would
 prepare it (Settings → Memory → *Images*: how large, how many).
 
+And back: with *Image generation* on ([Drawing pictures](#drawing-pictures)), ask the
+companion from your phone to draw something and the picture arrives as a photo after
+its reply, its file's name under it — `image-3.png` — so your next message can ask for
+a change to it. Telegram shrinks and recompresses every photo; the original stays in
+the conversation's files at the terminal. A picture Telegram would not take as a photo
+goes as a smaller JPEG copy, and one that does not go through at all is said in the
+chat.
+
 **Voice messages.** Hold the microphone in Telegram and talk: the companion reads
 what you said and answers it. The words are heard by the speech recognition you pick
 in Settings → Model/server → *Recognition*:
@@ -340,8 +348,8 @@ then *recording a voice message…*, then the reply in the profile's voice. A ty
 message is answered in text, and so is what the companion writes on its own.
 
 **Who can read it.** A chat with a bot is not end-to-end encrypted: Telegram's
-servers see every message, both ways, and a voice message is heard by the recogniser
-you picked too. The conversation itself is stored only on this
+servers see every message and picture, both ways, and a voice message is heard by the
+recogniser you picked too. The conversation itself is stored only on this
 machine. The token is the bot — anyone with it reads and writes as the bot — and a
 forked or carried companion does not take it, or your account. `/bridge` says what
 the bridge is doing; `/bridge unpair` forgets your account.
@@ -523,7 +531,9 @@ name — and the provider draws the new one from it.
   or **Size** (the others) is what the price is set by.
 - **What it may spend.** One turn draws at most **Pictures per turn** pictures (4;
   `0` for no limit). A follow-up or a background run never draws; a message you
-  send from Telegram does. When the provider refuses a picture, the assistant
+  send from Telegram does, and the picture comes back to your phone as a photo
+  ([Talking from your phone](#talking-from-your-phone-telegram)). When the
+  provider refuses a picture, the assistant
   draws nothing more in that turn: it tells you what was refused and asks what to
   change.
 - **What the assistant sees.** With **Show the picture to the model** on, a model
