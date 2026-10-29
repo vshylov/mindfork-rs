@@ -11,9 +11,13 @@ decisions:
 - **Clarified for F9:** the picture goes to the phone as a photo, and the phone is
   **stage 2**, straight after the tool (§8).
 
-Nothing is built. Next is the probe (§8, stage 0). Provider facts were read from
-the providers' own documentation on 2026-10-29 (§10); prices and model names move
-monthly, so the probe re-reads them before a line of code is written.
+**Stage 0, the probe, ran on 2026-10-29: GO** (§11). It measured the providers
+($0.97 in all) and the tool on Gemma 4 and Qwen 3.8, and it hands three forks back
+to the owner: **F3 re-opened** (OpenAI measured at a third of Gemini's price),
+**F10** (a refusal and the rest of the turn) and **F11** (Gemma 4 answers in JSON
+after a tool's picture on llama.cpp — every tool's, not only this one's). Nothing
+is built yet. Provider facts were read from the providers' own documentation on
+2026-10-29 (§10) and then measured (§11.1).
 
 ## 1. Why
 
@@ -381,13 +385,17 @@ and video are:
   OpenAI takes a pixel `size` (the aspect mapped to `1024x1024`, `1536x1024`,
   `1024x1536`, `1536x864`, `864x1536`) and answers base64 only; xAI takes
   `aspect_ratio` and `resolution`, is asked for `b64_json` so no temporary URL has
-  to be fetched, and names its edit inputs `<IMAGE_0>` in the prompt; the gateway
-  takes `aspect_ratio`, `resolution` and `input_references`, and reports
-  `media_type` and `usage.cost`.
+  to be fetched, and names its edit inputs `<IMAGE_0>` in the prompt; its refusal
+  is an error *string* beside a usage that was charged (§11.1); the gateway takes
+  `aspect_ratio`, `resolution` and `input_references` — each only when the model's
+  catalogue entry lists it (FLUX.2, Recraft and MAI take no `resolution`) — and
+  reports `media_type` and `usage.cost`.
 - **Gemini's `generateContent`**, on the transport the Gemini client and its speech
-  share: `responseModalities: ["IMAGE"]`, `imageConfig`, the pictures to edit as
-  `inlineData` parts of the one user turn, the answer's first image part taken and
-  its text kept for a refusal.
+  share: `responseModalities: ["IMAGE"]` (measured enough on its own), `imageConfig`,
+  the pictures to edit as `inlineData` parts of the one user turn. The answer's
+  first image part is taken — a JPEG, measured — and everything else dropped,
+  including a thought signature of up to three million characters on that very
+  part; a reply with no image part is a refusal, its text kept as the reason.
 
 An edit is always a **fresh request** with the pictures as inputs — never a replay
 of an image model's own conversation — so no thought signature and no stored
@@ -408,7 +416,9 @@ Parameters the model sees:
   ratio for Gemini, the gateway and xAI.
 - `images` — pictures to change or to draw from, by the handles the chat already
   has: a chat file (`#3`, `cat.png`), a message image or a `tool-image-N`. Absent
-  — a new picture (F4).
+  — a new picture (F4). The description says it is for pictures the person wants
+  changed — the probe saw a model pass its own failed attempt as the reference for
+  the retry (§11.2).
 
 What the model does **not** choose: quality, resolution, format and count. They
 are the price, and the price is the person's (one image per call; a second
@@ -514,7 +524,15 @@ each, dated.
   (b) `openai` — the speech slot's default, but a key that chats may be refused
   pictures until the organisation is verified, which a first try should not meet.
   (c) No default provider: the switch stays off until one is chosen.
-  **Owner's decision (2026-10-29): (a).**
+  **Owner's decision (2026-10-29): (a).** **Re-opened by the probe the same day**
+  (§11.1): measured, OpenAI's `gpt-image-2.5-flare` at `medium` costs $0.013 a
+  picture and Gemini's $0.039 with the thinking it cannot turn off — the premise of
+  (a) was wrong. Options again: (a′) **`openai`, `gpt-image-2.5-flare` at
+  `medium`** *(now recommended)* — a third of the price, the exact size asked for,
+  PNG, a refusal with a stable code; the risk is an account that must pass the
+  organisation check first, said in OpenAI's words on the first picture.
+  (b′) Gemini as decided — no check in front of it, but JPEG, three times the price,
+  and a violent prompt softened rather than refused. (c′) No default.
 - **F4. Editing in the first version.** (a) **Yes** — the `images` argument, by
   the handles the chat already has *(recommended)*: every provider in §2 takes
   input pictures (on the gateway, the models whose catalogue entry allows
@@ -560,6 +578,30 @@ each, dated.
   **stage 2**, before the rest of the providers and the command. The alternatives
   weighed and not taken: the photo plus the original as a file, the file alone;
   the phone inside stage 1, or last.
+- **F10. After a refusal, in the same turn** (found by the probe, §11.2 — both
+  models redrew a refused request with softened prompts, up to seven times, without
+  asking). (a) **The tool stops drawing for the rest of the turn**: a call after a
+  refusal is refused by the tool itself — "drawing is stopped for this turn after a
+  refusal; tell the user what was refused and ask what to change" *(recommended)* —
+  deterministic, free, and the person chooses the softened version, which is the
+  person's picture. (b) Wording only: the refusal note asks the model not to call
+  again and to ask first — cheaper to build, and the probe shows the current
+  wording read as permission to rephrase; it would need its own measurement.
+  (c) Keep the retries within the turn's ceiling — fewer round trips for the
+  person, up to four charged refusals a turn on xAI.
+- **F11. Where a tool's picture goes on llama.cpp** (found by the probe, §11.3 —
+  Gemma 4 wraps its reply in JSON after a picture inside a tool result, 28 of 30
+  English requests). (a) **Re-home it on every OpenAI-compatible endpoint, as a
+  gateway already gets it, behind a label that names the tool and carries no words
+  of any language** (`image_generate → tool-image-3.png`) *(recommended)* —
+  measured to end the JSON (0 of 29) with Qwen's calls and checks intact; the
+  label's form measured on both models before it ships, since the Russian label
+  moved English replies into Russian (Gemma 11 of 15, Qwen 3 of 9). It changes the
+  wire for every producer — `python_exec`, MCP — so it is **a PR of its own before
+  stage 1**, with the image smokes extended to assert that the reply is prose.
+  (b) Re-home for Gemma only — telling the model by its name, which the project
+  has been burned by. (c) Leave it: pictures from any tool keep breaking Gemma 4's
+  English replies.
 
 ## 8. Stages and the probe
 
@@ -583,6 +625,10 @@ project does with probes). Two questions, each with a go/no-go:
    nobody asked for, 5/5 refusals relayed without a picture described, and the
    match judged right in ≥ 4/5. A wording that fails is reworded and measured
    again, as the withheld-image notes were (spec §9.10).
+
+**Before stage 1 — F11, if (a).** Tool pictures re-homed on llama.cpp behind a
+language-free label: a wire change for every producer, its own PR, measured on
+Gemma 4 and Qwen 3.8 (§11.3).
 
 **Stage 1 — the slot and the tool.** `image_gen` settings and their section,
 the clients for OpenRouter, OpenAI and Gemini (F2), `image_generate` with editing
@@ -646,3 +692,167 @@ from their changelogs, deprecation and migration notices. Google's pages show
 
 **Terminal pictures**
 - [ratatui-image on crates.io](https://crates.io/crates/ratatui-image) — 11.1.0 (2026-09-17), 12.0.0-rc.3 (2026-10-18)
+
+## 11. Stage 0 — the probe (2026-10-29)
+
+The tag `probe/image-generation-stage0` (the unmerged branch
+`spike/image-generation-probe`, frozen); the provider script is
+`tools/image_gen_probe.py`, the tool-use harness
+`src/app/orchestrator/tests/image_probe.rs` (§11.4).
+
+### 11.1 The providers
+
+The five prompts of §8 (a photograph 1:1, lettering 2:3, a Russian prompt 3:2, a
+wide scene 16:9, a tall one 9:16), one edit of the first picture ("make it
+night… keep the fox exactly as it is") and one prompt of fictional graphic
+violence, which the policies refuse — once per provider. Each provider's slot
+default: Gemini `gemini-nano-banana-2.1` at `1K`, OpenAI `gpt-image-2.5-flare` at
+`medium`, xAI `grok-imagine-image-2.0` at `1k`, and on the gateway
+`black-forest-labs/flux-3-image` at `1K` — a third vendor beside the two direct
+ones. **About $0.97 in all.**
+
+| | Gemini | OpenAI | xAI | OpenRouter (FLUX-3) |
+|---|---|---|---|---|
+| **Pictures** | 5/5, edit ✓ | 5/5, edit ✓ | 5/5, edit ✓ | 5/5, edit ✓ |
+| **Seconds** | 10–14 | 10–13 | 8–19 | 16–29 |
+| **Format** | **JPEG**, 0.4–1.1 MB | PNG, 1.3–3.1 MB | JPEG, 0.1–0.6 MB | PNG, 1.0–2.1 MB |
+| **2:3 · 16:9** | 848×1264 · 1376×768 | 1024×1536 · 1536×864 (as asked) | 832×1248 · 1280×720 | 832×1248 · 1360×768 |
+| **What it counted** | 1120 image tokens a picture, any aspect, plus 600–860 thinking tokens | 439 image tokens (1:1), 343 (3:2), 280 (16:9); usage present | `cost_in_usd_ticks` | `usage.cost` |
+| **One picture costs** | **$0.039** — $0.034 of picture and ~$0.005 of thinking | **$0.008–0.013** | $0.04; edit $0.07 | $0.048, edit the same |
+| **The refused prompt** | **drawn** — "a cinematic … action-thriller photograph from a film scene" | `400` in 1.1 s, `moderation_blocked`, stage `input`, category `other` | `400` after **15.5 s**: `{"error": "Generated image rejected by content moderation."}` — and **charged $0.04** | `400` in 1.9 s: "Black Forest Labs blocked this request: it was flagged for graphic violence.", `metadata.provider_name` |
+
+All four drew `MINDFORK` letter for letter.
+
+What this changes:
+
+1. **OpenAI is the cheapest, not Gemini.** `gpt-image-2.5-flare` at `medium` spent
+   439 output tokens on a 1024×1024 picture — **$0.013** at $30 per million, against
+   the $0.053 OpenAI publishes for `gpt-image-2` at the same quality. Gemini's real
+   price is its list price plus thinking that cannot be turned off: $0.039. F3 was
+   decided on "Gemini is the cheapest" (§7), so **F3 goes back to the owner**. The
+   owner's key needed no organisation check; whether that is the key's history or
+   OpenAI's rule, one account cannot say.
+2. **Gemini answers in JPEG**, and the picture part carries a thought signature of
+   0.9–3.2 million characters. A client that kept the response would keep megabytes
+   of signature; the tool takes the image bytes and drops the rest (§6.2).
+3. **Gemini softens instead of refusing.** The violent prompt came back as a film
+   still with a cheerful sentence. A refusal on Gemini is the rarer path, so its
+   handling (§3.2) is tested by a stub, not by provoking one.
+4. **xAI refuses after drawing, and bills the refusal.** The shape is now known — an
+   error *string*, not an object, beside the usage — and the price of a refused
+   picture belongs in the result the model reads, so a model does not retry a
+   refused prompt at $0.04 a time.
+5. **The gateway names the vendor in the refusal**, and a model whose catalogue
+   entry has no `resolution` must not be sent one: FLUX.2, Recraft and MAI list none
+   (`GET /images/models`). The client sends only what the entry lists.
+6. **Gemini's `["IMAGE"]` alone works** (the sixth call), so the client need not ask
+   for text it throws away — and with `["TEXT", "IMAGE"]` its sentence is not always
+   clean (one came back with a fragment pasted mid-sentence).
+
+### 11.2 The local models
+
+The real agentic loop (`spawn_orch_tools`) against `llama-server` b11715 on the
+RTX 4090, the gate's own weights — Gemma 4 31B `q4_0` and Qwen 3.8 27B `Q4_K_M`
+(ggml-org), each with its vision projector, `-c 32768 --jinja`. The default
+profile's tools **plus** a stub `image_generate` with the description and result
+lines of §6.3, so a call nobody asked for competes with every tool the model really
+has. The stub hands back the matching OpenAI picture from §11.1 — or, on cue, the
+wrong one, or a refusal. Thirty conversations a model, each in a new chat: ten that
+ask for a picture (five English, five Russian; four name a shape), ten that do not
+(two of them about pictures: PNG against JPEG, "describe a Japanese garden"), five
+that end in a refusal, five that ask the model to check the result (three get the
+wrong picture first).
+
+| | Gemma 4 31B | Qwen 3.8 27B | GO |
+|---|---|---|---|
+| **Asked: one call, a faithful prompt** | 10/10 | 10/10 | ≥ 9/10 |
+| **…the shape asked for** | 4/4 | 4/4 | — |
+| **Not asked: calls** | 0/10 | 0/10 | ≤ 1/10 |
+| **Refused: relayed, no picture described** | 5/5 | 5/5 | 5/5 |
+| **Checked: judged right** | 5/5 (3 wrong pictures caught and redrawn) | 5/5 (the same) | ≥ 4/5 |
+| **Minutes for 30** | 12 | 8 | — |
+
+**GO on both models.** The prompts are full descriptions, not titles — a median of
+81 words for Gemma, 64 for Qwen — in English for English requests and mostly for
+Russian ones too (Qwen once wrote a Russian prompt in Russian). A refusal was said
+in each model's own words with an alternative offered, and no reply described a
+picture that was never drawn. Both name the file and `/file open #N` on their own when
+the result line offers it.
+
+Three findings, none of them in the GO criteria, each with a design consequence:
+
+1. **After a refusal, both models try again — with a softened prompt, and without
+   asking.** Gemma made 13 calls in the five refused conversations (one, 7), Qwen 16
+   (one, 6); Qwen once sent an empty prompt. The note's "the same prompt will be
+   refused again" is read as "change the prompt", which it literally permits. On
+   OpenAI and the gateway an input-stage refusal is free and takes a second; on xAI
+   each one is a charged picture and 15 s. A ceiling of 4 bounds it but does not
+   stop it — see F10.
+2. **A redraw may carry the wrong picture forward.** Qwen redrew a mismatched
+   picture by passing it in `images` as the reference — on a real provider the fox
+   would have leaked into the city. The description should say `images` is for
+   pictures the user wants changed, not for retries.
+3. **Gemma wraps its reply in JSON after a picture** — `{"action": "text",
+   "action_input": "Here is your red fox…"}` — in 5 of its 10 asked conversations,
+   all five English ones; one such blob even held a second `image_generate` call as
+   text, never executed. Qwen never did. §11.3 measures whether it is the picture
+   inside the tool result that does it.
+
+### 11.3 Gemma's JSON, measured
+
+The five English requests of §11.2 again, each in up to three variants, the
+variants interleaved so a drift of the server falls on all of them alike: the
+picture **inside the tool result** (what llama.cpp is sent today), **no picture**
+(the result says it is saved and not shown), and the picture **re-homed** into a
+user message after the result — what a gateway already gets
+(`wire::rehome_tool_images`), forced on llama.cpp by a spike-only switch.
+
+| Gemma 4 31B | inside the result | no picture | re-homed |
+|---|---|---|---|
+| Russian profile, 3 rounds × 5 | **14/15 JSON** | 0/15 | 0/15 |
+| English profile, 2 rounds × 5 English requests | **9/10 JSON** | — | 0/10 |
+| English profile, 2 rounds × 2 Russian requests | 0/4 | — | 0/4 |
+
+1. **The picture inside the tool result is what does it** — on Gemma 4, after an
+   English request: 28 of 30 such conversations across the runs, against 0 of 9
+   Russian ones and 0 of 10 on Qwen. Every turn still made exactly one call; only
+   the reply's shape broke.
+2. **It is not image generation's alone.** Every producer that puts a picture in a
+   tool result on llama.cpp — `python_exec`'s charts, an MCP screenshot — hands
+   Gemma 4 the same message. The gate's smokes for them assert on the files and on
+   what the model was told, not on the reply's shape, so nothing has caught it.
+3. **Re-homing ends it** (0 of 29), and the model still sees the picture. Two
+   things come with it. Under a Russian profile the re-homed picture's label is
+   Russian (`prompt.images.label`), and Gemma answered English requests in Russian
+   11 times of 15; under an English profile, 0 of 14 — the label's language, not
+   the move. And twice in those 14 Gemma answered as if the person had sent the
+   picture ("I'm glad you like the image!", "That is a very clean, bold start!"):
+   the label names a file, not the tool that made it.
+
+4. **Qwen loses nothing by it** — re-homed, under the Russian profile: 10 of 10
+   asked conversations with one call, 5 of 5 checks right (the three wrong pictures
+   caught and redrawn), no JSON. But the Russian label moved it too: 3 of 9 English
+   requests answered in Russian, where with the picture inside the result it never
+   switched. The label's wording has to carry no language — F11.
+
+### 11.4 Verdict
+
+**GO.** The providers do what §3 says, at the prices §11.1 measured: every one drew
+five of five and the edit; three refuse in a shape the tool can tell from a broken
+connection, and the fourth, Gemini, did not refuse at all — it softened the prompt
+and drew. Both gate models call the tool when asked and only then, relay a refusal
+without inventing a picture, and catch a wrong picture. Spent: $0.97 at the
+providers; the local runs cost nothing.
+
+What the probe adds for the owner before stage 1:
+
+- **F3 is re-opened** — OpenAI is a third of Gemini's price (§7).
+- **F10** — what a refusal does to the rest of the turn (§7).
+- **F11** — where a tool's picture goes on llama.cpp (§7). It reaches past this
+  track: `python_exec`'s charts and MCP screenshots meet Gemma 4 the same way.
+
+The probe's code is frozen as the tag `probe/image-generation-stage0`:
+`git show probe/image-generation-stage0:tools/image_gen_probe.py` (the providers,
+and `score` for the rows), `…:src/app/orchestrator/tests/image_probe.rs` (the stub
+and the thirty conversations), and the one-line spike switch in
+`src/shared/api/openai/client.rs` (`PROBE_REHOME`) the control arm used.
