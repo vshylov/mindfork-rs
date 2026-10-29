@@ -20,6 +20,12 @@
 //! `MINDFORK_ENGINE_URL` (+ `MINDFORK_ENGINE_KEY`) declares it;
 //! `MINDFORK_BRIDGE_RUNS` repeats it (default 1).
 //! `cargo test bridge_live -- --ignored --nocapture --test-threads=1`
+//!
+//! A second smoke, [`a_picture_drawn_from_the_phone_reaches_it_live`], draws
+//! from the phone (docs/research/image-generation.md F9): a picture asked for,
+//! then changed, each back as a photo after the words — the chat's own file,
+//! byte for byte, where Telegram takes it whole. It also needs
+//! `MINDFORK_OPENAI_KEY` and spends about three cents.
 
 use std::time::{Duration, Instant};
 
@@ -284,6 +290,113 @@ async fn one_run(backend: Arc<dyn EngineBackend>) {
     eprintln!("GO: {sent} messages, the persona's line kept");
     tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires a live model (MINDFORK_ENGINE_URL) and MINDFORK_OPENAI_KEY; spends about $0.03"]
+async fn a_picture_drawn_from_the_phone_reaches_it_live() {
+    let Some(backend) = live_backend() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL is not set");
+        return;
+    };
+    let Ok(key) = std::env::var("MINDFORK_OPENAI_KEY") else {
+        eprintln!("skip: MINDFORK_OPENAI_KEY is not set");
+        return;
+    };
+    if !crate::shared::secrets::scheme_available() {
+        eprintln!("skip: this machine cannot store a secret");
+        return;
+    }
+    let fake = TelegramFake::start("mara_bot", TOKEN).await;
+    let dir = tempfile::tempdir().unwrap();
+    let storage = Storage::open(Paths::with_root(dir.path())).unwrap();
+    let mut p = Profile::new("Mara", PERSONA);
+    p.language = crate::shared::i18n::Lang::En;
+    p.enabled_tools = crate::features::tools::default_tool_ids();
+    let draw = crate::features::tools::image_gen::IMAGE_GENERATE_ID.to_string();
+    if !p.enabled_tools.contains(&draw) {
+        p.enabled_tools.push(draw);
+    }
+    p.known_tools = p.enabled_tools.clone();
+    p.companion.bridge = true;
+    p.bridge.account = Some(ANN.to_string());
+    p.bridge.account_name = Some("@ann".into());
+    storage.json().upsert_profile(&p).unwrap();
+    let files = storage.json().files_dir();
+    drop(storage);
+
+    let mut cfg = no_auto_cfg();
+    cfg.interface.language = crate::shared::i18n::Lang::En;
+    cfg.bridge.telegram_api = Some(fake.api.clone());
+    cfg.default_sampling.max_tokens = Some(1500);
+    cfg.image_gen.enabled = true;
+    for (name, value) in [
+        (SecretKey::BridgeToken(p.id).storage_name(), TOKEN),
+        (cfg.image_gen.secret_key().storage_name(), key.as_str()),
+    ] {
+        crate::shared::secrets::put_key(&mut cfg.api_keys, &name, value, || "live".into()).unwrap();
+    }
+    let (tx, mut rx, handle) = spawn_orch_at(dir.path(), Some(backend), cfg);
+    let _ = wait_for(&mut rx, |e| matches!(e, AppEvent::ChatActivated { .. })).await;
+
+    let asks = [
+        "Could you draw me a small watercolor of your lighthouse at dusk? I'd love to see it.",
+        "Lovely! Now make it night, with the lamp lit and the sea dark.",
+    ];
+    for (i, ask) in asks.iter().enumerate() {
+        let n = i + 1;
+        let t = Instant::now();
+        fake.say(ANN, "ann", ask);
+        let words = nth(&fake, n, 300, "the words").await;
+        let photos = fake.wait_photos(ANN, n, 120).await;
+        assert_eq!(photos.len(), n, "[{n}] a photo after the words: {words}");
+        let (photo, caption) = &photos[n - 1];
+        let (w, h) = image::ImageReader::new(std::io::Cursor::new(photo))
+            .with_guessed_format()
+            .unwrap()
+            .into_dimensions()
+            .unwrap_or_else(|e| panic!("[{n}] the photo decodes: {e}"));
+        eprintln!(
+            "[{n}] ({:.1} s) words: {words}\n    photo: {caption}, {w}x{h}, {} bytes",
+            t.elapsed().as_secs_f32(),
+            photo.len()
+        );
+        assert!(
+            !words.trim_start().starts_with('{'),
+            "[{n}] prose, not JSON: {words}"
+        );
+        let chat = crate::shared::storage::JsonStore::new(Paths::with_root(dir.path()))
+            .load_profiles()
+            .unwrap()
+            .into_iter()
+            .find(|q| q.id == p.id)
+            .and_then(|q| q.bridge.chat)
+            .expect("the bridged chat");
+        let kept = std::fs::read(files.join(chat.to_string()).join(caption))
+            .unwrap_or_else(|e| panic!("[{n}] the chat's file {caption}: {e}"));
+        if kept.len() as u64 <= crate::shared::messenger::telegram::PHOTO_LIMIT {
+            assert_eq!(&kept, photo, "[{n}] the original, byte for byte");
+        }
+        let sent = fake.sent();
+        let last = |method: &str| sent.iter().rposition(|s| s.method == method).unwrap();
+        assert!(last("sendMessage") < last("sendPhoto"), "[{n}] words first");
+    }
+    assert_ne!(
+        fake.photos_to(ANN)[0].0,
+        fake.photos_to(ANN)[1].0,
+        "a new picture"
+    );
+    tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    // Whether the second was a change of the first (F4) — said, not asserted:
+    // the model's choice, which stage 1's smoke measured.
+    let storage = Storage::open(Paths::with_root(dir.path())).unwrap();
+    for chat in storage.json().load_chats().unwrap() {
+        for call in chat.messages.iter().flat_map(|m| m.tool_calls.iter()) {
+            eprintln!("    call: {} {}", call.name, call.arguments);
+        }
+    }
+    eprintln!("GO: two pictures drawn from the phone came back as photos");
 }
 
 #[test]

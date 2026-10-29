@@ -90,6 +90,24 @@ pub fn prepare(bytes: &[u8], downscale_px: u32) -> Result<PreparedImage, Prepare
     encode(&decoded, keep_png)
 }
 
+/// A JPEG copy of `bytes`, at most `long_edge` px on its longer side — for a
+/// destination that recompresses to JPEG anyway, where a PNG of the same pixels
+/// would only be larger (a messenger's photo, ADR 0013). Any decodable format
+/// in; always re-encoded, even when it is already a small JPEG.
+pub fn jpeg_copy(bytes: &[u8], long_edge: u32) -> Result<PreparedImage, PrepareError> {
+    let reader = ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|e| PrepareError::Failed(e.to_string()))?;
+    if reader.format().is_none() {
+        return Err(PrepareError::Undecodable);
+    }
+    let decoded = reader
+        .decode()
+        .map_err(|e| PrepareError::Failed(e.to_string()))?;
+    let needs = long_edge > 0 && decoded.width().max(decoded.height()) > long_edge;
+    encode(&downscale(decoded, needs.then_some(long_edge)), false)
+}
+
 /// Prepares raw RGBA pixels for attachment — what the clipboard hands over
 /// (`arboard::ImageData`: row-major RGBA8, no container format at all). Same downscale
 /// ceiling as [`prepare`].
@@ -212,6 +230,27 @@ mod tests {
         assert_eq!(prepared.width, 1568);
         assert_eq!(prepared.height, 784, "aspect ratio must be preserved");
         assert_ne!(prepared.bytes, png(3000, 1500));
+    }
+
+    #[test]
+    fn a_jpeg_copy_is_always_jpeg_and_shrinks_only_past_its_edge() {
+        let copy = jpeg_copy(&png_rgba(3000, 1500), 2560).unwrap();
+        assert_eq!(copy.mime, "image/jpeg", "even from a png with alpha");
+        assert_eq!((copy.width, copy.height), (2560, 1280));
+        assert_eq!(
+            image::guess_format(&copy.bytes).unwrap(),
+            ImageFormat::Jpeg,
+            "the bytes are what the label says"
+        );
+        let small = jpeg_copy(&bmp_rgb(40, 30), 2560).unwrap();
+        assert_eq!(
+            (small.mime, small.width, small.height),
+            ("image/jpeg", 40, 30)
+        );
+        assert_eq!(
+            jpeg_copy(b"not a picture", 2560),
+            Err(PrepareError::Undecodable)
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! The Telegram Bot API, as much of it as the bridge uses (ADR 0013):
 //! `getMe`, `getUpdates` (long polling), `sendMessage`, `sendChatAction`,
-//! `getFile` with the download, and `sendVoice`.
+//! `getFile` with the download, `sendVoice`, and `sendPhoto`.
 //!
 //! Long polling only: every call is an outbound HTTPS request, so a pod behind
 //! NAT needs no address of its own, and nothing here listens. The token is part
@@ -28,7 +28,14 @@ pub const MESSAGE_LIMIT: usize = 4096;
 /// The largest file a bot may download (Bot API, `getFile`): 20 MB.
 pub const FILE_LIMIT: u64 = 20 * 1024 * 1024;
 
-/// How long a file download may take.
+/// The largest photo a bot may send (Bot API, `sendPhoto`): 10 MB.
+pub const PHOTO_LIMIT: u64 = 10 * 1024 * 1024;
+
+/// A photo's width and height together, at most (Bot API, `sendPhoto`; its
+/// other rule, one side at most 20 times the other, no scaling mends).
+pub const PHOTO_SIDES: u32 = 10_000;
+
+/// How long a file download — or an upload — may take.
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// What a call came to when it did not succeed.
@@ -420,6 +427,12 @@ impl TelegramClient {
         self.send_action(chat, "record_voice").await
     }
 
+    /// Shows *sending a photo…* in `chat`, as long as [`Self::send_typing`]
+    /// shows its own.
+    pub async fn send_uploading(&self, chat: i64) -> Result<(), TelegramError> {
+        self.send_action(chat, "upload_photo").await
+    }
+
     async fn send_action(&self, chat: i64, action: &str) -> Result<(), TelegramError> {
         self.call::<bool>(
             "sendChatAction",
@@ -446,9 +459,44 @@ impl TelegramClient {
             .text("chat_id", chat.to_string())
             .text("duration", seconds.to_string())
             .part("voice", file);
+        self.upload("sendVoice", form).await
+    }
+
+    /// Sends `photo` — PNG or JPEG within what `sendPhoto` takes
+    /// ([`PHOTO_LIMIT`], [`PHOTO_SIDES`]) — to `chat` as a photo, with
+    /// `caption` under it. Telegram keeps a recompressed copy.
+    pub async fn send_photo(
+        &self,
+        chat: i64,
+        photo: Vec<u8>,
+        mime: &str,
+        caption: &str,
+    ) -> Result<(), TelegramError> {
+        let name = if mime == "image/jpeg" {
+            "photo.jpg"
+        } else {
+            "photo.png"
+        };
+        let file = reqwest::multipart::Part::bytes(photo)
+            .file_name(name)
+            .mime_str(mime)
+            .map_err(|e| TelegramError::Network(e.without_url().to_string()))?;
+        let form = reqwest::multipart::Form::new()
+            .text("chat_id", chat.to_string())
+            .text("caption", caption.to_string())
+            .part("photo", file);
+        self.upload("sendPhoto", form).await
+    }
+
+    /// A file sent up as a multipart form, its answer read as any other's.
+    async fn upload(
+        &self,
+        method: &str,
+        form: reqwest::multipart::Form,
+    ) -> Result<(), TelegramError> {
         let resp = self
             .http
-            .post(format!("{}/sendVoice", self.base))
+            .post(format!("{}/{method}", self.base))
             .multipart(form)
             .timeout(DOWNLOAD_TIMEOUT)
             .send()
@@ -613,6 +661,49 @@ mod tests {
         assert!(reqs[0].contains("audio/ogg") && reqs[0].contains("OggS-note"));
         assert!(reqs[0].contains("name=\"duration\"\r\n\r\n7"));
         assert_eq!(stub.bodies()[0]["action"], "record_voice");
+    }
+
+    #[tokio::test]
+    async fn a_photo_goes_up_as_a_file_with_its_caption() {
+        let stub = Stub::serving(vec![
+            json(r#"{"ok":true,"result":true}"#),
+            json(r#"{"ok":true,"result":{"message_id":4}}"#),
+            refused(
+                "400 Bad Request",
+                r#"{"ok":false,"error_code":400,"description":"Bad Request: PHOTO_INVALID_DIMENSIONS"}"#,
+            ),
+        ])
+        .await;
+        let c = client(&stub);
+        c.send_uploading(42).await.unwrap();
+        c.send_photo(
+            42,
+            b"\xFF\xD8\xFF-jpeg".to_vec(),
+            "image/jpeg",
+            "image-1.png",
+        )
+        .await
+        .unwrap();
+        let err = c
+            .send_photo(42, b"png".to_vec(), "image/png", "x")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, TelegramError::Refused { code: 400, description, .. }
+                if description.contains("PHOTO_INVALID_DIMENSIONS")),
+            "{err:?}"
+        );
+        assert_eq!(stub.bodies()[0]["action"], "upload_photo");
+        let reqs = stub.requests();
+        assert!(
+            reqs[1]
+                .to_ascii_lowercase()
+                .starts_with("post /v1/bot123:secret/sendphoto")
+        );
+        assert!(reqs[1].contains("name=\"photo\"; filename=\"photo.jpg\""));
+        assert!(reqs[1].contains("image/jpeg") && reqs[1].contains("-jpeg"));
+        assert!(reqs[1].contains("name=\"caption\"\r\n\r\nimage-1.png"));
+        assert!(reqs[2].contains("filename=\"photo.png\""));
     }
 
     #[test]
