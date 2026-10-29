@@ -6664,5 +6664,10 @@ owner decided it; the full record is §13 there, the contract spec §11.13
   "make it night". Gemma 4 31B `q4_0` — 32 s and 31 s, the change by `#1`; Qwen
   3.8 27B `Q4_K_M` — 28 s and 25 s, the change by `tool-image-1.png`. Prose replies
   in character, the photos after the words and byte for byte the chat's files.
-  About $0.10. Telegram itself is the owner's check, from the phone.
+  About $0.10. Telegram itself the owner checked from the phone the same day: a
+  self-portrait asked for came back as the words, then the photo, `image-1.png`.
+- **Stage 1's open end closed.** The four settings PNGs it left are re-rendered —
+  Pillow installed here again; the renderer first reproduced the committed images
+  byte for byte from their old dumps, and of the ten shots the current dumps
+  render (PNG and SVG each) only those four differed.
 - Unit tests 4450 green, 305 `#[ignore]` (the phone's smoke).

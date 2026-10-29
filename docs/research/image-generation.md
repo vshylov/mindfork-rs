@@ -1025,6 +1025,7 @@ at dusk?", then "Now make it night, with the lamp lit and the sea dark."
 
 **GO.** The two models named the picture to change by different handles — `#1` and
 the conversation image's name — both resolved, as stage 1 built. About $0.10 spent.
-Not measured here: Telegram itself. The fake answers `sendPhoto` as the Bot API
-documents it; a photo through the real API, from the owner's phone, is the owner's
-check, as the bridge's own stages were.
+
+**Telegram itself — checked by the owner** the same day, from the phone, as the
+bridge's own stages were: a self-portrait asked for in Russian came back as the
+reply's words, then the photo with `image-1.png` under it.
