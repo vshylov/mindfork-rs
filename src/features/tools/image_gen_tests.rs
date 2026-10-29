@@ -7,12 +7,14 @@ use std::sync::Arc;
 use base64::Engine as _;
 use uuid::Uuid;
 
-use super::*;
+use super::{IMAGE_GENERATE_ID, ImageGenerate, MAX_INPUTS};
+use crate::entities::chat_file::{ChatFile, FileOrigin};
 use crate::features::tools::testkit::ctx_with_storage_lang;
-use crate::shared::config::{ImageGenProvider, ImageGenSettings};
+use crate::features::tools::{ChatEffect, Tool, ToolContext, ToolOutcome};
+use crate::shared::config::{ImageGenProvider, ImageGenSettings, ImageSettings};
 use crate::shared::i18n::Lang;
 use crate::shared::image_gen::mock::MockImages;
-use crate::shared::image_gen::{ImageGenConfig, resolve};
+use crate::shared::image_gen::{Drawing, ImageGenConfig, ImageGenSlot, Picture, resolve};
 
 /// A real PNG of `w`×`h`.
 fn png(w: u32, h: u32) -> Vec<u8> {
