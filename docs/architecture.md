@@ -283,7 +283,13 @@ src/
 │  │  │                     capability probe + background decode/downscale → staging
 │  │  │                     (session-only, per chat), consumed by the send (spec §9.10).
 │  │  │                     One seam for every source: file, clipboard, downloaded —
-│  │  │                     a URL is resolved to bytes first (async), then prepared
+│  │  │                     a URL is resolved to bytes first (async), then prepared.
+│  │  │                     `/image generate` (spec §9.15) on its own channel
+│  │  │                     (ImageDrawResult): drawn off the loop by the slot's
+│  │  │                     client, kept by `image_gen::store_drawn` as the tool
+│  │  │                     keeps one, the prepared copy staged as
+│  │  │                     `MessageImage::copy_of(file)`; the chat is changed in
+│  │  │                     `handle_draw_result`, by its owner
 │  │  ├─ search.rs          chat content search (`Ctrl+F` in the list): indexes a
 │  │  │                     chat right after it is saved + the startup reconciliation
 │  │  │                     pass (stat-only walk of `chats/`), and answers a query —
@@ -650,7 +656,10 @@ src/
 │  │                        while carrying the #N and the /w/in name a turn already
 │  │                        promised, so a round that adds a file cannot renumber
 │  │                        under a model still reading the block (ToolContext.inputs,
-│  │                        refreshed by ToolContext::sync_inputs once a round)
+│  │                        refreshed by ToolContext::sync_inputs once a round).
+│  │                        An image that is a copy of a listed file
+│  │                        (`MessageImage::file_id`, /image generate) is that
+│  │                        file's item, as an attachment's original is
 │  ├─ rag_command.rs        /rag add|remove|list|rebuild parser
 │  ├─ compaction.rs        history compression, pure part: one renderer of a
 │  │                       message range (parameterized by the tool-result clip,
@@ -822,7 +831,12 @@ src/
    │  │                     (`architecture.input_modalities`) — what ModelSlot::Video's
    │  │                     list is narrowed by, not what a row shows, so
    │  │                     ModelFacts::is_empty ignores it; that list opens with the
-   │  │                     Gemini family, which orders it and never narrows it
+   │  │                     Gemini family, which orders it and never narrows it.
+   │  │                     CatalogueShape::OpenRouterImages is the gateway's picture
+   │  │                     models, `GET /images/models` — typed parameters, an object
+   │  │                     where the chat list has an array — for ModelSlot::Image:
+   │  │                     ModelRole::Image, ModelFacts::edits from
+   │  │                     `input_references`, the SVG-only entries left out
    │  ├─ effort.rs          the reasoning-effort scale across providers: the ladder, a
    │  │                      refusal's own list, "nearest", and the ask-again every client
    │  │                      whose model may refuse a value goes through (EffortWire)
@@ -1140,13 +1154,15 @@ src/
    ├─ image_gen/           image generation for `image_generate` (spec §9.15):
    │                       the `ImageGenerator` contract (`draw` → a `Picture` or
    │                       `Drawing::Refused`, an answer; an `Err` is everything
-   │                       else) and three clients — `OpenAiImages`
+   │                       else) and four clients — `OpenAiImages`
    │                       (`/images/generations`, `/images/edits` with `data:`
-   │                       URLs), `GeminiImages` (`generateContent`,
-   │                       `responseModalities: ["IMAGE"]`, a thought signature
-   │                       dropped) and `GatewayImages` (the gateway's `/images`,
-   │                       sending only what the model's `GET /images/models`
-   │                       entry lists). `resolve(settings, key, attribution)` →
+   │                       URLs), `XaiImages` (xAI's dialect of them: the ratio,
+   │                       `b64_json`, `image`/`images` with `<IMAGE_n>`, the
+   │                       price in ticks, the charged refusal), `GeminiImages`
+   │                       (`generateContent`, `responseModalities: ["IMAGE"]`, a
+   │                       thought signature dropped) and `GatewayImages` (the
+   │                       gateway's `/images`, sending only what the model's
+   │                       `GET /images/models` entry lists). `resolve(settings, key, attribution)` →
    │                       `ImageGenSlot` — the tool's switches and the config or
    │                       what it lacks (`Missing`). A slot of its own like video:
    │                       the providers that draw are not the ones that chat.
@@ -3252,7 +3268,10 @@ Implementation notes:
   **and not woken** (`start_generation_woken`), and `child_spec_with` drops it from
   a background sub-agent's set; a bridged turn keeps it — it is not dangerous — and
   `SeatReply` reads what it drew off the turn's `AddChatFile` effects (origin
-  `generated`), sent to the phone after the words (spec §11.13). The
+  `generated`), sent to the phone after the words (spec §11.13). The person's
+  own road, `/image generate`, uses the same client (`image_gen::client` over
+  `orchestrator::image_gen_slot`) and the same keeping (`store_drawn`) from the
+  orchestrator, outside any turn — no `TurnDraws`, no ceiling. The
   turn's image snapshot (`ToolContext::images`) is built when the tool is offered
   as well as for `python_exec`, so `images` reaches a conversation's pictures. The
   picture handed to the loop is the original under `images.max_bytes` and a

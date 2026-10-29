@@ -485,7 +485,7 @@ per-tool toggles, so a companion can be given less than the machine allows.
 | **Python execution** | `python_exec` in a WASI sandbox with no host file access; `mindfork sandbox setup` installs it once |
 | **File access** | `fs_read` / `fs_write` / `fs_list`, jailed to the one directory you name. The app's own data and program folders are never reachable |
 | **Video (YouTube)** | `youtube_watch` — needs a Gemini key or an OpenRouter one, by the group's **Provider** row, and works whatever your chat engine is |
-| **Image generation** | `image_generate` — the assistant draws when you ask; needs an OpenAI, Gemini or OpenRouter key, by the group's **Provider** row, and works whatever your chat engine is. Every picture is paid for |
+| **Image generation** | `image_generate` — the assistant draws when you ask, and `/image generate` draws for you; needs an OpenAI, Gemini, OpenRouter or xAI key, by the group's **Provider** row, and works whatever your chat engine is. Every picture is paid for |
 | **MCP servers** | tools from any Model Context Protocol server; a double opt-in, and a server that changes its tool list has to be re-confirmed |
 | **Background runs (subagent/dialogue)** | `start_subagent` and `start_dialogue` — work that outlives the reply |
 
@@ -518,17 +518,26 @@ snow", "make it night". The assistant writes the whole picture in words and the
 provider draws it; to change a picture, it names the one you mean — `#3`, a file's
 name — and the provider draws the new one from it.
 
+Or draw it yourself, with no model in between: `/image generate a fox in the snow,
+in watercolor` — `/image generate 16:9 …` for another shape (`3:2`, `2:3`, `16:9`,
+`9:16`; square otherwise). The picture is kept in the chat's files and attached to
+your next message, as a pasted one is: write what you want said about it and send,
+or take it off with `/image remove`. A model that cannot see images gets nothing
+attached; the picture is kept all the same.
+
 - **Where it goes.** Each picture is kept in the chat's files exactly as the
   provider sent it, as `image-1.png`, `image-2.png`…: `/file list` shows them,
   `/file open #N` opens one in your image viewer, `/file folder` opens the folder.
   The tool's card in the feed names the file.
 - **Who draws.** `openai` (the default, `gpt-image-2.5-flare` — about a cent and a
   half a picture at `medium`; OpenAI may ask an organisation to verify itself
-  before its key draws), `gemini` (Nano Banana; JPEG, about four cents) or
-  `openrouter` (some sixty models of a dozen vendors — type the model's name, e.g.
-  `black-forest-labs/flux-3-image`; the gateway charges nothing for a picture that
-  fails). The key is the provider's, the same one chat uses. **Quality** (OpenAI)
-  or **Size** (the others) is what the price is set by.
+  before its key draws), `gemini` (Nano Banana; JPEG, about four cents),
+  `openrouter` (some fifty models of a dozen vendors — `Enter` on **Model** lists
+  them, and marks the ones that can only draw a new picture; the gateway charges
+  nothing for a picture that fails) or `grok` (xAI's Grok Imagine; JPEG, four cents,
+  seven for a change — and a picture it refuses is charged too). The key is the
+  provider's, the same one chat uses. **Quality** (OpenAI, xAI) or **Size** (the
+  others) is what the price is set by.
 - **What it may spend.** One turn draws at most **Pictures per turn** pictures (4;
   `0` for no limit). A follow-up or a background run never draws; a message you
   send from Telegram does, and the picture comes back to your phone as a photo
@@ -835,6 +844,7 @@ Typed straight into the input box.
 | `/file open <name\|#N>` · `/file folder` | open one of this chat's files in the system (document types only — anything else opens its folder) / open the chat's files folder |
 | `/image attach <path\|url>` · `/image remove <name\|#N>` · `/image list` | stage an image for your next message / unstage one / list what is staged |
 | `/image paste` | stage the image on the clipboard — a screenshot needs no file |
+| `/image generate [16:9] <description>` | draw a picture with the image-generation provider, keep it in the chat's files and stage it for your next message ([Drawing pictures](#drawing-pictures)) |
 | `/project attach <directory>` · `/project detach` · `/project status` | attach a code project to this chat / detach it / show what is attached and what the command slots hold |
 | `/project build-cmd [line]` · `run-cmd` · `test-cmd` | set the command the assistant may build / run / test with — or, with no argument, show it |
 | `/project clear build\|run\|test` | unset one of those commands (the assistant then has no such tool at all) |

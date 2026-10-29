@@ -27,8 +27,11 @@ is built** (§12): the slot, the three clients, `image_generate` with editing, t
 `generated` chat file (chats 6 → 7), the ceiling and the stop after a refusal —
 live **GO** on every provider and through the loop on Gemma 4 and Qwen 3.8. **Stage 2 is built** (§13): a picture drawn from Telegram goes back to
 the phone as a photo after the words — live **GO** through the bridge on Gemma 4
-and Qwen 3.8. Next is stage 3. Provider facts were read from the providers' own documentation
-on 2026-10-29 (§10) and then measured (§11.1).
+and Qwen 3.8. **Stage 3 is built** (§14): xAI, the gateway's picture models in the
+picker and `/image generate` — live **GO** on xAI, the gateway's list, and the
+command and the loop on Gemma 4 and Qwen 3.8. **The track is complete.** Provider
+facts were read from the providers' own documentation on 2026-10-29 (§10) and then
+measured (§11.1); xAI's again on 2026-10-30 (§14).
 
 ## 1. Why
 
@@ -660,8 +663,8 @@ takes a photo of at most 10 MB, so a larger original goes as a prepared copy; th
 original stays in the chat's files either way. Live: a turn sent from the owner's
 phone that draws.
 
-**Stage 3 — xAI, the picker and the command.** xAI's dialect with the refusal
-shape the probe found, `ModelSlot::Image` with the gateway's catalogue roles,
+**Stage 3 — xAI, the picker and the command** (built, §14). xAI's dialect with the
+refusal shape the probe found, `ModelSlot::Image` with the gateway's catalogue roles,
 `/image generate`.
 
 **Later, its own track** — pixels in the feed (F8 c).
@@ -1029,3 +1032,120 @@ the conversation image's name — both resolved, as stage 1 built. About $0.10 s
 **Telegram itself — checked by the owner** the same day, from the phone, as the
 bridge's own stages were: a self-portrait asked for in Russian came back as the
 reply's words, then the photo with `image-1.png` under it.
+
+## 14. Stage 3, built (2026-10-30)
+
+`feat/image-generation-stage3`: xAI, the gateway's list in the picker, and
+`/image generate`. The forks of §7 cover the stage; what building it decided
+besides is listed as **D1–D9** below, each taken by the agent and open to the
+owner's review in the pull request.
+
+- **xAI's dialect** (`shared/image_gen/xai.rs`, `XaiImages`). OpenAI's routes with
+  xAI's parameters, as §3.3 and the probe's recorded calls have them:
+  `aspect_ratio` on both routes, `response_format: "b64_json"`, `n: 1`; one picture
+  to change as `image: {url, type: "image_url"}` — the probe's measured form —
+  several as `images`. The price is read from `usage.cost_in_usd_ticks`, 10¹⁰ to the
+  dollar ("one USD cent equals 100,000,000 ticks", the REST reference). The refusal
+  is the probe's recorded body — `{"code": "imagine:content-moderated", "error":
+  "Generated image rejected by content moderation.", "usage": {"cost_in_usd_ticks":
+  400000000}}` — read by its code, and by words of moderation on a `400` should the
+  code be renamed; its price goes into the refusal the model reads (*The provider
+  charged $0.040 for it.*). Every other failure, `error` being a string on xAI's
+  answers, is said in its words.
+  - **D1. Spelt `grok`**, not the `xai` §6.1 sketched: it is the engine's mode, the
+    stored key (`CloudProvider::Grok`) and the name the settings show, so the image
+    slot's provider row reads like every other provider row.
+  - **D2. The one field is `quality`** — `low`, `medium`, `auto`, default `auto` —
+    since xAI bills "at the quality it is served at"; `auto` (xAI's own: `low` for a
+    new picture, `medium` for a change) is never sent, so a model without the
+    parameter — `grok-imagine-image` takes none — draws as asked. The resolution is
+    xAI's default, `1k` (§6.1 sketched `resolution`; stage 1 made the section one
+    field, the price's).
+  - **D3. Several pictures are named for xAI.** Its prompts say `<IMAGE_0>`,
+    `<IMAGE_1>`; the model writes "the first picture". With two or more, the prompt
+    opens with *The pictures, in the order given: <IMAGE_0>, <IMAGE_1>.* — measured
+    live below.
+  - **D4. The shape goes with an edit too** (`aspect_ratio` is in the edits
+    reference), as every other client sends the shape the request names.
+  - **Schema.** `image_gen.provider` may read `grok` with no settings step: the
+    section is not in a release yet, so the value comes before the first one that
+    writes it, and an older reader skips the section whole. The storage ledger
+    names it at schema 7, beside the other three.
+- **The picker** (`ModelSlot::Image`, `CatalogueShape::OpenRouterImages`). Under
+  `openrouter`, `Enter` on *Model* lists the gateway's picture models; the other
+  providers' rows stay typed fields (§6.1).
+  - **D5. The list is `GET /images/models`**, the list of the route the client
+    draws on — not `/models?output_modalities=image`, whose ten text-and-image chat
+    models are not that route's. Public, and the same 62 entries with a key
+    (2026-10-30). Its `supported_parameters` is an object of typed entries where the
+    chat list has an array of names, so it has a parse of its own. Six entries list
+    `output_format` as `svg` alone (Recraft's vector models): the client reads a
+    picture by its bytes and cannot keep markup, so they are left out — 56 offered —
+    on their own entry's word. A model whose `input_references` maximum is 0 (two:
+    `recraft/recraft-v4.1-flash`, `meta/muse-image`) is marked *new pictures only*.
+    The row is the slug alone: the list publishes no price (it is behind one
+    `…/endpoints` request per model), and the name repeats the slug.
+- **`/image generate [ratio] <description>`** (§6.5). The slot's client called from
+  the orchestrator, outside any turn; the original kept by the tool's own keeping,
+  `store_drawn` (`image-N.<ext>`, `generated`); a copy prepared as `/image attach`
+  prepares one and staged. Notes in the interface language: *drawing*, then what was
+  drawn — size, weight, what the provider charged or counted — the `#N` it is kept
+  under, and the copy's tokens.
+  - **D6. One switch for both roads.** The command is refused while `enabled` is
+    off — a person who switched drawing off has said nothing is to be drawn — and
+    without a key or a model, before anything is paid for.
+  - **D7. A ratio may lead the description** (`/image generate 16:9 …`); a token
+    that is not one of the five is part of the description; square otherwise.
+  - **D8. The staged copy is linked to its file** (`MessageImage::file_id`). Sent
+    under the file's name, the copy would have been a second item of the chat's one
+    numbered list with the same name, and a handle by name — the model's
+    `images: ["image-3.png"]` among them — refused by the shared-name rule. The pair
+    is now one item, the file (the original, read from the folder), as an attached
+    document and its original are; with the file gone from the list, the image is an
+    item again. Matching the image's `source` to the file's path was rejected: the
+    path changes when the data folder moves. The field is written only when it is
+    set and an older reader ignores it, so the chats take no step.
+  - **D9. What bounds it.** The next message's room (`images.max_count`) is checked
+    before the request and again when the picture lands; a picture that finds no
+    room, or an engine that says it takes no images, is **kept and not staged**, the
+    note saying why — it was paid for. No ceiling and no stop after a refusal: those
+    bound a model's spending, and this is the person asking. No cancellation either,
+    as `/image attach <url>` has none: the request takes ten to thirty seconds.
+
+### 14.1 Live
+
+**xAI** (`xai_draws_and_changes_a_picture_live`): `grok-imagine-image-2.0` at
+`auto`, the 16:9 fox of §12.1, its change, then a change of **two** pictures at once.
+
+| | Drew | Changed it | Changed two |
+|---|---|---|---|
+| **Seconds** | 9.4 | 15.0 | 12.0 |
+| **Picture** | 1280×720 JPEG, 417 KB | JPEG, 417 KB | JPEG, 417 KB |
+| **Charged** (ticks → dollars) | $0.04 | $0.07 | $0.08 |
+
+**The picker** (`the_gateways_picture_catalogue_e2e_live`, free): 56 entries
+offered of 62, 2 marked *new pictures only*, none of them a vector model.
+
+**`/image generate`** (`image_generate_command_stages_a_picture_the_model_sees_live`):
+a 3:2 fox drawn by the command, kept and staged; then "I attached a picture. In one or
+two sentences, what does it show?" sent to a live chat model on `llama-server` (RTX
+4090, `-c 32768 --jinja`, the vision projector loaded).
+
+| | Gemma 4 31B `q4_0` | Qwen 3.8 27B `Q4_K_M` |
+|---|---|---|
+| **OpenAI draws** | 1536×1024 PNG, 2.8 MB, 12.4 s, 22 + 343 tokens; the copy ~2035 tok | the same, 2.7 MB |
+| **xAI draws** | 1248×832 JPEG, 433 KB, 12.0 s, $0.04; ~1350 tok | — |
+| **Reply** | prose: "a watercolor painting of a red fox sitting in a serene, snow-covered winter landscape…" (both providers) | prose, the fox, the frosted branches, the sunset sky |
+| **`/file list`** | `image-1.*` once, no second item | the same |
+
+**The tool through the loop with xAI drawing**
+(`image_generate_draws_and_changes_through_the_loop_live`,
+`MINDFORK_LIVE_IMAGE_PROVIDER=grok`): the two requests of §12.1.
+
+| | Gemma 4 31B | Qwen 3.8 27B |
+|---|---|---|
+| **Draw** | one call, 1024×1024 JPEG, $0.040 | one call, 3:2, 1248×832 JPEG, $0.040 |
+| **Change** | one call, `images: ["#1"]`, $0.070 | one call, the picture named, $0.070 |
+| **Replies** | prose (2 of 2) | prose (2 of 2) |
+
+**GO**, every arm. About $0.48 spent at the providers.
