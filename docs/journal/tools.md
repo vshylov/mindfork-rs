@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (103)
+## Entries (104)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -115,6 +115,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: image generation — the stage-0 probe (done)
 - Post-M9: image generation — stage 1, the slot and the tool (done)
 - Post-M9: image generation — stage 2, the phone (done)
+- Post-M9: image generation — stage 3, xAI, the picker and the command (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -6671,3 +6672,45 @@ owner decided it; the full record is §13 there, the contract spec §11.13
   byte for byte from their old dumps, and of the ten shots the current dumps
   render (PNG and SVG each) only those four differed.
 - Unit tests 4450 green, 305 `#[ignore]` (the phone's smoke).
+
+### Post-M9: image generation — stage 3, xAI, the picker and the command (done)
+Stage 3 of [image-generation.md](../research/image-generation.md) §8, and the last:
+the track is complete. The full record is §14 there, the contract spec §9.15 and
+§11.6.
+
+- **What it is.** xAI draws — `grok` beside `openai`, `gemini` and `openrouter`,
+  `grok-imagine-image-2.0` at xAI's own `auto` quality; its refusal, charged, says
+  what it cost. Under `openrouter` the *Model* row opens the gateway's picture
+  models (`GET /images/models`). And `/image generate [ratio] <description>` draws
+  for the person with no model in between: kept in the chat's files as the tool
+  keeps a picture, a copy staged for the next message as `/image paste` stages one.
+- **Decided while building** (D1–D9 in §14, the owner's to review): `grok`, not the
+  `xai` §6.1 sketched — the engine's mode and the stored key are spelt so; xAI's one
+  field is `quality`, `auto` never sent, so `grok-imagine-image` (which takes none)
+  draws; several pictures to change are named `<IMAGE_0>`… in a first line; the
+  picker reads the picture route's own list, leaves out the six models that answer in
+  SVG alone (the client cannot keep markup) and marks the two that cannot change a
+  picture; the command is behind the same switch as the tool; a ratio may lead the
+  description. The staged copy carries its file's id (`MessageImage::file_id`), so
+  the chat's one numbered list shows the pair once — sent under the file's name it
+  was a second item of the same name, and a handle by that name (the model's
+  `images: ["image-3.png"]`) was refused by the shared-name rule. Matching by path
+  was rejected: it breaks when the data folder moves. A picture that finds no room
+  in the next message, or an engine without vision, is kept and not staged — it was
+  paid for. The tool's file keeping became `store_drawn`, which both roads call.
+- **Schema.** `image_gen.provider` may read `grok` with no settings step, since the
+  section is in no release yet; the storage ledger names it at schema 7. `file_id`
+  is written only when set and an older reader ignores it — no chat step.
+- **A false alarm worth knowing.** The plural gate
+  (`no_english_count_a_person_reads_comes_before_a_plural`) flagged
+  "#{n} shows it": a verb in `-s` reads as a plural to it. Reworded around the count
+  rather than taught the verb.
+- **Live — GO.** xAI: a 16:9 fox 1280×720 JPEG for $0.04 in 9.4 s, its change
+  $0.07, a change of two pictures at once $0.08. The picker's list: 56 of 62 offered,
+  2 marked. The command on `llama-server` (RTX 4090, the projector loaded), then
+  "what does it show?": Gemma 4 31B `q4_0` and Qwen 3.8 27B `Q4_K_M` each described
+  the fox in prose (OpenAI drawing; Gemma with xAI too), and `/file list` listed the
+  picture once. The tool through the loop with xAI drawing: one call to draw and one
+  to change on each model, replies in prose. About $0.48.
+- Unit tests 4467 green, 308 `#[ignore]` (xAI's client, the picker's list, the
+  command's smoke).

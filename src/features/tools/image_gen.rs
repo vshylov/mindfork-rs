@@ -315,17 +315,18 @@ fn extension(mime: &str) -> &'static str {
     }
 }
 
-/// Stores the original as `image-N.<ext>`, the first `N` no file of the chat has
-/// taken under any extension — a slug of the prompt would be a transliteration
-/// problem in half the prompts this audience writes (§6.4). Returns the listing
-/// and the `#N` `/file list` will show it under.
-fn store(
-    ctx: &ToolContext,
+/// Stores a drawn picture in the chat's folder `dir` as `image-N.<ext>`, the
+/// first `N` no file of the chat has taken under any extension — a slug of the
+/// prompt would be a transliteration problem in half the prompts this audience
+/// writes (§6.4). `listed` is what the chat lists. Returns the listing: the
+/// tool's road and `/image generate`'s are one.
+pub fn store_drawn(
     dir: &std::path::Path,
-    picture: &Picture,
-) -> std::io::Result<(ChatFile, usize)> {
-    let ext = extension(picture.mime);
-    let listed = ctx.files.to_vec();
+    listed: &[ChatFile],
+    bytes: &[u8],
+    mime: &str,
+) -> std::io::Result<ChatFile> {
+    let ext = extension(mime);
     // What the folder holds, listed or not: a file a call wrote whose chat was
     // not saved still owns its name (sandbox-file-exchange §11 S6).
     let on_disk: Vec<String> = std::fs::read_dir(dir)
@@ -342,18 +343,30 @@ fn store(
             !listed.iter().any(|f| taken(&f.name)) && !on_disk.iter().any(|n| taken(n))
         })
         .expect("an unbounded range has a free name");
-    let file = match chat_files::store_as(
+    let stored = chat_files::store_as(
         dir,
-        &listed,
+        listed,
         &name,
-        &picture.bytes,
+        bytes,
         FileOrigin::Generated,
         // From the internet, like a call's output: Office must not open it as a
         // local, trusted file (sandbox-file-exchange §13 U11).
         Some(crate::shared::os_open::FROM_ELSEWHERE),
-    )? {
+    )?;
+    Ok(match stored {
         Stored::New(file) | Stored::Unchanged(file) | Stored::Restored(file) => file,
-    };
+    })
+}
+
+/// Stores the original ([`store_drawn`]) and says the `#N` `/file list` will
+/// show it under.
+fn store(
+    ctx: &ToolContext,
+    dir: &std::path::Path,
+    picture: &Picture,
+) -> std::io::Result<(ChatFile, usize)> {
+    let listed = ctx.files.to_vec();
+    let file = store_drawn(dir, &listed, &picture.bytes, picture.mime)?;
     let mut files = listed;
     if !files.iter().any(|f| f.id == file.id) {
         files.push(file.clone());

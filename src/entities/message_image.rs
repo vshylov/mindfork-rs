@@ -49,6 +49,15 @@ pub struct MessageImage {
     /// The encoded payload, base64 (no `data:` prefix — each wire format wants it
     /// differently, and Anthropic/Gemini want the bare string).
     pub data: String,
+    /// The chat's stored file this image is a copy of, when it is one: a picture
+    /// `/image generate` drew is kept as a file **and** sent as an image under the
+    /// file's name. The pair is one item of the chat's list, as an attached
+    /// document and its original are (`features::chat_inputs`) — listed apart,
+    /// its own name would reach two items and be refused by the shared-name rule.
+    /// Absent from every image that is no copy, so a chat file without one reads
+    /// and writes as it did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_id: Option<Uuid>,
 }
 
 impl MessageImage {
@@ -70,6 +79,15 @@ impl MessageImage {
             height,
             bytes: base64_decoded_len(&data),
             data,
+            file_id: None,
+        }
+    }
+
+    /// The same image, marked as a copy of the chat's stored file `file`.
+    pub fn copy_of(self, file: Uuid) -> Self {
+        Self {
+            file_id: Some(file),
+            ..self
         }
     }
 

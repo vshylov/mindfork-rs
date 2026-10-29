@@ -33,6 +33,17 @@ split by subsystem.
   change to it. A picture larger than Telegram takes as a photo is sent as a smaller
   copy; the original stays in the chat's files. A photo that does not go through is
   said in the chat and at the terminal.
+- **`/image generate` draws a picture for you.** `/image generate a fox in the snow`
+  — or `/image generate 16:9 …` for another shape — has the image-generation
+  provider draw it, with no model in between: the picture is kept in the chat's
+  files and attached to your next message, like a pasted one. It needs *Image
+  generation* switched on, as the assistant's drawing does.
+- **xAI draws too.** `grok` joins the image-generation providers — xAI's Grok
+  Imagine, about four cents a picture; a picture it refuses is charged too, and the
+  assistant is told what it cost.
+- **OpenRouter's picture models in the model list.** With OpenRouter drawing,
+  `Enter` on the *Model* row lists the gateway's models that draw, marking the ones
+  that can only draw a new picture, not change one.
 
 ### Fixed
 

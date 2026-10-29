@@ -211,34 +211,6 @@ effort tiers — have all closed
 
 ### Tools and MCP
 
-- **Image generation by cloud models** — **in progress: stages 1 and 2 of 3 built**,
-  researched 2026-10-29, forks decided by the owner the same day
-  ([image-generation.md](research/image-generation.md) §7). The decisions:
-  - **A slot of its own**, like speech and video, so a local or Claude chat can
-    draw: a tool, `image_generate`, the chat model calls, and later
-    `/image generate` for the person.
-  - **OpenRouter, OpenAI and Gemini first**, xAI later; **OpenAI the default** —
-    re-decided after the probe measured it at a third of Gemini's price.
-  - **Editing from the start**, by the handles the chat already has.
-  - **The original as a `generated` chat file** (chats 6 → 7), a copy shown to a
-    model that sees.
-  - **Off until turned on**; a ceiling per turn that is a setting, `0` for none;
-    no drawing in follow-ups or background runs, but turns from Telegram draw.
-  - **Seen through `/file open`**, and on the phone as a photo — stage 2.
-  - **A refusal stops drawing for the rest of the turn** — both models redrew a
-    refused request unasked in the probe.
-
-  **The probe ran on 2026-10-29: GO** (§11; $0.97 at the providers; Gemma 4 and
-  Qwen 3.8 call the tool when asked and only then), and the fix it asked for first
-  — Gemma 4's JSON after a tool's picture — is in (Closed). **Stage 1 is built**
-  (§12, 2026-10-29): the slot, the clients for OpenAI, Gemini and the gateway,
-  `image_generate` with editing, the `generated` chat file, the ceiling and the stop
-  after a refusal — live GO on every provider and through the loop on Gemma 4 and
-  Qwen 3.8. **Stage 2 is built** (§13): a picture drawn from Telegram goes back to
-  the phone as a photo after the words — live GO through the bridge on Gemma 4 and
-  Qwen 3.8. Next is stage 3 — xAI, the gateway's model list in the picker,
-  `/image generate`. Local generation
-  is out of scope — the owner's decision.
 - **What the withheld-image notes leave on Qwen 3.6** — **on demand**. The notes for
   `tools.mcp_images` off were reworded on 2026-10-11 — "You cannot see…", "this is not an
   error, and another call will not change it" — and now hold on Qwen 3.8, Gemma 4 and
@@ -752,6 +724,16 @@ down.
 An index, newest first — one line per track, with the release that shipped it
 and where its story is told. What a track left open is a bullet above, under
 its area.
+
+- **Image generation by cloud models** — unreleased (2026-10-30), a probe and three
+  stages, every fork the owner's: a slot of its own (OpenAI by default, Gemini, the
+  OpenRouter gateway, xAI), off until turned on; `image_generate` with editing, the
+  original a `generated` chat file (chats 6 → 7), a ceiling per turn and a stop
+  after a refusal; a picture drawn from Telegram back to the phone as a photo; the
+  gateway's picture models in the picker; `/image generate` for the person. Live GO
+  on every provider and on Gemma 4 and Qwen 3.8. Local generation is out of scope,
+  the owner's decision; pixels in the feed is its own idea, under *Feed and
+  rendering*. [image-generation.md](research/image-generation.md) §11–§14.
 
 - **Gemma 4's JSON after a tool's picture** — unreleased (2026-10-29): on
   llama.cpp a picture inside a tool result — a chart, a screenshot — turned Gemma

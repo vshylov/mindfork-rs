@@ -183,10 +183,10 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-10-29, version 0.22.0)
+## Status (2026-10-30, version 0.22.0)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **4450 unit tests
-green, 305 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **4467 unit tests
+green, 308 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump and demo-reel regenerators).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -198,11 +198,11 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
-- **Image generation — stages 1–2 of 3** (2026-10-29): `image_generate` over a
-  slot of its own (OpenAI by default, Gemini, the gateway), off by default; editing,
-  a `generated` chat file (chats 6 → 7), a ceiling per turn, a refusal ends the
-  turn's drawing; drawn from Telegram, back as a photo. Live **GO**
-  ([docs/research/image-generation.md](docs/research/image-generation.md) §12–§13).
+- **Image generation — track complete** (2026-10-30): `image_generate` over a
+  slot of its own (OpenAI by default, Gemini, the gateway, xAI), off by default;
+  editing, a `generated` chat file (chats 6 → 7), a ceiling per turn, a refusal ends
+  the turn's drawing; back to the phone as a photo; `/image generate`. Live **GO**
+  ([docs/research/image-generation.md](docs/research/image-generation.md) §12–§14).
 - **A platform for a companion — stages 1–6 C** (2026-10-24): every feature
   a profile switch, off by default; dated rows; the notes and earlier conversations
   in the prompt, `/notes`; follow-ups it plans, quiet hours and a cap on, silence

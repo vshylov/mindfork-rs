@@ -16,7 +16,8 @@ use crate::shared::api::catalogue::{
     self, CatalogueError, CatalogueRequest, CatalogueShape, ModelSlot,
 };
 use crate::shared::config::{
-    CloudSettings, ExternalSettings, ImpersonationMode, ServerMode, SttMode, TtsMode, VideoProvider,
+    CloudSettings, ExternalSettings, ImageGenProvider, ImpersonationMode, ServerMode, SttMode,
+    TtsMode, VideoProvider,
 };
 
 use super::Orchestrator;
@@ -77,6 +78,10 @@ impl Orchestrator {
         let speech = of_the_gateway(&cfg.tts.openrouter.url, &cfg.tts.openrouter.api_key_env);
         let video = of_the_gateway(&cfg.video.openrouter.url, &cfg.video.openrouter.api_key_env);
         let hearing = of_the_gateway(&cfg.stt.openrouter.url, &cfg.stt.openrouter.api_key_env);
+        let drawing = of_the_gateway(
+            &cfg.image_gen.openrouter.url,
+            &cfg.image_gen.openrouter.api_key_env,
+        );
         let (mode, external, cloud, secret) = match slot {
             ModelSlot::Speech => (
                 speech_mode(cfg.tts.mode).ok_or(CatalogueError::NotConfigured)?,
@@ -95,6 +100,12 @@ impl Orchestrator {
                 &cfg.engine.external,
                 Some(&video),
                 Some(cfg.video.secret_key()),
+            ),
+            ModelSlot::Image => (
+                image_mode(cfg.image_gen.provider).ok_or(CatalogueError::NotConfigured)?,
+                &cfg.engine.external,
+                Some(&drawing),
+                Some(cfg.image_gen.secret_key()),
             ),
             ModelSlot::Assistant => (
                 cfg.engine.mode,
@@ -190,6 +201,18 @@ fn video_mode(provider: VideoProvider) -> Option<ServerMode> {
     }
 }
 
+/// The picture slot's provider as the [`ServerMode`] whose catalogue it reads,
+/// or `None`: OpenAI's list says nothing of what a model does, Gemini's calls
+/// its picture models chat models, and xAI's language list holds none of them.
+/// The gateway publishes the models its picture route takes
+/// (docs/research/image-generation.md §6.1).
+fn image_mode(provider: ImageGenProvider) -> Option<ServerMode> {
+    match provider {
+        ImageGenProvider::OpenRouter => Some(ServerMode::OpenRouter),
+        ImageGenProvider::OpenAi | ImageGenProvider::Gemini | ImageGenProvider::Grok => None,
+    }
+}
+
 /// The request for a mode, or why there is none.
 ///
 /// The base URL is the slot's override when it has one — a proxy or a gateway
@@ -237,6 +260,7 @@ fn source(
                 ModelSlot::Speech => CatalogueShape::OpenRouterSpeech,
                 ModelSlot::Transcription => CatalogueShape::OpenRouterTranscription,
                 ModelSlot::Video => CatalogueShape::OpenRouterVideo,
+                ModelSlot::Image => CatalogueShape::OpenRouterImages,
                 ModelSlot::Assistant | ModelSlot::Impersonation => CatalogueShape::OpenRouter,
             };
             let base = cloud
@@ -555,6 +579,22 @@ mod tests {
             .into_iter()
             .filter(|provider| video_mode(*provider).is_some())
             .map(VideoProvider::label)
+            .collect();
+        assert_eq!(with_a_list, ["openrouter"]);
+    }
+
+    /// The picture row asks the gateway for the models that draw — the list of
+    /// the route its client draws on — and no other picture provider asks
+    /// anybody anything.
+    #[test]
+    fn the_picture_slot_asks_the_gateway_for_the_models_that_draw() {
+        let asked = gateway(ModelSlot::Image, None, None).expect("a request");
+        assert_eq!(asked.shape, CatalogueShape::OpenRouterImages);
+        assert_eq!(asked.base, GATEWAY_BASE);
+        let with_a_list: Vec<&str> = ImageGenProvider::ALL
+            .into_iter()
+            .filter(|provider| image_mode(*provider).is_some())
+            .map(ImageGenProvider::label)
             .collect();
         assert_eq!(with_a_list, ["openrouter"]);
     }

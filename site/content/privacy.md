@@ -507,14 +507,15 @@ this machine.
 ### 3.13 Image generation — off until you turn it on
 
 `image_gen.enabled` is **off in a fresh installation**, and with it the
-`image_generate` tool. Once you switch it on (Settings → Tools → Image
-generation), each time the assistant draws, a request goes to the provider the
-settings name — `api.openai.com`, `generativelanguage.googleapis.com` or
-`openrouter.ai`, or the base URL you set — with that provider's key: the one saved
-for the provider, or the variable you named in the group. A request carries:
+`image_generate` tool and the `/image generate` command. Once you switch it on
+(Settings → Tools → Image generation), each time the assistant draws, or you draw
+with `/image generate`, a request goes to the provider the settings name —
+`api.openai.com`, `generativelanguage.googleapis.com`, `openrouter.ai` or
+`api.x.ai`, or the base URL you set — with that provider's key: the one saved for
+the provider, or the variable you named in the group. A request carries:
 
-- **the prompt** — the picture described in words, which the model composed from
-  your conversation;
+- **the prompt** — the picture described in words: composed by the model from your
+  conversation, or the description you typed after `/image generate`;
 - **the pictures to change**, when the model named any: a file of the chat or an
   image of the conversation, as its bytes — a picture you attached included, if the
   model names it;
@@ -523,13 +524,16 @@ for the provider, or the variable you named in the group. A request carries:
 Through the gateway the request also carries the two headers that name the
 application (§3.1) unless you switched them off, and the gateway passes it on to
 the vendor behind the model you chose, which processes it under its own terms.
-Before the first picture through the gateway the app asks it for its list of
-picture models (`GET /images/models`) — with your key and no text of yours.
+Before the first picture through the gateway, and when you open the list behind
+its *Model* row, the app asks it for its list of picture models
+(`GET /images/models`) — with your key, when one is set, and no text of yours.
 
 What comes back is the picture, kept in the chat's folder as the provider sent it
 (§2), and what the provider counted or charged, which the tool's result and the log
 say. With *Show the picture to the model* on, a copy of the picture is sent to your
-chat model with the result, as a picture a tool returned is (§3.1).
+chat model with the result, as a picture a tool returned is (§3.1). A picture
+`/image generate` drew goes to your chat model only with the message you send
+next, as a picture you attached does.
 
 ## 4. What is off until you turn it on
 

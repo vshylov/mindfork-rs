@@ -180,6 +180,15 @@ fn derive(
         });
     }
     for (i, im) in images.iter().enumerate() {
+        // A copy of a listed file is that file's item: the file is the original,
+        // and its name is the image's (`MessageImage::file_id`). Once the file
+        // leaves the list, the image is an item of its own again.
+        if im
+            .file_id
+            .is_some_and(|id| files.iter().any(|f| f.id == id))
+        {
+            continue;
+        }
         items.push(ChatInput {
             id: im.id,
             handle: 0,
@@ -499,6 +508,29 @@ mod tests {
             open_path(&list[3], dir()).as_deref(),
             Some(Path::new("C:\\pics\\shot.png"))
         );
+    }
+
+    /// A picture `/image generate` drew is a stored file and an image sent under the
+    /// file's name. Listed apart, the name would reach two items and be refused; the copy
+    /// is the file's item, and the file — the original — is what a handle reaches. With
+    /// the file gone from the list, the image is an item of its own again.
+    #[test]
+    fn a_copy_of_a_listed_file_is_that_files_item() {
+        let drawn = ChatFile::new("image-1.png", FileOrigin::Generated, b"png");
+        let copy = image("image-1.png", "image/png").copy_of(drawn.id);
+        let other = image("shot.png", "image/png");
+        let images = [copy.clone(), other];
+        let list = items(&[], std::slice::from_ref(&drawn), &shown(&images), dir());
+        let names: Vec<&str> = list.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(names, ["image-1.png", "shot.png"]);
+        assert_eq!(list[0].file.as_deref(), Some("image-1.png"));
+        assert_eq!(list[0].image, None, "the original, read from the folder");
+        assert!(matches!(resolve(&list, "image-1.png"), Resolved::One(0)));
+        assert!(matches!(resolve(&list, "#2"), Resolved::One(1)));
+
+        let alone = items(&[], &[], &shown(&[copy]), dir());
+        assert_eq!(alone.len(), 1);
+        assert_eq!(alone[0].image, Some(0), "no file listed: the image itself");
     }
 
     /// A stored name is read back from `chat.json` unvalidated, so the join into the folder

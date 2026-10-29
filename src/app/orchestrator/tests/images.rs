@@ -769,3 +769,211 @@ async fn the_withheld_note_is_once_a_chat_until_the_engine_is_asked_again() {
         "told again after the engine changed"
     );
 }
+
+// ---------- `/image generate` (spec §9.15, docs/research/image-generation.md §6.5) ----------
+
+/// A provider at `stub` that answers in OpenAI's shape, with drawing on and a key
+/// stored, in an English interface.
+fn drawing_through(stub: &crate::shared::http_stub::Stub) -> AppConfig {
+    let mut cfg = no_auto_cfg();
+    // The notes are asserted on in English; the tests' orchestrators default to
+    // Russian.
+    cfg.interface.language = crate::shared::i18n::Lang::En;
+    cfg.image_gen.enabled = true;
+    cfg.image_gen.openai.url = Some(stub.url.clone());
+    crate::shared::secrets::put_key(
+        &mut cfg.api_keys,
+        &cfg.image_gen.secret_key().storage_name(),
+        "sk-test",
+        || "test".into(),
+    )
+    .unwrap();
+    cfg
+}
+
+/// A real PNG of `width`×`height`, as a provider sends one.
+fn png_bytes(width: u32, height: u32) -> Vec<u8> {
+    let buf =
+        image::ImageBuffer::from_fn(width, height, |x, _| image::Rgb([(x % 256) as u8, 120, 30]));
+    let mut bytes = Vec::new();
+    image::DynamicImage::ImageRgb8(buf)
+        .write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Png)
+        .unwrap();
+    bytes
+}
+
+/// OpenAI's answer with `picture` in it.
+fn drawn_answer(picture: &[u8]) -> crate::shared::http_stub::Step {
+    use base64::Engine as _;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(picture);
+    crate::shared::http_stub::json(
+        &serde_json::json!({
+            "data": [{ "b64_json": b64 }],
+            "usage": { "input_tokens": 12, "output_tokens": 280 },
+        })
+        .to_string(),
+    )
+}
+
+/// What `/file list` reports: the stored files' names and the conversation's
+/// images' names, in its order.
+async fn file_list(
+    cmd_tx: &UnboundedSender<AppCommand>,
+    rx: &mut UnboundedReceiver<AppEvent>,
+) -> (Vec<String>, Vec<String>) {
+    use crate::app::events::FileProgress;
+    cmd_tx.send(AppCommand::FileList).unwrap();
+    let ev = wait_for(rx, |e| {
+        matches!(e, AppEvent::FileProgress(FileProgress::Listed { .. }))
+    })
+    .await
+    .expect("a Listed event");
+    match ev {
+        AppEvent::FileProgress(FileProgress::Listed { stored, images, .. }) => (
+            stored.into_iter().map(|s| s.name).collect(),
+            images.into_iter().map(|i| i.name).collect(),
+        ),
+        _ => unreachable!(),
+    }
+}
+
+/// The person's own road: the picture is drawn in the shape asked for, kept in
+/// the chat's files as a `generated` file, staged, and sent with the next
+/// message under the file's name — after which the chat lists it **once**, as
+/// the file, not again as one of the conversation's images.
+#[tokio::test]
+async fn a_drawn_picture_is_kept_as_a_file_and_rides_the_next_message() {
+    let stub =
+        crate::shared::http_stub::Stub::serving(vec![drawn_answer(&png_bytes(96, 54))]).await;
+    let backend = CapturingBackend::new();
+    let (_dir, cmd_tx, mut evt_rx, handle) =
+        spawn_orch_cfg(Some(backend.clone()), drawing_through(&stub));
+
+    cmd_tx
+        .send(AppCommand::ImageGenerate {
+            prompt: "a red fox in fresh snow".into(),
+            aspect: crate::shared::image_gen::Aspect::Wide,
+        })
+        .unwrap();
+    let drawing = wait_for(&mut evt_rx, |e| {
+        matches!(e, AppEvent::ImageProgress(ImageProgress::Drawing { .. }))
+    })
+    .await;
+    assert!(drawing.is_some(), "the note that something is under way");
+    let ev = wait_for(&mut evt_rx, |e| {
+        matches!(
+            e,
+            AppEvent::ImageProgress(ImageProgress::Drawn { .. } | ImageProgress::Failed(_))
+        )
+    })
+    .await
+    .expect("an outcome");
+    let AppEvent::ImageProgress(ImageProgress::Drawn {
+        provider,
+        drawn,
+        info,
+        staged,
+    }) = ev
+    else {
+        panic!("expected Drawn, got {ev:?}");
+    };
+    assert_eq!(provider, "OpenAI");
+    assert_eq!(drawn.name, "image-1.png");
+    assert_eq!(drawn.handle, 1, "the chat's first file");
+    assert_eq!((drawn.width, drawn.height), (96, 54));
+    assert_eq!(drawn.spent.output_tokens, Some(280));
+    assert_eq!(info.name, "image-1.png");
+    assert_eq!(staged, 1);
+
+    let body = &stub.bodies()[0];
+    assert_eq!(body["prompt"], "a red fox in fresh snow");
+    assert_eq!(body["size"], "1536x864", "the shape asked for");
+    assert!(stub.asked()[0].contains("/images/generations"));
+
+    let (stored, images) = file_list(&cmd_tx, &mut evt_rx).await;
+    assert_eq!(stored, ["image-1.png"]);
+    assert!(images.is_empty(), "nothing sent yet");
+
+    let sent = sent_images(&backend, &cmd_tx, &mut evt_rx, "what do you think?").await;
+    assert_eq!(sent.len(), 1);
+    assert!(
+        sent[0]
+            .label
+            .as_deref()
+            .is_some_and(|l| l.contains("image-1.png")),
+        "the model reads the file's name: {:?}",
+        sent[0].label
+    );
+    let (stored, images) = file_list(&cmd_tx, &mut evt_rx).await;
+    assert_eq!(stored, ["image-1.png"]);
+    assert!(
+        images.is_empty(),
+        "the sent copy is the file's item, not a second one: {images:?}"
+    );
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+}
+
+/// Nothing reaches the provider while the slot is off — one switch for the
+/// tool and the command — or without a key; each refusal says where to go.
+#[tokio::test]
+async fn a_picture_is_not_asked_for_while_the_slot_is_off_or_has_no_key() {
+    let stub = crate::shared::http_stub::Stub::serving(Vec::new()).await;
+    let mut off = drawing_through(&stub);
+    off.image_gen.enabled = false;
+    let mut keyless = drawing_through(&stub);
+    keyless.api_keys = Default::default();
+    for (cfg, said) in [(off, "Settings > Tools"), (keyless, "OpenAI")] {
+        let (_dir, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(None, cfg);
+        cmd_tx
+            .send(AppCommand::ImageGenerate {
+                prompt: "a fox".into(),
+                aspect: Default::default(),
+            })
+            .unwrap();
+        let msg = wait_refusal(&mut evt_rx).await;
+        assert!(msg.contains(said), "{msg}");
+        cmd_tx.send(AppCommand::Quit).unwrap();
+        handle.await.unwrap();
+    }
+    assert!(
+        stub.requests().is_empty(),
+        "nothing was asked, nothing paid"
+    );
+}
+
+/// A refusal is said in the provider's words, and nothing is kept or staged.
+#[tokio::test]
+async fn a_refused_picture_is_said_and_nothing_is_kept() {
+    let refusal = serde_json::json!({"error": {
+        "message": "Your request was rejected by the safety system.",
+        "code": "moderation_blocked",
+    }})
+    .to_string();
+    let stub = crate::shared::http_stub::Stub::serving(vec![crate::shared::http_stub::refused(
+        "400 Bad Request",
+        &refusal,
+    )])
+    .await;
+    let (_dir, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(None, drawing_through(&stub));
+    cmd_tx
+        .send(AppCommand::ImageGenerate {
+            prompt: "something refused".into(),
+            aspect: Default::default(),
+        })
+        .unwrap();
+    let ev = wait_for(&mut evt_rx, |e| {
+        matches!(e, AppEvent::ImageProgress(ImageProgress::Refused { .. }))
+    })
+    .await
+    .expect("a Refused event");
+    let AppEvent::ImageProgress(ImageProgress::Refused { reason, .. }) = ev else {
+        unreachable!()
+    };
+    assert!(reason.contains("safety system"), "{reason}");
+    let (stored, _) = file_list(&cmd_tx, &mut evt_rx).await;
+    assert!(stored.is_empty());
+    assert!(staged_list(&cmd_tx, &mut evt_rx).await.is_empty());
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+}
