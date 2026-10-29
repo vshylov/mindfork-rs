@@ -217,24 +217,25 @@ effort tiers — have all closed
   - **A slot of its own**, like speech and video, so a local or Claude chat can
     draw: a tool, `image_generate`, the chat model calls, and later
     `/image generate` for the person.
-  - **OpenRouter, OpenAI and Gemini first**, xAI later. The default (Gemini) is
-    re-opened by the probe: OpenAI measured at a third of the price.
+  - **OpenRouter, OpenAI and Gemini first**, xAI later; **OpenAI the default** —
+    re-decided after the probe measured it at a third of Gemini's price.
   - **Editing from the start**, by the handles the chat already has.
   - **The original as a `generated` chat file** (chats 6 → 7), a copy shown to a
     model that sees.
   - **Off until turned on**; a ceiling per turn that is a setting, `0` for none;
     no drawing in follow-ups or background runs, but turns from Telegram draw.
   - **Seen through `/file open`**, and on the phone as a photo — stage 2.
+  - **A refusal stops drawing for the rest of the turn** — both models redrew a
+    refused request unasked in the probe.
 
   **The probe ran on 2026-10-29: GO** (§11; $0.97 at the providers; Gemma 4 and
-  Qwen 3.8 call the tool when asked and only then). Three forks went back to the
-  owner — the default provider, what a refusal does to the rest of the turn (both
-  models redrew a refused request unasked), and where a tool's picture goes on
-  llama.cpp (the next item). Local generation is out of scope — the owner's
+  Qwen 3.8 call the tool when asked and only then). Next is the next item's fix,
+  in a PR of its own, then stage 1. Local generation is out of scope — the owner's
   decision.
 - **Gemma 4 answers in JSON after a tool's picture** — **found 2026-10-29**, by the
-  image-generation probe ([image-generation.md](research/image-generation.md) §11.3,
-  F11). On llama.cpp a picture inside a tool result — `python_exec`'s chart, an MCP
+  image-generation probe ([image-generation.md](research/image-generation.md) §11.3);
+  the owner chose the fix the same day (F11 (a)): re-home on every endpoint, behind
+  a label with no language, a PR of its own before image generation's stage 1. On llama.cpp a picture inside a tool result — `python_exec`'s chart, an MCP
   screenshot, a generated image — turns Gemma 4's reply to an English request into
   `{"action": …, "action_input": …}`: 28 of 30, against 0 of 9 Russian requests and
   0 of 10 on Qwen 3.8. Re-homing the picture into a user message, as gateways

@@ -12,12 +12,18 @@ decisions:
   **stage 2**, straight after the tool (§8).
 
 **Stage 0, the probe, ran on 2026-10-29: GO** (§11). It measured the providers
-($0.97 in all) and the tool on Gemma 4 and Qwen 3.8, and it hands three forks back
-to the owner: **F3 re-opened** (OpenAI measured at a third of Gemini's price),
-**F10** (a refusal and the rest of the turn) and **F11** (Gemma 4 answers in JSON
-after a tool's picture on llama.cpp — every tool's, not only this one's). Nothing
-is built yet. Provider facts were read from the providers' own documentation on
-2026-10-29 (§10) and then measured (§11.1).
+($0.97 in all) and the tool on Gemma 4 and Qwen 3.8, and handed three forks back to
+the owner, **decided the same day as recommended**:
+- **F3 re-opened → (a′):** the default is OpenAI's `gpt-image-2.5-flare` at
+  `medium` — measured at a third of Gemini's price.
+- **F10 (a):** after a refusal the tool stops drawing for the rest of the turn.
+- **F11 (a):** a tool's picture is re-homed into a user message on every
+  OpenAI-compatible endpoint, behind a label with no words of any language — a PR
+  of its own before stage 1, since it is every tool's (Gemma 4 answers in JSON
+  after a picture inside a tool result).
+
+Nothing is built yet. Next is F11's PR, then stage 1. Provider facts were read from
+the providers' own documentation on 2026-10-29 (§10) and then measured (§11.1).
 
 ## 1. Why
 
@@ -355,7 +361,7 @@ A section of its own, shaped like `tts` and `video`, all `#[serde(default)]`:
 ```jsonc
 "image_gen": {
   "enabled": false,      // F7: nothing is drawn, or paid for, until the person says so
-  "provider": "gemini",  // F2/F3
+  "provider": "openai",  // F2/F3 (F3 re-decided after the probe: (a′))
   "gemini":     { "model_name": "gemini-nano-banana-2.1", "image_size": "1K", "api_key_env": null, "url": null },
   "openai":     { "model_name": "gpt-image-2.5-flare",    "quality": "medium", "api_key_env": null, "url": null },
   "openrouter": { "model_name": null,                     "resolution": "1K", "api_key_env": null, "url": null },
@@ -434,9 +440,12 @@ The provider rewrote the prompt as: "…"            ← when it says so (OpenAI
 followed by the loop's own line about whether the picture is shown (spec §9.10:
 "shown below", or "not shown" and why). A refusal is a result, not an error, and
 says so in the directive form measured for the withheld-image notes: *"The
-provider refused to draw this: «…». This is not a connection error, and the same
-prompt will be refused again. Tell the user what was refused; do not describe a
-picture."*
+provider refused to draw this: «…». This is not a connection error. Tell the user
+what was refused and ask what to change; do not describe a picture."* The probe
+saw "the same prompt will be refused again" read as leave to rephrase (§11.2), so
+**after a refusal the tool draws nothing more in that turn** (F10): a later call
+gets "drawing is stopped for this turn after a refusal" without reaching the
+provider, and xAI's refusals, which are charged, stay at one a turn.
 
 ### 6.4 Where the picture lives
 
@@ -533,6 +542,7 @@ each, dated.
   organisation check first, said in OpenAI's words on the first picture.
   (b′) Gemini as decided — no check in front of it, but JPEG, three times the price,
   and a violent prompt softened rather than refused. (c′) No default.
+  **Owner's decision (2026-10-29, after the probe): (a′).**
 - **F4. Editing in the first version.** (a) **Yes** — the `images` argument, by
   the handles the chat already has *(recommended)*: every provider in §2 takes
   input pictures (on the gateway, the models whose catalogue entry allows
@@ -589,6 +599,7 @@ each, dated.
   wording read as permission to rephrase; it would need its own measurement.
   (c) Keep the retries within the turn's ceiling — fewer round trips for the
   person, up to four charged refusals a turn on xAI.
+  **Owner's decision (2026-10-29): (a).**
 - **F11. Where a tool's picture goes on llama.cpp** (found by the probe, §11.3 —
   Gemma 4 wraps its reply in JSON after a picture inside a tool result, 28 of 30
   English requests). (a) **Re-home it on every OpenAI-compatible endpoint, as a
@@ -602,6 +613,7 @@ each, dated.
   (b) Re-home for Gemma only — telling the model by its name, which the project
   has been burned by. (c) Leave it: pictures from any tool keep breaking Gemma 4's
   English replies.
+  **Owner's decision (2026-10-29): (a).**
 
 ## 8. Stages and the probe
 
@@ -626,9 +638,9 @@ project does with probes). Two questions, each with a go/no-go:
    match judged right in ≥ 4/5. A wording that fails is reworded and measured
    again, as the withheld-image notes were (spec §9.10).
 
-**Before stage 1 — F11, if (a).** Tool pictures re-homed on llama.cpp behind a
+**Before stage 1 — F11 (a).** Tool pictures re-homed on llama.cpp behind a
 language-free label: a wire change for every producer, its own PR, measured on
-Gemma 4 and Qwen 3.8 (§11.3).
+Gemma 4 and Qwen 3.8 (§11.3) — the label's form among the measurements.
 
 **Stage 1 — the slot and the tool.** `image_gen` settings and their section,
 the clients for OpenRouter, OpenAI and Gemini (F2), `image_generate` with editing
@@ -844,12 +856,13 @@ and drew. Both gate models call the tool when asked and only then, relay a refus
 without inventing a picture, and catch a wrong picture. Spent: $0.97 at the
 providers; the local runs cost nothing.
 
-What the probe adds for the owner before stage 1:
+What the probe added before stage 1, each decided by the owner the same day (§7):
 
-- **F3 is re-opened** — OpenAI is a third of Gemini's price (§7).
-- **F10** — what a refusal does to the rest of the turn (§7).
-- **F11** — where a tool's picture goes on llama.cpp (§7). It reaches past this
-  track: `python_exec`'s charts and MCP screenshots meet Gemma 4 the same way.
+- **F3 re-opened → (a′)** — OpenAI is the default, at a third of Gemini's price.
+- **F10 (a)** — a refusal stops drawing for the rest of the turn.
+- **F11 (a)** — a tool's picture is re-homed on llama.cpp too, behind a
+  language-free label, in a PR of its own. It reaches past this track:
+  `python_exec`'s charts and MCP screenshots meet Gemma 4 the same way.
 
 The probe's code is frozen as the tag `probe/image-generation-stage0`:
 `git show probe/image-generation-stage0:tools/image_gen_probe.py` (the providers,

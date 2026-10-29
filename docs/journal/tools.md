@@ -6595,6 +6595,8 @@ the full record is §11 of the research.
   `Lang::default()` — Russian — so the scaffold the model reads is Russian unless
   the test says otherwise. `cyrillic_scan` decodes `\u` escapes in a Python
   source: the probe's Russian prompt went in as base64.
-- **Back to the owner:** F3 re-opened (OpenAI now recommended as the default), F10
-  and F11. Nothing merged into the code; unit tests unchanged (4395 green, 299
-  `#[ignore]`).
+- **Back to the owner, decided the same day as recommended:** F3 re-opened → (a′),
+  OpenAI's `gpt-image-2.5-flare` the default; F10 (a), a refusal stops drawing for
+  the rest of the turn; F11 (a), tool pictures re-homed on every endpoint behind a
+  language-free label, a PR of its own before stage 1. Nothing merged into the
+  code; unit tests unchanged (4395 green, 299 `#[ignore]`).
