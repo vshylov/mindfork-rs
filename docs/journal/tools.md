@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (101)
+## Entries (102)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -113,6 +113,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: speech without pauses between a reply's blocks (done)
 - Post-M9: a stalled speech request asked again (done)
 - Post-M9: image generation — the stage-0 probe (done)
+- Post-M9: image generation — stage 1, the slot and the tool (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -6600,3 +6601,40 @@ the full record is §11 of the research.
   the rest of the turn; F11 (a), tool pictures re-homed on every endpoint behind a
   language-free label, a PR of its own before stage 1. Nothing merged into the
   code; unit tests unchanged (4395 green, 299 `#[ignore]`).
+
+### Post-M9: image generation — stage 1, the slot and the tool (done)
+Stage 1 of [image-generation.md](../research/image-generation.md) §8, on the
+owner's forks; the full record is §12 there, the contract spec §9.15.
+
+- **What it is.** `image_gen` in the settings — off, OpenAI by default
+  (`gpt-image-2.5-flare` at `medium`), a section per provider, `show_to_model` on,
+  `max_per_turn` 4 — and a group of its own in *Tools*. Three clients in
+  `shared/image_gen/` (OpenAI's generations and edits, Gemini's `generateContent`
+  with `["IMAGE"]`, the gateway's `/images` sending only what the model's catalogue
+  entry lists). `image_generate { prompt, aspect?, images? }` behind
+  `ToolGate::ImageGen`: the original kept as a `generated` chat file
+  `image-N.<ext>` (chats 6 → 7, a stamp), a copy shown to the model, a refusal an
+  answer that stops the turn's drawing (F10), a ceiling per turn (F7), nothing
+  offered to a woken turn or a background sub-agent, a turn from the phone kept.
+- **Decided while building.** §6.1's `image_size`/`resolution` became one field,
+  `quality` — what the provider's price is set by. The ceiling and the refusal live
+  in `ToolContext::draws`, fresh with each turn's context and shared by a
+  sub-agent's clone. The result names the file by the `#N` of `/file list` — the
+  probe's measured line — which a new file does not shift, since files precede
+  images in that list. The collapsed card is named by the file, read off the
+  result's `#N image-N.<ext>`, so the call's record needed no new field. The free
+  `N` is checked against the folder too, under any extension: a file a call wrote
+  whose chat was not saved still owns its name.
+- **Met on the way.** A `"notes.txt"` literal in a test failed the i18n gate that
+  reads dotted literals as bundle keys. The settings dumps drifted by the section
+  counts (Tools 33 → 41, Profiles 75 → 76) and were regenerated; their PNGs were
+  not — Pillow is no longer installed here and the router's DNS does not resolve
+  `files.pythonhosted.org`. A live smoke reading `chats/` meets each chat's `.bak`.
+- **Live — GO.** The providers, each a 16:9 picture and its edit: OpenAI 11.7 s
+  and 13.4 s, Gemini 12.2 s and 14.2 s (JPEG; thinking counted as output), the
+  gateway's FLUX-3 24 s and 34 s at $0.048 each. Through the loop on
+  `llama-server` (RTX 4090, `-c 32768`, vision projector) with OpenAI drawing:
+  Gemma 4 31B `q4_0` and Qwen 3.8 27B `Q4_K_M` each drew the fox with one call and
+  a 75–80-word description, changed it with one call naming `images: ["#1"]`, and
+  answered in prose; both files listed as `generated`. About $0.30 spent.
+- Unit tests 4443 green, 304 `#[ignore]` (three provider smokes and the loop's).

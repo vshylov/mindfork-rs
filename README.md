@@ -139,8 +139,9 @@ a checkout with a recent stable Rust. On a rented GPU box or in a container, the
   (Settings → Profiles → *Companion*, each off by default).
 - **Real tools, behind switches you set.** Web search and page fetching, a
   **Python sandbox** (Wasmer/WASIX — no host file access), file access jailed to
-  one directory you name, YouTube video understanding, and tools from any **MCP**
-  server. Everything off by default; an optional confirmation prompt shows
+  one directory you name, YouTube video understanding, **pictures drawn on request**
+  by OpenAI, Gemini or OpenRouter's models (kept in the chat's files), and tools
+  from any **MCP** server. Everything off by default; an optional confirmation prompt shows
   exactly what a call is about to do.
 - **It can hand work off.** Subagents with their own tools and no chat history,
   a staged dialogue between two personas, and both of those in the **background**

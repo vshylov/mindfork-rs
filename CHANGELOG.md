@@ -14,6 +14,20 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Added
+
+- **The assistant can draw.** With *Image generation* switched on (Settings →
+  Tools), ask for a picture — or for a change to one the chat already has — and the
+  assistant draws it with OpenAI, Gemini or any of some sixty models behind an
+  OpenRouter key, whatever model you chat with, a local one included. The picture is
+  kept in the chat's files as the provider sent it — `/file list`, `/file open #N` —
+  and the assistant is shown a copy, so a model that sees can check it against what
+  you asked. Off by default, since every picture is paid for: one turn draws at most
+  four (a setting; `0` for no limit), follow-ups and background runs never draw, and
+  after the provider refuses a picture the assistant draws nothing more in that turn
+  and asks you what to change. OpenAI's `gpt-image-2.5-flare` is the default, at
+  about a cent and a half a picture.
+
 ### Fixed
 
 - **Long silences in the middle of a spoken reply.** A reply read aloud could fall
@@ -38,6 +52,15 @@ split by subsystem.
   already did, and the picture is labelled by the tool that made it rather than in
   the profile's language, which kept replies to English requests from coming back
   in Russian.
+
+### Data
+
+- **The chat files move to schema 7.** A file kept in a chat may now be a picture
+  the assistant drew, and 0.22.0 would skip a chat holding one without a word; with
+  the new version stamped, it refuses the data as a newer version's instead. Nothing
+  in a chat file changes but the stamp, and a backup is made before it is written.
+  `settings.json` gains the `image_gen` section and takes no step: an older version
+  ignores the section, and drops it when it saves its settings.
 
 ## [0.22.0] — 2026-10-24
 
