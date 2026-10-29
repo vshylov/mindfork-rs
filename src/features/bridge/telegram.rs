@@ -1,10 +1,62 @@
 //! Telegram's messages read into the bridge's own [`Incoming`] (ADR 0013): only
 //! private chats, never a bot, a forward named by its origin, a command split
-//! from its argument.
+//! from its argument. And the other way: a picture made into what `sendPhoto`
+//! takes ([`photo`]).
 
-use crate::shared::messenger::telegram::{TgMessage, forward_name};
+use crate::features::image_prepare::{PrepareError, jpeg_copy};
+use crate::shared::messenger::telegram::{PHOTO_LIMIT, PHOTO_SIDES, TgMessage, forward_name};
 
 use super::{Author, Body, Incoming, Picture, Voice, split_command};
+
+/// The longer side of the copy a picture goes as when Telegram would not take
+/// the original: more than a phone's screen shows, and as a JPEG far under
+/// [`PHOTO_LIMIT`] (docs/research/image-generation.md §13).
+pub const PHOTO_COPY_EDGE: u32 = 2560;
+
+/// What `sendPhoto` takes, as [`photo_within`] checks it.
+#[derive(Debug, Clone, Copy)]
+struct PhotoLimits {
+    bytes: u64,
+    sides: u32,
+}
+
+const TELEGRAM: PhotoLimits = PhotoLimits {
+    bytes: PHOTO_LIMIT,
+    sides: PHOTO_SIDES,
+};
+
+/// `picture` as Telegram takes a photo: the original when it is a PNG or a
+/// JPEG within `sendPhoto`'s limits, otherwise a JPEG copy at most
+/// [`PHOTO_COPY_EDGE`] on its longer side — Telegram recompresses a photo to
+/// JPEG either way. The bytes and their type.
+pub fn photo(picture: Vec<u8>) -> Result<(Vec<u8>, &'static str), PrepareError> {
+    photo_within(picture, TELEGRAM)
+}
+
+fn photo_within(
+    picture: Vec<u8>,
+    limits: PhotoLimits,
+) -> Result<(Vec<u8>, &'static str), PrepareError> {
+    let kind = crate::entities::chat_file::sniff_image(&picture)
+        .filter(|m| matches!(*m, "image/png" | "image/jpeg"));
+    if let Some(kind) = kind
+        && picture.len() as u64 <= limits.bytes
+        && sides(&picture).is_some_and(|(w, h)| w.saturating_add(h) <= limits.sides)
+    {
+        return Ok((picture, kind));
+    }
+    let copy = jpeg_copy(&picture, PHOTO_COPY_EDGE)?;
+    Ok((copy.bytes, copy.mime))
+}
+
+/// A picture's width and height, read from its header.
+fn sides(picture: &[u8]) -> Option<(u32, u32)> {
+    image::ImageReader::new(std::io::Cursor::new(picture))
+        .with_guessed_format()
+        .ok()?
+        .into_dimensions()
+        .ok()
+}
 
 /// `m` as the bridge reads it; `None` for what is never answered — a group, a
 /// channel, another bot, a message with no sender.
@@ -214,6 +266,53 @@ mod tests {
             Body::Unsupported,
             "an audio file is not a voice note"
         );
+    }
+
+    fn encoded(w: u32, h: u32, format: image::ImageFormat) -> Vec<u8> {
+        let mut out = Vec::new();
+        image::RgbImage::from_fn(w, h, |x, y| {
+            image::Rgb([(x % 256) as u8, (y % 256) as u8, 90])
+        })
+        .write_to(&mut std::io::Cursor::new(&mut out), format)
+        .unwrap();
+        out
+    }
+
+    #[test]
+    fn a_picture_telegram_takes_goes_as_it_is_and_any_other_as_a_jpeg_copy() {
+        let png = encoded(80, 40, image::ImageFormat::Png);
+        assert_eq!(
+            photo(png.clone()).unwrap(),
+            (png.clone(), "image/png"),
+            "byte for byte"
+        );
+        let jpeg = encoded(80, 40, image::ImageFormat::Jpeg);
+        assert_eq!(photo(jpeg.clone()).unwrap(), (jpeg, "image/jpeg"));
+        let over = |bytes: u64, sides: u32| {
+            photo_within(png.clone(), PhotoLimits { bytes, sides }).unwrap()
+        };
+        for (copy, mime) in [over(100, 10_000), over(u64::MAX, 100)] {
+            assert_eq!(mime, "image/jpeg", "too large, or too many pixels a side");
+            assert_eq!(sides(&copy), Some((80, 40)), "within the edge, not shrunk");
+        }
+        let (copy, mime) = photo(encoded(30, 20, image::ImageFormat::Bmp)).unwrap();
+        assert_eq!((mime, sides(&copy)), ("image/jpeg", Some((30, 20))));
+        assert!(photo(b"not a picture".to_vec()).is_err());
+    }
+
+    #[test]
+    fn a_copy_is_no_longer_than_its_edge() {
+        let wide = encoded(PHOTO_COPY_EDGE + 400, 100, image::ImageFormat::Png);
+        let (copy, _) = photo_within(
+            wide,
+            PhotoLimits {
+                bytes: 10,
+                sides: PHOTO_SIDES,
+            },
+        )
+        .unwrap();
+        let (w, _) = sides(&copy).unwrap();
+        assert_eq!(w, PHOTO_COPY_EDGE);
     }
 
     #[test]

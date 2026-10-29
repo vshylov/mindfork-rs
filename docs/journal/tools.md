@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (102)
+## Entries (103)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -114,6 +114,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a stalled speech request asked again (done)
 - Post-M9: image generation — the stage-0 probe (done)
 - Post-M9: image generation — stage 1, the slot and the tool (done)
+- Post-M9: image generation — stage 2, the phone (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -6638,3 +6639,35 @@ owner's forks; the full record is §12 there, the contract spec §9.15.
   a 75–80-word description, changed it with one call naming `images: ["#1"]`, and
   answered in prose; both files listed as `generated`. About $0.30 spent.
 - Unit tests 4443 green, 304 `#[ignore]` (three provider smokes and the loop's).
+
+### Post-M9: image generation — stage 2, the phone (done)
+Stage 2 of [image-generation.md](../research/image-generation.md) §8 — F9 as the
+owner decided it; the full record is §13 there, the contract spec §11.13
+(*Pictures it drew*).
+
+- **What it is.** A turn from Telegram that drew answers with its words, then each
+  picture as a photo (`sendPhoto`) under the chat file's name, *sending a photo…*
+  while it goes up. The pictures are read off the turn's effects — `AddChatFile`
+  of origin `generated` — before they land (`SeatReply`), read off the disk in a
+  task of their own, and handed to the bot's sender as `Outbound::Photo`. However
+  the turn ended, since each was paid for.
+- **Decided while building.** What Telegram takes is the channel's to know, not
+  the orchestrator's: `Outbound::Photo` carries the original's bytes and no type,
+  and `features::bridge::telegram::photo` sends the original when its bytes say PNG
+  or JPEG within 10 MB and 10 000 px of sides, else a JPEG copy at most 2560 px —
+  a new `image_prepare::jpeg_copy`, since `prepare` keeps a PNG a PNG, which can
+  stay over the limit. A photo that does not go is `PictureUnsent`: said to the
+  phone (its words went without it) and in the terminal. The voice note's retry
+  loop became one `retrying` both share; the fake's three waits became one.
+- **Live — GO.** The bridge against the tests' Bot API, a live model on
+  `llama-server` (RTX 4090), OpenAI drawing: "draw your lighthouse at dusk", then
+  "make it night". Gemma 4 31B `q4_0` — 32 s and 31 s, the change by `#1`; Qwen
+  3.8 27B `Q4_K_M` — 28 s and 25 s, the change by `tool-image-1.png`. Prose replies
+  in character, the photos after the words and byte for byte the chat's files.
+  About $0.10. Telegram itself the owner checked from the phone the same day: a
+  self-portrait asked for came back as the words, then the photo, `image-1.png`.
+- **Stage 1's open end closed.** The four settings PNGs it left are re-rendered —
+  Pillow installed here again; the renderer first reproduced the committed images
+  byte for byte from their old dumps, and of the ten shots the current dumps
+  render (PNG and SVG each) only those four differed.
+- Unit tests 4450 green, 305 `#[ignore]` (the phone's smoke).

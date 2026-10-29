@@ -2579,7 +2579,8 @@ calls count against the turn that called it — and refuses the call past it wit
 sentence the model passes on; and **no drawing in a turn nobody is waiting for**:
 a woken turn (a follow-up, a background run's notice) is not offered the tool, nor
 is a background sub-agent. A turn the person starts from the messenger keeps it
-(ADR 0013, D3).
+(ADR 0013, D3), and what it draws goes back to the phone as a photo after the reply's
+words ([11.13](#1113-the-messenger-bridge), *Pictures it drew*).
 
 ## 10. AI-companion profiles
 
@@ -5527,6 +5528,20 @@ a stopped reply: text only. A reply with nothing to say aloud goes as text alone
 synthesis or a `sendVoice` that fails costs the voice note only, said once in the
 terminal.
 
+**Pictures it drew** (docs/research/image-generation.md F9, stage 2). A turn from the
+phone may draw (§9.15 — `image_generate` is not dangerous). Its words go first, whole,
+as any reply's; then each picture the turn drew goes as a photo (`sendPhoto`), in the
+order drawn, with *sending a photo…* shown while it goes up and the chat's file name
+under it (`image-3.png`) — the name a change can be asked for by. However the turn
+ended: a picture the provider drew was paid for and is kept. The original goes as it is
+when Telegram takes it as a photo — PNG or JPEG, at most 10 MB, width and height
+together at most 10 000 px; anything else goes as a JPEG copy at most 2560 px on its
+longer side (`features/bridge/telegram.rs`), since Telegram recompresses every photo to
+JPEG either way, and the original stays in the chat's files. A photo that does not go —
+Telegram's refusal, a network still down after the retries, a file that cannot be read —
+is said to the phone in a line naming the file and the reason, and in the terminal. A
+picture a turn at the terminal draws stays at the terminal, as its words do.
+
 **Unasked.** A follow-up come due in the bridged chat (§9.3.6), or a background run's
 result there (§9.3.2), wakes a seat at once, the chat unopened, and the reply goes to
 the phone — within the follow-ups' own quiet hours and day's cap. The bots start before
@@ -5541,7 +5556,8 @@ conversation; network errors retry with a back-off, quietly. A message that arri
 while the engine is not ready is told so, and answered when it is.
 
 **Privacy** (ADR 0013, rule 4). A bot chat is encrypted between each party and
-Telegram's servers, not end to end: Telegram can read every message. A voice note is
+Telegram's servers, not end to end: Telegram can read every message and every picture
+the bot sends. A voice note is
 heard by the recognition slot's provider too. The switch's description says both before
 it is on. The history stays on this machine. A fork
 (`/profile fork`) and a carried companion (`mindfork companion export`) take neither

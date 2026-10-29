@@ -25,8 +25,9 @@ the owner, **decided the same day as recommended**:
 **F11 is built** (§11.5: Gemma 4's JSON replies 17 of 21 → 0 of 21). **Stage 1
 is built** (§12): the slot, the three clients, `image_generate` with editing, the
 `generated` chat file (chats 6 → 7), the ceiling and the stop after a refusal —
-live **GO** on every provider and through the loop on Gemma 4 and Qwen 3.8. Next is
-stage 2, the phone. Provider facts were read from the providers' own documentation
+live **GO** on every provider and through the loop on Gemma 4 and Qwen 3.8. **Stage 2 is built** (§13): a picture drawn from Telegram goes back to
+the phone as a photo after the words — live **GO** through the bridge on Gemma 4
+and Qwen 3.8. Next is stage 3. Provider facts were read from the providers' own documentation
 on 2026-10-29 (§10) and then measured (§11.1).
 
 ## 1. Why
@@ -653,10 +654,11 @@ for the model (F6), the chip, the configurable ceiling (F7). Unit tests against
 recorded responses; an `#[ignore]` smoke per provider and one through the agentic
 loop on a live chat model.
 
-**Stage 2 — the phone** (F9): a turn from Telegram that drew answers with the
-picture as a photo (`sendPhoto`) beside its text. The Bot API takes a photo of at
-most 10 MB, so a larger original goes as a prepared copy; the original stays in
-the chat's files either way. Live: a turn sent from the owner's phone that draws.
+**Stage 2 — the phone** (F9; built, §13): a turn from Telegram that drew
+answers with the picture as a photo (`sendPhoto`) beside its text. The Bot API
+takes a photo of at most 10 MB, so a larger original goes as a prepared copy; the
+original stays in the chat's files either way. Live: a turn sent from the owner's
+phone that draws.
 
 **Stage 3 — xAI, the picker and the command.** xAI's dialect with the refusal
 shape the probe found, `ModelSlot::Image` with the gateway's catalogue roles,
@@ -972,3 +974,58 @@ moon — keep the fox exactly as it is", in one chat.
 chat's `.bak` beside it). Spent on the live runs: about $0.30. No refusal was
 provoked live — the probe recorded each provider's (§11.1), and the stop after
 one is pinned by the tool's tests.
+
+## 13. Stage 2, built (2026-10-29)
+
+`feat/image-generation-stage2`. F9 as the owner decided it: a turn from the phone
+that drew answers with the picture as a photo.
+
+- **What goes, and when.** The seat's reply is read off the turn before it lands
+  (`SeatReply`), and the pictures with it: the turn's `AddChatFile` effects of
+  origin `generated`, in the order drawn — a chart `python_exec` wrote is not one,
+  and a bridged turn cannot run code anyway. The words go first, whole, as every
+  reply's do; then each picture, read off the disk in a task of its own so a 4K
+  original does not hold the orchestrator, goes to the bot's sender as
+  `Outbound::Photo` — the original's bytes and the file's name. However the turn
+  ended: a picture the provider drew was paid for and is kept, so a stopped or
+  failed turn still sends it. A turn at the terminal in the bridged chat sends
+  nothing to the phone, as its words do not.
+- **What Telegram takes** (`features/bridge/telegram.rs`, `photo`). `sendPhoto`
+  takes a photo of at most 10 MB whose width and height add up to 10 000 px at
+  most, one side at most twenty times the other. The original goes as it is when
+  its bytes say PNG or JPEG and it is within the first two; anything else — a
+  4K PNG over 10 MB from the gateway, a WebP — goes as a **JPEG copy at most
+  2560 px on its longer side** (`image_prepare::jpeg_copy`): Telegram recompresses
+  every photo to JPEG anyway, and the `prepare` the model's copy goes through keeps
+  a PNG a PNG, which at 2560 px can still be over the limit. The third rule no
+  scaling mends; Telegram's refusal of it is said like any other. The type is read
+  from the bytes, so `Outbound::Photo` carries none.
+- **What the phone sees.** *sending a photo…* (`upload_photo`) while it goes up,
+  then the photo with the file's name under it — `image-3.png`, the name a change
+  can be asked for by. A photo that does not go — a refusal, the network still
+  down after the voice note's retries (shared now, `retrying`), a file that cannot
+  be read — is `ChannelFailure::PictureUnsent`: one line to the phone naming the
+  file and the reason (its words went without it), and the terminal told.
+
+### 13.1 Live
+
+`a_picture_drawn_from_the_phone_reaches_it_live` (`tests/bridge_live.rs`): the
+bridge against the tests' own Bot API (`TelegramFake`, which learned `sendPhoto`),
+the default profile's tools plus `image_generate`, a live chat model on
+`llama-server` (RTX 4090, `-c 32768 --jinja`, the vision projector loaded), OpenAI
+drawing. From the phone: "Could you draw me a small watercolor of your lighthouse
+at dusk?", then "Now make it night, with the lamp lit and the sea dark."
+
+| | Gemma 4 31B `q4_0` | Qwen 3.8 27B `Q4_K_M` |
+|---|---|---|
+| **Turn 1** | 32.4 s; one call, 1024×1024 PNG, 2.4 MB | 27.5 s; one call, 1024×1024 PNG, 2.5 MB |
+| **Turn 2** | 31.2 s; a change, `images: ["#1"]` | 24.6 s; a change, `images: ["tool-image-1.png"]` |
+| **Replies** | prose, in character (2 of 2) | prose, in character (2 of 2) |
+| **Photos** | after the words, the chat's file byte for byte | the same |
+
+**GO.** The two models named the picture to change by different handles — `#1` and
+the conversation image's name — both resolved, as stage 1 built. About $0.10 spent.
+
+**Telegram itself — checked by the owner** the same day, from the phone, as the
+bridge's own stages were: a self-portrait asked for in Russian came back as the
+reply's words, then the photo with `image-1.png` under it.

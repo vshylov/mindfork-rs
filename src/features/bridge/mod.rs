@@ -54,6 +54,9 @@ pub enum ChannelFailure {
     /// A reply went as text only: its voice note could not be made or sent
     /// (ADR 0013, stage C, D9 (a) — the text had gone already).
     Unvoiced(String),
+    /// A picture the turn drew did not reach the messenger — `name`, the
+    /// chat's file it is kept as (docs/research/image-generation.md F9).
+    PictureUnsent { name: String, err: String },
 }
 
 /// A message, as the bridge reads it.
@@ -174,6 +177,14 @@ pub enum Outbound {
         to: String,
         note: Vec<u8>,
         seconds: u32,
+    },
+    /// A picture the turn drew, the original's bytes as the chat keeps it:
+    /// the channel sends it as its messenger takes a photo, named by `name`
+    /// (docs/research/image-generation.md F9).
+    Photo {
+        to: String,
+        name: String,
+        picture: Vec<u8>,
     },
 }
 

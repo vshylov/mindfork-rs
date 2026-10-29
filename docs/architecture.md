@@ -329,14 +329,19 @@ src/
 │  │  ├─ bridge.rs          the messenger bridge (spec §11.13, ADR 0013): a bot per profile
 │  │  │                     (refresh_bridges), the pairing, the bridged chat, and the
 │  │  │                     **seat** — a messenger's turn beside the terminal's, its mirror,
-│  │  │                     its landing answered to the phone, what waits for it, the wakes
+│  │  │                     its landing answered to the phone (its words, then the
+│  │  │                     pictures it drew, read off the disk in a task of their own),
+│  │  │                     what waits for it, the wakes
 │  │  ├─ bridge_task.rs     one bot's tasks: the poller (getMe, long-polled getUpdates →
 │  │  │                     `Inbound`; an album gathered, the paired account's pictures
 │  │  │                     fetched and prepared, and its voice notes fetched and heard
 │  │  │                     by the recognition settings a `watch` keeps current, before
 │  │  │                     they go up) and the sender (`Outbound` → typing… or
 │  │  │                     recording…, the reply cut into Telegram's markup, plain text
-│  │  │                     when refused, a voice note by `sendVoice`)
+│  │  │                     when refused, a voice note by `sendVoice`, a drawn picture
+│  │  │                     by `sendPhoto` — the original, or the JPEG copy
+│  │  │                     `features::bridge::telegram::photo` makes when Telegram
+│  │  │                     would refuse it)
 │  │  ├─ bridge_voice.rs    voice notes in the bridge (ADR 0013 stage C): what the bots hear
 │  │  │                     with (`hearing`, `refresh_hearing`), a heard note become the
 │  │  │                     person's message marked as spoken, an unheard one said, and a
@@ -675,7 +680,8 @@ src/
 │  │                        filtered — the user typed it (spec §9.10)
 │  ├─ image_prepare.rs      decode/downscale/normalize an attached image to png|jpeg
 │  │                        (the `image` crate; a png already within the ceiling is
-│  │                        passed through byte for byte)
+│  │                        passed through byte for byte); `jpeg_copy` — always JPEG,
+│  │                        for a messenger's photo
 │  ├─ exit_command.rs       /exit | /quit parser — the typed route out, for terminals
 │  │                        that claim both Ctrl+Q and F10 (spec §11.7)
 │  ├─ tts_command.rs        /tts [N|all|stop] parser (speech synthesis, spec §11.9)
@@ -693,7 +699,8 @@ src/
 │  │                        `Inbound`/`Outbound` — the plain data a channel and the
 │  │                        orchestrator exchange — the pairing code, the messenger's
 │  │                        commands, a forward as a quote; `telegram.rs` reads Telegram's
-│  │                        messages into them (private chats only, never a bot)
+│  │                        messages into them (private chats only, never a bot), and
+│  │                        `photo` makes a drawn picture what `sendPhoto` takes
 │  ├─ backup.rs             data backup/restore (zip, transactional, optional AES-256
 │  │                        password — spec §12.3); reports phase progress through a
 │  │                        callback, the CLI prints it (sandbox_setup's shape)
@@ -932,7 +939,8 @@ src/
    │                       blocks into messages ≤ 4096, each with its plain text (§11.13)
    ├─ messenger/           the messengers' wires (ADR 0013): `telegram.rs` — the Bot API
    │                       client (getMe/getUpdates/sendMessage/sendChatAction, getFile and
-   │                       a capped download, sendVoice; no error carries the token's URL);
+   │                       a capped download, sendVoice, sendPhoto; no error carries the
+   │                       token's URL);
    │                       `telegram_fake.rs` (tests) — a Bot API of the tests' own that a
    │                       message, a photo or a voice note "from the phone" is put into,
    │                       and that keeps the voice notes the bot sends
@@ -3242,7 +3250,9 @@ Implementation notes:
   and every later call answers without reaching the provider. Who is offered the
   tool is decided where the turn's set is: `ToolGates::image_gen` is the switch
   **and not woken** (`start_generation_woken`), and `child_spec_with` drops it from
-  a background sub-agent's set; a bridged turn keeps it — it is not dangerous. The
+  a background sub-agent's set; a bridged turn keeps it — it is not dangerous — and
+  `SeatReply` reads what it drew off the turn's `AddChatFile` effects (origin
+  `generated`), sent to the phone after the words (spec §11.13). The
   turn's image snapshot (`ToolContext::images`) is built when the tool is offered
   as well as for `python_exec`, so `images` reaches a conversation's pictures. The
   picture handed to the loop is the original under `images.max_bytes` and a

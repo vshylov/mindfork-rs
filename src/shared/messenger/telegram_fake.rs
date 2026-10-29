@@ -1,8 +1,9 @@
 //! A Telegram Bot API of the tests' own (ADR 0013, stage B): a real socket
 //! answering `getMe`, `getUpdates`, `sendChatAction`, `sendMessage`, `getFile`
-//! and a file's download, and `sendVoice` (stage C), so the bridge is driven end
-//! to end — its poller, its sender, the markup, a picture's or a voice note's
-//! fetch, a voice note sent back — with no account and no network. A test puts a message "from the phone" with
+//! and a file's download, `sendVoice` (stage C) and `sendPhoto`
+//! (docs/research/image-generation.md F9), so the bridge is driven end to end —
+//! its poller, its sender, the markup, a picture's or a voice note's fetch, a
+//! voice note or a drawn picture sent back — with no account and no network. A test puts a message "from the phone" with
 //! [`TelegramFake::say`]; the next poll carries it; everything the bot sends is
 //! kept, in order, for the test to read.
 //!
@@ -36,6 +37,11 @@ struct State {
     files_asked: std::sync::Mutex<Vec<String>>,
     /// The voice notes the bot sent, by chat, in order: the file's bytes.
     voices: std::sync::Mutex<Vec<(i64, Vec<u8>)>>,
+    /// The photos the bot sent, by chat, in order: the file's bytes and the
+    /// caption.
+    photos: std::sync::Mutex<Vec<(i64, Vec<u8>, String)>>,
+    /// Every `sendPhoto` is refused, as Telegram refuses a photo it cannot take.
+    refuse_photos: std::sync::atomic::AtomicBool,
     arrived: Notify,
     sent_any: Notify,
     next_update: AtomicI64,
@@ -60,6 +66,8 @@ impl TelegramFake {
             files: Default::default(),
             files_asked: Default::default(),
             voices: Default::default(),
+            photos: Default::default(),
+            refuse_photos: Default::default(),
             arrived: Notify::new(),
             sent_any: Notify::new(),
             next_update: AtomicI64::new(1),
@@ -71,13 +79,18 @@ impl TelegramFake {
                 tokio::spawn(async move {
                     let raw = crate::shared::http_stub::whole_request_bytes(&mut sock).await;
                     let request = String::from_utf8_lossy(&raw).to_string();
+                    let (method, ours) = route(&state, &request);
                     let (status, label, body) = match download(&state, &request) {
                         Some(file) => file,
-                        None if route(&state, &request) == ("sendVoice".to_string(), true) => (
+                        None if ours && method == "sendVoice" => (
                             "200 OK",
                             "application/json",
                             voice_sent(&state, &raw).into_bytes(),
                         ),
+                        None if ours && method == "sendPhoto" => {
+                            let (status, body) = photo_sent(&state, &raw);
+                            (status, "application/json", body.into_bytes())
+                        }
                         None => {
                             let (status, body) = answer(&state, &request).await;
                             (status, "application/json", body.into_bytes())
@@ -198,17 +211,50 @@ impl TelegramFake {
 
     /// Waits until the bot has sent `chat` `n` voice notes, at most `secs`.
     pub(crate) async fn wait_voices(&self, chat: i64, n: usize, secs: u64) -> Vec<Vec<u8>> {
+        self.wait_until(n, secs, || self.voices_to(chat)).await
+    }
+
+    /// From now on, every photo the bot sends is refused.
+    pub(crate) fn refuse_photos(&self) {
+        self.state.refuse_photos.store(true, Ordering::SeqCst);
+    }
+
+    /// The photos the bot sent `chat`, in order: the file's bytes and the
+    /// caption.
+    pub(crate) fn photos_to(&self, chat: i64) -> Vec<(Vec<u8>, String)> {
+        let photos = self.state.photos.lock().unwrap();
+        photos
+            .iter()
+            .filter(|(to, _, _)| *to == chat)
+            .map(|(_, photo, caption)| (photo.clone(), caption.clone()))
+            .collect()
+    }
+
+    /// Waits until the bot has sent `chat` `n` photos, at most `secs`.
+    pub(crate) async fn wait_photos(
+        &self,
+        chat: i64,
+        n: usize,
+        secs: u64,
+    ) -> Vec<(Vec<u8>, String)> {
+        self.wait_until(n, secs, || self.photos_to(chat)).await
+    }
+
+    /// Waits until `read` holds `n` things, at most `secs`; what it holds
+    /// then either way.
+    async fn wait_until<T>(&self, n: usize, secs: u64, read: impl Fn() -> Vec<T>) -> Vec<T> {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(secs);
         loop {
+            // Armed before the check, so a send between the two is not missed.
             let notified = self.state.sent_any.notified();
             tokio::pin!(notified);
             notified.as_mut().enable();
-            let got = self.voices_to(chat);
+            let got = read();
             if got.len() >= n {
                 return got;
             }
             if tokio::time::timeout_at(deadline, notified).await.is_err() {
-                return self.voices_to(chat);
+                return read();
             }
         }
     }
@@ -239,49 +285,76 @@ impl TelegramFake {
     /// Waits until the bot has sent `chat` `n` texts, at most `secs`; the
     /// texts so far either way.
     pub(crate) async fn wait_texts(&self, chat: i64, n: usize, secs: u64) -> Vec<String> {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(secs);
-        loop {
-            // Armed before the check, so a send between the two is not missed.
-            let notified = self.state.sent_any.notified();
-            tokio::pin!(notified);
-            notified.as_mut().enable();
-            let got = self.texts_to(chat);
-            if got.len() >= n {
-                return got;
-            }
-            if tokio::time::timeout_at(deadline, notified).await.is_err() {
-                return self.texts_to(chat);
-            }
-        }
+        self.wait_until(n, secs, || self.texts_to(chat)).await
     }
+}
+
+/// A multipart form's field by name, as bytes; empty when it has none.
+fn field(fields: &[(String, Vec<u8>)], name: &str) -> Vec<u8> {
+    fields
+        .iter()
+        .find(|(n, _)| n == name)
+        .map(|(_, v)| v.clone())
+        .unwrap_or_default()
+}
+
+/// A multipart form's field by name, as text.
+fn field_text(fields: &[(String, Vec<u8>)], name: &str) -> String {
+    String::from_utf8_lossy(&field(fields, name))
+        .trim()
+        .to_string()
 }
 
 /// `sendVoice`, a multipart form: the voice note kept with its chat, the call
 /// kept as the others are (its fields, without the file), the answer the API's.
 fn voice_sent(state: &State, raw: &[u8]) -> String {
     let fields = multipart_fields(raw);
-    let field = |name: &str| {
-        fields
-            .iter()
-            .find(|(n, _)| n == name)
-            .map(|(_, v)| v.clone())
-            .unwrap_or_default()
-    };
-    let chat: i64 = String::from_utf8_lossy(&field("chat_id"))
-        .trim()
-        .parse()
-        .unwrap_or(0);
-    let duration: u64 = String::from_utf8_lossy(&field("duration"))
-        .trim()
-        .parse()
-        .unwrap_or(0);
-    state.voices.lock().unwrap().push((chat, field("voice")));
+    let chat: i64 = field_text(&fields, "chat_id").parse().unwrap_or(0);
+    let duration: u64 = field_text(&fields, "duration").parse().unwrap_or(0);
+    state
+        .voices
+        .lock()
+        .unwrap()
+        .push((chat, field(&fields, "voice")));
     state.sent.lock().unwrap().push(Sent {
         method: "sendVoice".into(),
         body: serde_json::json!({ "chat_id": chat, "duration": duration }),
     });
     state.sent_any.notify_waiters();
     serde_json::json!({ "ok": true, "result": { "message_id": 1, "date": 0 } }).to_string()
+}
+
+/// `sendPhoto`, a multipart form: the call kept as the others are (its
+/// fields, without the file); the photo kept with its chat and caption — or
+/// refused, as Telegram refuses one it cannot take, when the test asked.
+fn photo_sent(state: &State, raw: &[u8]) -> (&'static str, String) {
+    let fields = multipart_fields(raw);
+    let chat: i64 = field_text(&fields, "chat_id").parse().unwrap_or(0);
+    let caption = field_text(&fields, "caption");
+    state.sent.lock().unwrap().push(Sent {
+        method: "sendPhoto".into(),
+        body: serde_json::json!({ "chat_id": chat, "caption": caption }),
+    });
+    let refused = state.refuse_photos.load(Ordering::SeqCst);
+    if !refused {
+        state
+            .photos
+            .lock()
+            .unwrap()
+            .push((chat, field(&fields, "photo"), caption));
+    }
+    state.sent_any.notify_waiters();
+    if refused {
+        return (
+            "400 Bad Request",
+            r#"{"ok":false,"error_code":400,"description":"Bad Request: PHOTO_INVALID_DIMENSIONS"}"#
+                .into(),
+        );
+    }
+    (
+        "200 OK",
+        serde_json::json!({ "ok": true, "result": { "message_id": 1, "date": 0 } }).to_string(),
+    )
 }
 
 /// The parts of a multipart form, by name, as bytes.

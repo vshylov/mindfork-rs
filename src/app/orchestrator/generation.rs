@@ -1284,7 +1284,8 @@ impl Orchestrator {
             .flatten();
         // What a messenger's turn answers, read before the rows move too.
         let seat = seat.map(|s| {
-            let reply = super::bridge::SeatReply::of(&res.messages, silent, res.woken);
+            let reply =
+                super::bridge::SeatReply::of(&res.messages, &res.effects, silent, res.woken);
             (s, reply)
         });
         // A messenger's turn is not spoken at the terminal: its person is not

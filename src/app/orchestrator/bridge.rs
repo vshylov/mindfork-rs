@@ -20,11 +20,13 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::app::events::AppEvent;
+use crate::entities::chat_file::FileOrigin;
 use crate::entities::message::{Message, MessageFinish, MessageRole};
 use crate::features::bridge::{
     Author, Body, BridgeAction, ChannelFailure, Inbound, InboundEvent, Incoming, MessengerCommand,
     Outbound, Pairing, Picture, PictureError,
 };
+use crate::features::tools::ChatEffect;
 use crate::shared::messenger::telegram::TelegramClient;
 use crate::shared::secrets::SecretKey;
 
@@ -74,12 +76,20 @@ pub(super) struct SeatReply {
     finish: Option<MessageFinish>,
     silent: bool,
     woken: bool,
+    /// The chat's files the turn drew, in order (`image_generate`).
+    drawn: Vec<String>,
 }
 
 impl SeatReply {
-    /// Read off the turn's rows before they move into the chat: the last
-    /// assistant message's words and how it ended.
-    pub(super) fn of(messages: &[Message], silent: bool, woken: bool) -> Self {
+    /// Read off the turn's rows and effects before they move into the chat:
+    /// the last assistant message's words, how it ended, and the pictures the
+    /// turn drew.
+    pub(super) fn of(
+        messages: &[Message],
+        effects: &[ChatEffect],
+        silent: bool,
+        woken: bool,
+    ) -> Self {
         let last = messages
             .iter()
             .rev()
@@ -93,6 +103,15 @@ impl SeatReply {
                 .and_then(|md| md.finish),
             silent,
             woken,
+            drawn: effects
+                .iter()
+                .filter_map(|e| match e {
+                    ChatEffect::AddChatFile(f) if f.origin == FileOrigin::Generated => {
+                        Some(f.name.clone())
+                    }
+                    _ => None,
+                })
+                .collect(),
         }
     }
 }
@@ -257,8 +276,21 @@ impl Orchestrator {
         }
     }
 
-    /// A failure, told once in the terminal (rule 6).
+    /// A failure, told once in the terminal (rule 6). A picture that did not
+    /// go is said to the phone too: its words went without it.
     fn bridge_failed(&mut self, profile: Uuid, failure: ChannelFailure) {
+        if let ChannelFailure::PictureUnsent { name, err } = &failure {
+            let account = self
+                .profiles
+                .iter()
+                .find(|p| p.id == profile)
+                .and_then(|p| p.bridge.account.clone());
+            if let Some(to) = account {
+                let loc = self.profile_lang_locale(profile);
+                let line = loc.tf("bridge.picture_unsent", &[("name", name), ("err", err)]);
+                self.bridge_send(profile, &to, line);
+            }
+        }
         let loc = self.ui_locale();
         let name = self.profile_name(profile);
         let text = match &failure {
@@ -276,6 +308,10 @@ impl Orchestrator {
             ChannelFailure::Unvoiced(err) => loc.tf(
                 "ui.bridge.err.unvoiced",
                 &[("profile", &name), ("err", err)],
+            ),
+            ChannelFailure::PictureUnsent { name: file, err } => loc.tf(
+                "ui.bridge.err.picture_unsent",
+                &[("profile", &name), ("name", file), ("err", err)],
             ),
         };
         let Some(bot) = self.bots.get_mut(&profile) else {
@@ -734,9 +770,55 @@ impl Orchestrator {
             ),
         };
         self.bridge_send(seat.profile, &seat.to, text);
+        self.bridge_pictures_out(seat.profile, &seat.to, seat.turn.chat, reply.drawn);
         if let Some(words) = spoken {
             self.bridge_voice_reply(seat.profile, &seat.to, &words);
         }
+    }
+
+    /// The pictures a seat's turn drew, to the phone after its words, as
+    /// photos in the order they were drawn — however the turn ended, since each
+    /// was paid for and is kept (docs/research/image-generation.md F9). Read
+    /// off the disk away from the orchestrator's thread; the channel makes
+    /// each what its messenger takes. One that cannot be read is told as one
+    /// that was not sent.
+    fn bridge_pictures_out(&self, profile: Uuid, to: &str, chat: Uuid, drawn: Vec<String>) {
+        let Some(bot) = self.bots.get(&profile).filter(|_| !drawn.is_empty()) else {
+            return;
+        };
+        let dir = self.stored_files_dir(chat);
+        let out = bot.tasks.out.clone();
+        let inbound = self.bridge_tx.clone();
+        let bot_key = bot.key;
+        let to = to.to_string();
+        tokio::spawn(async move {
+            for name in drawn {
+                let read = match crate::features::chat_files::confined(&dir, &name) {
+                    Ok(path) => tokio::fs::read(path).await,
+                    Err(err) => Err(err),
+                };
+                match read {
+                    Ok(picture) => {
+                        let _ = out.send(Outbound::Photo {
+                            to: to.clone(),
+                            name,
+                            picture,
+                        });
+                    }
+                    Err(err) => {
+                        tracing::warn!(%profile, error = %err, "bridge: a drawn picture could not be read");
+                        let _ = inbound.send(Inbound {
+                            profile,
+                            bot: bot_key,
+                            event: InboundEvent::Failed(ChannelFailure::PictureUnsent {
+                                name,
+                                err: err.to_string(),
+                            }),
+                        });
+                    }
+                }
+            }
+        });
     }
 
     /// After any turn lands in `chat`: what the messenger sent meanwhile is
@@ -928,4 +1010,31 @@ impl Orchestrator {
 /// Bytes as megabytes, one decimal — what a person reads a size in.
 pub(super) fn megabytes(bytes: u64) -> String {
     format!("{:.1}", bytes as f64 / (1024.0 * 1024.0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::entities::chat_file::ChatFile;
+
+    #[test]
+    fn a_seat_reply_carries_what_the_turn_drew_in_order_and_nothing_else() {
+        let file = |name: &str, origin| {
+            ChatEffect::AddChatFile(Box::new(ChatFile::new(name, origin, b"x")))
+        };
+        let effects = vec![
+            file("image-2.png", FileOrigin::Generated),
+            file("chart.png", FileOrigin::Sandbox),
+            ChatEffect::SetSystemMessage("s".into()),
+            file("image-3.jpg", FileOrigin::Generated),
+        ];
+        let reply = SeatReply::of(&[Message::assistant(" here ")], &effects, false, false);
+        assert_eq!(
+            reply.drawn,
+            ["image-2.png", "image-3.jpg"],
+            "a chart the code wrote stays"
+        );
+        assert_eq!(reply.text.as_deref(), Some("here"));
+        assert!(SeatReply::of(&[], &[], false, false).drawn.is_empty());
+    }
 }

@@ -2,7 +2,8 @@
 //! the orchestrator [`Inbound`] data, and a sender that takes [`Outbound`] data
 //! and writes to Telegram — *typing…* kept up while a turn runs, a reply cut
 //! into messages in Telegram's markup, sent again as plain text when the
-//! markup is refused. Neither holds anything of the orchestrator's.
+//! markup is refused, a picture the turn drew sent as a photo Telegram takes.
+//! Neither holds anything of the orchestrator's.
 //!
 //! A picture is fetched and prepared here, before its message goes up — the
 //! way `/image attach` prepares one (spec §9.10) — and only the paired
@@ -400,11 +401,22 @@ async fn send(
                     Outbound::Voice { to, note, seconds } => {
                         let Ok(chat) = to.parse::<i64>() else { continue };
                         recording.remove(&chat);
-                        if let Err(err) = deliver_voice(&client, chat, note, seconds).await {
+                        let sent = retrying(|| client.send_voice(chat, note.clone(), seconds)).await;
+                        if let Err(err) = sent {
                             tracing::warn!(%profile, error = %err, "bridge: a voice note was not delivered");
                             teller.tell(InboundEvent::Failed(ChannelFailure::Unvoiced(
                                 err.to_string(),
                             )));
+                        }
+                    }
+                    Outbound::Photo { to, name, picture } => {
+                        let Ok(chat) = to.parse::<i64>() else { continue };
+                        if let Err(err) = deliver_photo(&client, chat, &name, picture).await {
+                            tracing::warn!(%profile, error = %err, "bridge: a picture was not delivered");
+                            teller.tell(InboundEvent::Failed(ChannelFailure::PictureUnsent {
+                                name,
+                                err,
+                            }));
                         }
                     }
                 }
@@ -413,17 +425,36 @@ async fn send(
     }
 }
 
-/// A reply's voice note, after the wait Telegram asks for when it says so, and
-/// once more after a network failure.
-async fn deliver_voice(
+/// A drawn picture as a photo, its file's name under it: *sending a photo…*
+/// while it goes up, and the copy Telegram takes made first when the original
+/// is not one (docs/research/image-generation.md F9).
+async fn deliver_photo(
     client: &TelegramClient,
     chat: i64,
-    note: Vec<u8>,
-    seconds: u32,
-) -> Result<(), TelegramError> {
+    name: &str,
+    picture: Vec<u8>,
+) -> Result<(), String> {
+    let _ = client.send_uploading(chat).await;
+    let (photo, mime) =
+        tokio::task::spawn_blocking(move || crate::features::bridge::telegram::photo(picture))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+    retrying(|| client.send_photo(chat, photo.clone(), mime, name))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// One file sent up, after the wait Telegram asks for when it says so, and
+/// once more after a network failure.
+async fn retrying<F, Fut>(mut send: F) -> Result<(), TelegramError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<(), TelegramError>>,
+{
     let mut tries = 0;
     loop {
-        match client.send_voice(chat, note.clone(), seconds).await {
+        match send().await {
             Ok(()) => return Ok(()),
             Err(TelegramError::Refused {
                 retry_after: Some(secs),

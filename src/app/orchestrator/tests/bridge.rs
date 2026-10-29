@@ -949,3 +949,130 @@ async fn an_edit_from_the_settings_screen_keeps_the_bots_and_the_recognisers_key
     );
     b.quit().await;
 }
+
+// ---------- pictures drawn from the phone (docs/research/image-generation.md F9) ----------
+
+/// OpenAI's Images API of the test's own: every one of `n` requests answered
+/// with `picture`.
+async fn picture_server(picture: &[u8], n: usize) -> crate::shared::http_stub::Stub {
+    use base64::Engine as _;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(picture);
+    let body = serde_json::json!({
+        "data": [{ "b64_json": b64 }],
+        "usage": { "input_tokens": 9, "output_tokens": 300 },
+    })
+    .to_string();
+    crate::shared::http_stub::Stub::serving(
+        (0..n)
+            .map(|_| crate::shared::http_stub::json(&body))
+            .collect(),
+    )
+    .await
+}
+
+/// Drawing on — OpenAI, at `url`, with a key stored — and the tool on in the
+/// profile.
+fn draw_at(p: &mut Profile, cfg: &mut AppConfig, url: &str) {
+    let id = crate::features::tools::image_gen::IMAGE_GENERATE_ID.to_string();
+    if !p.enabled_tools.contains(&id) {
+        p.enabled_tools.push(id);
+    }
+    cfg.image_gen.enabled = true;
+    cfg.image_gen.openai.url = Some(url.into());
+    crate::shared::secrets::put_key(
+        &mut cfg.api_keys,
+        &cfg.image_gen.secret_key().storage_name(),
+        "sk-test",
+        || "test".into(),
+    )
+    .unwrap();
+}
+
+/// A turn that draws once and says `words`.
+fn draws_then_says(words: &str) -> Arc<super::subagent::ScriptRecorder> {
+    super::subagent::ScriptRecorder::new(vec![
+        super::subagent::call(
+            "d1",
+            crate::features::tools::image_gen::IMAGE_GENERATE_ID,
+            r#"{"prompt":"a red fox in fresh snow","aspect":"16:9"}"#,
+        ),
+        super::subagent::text(words),
+    ])
+}
+
+#[tokio::test]
+async fn a_picture_drawn_from_the_phone_goes_back_as_a_photo_after_the_words() {
+    let fake = TelegramFake::start("mara_bot", TOKEN).await;
+    let picture = png(48, 27);
+    let images = picture_server(&picture, 1).await;
+    let backend = draws_then_says("Here is your fox.");
+    let Some(b) = start(&fake, backend.clone(), true, |p, cfg, _| {
+        draw_at(p, cfg, &images.url)
+    })
+    .await
+    else {
+        return;
+    };
+    fake.say(ANN, "ann", "draw me a fox");
+    assert_eq!(
+        fake.wait_texts(ANN, 1, 20).await,
+        ["Here is your fox."],
+        "the words first"
+    );
+    assert_eq!(
+        fake.wait_photos(ANN, 1, 20).await,
+        [(picture.clone(), "image-1.png".to_string())],
+        "then the original, byte for byte, under the name the chat keeps it by"
+    );
+    let sent = fake.sent();
+    let at = |method: &str| sent.iter().position(|s| s.method == method).unwrap();
+    assert!(at("sendMessage") < at("sendPhoto"), "{sent:?}");
+    assert!(
+        sent.iter()
+            .any(|s| s.method == "sendChatAction" && s.body["action"] == "upload_photo"),
+        "sending a photo… while it goes up"
+    );
+    assert_eq!(images.requests().len(), 1, "drawn once");
+    let (dir, profile) = b.quit().await;
+    let chat = profile_on_disk(dir.path(), profile).bridge.chat.unwrap();
+    let kept = chat_on_disk(dir.path(), chat);
+    assert!(
+        kept.files.iter().any(|f| f.name == "image-1.png"
+            && f.origin == crate::entities::chat_file::FileOrigin::Generated),
+        "the original stays in the chat's files: {:?}",
+        kept.files
+    );
+}
+
+#[tokio::test]
+async fn a_picture_telegram_refuses_is_said_to_the_phone_and_at_the_terminal() {
+    let fake = TelegramFake::start("mara_bot", TOKEN).await;
+    let images = picture_server(&png(48, 27), 1).await;
+    let backend = draws_then_says("Here is your fox.");
+    let Some(mut b) = start(&fake, backend.clone(), true, |p, cfg, _| {
+        draw_at(p, cfg, &images.url)
+    })
+    .await
+    else {
+        return;
+    };
+    fake.refuse_photos();
+    fake.say(ANN, "ann", "draw me a fox");
+    let texts = fake.wait_texts(ANN, 2, 20).await;
+    assert_eq!(texts.len(), 2, "{texts:?}");
+    assert_eq!(texts[0], "Here is your fox.");
+    assert!(
+        texts[1].contains("image-1.png") && texts[1].contains("PHOTO_INVALID_DIMENSIONS"),
+        "the phone is told which, in Telegram's words: {}",
+        texts[1]
+    );
+    let AppEvent::Error(told) = event(&mut b.rx, |e| matches!(e, AppEvent::Error(_))).await else {
+        unreachable!()
+    };
+    assert!(
+        told.contains("Mara") && told.contains("image-1.png"),
+        "the terminal, once: {told}"
+    );
+    assert!(fake.photos_to(ANN).is_empty());
+    b.quit().await;
+}
