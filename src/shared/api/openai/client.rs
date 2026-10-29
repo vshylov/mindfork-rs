@@ -538,23 +538,20 @@ impl OpenAiClient {
     }
 
     /// The request as this endpoint should receive it. Only a conversation whose
-    /// tool results carry images can differ, and only on an endpoint whose
-    /// catalogue answered for the model — a gateway, where those images are
-    /// re-homed into a user message ([`wire::rehome_tool_images`], fork H1 of
-    /// docs/history/gateway-images-and-continue.md). Every other request, and every request
-    /// to an endpoint that publishes nothing (each llama.cpp), goes out as it came.
-    async fn shaped_for_endpoint(&self, req: ChatRequest) -> ChatRequest {
-        if !wire::carries_tool_images(&req.messages) {
-            return req;
-        }
-        // A gateway by name needs no catalogue to be one; everything else is one
-        // only once its catalogue has answered for the model.
-        if self.gateway.is_none() && self.model_capabilities().await.is_none() {
-            return req;
-        }
+    /// tool results carry images differs: those images are **re-homed** into a user
+    /// message after the run ([`wire::rehome_tool_images`]) — on every endpoint this
+    /// client speaks to, with nothing asked first.
+    ///
+    /// It used to be a gateway's alone, decided by whether the endpoint's catalogue
+    /// answered (fork H1 of docs/history/gateway-images-and-continue.md: routes that
+    /// refused or ignored an image inside a tool message). On llama.cpp the image
+    /// stayed inside, and Gemma 4 answered an English request in JSON after it, 28
+    /// times of 30, against 0 of 29 re-homed, with Qwen 3.8's calls and checks the
+    /// same either way (docs/research/image-generation.md §11.3, fork F11).
+    fn shaped_for_endpoint(&self, req: ChatRequest) -> ChatRequest {
         match wire::rehome_tool_images(&req.messages) {
             Some(messages) => {
-                tracing::debug!("a tool's images re-homed into a user message for a gateway");
+                tracing::debug!("a tool's images re-homed into a user message");
                 ChatRequest { messages, ..req }
             }
             None => req,
@@ -849,7 +846,7 @@ impl EffortWire for OpenAiClient {
 #[async_trait::async_trait]
 impl EngineBackend for OpenAiClient {
     async fn chat_stream(&self, req: ChatRequest, cancel: CancellationToken) -> Result<ChatStream> {
-        let req = self.shaped_for_endpoint(req).await;
+        let req = self.shaped_for_endpoint(req);
         let reasoning = self.reasoning_switch(&req).await;
         let omit_none = self.omit_effort_none_for(&req).await;
         let response = match self.send_chat(&req, omit_none, reasoning, &cancel).await {
@@ -2286,53 +2283,54 @@ mod tests {
         }
     }
 
-    /// Fork H1 on the wire: a gateway — its catalogue answers for the model — receives
-    /// the tool result text-only and the image in a user message after it; a
-    /// llama.cpp, whose catalogue lists the model and nothing else, receives exactly
-    /// the body it always did; and a turn with no tool image does not even ask the
-    /// catalogue, so its first request is the turn itself.
+    /// Fork F11 on the wire (docs/research/image-generation.md §11.3): **every**
+    /// endpoint — a llama.cpp that publishes no catalogue as much as a gateway —
+    /// receives the tool result text-only and the image in a user message after it,
+    /// behind its label, and nothing is asked first: the first request is the turn.
+    /// Fork H1 made it a gateway's alone, decided by the catalogue; on llama.cpp the
+    /// image inside the tool message turned Gemma 4's English replies into JSON.
     #[tokio::test]
-    async fn a_gateway_receives_a_tools_image_in_a_user_message() {
+    async fn every_endpoint_receives_a_tools_image_in_a_user_message() {
         let body_of = |raw: &str| serde_json::from_str::<serde_json::Value>(raw).unwrap();
 
-        let (url, seen) = scripted_server(&[(200, CATALOGUE_BODY), (200, ONE_CHUNK_SSE)]);
-        let client = OpenAiClient::new(url).with_model(Some("deepseek/deepseek-r1".into()));
-        collect_turn(&client, screenshot_round()).await;
-        let sent = body_of(&seen.join().unwrap()[1]);
-        let messages = sent["messages"].as_array().unwrap();
-        assert_eq!(messages.len(), 4, "{messages:?}");
-        assert_eq!(messages[2]["role"], "tool");
-        assert_eq!(messages[2]["content"], "Screenshot taken.");
-        assert_eq!(messages[3]["role"], "user");
-        assert_eq!(
-            messages[3]["content"][1]["image_url"]["url"],
-            "data:image/png;base64,QUJD"
-        );
+        for model in ["gemma-4", "deepseek/deepseek-r1"] {
+            let (url, seen) = scripted_server(&[(200, ONE_CHUNK_SSE)]);
+            let client = OpenAiClient::new(url).with_model(Some(model.into()));
+            collect_turn(&client, screenshot_round()).await;
+            let requests = seen.join().unwrap();
+            assert_eq!(requests.len(), 1, "{model}: nothing asked before the turn");
+            let sent = body_of(&requests[0]);
+            let messages = sent["messages"].as_array().unwrap();
+            assert_eq!(messages.len(), 4, "{model}: {messages:?}");
+            assert_eq!(messages[2]["role"], "tool");
+            assert_eq!(
+                messages[2]["content"], "Screenshot taken.",
+                "{model}: the tool message goes out text-only"
+            );
+            assert_eq!(messages[3]["role"], "user");
+            assert_eq!(
+                messages[3]["content"][0]["text"], "#1",
+                "{model}: the label first"
+            );
+            assert_eq!(
+                messages[3]["content"][1]["image_url"]["url"],
+                "data:image/png;base64,QUJD"
+            );
+        }
 
-        let (url, seen) = scripted_server(&[
-            (200, r#"{"data":[{"id":"gemma-4"}]}"#),
-            (200, ONE_CHUNK_SSE),
-        ]);
+        let (url, seen) = scripted_server(&[(200, ONE_CHUNK_SSE)]);
         let client = OpenAiClient::new(url).with_model(Some("gemma-4".into()));
-        collect_turn(&client, screenshot_round()).await;
+        collect_turn(&client, muted_turn()).await;
         assert_eq!(
-            body_of(&seen.join().unwrap()[1]),
+            body_of(&seen.join().unwrap()[0]),
             serde_json::to_value(wire::build_chat_request(
-                &screenshot_round(),
+                &muted_turn(),
                 true,
                 Some("gemma-4"),
                 false
             ))
             .unwrap(),
-            "an endpoint that publishes nothing gets the body it always got"
-        );
-
-        let (url, seen) = scripted_server(&[(200, ONE_CHUNK_SSE)]);
-        let client = OpenAiClient::new(url).with_model(Some("gemma-4".into()));
-        collect_turn(&client, muted_turn()).await;
-        assert!(
-            seen.join().unwrap()[0].contains("\"messages\""),
-            "the first request is the turn itself, not a catalogue lookup"
+            "a turn with no tool image goes out as it was built"
         );
     }
 

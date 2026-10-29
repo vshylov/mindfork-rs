@@ -29,11 +29,15 @@ fn message_to_api(message: &Message, loc: &Locale) -> Option<ApiMessage> {
             }
         }
         // A tool result can carry images too (spec §9.10): an MCP screenshot tool is the
-        // first producer. Four of the five engines accept them inside the tool result
-        // itself; Gemini refuses with a hard 400 and its builder moves them just after it
-        // (docs/research/mcp-tool-images.md §2.2, fork F1).
+        // first producer. Where each provider puts them is its builder's business — the
+        // OpenAI-compatible client and Gemini's move them into a user message after the
+        // result (docs/research/mcp-tool-images.md §2.2, docs/research/image-generation.md
+        // §11.3) — and each carries the tool's language-free label ([`tool_image_label`]).
         MessageRole::Tool => message.tool_call_id.as_ref().map(|id| {
-            ApiMessage::tool(id, &message.text).with_images(images_to_api(&message.images, loc))
+            ApiMessage::tool(id, &message.text).with_images(tool_images_to_api(
+                &message.images,
+                message.tool_name.as_deref(),
+            ))
         }),
     }
 }
@@ -184,6 +188,40 @@ fn images_to_api(images: &[MessageImage], loc: &Locale) -> Vec<ApiImage> {
                     "prompt.images.label",
                     &[("n", &(i + 1).to_string()), ("name", &image.name)],
                 )),
+            )
+        })
+        .collect()
+}
+
+/// The label a **tool's** picture carries: the tool that returned it and the picture's
+/// name, joined by an arrow — `python_exec → tool-image-3.png:` — with no word of any
+/// language (docs/research/image-generation.md §11.3, fork F11). The colon leads into
+/// the picture, as the user's label's does, and is what a withheld picture's marker
+/// trims ([`withhold_images`]).
+///
+/// Why not the numbered, localized label a user's image gets ([`images_to_api`]): a
+/// tool's picture travels to most engines in a *user* message after the result, and
+/// there a label in the profile's language pulled replies to English requests into
+/// that language — Gemma 4 11 times of 15, Qwen 3.8 3 of 9, under a Russian profile.
+/// Naming the tool also says whose picture it is: behind a bare file name Gemma 4
+/// twice answered as if the person had sent it. `None` — a stored tool message with
+/// no tool name — leaves the name alone.
+pub(super) fn tool_image_label(tool: Option<&str>, name: &str) -> String {
+    match tool.filter(|t| !t.is_empty()) {
+        Some(tool) => format!("{tool} → {name}:"),
+        None => format!("{name}:"),
+    }
+}
+
+/// A tool result's images → the request form, each behind [`tool_image_label`].
+fn tool_images_to_api(images: &[MessageImage], tool: Option<&str>) -> Vec<ApiImage> {
+    images
+        .iter()
+        .map(|image| {
+            ApiImage::new(
+                image.mime.clone(),
+                &image.data,
+                Some(tool_image_label(tool, &image.name)),
             )
         })
         .collect()

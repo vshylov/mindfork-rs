@@ -8723,3 +8723,191 @@ async fn the_model_catalogue_reaches_the_ui_e2e_live() {
     drop(cmd_tx);
     let _ = tokio::time::timeout(Duration::from_secs(5), handle).await;
 }
+
+/// A drawing tool for [`a_tools_picture_leaves_the_reply_prose_live`]: hands back
+/// [`figure_png`] on the field colour the test set for the turn, with a result line
+/// naming the picture — the shape `python_exec` and the image-generation tool give.
+struct DrawSquare {
+    field: Arc<std::sync::Mutex<[u8; 3]>>,
+    drawn: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl crate::features::tools::Tool for DrawSquare {
+    fn id(&self) -> crate::entities::profile::ToolId {
+        "draw_picture".into()
+    }
+    fn description(&self, _loc: &crate::shared::i18n::Locale) -> String {
+        "Draws a picture from a description and saves it in the chat's files. Call it \
+         when the user asks you to draw a picture."
+            .into()
+    }
+    fn parameters(&self, _loc: &crate::shared::i18n::Locale) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {"prompt": {"type": "string", "description": "The picture in words."}},
+            "required": ["prompt"]
+        })
+    }
+    async fn invoke(
+        &self,
+        _ctx: &crate::features::tools::ToolContext,
+        _args: serde_json::Value,
+    ) -> anyhow::Result<crate::features::tools::ToolOutcome> {
+        use base64::Engine as _;
+        let n = 1 + self
+            .drawn
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let field = *self.field.lock().unwrap();
+        let line = format!("Saved as picture-{n}.png (512×512) in the chat's files.");
+        Ok(
+            crate::features::tools::ToolOutcome::text(line.clone()).with_images(vec![
+                crate::features::tools::ToolImage {
+                    mime: "image/png".into(),
+                    data: base64::engine::general_purpose::STANDARD.encode(figure_png(field)),
+                    entry: Some(line),
+                },
+            ]),
+        )
+    }
+    fn group(&self) -> crate::features::tools::meta::ToolGroup {
+        crate::features::tools::meta::ToolGroup::ExternalWorld
+    }
+    fn ui_label(&self) -> &'static str {
+        "draw"
+    }
+}
+
+/// Is a reply the JSON envelope Gemma 4 wrapped its answer in after a picture inside a
+/// tool result — `{"action": "text", "action_input": "Here is…"}` — rather than prose?
+fn json_wrapped(reply: &str) -> bool {
+    let t = reply.trim_start();
+    t.starts_with('{') || t.contains("\"action\"")
+}
+
+#[test]
+fn a_json_envelope_is_told_from_prose() {
+    assert!(json_wrapped(
+        "{\n  \"action\": \"text\",\n  \"action_input\": \"Here is your fox.\"\n}"
+    ));
+    assert!(json_wrapped("```json\n{\"action\": \"none\"}\n```"));
+    assert!(!json_wrapped(
+        "Here is your picture: a white square on red."
+    ));
+    assert!(!json_wrapped("Вот ваш рисунок."));
+}
+
+/// A tool's picture leaves the reply **prose, in the request's language**
+/// (docs/research/image-generation.md §11.3, fork F11). On llama.cpp a picture inside
+/// the tool result turned Gemma 4's replies to English requests into a JSON envelope,
+/// 28 times of 30; re-homed into a user message behind a localized label, they stayed
+/// prose but came back in the profile's Russian 11 times of 15. So: the default
+/// profile's tools plus a drawing tool, a **Russian** profile (the harder case), five
+/// English requests and two Russian ones, each in a new chat; every turn must call the
+/// tool, and no reply may be JSON. English requests answered in Russian are **counted,
+/// not failed**: Qwen 3.8 does it under a Russian profile at its own rate whichever way
+/// the picture travels (2 of 10 inside the result, 3 of 15 re-homed behind the tool's
+/// label), so the count is a measurement; the label's form is held by unit tests.
+/// `MINDFORK_SMOKE_REPEAT` runs the set that many times — the measurement mode.
+///
+/// `#[ignore]`, manual against a live vision model.
+#[tokio::test]
+#[ignore = "requires a live vision model (MINDFORK_ENGINE_URL)"]
+async fn a_tools_picture_leaves_the_reply_prose_live() {
+    const REQUESTS: &[([u8; 3], &str)] = &[
+        ([200, 30, 30], "Draw me a white square on a red background."),
+        (
+            [30, 60, 200],
+            "Please draw a white square on a blue background.",
+        ),
+        (
+            [30, 160, 60],
+            "Can you draw a white square on green for me?",
+        ),
+        (
+            [230, 200, 30],
+            "Draw a white square on a yellow background, nothing else.",
+        ),
+        (
+            [130, 40, 170],
+            "Make me a picture of a white square on purple.",
+        ),
+        ([200, 30, 30], "Нарисуй белый квадрат на красном фоне."),
+        ([30, 60, 200], "Нарисуй белый квадрат на синем фоне."),
+    ];
+    if crate::shared::api::live_text_only() {
+        eprintln!("skip: MINDFORK_LIVE_TEXT_ONLY — this stack has no vision projector");
+        return;
+    }
+    let Some(backend) = live_backend() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let repeat: usize = std::env::var("MINDFORK_SMOKE_REPEAT")
+        .ok()
+        .and_then(|r| r.parse().ok())
+        .unwrap_or(1);
+    let field = Arc::new(std::sync::Mutex::new([0u8; 3]));
+    let tool = Arc::new(DrawSquare {
+        field: Arc::clone(&field),
+        drawn: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let mut cfg = no_auto_cfg();
+    cfg.default_sampling.max_tokens = Some(4096);
+    let (_dir, cmd_tx, mut evt_rx, handle) = spawn_orch_tools(Some(backend), cfg, vec![tool]);
+    let mut tools = crate::features::tools::default_tool_ids();
+    tools.push("draw_picture".into());
+    narrow_profile_to(&cmd_tx, &mut evt_rx, tools).await;
+
+    let cyrillic = |s: &str| s.chars().any(|c| ('\u{0400}'..='\u{04FF}').contains(&c));
+    let (mut uncalled, mut wrapped, mut switched) = (Vec::new(), Vec::new(), Vec::new());
+    let mut first = true;
+    for round in 0..repeat {
+        for (colour, request) in REQUESTS {
+            if !first {
+                cmd_tx
+                    .send(AppCommand::NewChat { profile_id: None })
+                    .unwrap();
+                wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+                    .await
+                    .unwrap();
+            }
+            first = false;
+            *field.lock().unwrap() = *colour;
+            let (reply, calls) = run_turn_capture(&cmd_tx, &mut evt_rx, request).await;
+            let drew = calls.iter().any(|(name, _)| name == "draw_picture");
+            eprintln!(
+                "[{round}] {request}\n  drew: {drew}\n  reply: {}",
+                reply
+                    .chars()
+                    .take(240)
+                    .collect::<String>()
+                    .replace('\n', " ")
+            );
+            let tag = format!("[{round}] {request}");
+            if !drew {
+                uncalled.push(tag.clone());
+            }
+            if json_wrapped(&reply) {
+                wrapped.push(tag.clone());
+            }
+            if !cyrillic(request) && cyrillic(&reply) {
+                switched.push(tag);
+            }
+        }
+    }
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    let total = repeat * REQUESTS.len();
+    eprintln!(
+        "summary: {} of {total} without a call, {} JSON-wrapped, {} English requests answered in Russian",
+        uncalled.len(),
+        wrapped.len(),
+        switched.len()
+    );
+    if !switched.is_empty() {
+        eprintln!("English requests answered in Russian (counted, not failed): {switched:?}");
+    }
+    assert!(uncalled.is_empty(), "turns that drew nothing: {uncalled:?}");
+    assert!(wrapped.is_empty(), "replies wrapped in JSON: {wrapped:?}");
+}

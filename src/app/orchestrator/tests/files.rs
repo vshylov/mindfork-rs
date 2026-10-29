@@ -1082,6 +1082,8 @@ struct ChartingTurn {
     asked: usize,
     /// The names of the images the chat's messages ended up carrying, in order.
     image_names: Vec<String>,
+    /// Every request the engine was handed in the turn, in order.
+    requests: Vec<crate::shared::api::ChatRequest>,
 }
 
 /// One turn in which the model calls `charting` once in each of `rounds` rounds.
@@ -1127,7 +1129,7 @@ async fn charting_turn_with(
     let recorder = ScriptRecorder::new(scripts);
     let asked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let backend: Arc<dyn EngineBackend> = Arc::new(Sighted {
-        inner: recorder,
+        inner: Arc::clone(&recorder),
         vision,
         asked: Arc::clone(&asked),
     });
@@ -1194,6 +1196,7 @@ async fn charting_turn_with(
         folder,
         asked: asked.load(std::sync::atomic::Ordering::Relaxed),
         image_names,
+        requests: recorder.requests(),
     }
 }
 
@@ -1267,6 +1270,23 @@ async fn an_image_a_seeing_model_takes_is_sent_without_a_note() {
         format!("files:\n- chart.png{}", loc.t("loop.image_shown"))
     );
     assert_eq!(files.len(), 1);
+}
+
+/// The round after a tool's picture sends it behind the tool's language-free label —
+/// the same label history replay gives it, so the next request repeats this one's
+/// prefix byte for byte (docs/research/image-generation.md §11.3, fork F11).
+#[tokio::test]
+async fn a_tools_picture_goes_out_behind_the_tools_label() {
+    let ChartingTurn {
+        _root, requests, ..
+    } = charting_turn(VisionSupport::Supported, real_png(), 1).await;
+    let after = requests.last().expect("the round after the call");
+    let labels: Vec<Option<&str>> = after
+        .messages
+        .iter()
+        .flat_map(|m| m.images.iter().map(|i| i.label.as_deref()))
+        .collect();
+    assert_eq!(labels, vec![Some("charting → tool-image-1.png:")]);
 }
 
 /// `prepare_tool_images` drops what it cannot decode — silently, until the result had to

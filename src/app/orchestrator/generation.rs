@@ -3444,14 +3444,15 @@ impl TurnLoop<'_> {
             ApiMessage::tool(&call.id, &result).with_images(
                 images
                     .iter()
-                    .enumerate()
-                    .map(|(i, image)| {
+                    .map(|image| {
                         crate::shared::api::ApiImage::new(
                             image.mime.clone(),
                             &image.data,
-                            Some(self.ctx.loc.tf(
-                                "prompt.images.label",
-                                &[("n", &(i + 1).to_string()), ("name", &image.name)],
+                            // The label history replay gives the same picture, so the
+                            // round's request and every later one agree byte for byte.
+                            Some(super::request::tool_image_label(
+                                Some(&call.name),
+                                &image.name,
                             )),
                         )
                     })

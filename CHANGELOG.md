@@ -29,6 +29,15 @@ split by subsystem.
   reply went quiet until it answered. A piece that is late is now asked for a second
   time, and whichever answer comes first is played; the extra request is paid for only
   when a piece stalls, and the log says when it happened.
+- **Gemma 4 answering in JSON after a tool's picture.** On llama.cpp, when a tool
+  returned a picture — a chart from the Python sandbox, a screenshot from a plugin —
+  Gemma 4 could answer an English request with a block of JSON
+  (`{"action": "text", "action_input": "…"}`) instead of a reply, most often when
+  the reply had little to say about the picture. Every OpenAI-compatible server now
+  gets a tool's picture in a message of its own after the result, as gateways
+  already did, and the picture is labelled by the tool that made it rather than in
+  the profile's language, which kept replies to English requests from coming back
+  in Russian.
 
 ## [0.22.0] — 2026-10-24
 
