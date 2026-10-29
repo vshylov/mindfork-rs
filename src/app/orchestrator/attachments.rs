@@ -580,10 +580,16 @@ impl Orchestrator {
             .collect();
         // The images the conversation carries, numbered on from the rest: the user sees
         // the `#N` the code can name (§12 T4).
+        // A copy of a listed file is listed as that file, as `chat_inputs` lists it,
+        // so the numbers agree.
         let images = chat
             .messages
             .iter()
             .flat_map(|m| m.images.iter())
+            .filter(|im| {
+                !im.file_id
+                    .is_some_and(|id| chat.files.iter().any(|f| f.id == id))
+            })
             .map(crate::entities::message_image::ImageInfo::from)
             .collect();
         self.emit_file_progress(FileProgress::Listed {

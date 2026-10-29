@@ -279,6 +279,9 @@ pub const HELP_COMMANDS: &[(&str, &str)] = &[
     // the terminal's decision (Windows Terminal binds it to its own paste), and an image
     // on the clipboard produces no text for the terminal to inject.
     ("/image paste", "ui.help.image_paste"),
+    // The person's own road to the picture slot (spec §9.15): what it draws is
+    // staged like a pasted picture, and kept in the chat's files besides.
+    ("ui.help.k.image_generate", "ui.help.image_generate"),
     // A project is the third thing attached to *this chat*, after files and
     // images — and the only one the assistant reaches through tools rather than
     // through the prompt (spec §9.12).

@@ -330,6 +330,10 @@ impl SettingsScreen {
                 "ui.settings.field.image_gen_size",
                 "ui.settings.desc.image_gen_size_gateway",
             ),
+            ImageGenProvider::Grok => (
+                "ui.settings.field.image_gen_quality",
+                "ui.settings.desc.image_gen_quality_xai",
+            ),
         };
         rows.push(
             row(

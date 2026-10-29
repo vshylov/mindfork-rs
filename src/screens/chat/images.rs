@@ -62,6 +62,69 @@ impl ChatScreen {
             ImageProgress::Failed(err) => {
                 self.push_error(&self.loc.tf("ui.image.failed", &[("err", &err)]));
             }
+            ImageProgress::Drawing { provider } => {
+                self.push_note(&self.loc.tf("ui.image.drawing", &[("provider", &provider)]));
+            }
+            ImageProgress::Drawn {
+                provider,
+                drawn,
+                info,
+                staged,
+            } => {
+                let msg = self.loc.tf(
+                    "ui.image.drawn",
+                    &[
+                        ("provider", &provider),
+                        ("name", &drawn.name),
+                        ("n", &drawn.handle.to_string()),
+                        ("picture", &drawn_facts(&drawn, self.loc)),
+                        ("tokens", &format_tokens(info.est_tokens)),
+                        ("staged", &staged.to_string()),
+                    ],
+                );
+                self.push_note(&msg);
+            }
+            ImageProgress::Kept {
+                provider,
+                drawn,
+                why,
+            } => {
+                let msg = self.loc.tf(
+                    "ui.image.kept",
+                    &[
+                        ("provider", &provider),
+                        ("name", &drawn.name),
+                        ("n", &drawn.handle.to_string()),
+                        ("picture", &drawn_facts(&drawn, self.loc)),
+                        ("why", &why),
+                    ],
+                );
+                self.push_note(&msg);
+            }
+            ImageProgress::Refused {
+                provider,
+                reason,
+                spent,
+            } => {
+                let charged = spent
+                    .cost_usd
+                    .map(|cost| {
+                        self.loc.tf(
+                            "ui.image.refused_charged",
+                            &[("cost", &format!("{cost:.3}"))],
+                        )
+                    })
+                    .unwrap_or_default();
+                let msg = self.loc.tf(
+                    "ui.image.refused",
+                    &[
+                        ("provider", &provider),
+                        ("reason", reason.trim()),
+                        ("charged", &charged),
+                    ],
+                );
+                self.push_error(&msg);
+            }
         }
     }
 
@@ -82,6 +145,37 @@ impl ChatScreen {
             ],
         ))
     }
+}
+
+/// What a note says about a drawn original: its size, its weight, and what the
+/// provider said it cost — the price where it states one, the tokens where it
+/// counts them, nothing where it says nothing (the app keeps no price list).
+fn drawn_facts(drawn: &crate::features::image_command::DrawnFile, loc: &Locale) -> String {
+    let mut facts = format!(
+        "{}×{}, {}",
+        drawn.width,
+        drawn.height,
+        format_bytes(drawn.bytes)
+    );
+    let spent = &drawn.spent;
+    let said = match (spent.cost_usd, spent.input_tokens, spent.output_tokens) {
+        (Some(cost), _, _) => {
+            Some(loc.tf("ui.image.spent_cost", &[("cost", &format!("{cost:.3}"))]))
+        }
+        (None, None, None) => None,
+        (None, input, output) => Some(loc.tf(
+            "ui.image.spent_tokens",
+            &[
+                ("input", &input.unwrap_or(0).to_string()),
+                ("output", &output.unwrap_or(0).to_string()),
+            ],
+        )),
+    };
+    if let Some(said) = said {
+        facts.push_str(", ");
+        facts.push_str(&said);
+    }
+    facts
 }
 
 /// Formats the `/image list` reply: a header plus one line per staged image with

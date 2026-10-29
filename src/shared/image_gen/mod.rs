@@ -9,8 +9,8 @@
 //! the picture back into the conversation, whatever the chat engine is.
 //!
 //! Two wires (§6.2): the OpenAI shape — OpenAI's own `/images/generations` and
-//! `/images/edits` ([`openai`]) and the gateway's `/images` ([`gateway`]) — and
-//! Gemini's `generateContent` ([`gemini`]). An edit is always a **fresh request**
+//! `/images/edits` ([`openai`]), xAI's dialect of them ([`xai`]) and the gateway's
+//! `/images` ([`gateway`]) — and Gemini's `generateContent` ([`gemini`]). An edit is always a **fresh request**
 //! with the pictures as inputs, never a replay of an image model's conversation,
 //! so no thought signature and no stored response id is ever kept.
 //!
@@ -27,6 +27,7 @@ pub mod gemini;
 #[cfg(test)]
 mod live_tests;
 pub mod openai;
+pub mod xai;
 
 use std::fmt;
 use std::sync::Arc;
@@ -39,7 +40,7 @@ use crate::shared::config::{ImageGenProvider, ImageGenSettings};
 
 /// The shape of the picture: the five the tool offers (§6.3). Each client maps
 /// it to what its provider takes — a pixel size for OpenAI, an aspect ratio for
-/// Gemini and the gateway.
+/// Gemini, xAI and the gateway.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Aspect {
     #[default]
@@ -132,7 +133,7 @@ pub struct ImageRequest {
 }
 
 /// What the provider said the call cost. OpenAI and Gemini count tokens; the
-/// gateway states the price. The app keeps no price list of its own (§6.6).
+/// gateway and xAI state the price. The app keeps no price list of its own (§6.6).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Spent {
     pub input_tokens: Option<u64>,
@@ -191,6 +192,7 @@ pub fn client(cfg: ImageGenConfig) -> Arc<dyn ImageGenerator> {
         ImageGenProvider::OpenAi => Arc::new(openai::OpenAiImages::new(cfg)),
         ImageGenProvider::Gemini => Arc::new(gemini::GeminiImages::new(cfg)),
         ImageGenProvider::OpenRouter => Arc::new(gateway::GatewayImages::new(cfg)),
+        ImageGenProvider::Grok => Arc::new(xai::XaiImages::new(cfg)),
     }
 }
 
@@ -206,8 +208,8 @@ pub struct ImageGenConfig {
     /// the gateway's client alone.
     pub attribution: bool,
     pub model: String,
-    /// OpenAI's `quality`, Gemini's `imageSize`, the gateway's `resolution`;
-    /// `None` — the provider's own default.
+    /// OpenAI's and xAI's `quality`, Gemini's `imageSize`, the gateway's
+    /// `resolution`; `None` — the provider's own default.
     pub quality: Option<String>,
     pub base_url: String,
     pub api_key: String,
@@ -522,6 +524,25 @@ mod tests {
         assert_eq!(
             resolve(&s, Some("k".into()), true).config.unwrap().base_url,
             "https://openai.example/v1"
+        );
+    }
+
+    /// xAI is read from its own section, at its own address, with the engine's
+    /// stored key for the same provider.
+    #[test]
+    fn xai_draws_from_its_own_section_and_address() {
+        let s = ImageGenSettings {
+            provider: ImageGenProvider::Grok,
+            ..Default::default()
+        };
+        let cfg = resolve(&s, Some("k".into()), true).config.unwrap();
+        assert_eq!(cfg.model, "grok-imagine-image-2.0");
+        assert_eq!(cfg.quality.as_deref(), Some("auto"));
+        assert_eq!(cfg.base_url, "https://api.x.ai/v1");
+        assert!(!cfg.attribution, "the switch is the gateway's");
+        assert_eq!(
+            s.secret_key(),
+            crate::shared::secrets::SecretKey::Provider(CloudProvider::Grok)
         );
     }
 

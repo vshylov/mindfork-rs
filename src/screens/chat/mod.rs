@@ -280,6 +280,12 @@ pub enum ChatIntent {
     },
     /// Show the images staged for the next message (command `/image list`).
     ImageList,
+    /// Draw a picture, keep it in the chat's files and stage it for the next
+    /// message (command `/image generate [ratio] <description>`). See spec §9.15.
+    ImageGenerate {
+        prompt: String,
+        aspect: crate::shared::image_gen::Aspect,
+    },
     /// Stage the image on the system clipboard (`Ctrl+V`, command `/image paste`).
     ///
     /// The clipboard is read by `runtime`, not here and not by the orchestrator — it is a

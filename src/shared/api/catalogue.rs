@@ -16,7 +16,7 @@
 //! | Anthropic | `GET {base}/v1/models` | the route itself: the Messages API has only chat models |
 //! | xAI | `GET {base}/language-models` | the route itself: the language half of a catalogue that also holds image and video models |
 //! | DeepSeek | `GET {base}/models` | the route itself: an API with chat models alone — and the window besides |
-//! | OpenRouter | `GET {base}/models/user`, `/models`, `/embeddings/models`, `…?output_modalities=speech`, `…?input_modalities=video` | `architecture.output_modalities` and `input_modalities` — and the window, the price, the parameters and the voices besides |
+//! | OpenRouter | `GET {base}/models/user`, `/models`, `/embeddings/models`, `…?output_modalities=speech`, `…?input_modalities=video`, `/images/models` | `architecture.output_modalities` and `input_modalities` — and the window, the price, the parameters and the voices besides; the picture models' list, the route itself |
 //!
 //! Hence [`ModelRole::Unstated`], which is **not** "it does nothing": where the
 //! endpoint publishes no claim, none is invented, and every model it lists is
@@ -86,6 +86,12 @@ pub enum CatalogueShape {
     /// entries are narrowed here, by the `input_modalities` each of them
     /// publishes ([`ModelFacts::video`], docs/research/openrouter-mode.md §14).
     OpenRouterVideo,
+    /// The same gateway's models that **draw** — `GET /images/models`, the list
+    /// of the very route the picture slot's client draws on, public and the
+    /// same with a key (62 entries either way, 2026-10-30). Each entry says what
+    /// it takes as an object of typed parameters, not as the chat list's array
+    /// of names (docs/research/image-generation.md §3.4, §14).
+    OpenRouterImages,
 }
 
 /// What the endpoint said a model is for.
@@ -104,6 +110,8 @@ pub enum ModelRole {
     Speech,
     /// The endpoint says this model turns speech into text.
     Transcription,
+    /// The endpoint says this model draws pictures.
+    Image,
     /// The endpoint says this model does something else (Gemini's video, music
     /// and live-only models).
     Other,
@@ -134,6 +142,11 @@ pub enum ModelSlot {
     /// The model that watches a video for `youtube_watch`. One provider of that
     /// slot has a catalogue — the gateway.
     Video,
+    /// The model that draws for `image_generate` and `/image generate`. One
+    /// provider of that slot has a catalogue — the gateway: OpenAI's list says
+    /// nothing of what a model does, and Gemini's calls its picture models chat
+    /// models (docs/research/image-generation.md §6.1).
+    Image,
 }
 
 /// One entry of a provider's catalogue, reduced to what a picker needs.
@@ -199,6 +212,9 @@ pub struct ModelFacts {
     /// `Some(false)` — it lists its inputs and video is not among them; `None` —
     /// it lists none. What a row is narrowed by, not what a row shows.
     pub video: Option<bool>,
+    /// Whether a picture model changes pictures given to it: `Some(false)` —
+    /// its entry takes no `input_references`, so it can only draw a new one.
+    pub edits: Option<bool>,
 }
 
 impl ModelFacts {
@@ -301,6 +317,8 @@ impl CatalogueRequest {
             }
             CatalogueShape::OpenRouterVideo if self.key.is_some() => format!("{base}/models/user"),
             CatalogueShape::OpenRouterVideo => format!("{base}/models?input_modalities=video"),
+            // Public, and the same list with a key: there is no account's own.
+            CatalogueShape::OpenRouterImages => format!("{base}/images/models"),
         }
     }
 }
@@ -512,6 +530,17 @@ pub fn parse(shape: CatalogueShape, body: &str) -> Result<Vec<CatalogModel>, Cat
             v.sort_by_key(|(created, _)| std::cmp::Reverse(*created));
             v.into_iter().map(|(_, m)| m).collect()
         }
+        CatalogueShape::OpenRouterImages => {
+            let list: GatewayImageList = serde_json::from_str(body).map_err(unreadable)?;
+            let mut v: Vec<_> = list
+                .data
+                .into_iter()
+                .filter(|e| !e.id.is_empty() && e.answers_with_a_raster())
+                .map(|e| (e.created.unwrap_or(0), e.into_model()))
+                .collect();
+            v.sort_by_key(|(created, _)| std::cmp::Reverse(*created));
+            v.into_iter().map(|(_, m)| m).collect()
+        }
     };
     // A catalogue that lists the same id twice (an alias published as its own
     // entry) would offer the same line twice.
@@ -595,7 +624,7 @@ fn rank(m: &CatalogModel, slot: ModelSlot) -> u8 {
         ),
         // The one catalogue this slot reads says what every entry is for, so
         // there is no name to guess from: the endpoint's order stands.
-        ModelSlot::Speech | ModelSlot::Transcription => 0,
+        ModelSlot::Speech | ModelSlot::Transcription | ModelSlot::Image => 0,
         // Gemini first. Every entry listed claims video, and the list is
         // narrowed by that claim alone; that the Gemini family is the one that
         // takes a YouTube **link** — the others go to download it, and refuse —
@@ -623,6 +652,7 @@ pub fn for_slot(models: Vec<CatalogModel>, slot: ModelSlot) -> Vec<CatalogModel>
             (ModelSlot::Embedder, role) => role == ModelRole::Embedding,
             (ModelSlot::Speech, role) => role == ModelRole::Speech,
             (ModelSlot::Transcription, role) => role == ModelRole::Transcription,
+            (ModelSlot::Image, role) => role == ModelRole::Image,
             // What answers with text and takes video — or has not said what it
             // takes, which is silence.
             (ModelSlot::Video, role) => role == ModelRole::Chat && m.facts.video != Some(false),
@@ -783,6 +813,9 @@ impl GatewayEntry {
                 .and_then(|i| i.as_array())
                 .filter(|list| !list.is_empty())
                 .map(|list| list.iter().any(|m| m.as_str() == Some("video"))),
+            // The chat list says nothing of changing pictures; the picture
+            // models' own list does ([`GatewayImageEntry`]).
+            edits: None,
         };
         CatalogModel {
             id: self.id,
@@ -806,6 +839,71 @@ fn price_per_million(per_token: &serde_json::Value) -> Option<u64> {
         _ => return None,
     };
     (dollars.is_finite() && dollars >= 0.0).then(|| (dollars * 1e12).round() as u64)
+}
+
+#[derive(Deserialize)]
+struct GatewayImageList {
+    #[serde(default)]
+    data: Vec<GatewayImageEntry>,
+}
+
+/// One entry of the gateway's list of picture models. Read leniently, like the
+/// chat list's: a field that changes its shape costs that one fact.
+#[derive(Deserialize)]
+struct GatewayImageEntry {
+    id: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    created: Option<i64>,
+    /// `{"resolution": {"type": "enum", "values": […]}, "input_references":
+    /// {"type": "range", "max": 10}, …}` — an object, where the chat list has
+    /// an array of names.
+    #[serde(default)]
+    supported_parameters: Option<serde_json::Value>,
+}
+
+impl GatewayImageEntry {
+    /// Whether the picture comes back as one the app can keep. Six of the 62
+    /// list `output_format` as `svg` alone (Recraft's vector models): a drawing
+    /// as markup, which the client cannot read as a picture — a paid picture
+    /// thrown away. Narrowed on the entry's own claim; an entry that lists no
+    /// format is offered.
+    fn answers_with_a_raster(&self) -> bool {
+        let formats = self
+            .supported_parameters
+            .as_ref()
+            .and_then(|p| p.pointer("/output_format/values"))
+            .and_then(serde_json::Value::as_array);
+        formats.is_none_or(|list| {
+            list.iter()
+                .filter_map(serde_json::Value::as_str)
+                .any(|f| f != "svg")
+        })
+    }
+
+    fn into_model(self) -> CatalogModel {
+        let edits = self
+            .supported_parameters
+            .as_ref()
+            .filter(|p| p.is_object())
+            .map(|p| {
+                p.pointer("/input_references/max")
+                    .and_then(serde_json::Value::as_u64)
+                    .is_some_and(|max| max > 0)
+            });
+        CatalogModel {
+            id: self.id,
+            display: self.name.filter(|n| !n.is_empty()),
+            role: ModelRole::Image,
+            retiring: None,
+            facts: ModelFacts {
+                edits,
+                ..ModelFacts::default()
+            },
+            voices: Vec::new(),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -1471,6 +1569,7 @@ mod tests {
                 tools: Some(c[4] == "yes").filter(|_| c[4] != "-"),
                 // What an entry takes as input has a test of its own.
                 video: got.video,
+                edits: None,
             };
             if got != want {
                 wrong.push(format!("{} — {}: {got:?}", c[0], why.trim()));
@@ -1565,10 +1664,83 @@ mod tests {
             url(CatalogueShape::OpenRouterTranscription, None),
             "https://openrouter.ai/api/v1/models?output_modalities=transcription"
         );
+        // The picture models: one list, public, the same with a key.
+        for key in [None, Some("k")] {
+            assert_eq!(
+                url(CatalogueShape::OpenRouterImages, key),
+                "https://openrouter.ai/api/v1/images/models"
+            );
+        }
         // No other shape asks a different route for having a key.
         assert_eq!(
             url(CatalogueShape::OpenAi, Some("k")),
             url(CatalogueShape::OpenAi, None)
+        );
+    }
+
+    /// Trimmed from `GET /images/models` as it answered on 2026-10-30: the
+    /// parameters an object of typed entries, a vector model that answers in
+    /// SVG alone, one that cannot change a picture, and one that says nothing
+    /// of what it takes.
+    const GATEWAY_IMAGES_BODY: &str = r#"{"data":[
+        {"id":"black-forest-labs/flux-3-image","name":"Black Forest Labs: FLUX-3","created":1790000000,
+         "architecture":{"input_modalities":["text","image"],"output_modalities":["image"]},
+         "supported_parameters":{"resolution":{"type":"enum","values":["768","1K","2K","4K"]},
+            "input_references":{"type":"range","min":0,"max":10}},
+         "supports_streaming":false,"endpoints":"/api/v1/images/models/black-forest-labs/flux-3-image/endpoints"},
+        {"id":"sourceful/riverflow-v2.6-pro","name":"Sourceful: Riverflow V2.6 Pro","created":1793289528,
+         "supported_parameters":{"output_format":{"type":"enum","values":["png","jpeg","webp"]},
+            "input_references":{"type":"range","min":0,"max":10}}},
+        {"id":"recraft/recraft-v4-vector","name":"Recraft: Recraft V4 Vector","created":1791000000,
+         "supported_parameters":{"output_format":{"type":"enum","values":["svg"]},
+            "input_references":{"type":"range","min":0,"max":1}}},
+        {"id":"recraft/recraft-v4.1-flash","name":"Recraft: Recraft V4.1 Flash","created":1792000000,
+         "supported_parameters":{"aspect_ratio":{"type":"enum","values":["1:1"]}}},
+        {"id":"odd/undescribed","created":1780000000},
+        {"id":"","created":1795000000}
+    ]}"#;
+
+    /// Every entry of the list draws; it is newest first, as the chat lists
+    /// are; a model that answers in SVG alone is left out on its own entry's
+    /// word; and whether a model changes pictures is read from its
+    /// `input_references` — unknown, not "no", where the entry lists nothing.
+    #[test]
+    fn the_gateways_picture_models_draw_and_say_whether_they_change_pictures() {
+        let listed = parse(CatalogueShape::OpenRouterImages, GATEWAY_IMAGES_BODY).expect("a list");
+        let ids: Vec<&str> = listed.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "sourceful/riverflow-v2.6-pro",
+                "recraft/recraft-v4.1-flash",
+                "black-forest-labs/flux-3-image",
+                "odd/undescribed",
+            ],
+            "newest first, the SVG-only model and the nameless entry left out"
+        );
+        assert!(listed.iter().all(|m| m.role == ModelRole::Image));
+        let edits = |id: &str| listed.iter().find(|m| m.id == id).unwrap().facts.edits;
+        assert_eq!(edits("black-forest-labs/flux-3-image"), Some(true));
+        assert_eq!(edits("recraft/recraft-v4.1-flash"), Some(false));
+        assert_eq!(edits("odd/undescribed"), None);
+        assert_eq!(
+            listed[0].display.as_deref(),
+            Some("Sourceful: Riverflow V2.6 Pro")
+        );
+        // The slot keeps them all and in the endpoint's order; no other slot
+        // takes a model that draws.
+        assert_eq!(for_slot(listed.clone(), ModelSlot::Image), listed);
+        for slot in [
+            ModelSlot::Assistant,
+            ModelSlot::Embedder,
+            ModelSlot::Speech,
+            ModelSlot::Video,
+        ] {
+            assert!(for_slot(listed.clone(), slot).is_empty(), "{slot:?}");
+        }
+        assert_eq!(
+            parse(CatalogueShape::OpenRouterImages, "<html>"),
+            Err(CatalogueError::Unreadable)
         );
     }
 }
@@ -1613,6 +1785,36 @@ mod live_smoke {
         })
         .await
         .expect("the catalogue answered")
+    }
+
+    /// The gateway's picture models, from the public list: what the picker
+    /// offers the picture slot. Free, and needs no key.
+    #[tokio::test]
+    #[ignore = "reaches openrouter.ai (a public list, no key)"]
+    async fn the_gateways_picture_catalogue_e2e_live() {
+        let models = fetched(
+            CatalogueShape::OpenRouterImages,
+            "https://openrouter.ai/api/v1",
+            None,
+        )
+        .await;
+        let drawing_only = models
+            .iter()
+            .filter(|m| m.facts.edits == Some(false))
+            .count();
+        eprintln!(
+            "openrouter images: {} entries, {drawing_only} cannot change a picture",
+            models.len()
+        );
+        for m in models.iter().take(5) {
+            eprintln!("    {} {:?} edits {:?}", m.id, m.display, m.facts.edits);
+        }
+        assert!(models.len() >= 20, "the gateway lists dozens");
+        assert!(models.iter().all(|m| m.role == ModelRole::Image));
+        assert!(
+            models.iter().all(|m| !m.id.contains("vector")),
+            "the SVG-only models are left out"
+        );
     }
 
     #[tokio::test]

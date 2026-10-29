@@ -161,9 +161,13 @@ pub(super) fn ledgers() -> Vec<Ledger> {
         ledger!(MediaResolution in Settings { 1 => [Low = "low", Medium = "medium"] }),
         // The picture slot came with an enum of its own, which an older reader
         // skips whole with its section: the schema of the first release that
-        // wrote it.
+        // wrote it. `grok` (stage 3) was added before that release, so it
+        // arrives with the section, not after it.
         ledger!(ImageGenProvider in Settings {
-            7 => [OpenAi = "openai", Gemini = "gemini", OpenRouter = "openrouter"],
+            7 => [
+                OpenAi = "openai", Gemini = "gemini", OpenRouter = "openrouter",
+                Grok = "grok",
+            ],
         }),
         ledger!(EmbedConvention in Settings {
             1 => [None = "none", E5 = "e5", E5Instruct = "e5-instruct"],

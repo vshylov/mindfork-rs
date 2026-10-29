@@ -98,7 +98,7 @@ use self::background::BgSlot;
 use self::compaction::{CompactResult, ContextDiscovery};
 use self::engines::EngineManager;
 use self::generation::{GenMessage, TurnProgress};
-use self::images::{ImageAttachResult, StagedImages};
+use self::images::{ImageAttachResult, ImageDrawResult, StagedImages};
 use self::mcp::{McpEvent, McpManager};
 use self::restart_queue::RestartQueue;
 use self::save_queue::SaveQueue;
@@ -256,6 +256,8 @@ pub async fn run(deps: OrchestratorDeps) {
     // The same shape for `/image attach`: decoding and downscaling a photo is far too
     // slow to run on the command loop.
     let (image_tx, mut image_rx) = unbounded_channel::<ImageAttachResult>();
+    // And for `/image generate`: a picture takes ten to thirty seconds to draw.
+    let (draw_tx, mut draw_rx) = unbounded_channel::<ImageDrawResult>();
     // And for `/file open`: the shell call blocks until the handler has started, and what
     // it answers is addressed to the chat it was asked in (`handle_open_result`).
     let (open_tx, mut open_rx) = unbounded_channel::<OpenResult>();
@@ -308,6 +310,7 @@ pub async fn run(deps: OrchestratorDeps) {
         rag_cancel: None,
         attach_tx,
         image_tx,
+        draw_tx,
         open_tx,
         staged_images: StagedImages::default(),
         tts_cancel: None,
@@ -473,6 +476,11 @@ pub async fn run(deps: OrchestratorDeps) {
             res = image_rx.recv() => {
                 if let Some(res) = res {
                     orch.handle_image_result(res);
+                }
+            }
+            res = draw_rx.recv() => {
+                if let Some(res) = res {
+                    orch.handle_draw_result(res);
                 }
             }
             res = attach_rx.recv() => {
@@ -819,6 +827,8 @@ struct Orchestrator {
     /// Channel for results of reading/decoding an attached image (`/image attach`,
     /// a background task → the loop). See [`images`].
     image_tx: UnboundedSender<ImageAttachResult>,
+    /// Channel for what `/image generate` drew ([`ImageDrawResult`]).
+    draw_tx: UnboundedSender<ImageDrawResult>,
     /// Channel for what a launch handed to the desktop's handler came back as (`/file open`,
     /// `/file folder`; a blocking task → the loop). See [`attachments`].
     open_tx: UnboundedSender<OpenResult>,
@@ -1091,6 +1101,9 @@ impl Orchestrator {
             AppCommand::ImageAttach { path } => self.handle_image_attach(path),
             AppCommand::ImageRemove { target } => self.handle_image_remove(target),
             AppCommand::ImageList => self.handle_image_list(),
+            AppCommand::ImageGenerate { prompt, aspect } => {
+                self.handle_image_generate(prompt, aspect)
+            }
             AppCommand::ImagePaste(image) => self.handle_image_paste(*image),
             AppCommand::Tts(scope) => self.handle_tts(scope),
             AppCommand::TtsStop => self.stop_tts(),

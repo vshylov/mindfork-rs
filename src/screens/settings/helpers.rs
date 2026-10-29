@@ -1560,16 +1560,19 @@ pub(super) fn index_menu<T: Copy + PartialEq>(
     (opts, idx)
 }
 
-/// The values the picture slot's quality row cycles through: OpenAI's
-/// qualities, or the sizes Gemini and the gateway take (spec §9.15).
+/// The values the picture slot's quality row cycles through: OpenAI's and
+/// xAI's qualities, or the sizes Gemini and the gateway take (spec §9.15).
+/// Every provider named: one added later must say what its row offers.
 pub(super) fn image_gen_qualities(
     provider: crate::shared::config::ImageGenProvider,
 ) -> &'static [&'static str] {
+    use crate::shared::config::{
+        IMAGE_GEN_OPENAI_QUALITIES, IMAGE_GEN_SIZES, IMAGE_GEN_XAI_QUALITIES, ImageGenProvider,
+    };
     match provider {
-        crate::shared::config::ImageGenProvider::OpenAi => {
-            &crate::shared::config::IMAGE_GEN_OPENAI_QUALITIES
-        }
-        _ => &crate::shared::config::IMAGE_GEN_SIZES,
+        ImageGenProvider::OpenAi => &IMAGE_GEN_OPENAI_QUALITIES,
+        ImageGenProvider::Gemini | ImageGenProvider::OpenRouter => &IMAGE_GEN_SIZES,
+        ImageGenProvider::Grok => &IMAGE_GEN_XAI_QUALITIES,
     }
 }
 

@@ -882,6 +882,9 @@ pub(super) fn dispatch(
         ChatIntent::ImageAttach { path } => AppCommand::ImageAttach { path },
         ChatIntent::ImageRemove { target } => AppCommand::ImageRemove { target },
         ChatIntent::ImageList => AppCommand::ImageList,
+        ChatIntent::ImageGenerate { prompt, aspect } => {
+            AppCommand::ImageGenerate { prompt, aspect }
+        }
         ChatIntent::Tts(scope) => AppCommand::Tts(scope),
         ChatIntent::TtsStop => AppCommand::TtsStop,
         ChatIntent::TtsPause => AppCommand::TtsPause,

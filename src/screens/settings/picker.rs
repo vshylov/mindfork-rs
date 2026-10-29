@@ -93,6 +93,12 @@ pub(super) fn model_slot(config: &AppConfig, id: FieldId) -> Option<ModelSlot> {
         FieldId::VideoModel if config.video.provider == VideoProvider::OpenRouter => {
             Some(ModelSlot::Video)
         }
+        // The picture row, likewise: the gateway lists the models its picture
+        // route takes (docs/research/image-generation.md §6.1). The other
+        // providers' rows stay the typed fields they are.
+        FieldId::IgModel if config.image_gen.provider == ImageGenProvider::OpenRouter => {
+            Some(ModelSlot::Image)
+        }
         _ => None,
     }
 }
@@ -201,6 +207,14 @@ impl SettingsScreen {
                     format!("{:?}", cfg.video.provider),
                     (section.url.as_deref(), section.api_key_env.as_deref()),
                     Some(cfg.video.secret_key()),
+                )
+            }
+            ModelSlot::Image => {
+                let section = &cfg.image_gen.openrouter;
+                (
+                    format!("{:?}", cfg.image_gen.provider),
+                    (section.url.as_deref(), section.api_key_env.as_deref()),
+                    Some(cfg.image_gen.secret_key()),
                 )
             }
             ModelSlot::Transcription => {
@@ -462,9 +476,18 @@ impl SettingsScreen {
     /// character (50 characters cost 50 × its `prompt` price) and Gemini's per
     /// token — so "per 1M tokens" beside it would be our claim, and a wrong
     /// one (docs/research/openrouter-mode.md §13).
+    ///
+    /// A **picture** model's row is its id, marked when it can only draw a new
+    /// picture: changing one is the second thing anyone asks for (F4), and the
+    /// list publishes no price — that is behind one request per model.
     pub(super) fn picker_label(&self, m: &CatalogModel) -> String {
         let mut line = m.id.clone();
-        if m.role == ModelRole::Speech {
+        if m.role == ModelRole::Image {
+            if m.facts.edits == Some(false) {
+                line.push_str(" · ");
+                line.push_str(self.loc().t("ui.settings.models.draws_only"));
+            }
+        } else if m.role == ModelRole::Speech {
             if !m.voices.is_empty() {
                 line.push_str(" · ");
                 line.push_str(&self.loc().tf(
@@ -682,6 +705,7 @@ mod tests {
             completion_price: price.map(|p| p.1),
             tools,
             video: None,
+            edits: None,
         }
     }
 
@@ -743,6 +767,35 @@ mod tests {
             s.picker_label(&leaving),
             "openai/gpt-4-turbo · 128K context · $10.00 in / $30.00 out per 1M tokens \
              · retiring 2026-11-01"
+        );
+    }
+
+    /// A picture model's row is its id, and a mark when it can only draw a
+    /// new picture — the name repeats the id, and the list has no price.
+    #[test]
+    fn a_picture_models_row_says_when_it_cannot_change_a_picture() {
+        use crate::shared::api::catalogue::{CatalogueShape, parse};
+        let mut config = AppConfig::default();
+        config.interface.language = crate::shared::i18n::Lang::En;
+        let s = SettingsScreen::new(config, vec![], vec![]);
+        let listed = parse(
+            CatalogueShape::OpenRouterImages,
+            r#"{"data":[
+                {"id":"black-forest-labs/flux-3-image","name":"Black Forest Labs: FLUX-3","created":2,
+                 "supported_parameters":{"input_references":{"type":"range","min":0,"max":10}}},
+                {"id":"recraft/recraft-v4.1-flash","name":"Recraft: V4.1 Flash","created":1,
+                 "supported_parameters":{"aspect_ratio":{"type":"enum","values":["1:1"]}}},
+                {"id":"odd/undescribed","created":0}]}"#,
+        )
+        .expect("a catalogue");
+        let rows: Vec<String> = listed.iter().map(|m| s.picker_label(m)).collect();
+        assert_eq!(
+            rows,
+            [
+                "black-forest-labs/flux-3-image",
+                "recraft/recraft-v4.1-flash · new pictures only",
+                "odd/undescribed",
+            ]
         );
     }
 

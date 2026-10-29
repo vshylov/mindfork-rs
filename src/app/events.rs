@@ -248,6 +248,14 @@ pub enum AppCommand {
     /// Show what is staged for the next message (`/image list`). The result is an
     /// `ImageProgress::Listed` event.
     ImageList,
+    /// Draw a picture with the picture slot's provider, keep it in the active
+    /// chat's files and stage it for the next message (`/image generate`, spec
+    /// §9.15). The drawing runs as a background task; the outcome arrives as
+    /// `ImageProgress` events.
+    ImageGenerate {
+        prompt: String,
+        aspect: crate::shared::image_gen::Aspect,
+    },
     /// Stage an image read off the system clipboard (`Ctrl+V`, `/image paste`).
     ///
     /// Carries the pixels rather than a request to read them: the `arboard` client lives
@@ -378,6 +386,9 @@ impl AppCommand {
             | AppCommand::Compact
             | AppCommand::FileAttach { .. }
             | AppCommand::FileRemove { .. }
+            // A drawn picture is kept in the chat's files, which the chat
+            // stores — not only staged, as an attached image is.
+            | AppCommand::ImageGenerate { .. }
             // Attaching or detaching a project changes what this chat's turns
             // can reach, and is stored in the chat file.
             | AppCommand::ProjectAttach { .. }

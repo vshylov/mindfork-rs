@@ -1,4 +1,5 @@
-//! Image attachments (`/image attach|remove|list`, spec §9.10).
+//! Image attachments (`/image attach|remove|list|paste`, spec §9.10) — and the
+//! pictures `/image generate` draws (spec §9.15), which are staged the same way.
 //!
 //! An image is **staged for the next message**, not pinned to the chat (fork F1 of
 //! docs/research/multimodal-images.md): every provider takes images as message content
@@ -24,15 +25,49 @@ use uuid::Uuid;
 
 use crate::app::events::AppEvent;
 use crate::entities::attachment::{Resolved, handle_number, handle_range, name_is_shared};
+use crate::entities::chat_file::ChatFile;
 use crate::entities::message_image::{MessageImage, infos, resolve_target};
-use crate::features::image_command::ImageProgress;
+use crate::features::image_command::{DrawnFile, ImageProgress};
 use crate::features::image_fetch::{self, FetchError, FetchedImage};
 use crate::features::image_prepare::{PrepareError, PreparedImage, prepare, prepare_rgba};
 use crate::shared::api::VisionSupport;
 use crate::shared::config::{ImageSettings, ServerMode};
 use crate::shared::i18n::Locale;
+use crate::shared::image_gen::{Aspect, Drawing, ImageRequest, Missing, Picture, Spent};
 
 use super::Orchestrator;
+
+/// A drawn picture whose original is in the chat's folder.
+pub(super) struct KeptPicture {
+    file: ChatFile,
+    width: u32,
+    height: u32,
+    bytes: usize,
+    spent: Spent,
+    /// The copy for the next message, or why there is none (localized).
+    staged: Result<MessageImage, String>,
+    vision: VisionSupport,
+}
+
+/// What a picture `/image generate` asked for came to (internal channel). The
+/// drawing, the keeping and the preparing run off the command loop — a picture
+/// takes ten to thirty seconds — and the chat is changed here, by its owner.
+pub(super) struct ImageDrawResult {
+    /// The chat the command was typed in; it may no longer be the active one.
+    pub(super) chat_id: Uuid,
+    /// Who drew, as the notes name it.
+    pub(super) provider: &'static str,
+    pub(super) outcome: DrawOutcome,
+}
+
+pub(super) enum DrawOutcome {
+    /// The provider drew and the original is in the chat's folder.
+    Drawn(Box<KeptPicture>),
+    /// The provider would not draw it.
+    Refused { reason: String, spent: Spent },
+    /// Nothing was drawn, or nothing kept — already in the interface language.
+    Failed(String),
+}
 
 /// An image read and prepared by the background task (internal channel).
 pub(super) struct ImageAttachResult {
@@ -142,6 +177,187 @@ impl Orchestrator {
             image: Box::new(image),
             name,
         }));
+    }
+
+    /// Draws a picture with the picture slot's provider (`/image generate`, spec
+    /// §9.15, docs/research/image-generation.md §6.5): the person's own road to the
+    /// slot — no tool, no model, no round. The original is kept in the chat's files
+    /// as the tool keeps one, and a copy staged for the next message as a pasted
+    /// picture is; sending it is what shows the model.
+    ///
+    /// Refused before anything is paid for when the slot is off (one switch for
+    /// both roads, F7), lacks a key or a model, or the next message has no room
+    /// for another picture. No ceiling per turn and no stop after a refusal: those
+    /// bound what a *model* spends, and this is the person asking.
+    pub(super) fn handle_image_generate(&mut self, prompt: String, aspect: Aspect) {
+        let loc = self.ui_locale();
+        let Some(chat_id) = self.active_id else {
+            self.fail_image(loc.t("ui.err.image_no_active_chat"));
+            return;
+        };
+        if !self.config.image_gen.enabled {
+            self.fail_image(loc.t("ui.image.generate_off"));
+            return;
+        }
+        let slot = super::image_gen_slot(&self.config);
+        let provider = slot.provider.cloud_provider().display_name();
+        let cfg = match slot.config {
+            Ok(cfg) => cfg,
+            Err(missing) => {
+                let key = match missing {
+                    Missing::Model => "ui.image.generate_no_model",
+                    Missing::Key => "ui.image.generate_no_key",
+                };
+                self.fail_image(&loc.tf(key, &[("provider", provider)]));
+                return;
+            }
+        };
+        let images = self.config.images;
+        let staged = self.staged_images.get(&chat_id).map_or(0, Vec::len);
+        if staged >= images.max_count {
+            let msg = loc.tf(
+                "ui.err.image_too_many",
+                &[("max", &images.max_count.to_string())],
+            );
+            self.fail_image(&msg);
+            return;
+        }
+        let Some(chat) = self.chats.iter().find(|c| c.id == chat_id) else {
+            return;
+        };
+        let listed = chat.files.clone();
+        let dir = self.stored_files_dir(chat_id);
+        let backend = self.engines.backend_if_ready(loc).ok();
+        let managed = self.config.engine.mode == ServerMode::Managed;
+        let tx = self.draw_tx.clone();
+        self.emit_image_progress(ImageProgress::Drawing {
+            provider: provider.to_string(),
+        });
+        tracing::info!(%chat_id, provider, ?aspect, "drawing a picture for /image generate");
+        tokio::spawn(async move {
+            let client = crate::shared::image_gen::client(cfg);
+            let request = ImageRequest {
+                prompt,
+                aspect,
+                inputs: Vec::new(),
+            };
+            let cancel = tokio_util::sync::CancellationToken::new();
+            let outcome = match client.draw(request, &cancel).await {
+                Err(err) => DrawOutcome::Failed(
+                    loc.tf("ui.image.not_drawn", &[("err", &format!("{err:#}"))]),
+                ),
+                Ok(Drawing::Refused { reason, spent }) => DrawOutcome::Refused { reason, spent },
+                Ok(Drawing::Picture(picture)) => {
+                    let vision = match &backend {
+                        Some(b) => b.vision().await,
+                        None => VisionSupport::Unknown,
+                    };
+                    tokio::task::spawn_blocking(move || {
+                        keep_drawn(&dir, &listed, picture, &images, vision, managed, loc)
+                    })
+                    .await
+                    .unwrap_or_else(|e| {
+                        DrawOutcome::Failed(loc.tf("ui.image.not_kept", &[("err", &e.to_string())]))
+                    })
+                }
+            };
+            let _ = tx.send(ImageDrawResult {
+                chat_id,
+                provider,
+                outcome,
+            });
+        });
+    }
+
+    /// Applies what `/image generate` came to: lists the kept original in its
+    /// chat, stages the copy, and says so.
+    pub(super) fn handle_draw_result(&mut self, res: ImageDrawResult) {
+        let provider = res.provider.to_string();
+        let (file, width, height, bytes, spent, staged, vision) = match res.outcome {
+            DrawOutcome::Failed(msg) => {
+                self.fail_image(&msg);
+                return;
+            }
+            DrawOutcome::Refused { reason, spent } => {
+                self.emit_image_progress(ImageProgress::Refused {
+                    provider,
+                    reason,
+                    spent,
+                });
+                return;
+            }
+            DrawOutcome::Drawn(kept) => {
+                let KeptPicture {
+                    file,
+                    width,
+                    height,
+                    bytes,
+                    spent,
+                    staged,
+                    vision,
+                } = *kept;
+                (file, width, height, bytes, spent, staged, vision)
+            }
+        };
+        // The chat may have been deleted while the picture was drawn; its file
+        // stays in the folder, as a call's output would.
+        let chat_id = res.chat_id;
+        let name = file.name.clone();
+        let Some(chat) = self.chat_mut(chat_id) else {
+            return;
+        };
+        chat.list_file(file);
+        self.mark_dirty(chat_id);
+        let (items, _) = self.chat_file_list(chat_id);
+        let handle = items
+            .iter()
+            .find(|i| i.file.as_deref() == Some(name.as_str()))
+            .map_or(0, |i| i.handle);
+        let drawn = DrawnFile {
+            name,
+            handle,
+            width,
+            height,
+            bytes,
+            spent,
+        };
+        // The cap again: another picture may have been staged while this one
+        // was drawn, and the drawn one is kept either way.
+        let max = self.config.images.max_count;
+        let staged = staged.and_then(|image| {
+            let waiting = self.staged_images.get(&chat_id).map_or(0, Vec::len);
+            if waiting >= max {
+                let loc = self.ui_locale();
+                return Err(loc.tf("ui.err.image_too_many", &[("max", &max.to_string())]));
+            }
+            Ok(image)
+        });
+        let image = match staged {
+            Ok(image) => image,
+            Err(why) => {
+                self.emit_image_progress(ImageProgress::Kept {
+                    provider,
+                    drawn,
+                    why,
+                });
+                return;
+            }
+        };
+        let info = (&image).into();
+        let slot = self.staged_images.entry(chat_id).or_default();
+        slot.retain(|i| i.source != image.source);
+        slot.push(image);
+        let count = slot.len();
+        self.emit_image_progress(ImageProgress::Drawn {
+            provider,
+            drawn,
+            info,
+            staged: count,
+        });
+        if vision == VisionSupport::Unknown && count == 1 {
+            self.emit_image_progress(ImageProgress::VisionUnknown);
+        }
+        self.emit_staged_images();
     }
 
     /// The one staging path, whatever the pixels came from: refuse early if there is
@@ -506,6 +722,62 @@ fn staged(prepared: PreparedImage, name: String, source: String) -> MessageImage
         prepared.height,
         data,
     )
+}
+
+/// Keeps a drawn picture in the chat's folder and prepares the copy the next
+/// message carries — the copy marked as the file's, so the two are one item of
+/// the chat's list (`MessageImage::file_id`). Blocking: runs on the blocking pool.
+/// Nothing is staged for an engine that says it takes no images; the original is
+/// kept all the same, since it was paid for.
+fn keep_drawn(
+    dir: &std::path::Path,
+    listed: &[ChatFile],
+    picture: Picture,
+    cfg: &ImageSettings,
+    vision: VisionSupport,
+    managed: bool,
+    loc: &'static Locale,
+) -> DrawOutcome {
+    let stored =
+        crate::features::tools::image_gen::store_drawn(dir, listed, &picture.bytes, picture.mime);
+    let file = match stored {
+        Ok(file) => file,
+        Err(err) => {
+            return DrawOutcome::Failed(loc.tf("ui.image.not_kept", &[("err", &err.to_string())]));
+        }
+    };
+    let (width, height) = image::ImageReader::new(std::io::Cursor::new(&picture.bytes))
+        .with_guessed_format()
+        .ok()
+        .and_then(|r| r.into_dimensions().ok())
+        .unwrap_or((0, 0));
+    let staged = if vision == VisionSupport::Unsupported {
+        let key = if managed {
+            "ui.err.image_no_vision_managed"
+        } else {
+            "ui.err.image_no_vision"
+        };
+        Err(loc.t(key).to_string())
+    } else {
+        prepare(&picture.bytes, cfg.downscale_px)
+            .map(|prepared| {
+                let source = dir.join(&file.name).display().to_string();
+                staged(prepared, file.name.clone(), source).copy_of(file.id)
+            })
+            .map_err(|e| match e {
+                PrepareError::Undecodable => loc.t("ui.err.image_undecodable").to_string(),
+                PrepareError::Failed(err) => loc.tf("ui.err.image_failed", &[("err", &err)]),
+            })
+    };
+    DrawOutcome::Drawn(Box::new(KeptPicture {
+        file,
+        width,
+        height,
+        bytes: picture.bytes.len(),
+        spent: picture.spent,
+        staged,
+        vision,
+    }))
 }
 
 /// Reads an image file and prepares it for attachment (blocking — runs on the blocking

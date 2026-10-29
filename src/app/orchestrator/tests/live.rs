@@ -8936,12 +8936,14 @@ async fn image_generate_draws_and_changes_through_the_loop_live() {
     let provider = match std::env::var("MINDFORK_LIVE_IMAGE_PROVIDER").as_deref() {
         Ok("gemini") => ImageGenProvider::Gemini,
         Ok("openrouter") => ImageGenProvider::OpenRouter,
+        Ok("grok") => ImageGenProvider::Grok,
         _ => ImageGenProvider::OpenAi,
     };
     let var = match provider {
         ImageGenProvider::OpenAi => "MINDFORK_OPENAI_KEY",
         ImageGenProvider::Gemini => "MINDFORK_GEMINI_KEY",
         ImageGenProvider::OpenRouter => "MINDFORK_OPENROUTER_KEY",
+        ImageGenProvider::Grok => "MINDFORK_GROK_KEY",
     };
     if std::env::var(var).is_err() {
         eprintln!("skip: {var} not set");
@@ -9055,4 +9057,137 @@ async fn image_generate_draws_and_changes_through_the_loop_live() {
             .all(|f| f.origin == crate::entities::chat_file::FileOrigin::Generated),
         "{listed:?}"
     );
+}
+
+/// `/image generate` (stage 3, docs/research/image-generation.md §14): the
+/// person's own road to the picture slot. A real provider draws; the original
+/// is kept in the chat's files and a copy staged; the next message carries it,
+/// under the file's name, to a live chat model that sees — which describes what
+/// was drawn, in prose. Afterwards the chat lists the picture once.
+///
+/// `MINDFORK_LIVE_IMAGE_PROVIDER` picks who draws (`openai` by default; `gemini`,
+/// `openrouter`, `grok`), with that provider's key in its variable.
+///
+/// `MINDFORK_ENGINE_URL=… MINDFORK_OPENAI_KEY=… cargo test
+/// image_generate_command_stages_a_picture_the_model_sees_live -- --ignored
+/// --nocapture --test-threads=1`
+#[tokio::test]
+#[ignore = "requires MINDFORK_ENGINE_URL (a model that sees) and a picture provider's key (MINDFORK_OPENAI_KEY by default); spends about $0.01"]
+async fn image_generate_command_stages_a_picture_the_model_sees_live() {
+    use crate::app::events::{FileProgress, ImageProgress};
+    use crate::shared::config::ImageGenProvider;
+    let Some(backend) = live_backend() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let provider = match std::env::var("MINDFORK_LIVE_IMAGE_PROVIDER").as_deref() {
+        Ok("gemini") => ImageGenProvider::Gemini,
+        Ok("openrouter") => ImageGenProvider::OpenRouter,
+        Ok("grok") => ImageGenProvider::Grok,
+        _ => ImageGenProvider::OpenAi,
+    };
+    let var = match provider {
+        ImageGenProvider::OpenAi => "MINDFORK_OPENAI_KEY",
+        ImageGenProvider::Gemini => "MINDFORK_GEMINI_KEY",
+        ImageGenProvider::OpenRouter => "MINDFORK_OPENROUTER_KEY",
+        ImageGenProvider::Grok => "MINDFORK_GROK_KEY",
+    };
+    if std::env::var(var).is_err() {
+        eprintln!("skip: {var} not set");
+        return;
+    }
+    let mut cfg = no_auto_cfg();
+    cfg.interface.language = crate::shared::i18n::Lang::En;
+    cfg.default_sampling.max_tokens = Some(2048);
+    cfg.image_gen.enabled = true;
+    cfg.image_gen.provider = provider;
+    let section = cfg.image_gen.section_mut();
+    section.api_key_env = Some(var.into());
+    if provider == ImageGenProvider::OpenRouter {
+        section.model_name = Some(
+            std::env::var("MINDFORK_LIVE_IMAGE_GATEWAY_MODEL")
+                .unwrap_or_else(|_| "black-forest-labs/flux-3-image".into()),
+        );
+    }
+    let (_dir, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(Some(backend), cfg);
+
+    let started = std::time::Instant::now();
+    cmd_tx
+        .send(AppCommand::ImageGenerate {
+            prompt: "A small red fox sitting in fresh snow, in watercolor, soft morning light."
+                .into(),
+            aspect: crate::shared::image_gen::Aspect::Landscape,
+        })
+        .unwrap();
+    let ev = wait_for(&mut evt_rx, |e| {
+        matches!(
+            e,
+            AppEvent::ImageProgress(
+                ImageProgress::Drawn { .. }
+                    | ImageProgress::Kept { .. }
+                    | ImageProgress::Refused { .. }
+                    | ImageProgress::Failed(_)
+            )
+        )
+    })
+    .await
+    .expect("an outcome");
+    let AppEvent::ImageProgress(ImageProgress::Drawn {
+        provider: who,
+        drawn,
+        info,
+        staged,
+    }) = ev
+    else {
+        panic!("expected Drawn, got {ev:?}");
+    };
+    eprintln!(
+        "{who} drew {} ({}x{}, {} bytes, spent {:?}) in {:.1}s as #{}; staged {}x{}, ~{} tok ({staged} staged)",
+        drawn.name,
+        drawn.width,
+        drawn.height,
+        drawn.bytes,
+        drawn.spent,
+        started.elapsed().as_secs_f64(),
+        drawn.handle,
+        info.width,
+        info.height,
+        info.est_tokens,
+    );
+    assert!(drawn.name.starts_with("image-1."), "{}", drawn.name);
+    assert!(drawn.width > drawn.height, "3:2 was asked for");
+    assert_eq!(staged, 1);
+
+    let (reply, calls) = run_turn_capture_args(
+        &cmd_tx,
+        &mut evt_rx,
+        "I attached a picture. In one or two sentences, what does it show?",
+    )
+    .await;
+    eprintln!("  reply: {}", reply.replace('\n', " "));
+    for (name, args, _) in &calls {
+        eprintln!("  call {name}({args})");
+    }
+    let said = reply.to_lowercase();
+    assert!(
+        said.contains("fox") || said.contains("лис"),
+        "the model saw the picture: {reply}"
+    );
+    assert!(!json_wrapped(&reply), "the reply is prose: {reply}");
+
+    cmd_tx.send(AppCommand::FileList).unwrap();
+    let ev = wait_for(&mut evt_rx, |e| {
+        matches!(e, AppEvent::FileProgress(FileProgress::Listed { .. }))
+    })
+    .await
+    .expect("a Listed event");
+    let AppEvent::FileProgress(FileProgress::Listed { stored, images, .. }) = ev else {
+        unreachable!()
+    };
+    let stored: Vec<_> = stored.iter().map(|s| s.name.as_str()).collect();
+    eprintln!("  /file list: stored {stored:?}, images {}", images.len());
+    assert_eq!(stored, [drawn.name.as_str()]);
+    assert!(images.is_empty(), "the sent copy is the file's item");
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
 }

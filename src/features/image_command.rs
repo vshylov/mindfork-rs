@@ -1,5 +1,6 @@
 //! Parses the image slash-commands in the input box (`/image attach <path>`,
-//! `/image remove <name|#N>`, `/image list`). Pure, testable logic, mirroring
+//! `/image remove <name|#N>`, `/image list`, `/image paste`, `/image generate
+//! [ratio] <description>`). Pure, testable logic, mirroring
 //! [`super::file_command`]: the chat screen calls it on send, a recognized command turns
 //! into an intent, and an unrecognized string goes out as an ordinary message. Error
 //! messages are in the interface language (axis B) — the caller passes its `Locale`.
@@ -18,6 +19,7 @@
 
 use crate::entities::message_image::ImageInfo;
 use crate::shared::i18n::Locale;
+use crate::shared::image_gen::{Aspect, Spent};
 
 /// A recognized `/image` command.
 #[derive(Debug, Clone, PartialEq)]
@@ -36,6 +38,12 @@ pub enum ImageCommand {
     /// clipboard there is no text to inject, so the app would see nothing at all. This
     /// route works everywhere. See spec §9.10.
     Paste,
+    /// Draw a picture with the picture slot's provider, keep it in the chat's
+    /// files and stage it for the next message — the person's own road to the
+    /// slot, with no model and no round (spec §9.15,
+    /// docs/research/image-generation.md §6.5). A ratio the tool offers may lead
+    /// the description: `/image generate 16:9 a fox in the snow`.
+    Generate { prompt: String, aspect: Aspect },
 }
 
 /// Outcome of an `/image` command, for the feed note / status chip.
@@ -58,6 +66,47 @@ pub enum ImageProgress {
     /// The command failed (no such file, undecodable content, cap reached, an engine
     /// that reports no vision support…).
     Failed(String),
+    /// `/image generate` reached the provider: a picture takes ten to thirty
+    /// seconds, and the note says something is under way.
+    Drawing { provider: String },
+    /// The provider drew: the original kept in the chat's files as `#handle file`
+    /// and a copy staged — `info` is the staged copy's card, `staged` how many
+    /// wait for the next message.
+    Drawn {
+        provider: String,
+        drawn: DrawnFile,
+        info: ImageInfo,
+        staged: usize,
+    },
+    /// The provider drew and the original is kept, but nothing was staged: `why`
+    /// says why, already in the interface language (an engine that takes no
+    /// images).
+    Kept {
+        provider: String,
+        drawn: DrawnFile,
+        why: String,
+    },
+    /// The provider would not draw it — its words, and what it charged for the
+    /// refusal where it says (xAI charges one).
+    Refused {
+        provider: String,
+        reason: String,
+        spent: Spent,
+    },
+}
+
+/// A drawn picture as the chat's files keep it: what the notes of
+/// [`ImageProgress::Drawn`] and [`ImageProgress::Kept`] say about the original.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DrawnFile {
+    pub name: String,
+    /// The `#N` `/file list` shows it under.
+    pub handle: usize,
+    pub width: u32,
+    pub height: u32,
+    pub bytes: usize,
+    /// What the provider said the picture cost.
+    pub spent: Spent,
 }
 
 /// Tries to parse an input string as an `/image` command.
@@ -101,6 +150,28 @@ pub fn parse(input: &str, loc: &Locale) -> Option<Result<ImageCommand, String>> 
         Some(Ok(ImageCommand::List))
     } else if sub.eq_ignore_ascii_case("paste") {
         Some(Ok(ImageCommand::Paste))
+    } else if sub.eq_ignore_ascii_case("generate") {
+        // The description is taken as typed — its line breaks and spacing are
+        // the person's — after the two words before it.
+        let after = |text: &str, word: &str| text.trim_start()[word.len()..].to_string();
+        let described = after(&after(input, first), sub).trim().to_string();
+        let (aspect, prompt) = match described.split_once(char::is_whitespace) {
+            Some((head, rest)) if Aspect::parse(head).is_some() => {
+                (Aspect::parse(head).unwrap_or_default(), rest.trim())
+            }
+            _ if Aspect::parse(&described).is_some() => (Aspect::default(), ""),
+            _ => (Aspect::default(), described.as_str()),
+        };
+        if prompt.is_empty() {
+            return Some(Err(loc.tf(
+                "ui.image.err.missing_prompt",
+                &[("usage", loc.t("ui.image.usage"))],
+            )));
+        }
+        Some(Ok(ImageCommand::Generate {
+            prompt: prompt.to_string(),
+            aspect,
+        }))
     } else {
         Some(Err(loc.tf(
             "ui.image.err.unknown_subcommand",
@@ -191,9 +262,58 @@ mod tests {
     fn the_usage_line_names_every_subcommand() {
         for &lang in crate::shared::i18n::Lang::ALL {
             let usage = crate::shared::i18n::locale(lang).t("ui.image.usage");
-            for sub in ["attach", "remove", "list", "paste"] {
+            for sub in ["attach", "remove", "list", "paste", "generate"] {
                 assert!(usage.contains(sub), "{lang:?} usage omits {sub}: {usage}");
             }
+        }
+    }
+
+    /// The description is taken as typed, line breaks included; a ratio the
+    /// tool offers may lead it, and anything else that looks like one is part
+    /// of the description.
+    #[test]
+    fn generate_takes_the_description_and_a_leading_ratio() {
+        let generate = |prompt: &str, aspect| {
+            Some(Ok(ImageCommand::Generate {
+                prompt: prompt.into(),
+                aspect,
+            }))
+        };
+        assert_eq!(
+            parse("/image generate a red fox in the snow", en()),
+            generate("a red fox in the snow", Aspect::Square)
+        );
+        assert_eq!(
+            parse(
+                "  /Image  GENERATE   16:9  a fox,
+  at dusk  ",
+                en()
+            ),
+            generate(
+                "a fox,
+  at dusk",
+                Aspect::Wide
+            )
+        );
+        assert_eq!(
+            parse("/image generate 4:3 a fox", en()),
+            generate("4:3 a fox", Aspect::Square),
+            "not a shape the tool offers: part of the description"
+        );
+        assert_eq!(
+            parse(
+                "/image generate 9:16
+the tall one",
+                en()
+            ),
+            generate("the tall one", Aspect::Tall)
+        );
+        for empty in [
+            "/image generate",
+            "/image generate   ",
+            "/image generate 16:9",
+        ] {
+            assert!(matches!(parse(empty, en()), Some(Err(_))), "{empty:?}");
         }
     }
 
@@ -224,7 +344,13 @@ mod tests {
     fn errors_are_localized_for_all_langs() {
         for &lang in crate::shared::i18n::Lang::ALL {
             let loc = crate::shared::i18n::locale(lang);
-            for input in ["/image", "/image attach", "/image remove", "/image purge x"] {
+            for input in [
+                "/image",
+                "/image attach",
+                "/image remove",
+                "/image purge x",
+                "/image generate",
+            ] {
                 let Some(Err(msg)) = parse(input, loc) else {
                     panic!("expected a syntax error for {input:?} in {lang:?}");
                 };

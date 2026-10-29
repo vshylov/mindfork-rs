@@ -512,6 +512,9 @@ impl ChatScreen {
             Ok(ImageCommand::Attach { path }) => Some(ChatIntent::ImageAttach { path }),
             Ok(ImageCommand::Remove { target }) => Some(ChatIntent::ImageRemove { target }),
             Ok(ImageCommand::List) => Some(ChatIntent::ImageList),
+            Ok(ImageCommand::Generate { prompt, aspect }) => {
+                Some(ChatIntent::ImageGenerate { prompt, aspect })
+            }
             // A typed command must not silently turn into a text paste: the user asked
             // for an image, so an absent one is reported rather than substituted.
             Ok(ImageCommand::Paste) => Some(ChatIntent::PasteImage {

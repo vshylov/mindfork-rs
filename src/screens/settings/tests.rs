@@ -7375,6 +7375,7 @@ fn watching(id: &str, tools: Option<bool>) -> CatalogModel {
             completion_price: Some(2_500_000),
             tools,
             video: Some(true),
+            edits: None,
         },
         ..cat(id, Some("A Vendor: A Model"), ModelRole::Chat)
     }
@@ -7821,4 +7822,120 @@ fn the_image_key_row_is_the_drawing_providers_key() {
         );
     }
     assert!(super::helpers::is_secret_field(FieldId::IgApiKey));
+}
+
+/// xAI's quality row cycles through xAI's own three, starting from its
+/// default, `auto`, and leaves the other providers' values alone.
+#[test]
+fn xais_quality_row_cycles_through_its_own_three() {
+    let mut s = screen();
+    s.config.image_gen.provider = ImageGenProvider::Grok;
+    goto_section(&mut s, Section::Tools);
+    goto_field(&mut s, FieldId::IgQuality);
+    assert_eq!(s.config.image_gen.grok.quality.as_deref(), Some("auto"));
+    s.handle_key(key(KeyCode::Right));
+    assert_eq!(s.config.image_gen.grok.quality.as_deref(), Some("low"));
+    s.handle_key(key(KeyCode::Right));
+    assert_eq!(s.config.image_gen.grok.quality.as_deref(), Some("medium"));
+    assert_eq!(
+        s.config.image_gen.openai.quality.as_deref(),
+        Some(crate::shared::config::DEFAULT_IMAGE_GEN_OPENAI_QUALITY)
+    );
+    let label = field_label(&s, FieldId::IgQuality).unwrap_or_default();
+    let quality = s.loc().t("ui.settings.field.image_gen_quality");
+    assert_eq!(label, quality);
+}
+
+/// `Enter` on the picture model row asks the gateway for the models that draw
+/// — through the gateway alone: OpenAI's, Gemini's and xAI's rows are the text
+/// fields they were. A pick is written into the gateway's section, and a model
+/// that can only draw a new picture is marked.
+#[test]
+fn the_gateways_picture_row_has_its_list_behind_it() {
+    for provider in [
+        ImageGenProvider::OpenAi,
+        ImageGenProvider::Gemini,
+        ImageGenProvider::Grok,
+    ] {
+        let mut s = screen();
+        s.config.image_gen.provider = provider;
+        goto_section(&mut s, Section::Tools);
+        goto_field(&mut s, FieldId::IgModel);
+        assert_eq!(s.handle_key(key(KeyCode::Enter)), None, "{provider:?}");
+        assert!(s.picker.is_none() && s.editor.is_some(), "{provider:?}");
+    }
+
+    let mut s = screen();
+    s.config.interface.language = crate::shared::i18n::Lang::En;
+    s.config.image_gen.provider = ImageGenProvider::OpenRouter;
+    goto_section(&mut s, Section::Tools);
+    goto_field(&mut s, FieldId::IgModel);
+    assert_eq!(
+        s.handle_key(key(KeyCode::Enter)),
+        Some(SettingsIntent::ListModels(ModelSlot::Image))
+    );
+    let drawing = |id: &str, edits: bool| CatalogModel {
+        facts: crate::shared::api::catalogue::ModelFacts {
+            edits: Some(edits),
+            ..Default::default()
+        },
+        ..cat(id, Some("A Vendor: A Model"), ModelRole::Image)
+    };
+    s.set_model_catalogue(
+        ModelSlot::Image,
+        Ok(vec![
+            drawing("black-forest-labs/flux-3-image", true),
+            drawing("recraft/recraft-v4.1-flash", false),
+        ]
+        .into()),
+    );
+    let rows: Vec<String> = {
+        let st = s.picker.as_ref().expect("the picker is open");
+        st.all.iter().map(|m| s.picker_label(m)).collect()
+    };
+    assert_eq!(
+        rows,
+        [
+            "black-forest-labs/flux-3-image",
+            "recraft/recraft-v4.1-flash · new pictures only"
+        ]
+    );
+    match s.handle_key(key(KeyCode::Enter)) {
+        Some(SettingsIntent::SaveConfig(c)) => {
+            assert_eq!(
+                c.image_gen.openrouter.model_name.as_deref(),
+                Some("black-forest-labs/flux-3-image")
+            );
+            assert_eq!(
+                c.image_gen.openai.model_name,
+                AppConfig::default().image_gen.openai.model_name
+            );
+        }
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+}
+
+/// What the picture slot points at is what its answer is filed under: the
+/// provider, the gateway section's address and variable, and whether the
+/// gateway's key is stored.
+#[test]
+fn a_picture_answer_is_kept_for_what_it_was_asked_under() {
+    let mut s = screen();
+    s.config.image_gen.provider = ImageGenProvider::OpenRouter;
+    let first = s.slot_source(ModelSlot::Image);
+    s.config.image_gen.openrouter.url = Some("https://eu.openrouter.ai/api/v1".into());
+    assert_ne!(s.slot_source(ModelSlot::Image), first, "the address");
+    s.config.image_gen.openrouter.url = None;
+    s.config.image_gen.openrouter.api_key_env = Some("MY_ROUTER".into());
+    assert_ne!(s.slot_source(ModelSlot::Image), first, "the variable");
+    s.config.image_gen.openrouter.api_key_env = None;
+    assert_eq!(s.slot_source(ModelSlot::Image), first);
+    s.set_secrets_present(vec![SecretKey::Provider(CloudProvider::OpenRouter)]);
+    assert_ne!(s.slot_source(ModelSlot::Image), first, "a stored key");
+    s.set_secrets_present(vec![]);
+    // Another provider's section is not what the gateway's list is asked under.
+    s.config.image_gen.openai.url = Some("https://proxy.example/v1".into());
+    assert_eq!(s.slot_source(ModelSlot::Image), first);
+    s.config.image_gen.provider = ImageGenProvider::OpenAi;
+    assert_ne!(s.slot_source(ModelSlot::Image), first, "the provider");
 }

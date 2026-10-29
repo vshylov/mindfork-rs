@@ -667,6 +667,7 @@ pub fn named_key_env_vars(cfg: &AppConfig) -> Vec<String> {
             cfg.image_gen.openai.api_key_env.clone(),
             cfg.image_gen.gemini.api_key_env.clone(),
             cfg.image_gen.openrouter.api_key_env.clone(),
+            cfg.image_gen.grok.api_key_env.clone(),
         ])
         .flatten()
         .map(|n| n.trim().to_string())
@@ -2415,6 +2416,12 @@ pub const DEFAULT_IMAGE_GEN_OPENAI_QUALITY: &str = "medium";
 pub const DEFAULT_IMAGE_GEN_GEMINI_MODEL: &str = "gemini-nano-banana-2.1";
 /// The size Gemini and the gateway are asked for: `1K`, each one's default.
 pub const DEFAULT_IMAGE_GEN_SIZE: &str = "1K";
+/// xAI's default picture model: the recommended one, $0.04 a picture
+/// (docs/research/image-generation.md §3.3).
+pub const DEFAULT_IMAGE_GEN_XAI_MODEL: &str = "grok-imagine-image-2.0";
+/// xAI's default quality: `auto`, its own — `low` for a new picture and `medium`
+/// for a change, which is what the probe measured ($0.04 and $0.07, §11.1).
+pub const DEFAULT_IMAGE_GEN_XAI_QUALITY: &str = "auto";
 /// How many pictures one turn may draw (fork F7): enough for a picture and a
 /// few changes to it, and a bound on what one turn can spend.
 pub const DEFAULT_IMAGE_GEN_MAX_PER_TURN: u32 = 4;
@@ -2425,11 +2432,15 @@ pub const IMAGE_GEN_OPENAI_QUALITIES: [&str; 6] = ["low", "medium", "high", "xhi
 /// The sizes Gemini's picture models take (§3.2); the gateway names the same
 /// four, and a model on it takes the ones its catalogue entry lists.
 pub const IMAGE_GEN_SIZES: [&str; 4] = ["512", "1K", "2K", "4K"];
+/// The qualities xAI's `grok-imagine-image-2.0` takes, cheapest first; a picture
+/// is "billed at the quality it is served at" (§3.3). `auto` is never sent — it
+/// is xAI's default, and a model without the parameter takes it that way.
+pub const IMAGE_GEN_XAI_QUALITIES: [&str; 3] = ["low", "medium", "auto"];
 
 /// Who draws (`image_generate`, spec §9.15). A slot of its own, independent of
 /// the chat engine as speech and video are: the providers that draw are not the
 /// ones that chat, and a person on a local model is the one who needs it most
-/// (docs/research/image-generation.md §1, F2). xAI's own endpoint is stage 3.
+/// (docs/research/image-generation.md §1, F2; xAI's own endpoint since stage 3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ImageGenProvider {
@@ -2442,13 +2453,17 @@ pub enum ImageGenProvider {
     /// The gateway's `POST /images`: some sixty models of a dozen vendors.
     #[serde(rename = "openrouter")]
     OpenRouter,
+    /// xAI's own `POST /v1/images/generations` and `/edits` — spelt `grok`, as
+    /// the engine's mode and the stored key are.
+    Grok,
 }
 
 impl ImageGenProvider {
-    pub const ALL: [ImageGenProvider; 3] = [
+    pub const ALL: [ImageGenProvider; 4] = [
         ImageGenProvider::OpenAi,
         ImageGenProvider::Gemini,
         ImageGenProvider::OpenRouter,
+        ImageGenProvider::Grok,
     ];
 
     /// UI label (Choice field), and the settings file's own spelling.
@@ -2457,6 +2472,7 @@ impl ImageGenProvider {
             ImageGenProvider::OpenAi => "openai",
             ImageGenProvider::Gemini => "gemini",
             ImageGenProvider::OpenRouter => "openrouter",
+            ImageGenProvider::Grok => "grok",
         }
     }
 
@@ -2467,6 +2483,7 @@ impl ImageGenProvider {
             ImageGenProvider::OpenAi => CloudProvider::OpenAi,
             ImageGenProvider::Gemini => CloudProvider::Gemini,
             ImageGenProvider::OpenRouter => CloudProvider::OpenRouter,
+            ImageGenProvider::Grok => CloudProvider::Grok,
         }
     }
 
@@ -2510,6 +2527,7 @@ pub struct ImageGenSettings {
     pub openai: ImageGenSection,
     pub gemini: ImageGenSection,
     pub openrouter: ImageGenSection,
+    pub grok: ImageGenSection,
     /// The model is shown the picture it drew (fork F6) — a prepared copy, on the
     /// path a tool's picture takes; the original stays in the chat's files.
     pub show_to_model: bool,
@@ -2524,6 +2542,7 @@ impl ImageGenSettings {
             ImageGenProvider::OpenAi => &self.openai,
             ImageGenProvider::Gemini => &self.gemini,
             ImageGenProvider::OpenRouter => &self.openrouter,
+            ImageGenProvider::Grok => &self.grok,
         }
     }
 
@@ -2533,6 +2552,7 @@ impl ImageGenSettings {
             ImageGenProvider::OpenAi => &mut self.openai,
             ImageGenProvider::Gemini => &mut self.gemini,
             ImageGenProvider::OpenRouter => &mut self.openrouter,
+            ImageGenProvider::Grok => &mut self.grok,
         }
     }
 
@@ -2559,6 +2579,11 @@ impl Default for ImageGenSettings {
             },
             openrouter: ImageGenSection {
                 quality: Some(DEFAULT_IMAGE_GEN_SIZE.into()),
+                ..Default::default()
+            },
+            grok: ImageGenSection {
+                model_name: Some(DEFAULT_IMAGE_GEN_XAI_MODEL.into()),
+                quality: Some(DEFAULT_IMAGE_GEN_XAI_QUALITY.into()),
                 ..Default::default()
             },
             show_to_model: true,
