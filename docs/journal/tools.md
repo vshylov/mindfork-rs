@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (100)
+## Entries (101)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -112,6 +112,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: voice notes from the phone, and replies in voice — companion stage 6 C (done)
 - Post-M9: speech without pauses between a reply's blocks (done)
 - Post-M9: a stalled speech request asked again (done)
+- Post-M9: image generation — the stage-0 probe (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -6553,3 +6554,49 @@ sub-decisions).
 
 **Gates**: 4395 unit tests green, 299 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check` clean.
+
+### Post-M9: image generation — the stage-0 probe (done)
+The probe of [image-generation.md](../research/image-generation.md) §8, before any
+code — the owner's go, 2026-10-29. Its code is frozen as the tag
+`probe/image-generation-stage0` (the unmerged `spike/image-generation-probe`);
+the full record is §11 of the research.
+
+- **The providers** (`tools/image_gen_probe.py`, standard library only, keys from
+  the environment, pictures to a scratch folder): five prompts, one edit and one
+  refused prompt each to Gemini `gemini-nano-banana-2.1` at `1K`, OpenAI
+  `gpt-image-2.5-flare` at `medium`, xAI `grok-imagine-image-2.0` at `1k` and the
+  gateway's `black-forest-labs/flux-3-image` at `1K`. Five of five and the edit on
+  every one; **$0.97** in all. OpenAI is the cheapest — 439 output tokens for a
+  1024×1024 picture, $0.013, where `gpt-image-2` at the same quality is published at
+  $0.053 — and Gemini costs $0.039 with the thinking it cannot turn off. Gemini
+  answers in JPEG with a thought signature of up to 3.2 million characters on the
+  picture's own part, and drew the violent prompt as a softened "film still"; xAI
+  refused it after 15.5 s with an error *string* and charged $0.04; the gateway's
+  refusal names the vendor; FLUX.2, Recraft and MAI take no `resolution`.
+- **The local models** (`src/app/orchestrator/tests/image_probe.rs`): the real
+  agentic loop with the default profile's tools plus a stub `image_generate`
+  (`OrchestratorDeps::extra_tools`), thirty conversations a model on the gate's own
+  weights — Gemma 4 31B `q4_0`, Qwen 3.8 27B `Q4_K_M`, `llama-server` b11715,
+  `-c 32768`. **GO on both**: asked, one call with a faithful prompt 10/10 (the
+  shape asked for 4/4); not asked, 0/10 calls; a refusal relayed 5/5 with no
+  picture described; a wrong picture caught 3/3 and a right one confirmed 2/2. After
+  a refusal both models tried again with softened prompts, unasked — 13 and 16
+  calls in five conversations, up to 7 in one — which is fork F10.
+- **Gemma 4 answers in JSON after a tool's picture** —
+  `{"action": "text", "action_input": "Here is your red fox…"}` — after an English
+  request, 28 of 30 times; after a Russian one 0 of 9; Qwen 0 of 10. Interleaved
+  controls: no picture 0 of 15, the picture re-homed into a user message 0 of 29.
+  The picture inside the tool message is the cause, so `python_exec`'s charts and
+  MCP screenshots meet it too — fork F11 and a roadmap item. A re-homed picture's
+  label in the scaffold's language moved English replies into Russian (Gemma 11 of
+  15, Qwen 3 of 9): the label must carry no language.
+- **Met on the way.** `narrow_profile_to` is private to `tests/live.rs`, so a new
+  test module inlines it. A live test's orchestrator starts with
+  `Lang::default()` — Russian — so the scaffold the model reads is Russian unless
+  the test says otherwise. `cyrillic_scan` decodes `\u` escapes in a Python
+  source: the probe's Russian prompt went in as base64.
+- **Back to the owner, decided the same day as recommended:** F3 re-opened → (a′),
+  OpenAI's `gpt-image-2.5-flare` the default; F10 (a), a refusal stops drawing for
+  the rest of the turn; F11 (a), tool pictures re-homed on every endpoint behind a
+  language-free label, a PR of its own before stage 1. Nothing merged into the
+  code; unit tests unchanged (4395 green, 299 `#[ignore]`).
