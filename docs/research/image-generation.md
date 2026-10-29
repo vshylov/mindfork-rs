@@ -22,9 +22,12 @@ the owner, **decided the same day as recommended**:
   of its own before stage 1, since it is every tool's (Gemma 4 answers in JSON
   after a picture inside a tool result).
 
-**F11 is built** (§11.5: Gemma 4's JSON replies 17 of 21 → 0 of 21). Next is
-stage 1. Provider facts were read from the providers' own documentation on
-2026-10-29 (§10) and then measured (§11.1).
+**F11 is built** (§11.5: Gemma 4's JSON replies 17 of 21 → 0 of 21). **Stage 1
+is built** (§12): the slot, the three clients, `image_generate` with editing, the
+`generated` chat file (chats 6 → 7), the ceiling and the stop after a refusal —
+live **GO** on every provider and through the loop on Gemma 4 and Qwen 3.8. Next is
+stage 2, the phone. Provider facts were read from the providers' own documentation
+on 2026-10-29 (§10) and then measured (§11.1).
 
 ## 1. Why
 
@@ -643,7 +646,7 @@ project does with probes). Two questions, each with a go/no-go:
 behind a language-free label: a wire change for every producer, its own PR,
 measured on Gemma 4 and Qwen 3.8 with a control build.
 
-**Stage 1 — the slot and the tool.** `image_gen` settings and their section,
+**Stage 1 — the slot and the tool** (built, §12). `image_gen` settings and their section,
 the clients for OpenRouter, OpenAI and Gemini (F2), `image_generate` with editing
 (F4), the original as a `generated` chat file (the 6 → 7 step, F5) and the copy
 for the model (F6), the chip, the configurable ceiling (F7). Unit tests against
@@ -900,3 +903,72 @@ builds (2 of 2 each) — as the probe's "check the picture" conversations were
 (§11.2). The envelope comes when the reply is "here it is". The existing image
 smokes — `sandbox_outputs_e2e_live`, `tool_result_image_is_seen_live`,
 `a_withheld_tool_image_is_not_described_live` — pass on Qwen 3.8 with the change.
+
+## 12. Stage 1, built (2026-10-29)
+
+`feat/image-generation-stage1`. What §6 designed, and where it moved:
+
+- **The slot** — `image_gen` in `settings.json` (`shared/config.rs`,
+  `ImageGenSettings`): `enabled` off, `provider` `openai`, a section per provider
+  (`model_name`, `quality`, `api_key_env`, `url`), `show_to_model` on,
+  `max_per_turn` 4. §6.1's sketch had `image_size` for Gemini and `resolution` for
+  the gateway; they are one field, `quality` — *what the provider's price is set
+  by* — read as OpenAI's `quality`, Gemini's `imageSize` and the gateway's
+  `resolution`. The settings take no step: a section an older reader skips whole.
+  The settings screen has a group of its own in *Tools*, after *Video*: the switch
+  first, then who draws and that provider's rows; the quality row cycles through
+  the chosen provider's values. The gateway's model row is a typed field for now —
+  the picker (`ModelSlot::Image`) is stage 3's.
+- **The clients** — `shared/image_gen/` (`openai.rs`, `gemini.rs`,
+  `gateway.rs`). A refusal is `Drawing::Refused`, an answer; every other failure is
+  an `Err` in the provider's words. The gateway's client asks `GET /images/models`
+  once and sends `aspect_ratio`, `resolution` and `input_references` only where
+  the model's entry lists them; a model that takes no pictures to change is
+  refused by name before anything is sent. Its refusal has no code, so a `400`
+  whose upstream message speaks of blocking, flagging, moderation or policy is
+  read as one — the probe's FLUX refusal word for word.
+- **The tool** — `features/tools/image_gen.rs`, gated by `ToolGate::ImageGen`.
+  The ceiling and the stop after a refusal live in `ToolContext::draws`, fresh
+  with every turn's context and shared by a sub-agent's clone, so a group child
+  counts against its turn's ceiling. A woken turn (a follow-up, a background run's
+  notice) is not offered the tool, nor is a background sub-agent; a turn from the
+  phone is. The result names the file by the `#N` `/file list` shows — the probe's
+  measured line — and the stored name is `image-N.<ext>`, the first `N` no file of
+  the chat holds under any extension. A picture over `images.max_bytes` is handed
+  to the loop as a prepared copy (§6.4's trap). `images` resolves `#N`, a stored
+  file's name and a conversation image's name, `tool-image-2` without its
+  extension included — the form the probe's models wrote.
+- **The card** — the collapsed tool card names the saved file
+  (`image_generate(image-3.png)`) instead of the start of the prompt; a new field
+  on the call's record was not needed.
+- **Chats 6 → 7** — the stamp for `FileOrigin::Generated`, with a golden v6 file
+  (`chat_v6_sandbox_file.json`).
+
+### 12.1 Live
+
+**The providers** (`shared/image_gen/live_tests.rs`): each drew a 16:9 picture and
+changed it, the edit carrying the first picture.
+
+| | OpenAI `gpt-image-2.5-flare` medium | Gemini `gemini-nano-banana-2.1` 1K | OpenRouter `flux-3-image` 1K |
+|---|---|---|---|
+| **Drew** | 1536×864 PNG, 2.5 MB, 11.7 s | 1376×768 JPEG, 1.0 MB, 12.2 s | 1360×768 PNG, 2.1 MB, 24.0 s |
+| **Counted** | 28 in / 280 out tokens | 23 in / 1981 out (picture + thinking) | $0.048 |
+| **Changed it** | 13.4 s, 1335 in / 280 out | 14.2 s, 1143 in / 1853 out | 33.8 s, $0.048 |
+
+**Through the loop** (`image_generate_draws_and_changes_through_the_loop_live`):
+the default profile's tools, a live chat model on `llama-server` (RTX 4090,
+`-c 32768 --jinja`, the vision projector loaded), OpenAI drawing. "Draw me a small
+red fox sitting in fresh snow, in watercolor", then "Now make it night, with a full
+moon — keep the fox exactly as it is", in one chat.
+
+| | Gemma 4 31B `q4_0` | Qwen 3.8 27B `Q4_K_M` |
+|---|---|---|
+| **Draw** | one call, an 80-word description | one call, a 75-word description |
+| **Change** | one call, `images: ["#1"]` | one call, `images: ["#1"]` |
+| **Replies** | prose (2 of 2) | prose (2 of 2), each naming `/file open #N` |
+| **Files** | `image-1.png`, `image-2.png`, both `generated` | the same |
+
+**GO.** Gemma ran twice (the first run's only failure was the smoke counting a
+chat's `.bak` beside it). Spent on the live runs: about $0.30. No refusal was
+provoked live — the probe recorded each provider's (§11.1), and the stop after
+one is pinned by the tool's tests.

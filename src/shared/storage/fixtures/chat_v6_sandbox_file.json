@@ -1,0 +1,48 @@
+{
+  "v": 6,
+  "id": "6c0ffee0-4d1e-4b2a-9e3f-6a7b8c9d0e1f",
+  "profile_id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+  "title": "A chart, kept",
+  "created_at": "2026-10-28T08:00:00Z",
+  "modified_at": "2026-10-28T08:01:00Z",
+  "system_message": "You are an assistant.",
+  "character_names": {
+    "user": "You",
+    "assistant": "Assistant",
+    "system": "System"
+  },
+  "messages": [
+    {
+      "id": "c0000000-0000-0000-0000-000000000001",
+      "role": "user",
+      "text": "Plot y = x squared.",
+      "timestamp": "2026-10-28T08:00:00Z"
+    },
+    {
+      "id": "c0000000-0000-0000-0000-000000000002",
+      "role": "assistant",
+      "text": "Here is the parabola, saved as chart.png.",
+      "timestamp": "2026-10-28T08:00:09Z",
+      "metadata": {
+        "sampling": {
+          "temperature": 0.75,
+          "max_tokens": 16384
+        },
+        "mode": "external",
+        "model": "gemma-4-31b",
+        "finish": "stop"
+      }
+    }
+  ],
+  "files": [
+    {
+      "id": "f0000000-0000-0000-0000-000000000001",
+      "name": "chart.png",
+      "origin": "sandbox",
+      "mime": "image/png",
+      "bytes": 21844,
+      "sha256": "9f2b5c1a0d3e4f5a6b7c8d9e0f1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c",
+      "added_at": "2026-10-28T08:00:08Z"
+    }
+  ]
+}

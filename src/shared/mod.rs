@@ -16,6 +16,7 @@ pub mod gguf;
 pub(crate) mod http_stub;
 pub mod http_text;
 pub mod i18n;
+pub mod image_gen;
 pub mod instance;
 pub mod keys;
 pub mod logging;

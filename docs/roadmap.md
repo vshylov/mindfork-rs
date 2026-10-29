@@ -211,8 +211,8 @@ effort tiers — have all closed
 
 ### Tools and MCP
 
-- **Image generation by cloud models** — **idea**, researched 2026-10-29, forks
-  decided by the owner the same day
+- **Image generation by cloud models** — **in progress: stage 1 of 3 built**,
+  researched 2026-10-29, forks decided by the owner the same day
   ([image-generation.md](research/image-generation.md) §7). The decisions:
   - **A slot of its own**, like speech and video, so a local or Claude chat can
     draw: a tool, `image_generate`, the chat model calls, and later
@@ -230,8 +230,13 @@ effort tiers — have all closed
 
   **The probe ran on 2026-10-29: GO** (§11; $0.97 at the providers; Gemma 4 and
   Qwen 3.8 call the tool when asked and only then), and the fix it asked for first
-  — Gemma 4's JSON after a tool's picture — is in (Closed). Next is stage 1. Local
-  generation is out of scope — the owner's decision.
+  — Gemma 4's JSON after a tool's picture — is in (Closed). **Stage 1 is built**
+  (§12, 2026-10-29): the slot, the clients for OpenAI, Gemini and the gateway,
+  `image_generate` with editing, the `generated` chat file, the ceiling and the stop
+  after a refusal — live GO on every provider and through the loop on Gemma 4 and
+  Qwen 3.8. Next is stage 2, the picture sent back to the phone; then stage 3 —
+  xAI, the gateway's model list in the picker, `/image generate`. Local generation
+  is out of scope — the owner's decision.
 - **What the withheld-image notes leave on Qwen 3.6** — **on demand**. The notes for
   `tools.mcp_images` off were reworded on 2026-10-11 — "You cannot see…", "this is not an
   error, and another call will not change it" — and now hold on Qwen 3.8, Gemma 4 and

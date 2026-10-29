@@ -380,6 +380,7 @@ async fn a_turn_from_the_phone_has_none_of_the_dangerous_tools() {
         p.enabled_tools = crate::features::tools::all_tool_ids();
         cfg.tools.python_enabled = true;
         cfg.tools.fs_enabled = true;
+        cfg.image_gen.enabled = true;
     })
     .await
     else {
@@ -409,6 +410,14 @@ async fn a_turn_from_the_phone_has_none_of_the_dangerous_tools() {
     assert!(
         phone.iter().any(|n| n == "fs_read"),
         "the safe ones stay: {phone:?}"
+    );
+    // A picture is not a danger: a turn from the phone draws
+    // (docs/research/image-generation.md §6.6, F7 as amended).
+    assert!(
+        phone
+            .iter()
+            .any(|n| n == crate::features::tools::image_gen::IMAGE_GENERATE_ID),
+        "the phone draws: {phone:?}"
     );
     b.quit().await;
 }

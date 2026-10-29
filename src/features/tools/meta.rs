@@ -33,6 +33,10 @@ pub enum ToolGate {
     /// profile's toggles like any tool, and offered only while the profile has
     /// the companion feature on — off by default, so a request is unchanged.
     Followups,
+    /// The picture slot's switch (`config.image_gen.enabled`, spec §9.15):
+    /// `image_generate` is offered only while it is on — off by default, since
+    /// every call is paid (docs/research/image-generation.md F7).
+    ImageGen,
 }
 
 /// Semantic group of a tool (the group heading in profile toggles). Variant order

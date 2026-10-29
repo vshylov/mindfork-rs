@@ -70,6 +70,8 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
         TPython => toggle(|c| c.tools.python_enabled = !c.tools.python_enabled),
         TPythonNet => toggle(|c| c.tools.python_net_enabled = !c.tools.python_net_enabled),
         TPythonImages => toggle(|c| c.tools.python_images = !c.tools.python_images),
+        IgEnabled => toggle(|c| c.image_gen.enabled = !c.image_gen.enabled),
+        IgShow => toggle(|c| c.image_gen.show_to_model = !c.image_gen.show_to_model),
         TFs => toggle(|c| c.tools.fs_enabled = !c.tools.fs_enabled),
         TConfirmDangerous => toggle(|c| c.tools.confirm_dangerous = !c.tools.confirm_dangerous),
         TSubBackground => toggle(|c| c.tools.subagent_background = !c.tools.subagent_background),
@@ -152,6 +154,39 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
                     c.video.provider,
                     |p| p.label().to_string(),
                 )
+            },
+        ),
+        IgProvider => choice(
+            |c, dir| c.image_gen.provider = c.image_gen.provider.cycle(dir),
+            |c, _loc| {
+                index_menu(
+                    &crate::shared::config::ImageGenProvider::ALL,
+                    c.image_gen.provider,
+                    |p| p.label().to_string(),
+                )
+            },
+        ),
+        // The values are the chosen provider's: OpenAI's qualities, or the sizes
+        // Gemini and the gateway take.
+        IgQuality => choice(
+            |c, dir| {
+                let values = image_gen_qualities(c.image_gen.provider);
+                let section = c.image_gen.section_mut();
+                let at = section
+                    .quality
+                    .as_deref()
+                    .and_then(|q| values.iter().position(|v| *v == q));
+                let next = match at {
+                    Some(i) => (i as i32 + dir).rem_euclid(values.len() as i32) as usize,
+                    None => 0,
+                };
+                section.quality = Some(values[next].to_string());
+            },
+            |c, _loc| {
+                let values = image_gen_qualities(c.image_gen.provider);
+                let current = c.image_gen.section().quality.as_deref().unwrap_or("");
+                let at = values.iter().position(|v| *v == current).unwrap_or(0);
+                (values.iter().map(|v| v.to_string()).collect(), at)
             },
         ),
         VideoResolution => choice(
@@ -580,6 +615,14 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
             crate::shared::config::VideoProvider::Gemini => c.video.model_name = opt(t),
             crate::shared::config::VideoProvider::OpenRouter => {
                 c.video.openrouter.model_name = opt(t)
+            }
+        }),
+        // Each provider keeps a model and a variable of its own.
+        IgModel => text(|c, t| c.image_gen.section_mut().model_name = opt(t)),
+        IgApiKeyEnv => text(|c, t| c.image_gen.section_mut().api_key_env = opt(t)),
+        IgMaxPerTurn => int(|c, t| {
+            if let Ok(v) = t.parse() {
+                c.image_gen.max_per_turn = v;
             }
         }),
         VideoMaxMinutes => int(|c, t| {

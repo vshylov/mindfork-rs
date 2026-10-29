@@ -30,7 +30,7 @@ pub const SETTINGS_SCHEMA: u32 = 7;
 /// Schema version of `profiles.json`.
 pub const PROFILES_SCHEMA: u32 = 1;
 /// Schema version of a chat file `chats/<id>.json`.
-pub const CHAT_SCHEMA: u32 = 6;
+pub const CHAT_SCHEMA: u32 = 7;
 /// SQLite schema version (`PRAGMA user_version`). The DB migration runner is in
 /// [`crate::shared::storage::db`] (baseline 0→1 + steps in transactions).
 pub const DB_SCHEMA: u32 = 1;
@@ -311,7 +311,7 @@ const SETTINGS_STEPS: &[Step] = &[
 ];
 
 /// The registry of artifacts. `settings.json` is at 7 (six steps), the chat files
-/// at 6 (five); `profiles.json` is still at 1 with no steps.
+/// at 7 (six); `profiles.json` is still at 1 with no steps.
 pub fn settings_artifact() -> JsonArtifact {
     JsonArtifact {
         name: "settings.json",
@@ -355,6 +355,11 @@ const CHAT_STEPS: &[Step] = &[
         to: 6,
         summary: "a reply's metadata may name the deepseek mode",
         apply: super::chat_steps::chat_to_v6,
+    },
+    Step {
+        to: 7,
+        summary: "a stored file's origin may read generated",
+        apply: super::chat_steps::chat_to_v7,
     },
 ];
 
@@ -498,18 +503,19 @@ mod tests {
         // budget that has to cover reasoning, the version that lets a mode
         // name the OpenRouter gateway, the one that lets an effort read
         // `max`, the self-model cap left at 0.9.4's default, then the version
-        // that lets a mode name DeepSeek's API); chats took five (the sub-agent
+        // that lets a mode name DeepSeek's API); chats took six (the sub-agent
         // transcripts, the dialogue-run stamp, spec §9.13, the cut run titles,
-        // spec §11.2, the same `max` stamp, then the same `deepseek` stamp);
+        // spec §11.2, the same `max` stamp, the same `deepseek` stamp, then the
+        // one that lets a stored file be a generated picture, spec §9.15);
         // profiles are still dormant.
         let settings = settings_artifact();
         assert_eq!(settings.current, 7);
         let reached: Vec<u32> = settings.steps.iter().map(|s| s.to).collect();
         assert_eq!(reached, [2, 3, 4, 5, 6, 7]);
         let chats = chat_artifact();
-        assert_eq!(chats.current, 6);
+        assert_eq!(chats.current, 7);
         let reached: Vec<u32> = chats.steps.iter().map(|s| s.to).collect();
-        assert_eq!(reached, [2, 3, 4, 5, 6]);
+        assert_eq!(reached, [2, 3, 4, 5, 6, 7]);
         let profiles = profiles_artifact();
         assert_eq!(profiles.current, 1);
         assert!(profiles.steps.is_empty());

@@ -1,6 +1,6 @@
 # Privacy policy
 
-Effective **2026-10-24**. It covers three things that are easy to confuse: the
+Effective **2026-10-29**. It covers three things that are easy to confuse: the
 **mindfork application**, the website **mindfork.io**, and the project's
 presence on **GitHub**. They have very different answers, so they are kept
 apart below.
@@ -496,11 +496,39 @@ The provider processes it under its own terms; what comes back is the text, whic
 is your message in the conversation (§2). Nothing is recorded from a microphone on
 this machine.
 
+### 3.13 Image generation — off until you turn it on
+
+`image_gen.enabled` is **off in a fresh installation**, and with it the
+`image_generate` tool. Once you switch it on (Settings → Tools → Image
+generation), each time the assistant draws, a request goes to the provider the
+settings name — `api.openai.com`, `generativelanguage.googleapis.com` or
+`openrouter.ai`, or the base URL you set — with that provider's key: the one saved
+for the provider, or the variable you named in the group. A request carries:
+
+- **the prompt** — the picture described in words, which the model composed from
+  your conversation;
+- **the pictures to change**, when the model named any: a file of the chat or an
+  image of the conversation, as its bytes — a picture you attached included, if the
+  model names it;
+- the model's name, the shape, and the quality or size the settings hold.
+
+Through the gateway the request also carries the two headers that name the
+application (§3.1) unless you switched them off, and the gateway passes it on to
+the vendor behind the model you chose, which processes it under its own terms.
+Before the first picture through the gateway the app asks it for its list of
+picture models (`GET /images/models`) — with your key and no text of yours.
+
+What comes back is the picture, kept in the chat's folder as the provider sent it
+(§2), and what the provider counted or charged, which the tool's result and the log
+say. With *Show the picture to the model* on, a copy of the picture is sent to your
+chat model with the result, as a picture a tool returned is (§3.1).
+
 ## 4. What is off until you turn it on
 
 **Off until you say otherwise:**
 
 - the **web tools** — search, page fetching, YouTube (§3.3);
+- **image generation** (`image_gen.enabled`, §3.13);
 - **Python execution** (`tools.python_enabled`);
 - the **file tools** (`tools.fs_enabled`) — and they work only inside the folder
   you set as their root (`fs_root`): until you set one they refuse, and the app's

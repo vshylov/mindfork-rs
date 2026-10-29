@@ -1,5 +1,8 @@
 //! Chat-file migration steps (ADR 0006; the registry is [`super::schema`]).
 //!
+//! **6 → 7** (`chat_to_v7`): no shape change — the stamp of the first schema
+//! in which a stored file's origin may read `generated`.
+//!
 //! **4 → 5** (`chat_to_v5`): no shape change — the stamp of the first schema
 //! in which a reasoning effort may read `max`.
 //!
@@ -73,6 +76,19 @@ pub(super) fn chat_to_v5(mut v: Value) -> Result<Value> {
 /// one for the chat file that arrives without its settings.
 pub(super) fn chat_to_v6(mut v: Value) -> Result<Value> {
     v["v"] = json!(6);
+    Ok(v)
+}
+
+/// `chats/<id>.json` 6 → 7: no shape change, like [`chat_to_v6`]. 7 is the
+/// first schema in which a stored file's `origin` may read `"generated"` — a
+/// picture `image_generate` drew (spec §9.15, docs/research/image-generation.md
+/// F5) — and the origin is a strict enum, so one such file is enough for 0.22.0
+/// to skip the whole chat in silence. This is the only file the value lives in:
+/// the settings hold the picture slot as a section of its own, which an older
+/// reader skips whole, so they take no stamp, and this one answers for a root
+/// downgraded in place as well as for a chat file copied by hand.
+pub(super) fn chat_to_v7(mut v: Value) -> Result<Value> {
+    v["v"] = json!(7);
     Ok(v)
 }
 
@@ -359,6 +375,45 @@ mod tests {
     /// A chat file as 0.20.0 wrote it: `v = 5`, one reply generated in the
     /// `external` mode at DeepSeek's API — the setup that version's manual names.
     const V5_CHAT: &str = include_str!("fixtures/chat_v5_external_deepseek.json");
+
+    /// A chat file as 0.22.0 wrote it: `v = 6`, one file a `python_exec` call
+    /// stored — the list a generated picture joins.
+    const V6_CHAT: &str = include_str!("fixtures/chat_v6_sandbox_file.json");
+
+    #[test]
+    fn the_v6_fixture_holds_nothing_a_chat_drops() {
+        let fixture: Value = serde_json::from_str(V6_CHAT).unwrap();
+        let chat: Chat = serde_json::from_value(fixture.clone()).unwrap();
+        assert_eq!(chat.v, 6);
+        let read_back = serde_json::to_value(&chat).unwrap();
+        assert_eq!(
+            super::super::schema::dropped_paths(&fixture, &read_back),
+            Vec::<String>::new()
+        );
+    }
+
+    /// 6 → 7 is the version and nothing else, and a second pass finds nothing
+    /// to do. The stored file keeps the origin it had; the new value is one a
+    /// chat file may hold from now on, and does.
+    #[test]
+    fn the_generated_stamp_is_v7_and_touches_nothing_else() {
+        let before: Value = serde_json::from_str(V6_CHAT).unwrap();
+        let after = chat_to_v7(before.clone()).unwrap();
+        assert_eq!(after["v"], json!(7));
+        let mut restamped = after.clone();
+        restamped["v"] = json!(6);
+        assert_eq!(restamped, before, "every other value is where it was");
+        assert_eq!(chat_to_v7(after.clone()).unwrap(), after);
+
+        let mut chat: Chat = serde_json::from_value(after).unwrap();
+        assert_eq!(
+            chat.files[0].origin,
+            crate::entities::chat_file::FileOrigin::Sandbox
+        );
+        chat.files[0].origin = crate::entities::chat_file::FileOrigin::Generated;
+        let written = serde_json::to_value(&chat).unwrap();
+        assert_eq!(written["files"][0]["origin"], json!("generated"));
+    }
 
     #[test]
     fn the_v5_fixture_holds_nothing_a_chat_drops() {

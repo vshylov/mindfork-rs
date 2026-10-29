@@ -802,6 +802,11 @@ impl Orchestrator {
                 mcp: self.config.mcp.enabled,
                 background: self.config.tools.subagent_background,
                 followups: companion.followups,
+                // Nobody is waiting for a woken turn — a follow-up, a background
+                // run's notice — so it draws nothing, whatever the switch says
+                // (docs/research/image-generation.md §6.6, F7). A messenger's turn
+                // is someone's, and draws.
+                image_gen: self.config.image_gen.enabled && !woken,
                 history: history_upto.is_some(),
                 workspace: workspace.is_some(),
                 // Which slots carry a line, so a `code_test` with nothing to
@@ -838,6 +843,11 @@ impl Orchestrator {
             .iter()
             .any(|t| t == crate::features::tools::PYTHON_EXEC_ID);
         let python_dirs = self.config.tools.python_mode.dirs();
+        // `image_generate` changes a picture the chat already has, named as the chat
+        // names it: the conversation's images are its inputs too (spec §9.15).
+        let draws = allowed
+            .iter()
+            .any(|t| t == crate::features::tools::image_gen::IMAGE_GENERATE_ID);
         let profile_loc = crate::shared::i18n::locale(profile_lang);
         let schemas = self.registry.schemas_for(&allowed, profile_loc);
         // Copied out before the `chat_mut` borrow below (config can't be read
@@ -957,7 +967,8 @@ impl Orchestrator {
             // T2/T4): the images the conversation carries, and the chat's files as the one
             // numbered list the block shows, the tool resolves and the popup reports.
             // Empty — and not even collected — for a turn that cannot stage anything.
-            let images: Vec<crate::entities::message_image::MessageImage> = if stages_files {
+            let images: Vec<crate::entities::message_image::MessageImage> = if stages_files || draws
+            {
                 chat.messages
                     .iter()
                     .flat_map(|m| m.images.iter().cloned())
@@ -3771,10 +3782,17 @@ impl TurnLoop<'_> {
         // plans without them instead of acting unasked
         // (docs/research/safe-defaults.md D7).
         let unconfirmable = tool == START_SUBAGENT_ID && self.shared.confirm_dangerous;
+        // Nobody waits for a background run either, so it draws no pictures
+        // (docs/research/image-generation.md §6.6, F7); a group child is part of
+        // the turn the person is watching, and shares its ceiling.
+        let background = tool == START_SUBAGENT_ID;
         let allowed: Vec<ToolId> = self
             .allowed
             .iter()
             .filter(|t| !withheld_from_subagent(t))
+            .filter(|t| {
+                !(background && t.as_str() == crate::features::tools::image_gen::IMAGE_GENERATE_ID)
+            })
             .filter(|t| {
                 !(unconfirmable
                     && self

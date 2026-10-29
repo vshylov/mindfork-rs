@@ -4125,12 +4125,13 @@ fn value_column_is_shared_across_groups() {
     // per section; a per-group column "sawtoothed" between groups).
     let mut s = screen();
     goto_section(&mut s, Section::Tools);
-    // "Tools" now carries "Video (YouTube)" above "Files", and "Web search" grew
-    // the provider choice plus a key pair per keyed provider — so the viewport
-    // has to be tall enough that every group (through "Files") is still on
-    // screen. The height is incidental to what this test asserts (one value
-    // column across groups); it only has to clear the last group.
-    let mut term = Terminal::new(TestBackend::new(100, 52)).unwrap();
+    // "Tools" now carries "Video (YouTube)" and "Image generation" above
+    // "Files", and "Web search" grew the provider choice plus a key pair per
+    // keyed provider — so the viewport has to be tall enough that every group
+    // (through "Files") is still on screen. The height is incidental to what
+    // this test asserts (one value column across groups); it only has to clear
+    // the last group.
+    let mut term = Terminal::new(TestBackend::new(100, 64)).unwrap();
     term.draw(|f| s.render(f)).unwrap();
     let buf = term.backend().buffer();
     let lines: Vec<String> = (0..buf.area.height)
@@ -7681,4 +7682,143 @@ fn the_effort_cycle_reaches_max_and_wraps() {
     );
     assert_eq!(menu, seen);
     assert_eq!(at, 7);
+}
+
+// ---------- image generation (spec §9.15, docs/research/image-generation.md §6.1) ----------
+
+use crate::shared::config::ImageGenProvider;
+
+/// The rows of the picture group, in the order they are shown.
+fn image_gen_group(s: &SettingsScreen) -> Vec<FieldId> {
+    let fields = s.tool_fields();
+    let group = fields
+        .iter()
+        .find(|f| f.id == FieldId::IgEnabled)
+        .map(|f| f.group)
+        .expect("the switch's row");
+    fields
+        .iter()
+        .filter(|f| f.group == group)
+        .map(|f| f.id)
+        .collect()
+}
+
+/// The switch comes first and is off; then who draws and that provider's rows,
+/// the gateway's own switch closing the group under the gateway. Every row
+/// says what it is for in every interface language, and the key rows name the
+/// provider whose key they are.
+#[test]
+fn the_image_group_opens_with_its_switch_and_shows_the_providers_rows() {
+    use FieldId as F;
+    let s = screen();
+    assert!(!s.config.image_gen.enabled);
+    let rows = [
+        F::IgEnabled,
+        F::IgProvider,
+        F::IgModel,
+        F::IgQuality,
+        F::IgShow,
+        F::IgMaxPerTurn,
+        F::IgApiKey,
+        F::IgApiKeyEnv,
+    ];
+    assert_eq!(image_gen_group(&s), rows);
+    for lang in crate::shared::i18n::Lang::ALL.iter().copied() {
+        for provider in ImageGenProvider::ALL {
+            let mut s = screen();
+            s.config.image_gen.provider = provider;
+            s.config.interface.language = lang;
+            let mut expected = rows.to_vec();
+            if provider == ImageGenProvider::OpenRouter {
+                expected.push(F::GatewayAttribution);
+            }
+            assert_eq!(image_gen_group(&s), expected, "{lang:?} {provider:?}");
+            for row in image_gen_group(&s) {
+                let hint = field_desc(&s, row).unwrap_or_default();
+                assert!(!hint.is_empty(), "{lang:?} {provider:?} {row:?}");
+            }
+            let name = provider.cloud_provider().display_name();
+            for row in [F::IgApiKey, F::IgApiKeyEnv] {
+                let label = field_label(&s, row).unwrap_or_default();
+                assert!(
+                    label.contains(name),
+                    "{lang:?} {provider:?} {row:?}: {label}"
+                );
+            }
+        }
+    }
+}
+
+/// The switch saves; the quality row cycles through the chosen provider's own
+/// values — OpenAI's qualities, Gemini's sizes — and each provider keeps its
+/// model, its quality and its variable across a switch.
+#[test]
+fn the_image_rows_save_into_the_chosen_providers_section() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Tools);
+    goto_field(&mut s, FieldId::IgEnabled);
+    match s.handle_key(key(KeyCode::Enter)) {
+        Some(SettingsIntent::SaveConfig(c)) => assert!(c.image_gen.enabled),
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+    goto_section(&mut s, Section::Tools);
+    goto_field(&mut s, FieldId::IgQuality);
+    s.handle_key(key(KeyCode::Right));
+    assert_eq!(s.config.image_gen.openai.quality.as_deref(), Some("high"));
+    s.handle_key(key(KeyCode::Left));
+    s.handle_key(key(KeyCode::Left));
+    assert_eq!(s.config.image_gen.openai.quality.as_deref(), Some("low"));
+
+    goto_section(&mut s, Section::Tools);
+    goto_field(&mut s, FieldId::IgProvider);
+    s.handle_key(key(KeyCode::Right));
+    assert_eq!(s.config.image_gen.provider, ImageGenProvider::Gemini);
+    goto_section(&mut s, Section::Tools);
+    goto_field(&mut s, FieldId::IgQuality);
+    s.handle_key(key(KeyCode::Right));
+    assert_eq!(s.config.image_gen.gemini.quality.as_deref(), Some("2K"));
+    assert_eq!(
+        s.config.image_gen.openai.quality.as_deref(),
+        Some("low"),
+        "OpenAI's quality is its own"
+    );
+    goto_section(&mut s, Section::Tools);
+    goto_field(&mut s, FieldId::IgModel);
+    s.handle_key(key(KeyCode::Enter));
+    s.handle_key(ctrl('k'));
+    for c in "gemini-3-pro-image".chars() {
+        s.handle_key(key(KeyCode::Char(c)));
+    }
+    s.handle_key(key(KeyCode::Enter));
+    assert_eq!(
+        s.config.image_gen.gemini.model_name.as_deref(),
+        Some("gemini-3-pro-image")
+    );
+    assert_eq!(
+        s.config.image_gen.openai.model_name.as_deref(),
+        Some(crate::shared::config::DEFAULT_IMAGE_GEN_OPENAI_MODEL)
+    );
+
+    goto_section(&mut s, Section::Tools);
+    goto_field(&mut s, FieldId::IgMaxPerTurn);
+    s.handle_key(key(KeyCode::Enter));
+    s.handle_key(ctrl('k'));
+    s.handle_key(key(KeyCode::Char('0')));
+    s.handle_key(key(KeyCode::Enter));
+    assert_eq!(s.config.image_gen.max_per_turn, 0, "0 — no ceiling");
+}
+
+/// The key row addresses the key of whoever draws — the provider's one key,
+/// shared with every other slot of that provider (ADR 0008).
+#[test]
+fn the_image_key_row_is_the_drawing_providers_key() {
+    let mut s = screen();
+    for provider in ImageGenProvider::ALL {
+        s.config.image_gen.provider = provider;
+        assert_eq!(
+            s.secret_field_key(FieldId::IgApiKey),
+            Some(SecretKey::Provider(provider.cloud_provider()))
+        );
+    }
+    assert!(super::helpers::is_secret_field(FieldId::IgApiKey));
 }

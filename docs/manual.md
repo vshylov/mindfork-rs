@@ -477,6 +477,7 @@ per-tool toggles, so a companion can be given less than the machine allows.
 | **Python execution** | `python_exec` in a WASI sandbox with no host file access; `mindfork sandbox setup` installs it once |
 | **File access** | `fs_read` / `fs_write` / `fs_list`, jailed to the one directory you name. The app's own data and program folders are never reachable |
 | **Video (YouTube)** | `youtube_watch` — needs a Gemini key or an OpenRouter one, by the group's **Provider** row, and works whatever your chat engine is |
+| **Image generation** | `image_generate` — the assistant draws when you ask; needs an OpenAI, Gemini or OpenRouter key, by the group's **Provider** row, and works whatever your chat engine is. Every picture is paid for |
 | **MCP servers** | tools from any Model Context Protocol server; a double opt-in, and a server that changes its tool list has to be re-confirmed |
 | **Background runs (subagent/dialogue)** | `start_subagent` and `start_dialogue` — work that outlives the reply |
 
@@ -501,6 +502,34 @@ that the whole was read, and the length ceiling measures the whole video — one
 longer than the ceiling is refused even for a minute of it. Any link you paste
 is fine: the app hands over the video's own address and nothing else of the
 link ([install.md §4.4](install.md)).
+
+### Drawing pictures
+
+Turn on `Ctrl+P → Tools → Image generation`, then ask: "draw me a fox in the
+snow", "make it night". The assistant writes the whole picture in words and the
+provider draws it; to change a picture, it names the one you mean — `#3`, a file's
+name — and the provider draws the new one from it.
+
+- **Where it goes.** Each picture is kept in the chat's files exactly as the
+  provider sent it, as `image-1.png`, `image-2.png`…: `/file list` shows them,
+  `/file open #N` opens one in your image viewer, `/file folder` opens the folder.
+  The tool's card in the feed names the file.
+- **Who draws.** `openai` (the default, `gpt-image-2.5-flare` — about a cent and a
+  half a picture at `medium`; OpenAI may ask an organisation to verify itself
+  before its key draws), `gemini` (Nano Banana; JPEG, about four cents) or
+  `openrouter` (some sixty models of a dozen vendors — type the model's name, e.g.
+  `black-forest-labs/flux-3-image`; the gateway charges nothing for a picture that
+  fails). The key is the provider's, the same one chat uses. **Quality** (OpenAI)
+  or **Size** (the others) is what the price is set by.
+- **What it may spend.** One turn draws at most **Pictures per turn** pictures (4;
+  `0` for no limit). A follow-up or a background run never draws; a message you
+  send from Telegram does. When the provider refuses a picture, the assistant
+  draws nothing more in that turn: it tells you what was refused and asks what to
+  change.
+- **What the assistant sees.** With **Show the picture to the model** on, a model
+  that takes images sees what it drew and can check it against your request. The
+  copy stays in the conversation and is sent again with every later message; turn
+  the switch off to keep the conversation light — the picture is kept either way.
 
 ### Confirmation
 

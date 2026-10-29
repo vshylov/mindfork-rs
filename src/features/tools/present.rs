@@ -164,13 +164,42 @@ pub struct ToolPresentation {
 /// `result`. `detail` decides how much of the arguments is shown — see [`ArgDetail`].
 pub fn present(name: &str, arguments: &str, result: &str, detail: ArgDetail) -> ToolPresentation {
     let val: Option<Value> = serde_json::from_str(arguments).ok();
-    let (header_suffix, args) = present_args(name, arguments, val.as_ref(), detail);
+    let (mut header_suffix, args) = present_args(name, arguments, val.as_ref(), detail);
+    // A drawn picture's collapsed card names the file it was saved as — the
+    // handle `/file open` takes — rather than the start of a long prompt
+    // (spec §9.15, docs/research/image-generation.md F8).
+    if detail == ArgDetail::Compact
+        && name == super::image_gen::IMAGE_GENERATE_ID
+        && let Some(saved) = saved_picture(result)
+    {
+        header_suffix = Some(saved.to_string());
+    }
     let result = present_result(name, val.as_ref(), result);
     ToolPresentation {
         header_suffix,
         args,
         result,
     }
+}
+
+/// The name a picture `image_generate` drew was saved under, read off the
+/// result's first line: the tool writes the file as `#N image-N.<ext>` (§6.4),
+/// a form that holds in every scaffold language and that no other line of its
+/// result has — a refusal may quote anything. `None` — nothing was saved.
+fn saved_picture(result: &str) -> Option<&str> {
+    const EXTS: [&str; 5] = ["png", "jpg", "webp", "gif", "bmp"];
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    let words: Vec<&str> = result.lines().next()?.split_whitespace().collect();
+    words.windows(2).find_map(|pair| {
+        let [handle, name] = pair else {
+            return None;
+        };
+        let (stem, ext) = name.rsplit_once('.')?;
+        (handle.strip_prefix('#').is_some_and(digits)
+            && stem.strip_prefix("image-").is_some_and(digits)
+            && EXTS.contains(&ext))
+        .then_some(*name)
+    })
 }
 
 /// The header + argument blocks.
@@ -641,6 +670,35 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// A drawn picture's collapsed card is named by its file, in either scaffold
+    /// language; a refusal, or a call still running, keeps the prompt.
+    #[test]
+    fn a_drawn_pictures_card_names_its_file() {
+        let args = r#"{"prompt":"a red fox in the snow","aspect":"16:9"}"#;
+        let saved = "Saved as #3 image-12.png (1536×864, 2.1 MB) in the chat's files;                      the user can open it with /file open #3.
+The provider counted 1 and 2 tokens.";
+        let p = present("image_generate", args, saved);
+        assert_eq!(p.header_suffix.as_deref(), Some("image-12.png"));
+        let ru = "Сохранено как #3 image-4.jpg (848×1264, 0.5 MB) в файлах чата.";
+        assert_eq!(
+            present("image_generate", args, ru).header_suffix.as_deref(),
+            Some("image-4.jpg")
+        );
+        for unsaved in ["", "The provider refused to draw this: «image-1.png»"] {
+            let p = present("image_generate", args, unsaved);
+            assert!(
+                p.header_suffix
+                    .as_deref()
+                    .unwrap_or_default()
+                    .contains("red fox"),
+                "{unsaved:?}: {:?}",
+                p.header_suffix
+            );
+        }
+        let full = super::present("image_generate", args, saved, ArgDetail::Full);
+        assert_eq!(full.header_suffix, None, "expanded, the name alone");
     }
 
     #[test]

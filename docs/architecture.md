@@ -587,6 +587,14 @@ src/
 │  │  │                     video, and the result says the whole was read — spec §9.9
 │  │  ├─ gateway_live_tests.rs  #[ignore]: youtube_watch on the gateway's client, as
 │  │  │                     the agentic loop calls it (docs/install.md §7.1)
+│  │  ├─ image_gen.rs       image_generate: a picture drawn by the image slot's
+│  │  │                     provider via shared/image_gen (spec §9.15). The
+│  │  │                     original is kept as a `generated` chat file
+│  │  │                     image-N.<ext> (ChatEffect::AddChatFile), a copy goes
+│  │  │                     back as a ToolImage; `images` resolves the chat's
+│  │  │                     handles (chat_inputs). TurnDraws — the turn's
+│  │  │                     ceiling and the stop after a refusal, in
+│  │  │                     ToolContext::draws; gated by ToolGate::ImageGen
 │  │  ├─ calc.rs            calculate (our own math expression evaluator)
 │  │  ├─ datetime.rs        current_time (date/time, chrono)
 │  │  ├─ fs.rs              fs_read/fs_write/fs_list (files; fs_enabled gate + sandbox)
@@ -753,7 +761,8 @@ src/
 │  │                        FeedView (per-chat collapse state of the feed's foldable blocks)
 │  ├─ chat_file.rs          ChatFile/FileOrigin — a file stored with a chat (bytes in
 │  │                        data/files/<chat-id>/): a call's output, one adopted at
-│  │                        startup, or an original /file attach kept; the name
+│  │                        startup, an original /file attach kept, or a picture
+│  │                        image_generate drew (`generated`, chats 7); the name
 │  │                        sanitizer and versioning
 │  ├─ live_turn.rs          LiveTurn/LivePartial/LiveTool — the generation in flight on a
 │  │                        conversation being activated: what ChatActivated seeds the feed with
@@ -1120,6 +1129,20 @@ src/
    │                       (the summary) reserves too. Spec §6.3,
    │                       docs/research/admission-by-budget.md, silent-tasks-budget.md,
    │                       silent-preemption.md
+   ├─ image_gen/           image generation for `image_generate` (spec §9.15):
+   │                       the `ImageGenerator` contract (`draw` → a `Picture` or
+   │                       `Drawing::Refused`, an answer; an `Err` is everything
+   │                       else) and three clients — `OpenAiImages`
+   │                       (`/images/generations`, `/images/edits` with `data:`
+   │                       URLs), `GeminiImages` (`generateContent`,
+   │                       `responseModalities: ["IMAGE"]`, a thought signature
+   │                       dropped) and `GatewayImages` (the gateway's `/images`,
+   │                       sending only what the model's `GET /images/models`
+   │                       entry lists). `resolve(settings, key, attribution)` →
+   │                       `ImageGenSlot` — the tool's switches and the config or
+   │                       what it lacks (`Missing`). A slot of its own like video:
+   │                       the providers that draw are not the ones that chat.
+   │                       Key — the stored key of the provider the settings name
    ├─ video/               video understanding for `youtube_watch`: the
    │                       `VideoUnderstanding` contract + two clients of it,
    │                       `GeminiVideo` (`generateContent` with a `file_data`
@@ -2746,7 +2769,7 @@ different rates; `settings.json` is at **7**, the chat files at **6**,
   `detect` + a `steps` chain), the `Assessment` verdict (`UpToDate`/`Migrate`/
   `Downgrade`), a registry.
 - **`shared/storage/chat_steps.rs`** — the chat-file steps themselves
-  (`chat_to_v2` … `chat_to_v6`), kept out of the registry file because a step is a page of
+  (`chat_to_v2` … `chat_to_v7`), kept out of the registry file because a step is a page of
   logic with a golden fixture (`storage/fixtures/`), not a line in a table.
 - **`features/data_migration.rs`** — orchestration: file I/O, gates,
   pre-migration backup, control-parse. `run(paths, loc)` is called from
@@ -3023,7 +3046,7 @@ by `ToolGroup` (`Ord`).
 |----------------|-----------------------------------------------------------------|
 | Memory/knowledge  | `note_save` (embeds + a compatibility gate), `note_recall` (semantic search + spreading activation over the graph, falls back to substring match; **hides `@self` self-notes**), `note_revise` (in-place edit), `note_link`/`note_neighbors` (typed link graph), `note_supersede`/`note_merge` (supersession with a scar / merge with link transfer; **inherit tags**, including `@self`), `consolidate_notes` (a consolidation overview), `rag_add`, `rag_search`. Notes connectivity (accumulation → integration) + auto "sleep": see [docs/notes-connectivity.md](history/notes-connectivity.md). Self-model observations are ordinary notes tagged `@self` ([docs/narrative-as-notes.md](history/narrative-as-notes.md), §9) |
 | Introspection  | `get_sampling`, `set_sampling`, `get_system_message`, `set_system_message`, `get_last_user_message_time`; `get_llm_name`/`get_llm_history` (spec §9.14) — the **language model's** name (from the turn snapshot `ToolContext.model_name`/`engine_mode`, the same single `effective_model_name()` read the header and `MessageMetadata` use) and the profile's dated history of model changes (`data.db` `llm_history`, written by `handle_done` → `record_llm_history` when the pair name+mode differs from the newest record; a history with no records at all is seeded once at bootstrap from the chats' stored metadata — `orchestrator/llm_history.rs`). Named `llm_*` deliberately — the counterpart of the `self_model` family below, never a bare "model" |
-| External       | `web_search` (multi-provider + anti-bot), `fetch_url` (fetch+summarize; a YouTube link → metadata + a pointer to `youtube_watch`), `youtube_watch` (what a video says **and shows** — a slot of its own, Gemini by Google's API or through the OpenRouter gateway, degrades to free metadata; `transcript: true` lands the words as a chat attachment; spec §9.9), `python_exec` (the Wasmer sandbox or a local interpreter; what the code saves to `/w/out` is stored with the chat, and the chat's files a call names in `files` are copied into `/w/in` before it runs, spec §9.7, §13.2) — gated by `web_enabled`/`python_enabled` |
+| External       | `web_search` (multi-provider + anti-bot), `fetch_url` (fetch+summarize; a YouTube link → metadata + a pointer to `youtube_watch`), `youtube_watch` (what a video says **and shows** — a slot of its own, Gemini by Google's API or through the OpenRouter gateway, degrades to free metadata; `transcript: true` lands the words as a chat attachment; spec §9.9), `image_generate` (a picture drawn by OpenAI, Gemini or the gateway — a slot of its own, gated by `image_gen.enabled`, the original kept as a `generated` chat file; spec §9.15), `python_exec` (the Wasmer sandbox or a local interpreter; what the code saves to `/w/out` is stored with the chat, and the chat's files a call names in `files` are copied into `/w/in` before it runs, spec §9.7, §13.2) — gated by `web_enabled`/`python_enabled` |
 | Files          | `fs_read`, `fs_write`, `fs_list` — gated by `fs_enabled`, confined to `fs_root` (empty → refused), the app's own directories out of reach (`reach.rs`); `attachment_read` (one page of a file the user attached with `/file attach`) and `attachment_search` (by meaning, over the chat-scoped index) — **not gated and on by default**: unlike `fs_read` they *narrow* access to what the user explicitly attached, reading the stored snapshot/index rather than the disk. See spec §9.7 |
 | Utilities      | `calculate` (our own expression evaluator), `current_time` (chrono) — no I/O, not gated |
 | Files (project) | `code_list`, `code_read`, `code_grep`, `code_edit`, `code_write`, `code_build`, `code_run`, `code_test` — the code workspace attached to *this chat* with `/project attach` (spec §9.12). One `CodeTool` enum with one `impl Tool` dispatching to free functions, and `code::ALL` is what the registry loops, so a new member cannot be registered without joining the family's list. The editing pair and the three command tools are `danger()` (so §9.8's confirmation can park them); the editors journal a file's previous bytes before touching it; the whole family is exempt from `max_tool_rounds` and bounded instead by `workspace.max_rounds`. **No global gate**: the project's presence is the gate — and for a command tool, a line in its slot — so with none attached the schemas never reach the prompt and the request is byte-identical to what it was before the feature. The rule lives in `code::offered`, which `effective_tool_ids` consults. Stateless — the root, the command lines and the limits are per-turn snapshots (`ToolContext.workspace`, `ToolContext.workspace_cfg`), not registry parameters |
@@ -3208,6 +3231,23 @@ Implementation notes:
   previous check knew. Chain order is not fixed: a family that blocked is
   remembered for `PROVIDER_COOLDOWN` and reordered to the back (the two DDG
   entries share one `Provider::family`, hence one throttle), never skipped.
+- **`image_generate`** (`image_gen.rs`, spec §9.15) — the client is the
+  registry's, built from `ToolConfig::image_gen` (`orchestrator::image_gen_slot`:
+  the settings, the stored key of the provider they name, the gateway's switch),
+  and rebuilt on a change of the slot, of `images` or of that provider's key. A slot
+  that lacks a key or a model still registers the tool, which says what is missing.
+  What a turn may spend is the turn's: `ToolContext::draws` (`TurnDraws`) is made
+  fresh by every `ToolContext::new` — once a turn — and a sub-agent's context is a
+  clone, so its calls count against the turn's ceiling; a refusal sets its stop,
+  and every later call answers without reaching the provider. Who is offered the
+  tool is decided where the turn's set is: `ToolGates::image_gen` is the switch
+  **and not woken** (`start_generation_woken`), and `child_spec_with` drops it from
+  a background sub-agent's set; a bridged turn keeps it — it is not dangerous. The
+  turn's image snapshot (`ToolContext::images`) is built when the tool is offered
+  as well as for `python_exec`, so `images` reaches a conversation's pictures. The
+  picture handed to the loop is the original under `images.max_bytes` and a
+  prepared copy above it — `prepare_tool_images` drops an oversized tool image
+  before it downscales one.
 - **`youtube_watch`** (`youtube.rs`, spec §9.9) — the client is the registry's:
   the tool is registered with `shared::video::client(cfg)`, the client of the
   provider the settings name, or with none, and then it degrades to the

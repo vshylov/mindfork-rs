@@ -104,6 +104,11 @@ impl Orchestrator {
         if self.config.tools != old.tools
             || self.config.video != old.video
             || self.video_follows(&old.openrouter)
+            // The picture slot's client and limits live in the registry too.
+            || self.config.image_gen != old.image_gen
+            || self.config.images != old.images
+            || (self.config.image_gen.provider == crate::shared::config::ImageGenProvider::OpenRouter
+                && self.config.openrouter != old.openrouter)
         {
             self.rebuild_registry();
             // The cap on background runs applies to the next start.
@@ -154,7 +159,10 @@ impl Orchestrator {
                 // change of that key has to rebuild it (cheap, in-memory), or
                 // `youtube_watch` would keep reporting itself unconfigured until
                 // the next unrelated settings edit.
-                if provider == self.config.video.provider.cloud_provider() {
+                // So does the picture slot (`image_generate`, spec §9.15).
+                if provider == self.config.video.provider.cloud_provider()
+                    || provider == self.config.image_gen.provider.cloud_provider()
+                {
                     self.rebuild_registry();
                 }
             }

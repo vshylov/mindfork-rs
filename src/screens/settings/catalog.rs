@@ -282,6 +282,100 @@ impl SettingsScreen {
         rows
     }
 
+    /// The picture group (spec §9.15, docs/research/image-generation.md §6.1):
+    /// the switch first — off until turned on — then who draws and that
+    /// provider's rows. The gateway's model row names no default, and the
+    /// provider's own switch closes the group, as under the video group.
+    fn image_gen_rows(&self, loc: &'static Locale) -> Vec<FieldRow> {
+        let ig = &self.config.image_gen;
+        let provider = ig.provider.cloud_provider();
+        let name = provider.display_name();
+        let gateway = ig.provider == ImageGenProvider::OpenRouter;
+        let section = ig.section();
+        let said = |key: &'static str| loc.t(key);
+        let mut rows = vec![
+            row(
+                FieldId::IgEnabled,
+                said("ui.settings.field.image_gen_enabled"),
+                FieldKind::Toggle(ig.enabled),
+            )
+            .describe(said("ui.settings.desc.image_gen_enabled")),
+            row(
+                FieldId::IgProvider,
+                said("ui.settings.field.image_gen_provider"),
+                FieldKind::Choice(ig.provider.label().to_string()),
+            )
+            .describe(said("ui.settings.desc.image_gen_provider")),
+            text_row(
+                FieldId::IgModel,
+                said("ui.settings.field.model"),
+                &section.model_name,
+            )
+            .describe(said(if gateway {
+                "ui.settings.desc.image_gen_model_gateway"
+            } else {
+                "ui.settings.desc.image_gen_model"
+            })),
+        ];
+        let (label, desc) = match ig.provider {
+            ImageGenProvider::OpenAi => (
+                "ui.settings.field.image_gen_quality",
+                "ui.settings.desc.image_gen_quality",
+            ),
+            ImageGenProvider::Gemini => (
+                "ui.settings.field.image_gen_size",
+                "ui.settings.desc.image_gen_size",
+            ),
+            ImageGenProvider::OpenRouter => (
+                "ui.settings.field.image_gen_size",
+                "ui.settings.desc.image_gen_size_gateway",
+            ),
+        };
+        rows.push(
+            row(
+                FieldId::IgQuality,
+                said(label),
+                FieldKind::Choice(section.quality.clone().unwrap_or_default()),
+            )
+            .describe(said(desc)),
+        );
+        rows.push(
+            row(
+                FieldId::IgShow,
+                said("ui.settings.field.image_gen_show"),
+                FieldKind::Toggle(ig.show_to_model),
+            )
+            .describe(said("ui.settings.desc.image_gen_show")),
+        );
+        rows.push(
+            num_field(
+                FieldId::IgMaxPerTurn,
+                said("ui.settings.field.image_gen_max_per_turn"),
+                ig.max_per_turn,
+            )
+            .describe(said("ui.settings.desc.image_gen_max_per_turn")),
+        );
+        rows.push(secret_row(
+            FieldId::IgApiKey,
+            self.secret_field_present(FieldId::IgApiKey),
+            &api_key_label(Some(name), loc),
+            "ui.settings.desc.image_gen_api_key",
+            loc,
+        ));
+        rows.push(
+            text_row(
+                FieldId::IgApiKeyEnv,
+                &api_key_env_opt_label(name, loc),
+                &section.api_key_env,
+            )
+            .describe(said("ui.settings.desc.image_gen_api_key_env")),
+        );
+        if gateway {
+            rows.extend(provider_wide_rows(Some(provider), &self.config, loc));
+        }
+        rows
+    }
+
     pub(super) fn secret_field_key(&self, id: FieldId) -> Option<SecretKey> {
         match id {
             FieldId::XApiKey => self.config.engine.secret_key(),
@@ -292,6 +386,8 @@ impl SettingsScreen {
             // The key of whoever watches: Gemini's, or the gateway's — the
             // settings' own answer, like the rows above (spec §9.9).
             FieldId::VideoApiKey => Some(self.config.video.secret_key()),
+            // The picture provider's key — the slot's own answer, as above.
+            FieldId::IgApiKey => Some(self.config.image_gen.secret_key()),
             // A search slot, like an external one, is its own address: these are
             // not inference providers and must never resolve through the
             // engine's key lookup (see `SecretKey::Search`).
@@ -1158,6 +1254,10 @@ impl SettingsScreen {
         rows.extend(grouped(
             loc.t("ui.settings.group.video"),
             self.video_rows(loc),
+        ));
+        rows.extend(grouped(
+            loc.t("ui.settings.group.image_gen"),
+            self.image_gen_rows(loc),
         ));
         rows.extend(grouped(
             loc.t("ui.settings.group.files"),
@@ -2202,6 +2302,7 @@ impl SettingsScreen {
             ToolGate::Mcp => !self.config.mcp.enabled,
             ToolGate::Background => !self.config.tools.subagent_background,
             ToolGate::Followups => !profile.companion.followups,
+            ToolGate::ImageGen => !self.config.image_gen.enabled,
         }
     }
 
