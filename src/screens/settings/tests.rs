@@ -7685,7 +7685,7 @@ fn the_effort_cycle_reaches_max_and_wraps() {
     assert_eq!(at, 7);
 }
 
-// ---------- image generation (spec §9.15, docs/research/image-generation.md §6.1) ----------
+// ---------- image generation (spec §9.15, docs/history/image-generation.md §6.1) ----------
 
 use crate::shared::config::ImageGenProvider;
 

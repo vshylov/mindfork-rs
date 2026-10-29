@@ -180,7 +180,7 @@ impl Orchestrator {
     }
 
     /// Draws a picture with the picture slot's provider (`/image generate`, spec
-    /// §9.15, docs/research/image-generation.md §6.5): the person's own road to the
+    /// §9.15, docs/history/image-generation.md §6.5): the person's own road to the
     /// slot — no tool, no model, no round. The original is kept in the chat's files
     /// as the tool keeps one, and a copy staged for the next message as a pasted
     /// picture is; sending it is what shows the model.

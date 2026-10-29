@@ -1,6 +1,6 @@
 //! OpenAI's Images API: `POST /images/generations` for a new picture,
 //! `POST /images/edits` (JSON, the pictures as `data:` URLs) for a changed one
-//! (docs/research/image-generation.md §3.1).
+//! (docs/history/image-generation.md §3.1).
 //!
 //! The answer is **base64 only** for the GPT image models — no URL to fetch
 //! before it expires. A refusal is a `400` with a stable code,

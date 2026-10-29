@@ -804,7 +804,7 @@ impl Orchestrator {
                 followups: companion.followups,
                 // Nobody is waiting for a woken turn — a follow-up, a background
                 // run's notice — so it draws nothing, whatever the switch says
-                // (docs/research/image-generation.md §6.6, F7). A messenger's turn
+                // (docs/history/image-generation.md §6.6, F7). A messenger's turn
                 // is someone's, and draws.
                 image_gen: self.config.image_gen.enabled && !woken,
                 history: history_upto.is_some(),
@@ -3784,7 +3784,7 @@ impl TurnLoop<'_> {
         // (docs/research/safe-defaults.md D7).
         let unconfirmable = tool == START_SUBAGENT_ID && self.shared.confirm_dangerous;
         // Nobody waits for a background run either, so it draws no pictures
-        // (docs/research/image-generation.md §6.6, F7); a group child is part of
+        // (docs/history/image-generation.md §6.6, F7); a group child is part of
         // the turn the person is watching, and shares its ceiling.
         let background = tool == START_SUBAGENT_ID;
         let allowed: Vec<ToolId> = self

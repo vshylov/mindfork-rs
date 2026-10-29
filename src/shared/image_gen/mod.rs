@@ -1,5 +1,5 @@
 //! Image generation: the contract and the provider clients, for the
-//! `image_generate` tool (spec §9.15, docs/research/image-generation.md §6.2).
+//! `image_generate` tool (spec §9.15, docs/history/image-generation.md §6.2).
 //!
 //! Like speech (ADR 0009) and video (`shared::video`), this slot is
 //! **independent of the chat engine**: the providers that draw are not the ones

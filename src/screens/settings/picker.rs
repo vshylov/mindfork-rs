@@ -94,7 +94,7 @@ pub(super) fn model_slot(config: &AppConfig, id: FieldId) -> Option<ModelSlot> {
             Some(ModelSlot::Video)
         }
         // The picture row, likewise: the gateway lists the models its picture
-        // route takes (docs/research/image-generation.md §6.1). The other
+        // route takes (docs/history/image-generation.md §6.1). The other
         // providers' rows stay the typed fields they are.
         FieldId::IgModel if config.image_gen.provider == ImageGenProvider::OpenRouter => {
             Some(ModelSlot::Image)

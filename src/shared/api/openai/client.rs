@@ -547,7 +547,7 @@ impl OpenAiClient {
     /// refused or ignored an image inside a tool message). On llama.cpp the image
     /// stayed inside, and Gemma 4 answered an English request in JSON after it, 28
     /// times of 30, against 0 of 29 re-homed, with Qwen 3.8's calls and checks the
-    /// same either way (docs/research/image-generation.md §11.3, fork F11).
+    /// same either way (docs/history/image-generation.md §11.3, fork F11).
     fn shaped_for_endpoint(&self, req: ChatRequest) -> ChatRequest {
         match wire::rehome_tool_images(&req.messages) {
             Some(messages) => {
@@ -2283,7 +2283,7 @@ mod tests {
         }
     }
 
-    /// Fork F11 on the wire (docs/research/image-generation.md §11.3): **every**
+    /// Fork F11 on the wire (docs/history/image-generation.md §11.3): **every**
     /// endpoint — a llama.cpp that publishes no catalogue as much as a gateway —
     /// receives the tool result text-only and the image in a user message after it,
     /// behind its label, and nothing is asked first: the first request is the turn.

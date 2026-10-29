@@ -1,5 +1,5 @@
 //! `image_generate` — a picture drawn by the image slot's provider (spec §9.15,
-//! docs/research/image-generation.md §6.3–§6.4).
+//! docs/history/image-generation.md §6.3–§6.4).
 //!
 //! The tool calls the configured provider out of band, as `youtube_watch` calls
 //! its video model: the chat engine can be anything, a local model included. The

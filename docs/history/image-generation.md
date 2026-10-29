@@ -1,7 +1,15 @@
 # Image generation by cloud models
 
-Status: **research; forks decided by the owner on 2026-10-29** (§7). The
-decisions:
+**Status:** the track is **closed** (2026-10-30). The research merged as #841,
+the probe as #842, F11 as #843, stage 1 as #844, stage 2 as #845 and stage 3 as
+#846, each stage with a live run that was a GO — on every provider and on
+Gemma 4 and Qwen 3.8 (§11–§14). The forks F1–F11 were the owner's; D1–D9 of
+stage 3 were decided while building and listed for review in its pull request
+(§14). Local generation stays out of scope, the owner's decision (§1); pixels in
+the feed is the roadmap's own idea (F8 c). The account below is the research as
+written and each stage as built.
+
+**The forks were decided by the owner on 2026-10-29** (§7):
 - **As recommended:** F1 (a), F2 (a), F3 (a), F4 (a), F5 (a), F6 (a), F8 (a),
   F9 (a).
 - **F7, amended:** the switch off by default and nothing drawn in follow-ups or
@@ -276,7 +284,7 @@ tool, and a settings section.
    clients are stateless and built from a config snapshot per call
    (`shared/tts`, `shared/video`, `shared/stt`). The gateway's sections have **no
    default model** — a default that names a model ages
-   ([model-picker.md](model-picker.md) §1) — and the cloud ones do.
+   ([model-picker.md](../research/model-picker.md) §1) — and the cloud ones do.
 2. **A tool can return pictures.** `ToolOutcome.images: Vec<ToolImage>`
    (`features/tools/mod.rs`) carries base64 + MIME + the result line that names
    the file. The orchestrator prepares each one on the path `/image attach` takes
@@ -291,7 +299,7 @@ tool, and a settings section.
 3. **`python_exec` is the template to copy.** An image its code saves is stored
    **as written** in the chat's folder and a prepared copy is offered to the model
    under its own switch, `tools.python_images` (on by default)
-   ([sandbox-file-exchange.md](../history/sandbox-file-exchange.md) F5, §11 S8).
+   ([sandbox-file-exchange.md](sandbox-file-exchange.md) F5, §11 S8).
    A generated image wants exactly that: the original kept, a smaller copy shown.
 4. **The chat's files.** `data/files/<chat-id>/`, listed by `Chat.files:
    Vec<ChatFile>` with an origin (`sandbox`, `recovered`, `attached`), a SHA-256
@@ -307,7 +315,7 @@ tool, and a settings section.
    settings row (`ModelSlot::{Speech, Transcription, Video}`, …) and already sees
    image models: the gateway's `openai/gpt-image-2` is classified
    `ModelRole::Other` and kept out of the chat list; OpenAI's own list carries
-   `gpt-image-2.5-*` and `chatgpt-image-latest` ([model-picker.md](model-picker.md)).
+   `gpt-image-2.5-*` and `chatgpt-image-latest` ([model-picker.md](../research/model-picker.md)).
    An image slot is one more `ModelSlot` and one more role.
 7. **The feed draws no pixels.** A tool card shows a chip per image it returned
    (`ToolCallRecord.images`, a count); rendering pictures is a roadmap idea
@@ -316,7 +324,7 @@ tool, and a settings section.
    Sixel protocols with a half-block fallback; 12.0.0 is at rc.3 (2026-10-18).
    The audience's terminals are often the ones that draw none of it — tmux without
    `allow-passthrough`, JupyterLab's terminal, the Windows console host
-   ([companion-platform.md](companion-platform.md) C12).
+   ([companion-platform.md](../research/companion-platform.md) C12).
 8. **The messenger bridge receives pictures and sends none**
    ([ADR 0013](../decisions/0013-messenger-bridge.md), stage B). A phone is where a
    picture is actually seen; a generated image is the obvious first thing it would
@@ -325,7 +333,7 @@ tool, and a settings section.
    effects outside the application (spec §9.8), and `youtube_watch` — the paid
    precedent — is not "dangerous". What bounds a turn is `max_tool_rounds` (8). The
    companion platform's rule 5 stands for any turn nobody asked for: it spends
-   money only within a cap the person set ([companion-platform.md](companion-platform.md) §7).
+   money only within a cap the person set ([companion-platform.md](../research/companion-platform.md) §7).
 10. **Stored types.** A new section with an enum of its own (`image_gen.provider`)
     is skipped whole by an older reader and needs no settings step. A **new value**
     of `FileOrigin` (`generated`) is a chat-schema step, 6 → 7: an older binary

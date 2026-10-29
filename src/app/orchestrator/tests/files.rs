@@ -1274,7 +1274,7 @@ async fn an_image_a_seeing_model_takes_is_sent_without_a_note() {
 
 /// The round after a tool's picture sends it behind the tool's language-free label —
 /// the same label history replay gives it, so the next request repeats this one's
-/// prefix byte for byte (docs/research/image-generation.md §11.3, fork F11).
+/// prefix byte for byte (docs/history/image-generation.md §11.3, fork F11).
 #[tokio::test]
 async fn a_tools_picture_goes_out_behind_the_tools_label() {
     let ChartingTurn {

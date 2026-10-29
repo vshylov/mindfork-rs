@@ -385,7 +385,7 @@ effort tiers — have all closed
   in the message, and the only chips are for images waiting to be sent and on
   a tool's card ([multimodal-images.md §5](research/multimodal-images.md),
   spec §9.10). Image generation would make it worth more
-  ([image-generation.md](research/image-generation.md) F8).
+  ([image-generation.md](history/image-generation.md) F8).
 - **Regeneration with variations** — **idea**. Not just `Ctrl+R`/`/regen` with
   the same request: different sampling, or picking from several response
   variants. Today a replaced reply is only archived.
@@ -733,7 +733,7 @@ its area.
   gateway's picture models in the picker; `/image generate` for the person. Live GO
   on every provider and on Gemma 4 and Qwen 3.8. Local generation is out of scope,
   the owner's decision; pixels in the feed is its own idea, under *Feed and
-  rendering*. [image-generation.md](research/image-generation.md) §11–§14.
+  rendering*. [image-generation.md](history/image-generation.md) §11–§14.
 
 - **Gemma 4's JSON after a tool's picture** — unreleased (2026-10-29): on
   llama.cpp a picture inside a tool result — a chart, a screenshot — turned Gemma
@@ -741,7 +741,7 @@ its area.
   OpenAI-compatible endpoint now gets a tool's pictures re-homed into a user
   message behind a language-free `tool → name:` label (17 of 21 → 0 of 21).
   Found by the image-generation probe:
-  [image-generation.md](research/image-generation.md) §11.3, §11.5.
+  [image-generation.md](history/image-generation.md) §11.3, §11.5.
 
 - **The self-model's observations: their room, a floor, their header** —
   unreleased (2026-10-18), three pull requests: a stored `prompt_cap` of 1200

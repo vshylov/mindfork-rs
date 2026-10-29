@@ -8798,7 +8798,7 @@ fn a_json_envelope_is_told_from_prose() {
 }
 
 /// A tool's picture leaves the reply **prose, in the request's language**
-/// (docs/research/image-generation.md §11.3, fork F11). On llama.cpp a picture inside
+/// (docs/history/image-generation.md §11.3, fork F11). On llama.cpp a picture inside
 /// the tool result turned Gemma 4's replies to English requests into a JSON envelope,
 /// 28 times of 30; re-homed into a user message behind a localized label, they stayed
 /// prose but came back in the profile's Russian 11 times of 15. So: the default
@@ -8913,7 +8913,7 @@ async fn a_tools_picture_leaves_the_reply_prose_live() {
 }
 
 /// `image_generate` through the real loop (spec §9.15,
-/// docs/research/image-generation.md §8, stage 1): a live chat model asked to
+/// docs/history/image-generation.md §8, stage 1): a live chat model asked to
 /// draw calls the tool once with a full description, the picture is kept in the
 /// chat's folder as a generated file, and the reply is prose; asked next to
 /// change it, the model names the picture in `images` and the provider edits
@@ -9059,7 +9059,7 @@ async fn image_generate_draws_and_changes_through_the_loop_live() {
     );
 }
 
-/// `/image generate` (stage 3, docs/research/image-generation.md §14): the
+/// `/image generate` (stage 3, docs/history/image-generation.md §14): the
 /// person's own road to the picture slot. A real provider draws; the original
 /// is kept in the chat's files and a copy staged; the next message carries it,
 /// under the file's name, to a live chat model that sees — which describes what

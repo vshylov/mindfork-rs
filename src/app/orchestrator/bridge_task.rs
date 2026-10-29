@@ -427,7 +427,7 @@ async fn send(
 
 /// A drawn picture as a photo, its file's name under it: *sending a photo…*
 /// while it goes up, and the copy Telegram takes made first when the original
-/// is not one (docs/research/image-generation.md F9).
+/// is not one (docs/history/image-generation.md F9).
 async fn deliver_photo(
     client: &TelegramClient,
     chat: i64,

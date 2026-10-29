@@ -770,7 +770,7 @@ async fn the_withheld_note_is_once_a_chat_until_the_engine_is_asked_again() {
     );
 }
 
-// ---------- `/image generate` (spec §9.15, docs/research/image-generation.md §6.5) ----------
+// ---------- `/image generate` (spec §9.15, docs/history/image-generation.md §6.5) ----------
 
 /// A provider at `stub` that answers in OpenAI's shape, with drawing on and a key
 /// stored, in an English interface.

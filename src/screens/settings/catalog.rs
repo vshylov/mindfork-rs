@@ -282,7 +282,7 @@ impl SettingsScreen {
         rows
     }
 
-    /// The picture group (spec §9.15, docs/research/image-generation.md §6.1):
+    /// The picture group (spec §9.15, docs/history/image-generation.md §6.1):
     /// the switch first — off until turned on — then who draws and that
     /// provider's rows. The gateway's model row names no default, and the
     /// provider's own switch closes the group, as under the video group.

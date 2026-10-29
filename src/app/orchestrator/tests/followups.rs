@@ -182,7 +182,7 @@ async fn a_due_follow_up_is_delivered_once_and_wakes_the_open_conversation() {
 
 /// Nobody is waiting for a woken turn, so it is not offered `image_generate`
 /// even with the picture slot on; the turn the person types next is
-/// (docs/research/image-generation.md §6.6, F7).
+/// (docs/history/image-generation.md §6.6, F7).
 #[tokio::test]
 async fn a_woken_turn_draws_nothing_and_the_persons_turn_may() {
     let dir = tempfile::tempdir().unwrap();

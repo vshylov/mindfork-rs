@@ -202,7 +202,7 @@ being recent is dropped, not shortened.
   slot of its own (OpenAI by default, Gemini, the gateway, xAI), off by default;
   editing, a `generated` chat file (chats 6 → 7), a ceiling per turn, a refusal ends
   the turn's drawing; back to the phone as a photo; `/image generate`. Live **GO**
-  ([docs/research/image-generation.md](docs/research/image-generation.md) §12–§14).
+  ([docs/history/image-generation.md](docs/history/image-generation.md) §12–§14).
 - **A platform for a companion — stages 1–6 C** (2026-10-24): every feature
   a profile switch, off by default; dated rows; the notes and earlier conversations
   in the prompt, `/notes`; follow-ups it plans, quiet hours and a cap on, silence

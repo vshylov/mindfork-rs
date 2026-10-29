@@ -6559,7 +6559,7 @@ sub-decisions).
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check` clean.
 
 ### Post-M9: image generation — the stage-0 probe (done)
-The probe of [image-generation.md](../research/image-generation.md) §8, before any
+The probe of [image-generation.md](../history/image-generation.md) §8, before any
 code — the owner's go, 2026-10-29. Its code is frozen as the tag
 `probe/image-generation-stage0` (the unmerged `spike/image-generation-probe`);
 the full record is §11 of the research.
@@ -6605,7 +6605,7 @@ the full record is §11 of the research.
   code; unit tests unchanged (4395 green, 299 `#[ignore]`).
 
 ### Post-M9: image generation — stage 1, the slot and the tool (done)
-Stage 1 of [image-generation.md](../research/image-generation.md) §8, on the
+Stage 1 of [image-generation.md](../history/image-generation.md) §8, on the
 owner's forks; the full record is §12 there, the contract spec §9.15.
 
 - **What it is.** `image_gen` in the settings — off, OpenAI by default
@@ -6642,7 +6642,7 @@ owner's forks; the full record is §12 there, the contract spec §9.15.
 - Unit tests 4443 green, 304 `#[ignore]` (three provider smokes and the loop's).
 
 ### Post-M9: image generation — stage 2, the phone (done)
-Stage 2 of [image-generation.md](../research/image-generation.md) §8 — F9 as the
+Stage 2 of [image-generation.md](../history/image-generation.md) §8 — F9 as the
 owner decided it; the full record is §13 there, the contract spec §11.13
 (*Pictures it drew*).
 
@@ -6674,7 +6674,7 @@ owner decided it; the full record is §13 there, the contract spec §11.13
 - Unit tests 4450 green, 305 `#[ignore]` (the phone's smoke).
 
 ### Post-M9: image generation — stage 3, xAI, the picker and the command (done)
-Stage 3 of [image-generation.md](../research/image-generation.md) §8, and the last:
+Stage 3 of [image-generation.md](../history/image-generation.md) §8, and the last:
 the track is complete. The full record is §14 there, the contract spec §9.15 and
 §11.6.
 

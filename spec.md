@@ -1942,7 +1942,7 @@ append-only shape keeps the prefix cache intact across an image turn
   §1.2, fork H1). And on llama.cpp, which takes the image inside, Gemma 4 then
   answered English requests in a JSON envelope — `{"action": …, "action_input": …}`
   — 28 times of 30, against 0 of 29 re-homed, with Qwen 3.8's calls and checks the
-  same either way ([docs/research/image-generation.md](docs/research/image-generation.md)
+  same either way ([docs/history/image-generation.md](docs/history/image-generation.md)
   §11.3, fork F11). A tool's image is labelled **`tool → name:`**
   (`python_exec → tool-image-3.png:`) — no word of any language, since in a user
   message the numbered, localized label a user's image carries pulled replies to
@@ -2507,7 +2507,7 @@ docs/research/language-model-history.md.
 The assistant draws when asked to — a picture of something, or a change to a
 picture the chat already has — with an image-generation model of a cloud provider.
 Research, the probe and the owner's forks —
-[docs/research/image-generation.md](docs/research/image-generation.md).
+[docs/history/image-generation.md](docs/history/image-generation.md).
 
 **A slot of its own, out of band.** Like the video tool ([9.9](#99-watching-a-youtube-video-youtube_watch))
 the tool calls its provider itself, whatever the chat engine is: the providers that
@@ -5576,7 +5576,7 @@ a stopped reply: text only. A reply with nothing to say aloud goes as text alone
 synthesis or a `sendVoice` that fails costs the voice note only, said once in the
 terminal.
 
-**Pictures it drew** (docs/research/image-generation.md F9, stage 2). A turn from the
+**Pictures it drew** (docs/history/image-generation.md F9, stage 2). A turn from the
 phone may draw (§9.15 — `image_generate` is not dangerous). Its words go first, whole,
 as any reply's; then each picture the turn drew goes as a photo (`sendPhoto`), in the
 order drawn, with *sending a photo…* shown while it goes up and the chat's file name

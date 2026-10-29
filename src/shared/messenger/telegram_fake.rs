@@ -1,7 +1,7 @@
 //! A Telegram Bot API of the tests' own (ADR 0013, stage B): a real socket
 //! answering `getMe`, `getUpdates`, `sendChatAction`, `sendMessage`, `getFile`
 //! and a file's download, `sendVoice` (stage C) and `sendPhoto`
-//! (docs/research/image-generation.md F9), so the bridge is driven end to end —
+//! (docs/history/image-generation.md F9), so the bridge is driven end to end —
 //! its poller, its sender, the markup, a picture's or a voice note's fetch, a
 //! voice note or a drawn picture sent back — with no account and no network. A test puts a message "from the phone" with
 //! [`TelegramFake::say`]; the next poll carries it; everything the bot sends is

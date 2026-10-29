@@ -588,7 +588,7 @@ enum FieldId {
     /// stored in settings. Each provider's section keeps its own.
     VideoApiKeyEnv,
     /// The picture slot's switch (`image_gen.enabled`, spec §9.15) — off by
-    /// default: every picture is paid for (docs/research/image-generation.md F7).
+    /// default: every picture is paid for (docs/history/image-generation.md F7).
     IgEnabled,
     /// Who draws (`image_gen.provider`).
     IgProvider,
