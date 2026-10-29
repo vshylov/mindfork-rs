@@ -453,6 +453,7 @@ pub(super) fn is_secret_field(id: FieldId) -> bool {
             | FieldId::TtsApiKey
             | FieldId::SttApiKey
             | FieldId::VideoApiKey
+            | FieldId::IgApiKey
             | FieldId::BackupPassword
             | FieldId::INtfyToken
             | FieldId::PBridgeToken
@@ -844,6 +845,7 @@ pub(super) fn gate_hint(gate: ToolGate, loc: &'static Locale) -> &'static str {
         ToolGate::Mcp => "ui.settings.gate.mcp",
         ToolGate::Background => "ui.settings.gate.background",
         ToolGate::Followups => "ui.settings.gate.followups",
+        ToolGate::ImageGen => "ui.settings.gate.image_gen",
     })
 }
 
@@ -1556,6 +1558,19 @@ pub(super) fn index_menu<T: Copy + PartialEq>(
     let opts = all.iter().map(|&x| label(x)).collect();
     let idx = all.iter().position(|&x| x == cur).unwrap_or(0);
     (opts, idx)
+}
+
+/// The values the picture slot's quality row cycles through: OpenAI's
+/// qualities, or the sizes Gemini and the gateway take (spec §9.15).
+pub(super) fn image_gen_qualities(
+    provider: crate::shared::config::ImageGenProvider,
+) -> &'static [&'static str] {
+    match provider {
+        crate::shared::config::ImageGenProvider::OpenAi => {
+            &crate::shared::config::IMAGE_GEN_OPENAI_QUALITIES
+        }
+        _ => &crate::shared::config::IMAGE_GEN_SIZES,
+    }
 }
 
 pub(super) fn flash_menu(cur: FlashAttn) -> (Vec<String>, usize) {

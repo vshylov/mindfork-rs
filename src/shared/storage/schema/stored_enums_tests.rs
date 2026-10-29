@@ -36,9 +36,9 @@ use crate::entities::sampling::{ReasoningEffort, Verbosity};
 use crate::entities::self_model::GoalStatus;
 use crate::entities::subagent::{RunKind, RunOutcome};
 use crate::shared::config::{
-    AutoTitleMode, CodeBlockBackground, FlashAttn, ImpersonationMode, MediaResolution, NoteOrder,
-    PythonMode, ServerMode, SpecType, SttMode, Theme, ThemeMode, TtsMode, VideoProvider,
-    WebProvider,
+    AutoTitleMode, CodeBlockBackground, FlashAttn, ImageGenProvider, ImpersonationMode,
+    MediaResolution, NoteOrder, PythonMode, ServerMode, SpecType, SttMode, Theme, ThemeMode,
+    TtsMode, VideoProvider, WebProvider,
 };
 use crate::shared::embed_prefix::EmbedConvention;
 use crate::shared::notify::NotifyEscape;
@@ -159,6 +159,12 @@ pub(super) fn ledgers() -> Vec<Ledger> {
             4 => [Gemini = "gemini", OpenRouter = "openrouter"],
         }),
         ledger!(MediaResolution in Settings { 1 => [Low = "low", Medium = "medium"] }),
+        // The picture slot came with an enum of its own, which an older reader
+        // skips whole with its section: the schema of the first release that
+        // wrote it.
+        ledger!(ImageGenProvider in Settings {
+            7 => [OpenAi = "openai", Gemini = "gemini", OpenRouter = "openrouter"],
+        }),
         ledger!(EmbedConvention in Settings {
             1 => [None = "none", E5 = "e5", E5Instruct = "e5-instruct"],
         }),
@@ -224,8 +230,10 @@ pub(super) fn ledgers() -> Vec<Ledger> {
             4 => [Stop = "stop", Length = "length", Cancelled = "cancelled", Error = "error"],
         }),
         ledger!(AttachMode in Chats { 1 => [Inline = "inline", ByReference = "by_reference"] }),
+        // `generated` is what the 6→7 stamp is for (`chat_steps::chat_to_v7`).
         ledger!(FileOrigin in Chats {
             4 => [Sandbox = "sandbox", Recovered = "recovered", Attached = "attached"],
+            7 => [Generated = "generated"],
         }),
         ledger!(DeletedCause in Chats {
             1 => [

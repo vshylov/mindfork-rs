@@ -23,6 +23,7 @@ pub mod fetch;
 pub mod followups;
 pub mod fs;
 pub mod history;
+pub mod image_gen;
 pub mod introspection;
 pub mod llm;
 pub mod mcp;
@@ -254,6 +255,10 @@ pub struct ToolContext {
     /// rather than an interactive permit (docs/research/silent-tasks-budget.md
     /// §4.2). `false` on a user's turn and on every run.
     pub silent_lane: bool,
+    /// What this turn has drawn (`image_generate`, spec §9.15): the ceiling and
+    /// the stop after a refusal are the turn's. Fresh with every
+    /// [`ToolContext::new`] — once a turn — and shared by a sub-agent's clone.
+    pub draws: Arc<image_gen::TurnDraws>,
 }
 
 /// Long-lived shared tool dependencies (an `Arc` bundle; changes on server
@@ -426,6 +431,7 @@ impl ToolContext {
             engine_mode: turn.engine_mode,
             sessions: turn.sessions,
             silent_lane: turn.silent_lane,
+            draws: Arc::default(),
         }
     }
 
@@ -866,6 +872,9 @@ pub struct ToolGates {
     /// The profile's *Follow-ups* switch — `followup_plan`/`followup_cancel`
     /// (spec §9.3.6).
     pub followups: bool,
+    /// `image_gen.enabled` — `image_generate` (spec §9.15). Off by default, and
+    /// off for a turn nobody is waiting for, whatever the switch says (F7).
+    pub image_gen: bool,
     /// Whether **this chat** has a compacted-away range (spec §6.7, S12).
     pub history: bool,
     /// Whether **this chat** has a code project attached (spec §9.12).
@@ -919,6 +928,7 @@ pub fn effective_tool_ids(enabled: &[ToolId], gates: &ToolGates) -> Vec<ToolId> 
                 Some(meta::ToolGate::Mcp) => gates.mcp,
                 Some(meta::ToolGate::Background) => gates.background,
                 Some(meta::ToolGate::Followups) => gates.followups,
+                Some(meta::ToolGate::ImageGen) => gates.image_gen,
                 None => true,
             }
         })
@@ -974,6 +984,13 @@ pub struct ToolConfig {
     /// configured; the tool then degrades to metadata). Independent of the chat
     /// engine — see `shared::video`.
     pub video: Option<crate::shared::video::VideoConfig>,
+    /// The resolved picture slot for `image_generate` (`None` — the catalogue's
+    /// registry, which runs no tool). Independent of the chat engine — see
+    /// `shared::image_gen`.
+    pub image_gen: Option<crate::shared::image_gen::ImageGenSlot>,
+    /// The image limits a tool's picture is prepared under (`config.images`):
+    /// `image_generate` hands the loop a copy that fits them.
+    pub images: crate::shared::config::ImageSettings,
     /// Cloud provider of the chat engine (`None` — local/external). Determines
     /// which sampling parameters `get_sampling`/`set_sampling` see/change (schema
     /// and result filtering) — a mirror of the wire dialect. See ADR 0004.
@@ -1005,6 +1022,8 @@ impl Default for ToolConfig {
             named_secrets: Vec::new(),
             subagent_parallel: 1,
             video: None,
+            image_gen: None,
+            images: crate::shared::config::ImageSettings::default(),
             sampling_provider: None,
             sampling_endpoint: None,
         }
@@ -1081,6 +1100,20 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
             .map_or(crate::shared::config::DEFAULT_VIDEO_MAX_MINUTES, |c| {
                 c.max_minutes
             }),
+    )));
+    // Pictures are a slot of their own too (spec §9.15): the client is built from
+    // `cfg.image_gen`, never from `ctx.engine`. A slot without a key or a model
+    // still registers — the tool says what is missing, so the model can tell the
+    // person where to put it.
+    let image_client = cfg
+        .image_gen
+        .as_ref()
+        .and_then(|slot| slot.config.clone().ok())
+        .map(crate::shared::image_gen::client);
+    reg.register(Arc::new(image_gen::ImageGenerate::new(
+        cfg.image_gen.clone(),
+        image_client,
+        cfg.images,
     )));
     // One contract, one call path: the mode picks the runner, not a second branch inside
     // the tool (docs/history/sandbox-file-exchange.md §14 V1).

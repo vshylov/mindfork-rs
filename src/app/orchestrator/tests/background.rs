@@ -699,6 +699,7 @@ fn start_subagent_is_gated_by_the_setting() {
         mcp: true,
         background,
         followups: false,
+        image_gen: false,
         history: false,
         workspace: false,
         workspace_commands: Default::default(),
@@ -766,4 +767,44 @@ async fn a_background_run_is_not_offered_what_no_one_could_confirm() {
             child.tools.iter().map(|t| &t.name).collect::<Vec<_>>()
         );
     }
+}
+
+/// Nobody waits for a background run, so it draws nothing, though the turn
+/// that started it may (docs/research/image-generation.md §6.6, F7).
+#[tokio::test]
+async fn a_background_run_draws_no_pictures() {
+    let backend = KeyedRecorder::new(
+        vec![
+            ("", vec![start("c1"), text("started it")]),
+            ("be harsh", vec![text("harsh view")]),
+        ],
+        10,
+    );
+    let mut cfg = cfg(2);
+    cfg.tools.subagent_background_wake = false;
+    cfg.image_gen.enabled = true;
+    let (_dir, cmd_tx, mut rx, handle, _chat_id) = begin(backend.clone(), cfg).await;
+    next(&mut rx, finished).await;
+    next(&mut rx, runs_out(0)).await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let requests = backend.requests();
+    let draws = |req: &crate::shared::api::contract::ChatRequest| {
+        req.tools
+            .iter()
+            .any(|t| t.name == crate::features::tools::image_gen::IMAGE_GENERATE_ID)
+    };
+    let is_child = |req: &crate::shared::api::contract::ChatRequest| {
+        req.system
+            .as_deref()
+            .is_some_and(|s| s.contains("be harsh"))
+    };
+    let parent = requests.iter().find(|r| !is_child(r)).unwrap();
+    let child = requests
+        .iter()
+        .find(|r| is_child(r))
+        .expect("the run's request");
+    assert!(draws(parent), "the turn is offered it");
+    assert!(!draws(child), "the run is not");
 }

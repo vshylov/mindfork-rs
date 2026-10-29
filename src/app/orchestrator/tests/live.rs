@@ -8911,3 +8911,148 @@ async fn a_tools_picture_leaves_the_reply_prose_live() {
     assert!(uncalled.is_empty(), "turns that drew nothing: {uncalled:?}");
     assert!(wrapped.is_empty(), "replies wrapped in JSON: {wrapped:?}");
 }
+
+/// `image_generate` through the real loop (spec §9.15,
+/// docs/research/image-generation.md §8, stage 1): a live chat model asked to
+/// draw calls the tool once with a full description, the picture is kept in the
+/// chat's folder as a generated file, and the reply is prose; asked next to
+/// change it, the model names the picture in `images` and the provider edits
+/// it. The picture slot is OpenAI's by default (`gpt-image-2.5-flare` at
+/// `medium`, about $0.03 for the two pictures); `MINDFORK_LIVE_IMAGE_PROVIDER`
+/// picks `gemini` or `openrouter` (with `MINDFORK_LIVE_IMAGE_GATEWAY_MODEL`).
+///
+/// `MINDFORK_ENGINE_URL=… MINDFORK_OPENAI_KEY=… cargo test
+/// image_generate_draws_and_changes_through_the_loop_live -- --ignored
+/// --nocapture --test-threads=1`
+#[tokio::test]
+#[ignore = "requires MINDFORK_ENGINE_URL and a picture provider's key (MINDFORK_OPENAI_KEY by default); spends about $0.03"]
+async fn image_generate_draws_and_changes_through_the_loop_live() {
+    use crate::features::tools::image_gen::IMAGE_GENERATE_ID;
+    use crate::shared::config::ImageGenProvider;
+    let Some(backend) = live_backend() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let provider = match std::env::var("MINDFORK_LIVE_IMAGE_PROVIDER").as_deref() {
+        Ok("gemini") => ImageGenProvider::Gemini,
+        Ok("openrouter") => ImageGenProvider::OpenRouter,
+        _ => ImageGenProvider::OpenAi,
+    };
+    let var = match provider {
+        ImageGenProvider::OpenAi => "MINDFORK_OPENAI_KEY",
+        ImageGenProvider::Gemini => "MINDFORK_GEMINI_KEY",
+        ImageGenProvider::OpenRouter => "MINDFORK_OPENROUTER_KEY",
+    };
+    if std::env::var(var).is_err() {
+        eprintln!("skip: {var} not set");
+        return;
+    }
+    let mut cfg = no_auto_cfg();
+    cfg.default_sampling.max_tokens = Some(4096);
+    cfg.image_gen.enabled = true;
+    cfg.image_gen.provider = provider;
+    let section = cfg.image_gen.section_mut();
+    section.api_key_env = Some(var.into());
+    if provider == ImageGenProvider::OpenRouter {
+        section.model_name = Some(
+            std::env::var("MINDFORK_LIVE_IMAGE_GATEWAY_MODEL")
+                .unwrap_or_else(|_| "black-forest-labs/flux-3-image".into()),
+        );
+    }
+    let (dir, cmd_tx, mut evt_rx, handle) = spawn_orch_tools(Some(backend), cfg, Vec::new());
+    narrow_profile_to(
+        &cmd_tx,
+        &mut evt_rx,
+        crate::features::tools::default_tool_ids(),
+    )
+    .await;
+
+    let turn = |label: &str, reply: &str, calls: &[(String, String, String)]| {
+        eprintln!("--- {label}");
+        for (name, args, result) in calls {
+            eprintln!(
+                "  call {name}({args})\n    → {}",
+                result.replace('\n', " | ")
+            );
+        }
+        eprintln!("  reply: {}", reply.replace('\n', " "));
+    };
+    let (reply, calls) = run_turn_capture_args(
+        &cmd_tx,
+        &mut evt_rx,
+        "Draw me a small red fox sitting in fresh snow, in watercolor.",
+    )
+    .await;
+    turn("draw", &reply, &calls);
+    let drawn: Vec<_> = calls
+        .iter()
+        .filter(|(name, _, _)| name == IMAGE_GENERATE_ID)
+        .collect();
+    assert_eq!(drawn.len(), 1, "one picture asked for, one call");
+    let args: serde_json::Value = serde_json::from_str(&drawn[0].1).unwrap();
+    let prompt = args["prompt"].as_str().unwrap_or_default();
+    assert!(
+        prompt.split_whitespace().count() >= 5,
+        "a description, not a title: {prompt:?}"
+    );
+    assert!(
+        drawn[0].2.contains("image-1."),
+        "the result names the file: {}",
+        drawn[0].2
+    );
+    assert!(!json_wrapped(&reply), "the reply is prose: {reply}");
+
+    let (reply, calls) = run_turn_capture_args(
+        &cmd_tx,
+        &mut evt_rx,
+        "Lovely. Now make it night, with a full moon in the sky — keep the fox exactly as it is.",
+    )
+    .await;
+    turn("change", &reply, &calls);
+    let changed: Vec<_> = calls
+        .iter()
+        .filter(|(name, _, _)| name == IMAGE_GENERATE_ID)
+        .collect();
+    assert_eq!(changed.len(), 1, "one change asked for, one call");
+    let args: serde_json::Value = serde_json::from_str(&changed[0].1).unwrap();
+    let named = args["images"]
+        .as_array()
+        .map(|a| a.len())
+        .unwrap_or_default();
+    assert!(named >= 1, "the picture to change is named: {args}");
+    assert!(
+        changed[0].2.contains("image-2."),
+        "the change is a new file: {}",
+        changed[0].2
+    );
+    assert!(!json_wrapped(&reply), "the reply is prose: {reply}");
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    // Both pictures are in the chat's folder, listed as generated. The chat
+    // files only — `chats/` also holds each one's `.bak`.
+    let chats = std::fs::read_dir(dir.path().join("chats")).unwrap();
+    let listed: Vec<crate::entities::chat_file::ChatFile> = chats
+        .filter_map(|e| Some(e.ok()?.path()))
+        .filter(|path| path.extension().is_some_and(|x| x == "json"))
+        .filter_map(|path| std::fs::read_to_string(path).ok())
+        .filter_map(|text| serde_json::from_str::<crate::entities::chat::Chat>(&text).ok())
+        .flat_map(|chat| {
+            let folder = dir.path().join("files").join(chat.id.to_string());
+            chat.files.into_iter().inspect(move |f| {
+                assert!(
+                    folder.join(&f.name).is_file(),
+                    "{} is not in the folder",
+                    f.name
+                );
+            })
+        })
+        .collect();
+    assert_eq!(listed.len(), 2, "{listed:?}");
+    assert!(
+        listed
+            .iter()
+            .all(|f| f.origin == crate::entities::chat_file::FileOrigin::Generated),
+        "{listed:?}"
+    );
+}

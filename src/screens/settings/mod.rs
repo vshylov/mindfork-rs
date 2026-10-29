@@ -23,9 +23,10 @@ use crate::entities::sampling::{ReasoningEffort, SamplingConfig, Verbosity};
 use crate::features::profiles::ProfileEdit;
 use crate::features::tools::meta::{ToolGate, ToolInfo};
 use crate::shared::config::{
-    AppConfig, AutoTitleMode, CloudProvider, CloudSettings, FlashAttn, ImpersonationMode,
-    ManagedSettings, McpServerConfig, MediaResolution, NoteOrder, PythonMode, SecretSlot,
-    ServerMode, SpecType, SttMode, Theme, ThemeMode, TtsCloudSettings, TtsMode, VideoProvider,
+    AppConfig, AutoTitleMode, CloudProvider, CloudSettings, FlashAttn, ImageGenProvider,
+    ImpersonationMode, ManagedSettings, McpServerConfig, MediaResolution, NoteOrder, PythonMode,
+    SecretSlot, ServerMode, SpecType, SttMode, Theme, ThemeMode, TtsCloudSettings, TtsMode,
+    VideoProvider,
 };
 use crate::shared::embed_prefix::EmbedConvention;
 use crate::shared::i18n::Locale;
@@ -586,6 +587,24 @@ enum FieldId {
     /// Env-variable name with that provider's key — a fallback when no key is
     /// stored in settings. Each provider's section keeps its own.
     VideoApiKeyEnv,
+    /// The picture slot's switch (`image_gen.enabled`, spec §9.15) — off by
+    /// default: every picture is paid for (docs/research/image-generation.md F7).
+    IgEnabled,
+    /// Who draws (`image_gen.provider`).
+    IgProvider,
+    /// The chosen provider's picture model.
+    IgModel,
+    /// What the chosen provider's price is set by: OpenAI's quality, Gemini's
+    /// and the gateway's size.
+    IgQuality,
+    /// Show the model the picture it drew (`image_gen.show_to_model`, F6).
+    IgShow,
+    /// Pictures one turn may draw (`image_gen.max_per_turn`; `0` — no ceiling).
+    IgMaxPerTurn,
+    /// The **stored** key of the picture provider (ADR 0008).
+    IgApiKey,
+    /// Env-variable name with that provider's key — each section keeps its own.
+    IgApiKeyEnv,
     TFs,
     TFsRoot,
     /// The code workspace's command time limit (`workspace.command_timeout_secs`).

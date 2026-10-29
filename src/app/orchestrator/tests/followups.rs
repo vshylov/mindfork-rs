@@ -180,6 +180,40 @@ async fn a_due_follow_up_is_delivered_once_and_wakes_the_open_conversation() {
     assert_eq!(backend.requests().len(), 1, "one wake, once");
 }
 
+/// Nobody is waiting for a woken turn, so it is not offered `image_generate`
+/// even with the picture slot on; the turn the person types next is
+/// (docs/research/image-generation.md §6.6, F7).
+#[tokio::test]
+async fn a_woken_turn_draws_nothing_and_the_persons_turn_may() {
+    let dir = tempfile::tempdir().unwrap();
+    let w = seed(dir.path(), true, |_| {});
+    plant(dir.path(), &w, w.interview, -1);
+    let backend = Replying::new("Hey — how did the interview go?");
+    let mut cfg = no_auto_cfg();
+    cfg.image_gen.enabled = true;
+    let (cmd_tx, mut evt_rx, handle) = spawn_orch_at(dir.path(), Some(backend.clone()), cfg);
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+        .await
+        .unwrap();
+    cmd_tx
+        .send(AppCommand::SendMessage("Draw me a fox for luck".into()))
+        .unwrap();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+        .await
+        .unwrap();
+
+    let requests = backend.requests();
+    let draws = |req: &crate::shared::api::ChatRequest| {
+        req.tools
+            .iter()
+            .any(|t| t.name == crate::features::tools::image_gen::IMAGE_GENERATE_ID)
+    };
+    assert_eq!(requests.len(), 2);
+    assert!(!draws(&requests[0]), "the woken turn");
+    assert!(draws(&requests[1]), "the person's turn");
+    quit(cmd_tx, handle).await;
+}
+
 #[tokio::test]
 async fn silence_leaves_no_trace() {
     let dir = tempfile::tempdir().unwrap();

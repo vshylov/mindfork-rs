@@ -32,6 +32,9 @@ pub enum FileOrigin {
     /// binary, or the original of a document whose extracted text became an attachment
     /// (fork F8a, §12 T9). Our copy — removing it never touches the user's original.
     Attached,
+    /// A picture `image_generate` drew, kept as the provider sent it (spec §9.15,
+    /// docs/research/image-generation.md F5). Arrived with the chats' 6 → 7 step.
+    Generated,
 }
 
 /// A file stored with a chat.

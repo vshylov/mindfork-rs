@@ -664,6 +664,9 @@ pub fn named_key_env_vars(cfg: &AppConfig) -> Vec<String> {
             cfg.tools.web_tavily_key_env.clone(),
             cfg.video.api_key_env.clone(),
             cfg.video.openrouter.api_key_env.clone(),
+            cfg.image_gen.openai.api_key_env.clone(),
+            cfg.image_gen.gemini.api_key_env.clone(),
+            cfg.image_gen.openrouter.api_key_env.clone(),
         ])
         .flatten()
         .map(|n| n.trim().to_string())
@@ -2400,6 +2403,170 @@ impl Default for VideoSettings {
     }
 }
 
+/// OpenAI's default picture model: the fastest of the 2.5 pair, and measured the
+/// cheapest picture of every provider at `medium` — $0.013 for 1024×1024
+/// (docs/research/image-generation.md §11.1, fork F3′).
+pub const DEFAULT_IMAGE_GEN_OPENAI_MODEL: &str = "gpt-image-2.5-flare";
+/// OpenAI's default quality — the price is the person's, and `medium` is what the
+/// probe measured.
+pub const DEFAULT_IMAGE_GEN_OPENAI_QUALITY: &str = "medium";
+/// Gemini's default picture model: GA since 2026-10-06 and the recommended
+/// replacement for every older one (§3.2).
+pub const DEFAULT_IMAGE_GEN_GEMINI_MODEL: &str = "gemini-nano-banana-2.1";
+/// The size Gemini and the gateway are asked for: `1K`, each one's default.
+pub const DEFAULT_IMAGE_GEN_SIZE: &str = "1K";
+/// How many pictures one turn may draw (fork F7): enough for a picture and a
+/// few changes to it, and a bound on what one turn can spend.
+pub const DEFAULT_IMAGE_GEN_MAX_PER_TURN: u32 = 4;
+
+/// The qualities OpenAI's picture models take, cheapest first (§3.1); `xhigh`
+/// and `max` are the 2.5 models' own.
+pub const IMAGE_GEN_OPENAI_QUALITIES: [&str; 6] = ["low", "medium", "high", "xhigh", "max", "auto"];
+/// The sizes Gemini's picture models take (§3.2); the gateway names the same
+/// four, and a model on it takes the ones its catalogue entry lists.
+pub const IMAGE_GEN_SIZES: [&str; 4] = ["512", "1K", "2K", "4K"];
+
+/// Who draws (`image_generate`, spec §9.15). A slot of its own, independent of
+/// the chat engine as speech and video are: the providers that draw are not the
+/// ones that chat, and a person on a local model is the one who needs it most
+/// (docs/research/image-generation.md §1, F2). xAI's own endpoint is stage 3.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ImageGenProvider {
+    /// `POST /v1/images/generations` and `/edits` — the default (fork F3′).
+    #[default]
+    #[serde(rename = "openai")]
+    OpenAi,
+    /// `generateContent` with `responseModalities: ["IMAGE"]`.
+    Gemini,
+    /// The gateway's `POST /images`: some sixty models of a dozen vendors.
+    #[serde(rename = "openrouter")]
+    OpenRouter,
+}
+
+impl ImageGenProvider {
+    pub const ALL: [ImageGenProvider; 3] = [
+        ImageGenProvider::OpenAi,
+        ImageGenProvider::Gemini,
+        ImageGenProvider::OpenRouter,
+    ];
+
+    /// UI label (Choice field), and the settings file's own spelling.
+    pub fn label(self) -> &'static str {
+        match self {
+            ImageGenProvider::OpenAi => "openai",
+            ImageGenProvider::Gemini => "gemini",
+            ImageGenProvider::OpenRouter => "openrouter",
+        }
+    }
+
+    /// The provider whose stored key the slot reads (ADR 0008): a key entered
+    /// for chat or speech draws too.
+    pub fn cloud_provider(self) -> CloudProvider {
+        match self {
+            ImageGenProvider::OpenAi => CloudProvider::OpenAi,
+            ImageGenProvider::Gemini => CloudProvider::Gemini,
+            ImageGenProvider::OpenRouter => CloudProvider::OpenRouter,
+        }
+    }
+
+    pub fn cycle(self, dir: i32) -> Self {
+        let i = Self::ALL.iter().position(|v| *v == self).unwrap_or(0) as i32;
+        let n = Self::ALL.len() as i32;
+        Self::ALL[(i + dir).rem_euclid(n) as usize]
+    }
+}
+
+/// One provider's section of the picture slot. Each provider keeps its own, so a
+/// switch loses nothing (the speech slot's arrangement).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ImageGenSection {
+    /// The provider's picture model. The gateway's has **no default** — a default
+    /// that names a model ages (docs/research/model-picker.md §1).
+    pub model_name: Option<String>,
+    /// What the price is set by: OpenAI's `quality`, Gemini's `imageSize`, the
+    /// gateway's `resolution` (sent only where the model's entry lists it). Empty
+    /// → the provider's own default.
+    pub quality: Option<String>,
+    /// Env-variable name with the key — a fallback when none is stored.
+    pub api_key_env: Option<String>,
+    /// Base URL override; empty → the provider's own.
+    pub url: Option<String>,
+}
+
+/// Image generation (`image_generate`, spec §9.15,
+/// docs/research/image-generation.md §6.1). **Off by default** (fork F7):
+/// nothing is drawn, or paid for, until the person turns it on. The key is not
+/// here — it is the provider's stored key (ADR 0008). All fields
+/// `#[serde(default)]`: an older `settings.json` reads without a step, and an
+/// older binary skips the whole section.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ImageGenSettings {
+    /// The switch: `image_generate` is offered only while it is on.
+    pub enabled: bool,
+    pub provider: ImageGenProvider,
+    pub openai: ImageGenSection,
+    pub gemini: ImageGenSection,
+    pub openrouter: ImageGenSection,
+    /// The model is shown the picture it drew (fork F6) — a prepared copy, on the
+    /// path a tool's picture takes; the original stays in the chat's files.
+    pub show_to_model: bool,
+    /// Pictures one turn may draw; `0` — no ceiling (fork F7, as amended).
+    pub max_per_turn: u32,
+}
+
+impl ImageGenSettings {
+    /// The chosen provider's section.
+    pub fn section(&self) -> &ImageGenSection {
+        match self.provider {
+            ImageGenProvider::OpenAi => &self.openai,
+            ImageGenProvider::Gemini => &self.gemini,
+            ImageGenProvider::OpenRouter => &self.openrouter,
+        }
+    }
+
+    /// The chosen provider's section, to edit.
+    pub fn section_mut(&mut self) -> &mut ImageGenSection {
+        match self.provider {
+            ImageGenProvider::OpenAi => &mut self.openai,
+            ImageGenProvider::Gemini => &mut self.gemini,
+            ImageGenProvider::OpenRouter => &mut self.openrouter,
+        }
+    }
+
+    /// The stored secret the slot reads: the chosen provider's one key.
+    pub fn secret_key(&self) -> crate::shared::secrets::SecretKey {
+        crate::shared::secrets::SecretKey::Provider(self.provider.cloud_provider())
+    }
+}
+
+impl Default for ImageGenSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            provider: ImageGenProvider::default(),
+            openai: ImageGenSection {
+                model_name: Some(DEFAULT_IMAGE_GEN_OPENAI_MODEL.into()),
+                quality: Some(DEFAULT_IMAGE_GEN_OPENAI_QUALITY.into()),
+                ..Default::default()
+            },
+            gemini: ImageGenSection {
+                model_name: Some(DEFAULT_IMAGE_GEN_GEMINI_MODEL.into()),
+                quality: Some(DEFAULT_IMAGE_GEN_SIZE.into()),
+                ..Default::default()
+            },
+            openrouter: ImageGenSection {
+                quality: Some(DEFAULT_IMAGE_GEN_SIZE.into()),
+                ..Default::default()
+            },
+            show_to_model: true,
+            max_per_turn: DEFAULT_IMAGE_GEN_MAX_PER_TURN,
+        }
+    }
+}
+
 /// Speech (TTS) mode — an independent "server slot", like embeddings
 /// (ADR 0002): Anthropic has no TTS at all, so the speech provider is
 /// configured separately from the chat engine. A local engine (managed sidecar) is
@@ -2884,6 +3051,8 @@ pub struct AppConfig {
     pub stt: SttSettings,
     /// Video understanding for `youtube_watch` (spec §9.9).
     pub video: VideoSettings,
+    /// Image generation for `image_generate` (spec §9.15) — off until switched on.
+    pub image_gen: ImageGenSettings,
     /// How a notification reaches someone not looking — the terminal escape, the
     /// bell, a ntfy topic (spec §11.12). Whether one is sent is a profile's switch.
     pub notifications: crate::shared::notify::NotificationSettings,
@@ -2979,6 +3148,7 @@ impl Default for AppConfig {
             tts: TtsSettings::default(),
             stt: SttSettings::default(),
             video: VideoSettings::default(),
+            image_gen: ImageGenSettings::default(),
             notifications: crate::shared::notify::NotificationSettings::default(),
             bridge: BridgeSettings::default(),
             last_active_chat: None,
