@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (109)
+## Entries (110)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -121,6 +121,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: DeepSeek — `/continue` by the beta prefix completion, stage 2 (done)
 - Post-M9: the time row, and the user's previous message — the companion track's stage 1 (done)
 - Post-M9: persona drift, measured before it is fought — the companion track's C10 (done)
+- Post-M9: a tool's picture re-homed on every OpenAI-compatible endpoint (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -7237,3 +7238,55 @@ drift, most in emotional conversations and in ones that press a model on its own
 **Gates**: 4255 unit tests green, 293 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check`
 clean.
+
+### Post-M9: a tool's picture re-homed on every OpenAI-compatible endpoint (done)
+Found by the image-generation probe
+([image-generation.md](../research/image-generation.md) §11.3) and decided by the
+owner on 2026-10-29 as F11 (a): on llama.cpp a picture inside a tool result turned
+Gemma 4's replies to English requests into a JSON envelope —
+`{"action": "text", "action_input": "Here is…"}` — 28 times of 30 in the probe.
+
+- **The wire.** `OpenAiClient::shaped_for_endpoint` re-homes a tool's pictures into
+  one user message after the run of tool results (`wire::rehome_tool_images`) on
+  **every** request that carries one — llama.cpp, any external server, the gateway,
+  xAI, DeepSeek — and asks nothing first. It used to be a gateway's alone, decided
+  by whether the endpoint's catalogue answered for the model (fork H1 of
+  gateway-images-and-continue); the catalogue lookup a tool's picture triggered on
+  llama.cpp is gone with it. Anthropic and Responses keep the picture inside the
+  tool result; Gemini's builder already moved it after the response.
+- **The label.** A tool's picture is labelled `tool → name:`
+  (`python_exec → tool-image-3.png:`, `request::tool_image_label`) in the live round
+  and on history replay alike, so the two agree byte for byte; a stored tool message
+  without a tool name keeps the name alone. A user's own image keeps the numbered,
+  localized label. Why: in a user message the localized label pulled replies to
+  English requests into the profile's Russian (Gemma 4 11 of 15, Qwen 3.8 3 of 9 in
+  the probe), and behind a bare file name Gemma twice answered as if the person had
+  sent the picture.
+- **Live, GO, control red.** A new smoke, `a_tools_picture_leaves_the_reply_prose_live`:
+  a drawing tool beside the default profile's tools, a Russian profile, five English
+  and two Russian requests, each in a new chat; it fails on a turn that did not draw
+  or a reply in JSON, and counts English requests answered in Russian. The build
+  before the change and the build with it, alternately on one server (`llama-server`
+  b11715, gate weights, `-c 32768`): **Gemma 4 31B, JSON 17 of 21 → 0 of 21**, no
+  English request answered in Russian in either; Qwen 3.8 27B, JSON 0 of 14 → 0 of
+  21, and English answered in Russian 2 of 10 → 3 of 15 — its own rate under a
+  Russian profile whichever way the picture travels, which is why the smoke counts
+  it and does not fail on it. `sandbox_outputs_e2e_live`,
+  `tool_result_image_is_seen_live` and `a_withheld_tool_image_is_not_described_live`
+  green on Qwen 3.8. On Gemma the chart smoke, which asks for a sentence about the
+  chart, was prose in both builds: the envelope comes with a reply that has little
+  to say.
+- **Tests** (+3): the history label of a user's image and a tool's
+  (`a_tools_picture_is_labelled_by_the_tool_without_a_language`); the live round's
+  label through the real loop (`a_tools_picture_goes_out_behind_the_tools_label`,
+  `ChartingTurn` now keeps the turn's requests); the JSON check itself
+  (`a_json_envelope_is_told_from_prose`). Rewritten:
+  `every_endpoint_receives_a_tools_image_in_a_user_message` (was
+  `a_gateway_receives_…`, which pinned llama.cpp's old body) — a llama.cpp and a
+  gateway model alike get the user message, and nothing is asked before the turn.
+- **Docs**: spec §9.10, architecture (the wire's tool images, the gateway's
+  behaviours, DeepSeek), the research §11.5, a lessons line (assert the reply's
+  shape, run the old build beside the new), CHANGELOG, roadmap (Closed).
+
+**Gates**: 4398 unit tests green, 300 `#[ignore]`; clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check` clean.

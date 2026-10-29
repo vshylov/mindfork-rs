@@ -258,24 +258,28 @@ pub fn carries_tool_images(messages: &[ApiMessage]) -> bool {
 /// The conversation with every tool result's images **re-homed**: each `role:"tool"`
 /// message goes out text-only, and the images a run of tool results carried follow it
 /// in one `user` message, in call order, each behind the label it already has — the
-/// file name the tool's own result names. `None` when no tool result carries an
-/// image, so the caller sends the request exactly as it was.
+/// tool and the picture's name (`python_exec → tool-image-3.png`). `None` when no tool
+/// result carries an image, so the caller sends the request exactly as it was.
 ///
-/// Why: a tool message's content is text in the OpenAI spec's letter, and through a
-/// gateway the routed provider decides what an image there means — measured, 20 of 29
-/// route-and-model pairs saw it, 6 refused the request and 3 answered about a picture
-/// they never received, while in a `user` message all 28 that answered saw it
-/// (docs/history/gateway-images-and-continue.md §1.2, fork H1). It is the fallback Gemini's
-/// builder already takes (docs/research/mcp-tool-images.md F1-A). **One** message per
-/// run rather than one per result, because a round's tool messages must follow its
-/// `tool_calls` contiguously.
+/// Why, on every endpoint the client speaks to: a tool message's content is text in
+/// the OpenAI spec's letter. Through a gateway the routed provider decides what an
+/// image there means — measured, 20 of 29 route-and-model pairs saw it, 6 refused the
+/// request and 3 answered about a picture they never received, while in a `user`
+/// message all 28 that answered saw it (docs/history/gateway-images-and-continue.md
+/// §1.2, fork H1). And llama.cpp takes it, but Gemma 4 then answered an English
+/// request in JSON — `{"action": …, "action_input": …}` — 28 times of 30, against 0
+/// of 29 with the image re-homed (docs/research/image-generation.md §11.3, fork F11).
+/// It is the fallback Gemini's builder already takes (docs/research/mcp-tool-images.md
+/// F1-A). **One** message per run rather than one per result, because a round's tool
+/// messages must follow its `tool_calls` contiguously.
 ///
 /// The label is load-bearing, not decoration: the `user` message has no text of its
 /// own, and one that is an image and nothing else was answered by
 /// `google/gemini-3.5-flash` with its scratch text in the reply or with no reply at
 /// all — 8 of 8, against 8 clean of 8 with a label before the image
 /// (docs/research/openrouter-mode.md §11.4). Every image the orchestrator builds
-/// carries one.
+/// carries one, and a tool's carries no word of any language: in a user message a
+/// localized one pulled English replies into the profile's language (§11.3).
 pub fn rehome_tool_images(messages: &[ApiMessage]) -> Option<Vec<ApiMessage>> {
     if !carries_tool_images(messages) {
         return None;

@@ -229,19 +229,9 @@ effort tiers — have all closed
     refused request unasked in the probe.
 
   **The probe ran on 2026-10-29: GO** (§11; $0.97 at the providers; Gemma 4 and
-  Qwen 3.8 call the tool when asked and only then). Next is the next item's fix,
-  in a PR of its own, then stage 1. Local generation is out of scope — the owner's
-  decision.
-- **Gemma 4 answers in JSON after a tool's picture** — **found 2026-10-29**, by the
-  image-generation probe ([image-generation.md](research/image-generation.md) §11.3);
-  the owner chose the fix the same day (F11 (a)): re-home on every endpoint, behind
-  a label with no language, a PR of its own before image generation's stage 1. On llama.cpp a picture inside a tool result — `python_exec`'s chart, an MCP
-  screenshot, a generated image — turns Gemma 4's reply to an English request into
-  `{"action": …, "action_input": …}`: 28 of 30, against 0 of 9 Russian requests and
-  0 of 10 on Qwen 3.8. Re-homing the picture into a user message, as gateways
-  already get it, ends it (0 of 29) — with a label that carries no language, since
-  the localized one moved English replies into the profile's language. The gate's
-  image smokes do not look at the reply's shape, which is why nothing caught it.
+  Qwen 3.8 call the tool when asked and only then), and the fix it asked for first
+  — Gemma 4's JSON after a tool's picture — is in (Closed). Next is stage 1. Local
+  generation is out of scope — the owner's decision.
 - **What the withheld-image notes leave on Qwen 3.6** — **on demand**. The notes for
   `tools.mcp_images` off were reworded on 2026-10-11 — "You cannot see…", "this is not an
   error, and another call will not change it" — and now hold on Qwen 3.8, Gemma 4 and
@@ -755,6 +745,14 @@ down.
 An index, newest first — one line per track, with the release that shipped it
 and where its story is told. What a track left open is a bullet above, under
 its area.
+
+- **Gemma 4's JSON after a tool's picture** — unreleased (2026-10-29): on
+  llama.cpp a picture inside a tool result — a chart, a screenshot — turned Gemma
+  4's replies to English requests into `{"action": …, "action_input": …}`; every
+  OpenAI-compatible endpoint now gets a tool's pictures re-homed into a user
+  message behind a language-free `tool → name:` label (17 of 21 → 0 of 21).
+  Found by the image-generation probe:
+  [image-generation.md](research/image-generation.md) §11.3, §11.5.
 
 - **The self-model's observations: their room, a floor, their header** —
   unreleased (2026-10-18), three pull requests: a stored `prompt_cap` of 1200

@@ -120,6 +120,59 @@ fn the_chat_files_block_names_handles_and_staged_names() {
     assert!(!local.contains("/w/"), "{local}");
 }
 
+/// A tool's picture is labelled by the tool and its name with no word of any language,
+/// while the user's own image keeps the numbered label in the profile's language
+/// (docs/research/image-generation.md §11.3, fork F11): the tool's travels to most
+/// engines in a user message, where a localized label pulled English replies into
+/// Russian. A stored tool message without a tool name keeps the picture's name alone.
+#[test]
+fn a_tools_picture_is_labelled_by_the_tool_without_a_language() {
+    use crate::entities::message::ToolCallRecord;
+    use crate::entities::message_image::MessageImage;
+
+    let image = |name: &str| MessageImage::new(name, name, "image/png", 8, 8, "AAAA".into());
+    let p = Profile::new("X", "Ты — X.");
+    let mut chat = Chat::from_profile(&p, "c");
+    chat.push_message(Message::user("нарисуй график").with_images(vec![image("photo.png")]));
+    let mut call = Message::assistant("");
+    call.tool_calls = vec![ToolCallRecord {
+        id: "c1".into(),
+        name: "python_exec".into(),
+        arguments: serde_json::json!({}),
+        result: Some("files:".into()),
+        thought_signature: None,
+        images: 1,
+        subagent: None,
+    }];
+    chat.push_message(call);
+    let mut result = Message::new(MessageRole::Tool, "files:");
+    result.tool_call_id = Some("c1".into());
+    result.tool_name = Some("python_exec".into());
+    result.images = vec![image("tool-image-1.png")];
+    chat.push_message(result);
+
+    let req = request_of(&chat, &CompactionSettings::default(), true);
+    let labels: Vec<Option<&str>> = req
+        .messages
+        .iter()
+        .flat_map(|m| m.images.iter().map(|i| i.label.as_deref()))
+        .collect();
+    assert_eq!(
+        labels,
+        vec![
+            Some(
+                ru().tf("prompt.images.label", &[("n", "1"), ("name", "photo.png")])
+                    .as_str()
+            ),
+            Some("python_exec → tool-image-1.png:"),
+        ]
+    );
+    assert_eq!(
+        crate::app::orchestrator::request::tool_image_label(None, "tool-image-2.png"),
+        "tool-image-2.png:"
+    );
+}
+
 #[test]
 fn build_request_puts_system_aside_and_maps_roles() {
     let mut p = Profile::new("X", "Ты — X.");

@@ -22,8 +22,9 @@ the owner, **decided the same day as recommended**:
   of its own before stage 1, since it is every tool's (Gemma 4 answers in JSON
   after a picture inside a tool result).
 
-Nothing is built yet. Next is F11's PR, then stage 1. Provider facts were read from
-the providers' own documentation on 2026-10-29 (§10) and then measured (§11.1).
+**F11 is built** (§11.5: Gemma 4's JSON replies 17 of 21 → 0 of 21). Next is
+stage 1. Provider facts were read from the providers' own documentation on
+2026-10-29 (§10) and then measured (§11.1).
 
 ## 1. Why
 
@@ -638,9 +639,9 @@ project does with probes). Two questions, each with a go/no-go:
    match judged right in ≥ 4/5. A wording that fails is reworded and measured
    again, as the withheld-image notes were (spec §9.10).
 
-**Before stage 1 — F11 (a).** Tool pictures re-homed on llama.cpp behind a
-language-free label: a wire change for every producer, its own PR, measured on
-Gemma 4 and Qwen 3.8 (§11.3) — the label's form among the measurements.
+**Before stage 1 — F11 (a), done** (§11.5). Tool pictures re-homed on llama.cpp
+behind a language-free label: a wire change for every producer, its own PR,
+measured on Gemma 4 and Qwen 3.8 with a control build.
 
 **Stage 1 — the slot and the tool.** `image_gen` settings and their section,
 the clients for OpenRouter, OpenAI and Gemini (F2), `image_generate` with editing
@@ -869,3 +870,33 @@ The probe's code is frozen as the tag `probe/image-generation-stage0`:
 and `score` for the rows), `…:src/app/orchestrator/tests/image_probe.rs` (the stub
 and the thirty conversations), and the one-line spike switch in
 `src/shared/api/openai/client.rs` (`PROBE_REHOME`) the control arm used.
+
+### 11.5 F11, built (2026-10-29)
+
+`fix/tool-images-re-homed`: `OpenAiClient::shaped_for_endpoint` re-homes a tool's
+pictures on every endpoint, with no catalogue asked first, and a tool's picture is
+labelled `tool → name:` (`request::tool_image_label`) — in the live round and on
+history replay alike; a user's own image keeps its numbered, localized label.
+
+Measured by the new smoke `a_tools_picture_leaves_the_reply_prose_live`: a drawing
+tool beside the default profile's tools, a Russian profile, five English and two
+Russian requests, each in a new chat; the build before the change (control) and the
+build with it, run alternately on the same server.
+
+| | JSON replies, control | JSON replies, fixed | English answered in Russian, control → fixed |
+|---|---|---|---|
+| Gemma 4 31B, 3 rounds each | **17 of 21** | **0 of 21** | 0 of 15 → 0 of 15 |
+| Qwen 3.8 27B, 2 and 3 rounds | 0 of 14 | 0 of 21 | 2 of 10 → 3 of 15 |
+
+Every turn drew, in both builds. The language-free label leaves Gemma's replies in
+the request's language (the localized one had moved 11 of 15), and Qwen at its own
+rate under a Russian profile — the same with the picture inside the result — so the
+smoke counts a switch and does not fail on it; the label's form is held by unit
+tests.
+
+What the JSON needs is a reply with little to say. `sandbox_outputs_e2e_live` asks
+Gemma 4 to say in a sentence what its chart shows, and that reply was prose in both
+builds (2 of 2 each) — as the probe's "check the picture" conversations were
+(§11.2). The envelope comes when the reply is "here it is". The existing image
+smokes — `sandbox_outputs_e2e_live`, `tool_result_image_is_seen_live`,
+`a_withheld_tool_image_is_not_described_live` — pass on Qwen 3.8 with the change.

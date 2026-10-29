@@ -1953,9 +1953,9 @@ Studio's routes are never asked; and a continuation is the beta prefix completio
 — `ChatCompletionRequest::with_prefix_completion` marks the trailing assistant
 message `prefix: true` and drops the tool schemas and the reasoning asks, and
 `OpenAiClient::send` posts a body that `continues_by_prefix` to
-`deepseek_beta_base` (`/beta` in place of `/v1`). With a window read the endpoint counts as
-catalogued, so a tool's images are re-homed into a user message, which
-`deepseek-flash` reads either way. The picker reads the same list
+`deepseek_beta_base` (`/beta` in place of `/v1`). A tool's images are re-homed into
+a user message, as on every endpoint of this client, and `deepseek-flash` reads
+them there. The picker reads the same list
 (`CatalogueShape::DeepSeek`: role `Chat`, the display name, the window).
 
 The **OpenRouter gateway** (`openrouter`) is the second cloud on
@@ -1963,7 +1963,7 @@ The **OpenRouter gateway** (`openrouter`) is the second cloud on
 left to infer: `cloud_chat_setup` and `cloud_embed_setup` build it with
 `for_openrouter(attribution)`, which sets `OpenAiClient.gateway`. `external`
 recognises a gateway only once `GET /models` has answered for the configured
-model, and five behaviours hang on that one lookup; with the field set they are
+model, and four behaviours hang on that one lookup; with the field set they are
 the mode's own (docs/research/openrouter-mode.md §2.3, §4.1):
 
 - **the dialect** — `send_chat` passes the body through
@@ -1985,8 +1985,6 @@ the mode's own (docs/research/openrouter-mode.md §2.3, §4.1):
   `props()` and `listed_models()` return `None` without a request, so
   `context_budget`, `parallel_slots` and `model_id` cost nothing and `vision`
   and `model_capabilities` read the entry;
-- **a tool's images** — `shaped_for_endpoint` re-homes them into a user message
-  on every request that carries one, without waiting for the catalogue;
 - **attribution** — `auth` adds `HTTP-Referer` and `X-OpenRouter-Title`
   (`ATTRIBUTION_REFERER`, `ATTRIBUTION_TITLE`) to every request this client
   makes — chat, embeddings, `/key`, `/model/{slug}` — when the switch is on.
@@ -2098,15 +2096,19 @@ its own — or named by `api_key_env`, resolved through the same
   Every backend puts **images before text**, and each image behind a label part
   built in the app layer (axis A), so one prompt behaves the same wherever it
   goes. A **tool result** may carry images too (spec §9.10): there the result
-  text leads and the images follow it, inside the tool result itself — except on
-  **Gemini**, whose multimodal `functionResponse` is a hard `400`, so its builder
-  emits them as user parts immediately after the response, and through a
-  **gateway**, where `OpenAiClient::shaped_for_endpoint` re-homes them into one
-  user message after the run of tool results (`wire::rehome_tool_images`): in
-  `external` once the catalogue has answered for the model, in `openrouter` on
-  every such request. The choice is static
-  per provider; a request with no images serializes byte-identically to before in
-  all four formats, each with its own test.
+  text leads and the images follow it, inside the tool result itself, on
+  Anthropic and Responses. **Gemini**'s multimodal `functionResponse` is a hard
+  `400`, so its builder emits them as user parts immediately after the response,
+  and **every endpoint of `OpenAiClient`** — llama.cpp, any external server, the
+  gateway, xAI, DeepSeek — gets them re-homed by `shaped_for_endpoint` into one
+  user message after the run of tool results (`wire::rehome_tool_images`), with
+  nothing asked first: inside a tool message, Gemma 4 on llama.cpp answered
+  English requests in JSON (docs/research/image-generation.md §11.3, fork F11).
+  A tool's image is labelled `tool → name:` by `request::tool_image_label` — no
+  word of any language, since in a user message a localized label pulled replies
+  into the profile's language; a user's own image keeps the numbered, localized
+  label. The choice is static per provider; a request with no images serializes
+  byte-identically to before in all four formats, each with its own test.
 - **`EngineBackend::context_budget() -> Option<u32>`** (`None` by default) —
   the window the engine runs, for the compaction trigger (spec §6.7).
   `OpenAiClient` reads llama.cpp's `/props` (`n_ctx`, as given) and, where that

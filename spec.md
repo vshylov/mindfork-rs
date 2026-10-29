@@ -1924,26 +1924,28 @@ append-only shape keeps the prefix cache intact across an image turn
 - **A tool can return an image too** (spec §9.6: an MCP screenshot tool was the
   first producer, `python_exec` the second — an image its code saves to `/w/out`,
   §13.2; research: [docs/research/mcp-tool-images.md](docs/research/mcp-tool-images.md)).
-  It lands on the tool-result message and is delivered *inside* the tool result —
-  measured, llama.cpp, Anthropic, OpenAI Responses and xAI all accept it there.
-  **Gemini is the exception**: a multimodal `functionResponse` is a hard `400`
-  ("Multimodal function responses are not supported for this model"), so its
-  builder emits the image as user parts immediately after the response. **An
-  `external` gateway** is the second exception, answered per route rather than
-  per protocol: measured through OpenRouter, of 29 route-and-model pairs 6 refused
-  a tool message carrying an image and 3 silently dropped it — the model then
-  describing a picture it never received — while in a user message every route
-  that answered saw it. So when the endpoint's catalogue answers for the
-  configured model (a llama.cpp never does), the OpenAI-compatible client sends
-  each tool result text-only and the images of a run of tool results in **one**
-  user message right after the run (a round's tool messages must stay contiguous),
-  in call order, behind the labels they already carry; an endpoint that publishes
-  no catalogue is sent the body it always was
+  It lands on the tool-result message, and is delivered *inside* the tool result
+  only to Anthropic and OpenAI Responses. **Gemini** refuses a multimodal
+  `functionResponse` with a hard `400` ("Multimodal function responses are not
+  supported for this model"), so its builder emits the image as user parts
+  immediately after the response. **The OpenAI-compatible client** — llama.cpp,
+  any external server, the OpenRouter gateway, xAI, DeepSeek — sends each tool
+  result text-only and the images of a run of tool results in **one** user message
+  right after the run (a round's tool messages must stay contiguous), in call order,
+  on every request and with nothing asked first. Two measurements put it there.
+  Through a gateway, of 29 route-and-model pairs 6 refused a tool message carrying
+  an image and 3 silently dropped it — the model then describing a picture it never
+  received — while in a user message every route that answered saw it
   ([docs/history/gateway-images-and-continue.md](docs/history/gateway-images-and-continue.md)
-  §1.2, fork H1). In the **`openrouter` mode** the re-homing is done on **every**
-  request that carries a tool's image, whether or not the catalogue has answered
-  yet: the client is told it speaks to the gateway and has nothing to wait for
-  ([docs/research/openrouter-mode.md](docs/research/openrouter-mode.md) §2.3). The choice is made **per provider, statically** — never by sending and catching the
+  §1.2, fork H1). And on llama.cpp, which takes the image inside, Gemma 4 then
+  answered English requests in a JSON envelope — `{"action": …, "action_input": …}`
+  — 28 times of 30, against 0 of 29 re-homed, with Qwen 3.8's calls and checks the
+  same either way ([docs/research/image-generation.md](docs/research/image-generation.md)
+  §11.3, fork F11). A tool's image is labelled **`tool → name:`**
+  (`python_exec → tool-image-3.png:`) — no word of any language, since in a user
+  message the numbered, localized label a user's image carries pulled replies to
+  English requests into the profile's language (Gemma 4 11 of 15, Qwen 3.8 3 of 9),
+  and naming the tool says whose picture it is. The choice is made **per provider, statically** — never by sending and catching the
   error, since a mid-turn retry after a hard failure is exactly what the retry
   decorator refuses (§6.8). Limits are the ones above plus a **cap of 4 images
   per tool result** (`MAX_TOOL_RESULT_IMAGES`, one constant for every producer),

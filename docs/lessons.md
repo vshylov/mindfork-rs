@@ -2268,6 +2268,17 @@ optional*, *`zip` 2.4.2 → 8.6.0 — what a green build does not say about a bu
 
 ## 9. Live runs and model behaviour
 
+**A smoke about what the model is shown must also look at the shape of what it
+says.** Every image smoke asserted on the files, the image count and the notes the
+model was given — and none on the reply itself. A picture inside a tool result was
+turning Gemma 4's short replies to English requests into a JSON envelope
+(`{"action": "text", "action_input": "…"}`) on llama.cpp, 28 times of 30, with every
+smoke green; it was found by reading replies in a probe of something else.
+When a change alters what reaches the model — a new part, a moved image, a label —
+assert the reply is prose in the request's language as well; and before calling a
+cause, run the old build beside the new one on the same server (17 of 21 → 0 of 21).
+— *Gemma 4's JSON after a tool's picture*.
+
 **A judge model grading one turn needs the conversation's frame, room to think, and
 its last line read.** Grading the persona-drift replies a turn at a time, Claude
 Sonnet 5.5 took a reply's reference to an earlier turn for an invention and marked it
