@@ -5441,3 +5441,63 @@ No Rust changed and no live stack is involved; the test count is unchanged.
   `release_guard.py --tag v0.23.0` accepts the tag and cuts 84 lines of notes;
   `cargo deny check`: ok; `zola build`: ok, `softwareVersion` 0.23.0; the legal pages,
   the RTFs and `/llms.txt` match their sources.
+- **The draft, checked before anyone else could see it** (§6 step 5).
+  - The owner merged 848 (`4ba044b9`, 22:02:03Z) and set `v0.23.0` on `4ba044b9`,
+    which was `origin/main`.
+  - `release.yml` (run 41135402689) was green in all eight jobs in **17 min 13 s**
+    (0.22.0: 14 min 17 s). Windows took the longest at 15 min 58 s, then macOS
+    14 min 12 s, Linux 9 min 45 s, and the demo 4 min 39 s.
+  - It left a draft that was not a prerelease, with fifteen assets — the same set as
+    0.22.0's. Every downloaded file matched `sha256sums.txt`. Its notes were the
+    `[0.23.0]` section line for line, with the workflow's footer (mindfork.io, the
+    install guide) below.
+  - **`install.sh` and the six animation files are 0.22.0's byte for byte** — nothing
+    the reel shows moved.
+  - **The released archives.** The Windows zip has 48 entries, as 0.22.0's; its
+    `mindfork.exe` says `mindfork 0.23.0`, its `PRIVACY.md` is effective 2026-10-30, and
+    its notices name `pulldown-cmark` 0.13.6. The macOS archive's `mindfork` is a
+    64-bit Mach-O for arm64, mode 0755, beside the same `PRIVACY.md`.
+- **The schema step, both ways, on the released binary** — §6 step 5's rule for a
+  release that moves a schema constant. The zip's `mindfork.exe` and 0.22.0 built from
+  its tag, each pointed at a root by a `defaults.json` beside it, as for the rubric:
+  - *On 0.22.0's own data* (the restored pre-migration backup, 278 chats at 6):
+    `mindfork import` with an empty import file — exit 0, all 278 chats at 7, one
+    `pre-migrate-*.zip`, `image_gen` written at its defaults; `stats`: the same counts
+    and fingerprint, `015d8483add3e6f4`.
+  - *0.22.0 on what it wrote*: refuses at start, *"…was created by a newer version of
+    mindfork (schema 7, supported 6)"*, exit 1; all 590 stored files byte for byte as
+    they were.
+  - *On data at 7 already* (a copy of the dev root, 279 chats): exit 0, no backup, and
+    one stored file rewritten — `settings.json`, which gained `image_gen.grok` at its
+    defaults, the dev settings having been saved before stage 3. `stats`: 279 chats.
+  - *The golden file*: `chat_v6_sandbox_file.json` in 0.22.0's root, stepped to 7.
+  - The copies of the dev data held real chats and were deleted afterwards.
+- **The interface**, in `console_probe` on the zip's binary (each scenario on data of
+  its own): `first-frame`, `full-mode` and `keys` passed. `small-window` reported three
+  failed checks on its first run, and their lines were not kept — the command printed
+  only its last four; three runs after it passed all 83 checks.
+- **Not run this time**: a live turn on the released binary, a picture drawn by it
+  included; the attestations; the installer and the packages beyond what their jobs
+  install.
+- **Published, and the numbers of it.**
+  - **Published at 22:37:58Z by the owner**, 17 min 59 s after the draft appeared
+    (22:19:59Z).
+  - `crates-io.yml` (run 41139407305) ran 22:38:00Z → 22:40:37Z. `mindfork 0.23.0` was
+    on the registry at 22:40:32Z (4 914 194 bytes), **2 min 34 s** after the
+    publication.
+  - `Site` (run 41139693623) started 4 s after `crates.io` completed and deployed at
+    22:41:21Z — **3 min 23 s after the publication** (0.22.0: 2 min 55 s). The hold on
+    the merge had shown as before (run 41135324276): "Is this version out?" green, the
+    build and the deploy skipped.
+  - From outside:
+    - the post answers 200 at `/blog/mindfork-0-23-0/`;
+    - the home page's and the install page's structured data say
+      `"softwareVersion": "0.23.0"`;
+    - the blog's index, `/llms.txt`, the Atom feed and the sitemap list the post;
+    - the privacy page is effective 2026-10-30;
+    - `releases/latest` resolves to `v0.23.0`;
+    - `mindfork.io/demo/mindfork-demo-dark-en.gif` is the release's, byte for byte.
+- **The package managers.** `aur.yml` (run 41139407263) built and installed
+  `mindfork-rs-bin` 0.23.0 (`installed: mindfork 0.23.0`) and stopped at its notice,
+  because there is no key. At 22:43Z, Scoop's bucket and the tap's formula still named
+  0.22.0. Neither was waited for.
