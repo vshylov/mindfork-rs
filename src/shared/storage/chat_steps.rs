@@ -81,7 +81,7 @@ pub(super) fn chat_to_v6(mut v: Value) -> Result<Value> {
 
 /// `chats/<id>.json` 6 → 7: no shape change, like [`chat_to_v6`]. 7 is the
 /// first schema in which a stored file's `origin` may read `"generated"` — a
-/// picture `image_generate` drew (spec §9.15, docs/research/image-generation.md
+/// picture `image_generate` drew (spec §9.15, docs/history/image-generation.md
 /// F5) — and the origin is a strict enum, so one such file is enough for 0.22.0
 /// to skip the whole chat in silence. This is the only file the value lives in:
 /// the settings hold the picture slot as a section of its own, which an older

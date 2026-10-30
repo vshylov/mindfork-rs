@@ -1,5 +1,5 @@
 //! The OpenRouter gateway's Image API, `POST /images`
-//! (docs/research/image-generation.md §3.4, §6.2): one key, some sixty models
+//! (docs/history/image-generation.md §3.4, §6.2): one key, some sixty models
 //! of a dozen vendors, billing that is all-or-nothing — a failed generation is
 //! a `502` and is not charged — and an answer that states its own price.
 //!

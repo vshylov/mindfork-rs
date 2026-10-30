@@ -55,7 +55,7 @@ pub enum ChannelFailure {
     /// (ADR 0013, stage C, D9 (a) — the text had gone already).
     Unvoiced(String),
     /// A picture the turn drew did not reach the messenger — `name`, the
-    /// chat's file it is kept as (docs/research/image-generation.md F9).
+    /// chat's file it is kept as (docs/history/image-generation.md F9).
     PictureUnsent { name: String, err: String },
 }
 
@@ -180,7 +180,7 @@ pub enum Outbound {
     },
     /// A picture the turn drew, the original's bytes as the chat keeps it:
     /// the channel sends it as its messenger takes a photo, named by `name`
-    /// (docs/research/image-generation.md F9).
+    /// (docs/history/image-generation.md F9).
     Photo {
         to: String,
         name: String,

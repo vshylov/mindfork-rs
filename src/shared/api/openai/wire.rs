@@ -268,7 +268,7 @@ pub fn carries_tool_images(messages: &[ApiMessage]) -> bool {
 /// message all 28 that answered saw it (docs/history/gateway-images-and-continue.md
 /// §1.2, fork H1). And llama.cpp takes it, but Gemma 4 then answered an English
 /// request in JSON — `{"action": …, "action_input": …}` — 28 times of 30, against 0
-/// of 29 with the image re-homed (docs/research/image-generation.md §11.3, fork F11).
+/// of 29 with the image re-homed (docs/history/image-generation.md §11.3, fork F11).
 /// It is the fallback Gemini's builder already takes (docs/research/mcp-tool-images.md
 /// F1-A). **One** message per run rather than one per result, because a round's tool
 /// messages must follow its `tool_calls` contiguously.

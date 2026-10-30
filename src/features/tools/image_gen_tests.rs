@@ -1,6 +1,6 @@
 //! `image_generate` against a scripted provider: what is kept, what is said,
 //! what is shown, and the three bounds of a turn (spec §9.15,
-//! docs/research/image-generation.md §6.3–§6.6).
+//! docs/history/image-generation.md §6.3–§6.6).
 
 use std::sync::Arc;
 

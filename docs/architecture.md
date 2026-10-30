@@ -2150,7 +2150,7 @@ its own — or named by `api_key_env`, resolved through the same
   gateway, xAI, DeepSeek — gets them re-homed by `shaped_for_endpoint` into one
   user message after the run of tool results (`wire::rehome_tool_images`), with
   nothing asked first: inside a tool message, Gemma 4 on llama.cpp answered
-  English requests in JSON (docs/research/image-generation.md §11.3, fork F11).
+  English requests in JSON (docs/history/image-generation.md §11.3, fork F11).
   A tool's image is labelled `tool → name:` by `request::tool_image_label` — no
   word of any language, since in a user message a localized label pulled replies
   into the profile's language; a user's own image keeps the numbered, localized

@@ -205,7 +205,7 @@ fn video_mode(provider: VideoProvider) -> Option<ServerMode> {
 /// or `None`: OpenAI's list says nothing of what a model does, Gemini's calls
 /// its picture models chat models, and xAI's language list holds none of them.
 /// The gateway publishes the models its picture route takes
-/// (docs/research/image-generation.md §6.1).
+/// (docs/history/image-generation.md §6.1).
 fn image_mode(provider: ImageGenProvider) -> Option<ServerMode> {
     match provider {
         ImageGenProvider::OpenRouter => Some(ServerMode::OpenRouter),

@@ -167,7 +167,7 @@ pub fn present(name: &str, arguments: &str, result: &str, detail: ArgDetail) -> 
     let (mut header_suffix, args) = present_args(name, arguments, val.as_ref(), detail);
     // A drawn picture's collapsed card names the file it was saved as — the
     // handle `/file open` takes — rather than the start of a long prompt
-    // (spec §9.15, docs/research/image-generation.md F8).
+    // (spec §9.15, docs/history/image-generation.md F8).
     if detail == ArgDetail::Compact
         && name == super::image_gen::IMAGE_GENERATE_ID
         && let Some(saved) = saved_picture(result)

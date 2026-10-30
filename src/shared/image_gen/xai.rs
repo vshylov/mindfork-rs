@@ -1,6 +1,6 @@
 //! xAI's Images API: `POST /v1/images/generations` for a new picture,
 //! `POST /v1/images/edits` (JSON only) for a changed one
-//! (docs/research/image-generation.md §3.3, §6.2).
+//! (docs/history/image-generation.md §3.3, §6.2).
 //!
 //! The OpenAI wire in a dialect of its own:
 //!

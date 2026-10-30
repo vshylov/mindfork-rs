@@ -90,7 +90,7 @@ pub enum CatalogueShape {
     /// of the very route the picture slot's client draws on, public and the
     /// same with a key (62 entries either way, 2026-10-30). Each entry says what
     /// it takes as an object of typed parameters, not as the chat list's array
-    /// of names (docs/research/image-generation.md §3.4, §14).
+    /// of names (docs/history/image-generation.md §3.4, §14).
     OpenRouterImages,
 }
 
@@ -145,7 +145,7 @@ pub enum ModelSlot {
     /// The model that draws for `image_generate` and `/image generate`. One
     /// provider of that slot has a catalogue — the gateway: OpenAI's list says
     /// nothing of what a model does, and Gemini's calls its picture models chat
-    /// models (docs/research/image-generation.md §6.1).
+    /// models (docs/history/image-generation.md §6.1).
     Image,
 }
 

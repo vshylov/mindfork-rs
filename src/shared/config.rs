@@ -2406,7 +2406,7 @@ impl Default for VideoSettings {
 
 /// OpenAI's default picture model: the fastest of the 2.5 pair, and measured the
 /// cheapest picture of every provider at `medium` — $0.013 for 1024×1024
-/// (docs/research/image-generation.md §11.1, fork F3′).
+/// (docs/history/image-generation.md §11.1, fork F3′).
 pub const DEFAULT_IMAGE_GEN_OPENAI_MODEL: &str = "gpt-image-2.5-flare";
 /// OpenAI's default quality — the price is the person's, and `medium` is what the
 /// probe measured.
@@ -2417,7 +2417,7 @@ pub const DEFAULT_IMAGE_GEN_GEMINI_MODEL: &str = "gemini-nano-banana-2.1";
 /// The size Gemini and the gateway are asked for: `1K`, each one's default.
 pub const DEFAULT_IMAGE_GEN_SIZE: &str = "1K";
 /// xAI's default picture model: the recommended one, $0.04 a picture
-/// (docs/research/image-generation.md §3.3).
+/// (docs/history/image-generation.md §3.3).
 pub const DEFAULT_IMAGE_GEN_XAI_MODEL: &str = "grok-imagine-image-2.0";
 /// xAI's default quality: `auto`, its own — `low` for a new picture and `medium`
 /// for a change, which is what the probe measured ($0.04 and $0.07, §11.1).
@@ -2440,7 +2440,7 @@ pub const IMAGE_GEN_XAI_QUALITIES: [&str; 3] = ["low", "medium", "auto"];
 /// Who draws (`image_generate`, spec §9.15). A slot of its own, independent of
 /// the chat engine as speech and video are: the providers that draw are not the
 /// ones that chat, and a person on a local model is the one who needs it most
-/// (docs/research/image-generation.md §1, F2; xAI's own endpoint since stage 3).
+/// (docs/history/image-generation.md §1, F2; xAI's own endpoint since stage 3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ImageGenProvider {
@@ -2513,7 +2513,7 @@ pub struct ImageGenSection {
 }
 
 /// Image generation (`image_generate`, spec §9.15,
-/// docs/research/image-generation.md §6.1). **Off by default** (fork F7):
+/// docs/history/image-generation.md §6.1). **Off by default** (fork F7):
 /// nothing is drawn, or paid for, until the person turns it on. The key is not
 /// here — it is the provider's stored key (ADR 0008). All fields
 /// `#[serde(default)]`: an older `settings.json` reads without a step, and an

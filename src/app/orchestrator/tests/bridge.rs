@@ -412,7 +412,7 @@ async fn a_turn_from_the_phone_has_none_of_the_dangerous_tools() {
         "the safe ones stay: {phone:?}"
     );
     // A picture is not a danger: a turn from the phone draws
-    // (docs/research/image-generation.md §6.6, F7 as amended).
+    // (docs/history/image-generation.md §6.6, F7 as amended).
     assert!(
         phone
             .iter()
@@ -950,7 +950,7 @@ async fn an_edit_from_the_settings_screen_keeps_the_bots_and_the_recognisers_key
     b.quit().await;
 }
 
-// ---------- pictures drawn from the phone (docs/research/image-generation.md F9) ----------
+// ---------- pictures drawn from the phone (docs/history/image-generation.md F9) ----------
 
 /// OpenAI's Images API of the test's own: every one of `n` requests answered
 /// with `picture`.

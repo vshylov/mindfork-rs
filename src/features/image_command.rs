@@ -41,7 +41,7 @@ pub enum ImageCommand {
     /// Draw a picture with the picture slot's provider, keep it in the chat's
     /// files and stage it for the next message — the person's own road to the
     /// slot, with no model and no round (spec §9.15,
-    /// docs/research/image-generation.md §6.5). A ratio the tool offers may lead
+    /// docs/history/image-generation.md §6.5). A ratio the tool offers may lead
     /// the description: `/image generate 16:9 a fox in the snow`.
     Generate { prompt: String, aspect: Aspect },
 }

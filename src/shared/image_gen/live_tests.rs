@@ -2,7 +2,7 @@
 //! `#[ignore]` — not in CI; silently skipped without their key. Each draws one
 //! picture and changes it once: about $0.03 on OpenAI, $0.08 on Gemini,
 //! $0.10 on the gateway's FLUX-3 and $0.11 on xAI, which also changes two at
-//! once (docs/research/image-generation.md §11.1, §14). No refusal is provoked:
+//! once (docs/history/image-generation.md §11.1, §14). No refusal is provoked:
 //! the probe recorded each provider's once, and repeated violations are what an
 //! account gets flagged for.
 //!

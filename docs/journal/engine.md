@@ -7241,7 +7241,7 @@ clean.
 
 ### Post-M9: a tool's picture re-homed on every OpenAI-compatible endpoint (done)
 Found by the image-generation probe
-([image-generation.md](../research/image-generation.md) §11.3) and decided by the
+([image-generation.md](../history/image-generation.md) §11.3) and decided by the
 owner on 2026-10-29 as F11 (a): on llama.cpp a picture inside a tool result turned
 Gemma 4's replies to English requests into a JSON envelope —
 `{"action": "text", "action_input": "Here is…"}` — 28 times of 30 in the probe.

@@ -770,7 +770,7 @@ async fn a_background_run_is_not_offered_what_no_one_could_confirm() {
 }
 
 /// Nobody waits for a background run, so it draws nothing, though the turn
-/// that started it may (docs/research/image-generation.md §6.6, F7).
+/// that started it may (docs/history/image-generation.md §6.6, F7).
 #[tokio::test]
 async fn a_background_run_draws_no_pictures() {
     let backend = KeyedRecorder::new(

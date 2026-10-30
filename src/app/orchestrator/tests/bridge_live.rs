@@ -22,7 +22,7 @@
 //! `cargo test bridge_live -- --ignored --nocapture --test-threads=1`
 //!
 //! A second smoke, [`a_picture_drawn_from_the_phone_reaches_it_live`], draws
-//! from the phone (docs/research/image-generation.md F9): a picture asked for,
+//! from the phone (docs/history/image-generation.md F9): a picture asked for,
 //! then changed, each back as a photo after the words — the chat's own file,
 //! byte for byte, where Telegram takes it whole. It also needs
 //! `MINDFORK_OPENAI_KEY` and spends about three cents.

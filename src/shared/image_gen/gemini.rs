@@ -1,5 +1,5 @@
 //! Gemini's picture models through `generateContent`
-//! (docs/research/image-generation.md §3.2, §6.2): the same endpoint and the
+//! (docs/history/image-generation.md §3.2, §6.2): the same endpoint and the
 //! same `x-goog-api-key` header the chat client and speech use, with
 //! `responseModalities: ["IMAGE"]` — measured enough on its own (§11.1), so no
 //! sentence is asked for and thrown away — and `imageConfig`.

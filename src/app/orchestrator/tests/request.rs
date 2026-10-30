@@ -122,7 +122,7 @@ fn the_chat_files_block_names_handles_and_staged_names() {
 
 /// A tool's picture is labelled by the tool and its name with no word of any language,
 /// while the user's own image keeps the numbered label in the profile's language
-/// (docs/research/image-generation.md §11.3, fork F11): the tool's travels to most
+/// (docs/history/image-generation.md §11.3, fork F11): the tool's travels to most
 /// engines in a user message, where a localized label pulled English replies into
 /// Russian. A stored tool message without a tool name keeps the picture's name alone.
 #[test]

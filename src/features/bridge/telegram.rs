@@ -10,7 +10,7 @@ use super::{Author, Body, Incoming, Picture, Voice, split_command};
 
 /// The longer side of the copy a picture goes as when Telegram would not take
 /// the original: more than a phone's screen shows, and as a JPEG far under
-/// [`PHOTO_LIMIT`] (docs/research/image-generation.md §13).
+/// [`PHOTO_LIMIT`] (docs/history/image-generation.md §13).
 pub const PHOTO_COPY_EDGE: u32 = 2560;
 
 /// What `sendPhoto` takes, as [`photo_within`] checks it.

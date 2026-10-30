@@ -778,7 +778,7 @@ impl Orchestrator {
 
     /// The pictures a seat's turn drew, to the phone after its words, as
     /// photos in the order they were drawn — however the turn ended, since each
-    /// was paid for and is kept (docs/research/image-generation.md F9). Read
+    /// was paid for and is kept (docs/history/image-generation.md F9). Read
     /// off the disk away from the orchestrator's thread; the channel makes
     /// each what its messenger takes. One that cannot be read is told as one
     /// that was not sent.
