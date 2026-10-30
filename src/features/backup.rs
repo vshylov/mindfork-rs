@@ -20,8 +20,9 @@
 //! Excluded: `backups/`, `logs/`, and the install-defaults files `defaults.json`/
 //! `location.json` (they're about the install, not user data). Additionally, a
 //! `manifest.json` (schema versions + app version) is written into the archive —
-//! metadata for warning on restoring a backup made by a newer version; it is
-//! **not** extracted into the root. See [`BackupManifest`].
+//! metadata for warning on restoring data newer than the running build reads; it
+//! is **not** extracted into the root. A pre-migration backup records the schemas
+//! its files held before the step, not the build's. See [`BackupManifest`].
 //!
 //! **The database is compacted** on both paths (spec §12.3): a backup packs a
 //! `VACUUM INTO` copy of `data.db` instead of the live file (free pages left by
@@ -88,8 +89,16 @@ use crate::shared::storage::schema::{CHAT_SCHEMA, DB_SCHEMA, PROFILES_SCHEMA, SE
 /// release-engineering.md §3.4.
 const MANIFEST_NAME: &str = "manifest.json";
 
-/// Data schema versions at backup creation time (release-engineering.md, the manifest deliverable).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// The data schema of each kind of stored file in an archive (ADR 0006 §11).
+///
+/// An ordinary backup records the writing build's own schemas
+/// ([`SchemaVersions::current`]). A **pre-migration** backup records what its
+/// files held **before** the step ([`create_pre_migrate_backup`]): it is the
+/// copy to take back to the release before the step, and this build's schemas
+/// would have that release warn that its own data comes from a newer version
+/// (spec §12.3). There a kind with no file is `0` ([`Default`]): nothing in the
+/// archive asks a reader for it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SchemaVersions {
     pub settings: u32,
     pub profiles: u32,
@@ -97,10 +106,34 @@ pub struct SchemaVersions {
     pub db: u32,
 }
 
-/// Backup manifest (`manifest.json` in the archive): app version, schema
-/// versions, and creation time. Needed so that when restoring a backup made
-/// by a **newer** mindfork version, the user gets a warning (data is intact;
-/// the startup downgrade guard protects it regardless — ADR 0006).
+impl SchemaVersions {
+    /// This build's schemas.
+    fn current() -> Self {
+        Self {
+            settings: SETTINGS_SCHEMA,
+            profiles: PROFILES_SCHEMA,
+            chat: CHAT_SCHEMA,
+            db: DB_SCHEMA,
+        }
+    }
+}
+
+/// One kind of file an archive holds at a schema newer than a reader's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct NewerSchema {
+    /// The file as a person finds it in the data root (`chats/*.json`).
+    file: &'static str,
+    /// Its schema in the archive.
+    found: u32,
+    /// The newest schema the reader reads.
+    supported: u32,
+}
+
+/// Backup manifest (`manifest.json` in the archive): the version of the app
+/// that wrote the archive, the schemas of what it holds ([`SchemaVersions`]),
+/// and the creation time. Needed so that restoring data **newer** than this
+/// build reads gets a warning (data is intact; the startup downgrade guard
+/// protects it regardless — ADR 0006).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BackupManifest {
     pub app_version: String,
@@ -109,27 +142,74 @@ pub struct BackupManifest {
 }
 
 impl BackupManifest {
-    /// Manifest for the current build (app version + current schema versions).
-    fn current() -> Self {
+    /// A manifest this build writes now, for an archive whose files are at
+    /// `schemas`.
+    fn written_now(schemas: SchemaVersions) -> Self {
         Self {
             app_version: env!("CARGO_PKG_VERSION").to_string(),
-            schemas: SchemaVersions {
-                settings: SETTINGS_SCHEMA,
-                profiles: PROFILES_SCHEMA,
-                chat: CHAT_SCHEMA,
-                db: DB_SCHEMA,
-            },
+            schemas,
             created_at: Local::now().to_rfc3339(),
         }
     }
 
-    /// Does the manifest carry a schema **newer** than current (an archive
-    /// from a newer app version) — a signal to warn on restore.
+    /// The kinds of file the archive holds at a schema newer than `reader`'s,
+    /// in the order the start-up reads them. Empty — the reader reads it all.
+    fn newer_than(&self, reader: &SchemaVersions) -> Vec<NewerSchema> {
+        let (a, r) = (&self.schemas, reader);
+        [
+            ("settings.json", a.settings, r.settings),
+            ("profiles.json", a.profiles, r.profiles),
+            ("chats/*.json", a.chat, r.chat),
+            ("data.db", a.db, r.db),
+        ]
+        .into_iter()
+        .filter(|(_, found, supported)| found > supported)
+        .map(|(file, found, supported)| NewerSchema {
+            file,
+            found,
+            supported,
+        })
+        .collect()
+    }
+
+    /// The kinds of file the archive holds at a schema newer than this build
+    /// reads.
+    fn newer_schemas(&self) -> Vec<NewerSchema> {
+        self.newer_than(&SchemaVersions::current())
+    }
+
+    /// Does the archive hold data at a schema **newer** than this build reads —
+    /// a signal to warn on restore.
     pub fn is_newer_than_current(&self) -> bool {
-        self.schemas.settings > SETTINGS_SCHEMA
-            || self.schemas.profiles > PROFILES_SCHEMA
-            || self.schemas.chat > CHAT_SCHEMA
-            || self.schemas.db > DB_SCHEMA
+        !self.newer_schemas().is_empty()
+    }
+
+    /// The warning `restore` prints before it starts, when the archive holds
+    /// data newer than this build reads: which files, at which schema, and the
+    /// version that wrote the archive. `None` — nothing to warn about.
+    pub fn restore_warning(&self, loc: &Locale) -> Option<String> {
+        let newer = self.newer_schemas();
+        if newer.is_empty() {
+            return None;
+        }
+        let schemas = newer
+            .iter()
+            .map(|n| {
+                loc.tf(
+                    "backup.warn.newer_schema",
+                    &[
+                        ("file", n.file),
+                        ("found", &n.found.to_string()),
+                        ("supported", &n.supported.to_string()),
+                    ],
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        Some(loc.tf(
+            "backup.warn.newer_manifest",
+            &[("schemas", &schemas), ("version", &self.app_version)],
+        ))
     }
 }
 
@@ -401,12 +481,64 @@ pub fn create_backup(
     fs_root: Option<&Path>,
     password: Option<&str>,
     loc: &Locale,
-    mut progress: impl FnMut(&str),
+    progress: impl FnMut(&str),
 ) -> Result<PathBuf> {
     let out_path = match output {
         Some(p) => p,
         None => default_backup_path(paths, "mindfork-backup"),
     };
+    let spec = ZipSpec {
+        level,
+        password,
+        manifest: BackupManifest::written_now(SchemaVersions::current()),
+    };
+    pack(paths, out_path, fs_root, &spec, loc, progress)
+}
+
+/// Creates the backup made before a schema step (`backups/pre-migrate-<date>.zip`,
+/// spec §12.2) and returns its path.
+///
+/// Its manifest records `held` — the schemas the files are at **before** the
+/// step — and not this build's: the archive is the way back to the release
+/// before the step, which reads every file in it and must not be told that it
+/// comes from a newer version (spec §12.3). `app_version` still names this
+/// build, the one that wrote it. Maximum compression, no `fs_root` (the config
+/// may itself be about to migrate), and silent: it runs on start-up, before the
+/// TUI.
+pub fn create_pre_migrate_backup(
+    paths: &Paths,
+    held: SchemaVersions,
+    password: Option<&str>,
+    loc: &Locale,
+) -> Result<PathBuf> {
+    let spec = ZipSpec {
+        level: 9,
+        password,
+        manifest: BackupManifest::written_now(held),
+    };
+    let out_path = default_backup_path(paths, "pre-migrate");
+    pack(paths, out_path, None, &spec, loc, |_| {})
+}
+
+/// How an archive is written: the compression level `0..=9`, the password that
+/// encrypts its data entries (`None`/empty — none), and the manifest that goes
+/// in beside them.
+struct ZipSpec<'a> {
+    level: i64,
+    password: Option<&'a str>,
+    manifest: BackupManifest,
+}
+
+/// Packs the data root into `out_path` as `spec` says — the body of both
+/// [`create_backup`] and [`create_pre_migrate_backup`].
+fn pack(
+    paths: &Paths,
+    out_path: PathBuf,
+    fs_root: Option<&Path>,
+    spec: &ZipSpec<'_>,
+    loc: &Locale,
+    mut progress: impl FnMut(&str),
+) -> Result<PathBuf> {
     // A compacted copy is packed in place of the live database (see the module
     // doc); `None` — there is none, or it couldn't be compacted, and the raw
     // files go in instead. The scratch file lives until the archive is written.
@@ -416,15 +548,7 @@ pub fn create_backup(
     let compact = compacted_db(paths, &out_path);
     let entries = gather_entries(paths, fs_root, compact.as_ref().map(TempDb::path), loc)?;
     progress(loc.t("backup.progress.packing"));
-    write_zip(
-        &out_path,
-        &entries,
-        level,
-        normalize(password),
-        loc,
-        &mut progress,
-    )
-    .with_context(|| {
+    write_zip(&out_path, &entries, spec, loc, &mut progress).with_context(|| {
         loc.tf(
             "backup.ctx.create_archive",
             &[("path", &out_path.display().to_string())],
@@ -710,14 +834,13 @@ fn collect_dir(abs: &Path, prefix: &str, out: &mut Vec<Entry>, loc: &Locale) -> 
     Ok(())
 }
 
-/// Writes the archive from the entry list at the given compression level,
-/// encrypting the data entries when `password` is set (the manifest stays
+/// Writes the archive from the entry list at `spec`'s compression level,
+/// encrypting the data entries when it names a password (the manifest stays
 /// readable — see the module doc).
 fn write_zip(
     out_path: &Path,
     entries: &[Entry],
-    level: i64,
-    password: Option<&str>,
+    spec: &ZipSpec<'_>,
     loc: &Locale,
     progress: &mut impl FnMut(&str),
 ) -> Result<()> {
@@ -737,7 +860,7 @@ fn write_zip(
     })?;
     let mut zip = ZipWriter::new(file);
 
-    let level = level.clamp(0, 9);
+    let level = spec.level.clamp(0, 9);
     let plain = if level == 0 {
         SimpleFileOptions::default().compression_method(CompressionMethod::Stored)
     } else {
@@ -747,7 +870,7 @@ fn write_zip(
     };
     // Data entries: encrypted when a password is set. The manifest always uses
     // `plain` — it carries no user data and stays readable without the password.
-    let options = match password {
+    let options = match normalize(spec.password) {
         Some(pw) => plain.with_aes_encryption(AesMode::Aes256, pw),
         None => plain,
     };
@@ -768,8 +891,8 @@ fn write_zip(
     }
 
     // The schema-version manifest (metadata, not a user file) — written last.
-    let manifest = serde_json::to_vec_pretty(&BackupManifest::current())
-        .context("serializing backup manifest")?;
+    let manifest =
+        serde_json::to_vec_pretty(&spec.manifest).context("serializing backup manifest")?;
     zip.start_file(MANIFEST_NAME, plain)
         .with_context(|| loc.tf("backup.ctx.write_entry", &[("name", MANIFEST_NAME)]))?;
     io::copy(&mut manifest.as_slice(), &mut zip)
@@ -1727,6 +1850,120 @@ mod tests {
             created_at: "2030-01-01T00:00:00+00:00".into(),
         };
         assert!(m.is_newer_than_current());
+    }
+
+    /// The release before the chats' last step: every schema this build has but
+    /// the chats', one lower (0.22.0 to 0.23.0's chats 6 → 7).
+    fn reader_before_the_chat_step() -> SchemaVersions {
+        SchemaVersions {
+            chat: CHAT_SCHEMA - 1,
+            ..SchemaVersions::current()
+        }
+    }
+
+    /// A pre-migration backup records the schemas its files held before the
+    /// step, not this build's, and still names the build that wrote it: the
+    /// release before the step reads every file in it and is not warned
+    /// (spec §12.3; 0.22.0 was, on 0.23.0's).
+    #[test]
+    fn a_pre_migrate_backup_records_what_its_files_hold() {
+        let dir = tempfile::tempdir().unwrap();
+        seed_data(dir.path());
+        let paths = Paths::with_root(dir.path());
+        let held = reader_before_the_chat_step();
+        let out = create_pre_migrate_backup(&paths, held.clone(), None, ru()).unwrap();
+
+        assert_eq!(out.parent(), Some(paths.backups_dir().as_path()));
+        let name = out.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(name.starts_with("pre-migrate-"), "{name}");
+        let m = read_manifest(&out).unwrap().expect("a manifest");
+        assert_eq!(m.schemas, held);
+        assert_eq!(m.app_version, env!("CARGO_PKG_VERSION"), "who wrote it");
+        assert_eq!(m.newer_than(&reader_before_the_chat_step()), vec![]);
+        assert!(!m.is_newer_than_current());
+        assert_eq!(m.restore_warning(locale(Lang::En)), None);
+        // What it packs is what an ordinary backup packs.
+        let ordinary = create_backup(&paths, None, 9, None, None, ru(), |_| {}).unwrap();
+        assert_eq!(archive_names(&out), archive_names(&ordinary));
+    }
+
+    /// An ordinary backup still records this build's schemas — the app it is
+    /// taken from has brought its files to them — so the release before a step
+    /// is warned, and told which file.
+    #[test]
+    fn an_ordinary_backup_is_newer_for_the_release_before_a_step() {
+        let dir = tempfile::tempdir().unwrap();
+        seed_data(dir.path());
+        let paths = Paths::with_root(dir.path());
+        let out = create_backup(&paths, None, 1, None, None, ru(), |_| {}).unwrap();
+
+        let m = read_manifest(&out).unwrap().expect("a manifest");
+        assert_eq!(m.schemas, SchemaVersions::current());
+        assert_eq!(
+            m.newer_than(&reader_before_the_chat_step()),
+            vec![NewerSchema {
+                file: "chats/*.json",
+                found: CHAT_SCHEMA,
+                supported: CHAT_SCHEMA - 1,
+            }]
+        );
+    }
+
+    /// A pre-migration backup is encrypted like every copy the app makes on its
+    /// own, and its manifest stays readable without the password.
+    #[test]
+    fn a_pre_migrate_backup_takes_the_password() {
+        let dir = tempfile::tempdir().unwrap();
+        seed_data(dir.path());
+        let paths = Paths::with_root(dir.path());
+        let held = reader_before_the_chat_step();
+        let out = create_pre_migrate_backup(&paths, held.clone(), Some("pw"), ru()).unwrap();
+
+        assert_eq!(
+            check_password(&out, None).unwrap(),
+            ArchivePassword::Required
+        );
+        assert_eq!(
+            check_password(&out, Some("pw")).unwrap(),
+            ArchivePassword::Ok
+        );
+        assert_eq!(
+            read_manifest(&out).unwrap().expect("a manifest").schemas,
+            held
+        );
+    }
+
+    /// The warning names each file the archive holds at a newer schema, both
+    /// schemas, and the version that wrote it — every placeholder filled in
+    /// every language.
+    #[test]
+    fn the_restore_warning_names_what_is_newer() {
+        let m = BackupManifest {
+            app_version: "9.9.9".into(),
+            schemas: SchemaVersions {
+                chat: CHAT_SCHEMA + 1,
+                db: DB_SCHEMA + 2,
+                ..SchemaVersions::current()
+            },
+            created_at: "2030-01-01T00:00:00+00:00".into(),
+        };
+        let en = m.restore_warning(locale(Lang::En)).expect("a warning");
+        let chats = format!(
+            "chats/*.json: schema {}, supported {CHAT_SCHEMA}",
+            CHAT_SCHEMA + 1
+        );
+        let db = format!("data.db: schema {}, supported {DB_SCHEMA}", DB_SCHEMA + 2);
+        assert!(en.contains(&format!("({chats}; {db})")), "{en}");
+        assert!(en.contains("9.9.9"), "{en}");
+        assert!(!en.contains("settings.json"), "{en}");
+        for lang in Lang::ALL {
+            let w = m.restore_warning(locale(*lang)).expect("a warning");
+            assert!(!w.contains(['{', '}']), "{lang:?}: {w}");
+            assert!(
+                w.contains("chats/*.json") && w.contains("9.9.9"),
+                "{lang:?}: {w}"
+            );
+        }
     }
 
     #[test]

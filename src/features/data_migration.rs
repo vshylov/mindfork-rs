@@ -73,8 +73,13 @@ fn run_with(
     chat: &JsonArtifact,
 ) -> Result<()> {
     let mut plan: Vec<Planned> = Vec::new();
+    // The schema each kind of file is at before any step: what the pre-migration
+    // backup holds, and what its manifest says (`backup::SchemaVersions`). A kind
+    // with no file stays 0. For the chats it is the newest one found, since a
+    // reader older than that one file would refuse it.
+    let mut held = backup::SchemaVersions::default();
 
-    if let Some(p) = assess_file(
+    if let Some(found) = assess_file(
         &paths.settings_file(),
         settings,
         Kind::Settings,
@@ -84,9 +89,10 @@ fn run_with(
             invalid: "migrate.err.settings_invalid",
         },
     )? {
-        plan.push(p);
+        held.settings = found.version;
+        plan.extend(found.plan);
     }
-    if let Some(p) = assess_file(
+    if let Some(found) = assess_file(
         &paths.profiles_file(),
         profiles,
         Kind::Profiles,
@@ -96,20 +102,24 @@ fn run_with(
             invalid: "migrate.err.profiles_invalid",
         },
     )? {
-        plan.push(p);
+        held.profiles = found.version;
+        plan.extend(found.plan);
     }
 
     for path in chat_files(paths)? {
         match json::read_json::<Value>(&path) {
             Ok(None) => {}
             Ok(Some(v)) => match chat.assess(&v) {
-                Assessment::UpToDate => {}
-                Assessment::Migrate { from } => plan.push(Planned {
-                    path,
-                    kind: Kind::Chat,
-                    from,
-                    value: v,
-                }),
+                Assessment::UpToDate => held.chat = held.chat.max(chat.current),
+                Assessment::Migrate { from } => {
+                    held.chat = held.chat.max(from);
+                    plan.push(Planned {
+                        path,
+                        kind: Kind::Chat,
+                        from,
+                        value: v,
+                    });
+                }
                 Assessment::Downgrade { from } => {
                     bail!(downgrade_msg(
                         loc,
@@ -134,6 +144,7 @@ fn run_with(
         bail!(downgrade_msg(loc, "data.db", db_uv, schema::DB_SCHEMA));
     }
     let db_needs_migration = db::needs_step_migration(db_uv);
+    held.db = db_uv;
 
     if plan.is_empty() && !db_needs_migration {
         tracing::debug!("no data migration needed");
@@ -148,25 +159,17 @@ fn run_with(
     // a setting that says "my backups are encrypted" must not have an exception
     // that quietly writes a plaintext copy of everything. Safe to read ahead of
     // the migration — the secrets list is additive and has never been migrated.
-    let backup_path = backup::default_backup_path(paths, "pre-migrate");
+    //
+    // Its manifest records `held`, not this build's schemas: the archive is the way
+    // back to the release before the step, which reads it (spec §12.3).
     let password = stored_backup_password(paths);
-    backup::create_backup(
-        paths,
-        Some(backup_path.clone()),
-        9,
-        None,
-        password.as_deref(),
-        loc,
-        // Silent: this runs on startup, before the TUI, where a stream of
-        // progress lines would only look like noise before the app appears.
-        |_| {},
-    )
-    .map_err(|e| {
-        anyhow!(
-            "{}",
-            loc.tf("migrate.err.backup_failed", &[("err", &format!("{e:#}"))])
-        )
-    })?;
+    let backup_path = backup::create_pre_migrate_backup(paths, held, password.as_deref(), loc)
+        .map_err(|e| {
+            anyhow!(
+                "{}",
+                loc.tf("migrate.err.backup_failed", &[("err", &format!("{e:#}"))])
+            )
+        })?;
     tracing::info!(backup = %backup_path.display(), files = plan.len(),
         "created a backup before migrating data");
 
@@ -215,8 +218,16 @@ struct RefusalKeys {
     invalid: &'static str,
 }
 
-/// Assesses one file: `Ok(None)` — no file, or already current; `Ok(Some)` — into the plan;
-/// `Err` — corrupt, invalid (both via `keys`) or a downgrade (data newer than the app).
+/// What [`assess_file`] found in a file that exists: the schema it is at, and
+/// the migration it needs (`None` — it is current).
+struct Found {
+    version: u32,
+    plan: Option<Planned>,
+}
+
+/// Assesses one file: `Ok(None)` — no file; `Ok(Some)` — its version, and its plan when it
+/// is older than current; `Err` — corrupt, invalid (both via `keys`) or a downgrade (data
+/// newer than the app).
 ///
 /// A file at the current version is parsed into its **typed** structure here,
 /// not only as a `Value`: it is what the app is about to load, and a value the
@@ -232,7 +243,7 @@ fn assess_file(
     kind: Kind,
     loc: &Locale,
     keys: &RefusalKeys,
-) -> Result<Option<Planned>> {
+) -> Result<Option<Found>> {
     let shown = path.display().to_string();
     let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
@@ -255,13 +266,19 @@ fn assess_file(
                     )
                 },
             )?;
-            Ok(None)
+            Ok(Some(Found {
+                version: art.current,
+                plan: None,
+            }))
         }
-        Assessment::Migrate { from } => Ok(Some(Planned {
-            path: path.to_path_buf(),
-            kind,
-            from,
-            value: v,
+        Assessment::Migrate { from } => Ok(Some(Found {
+            version: from,
+            plan: Some(Planned {
+                path: path.to_path_buf(),
+                kind,
+                from,
+                value: v,
+            }),
         })),
         Assessment::Downgrade { from } => {
             bail!(downgrade_msg(loc, art.name, from, art.current))
@@ -584,6 +601,77 @@ mod tests {
 
         run(&paths, ru()).unwrap();
         assert_eq!(pre_migrate_backups(&paths), 1);
+    }
+
+    /// The manifest of the root's one pre-migration backup.
+    fn pre_migrate_manifest(paths: &Paths) -> backup::BackupManifest {
+        let archives: Vec<PathBuf> = fs::read_dir(paths.backups_dir())
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.to_string_lossy().contains("pre-migrate"))
+            .collect();
+        assert_eq!(archives.len(), 1, "{archives:?}");
+        backup::read_manifest(&archives[0])
+            .unwrap()
+            .expect("a manifest")
+    }
+
+    /// A root of 0.22.0 — settings at 7, a bare profiles array, a chat at 6 and
+    /// no database — as the files before the chats' step 6 → 7.
+    fn root_before_generated_pictures() -> (tempfile::TempDir, Paths) {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(dir.path());
+        let mut settings: Value =
+            serde_json::from_str(include_str!("../shared/storage/fixtures/settings_v6.json"))
+                .unwrap();
+        settings["schema_version"] = json!(7);
+        write(&paths.settings_file(), &settings.to_string());
+        write(&paths.profiles_file(), "[]");
+        write(
+            &paths.chat_file("6c0ffee0-4d1e-4b2a-9e3f-6a7b8c9d0e1f"),
+            include_str!("../shared/storage/fixtures/chat_v6_sandbox_file.json"),
+        );
+        (dir, paths)
+    }
+
+    /// The pre-migration backup is the way back to the release before the step,
+    /// so its manifest says what that release finds in it — the chats at 6, not
+    /// this build's 7 — and 0.22.0 restores it without the "newer version"
+    /// warning it printed for 0.23.0's (spec §12.3). A kind with no file is 0.
+    #[test]
+    fn the_pre_migrate_backup_records_the_schemas_before_the_step() {
+        let (_dir, paths) = root_before_generated_pictures();
+
+        run(&paths, ru()).unwrap();
+
+        let m = pre_migrate_manifest(&paths);
+        let before_the_step = backup::SchemaVersions {
+            settings: 7,
+            profiles: 1,
+            chat: 6,
+            db: 0,
+        };
+        assert_eq!(m.schemas, before_the_step);
+        assert_eq!(m.app_version, env!("CARGO_PKG_VERSION"), "who wrote it");
+    }
+
+    /// One chat already at this build's schema among older ones makes the
+    /// manifest say so: the release before the step would refuse that file, and
+    /// the warning is due.
+    #[test]
+    fn the_pre_migrate_backup_records_the_newest_chat() {
+        let (_dir, paths) = root_before_generated_pictures();
+        write(
+            &paths.chat_file("00000000-0000-4000-8000-000000000001"),
+            &valid_chat_json(),
+        );
+
+        run(&paths, ru()).unwrap();
+
+        assert_eq!(
+            pre_migrate_manifest(&paths).schemas.chat,
+            schema::CHAT_SCHEMA
+        );
     }
 
     /// `profiles.json` has no step for the `max` effort (`schema::settings_to_v5`

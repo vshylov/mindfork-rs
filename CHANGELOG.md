@@ -14,6 +14,16 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A false warning on the way back to the previous version.** Restoring the backup
+  made before a data upgrade (`backups/pre-migrate-….zip`) with the version before the
+  upgrade warned that the copy came from a newer version and might be refused — and
+  then read every chat in it. That backup now records the format of the data it holds,
+  so the version it is meant for restores it without a word. A backup 0.23.0 already
+  made still warns, harmlessly. When the warning is due, it now names the files that are
+  newer and their format numbers.
+
 ## [0.23.0] — 2026-10-30
 
 **Pictures.** The assistant can draw: ask for a picture, or for a change to one the

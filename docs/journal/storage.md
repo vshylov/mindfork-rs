@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (26)
+## Entries (27)
 
 - Post-M9: persisting the input-box draft in the chat file (done)
 - Post-M9: persisting deleted exchanges in the chat file (`Ctrl+E`/`Ctrl+R`) (done)
@@ -38,6 +38,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: forking a companion — the profile's memory under new ids (done)
 - Post-M9: carrying one companion — `mindfork companion export|import` (done)
 - Post-M9: character cards — `mindfork import` reads the community's personas (done)
+- Post-M9: the pre-migration backup records the schemas it holds (done)
 
 ### Post-M9: persisting the input-box draft in the chat file (done)
 - **Unsaved input-box text is stored on the chat and restored on
@@ -1549,3 +1550,64 @@ deferred).
   picking, refusing; the CLI's options.
 
 **Gates**: 4286 unit tests green, 294 `#[ignore]`; clippy `-D warnings`, fmt, `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check` clean.
+
+### Post-M9: the pre-migration backup records the schemas it holds (done)
+- **Found on the way to 0.23.0** (docs/journal/release.md, "Release 0.23.0"): 0.22.0
+  restoring the pre-migration backup made by the chats' step 6 → 7 printed *"this backup
+  was created by a newer version of mindfork"* — and then read all 278 chats in it.
+  Every archive's `manifest.json` was `BackupManifest::current()`, the schemas of the
+  build that writes it; a pre-migration backup holds the data **before** the step. So
+  the copy made to go back to the previous release was the one that warned against it,
+  since the manifest's first day (ADR 0006 §11) and the first schema step.
+- **The manifest records what the archive holds.** `data_migration::run_with` already
+  detects every file's version to build its plan; it now keeps them (`held`): the
+  version each of `settings.json`/`profiles.json` was found at, the **newest** of the
+  chats (a reader older than one file refuses that file — a root half at 6 and half at
+  7 records 7, and the warning is due), `data.db`'s `user_version`, and `0` for a kind
+  with no file — nothing asks a reader for it. `assess_file` returns `Found { version,
+  plan }` where it returned the plan alone, since a current file's version was lost in
+  its `None`. `backup::create_pre_migrate_backup(paths, held, password, loc)` writes
+  them; `app_version` still names the build that wrote the archive. An ordinary backup
+  (`backup`, the pre-restore copy) keeps the build's schemas, by the
+  task's scope.
+- **No new field, no new shape.** The four numbers stay numbers and nothing is added:
+  an older reader parses the manifest as before, and a manifest that failed to parse
+  would be read as none — which silences the warning rather than raising it. The two
+  ways to write an archive share one body, `pack`, with the zip's knobs in a `ZipSpec`
+  (level, password, manifest) — the manifest as an eighth argument was over clippy's
+  limit, and `write_zip` takes the spec too.
+- **The warning names what is newer.** `BackupManifest::restore_warning` lists each
+  kind the archive holds above this build — *"(chats/*.json: schema 8, supported 7)"*,
+  the words of the start-up refusal — then the version that wrote it. Before, it named
+  only the version, and what 0.22.0 printed read *"…by a newer version of mindfork
+  (0.22.0)"*, the dev build having written it before the version bump. `newer_than`
+  takes a reader's schemas, so a test can be the release before a step.
+- **Live, GO** — Windows 11, 0.22.0 built from its tag into a target directory of its
+  own (3 min 41 s), each binary copied beside a `defaults.json` of mode `path`, every
+  root holding a copy of the dev root's `settings.json` for the backup password:
+  - *Control*: 0.22.0 restores the pre-migration backup the stage-1 build made on
+    2026-10-29 (`chat: 7` in its manifest) — the warning, exit 0; `stats` 278 chats,
+    fingerprint `015d8483add3e6f4`.
+  - *This build* starts on that root (`mindfork import` of an empty file): exit 0, all
+    278 chats stamped 7, one `pre-migrate-*.zip` whose manifest says `settings 7,
+    profiles 1, chat 6, db 1`, `app_version` 0.23.0.
+  - *Back*: 0.22.0 restores it into a fresh root — **no warning**, exit 0; `stats` 278
+    chats, the same fingerprint; 0.22.0 then starts on it (exit 0).
+  - *Ordinary backups unchanged*: this build's `mindfork backup` of the migrated root
+    (`chat: 7`) still warns 0.22.0, in its old words.
+  - *The new wording*: a plain backup with its manifest's chat schema raised to 8 —
+    this build warns *"(chats/*.json: schema 8, supported 7); it was created by version
+    9.9.9"*, in Russian and English, then restores.
+- **Tests** (+6): a pre-migration archive records `held` and the writing build, is not
+  newer for the release before the chats' step, packs what an ordinary backup packs,
+  takes the password with its manifest readable; an ordinary one still is newer for
+  that release, naming `chats/*.json`; the warning lists every newer kind with both
+  schemas, every placeholder filled in both languages; `run` on a 0.22.0 root records
+  `settings 7, profiles 1, chat 6, db 0`, and one chat already at 7 among them records
+  7.
+- **Not done, noted**: `mindfork backup` run by a new build on a root it has not yet
+  started on (so not yet migrated) records the build's schemas for older data, and the
+  pre-restore copy of a root restored but not yet started does too — the same false
+  warning, on a road less travelled. Ordinary backups were left as they are.
+
+**Gates**: 4473 unit tests green, 308 `#[ignore]`; clippy `-D warnings`, fmt, `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check` clean.
