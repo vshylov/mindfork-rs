@@ -193,7 +193,7 @@ pub const COMPONENTS: &[(&str, &str, &str)] = &[
     ("opus-rs", "0.1.39", "BSD-3-Clause"),
     ("pdf-extract", "0.12.1", "MIT"),
     ("percent-encoding", "2.3.2", "MIT OR Apache-2.0"),
-    ("pulldown-cmark", "0.13.4", "MIT"),
+    ("pulldown-cmark", "0.13.6", "MIT"),
     ("quick-xml", "0.42.0", "MIT"),
     ("ratatui", "0.30.2", "MIT"),
     ("regex", "1.13.1", "MIT OR Apache-2.0"),
