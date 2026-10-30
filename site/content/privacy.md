@@ -2,11 +2,11 @@
 # Generated from PRIVACY.md by tools/site_legal_pages.py - do not edit.
 title = "Privacy policy"
 description = "What mindfork keeps on your machine, what leaves it and only on which setting of yours, and what reaches its author — which is nothing."
-updated = "2026-10-29"
+updated = "2026-10-30"
 template = "doc.html"
 +++
 
-Effective **2026-10-29**. It covers three things that are easy to confuse: the
+Effective **2026-10-30**. It covers three things that are easy to confuse: the
 **mindfork application**, the website **mindfork.io**, and the project's
 presence on **GitHub**. They have very different answers, so they are kept
 apart below.

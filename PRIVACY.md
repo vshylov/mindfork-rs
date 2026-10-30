@@ -1,6 +1,6 @@
 # Privacy policy
 
-Effective **2026-10-29**. It covers three things that are easy to confuse: the
+Effective **2026-10-30**. It covers three things that are easy to confuse: the
 **mindfork application**, the website **mindfork.io**, and the project's
 presence on **GitHub**. They have very different answers, so they are kept
 apart below.

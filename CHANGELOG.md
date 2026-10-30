@@ -14,6 +14,16 @@ split by subsystem.
 
 ## [Unreleased]
 
+## [0.23.0] — 2026-10-30
+
+**Pictures.** The assistant can draw: ask for a picture, or for a change to one the
+chat already has, and it is drawn by OpenAI, Gemini, xAI or one of OpenRouter's
+picture models — whatever model you chat with, a local one included.
+`/image generate` draws one for you, with no model in between, and a picture asked
+for from Telegram comes back to the phone. It is off by default, since every picture
+is paid for. Spoken replies no longer fall silent in the middle, and Gemma 4 no longer
+answers in JSON after a tool's picture.
+
 ### Added
 
 - **The assistant can draw.** With *Image generation* switched on (Settings →
@@ -70,6 +80,12 @@ split by subsystem.
   the profile's language, which kept replies to English requests from coming back
   in Russian.
 
+### Security
+
+- **The Markdown parser is updated** (`pulldown-cmark` 0.13.6), past
+  RUSTSEC-2026-0414: a document with wiki links could make it do exponentially much
+  work. mindfork never turns wiki links on, so it was not affected.
+
 ### Data
 
 - **The chat files move to schema 7.** A file kept in a chat may now be a picture
@@ -78,6 +94,12 @@ split by subsystem.
   in a chat file changes but the stamp, and a backup is made before it is written.
   `settings.json` gains the `image_gen` section and takes no step: an older version
   ignores the section, and drops it when it saves its settings.
+- **Checked with 0.22.0** built from its tag. On data this version wrote, it stops
+  at start with *"Data (…) was created by a newer version of mindfork (schema 7,
+  supported 6)"*, naming the chat file, and changes nothing. To go back, restore the backup made
+  before the step (`backups/pre-migrate-….zip`) with 0.22.0: it warns that the copy
+  comes from a newer version, then reads every chat in it — what you wrote since is
+  not in it.
 
 ## [0.22.0] — 2026-10-24
 
@@ -3728,7 +3750,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.22.0...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.23.0...HEAD
+[0.23.0]: https://github.com/vshylov/mindfork-rs/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/vshylov/mindfork-rs/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/vshylov/mindfork-rs/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/vshylov/mindfork-rs/compare/v0.19.0...v0.20.0
