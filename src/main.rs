@@ -845,16 +845,13 @@ fn run_restore(
     let cfg = backup_config(paths, loc);
     let password = resolve_restore_password(archive, password, cfg.stored_password, loc)?;
 
-    // Warn if the backup was made by a newer version of the app: the data is intact, but
+    // Warn if the backup holds data newer than this version reads: the data is intact, but
     // the current version might refuse to open it (downgrade guard, ADR 0006). We swallow
     // a manifest-read error — an old backup with no manifest is normal.
     if let Ok(Some(m)) = backup::read_manifest(archive)
-        && m.is_newer_than_current()
+        && let Some(warning) = m.restore_warning(loc)
     {
-        eprintln!(
-            "{}",
-            loc.tf("backup.warn.newer_manifest", &[("version", &m.app_version)])
-        );
+        eprintln!("{warning}");
     }
 
     // Err only before any destructive action (missing file / corrupt / unsafe /

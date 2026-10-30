@@ -212,6 +212,13 @@ data); `read_manifest` reads it separately, and `mindfork restore` warns
 data is intact, and the downgrade guard at startup still protects it. An old
 backup without a manifest → `None` (no warning).
 
+**Amended 2026-10-31.** The schemas are those of what the archive **holds**. An
+ordinary backup records the writing build's constants; the pre-migration backup
+records the versions its files were detected at before the step
+(`backup::create_pre_migrate_backup`), because it is the copy that goes back to
+the previous release — recorded at the build's schemas, it had 0.22.0 warn about
+its own data. The warning names each newer file and both schemas (spec §12.3).
+
 **Deferred** (groundwork):
 
 - **vec0 recreation**: the `rag_vectors` virtual table and `meta.rag_dim` are
