@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (82)
+## Entries (83)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -94,6 +94,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Release 0.21.0 (prepared)
 - Post-M9: Pillow 13 for the demo reel — a Python of the job's own (done)
 - Release 0.22.0 (prepared)
+- Release 0.23.0 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -5355,3 +5356,88 @@ No Rust changed and no live stack is involved; the test count is unchanged.
   because there is no key. At 17:00Z, Scoop's bucket and the tap's formula still named
   0.21.0. The Excavator picks a release up within four hours, and the tap's schedule
   (`23 */6`) next fires at 18:23Z. Neither was waited for.
+
+### Release 0.23.0 (prepared)
+
+- **A release PR** per [AGENTS.md §6](../../AGENTS.md), branch `chore/release-0.23.0`:
+  - `Cargo.toml` `0.22.0 → 0.23.0` (+ `Cargo.lock`), and the site's `app_version`;
+  - `CHANGELOG.md`: `[Unreleased]` → `[0.23.0] — 2026-10-30` under a lead paragraph,
+    "Pictures", a **Security** section and the **Data** section with what was measured
+    (below), a fresh `[Unreleased]`, and the comparison links;
+  - CLAUDE.md's status heading;
+  - the release's post, and `/llms.txt` regenerated from it;
+  - the privacy policy's effective date, `2026-10-29 → 2026-10-30`: stage 3 (846)
+    changed §3.13 on the 30th — xAI's address, `/image generate`, the picker's request —
+    and left the date. The Russian translation carries the same; the site's page and
+    both installer RTFs are regenerated;
+  - `pulldown-cmark` `0.13.4 → 0.13.6`: the lock file, and the About screen's component
+    list (`shared/credits.rs`), which a test holds to the lock (below).
+
+  Since `v0.22.0`, the pull requests with behaviour:
+  - 834 and 835, a spoken reply's blocks packed together with speech made forty
+    seconds ahead, and a stalled speech request asked again (merged together);
+  - 843, a tool's picture re-homed on every OpenAI-compatible server — Gemma 4's JSON
+    replies (F11 of the image-generation track);
+  - 844–846, image generation's three stages: the `image_generate` tool and its slot,
+    the picture back to the phone, xAI, the gateway's picture models in the picker and
+    `/image generate`.
+
+  The rest moved no behaviour: the 0.22.0 publication's journal (832), the third
+  weekly measurement (833), the cloud chat import's research (837), two actions' pins
+  (838, 839), the promotion plan's removal (840), and image generation's research,
+  probe and plan move (841, 842, 847).
+- **A MINOR**: a track of features, §6's rule for `0.x`. One schema constant moved:
+  `CHAT_SCHEMA` 6 → 7 (844).
+- **A security advisory, on the release PR.** `cargo deny check` was red on `main`:
+  RUSTSEC-2026-0414, `pulldown-cmark` < 0.13.5 — a document with wiki links makes the
+  parser's events grow exponentially, with `ENABLE_WIKILINKS` set. mindfork's three
+  parsers (`markdown/mod.rs`, `speak.rs`, `telegram.rs`) each set strikethrough, task
+  lists, math and tables, never wiki links, so it was not affected. `cargo update -p
+  pulldown-cmark` took 0.13.6; the floor in `Cargo.toml` stays, as with `rustls` in
+  0.18.3 and the five crates of 6558739a. The first full run had one red test,
+  `component_versions_match_cargo_lock`: the About screen's list still said 0.13.4.
+- **The `Data` rubric, by measurement.** Since `v0.22.0` three things are stored that
+  0.22.0 never wrote: the `image_gen` section of `settings.json`, with `ImageGenProvider`
+  (`openai`, `gemini`, `openrouter`, `grok`) — a section new in this release, so the
+  ledger names it at settings schema 7 with no step; `ChatFileKind::Generated` in a
+  chat file, the reason for chat schema 7; and a staged picture's `file_id`, an
+  optional field written only when set. Run on Windows 11 with 0.22.0 built from its
+  tag into a target directory of its own (2 min 56 s), each binary pointed at a root by
+  a `defaults.json` of mode `path` beside it, the start made by `mindfork import` with
+  an empty import file, and the stored files (`settings.json`, `profiles.json`,
+  `data.db`, `chats/`, `files/`) hashed before and after:
+  - *Back, on what this version wrote*: a copy of the dev data root — 279 chats at 7,
+    one holding a drawn picture, settings with `image_gen`. 0.22.0 refuses with
+    *"Data (…\chats\00f5393c-….json) was created by a newer version of mindfork (schema
+    7, supported 6)"* (printed in the root's Russian), exit 1, all 593 stored files byte
+    for byte as they were. Its `stats` (exit 0) counts what it can read and says a newer
+    version wrote the data.
+  - *0.22.0's own data*: the pre-migration backup the stage-1 build made on 2026-10-29
+    (encrypted) restored by 0.22.0 into an empty root holding a copy of the settings,
+    for the password — exit 0, 278 chats at 6, fingerprint `015d8483add3e6f4`.
+  - *The settings section*: that root given this version's `image_gen` section, provider
+    `grok`. 0.22.0 starts (exit 0) and rewrites `settings.json` without the section; the
+    other 26 sections are the same, compared one by one. Its `stats`: 278 chats, the
+    same fingerprint.
+  - *Forward*: this version on 0.22.0's root — exit 0, all 278 chats stamped 7, one
+    `pre-migrate-*.zip`, `image_gen` written at its defaults, and `stats` with the same
+    counts and fingerprint.
+  - *Back, on what it migrated*: 0.22.0 refuses as above, exit 1, every stored file
+    byte for byte as it was.
+  - *The golden file*: `chat_v6_sandbox_file.json` dropped into 0.22.0's root — 0.22.0
+    takes it (exit 0), this version steps it to 7.
+- **Found on the way: a wrong warning on the road back.** Restoring that pre-migration
+  backup, 0.22.0 printed *"this backup was created by a newer version of mindfork
+  (0.22.0). After restoring, the current app version may refuse to open the data"* —
+  and then read every chat in it. `BackupManifest::current()` records the schemas of the
+  build that writes the archive, not of what the archive holds; a pre-migration backup
+  holds the data before the step. So the copy made to go back to the previous version is
+  the one that warns against it. It has been so since the manifest and the first schema
+  step; a fix is its own pull request. The CHANGELOG's Data section says what a user
+  sees: the warning, then every chat.
+- **No rehearsal.** `git diff v0.22.0 -- .github packaging tools/release_guard.py
+  tools/demo_reel.py` holds two actions' pins (`Swatinem/rust-cache` 2.9.3,
+  `taiki-e/install-action` 2.87.31) and the two privacy RTFs — as for 0.18.2 and 0.21.0.
+  `release_guard.py --tag v0.23.0` accepts the tag and cuts 84 lines of notes;
+  `cargo deny check`: ok; `zola build`: ok, `softwareVersion` 0.23.0; the legal pages,
+  the RTFs and `/llms.txt` match their sources.
