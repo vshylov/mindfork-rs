@@ -28,7 +28,9 @@ sources of truth:
   [0012](decisions/0012-concurrent-tool-calls.md) — concurrent tool calls in
   a round: the segment and the per-tool mark; and
   [0013](decisions/0013-messenger-bridge.md) — the messenger bridge: a seat of
-  its own for a turn whose chat is not on screen, Telegram first;
+  its own for a turn whose chat is not on screen, Telegram first; and
+  [0014](decisions/0014-fabula-story-engine.md) — Fabula, a multi-agent story
+  engine inside mindfork, used from the chat through tools (planned, [fabula.md](fabula.md));
 - **[docs/install.md](install.md)** — install/run, engine, env.
 
 > Terminology: **engine** = the inference provider behind the `EngineBackend`
