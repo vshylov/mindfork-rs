@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (83)
+## Entries (84)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -95,6 +95,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: Pillow 13 for the demo reel — a Python of the job's own (done)
 - Release 0.22.0 (prepared)
 - Release 0.23.0 (prepared)
+- Release 0.23.1 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -5501,3 +5502,51 @@ No Rust changed and no live stack is involved; the test count is unchanged.
   `mindfork-rs-bin` 0.23.0 (`installed: mindfork 0.23.0`) and stopped at its notice,
   because there is no key. At 22:43Z, Scoop's bucket and the tap's formula still named
   0.22.0. Neither was waited for.
+
+### Release 0.23.1 (prepared)
+
+- **A release PR** per [AGENTS.md §6](../../AGENTS.md), branch `chore/release-0.23.1`:
+  - `Cargo.toml` `0.23.0 → 0.23.1` (+ one line of `Cargo.lock`), and the site's
+    `app_version`;
+  - `CHANGELOG.md`: `[Unreleased]` → `[0.23.1] — 2026-10-31` under a lead paragraph,
+    "A backup says what it holds", a **Data** section with what was measured (below),
+    a fresh `[Unreleased]`, and the comparison links;
+  - CLAUDE.md's status heading;
+  - the release's post, and `/llms.txt` regenerated from it.
+
+  Since `v0.23.0`: two pull requests with behaviour, 850 and 851 — the backup made
+  before a data upgrade, then every backup, records the schemas of the files it packs
+  rather than of the build that wrote it (docs/journal/storage.md, the last two
+  entries) — and 849, the journal of 0.23.0's publication. Asked for by the owner so
+  that the fix reaches the users who will go back from 0.23.0.
+- **A PATCH**: fixes only, §6's rule for `0.x`. No schema constant moved.
+- **The `Data` rubric, by measurement.** `git diff v0.23.0 -- src/shared/storage
+  src/shared/config.rs src/entities src/features/data_migration.rs
+  src/features/backup.rs` names `backup.rs`, `data_migration.rs` and `db/mod.rs`: no
+  new value of a stored type, and a backup's `manifest.json` keeps its four numbers
+  and its shape — what changed is which numbers. Measured anyway, on Windows 11, with
+  **the published binaries** this time — the Windows zips of `v0.23.0` and `v0.22.0`,
+  downloaded from their releases, each matching its `sha256sums.txt` — beside a debug
+  build of this branch; each binary pointed at a root by a `defaults.json` of mode
+  `path`, every root holding a copy of the dev root's `settings.json` for the backup
+  password:
+  - *0.23.0 on this version's backup*: `mindfork backup` of a copy of the dev root
+    (279 chats at 7) writes a manifest `settings 7, profiles 1, chat 7, db 1`,
+    `app_version` 0.23.1. 0.23.0 restores it into an empty root with no warning, exit
+    0; its `stats` and this version's on the source agree — 279 chats, fingerprint
+    `b59f1ed90fe36c40`; 0.23.0 then starts on it (exit 0).
+  - *0.22.0's own data*: 0.22.0 restores the stage-1 build's pre-migration backup of
+    2026-10-29 (manifest `chat 7`) — the warning, *"…created by a newer version of
+    mindfork (0.22.0)"*, then exit 0 and 278 chats at 6. The root is copied for the
+    control.
+  - *This version on it, and back*: this version starts on that root (`mindfork
+    import` with an empty file) — exit 0, all 278 chats stamped 7, a `pre-migrate-*.zip`
+    whose manifest says `chat 6`, `app_version` 0.23.1. 0.22.0 restores it into an
+    empty root with **no warning**, exit 0: 278 chats at 6, fingerprint
+    `015d8483add3e6f4`.
+  - *Control*: 0.23.0 starts on the copy of the same root; its `pre-migrate-*.zip`
+    says `chat 7`, and 0.22.0 restoring it warns, *"…(0.23.0)"*, as the CHANGELOG of
+    0.23.0 told.
+  - The copies of the dev data held real chats and were deleted afterwards.
+- **No rehearsal.** `git diff v0.23.0 -- .github packaging tools` is empty.
+  `release_guard.py --tag v0.23.1` accepts the tag; `cargo deny check`: ok.
