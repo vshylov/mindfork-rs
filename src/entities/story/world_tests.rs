@@ -1,8 +1,12 @@
 //! The fold and the witnesses on the harbour fixture
 //! (docs/research/fabula-engine.md §6, docs/fabula.md §4 PR 1).
 
-use super::*;
-use crate::entities::story::{Cause, fixture_canon};
+use std::collections::BTreeSet;
+
+use crate::entities::story::{
+    BranchId, Canon, Cause, CharacterKey, Effect, Event, EventId, EventKind, Holder, ItemKey,
+    LocationKey, NewEvent, Refusal, SecretKey, Severity, Visibility, WorldState, fixture_canon,
+};
 
 fn c(key: &str) -> CharacterKey {
     CharacterKey::from(key)
@@ -580,8 +584,8 @@ fn refusals_read_as_sentences() {
 fn stored(n: u64, body: NewEvent) -> Event {
     Event {
         seq: n,
-        id: EventId::nth(&crate::entities::story::BranchId::genesis(), n),
-        branch: crate::entities::story::BranchId::genesis(),
+        id: EventId::nth(&BranchId::genesis(), n),
+        branch: BranchId::genesis(),
         body,
         witnesses: BTreeSet::new(),
     }
