@@ -13,7 +13,7 @@ Fabula is a multi-agent story engine in which simulated characters produce what 
 
 Success criterion: Fabula must beat a single-agent iterative baseline at equal cost in blind pairwise comparison (section 11). Earlier role-based pipelines (writer, editor, proofreader) lost to that baseline, so this is the bar to clear.
 
-This spec also settles where to build Fabula. Section 14 recommends a separate repository designed to be absorbed into mindfork-rs as a workspace crate, but only if the M3 evaluation gate passes.
+This spec also settles where to build Fabula. Section 14 recommended a separate repository, absorbed into mindfork-rs as a workspace crate only if the M3 evaluation gate passes; on 2026-10-31 the owner chose to build Fabula inside mindfork-rs from the start (option A).
 
 ## 2. Background and prior art
 
@@ -510,7 +510,7 @@ The MVP writes one short story end to end with the smallest cast that can produc
 - Roles: World Master, 3 character agents, Author, Reader, Continuity checker. Voice review and the Canon keeper wait for M4.
 - Stores: event log with branches and visibility, canon imported from JSON files, manuscript, call log.
 - K = 3 branches, at most 8 rounds per branch.
-- A command-line entry point to create a story, run a chapter and export markdown plus the JSON trace.
+- A command-line entry point, `mindfork story` (section 14), to create a story, run a chapter and export markdown plus the JSON trace.
 - Replay mode from the call log, so tests run offline.
 
 M4 starts only if M3's decision rule passes (section 11). The other thresholds are proposals: M1 asks for 20 simulated scenes with zero knowledge leaks and at least 99% of calls schema-valid at the first attempt. Under schema-constrained decoding (section 8) that share measures what the decoder cannot guarantee — cuts, refusals, provider errors and the fallback's misses — rather than the model's way with braces.
@@ -567,7 +567,7 @@ endpoint = "openrouter"
 model = "<mid-tier model>"
 
 [roles.character]
-endpoint = "local"      # llama.cpp, OpenAI-compatible
+endpoint = "external"   # a llama.cpp server, OpenAI-compatible
 base_url = "http://127.0.0.1:8000/v1"
 model = "<small instruct model>"
 concurrency = 3         # match llama-server -np
@@ -576,6 +576,8 @@ concurrency = 3         # match llama-server -np
 endpoint = "openrouter"
 model = "<mid-tier model from another family than the Author's>"
 ```
+
+Under option A an `endpoint` names one of mindfork's modes (`managed`, `external`, `openai`, `claude`, `gemini`, `grok`, `deepseek`, `openrouter`), and the keys come from its key store (ADR 0008).
 
 **Canon fixture sketch** (abridged: one of three characters, three of five locations)
 
@@ -611,6 +613,14 @@ Routes are measured in scene ticks. The token in brackets is the planted secret 
 
 Recommendation: start Fabula as a separate repository whose core is a library behind ports, and bring that library into mindfork-rs only if the M3 gate passes. mindfork-rs has the provider wires Fabula wants; most of the mechanics it lacks are ones Fabula builds for itself wherever it lives; and its standards would apply to an experiment that may be discarded.
 
+**Owner's decision (2026-10-31): option A.** Fabula is built inside mindfork-rs from the start, against this section's recommendation of D. What follows from it:
+
+- One crate, no workspace. Fabula is modules of `mindfork`: the engine under `features/story`, the command in the CLI. Publishing does not change, and the workspace item of the integration work falls away.
+- The integration work comes first, at M0 and M1, instead of after M3 (*Integration work*, below).
+- mindfork's bar applies from the first pull request: a track design plan with its forks confirmed, live smokes, prompts under axis A, 80% coverage on new code, and journal entries. ADR 0014 is written with that plan.
+- The simulation stays an experiment until M3 decides it, and how the feature is exposed until then is open (section 15). If M3 drops the simulation, the removal is a pull request of its own, and A1's pipeline stays if it beats B0 (section 11).
+- The ports stay. `LlmPort` and `Store` are what makes the engine testable offline by replay, not only what made a later move cheap.
+
 The facts below come from reading mindfork-rs at 0.23.1 (commit 7a7c06d, 2026-10-31). Claude Code confirmed them against the code the same day; the checklist at the end records what it found, and the table carries the corrections.
 
 **What Fabula needs versus what mindfork-rs has today**
@@ -632,16 +642,16 @@ The facts below come from reading mindfork-rs at 0.23.1 (commit 7a7c06d, 2026-10
 | Prompts | Model-facing text is localized per profile (axis A: the `tool.`, `loop.` and `prompt.` families in `locales/{en,ru}.json`); Cyrillic in sources fails `tools/cyrillic_scan.py` | en and ru variants of every prompt, or an explicit exception (section 15) |
 | A local model during a headless run | `mindfork setup --verify` starts a managed `llama-server` without the TUI (`src/app/verify.rs`); a running app's managed server holds its port and VRAM | An external URL for the characters, or a port and memory of their own |
 
-Rows whose gap reads "Fabula's own" are gaps only for a Fabula inside the chat runtime. A headless `mindfork story` command, which is all that M0–M3 would need, uses none of that machinery: Fabula brings its own run manager, scene runner and database in either option. What mindfork itself must add is the client factory, the output-schema field, a budget per provider, the command, the story database's version and the prompts' language (see *Integration cost after M3* below).
+Rows whose gap reads "Fabula's own" are gaps only for a Fabula inside the chat runtime. A headless `mindfork story` command, which is all that M0–M3 would need, uses none of that machinery: Fabula brings its own run manager, scene runner and database in either option. What mindfork itself must add is the client factory, the output-schema field, a budget per provider, the command, the story database's version and the prompts' language (see *Integration work* below).
 
 **Options**
 
 | Option | Shape | For | Against |
 | --- | --- | --- | --- |
-| A. Feature inside mindfork-rs | `features/story` and a headless `mindfork story` command; an orchestrator module and a screen later | All seven providers, keys, settings, packaging and character cards; one product | The M0–M3 code ships in releases and is held to mindfork's bar: live smokes, en/ru strings, 80% coverage on new code (the gate applied on SonarQube Cloud). mindfork localizes model-facing text, so the prompts would need Russian variants. A story database in the data directory needs a schema version and a backup decision. Data-changing commands take the single-instance lock (`src/main.rs:562`), so the chat app cannot start during an hours-long run unless the command skips the lock, as `stats`, `keys` and `demo` do (`src/main.rs:242`) |
+| **A. Feature inside mindfork-rs (the owner's choice, 2026-10-31)** | `features/story` and a headless `mindfork story` command; an orchestrator module and a screen later | All seven providers, keys, settings, packaging and character cards; one product | The M0–M3 code ships in releases and is held to mindfork's bar: live smokes, en/ru strings, 80% coverage on new code (the gate applied on SonarQube Cloud). mindfork localizes model-facing text, so the prompts would need Russian variants. A story database in the data directory needs a schema version and a backup decision. Data-changing commands take the single-instance lock (`src/main.rs:562`), so the chat app cannot start during an hours-long run unless the command skips the lock, as `stats`, `keys` and `demo` do (`src/main.rs:242`) |
 | B. Separate repository, independent | A new crate with its own minimal client | Fastest route to the M3 decision; no risk to releases; free design | Duplicates provider quirks; no TUI; two codebases |
 | C. Workspace member now | `fabula-core` joins mindfork-rs as a workspace crate before M3 | One repository; mindfork's CI from day one | Turns a released single crate into a workspace before the hypothesis is tested; every `fabula-core` version would stay on crates.io for good, and while `cargo publish --workspace` orders the uploads itself, `crates-io.yml` and `tools/release_guard.py` handle one crate; release scripts change |
-| **D. Staged (recommended)** | B now, with the core as a library behind `LlmPort` and `Store`; after M3 passes, `fabula-core` joins a mindfork-rs workspace and mindfork adds an `LlmPort` adapter over `EngineBackend` | Fast evidence, zero risk to mindfork, adoption through one adapter | About six pull requests in mindfork after M3 (listed below), and a second crate on crates.io |
+| D. Staged (this section's recommendation) | B now, with the core as a library behind `LlmPort` and `Store`; after M3 passes, `fabula-core` joins a mindfork-rs workspace and mindfork adds an `LlmPort` adapter over `EngineBackend` | Fast evidence, zero risk to mindfork, adoption through one adapter | About six pull requests in mindfork after M3 (listed below), and a second crate on crates.io |
 
 **Why D**
 
@@ -652,20 +662,21 @@ Rows whose gap reads "Fabula's own" are gaps only for a Fabula inside the chat r
 
 Choose A instead if Fabula is wanted as a mindfork feature whatever M3 shows, and the process cost is acceptable.
 
-**Integration cost after M3**
+**Integration work**
 
-About six pull requests bring `fabula-core` into mindfork as a headless command; a TUI screen and the tasks screen's view of a run are a track of their own (M4).
+Under D this work came after M3, as about six pull requests. Under A it comes first and the workspace item falls away, leaving five pull requests of groundwork beside Fabula's own code. A TUI screen and the tasks screen's view of a run stay a track of their own (M4).
 
-1. A pure client factory taken out of `cloud_chat_setup`, and a pool of per-role clients over it.
-2. The output-schema field on `ChatRequest`, sent as `response_format` on Chat Completions (llama.cpp, xAI, OpenRouter), as `text.format` beside `text.verbosity` on Responses, as `output_config.format` on Anthropic and in `generationConfig.responseFormat` on Gemini; DeepSeek, and gateway models without `structured_outputs`, take the fallback (section 8). A live smoke per provider (AGENTS.md §3).
-3. The `LlmPort` adapter over `EngineBackend`: `json` sends the schema, collects the stream and validates the reply; `text` collects the stream; a `SessionBudget` per provider caps the calls.
-4. The workspace: `fabula-core` as a member, `crates-io.yml` on `cargo publish --workspace`, `tools/release_guard.py` and `sonar.sources` widened, rehearsed with a `-rc1` tag (AGENTS.md §6).
-5. `mindfork story`: a headless command that skips the single-instance lock, with its CLI strings in en and ru.
-6. The story database's schema version and the backup decision; the prompts' en and ru variants, unless the owner decides on an exception.
+1. M0. `mindfork story`: a headless command that skips the single-instance lock, with its CLI strings in en and ru.
+2. M0. The story database's schema version, and whether stories are backed up and counted by `mindfork stats` (section 15).
+3. M1. A pure client factory taken out of `cloud_chat_setup` and moved down into `shared/api`, so that the engine in `features` reaches it without breaking the layer gate (`tools/layer_check.py`); a pool of per-role clients over it.
+4. M1. The output-schema field on `ChatRequest`, sent as `response_format` on Chat Completions (llama.cpp, xAI, OpenRouter), as `text.format` beside `text.verbosity` on Responses, as `output_config.format` on Anthropic and in `generationConfig.responseFormat` on Gemini; DeepSeek, and gateway models without `structured_outputs`, take the fallback (section 8). The Chat Completions wire comes first, since llama.cpp and OpenRouter are what M1 runs on, and each wire lands with its live smoke (AGENTS.md §3).
+5. M1. The `LlmPort` adapter over `EngineBackend`: `json` sends the schema, collects the stream and validates the reply; `text` collects the stream; a `SessionBudget` per provider caps the calls. The prompts arrive with it, in en and ru unless the owner decides on an exception.
 
-The M3 runners (B0, A1–A4 and the judging tool) stay in the Fabula repository: they are experiment harnesses, not product.
+Under D a sixth item made `fabula-core` a workspace member: `crates-io.yml` on `cargo publish --workspace`, `tools/release_guard.py` and `sonar.sources` widened, rehearsed with a `-rc1` tag (AGENTS.md §6). Under A there is no second crate. Where the M3 runners (B0, A1–A4 and the judging tool) live is open (section 15).
 
 **Rules that keep the later move cheap**
+
+These rules were written for D. Under A there is no later move: the stack is mindfork's by construction, the planned `fabula-core` and `fabula-cli` become modules and a CLI command, and decisions go straight into `docs/decisions/`. The two ports remain, for offline replay.
 
 - Mirror mindfork's stack: Rust 2024 on toolchain 1.96, tokio, rusqlite (bundled), serde, `anyhow` in application code and `thiserror` in library code, English sources, `cargo clippy --all-targets -- -D warnings`. mindfork already depends on all of it, `uuid` with v5 and `async-trait` included, so M0 adds no dependency there.
 - Keep the core behind two ports: `LlmPort` (section 8) and `Store` (SQLite).
@@ -682,20 +693,22 @@ The M3 runners (B0, A1–A4 and the judging tool) stay in the Fabula repository:
 - [x] Decide whether Fabula's prompts need en/ru variants under mindfork's i18n rules. Under the current rules they do: model-facing text is localized per profile (axis A, the `tool.`, `loop.` and `prompt.` families), and Cyrillic in sources fails `tools/cyrillic_scan.py`. English-only prompts would be an explicit exception, which is the owner's decision (section 15).
 - [x] Confirm which Sonar quality gate applies: `sonar-project.properties` names the built-in gate with 80% coverage on new code, while `docs/roadmap.md` still names a custom gate without it. The built-in `Sonar way` applies: the project's status on SonarQube Cloud carries its six conditions, coverage on new code ≥ 80% among them (read on 2026-10-31, at 89.4%), as `sonar-project.properties` says. The paragraph in `docs/roadmap.md` is stale.
 - [x] If extraction ever comes up again: `src/shared/api` imports `entities::sampling` and `shared::{config, gguf, i18n, cmdline}`, and its `features` references are test code or doc links. Confirmed: the only `features` imports sit in `#[cfg(test)]` modules of `src/shared/api/openai/client.rs`.
-- [ ] Record the fork and the user's decision in a design doc, per AGENTS.md section 1; write ADR 0014 if Fabula enters the repository. Open: the choice between D and A is the owner's.
+- [x] Record the fork and the user's decision in a design doc, per AGENTS.md section 1; write ADR 0014 if Fabula enters the repository. The owner chose A on 2026-10-31 (recorded at the top of this section and in section 15). Fabula therefore enters the repository, and ADR 0014 is written with the track's design plan, before the first code pull request.
 
 ## 15. Open questions
 
-Eight decisions are open. The first seven change scope or cost, so they are settled before M0 starts; the last matters only for the move into mindfork-rs.
+Two decisions were settled on 2026-10-31 and eight remain open. Each changes scope or cost, so they are settled before M0 starts; under option A the prompts' language and the story data also meet mindfork's rules from the first pull request.
 
-- [ ] Where Fabula is built: the staged option D that section 14 recommends, or option A, a feature inside mindfork-rs from the start?
-- [ ] Probe language: Rust from day one, so the move into mindfork-rs is cheap, or Python for faster experiments and a rewrite on success? This spec assumes Rust.
+- [x] Where Fabula is built. Owner's decision (2026-10-31): option A, a feature inside mindfork-rs from the start (section 14).
+- [x] Probe language: Rust, settled by option A.
 - [ ] Story language: English first, or Russian as well? Do the model-facing prompts stay in English when the story is in Russian? Inside mindfork-rs model-facing text is localized per profile, so English-only prompts would be an exception to its rules (section 14).
-- [ ] Models per role for the MVP, and whether a local llama.cpp model is good enough for character agents.
+- [ ] Models per role for the MVP, and whether a local llama.cpp model is good enough for character agents. Section 8 measured the shape of their replies, not the quality of their decisions.
 - [ ] Who writes the 12 frozen premises, and in which genres and lengths?
 - [ ] Who the judges are: M3 needs up to 216 pair readings (section 11) unless a calibrated LLM panel takes over most of them.
 - [ ] How much steering is wanted between chapters: a checkpoint after each chapter by default, or autopilot with a report?
 - [ ] Are stories part of mindfork's data — versioned, backed up and counted by `mindfork stats` — or kept beside it in a directory of their own?
+- [ ] How the feature is exposed until M3 passes. (a) A command left out of `--help`, the README and the CHANGELOG. (b) A cargo feature that release builds leave off, which CI must then build, test and measure for coverage with the feature on. (c) A visible command marked experimental, whose story database takes on the schema discipline of every stored file from its first release. Recommended: (a), the cheapest to reverse if M3 drops the simulation.
+- [ ] Where M3's systems live. B0 and A1–A4 could be run options of `mindfork story`, reusing the engine and the clients, or harnesses outside the product. The blind judging tool serves no user, so it could be a script under `tools/` or a page of its own. Recommended: run options for the systems, a script for the judging.
 
 ## 16. References
 
