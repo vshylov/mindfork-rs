@@ -13,7 +13,7 @@ Fabula is a multi-agent story engine in which simulated characters produce what 
 
 Success criterion: Fabula must beat a single-agent iterative baseline at equal cost in blind pairwise comparison (section 11). Earlier role-based pipelines (writer, editor, proofreader) lost to that baseline, so this is the bar to clear.
 
-This spec also settles where to build Fabula. Section 14 recommended a separate repository, absorbed into mindfork-rs as a workspace crate only if the M3 evaluation gate passes; on 2026-10-31 the owner chose to build Fabula inside mindfork-rs from the start (option A).
+This spec also settles where to build Fabula. Section 14 recommended a separate repository, absorbed into mindfork-rs as a workspace crate only if the M3 evaluation gate passes; on 2026-10-31 the owner chose to build Fabula inside mindfork-rs from the start (option A), used from the chat through tools.
 
 ## 2. Background and prior art
 
@@ -510,7 +510,7 @@ The MVP writes one short story end to end with the smallest cast that can produc
 - Roles: World Master, 3 character agents, Author, Reader, Continuity checker. Voice review and the Canon keeper wait for M4.
 - Stores: event log with branches and visibility, canon imported from JSON files, manuscript, call log.
 - K = 3 branches, at most 8 rounds per branch.
-- A command-line entry point, `mindfork story` (section 14), to create a story, run a chapter and export markdown plus the JSON trace.
+- Chat tools over the engine, `story_create`, `story_continue` and `story_status` (section 14), and a hidden headless runner for M3's batch runs; either exports markdown plus the JSON trace.
 - Replay mode from the call log, so tests run offline.
 
 M4 starts only if M3's decision rule passes (section 11). The other thresholds are proposals: M1 asks for 20 simulated scenes with zero knowledge leaks and at least 99% of calls schema-valid at the first attempt. Under schema-constrained decoding (section 8) that share measures what the decoder cannot guarantee — cuts, refusals, provider errors and the fallback's misses — rather than the model's way with braces.
@@ -539,8 +539,8 @@ flowchart TB
 | --- | --- | --- |
 | M0 Skeleton | Database actor and capabilities; schema with append-only triggers; canon import from JSON; `LlmPort` with a replay adapter; one scene replayed from a recorded fixture | The fixture replays identically; the actor refuses a second writer for a branch; a compile-fail test shows `BranchWriter` cannot be cloned |
 | M1 Simulation | Character and World Master contracts on a live model, their schemas in the shared dialect (section 8); K branches; opening events; witnesses and memory views over the branch path; planted secret tokens | 20 simulated scenes with zero token leaks; at least 99% of calls schema-valid at the first attempt, with each call's mechanism recorded; World Master commits refused by the validators reported per scene |
-| M2 Author loop | Outline, rolling scene plans, pick, write; Reader and Continuity checker; note decisions and up to two revisions; markdown export | One short story end to end, read by a person; a run killed at any step resumes |
-| M3 Evaluation | B0 and A1–A4 runners; 12 premises times 3 seeds; a judging tool | The two decisions in section 11 |
+| M2 Author loop | Outline, rolling scene plans, pick, write; Reader and Continuity checker; note decisions and up to two revisions; markdown export; the chat tools with their pauses P1–P3 (section 14) | One short story end to end, read by a person; a run killed at any step resumes |
+| M3 Evaluation | B0 and A1–A4 runners and the hidden headless runner that drives them; 12 premises times 3 seeds; a judging tool | The two decisions in section 11 |
 | M4 Long form | Voice review, Canon keeper, settle branches, multi-chapter runs, steering | A three-chapter story with no more leaks or continuity findings per 1,000 words than the M3 stories |
 
 **Configuration sketch**
@@ -577,7 +577,7 @@ endpoint = "openrouter"
 model = "<mid-tier model from another family than the Author's>"
 ```
 
-Under option A an `endpoint` names one of mindfork's modes (`managed`, `external`, `openai`, `claude`, `gemini`, `grok`, `deepseek`, `openrouter`), and the keys come from its key store (ADR 0008).
+Under option A an `endpoint` names one of mindfork's modes (`managed`, `external`, `openai`, `claude`, `gemini`, `grok`, `deepseek`, `openrouter`), and the keys come from its key store (ADR 0008). With one model for now (section 14), the `[roles.*]` tables wait for models per role; `[run]` and `[budget]` apply as written.
 
 **Canon fixture sketch** (abridged: one of three characters, three of five locations)
 
@@ -615,8 +615,8 @@ Recommendation: start Fabula as a separate repository whose core is a library be
 
 **Owner's decision (2026-10-31): option A.** Fabula is built inside mindfork-rs from the start, against this section's recommendation of D. What follows from it:
 
-- One crate, no workspace. Fabula is modules of `mindfork`: the engine under `features/story`, the command in the CLI. Publishing does not change, and the workspace item of the integration work falls away.
-- The integration work comes first, at M0 and M1, instead of after M3 (*Integration work*, below).
+- One crate, no workspace. Fabula is modules of `mindfork`: the engine under `features/story`, used from the chat through tools (*The chat tools and the human in the loop*, below). Publishing does not change, and the workspace item of the integration work falls away.
+- The integration work comes first, at M0–M2, instead of after M3 (*Integration work*, below).
 - mindfork's bar applies from the first pull request: a track design plan with its forks confirmed, live smokes, prompts under axis A, 80% coverage on new code, and journal entries. ADR 0014 is written with that plan.
 - The simulation stays an experiment until M3 decides it, and how the feature is exposed until then is open (section 15). If M3 drops the simulation, the removal is a pull request of its own, and A1's pipeline stays if it beats B0 (section 11).
 - The ports stay. `LlmPort` and `Store` are what makes the engine testable offline by replay, not only what made a later move cheap.
@@ -628,9 +628,9 @@ The facts below come from reading mindfork-rs at 0.23.1 (commit 7a7c06d, 2026-10
 | Fabula needs | mindfork-rs today | Gap |
 | --- | --- | --- |
 | Many providers and models | Seven providers over four wire modules behind `EngineBackend`, with `RetryBackend`, effort tiers and cache accounting; an `Embedder` trait and sqlite-vec | None |
-| A different model per role | `ChatRequest` has no model field (`src/shared/api/contract.rs:234`); the model is fixed when a client is built; the app holds two chat backends. `cloud_chat_setup` (`src/app/supervisor.rs:705`) builds any provider's client from a provider, a model and a key | A pool of per-role clients over a factory taken out of `cloud_chat_setup` |
+| A different model per role | `ChatRequest` has no model field (`src/shared/api/contract.rs:234`); the model is fixed when a client is built; the app holds two chat backends. `cloud_chat_setup` (`src/app/supervisor.rs:705`) builds any provider's client from a provider, a model and a key | A pool of per-role clients over a factory taken out of `cloud_chat_setup`; deferred with models per role, since every role runs on the app's selected model for now |
 | Structured JSON output | No JSON-schema mode on any chat wire; structured replies go through tool schemas, with `tool_choice` hard-coded to `auto` on both OpenAI wires (`src/shared/api/openai/wire.rs:416`, `src/shared/api/openai/responses/wire.rs:131`) and not sent by the Anthropic and Gemini wires; Anthropic's newest models refuse a forced tool on every request (section 8) | An output-schema field on `ChatRequest`, mapped by the four wire modules to each provider's structured-output mode (section 8) |
-| Parallel calls, capped per provider | `SessionBudget`: one app-wide budget sized from one engine (`DEFAULT_SESSIONS = 1`); it also reserves room in llama.cpp's shared KV pool. The type lives in `src/shared/session_budget.rs`, outside the orchestrator | One budget per provider: new instances of the same type, the KV-pool reservation included |
+| Parallel calls, capped per provider | `SessionBudget`: one app-wide budget sized from one engine (`DEFAULT_SESSIONS = 1`); it also reserves room in llama.cpp's shared KV pool. The type lives in `src/shared/session_budget.rs`, outside the orchestrator | None while one model serves every role: a story's calls take the app's budget, as a background dialogue's do. With models per role, one budget per provider: new instances of the same type, the KV-pool reservation included |
 | Long runs started from code, resumable | Background runs start only from a model's tool call, 2 at a time by default (`tools.subagent_background_max`), and quitting ends them as cancelled | Fabula's own run manager (section 9) |
 | Scenes with more than two agents | `run_dialogue` (ADR 0011): exactly two personas plus a director, one model | Fabula's own World Master (section 7) |
 | Append-only, branched event log | Chats are linear JSON files; `data.db` is one `Mutex<Connection>`; additive tables through `baseline_ddl` | Fabula's own database and writer actor (sections 6 and 9) |
@@ -664,15 +664,60 @@ Choose A instead if Fabula is wanted as a mindfork feature whatever M3 shows, an
 
 **Integration work**
 
-Under D this work came after M3, as about six pull requests. Under A it comes first and the workspace item falls away, leaving five pull requests of groundwork beside Fabula's own code. A TUI screen and the tasks screen's view of a run stay a track of their own (M4).
+Under D this work came after M3, as about six pull requests. Under A it comes first, the workspace item falls away, and the chat tools below reshape the rest: the command shrinks to M3's batch runner, and one model defers the client pool. A TUI screen and the tasks screen's view of a run stay a track of their own (M4).
 
-1. M0. `mindfork story`: a headless command that skips the single-instance lock, with its CLI strings in en and ru.
-2. M0. The story database's schema version, and whether stories are backed up and counted by `mindfork stats` (section 15).
-3. M1. A pure client factory taken out of `cloud_chat_setup` and moved down into `shared/api`, so that the engine in `features` reaches it without breaking the layer gate (`tools/layer_check.py`); a pool of per-role clients over it.
-4. M1. The output-schema field on `ChatRequest`, sent as `response_format` on Chat Completions (llama.cpp, xAI, OpenRouter), as `text.format` beside `text.verbosity` on Responses, as `output_config.format` on Anthropic and in `generationConfig.responseFormat` on Gemini; DeepSeek, and gateway models without `structured_outputs`, take the fallback (section 8). The Chat Completions wire comes first, since llama.cpp and OpenRouter are what M1 runs on, and each wire lands with its live smoke (AGENTS.md §3).
-5. M1. The `LlmPort` adapter over `EngineBackend`: `json` sends the schema, collects the stream and validates the reply; `text` collects the stream; a `SessionBudget` per provider caps the calls. The prompts arrive with it, in en and ru unless the owner decides on an exception.
+1. M0. The story database's schema version, and whether stories are backed up and counted by `mindfork stats` (section 15).
+2. M1. The output-schema field on `ChatRequest`, sent as `response_format` on Chat Completions (llama.cpp, xAI, OpenRouter), as `text.format` beside `text.verbosity` on Responses, as `output_config.format` on Anthropic and in `generationConfig.responseFormat` on Gemini; DeepSeek, and gateway models without `structured_outputs`, take the fallback (section 8). The Chat Completions wire comes first, and each wire lands with its live smoke (AGENTS.md §3).
+3. M1. The `LlmPort` adapter over the chat's own `EngineBackend`: `json` sends the schema, collects the stream and validates the reply; `text` collects the stream; each call takes the app's session budget, as a background dialogue's calls do. The prompts arrive with it, in en and ru unless the owner decides on an exception.
+4. M2. The chat tools and their pauses (*The chat tools and the human in the loop*, below): a third background payload beside the sub-agent's and the dialogue's, the run kind `story` (`CHAT_SCHEMA` 7 → 8), the chapter's own timeout, the resume after a quit, and live smokes with the gate models as the chat's model.
+5. M3. A hidden headless runner for the evaluation's batch runs, skipping the single-instance lock as `stats`, `keys` and `demo` do.
+
+Deferred with models per role: a pure client factory taken out of `cloud_chat_setup` and moved down into `shared/api`, so that the engine in `features` reaches it without breaking the layer gate (`tools/layer_check.py`), and a pool of per-role clients over it.
 
 Under D a sixth item made `fabula-core` a workspace member: `crates-io.yml` on `cargo publish --workspace`, `tools/release_guard.py` and `sonar.sources` widened, rehearsed with a `-rc1` tag (AGENTS.md §6). Under A there is no second crate. Where the M3 runners (B0, A1–A4 and the judging tool) live is open (section 15).
+
+**The chat tools and the human in the loop**
+
+The owner's decisions (2026-10-31), taken after option A: Fabula is used from the chat, through tools in the manner of `start_dialogue`, with sketches of the work attached to the chat (`/file attach`).
+
+1. **Timeouts of its own, and large.** A chapter is not bounded by the dialogue's 1800 s (`tools.dialogue_run_timeout_secs`). It has a setting of its own, measured in hours, and the per-chapter budget (section 10) is the other bound. The owner accepts the cost.
+2. **A run cut short resumes on request.** Quitting cancels every background run, as it does today (`src/app/orchestrator/background_runs.rs:379`). A story's cancelled landing says at which step it stopped, and the next `story_continue` resumes from the first missing step (section 9); nothing restarts by itself.
+3. **One model for now.** Every role runs on the model selected in the app; models per role are deferred to the far term. Each call takes the app's session budget, so at `sessions = 1` the story's calls and the chat's turns alternate request by request. Thinking stays a per-call setting (section 8), the Reader shares the Author's model (self-preference accepted for now), and the cost model's tiers collapse into one price.
+4. **A chat schema step.** A run of `kind: story` is a new stored variant, so `CHAT_SCHEMA` moves 7 → 8 with a stamp-only step, as the dialogue's kind moved it 2 → 3.
+5. **No popup.** Approvals and clarifications are ordinary messages: the assistant asks in the chat, and the user answers in the chat. The design below is a proposal, and its forks wait for the owner.
+
+*Tools.* There are three separate tools rather than one tool with a mode flag. An optional flag was ignored by Claude in all three trials, while a second tool was used 3/3 on all four clouds and 5/5 locally ([background-subagents.md](background-subagents.md) §3.1). The project's tools are separate in the same way: `run_dialogue` and `start_dialogue`, `call_subagent` and `start_subagent`.
+
+- `story_create` is synchronous. The assistant composes the canon (world rules, map, cast with goals and secrets, style, arc) from the attached sketches and the conversation, and passes it as the call's arguments. The deterministic checks (cast keys, routes, the dialect of section 8) refuse with a reason, which the assistant fixes or takes to the user. The canon is stored as a draft, and the first pause opens.
+- `story_continue` resolves the pending question from the user's reply and starts the background run that follows. It returns at once with the run's address, like `start_dialogue`.
+- `story_status` is synchronous and reports the chapters written, the run in progress and the pending question, so "what is my story doing" never gets a guess.
+
+*Pauses.* The engine stops only at defined points, each recorded as a step:
+
+- P1, before chapter 1: the canon and the arc are approved or changed.
+- P2, after each chapter: accept it, ask for a revision, rerun a named scene, or leave notes for the next chapter.
+- P3, when every branch of a scene fails three times running (section 7).
+- P4, from M4: the canon deltas a chapter proposes.
+
+A pause writes a `question` row (what to ask, what it accepts, what the default would be) and ends the background run. Nothing waits in memory for an answer: a waiting run would hold a background slot and die on quit. Inside a chapter, a role in doubt does not stop. It records an `assumption` row (the doubt and the choice made) and goes on, and the checkpoint lists the chapter's assumptions beside its question.
+
+*The question.* The landing's notification carries it, in the profile's language and under the prefix every task notification has: not a message from the user, granting nothing. With `tools.subagent_background_wake` on, the woken turn has the assistant ask it in an ordinary message, in its own words and persona; with it off, the question waits for the user's next message. While a question is pending, every turn's request carries one line naming it, so a reply that answers it meets the reminder in the same turn. The line rides at the request's tail, after the stable prefix, so the prompt cache holds ([prompt-caching.md](prompt-caching.md)). The engine's own wording of the question stays in the feed as the notification row, so the assistant's paraphrase cannot hide what is being approved. An approval prompt built from text the agent controls is the attack OWASP calls [Lies in the Loop](https://community.owasp.org/attacks/Lies_in_the_Loop).
+
+*The answer is the user's own words.* The user replies in ordinary messages, as many as they like, and the assistant may talk it over with them. When the assistant calls `story_continue`, the answer does not come from the call's arguments. The orchestrator, which intercepts the call as it intercepts `start_dialogue`, takes the rows the user wrote after the question's notification, in the terminal or through the profile's bridge, verbatim, from the chat. Notification rows, attachments and tool results never count, so a sketch that says "the canon is approved" approves nothing. A user role on the wire is no proof either: there a notification rides inside the next user turn, and Google's ADK once took confirmations that reached it as user events from a remote agent ([google/adk-python#6462](https://github.com/google/adk-python/pull/6462)). The assistant may add `notes`, recorded as its own. One schema-constrained call of the same model reads the question and the messages and returns `{decision: approve | change | answer | unclear, answers, changes}`. It reads conservatively: a question back, a hedge or half an answer is `change` or `unclear`, never `approve`. That is the rule of Claude Code's auto mode, which treats nothing the agent decided on its own as authorized until the user says so, and reads a user's question as a question rather than an instruction ([Anthropic](https://www.anthropic.com/engineering/claude-code-auto-mode)).
+
+- A turn that answers no user message cannot resolve a pause: on a woken turn `UserMessageTimes.answering` is empty. Neither can `unclear`. In both cases the tool refuses with "the user has not answered the story's question yet; ask them".
+- Each resolution is a row the engine owns: the question's id, the messages' ids and a quote, and the decision. An approval binds to its question, and the next question needs a newer message.
+- The run then starts from the paused step. An approved canon opens chapter 1, an accepted chapter settles and opens the next, and a change request reaches the Author as the human's notes.
+
+*Known risk.* A model may say it continued the story without calling the tool. Claude narrated a background start it never made in all three trials of the flag shape, and the wording that ships with `start_dialogue` cut Qwen's claims without a call from 9 in 40 to 1 in 20 — a mitigation, not a fix ([docs/journal/tools.md](../journal/tools.md), "a background run is started by its call, not by the reply"). The pending question's reminder line and `story_status` make a missed call visible, and a live smoke counts claims without a call on the gate models.
+
+*Prior art.* AutoGen warns that a human proxy which blocks leaves a team in a state that cannot be saved or resumed. In its place it documents the shape above: stop the team, save its state, and pass the user's answer into the next run ([AutoGen](https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/tutorial/human-in-the-loop.html)). Few pauses are deliberate too. Users accept 93% of Claude Code's permission prompts, which Anthropic names approval fatigue, so a pause per chapter asks for attention that a pause per scene would wear out.
+
+*Forks for the owner.*
+
+- H1. Where the answer comes from. (a) The user's messages verbatim, read by the engine *(recommended)*: it costs one call per reply, and it is the only shape in which a model cannot answer for the user. (b) The assistant's summary in the call's arguments.
+- H2. Which pauses. (a) P1–P3, with P4 from M4 *(recommended)*. (b) P1 only, with chapters written on autopilot until the user steps in.
+- H3. A question nobody answers. (a) It waits until answered *(recommended)*, so nothing spends money unasked. (b) It proceeds with its default after a set time.
 
 **Rules that keep the later move cheap**
 
@@ -697,18 +742,19 @@ These rules were written for D. Under A there is no later move: the stack is min
 
 ## 15. Open questions
 
-Two decisions were settled on 2026-10-31 and eight remain open. Each changes scope or cost, so they are settled before M0 starts; under option A the prompts' language and the story data also meet mindfork's rules from the first pull request.
+Four decisions were settled on 2026-10-31 and seven remain open. Each changes scope or cost, so they are settled before M0 starts; under option A the prompts' language and the story data also meet mindfork's rules from the first pull request.
 
 - [x] Where Fabula is built. Owner's decision (2026-10-31): option A, a feature inside mindfork-rs from the start (section 14).
 - [x] Probe language: Rust, settled by option A.
+- [x] The form. Owner's decision (2026-10-31): tools in the chat, with sketches attached to it (section 14, *The chat tools and the human in the loop*).
+- [x] Models per role. Owner's decision (2026-10-31): one model for now, the one selected in the app; models per role are deferred to the far term. Whether that model serves every role well is for M1 and M2 to measure: section 8 measured the shape of replies, not the quality of decisions.
 - [ ] Story language: English first, or Russian as well? Do the model-facing prompts stay in English when the story is in Russian? Inside mindfork-rs model-facing text is localized per profile, so English-only prompts would be an exception to its rules (section 14).
-- [ ] Models per role for the MVP, and whether a local llama.cpp model is good enough for character agents. Section 8 measured the shape of their replies, not the quality of their decisions.
 - [ ] Who writes the 12 frozen premises, and in which genres and lengths?
 - [ ] Who the judges are: M3 needs up to 216 pair readings (section 11) unless a calibrated LLM panel takes over most of them.
-- [ ] How much steering is wanted between chapters: a checkpoint after each chapter by default, or autopilot with a report?
+- [ ] How the human stays in the loop: forks H1–H3 of section 14 — where the answer comes from, which pauses, and what a question nobody answers does. H2 is the earlier question of how much steering is wanted between chapters.
 - [ ] Are stories part of mindfork's data — versioned, backed up and counted by `mindfork stats` — or kept beside it in a directory of their own?
-- [ ] How the feature is exposed until M3 passes. (a) A command left out of `--help`, the README and the CHANGELOG. (b) A cargo feature that release builds leave off, which CI must then build, test and measure for coverage with the feature on. (c) A visible command marked experimental, whose story database takes on the schema discipline of every stored file from its first release. Recommended: (a), the cheapest to reverse if M3 drops the simulation.
-- [ ] Where M3's systems live. B0 and A1–A4 could be run options of `mindfork story`, reusing the engine and the clients, or harnesses outside the product. The blind judging tool serves no user, so it could be a script under `tools/` or a page of its own. Recommended: run options for the systems, a script for the judging.
+- [ ] How the feature is exposed until M3 passes. (a) A command left out of `--help`, the README and the CHANGELOG. (b) A cargo feature that release builds leave off, which CI must then build, test and measure for coverage with the feature on. (c) A visible command marked experimental, whose story database takes on the schema discipline of every stored file from its first release. (d) The chat tools behind a profile switch, off by default, as `start_subagent` and `image_generate` are; the story database takes on the same discipline. Recommended since the owner chose the tool form: (d). The tools survive M3 either way, since a dropped simulation leaves them running A1's pipeline. Before that choice the recommendation was (a).
+- [ ] Where M3's systems live. B0 and A1–A4 could be run options of the hidden headless runner (section 14), reusing the engine and the client, or harnesses outside the product. The blind judging tool serves no user, so it could be a script under `tools/` or a page of its own. Recommended: run options for the systems, a script for the judging.
 
 ## 16. References
 
@@ -725,4 +771,5 @@ Two decisions were settled on 2026-10-31 and eight remain open. Each changes sco
 - [The Format Tax](https://arxiv.org/abs/2604.03616) — Lee, D'Antoni and Berg-Kirkpatrick, 2026. Format instructions cause most of the loss; decoupling reasoning from the format recovers it.
 - [Structure Tax: How Structured Output affects LLMs Performance](https://arxiv.org/abs/2610.12056) — Kumar, Kanishka and Mandora, AACL 2026. Reasoning-first field order matches free-form accuracy.
 - Structured output as documented on 2026-10-31: [OpenAI](https://developers.openai.com/api/docs/guides/structured-outputs); Anthropic's [structured outputs](https://platform.claude.com/docs/en/build-with-claude/structured-outputs), [thinking and forced tool use](https://platform.claude.com/docs/en/build-with-claude/thinking) and [refusals](https://platform.claude.com/docs/en/build-with-claude/refusals-and-fallback); [Gemini](https://ai.google.dev/gemini-api/docs/generate-content/structured-output); [xAI](https://docs.x.ai/docs/guides/structured-outputs); DeepSeek's [JSON output](https://api-docs.deepseek.com/guides/json_mode) and [function calling](https://api-docs.deepseek.com/guides/tool_calls); OpenRouter's [structured outputs](https://openrouter.ai/docs/guides/features/structured-outputs) and [provider routing](https://openrouter.ai/docs/features/provider-routing); llama.cpp's [server](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md) and [grammars](https://github.com/ggml-org/llama.cpp/blob/master/grammars/README.md); [vLLM](https://docs.vllm.ai/en/latest/features/structured_outputs.html); [Ollama](https://docs.ollama.com/capabilities/structured-outputs); [LM Studio](https://lmstudio.ai/docs/developer/openai-compat/structured-output).
+- The human in the loop: AutoGen's [human-in-the-loop guide](https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/tutorial/human-in-the-loop.html); Anthropic, [Claude Code auto mode](https://www.anthropic.com/engineering/claude-code-auto-mode); Google ADK's [confused-deputy fix for confirmations over A2A](https://github.com/google/adk-python/pull/6462); OWASP, [Lies in the Loop](https://community.owasp.org/attacks/Lies_in_the_Loop).
 - [mindfork-rs](https://github.com/vshylov/mindfork-rs) — read at version 0.23.1, commit 7a7c06d, and checked against the code by Claude Code the same day: [AGENTS.md](https://github.com/vshylov/mindfork-rs/blob/main/AGENTS.md), [ADR 0004](https://github.com/vshylov/mindfork-rs/blob/main/docs/decisions/0004-engine-contract-multi-provider.md), [ADR 0011](https://github.com/vshylov/mindfork-rs/blob/main/docs/decisions/0011-dialogue-directed-run.md), `src/shared/api/contract.rs`, `src/shared/storage/db/mod.rs`, `src/main.rs`.
