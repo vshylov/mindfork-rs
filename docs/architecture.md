@@ -2812,10 +2812,10 @@ Invariants:
   (absent in pre-2 files → 1; written by every save since `CHAT_SCHEMA` 2 —
   `Chat::v`, kept as loaded, so it states what the content conforms to);
 - **eager at startup**: the plan = files with a version `< current`;
-  non-empty → **one** pre-migration backup (`backups/pre-migrate-<date>.zip`,
-  `backup::create_pre_migrate_backup`: its manifest records the schemas each
-  kind of file was found at, not the build's — spec §12.3) before any write → steps → control-parse (the migrated result fails to
-  parse → abort, the file isn't overwritten) → an atomic write of the
+  non-empty → **one** pre-migration backup (`backups/pre-migrate-<date>.zip`;
+  like every archive's, its manifest records the schemas of the files it
+  packs, here those before the step — spec §12.3) before any write → steps →
+  control-parse (the migrated result fails to parse → abort, the file isn't overwritten) → an atomic write of the
   migrated `Value` (`json::write_json`, `pub(crate)`);
 - **downgrade guard**: a version newer than the app → refuse to start
   (localized);

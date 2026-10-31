@@ -19,10 +19,12 @@ split by subsystem.
 - **A false warning on the way back to the previous version.** Restoring the backup
   made before a data upgrade (`backups/pre-migrate-….zip`) with the version before the
   upgrade warned that the copy came from a newer version and might be refused — and
-  then read every chat in it. That backup now records the format of the data it holds,
-  so the version it is meant for restores it without a word. A backup 0.23.0 already
-  made still warns, harmlessly. When the warning is due, it now names the files that are
-  newer and their format numbers.
+  then read every chat in it. Every backup now records the format of the data it holds
+  rather than of the version that made it, so the version it is meant for restores it
+  without a word. The same goes for `mindfork backup` run by a new version before its
+  first start, and for the copy `restore` makes of data restored but not yet opened. A
+  backup 0.23.0 already made still warns, harmlessly. When the warning is due, it now
+  names the files that are newer and their format numbers.
 
 ## [0.23.0] — 2026-10-30
 

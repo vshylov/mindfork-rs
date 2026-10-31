@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (27)
+## Entries (28)
 
 - Post-M9: persisting the input-box draft in the chat file (done)
 - Post-M9: persisting deleted exchanges in the chat file (`Ctrl+E`/`Ctrl+R`) (done)
@@ -39,6 +39,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: carrying one companion — `mindfork companion export|import` (done)
 - Post-M9: character cards — `mindfork import` reads the community's personas (done)
 - Post-M9: the pre-migration backup records the schemas it holds (done)
+- Post-M9: every backup's manifest records the schemas its files hold (done)
 
 ### Post-M9: persisting the input-box draft in the chat file (done)
 - **Unsaved input-box text is stored on the chat and restored on
@@ -1608,6 +1609,61 @@ deferred).
 - **Not done, noted**: `mindfork backup` run by a new build on a root it has not yet
   started on (so not yet migrated) records the build's schemas for older data, and the
   pre-restore copy of a root restored but not yet started does too — the same false
-  warning, on a road less travelled. Ordinary backups were left as they are.
+  warning, on a road less travelled. Ordinary backups were left as they are — until the
+  next entry.
 
 **Gates**: 4473 unit tests green, 308 `#[ignore]`; clippy `-D warnings`, fmt, `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check` clean.
+
+### Post-M9: every backup's manifest records the schemas its files hold (done)
+- **The rest of the false warning.** #850 gave the pre-migration backup the schemas
+  its files held and left the other backups at the build's. Two of them can hold files
+  no start has migrated: `mindfork backup` run by a new version before its first start
+  (`run_backup` does not migrate), and the copy `restore` makes of a root restored and
+  not yet opened. Both recorded the new build's schemas for the old data, so the
+  release before warned against its own files — the owner asked for them too.
+- **One rule instead of two.** `create_backup` now reads the schemas of what it packs
+  (`SchemaVersions::held_by`): `settings.json` and `profiles.json` through the start-up's
+  own `schema::*_artifact().detect`, the **newest** of `chats/*.json` (a `.bak` not
+  counted, a file that is not JSON skipped), and `data.db`'s `user_version`; a kind
+  with no file, or one that does not parse, is `0`. It never fails the backup. With
+  every backup reading its files, the pre-migration backup needs nothing of its own:
+  #850's `held` plumbing in `data_migration` (`Found`, the tracking in `run_with`) and
+  `create_pre_migrate_backup`/`pack` are gone, and the migration calls `create_backup`
+  as it did before #850. Its two tests stay and pass unchanged — the backup is taken
+  before any write, so what it reads is what the migration detected.
+- **The database's version from its header, not from SQLite.** `peek_user_version`
+  opens the file read-write, and `vacuum_into` documents why a backup must not open
+  the live file casually (SQLite deletes a stale `-wal` next to a file it reads as
+  zero-page, whatever the flags). `db::header_user_version` reads offset 60 of the
+  header — four big-endian bytes, the pragma's own storage — of the file that goes into
+  the archive: the compacted copy, which has no WAL, else the raw file, whose header
+  can lag a change not yet checkpointed (a hot WAL is also why compaction would have
+  failed — the edge of an edge). Tested against the pragma on an opened, a compacted
+  and a hand-stamped database.
+- **Live, GO** — Windows 11, three debug binaries — 0.22.0 from its tag, `main` at #850's
+  merge, and this branch — each beside a `defaults.json` of mode `path`, every root
+  holding a copy of the dev root's `settings.json` for the backup password. A 0.22.0
+  root came from 0.22.0 restoring the 2026-10-29 pre-migration backup: 278 chats at 6,
+  fingerprint `015d8483add3e6f4`.
+  - *`backup` before the first start*: on that root, `main` records `chat 7` and 0.22.0
+    restoring it warns; this branch records `settings 7, profiles 1, chat 6, db 1`, and
+    0.22.0 restores it with no warning — 278 chats, the same fingerprint — and starts on
+    it. Neither backup migrated a chat.
+  - *The pre-restore copy*: a root holding 0.22.0's data, restored and not opened, then
+    restored over — `main`'s copy says `chat 7` and warns 0.22.0; this branch's says
+    `chat 6`, and 0.22.0 restores it with no warning.
+  - *The pre-migration backup* (#850's case): this branch starts on the 0.22.0 root,
+    stamps the chats 7, and its `pre-migrate-*.zip` says `chat 6`; 0.22.0 restores it
+    with no warning.
+  - *The cost of reading every chat*: `backup -c 0` on the same root (77 MB of chats),
+    `main` and this branch alternately, three rounds — the fastest 1.99 s without the
+    reading, 2.41 s with it, the rounds spread over 2.0–3.8 s; debug builds, so a release
+    pays a fraction of the 0.4 s.
+- **Tests** (+2 net, 4475): a backup of a root at the release before the chats' step
+  records it and is not newer for that release; one at this build's schemas is, naming
+  `chats/*.json`; the newest chat counts, a `.bak`, a non-JSON chat, a non-JSON settings
+  file and a non-SQLite database do not; `restore`'s pre-restore copy records the root
+  it saved; the header's bytes agree with the pragma. #850's three tests of the
+  pre-migrate entry point went with it.
+
+**Gates**: 4475 unit tests green, 308 `#[ignore]`; clippy `-D warnings`, fmt, `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check` clean.

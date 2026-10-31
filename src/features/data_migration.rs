@@ -73,13 +73,8 @@ fn run_with(
     chat: &JsonArtifact,
 ) -> Result<()> {
     let mut plan: Vec<Planned> = Vec::new();
-    // The schema each kind of file is at before any step: what the pre-migration
-    // backup holds, and what its manifest says (`backup::SchemaVersions`). A kind
-    // with no file stays 0. For the chats it is the newest one found, since a
-    // reader older than that one file would refuse it.
-    let mut held = backup::SchemaVersions::default();
 
-    if let Some(found) = assess_file(
+    if let Some(p) = assess_file(
         &paths.settings_file(),
         settings,
         Kind::Settings,
@@ -89,10 +84,9 @@ fn run_with(
             invalid: "migrate.err.settings_invalid",
         },
     )? {
-        held.settings = found.version;
-        plan.extend(found.plan);
+        plan.push(p);
     }
-    if let Some(found) = assess_file(
+    if let Some(p) = assess_file(
         &paths.profiles_file(),
         profiles,
         Kind::Profiles,
@@ -102,24 +96,20 @@ fn run_with(
             invalid: "migrate.err.profiles_invalid",
         },
     )? {
-        held.profiles = found.version;
-        plan.extend(found.plan);
+        plan.push(p);
     }
 
     for path in chat_files(paths)? {
         match json::read_json::<Value>(&path) {
             Ok(None) => {}
             Ok(Some(v)) => match chat.assess(&v) {
-                Assessment::UpToDate => held.chat = held.chat.max(chat.current),
-                Assessment::Migrate { from } => {
-                    held.chat = held.chat.max(from);
-                    plan.push(Planned {
-                        path,
-                        kind: Kind::Chat,
-                        from,
-                        value: v,
-                    });
-                }
+                Assessment::UpToDate => {}
+                Assessment::Migrate { from } => plan.push(Planned {
+                    path,
+                    kind: Kind::Chat,
+                    from,
+                    value: v,
+                }),
                 Assessment::Downgrade { from } => {
                     bail!(downgrade_msg(
                         loc,
@@ -144,7 +134,6 @@ fn run_with(
         bail!(downgrade_msg(loc, "data.db", db_uv, schema::DB_SCHEMA));
     }
     let db_needs_migration = db::needs_step_migration(db_uv);
-    held.db = db_uv;
 
     if plan.is_empty() && !db_needs_migration {
         tracing::debug!("no data migration needed");
@@ -159,17 +148,25 @@ fn run_with(
     // a setting that says "my backups are encrypted" must not have an exception
     // that quietly writes a plaintext copy of everything. Safe to read ahead of
     // the migration — the secrets list is additive and has never been migrated.
-    //
-    // Its manifest records `held`, not this build's schemas: the archive is the way
-    // back to the release before the step, which reads it (spec §12.3).
+    let backup_path = backup::default_backup_path(paths, "pre-migrate");
     let password = stored_backup_password(paths);
-    let backup_path = backup::create_pre_migrate_backup(paths, held, password.as_deref(), loc)
-        .map_err(|e| {
-            anyhow!(
-                "{}",
-                loc.tf("migrate.err.backup_failed", &[("err", &format!("{e:#}"))])
-            )
-        })?;
+    backup::create_backup(
+        paths,
+        Some(backup_path.clone()),
+        9,
+        None,
+        password.as_deref(),
+        loc,
+        // Silent: this runs on startup, before the TUI, where a stream of
+        // progress lines would only look like noise before the app appears.
+        |_| {},
+    )
+    .map_err(|e| {
+        anyhow!(
+            "{}",
+            loc.tf("migrate.err.backup_failed", &[("err", &format!("{e:#}"))])
+        )
+    })?;
     tracing::info!(backup = %backup_path.display(), files = plan.len(),
         "created a backup before migrating data");
 
@@ -218,16 +215,8 @@ struct RefusalKeys {
     invalid: &'static str,
 }
 
-/// What [`assess_file`] found in a file that exists: the schema it is at, and
-/// the migration it needs (`None` — it is current).
-struct Found {
-    version: u32,
-    plan: Option<Planned>,
-}
-
-/// Assesses one file: `Ok(None)` — no file; `Ok(Some)` — its version, and its plan when it
-/// is older than current; `Err` — corrupt, invalid (both via `keys`) or a downgrade (data
-/// newer than the app).
+/// Assesses one file: `Ok(None)` — no file, or already current; `Ok(Some)` — into the plan;
+/// `Err` — corrupt, invalid (both via `keys`) or a downgrade (data newer than the app).
 ///
 /// A file at the current version is parsed into its **typed** structure here,
 /// not only as a `Value`: it is what the app is about to load, and a value the
@@ -243,7 +232,7 @@ fn assess_file(
     kind: Kind,
     loc: &Locale,
     keys: &RefusalKeys,
-) -> Result<Option<Found>> {
+) -> Result<Option<Planned>> {
     let shown = path.display().to_string();
     let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
@@ -266,19 +255,13 @@ fn assess_file(
                     )
                 },
             )?;
-            Ok(Some(Found {
-                version: art.current,
-                plan: None,
-            }))
+            Ok(None)
         }
-        Assessment::Migrate { from } => Ok(Some(Found {
-            version: from,
-            plan: Some(Planned {
-                path: path.to_path_buf(),
-                kind,
-                from,
-                value: v,
-            }),
+        Assessment::Migrate { from } => Ok(Some(Planned {
+            path: path.to_path_buf(),
+            kind,
+            from,
+            value: v,
         })),
         Assessment::Downgrade { from } => {
             bail!(downgrade_msg(loc, art.name, from, art.current))
