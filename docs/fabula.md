@@ -1,7 +1,8 @@
 # Fabula — a story engine used from the chat: track plan
 
-**Status:** plan (2026-10-31). Every fork of the research is decided by the owner;
-the three this plan adds (§6) wait for the owner before the first code PR. The design —
+**Status:** plan (2026-10-31). Every fork of the research is decided by the owner, and
+so are the three this plan adds (§6) and where development runs (§4, *The development
+stack*). The design —
 the engine, its stores, its contracts, its evaluation — is
 [research/fabula-engine.md](research/fabula-engine.md) (*the spec* below), and the
 decision to build it here is [ADR 0014](decisions/0014-fabula-story-engine.md). This
@@ -40,6 +41,8 @@ All of them the owner's, on 2026-10-31; the reasoning is in the spec.
 | Off by default until M3: `tools.story` | spec §15 |
 | M3's systems as run options of a hidden runner; judging by a script under `tools/` | spec §15 |
 | About 20 premise candidates drafted by Claude, 12 chosen by the owner; three human judges on the calibration set | spec §11, §15 |
+| Development and calibration on Claude (`CLAUDE_API_KEY`) and OpenRouter (`OPENROUTER_API_KEY`); the local RTX 4090 for what only llama.cpp shows | §4 |
+| T1 (a), T2 (a), T3 (a) | §6 |
 
 ## 3. Where the code goes
 
@@ -69,6 +72,41 @@ work*).
 Each line is one pull request on a branch of its own (AGENTS.md §2). A stage's gate
 is checked before the next stage starts, and its outcome goes into the journal.
 
+### The development stack
+
+The owner's decision (2026-10-31): development and calibration run on cloud APIs. The
+feature is complex, and weeks of iteration on the local RTX 4090 alone would be too
+slow; a turn takes seconds on a cloud route, and arms run side by side.
+
+- **Claude**, through `CLAUDE_API_KEY` on the Anthropic wire. The smokes read
+  `MINDFORK_ANTHROPIC_KEY` and a model variable, so the key is passed as
+  `MINDFORK_ANTHROPIC_KEY=$CLAUDE_API_KEY`. In the app, the Claude section's
+  `api_key_env` names `CLAUDE_API_KEY`; its default is `ANTHROPIC_API_KEY`.
+- **OpenRouter**, through `OPENROUTER_API_KEY`, for the open models near the gate:
+  `qwen/qwen3.8-27b` pinned to DeepInfra (bf16) and `google/gemma-4-31b-it` pinned to
+  DeepInfra (fp8). Both endpoints list `structured_outputs` (read 2026-10-31), while
+  several other providers of the same models do not, so every request carries
+  `provider: {only: [...], allow_fallbacks: false}` and `require_parameters: true`. The
+  smokes take `MINDFORK_ENGINE_URL=https://openrouter.ai/api/v1`,
+  `MINDFORK_ENGINE_KEY=$OPENROUTER_API_KEY` and `MINDFORK_ENGINE_MODEL=<id>`.
+- **Thinking on Claude.** In the 5.5 generation, only Haiku 5.5 accepts
+  `thinking: {type: "disabled"}`, and only at `high` effort or below. Sonnet 5.5 takes
+  `"between_tools"`, which turns off only the thinking before its first output, and Opus 5.5
+  and Fable 5.1 always think. So "thinking off for characters" means Haiku 5.5 with thinking
+  disabled, or the lowest effort elsewhere, and M1 measures what that costs.
+- **Which model where.** M1 iterates on Haiku 5.5 and the two open models, since they
+  are cheap and M1 judges the shape of decisions. M2's quality runs and the G2 story use
+  Sonnet 5.5 or Opus 5.5 as the one model. M3's model is chosen when M3 starts; one
+  model serves every system there anyway.
+- **What stays local.** The local RTX 4090 keeps what only it shows: llama.cpp's grammar
+  with thinking, the managed server and its `draft-mtp` trap, and the gate's own Q4
+  weights. A finding on a cloud route is confirmed on the gate's weights, locally or on
+  the rented gate, before it is called; a cloud route is fp8 or bf16, not Q4_K_M
+  (docs/lessons.md §9).
+- **Spend.** The call log records every call's tokens. OpenRouter also reports cost, so
+  T1's dollar cap applies there; Anthropic reports tokens only, so a Claude run is
+  bounded by its token budget.
+
 ### Stage 0 — this plan
 
 | PR | Content |
@@ -86,9 +124,9 @@ is checked before the next stage starts, and its outcome goes into the journal.
 
 | PR | Content | Proof |
 | --- | --- | --- |
-| 3 `feat/output-schema` | `ChatRequest.output_schema`, sent as `response_format` with `json_schema` on the Chat Completions wire (llama.cpp, vLLM, xAI, OpenRouter with `provider.require_parameters`); DeepSeek keeps the fallback; an unset field leaves the request byte-identical | A unit test of the unchanged request; live: the probe of spec §8 repeated as a smoke on the gate models, thinking on and off, and one OpenRouter model |
-| 4 `feat/story-simulation` | The character and World Master contracts with their English prompts; the round (intent, initiative, reaction, reflection); the opening events; K branches, one after another under `sessions = 1`; the memory views; thinking off for characters; planted secret tokens and the leak count; an `#[ignore]` harness that simulates scenes from the fixture canon | **Gate G1** (spec §13): 20 scenes with zero leaks, at least 99% of calls schema-valid at the first attempt, the World Master's refusals reported per scene. GO or NO-GO into the journal |
-| 5 `feat/output-schema-clouds` | The same field on Responses (`text.format`), Anthropic (`output_config.format`) and Gemini (`generationConfig.responseFormat`) | A live smoke per provider. Independent of PR 4; it lands before PR 8, since the model a person selects can be any of them |
+| 3 `feat/output-schema` | `ChatRequest.output_schema` on the two wires development runs on: `response_format` with `json_schema` on Chat Completions (llama.cpp, vLLM, xAI, OpenRouter with `provider.require_parameters`), and `output_config.format` on Anthropic. DeepSeek keeps the fallback, and an unset field leaves every request byte-identical | Unit tests of the unchanged requests. Live: the probe of spec §8 as a smoke on the two pinned OpenRouter routes and on Haiku 5.5 and Sonnet 5.5, thinking on and off, then once on a gate model's own weights through the local llama.cpp |
+| 4 `feat/story-simulation` | The character and World Master contracts with their English prompts; the round (intent, initiative, reaction, reflection); the opening events; K branches, one after another under `sessions = 1`; the memory views; thinking off for characters; planted secret tokens and the leak count; an `#[ignore]` harness that simulates scenes from the fixture canon | **Gate G1** (spec §13): 20 scenes with zero leaks, at least 99% of calls schema-valid at the first attempt, the World Master's refusals reported per scene. Measured on the development models, then confirmed on a gate model's own weights. GO or NO-GO into the journal |
+| 5 `feat/output-schema-clouds` | The same field on the remaining wires: Responses (`text.format`) and Gemini (`generationConfig.responseFormat`) | A live smoke per provider. Independent of PR 4; it lands before PR 8, since the model a person selects can be any of them |
 
 ### M2 — the Author's loop and the chat tools
 
@@ -140,6 +178,10 @@ Its pull requests are cut when M4 starts.
   raise `sessions` with its slots.
 - **Hours of work on a laptop.** Quitting cancels the run (decided); a resume costs only
   the step in flight, because every finished step is recorded (spec §9).
+- **Characters on a model that always thinks.** Opus 5.5 and Fable 5.1 cannot turn
+  thinking off, so on them a character's call costs several times what the cost model
+  assumes. The tool's description says so, the budget bounds it, and the lowest effort
+  keeps the thought short.
 - **`json_schema` under `--spec-type draft-mtp`** crashes llama.cpp's grammar
   ([#30419](https://github.com/ggml-org/llama.cpp/issues/30419), open). While a managed
   server runs a draft model, the adapter takes the fallback mechanism.
@@ -167,19 +209,20 @@ Its pull requests are cut when M4 starts.
 
 ## 6. Forks this plan adds
 
-Each waits for the owner before the PR it names.
+The owner accepted all three recommendations on 2026-10-31.
 
 - **T1. The budget's unit** (PR 6). (a) Tokens per chapter on every provider, plus a
   dollar cap where the provider reports cost, as OpenRouter does *(recommended)*.
   (b) Dollars only, which needs a price list for every provider. (c) No budget beyond the
-  timeout.
+  timeout. **Owner's decision (2026-10-31): (a).**
 - **T2. The chapter's default timeout** (PR 8). Rough estimate: a chapter takes about an
   hour on a local 12B model and twice that on a 27B one, before reruns. (a) Six hours
   *(recommended)*: a backstop for a hung run, while the budget bounds the spend. (b) Three
-  hours. (c) Twelve hours.
+  hours. (c) Twelve hours. **Owner's decision (2026-10-31): (a).**
 - **T3. How a chapter lands** (PR 8). (a) As a text attachment of the chat *(recommended)*:
   the assistant reads it in full or by reference and can discuss it, and the person opens
   it as any attachment. (b) As a chat file only, which the assistant reaches through a tool.
+  **Owner's decision (2026-10-31): (a).**
 
 ## 7. Not in this track
 
