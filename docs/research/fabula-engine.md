@@ -684,7 +684,7 @@ The owner's decisions (2026-10-31), taken after option A: Fabula is used from th
 2. **A run cut short resumes on request.** Quitting cancels every background run, as it does today (`src/app/orchestrator/background_runs.rs:379`). A story's cancelled landing says at which step it stopped, and the next `story_continue` resumes from the first missing step (section 9); nothing restarts by itself.
 3. **One model for now.** Every role runs on the model selected in the app; models per role are deferred to the far term. Each call takes the app's session budget, so at `sessions = 1` the story's calls and the chat's turns alternate request by request. Thinking stays a per-call setting (section 8), the Reader shares the Author's model (self-preference accepted for now), and the cost model's tiers collapse into one price.
 4. **A chat schema step.** A run of `kind: story` is a new stored variant, so `CHAT_SCHEMA` moves 7 → 8 with a stamp-only step, as the dialogue's kind moved it 2 → 3.
-5. **No popup.** Approvals and clarifications are ordinary messages: the assistant asks in the chat, and the user answers in the chat. The design below is a proposal, and its forks wait for the owner.
+5. **No popup.** Approvals and clarifications are ordinary messages: the assistant asks in the chat, and the user answers in the chat. The design below was proposed the same day, and the owner accepted the recommendations of its three forks (H1–H3).
 
 *Tools.* There are three separate tools rather than one tool with a mode flag. An optional flag was ignored by Claude in all three trials, while a second tool was used 3/3 on all four clouds and 5/5 locally ([background-subagents.md](background-subagents.md) §3.1). The project's tools are separate in the same way: `run_dialogue` and `start_dialogue`, `call_subagent` and `start_subagent`.
 
@@ -713,11 +713,11 @@ A pause writes a `question` row (what to ask, what it accepts, what the default 
 
 *Prior art.* AutoGen warns that a human proxy which blocks leaves a team in a state that cannot be saved or resumed. In its place it documents the shape above: stop the team, save its state, and pass the user's answer into the next run ([AutoGen](https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/tutorial/human-in-the-loop.html)). Few pauses are deliberate too. Users accept 93% of Claude Code's permission prompts, which Anthropic names approval fatigue, so a pause per chapter asks for attention that a pause per scene would wear out.
 
-*Forks for the owner.*
+*Forks.* The owner accepted all three recommendations on 2026-10-31.
 
-- H1. Where the answer comes from. (a) The user's messages verbatim, read by the engine *(recommended)*: it costs one call per reply, and it is the only shape in which a model cannot answer for the user. (b) The assistant's summary in the call's arguments.
-- H2. Which pauses. (a) P1–P3, with P4 from M4 *(recommended)*. (b) P1 only, with chapters written on autopilot until the user steps in.
-- H3. A question nobody answers. (a) It waits until answered *(recommended)*, so nothing spends money unasked. (b) It proceeds with its default after a set time.
+- H1. Where the answer comes from. (a) The user's messages verbatim, read by the engine *(recommended)*: it costs one call per reply, and it is the only shape in which a model cannot answer for the user. (b) The assistant's summary in the call's arguments. **Owner's decision (2026-10-31): (a).**
+- H2. Which pauses. (a) P1–P3, with P4 from M4 *(recommended)*. (b) P1 only, with chapters written on autopilot until the user steps in. **Owner's decision (2026-10-31): (a).**
+- H3. A question nobody answers. (a) It waits until answered *(recommended)*, so nothing spends money unasked. (b) It proceeds with its default after a set time. **Owner's decision (2026-10-31): (a).**
 
 **Rules that keep the later move cheap**
 
@@ -742,16 +742,16 @@ These rules were written for D. Under A there is no later move: the stack is min
 
 ## 15. Open questions
 
-Four decisions were settled on 2026-10-31 and seven remain open. Each changes scope or cost, so they are settled before M0 starts; under option A the prompts' language and the story data also meet mindfork's rules from the first pull request.
+Five decisions were settled on 2026-10-31 and six remain open. Each changes scope or cost, so they are settled before M0 starts; under option A the prompts' language and the story data also meet mindfork's rules from the first pull request.
 
 - [x] Where Fabula is built. Owner's decision (2026-10-31): option A, a feature inside mindfork-rs from the start (section 14).
 - [x] Probe language: Rust, settled by option A.
 - [x] The form. Owner's decision (2026-10-31): tools in the chat, with sketches attached to it (section 14, *The chat tools and the human in the loop*).
 - [x] Models per role. Owner's decision (2026-10-31): one model for now, the one selected in the app; models per role are deferred to the far term. Whether that model serves every role well is for M1 and M2 to measure: section 8 measured the shape of replies, not the quality of decisions.
+- [x] How the human stays in the loop. Owner's decision (2026-10-31): the recommendations of forks H1–H3 in section 14. The answer is the user's own messages, read verbatim; the run pauses at P1–P3, with P4 from M4; and a question waits until it is answered. H2 also settles the earlier question of how much steering is wanted between chapters: a checkpoint after each one.
 - [ ] Story language: English first, or Russian as well? Do the model-facing prompts stay in English when the story is in Russian? Inside mindfork-rs model-facing text is localized per profile, so English-only prompts would be an exception to its rules (section 14).
 - [ ] Who writes the 12 frozen premises, and in which genres and lengths?
 - [ ] Who the judges are: M3 needs up to 216 pair readings (section 11) unless a calibrated LLM panel takes over most of them.
-- [ ] How the human stays in the loop: forks H1–H3 of section 14 — where the answer comes from, which pauses, and what a question nobody answers does. H2 is the earlier question of how much steering is wanted between chapters.
 - [ ] Are stories part of mindfork's data — versioned, backed up and counted by `mindfork stats` — or kept beside it in a directory of their own?
 - [ ] How the feature is exposed until M3 passes. (a) A command left out of `--help`, the README and the CHANGELOG. (b) A cargo feature that release builds leave off, which CI must then build, test and measure for coverage with the feature on. (c) A visible command marked experimental, whose story database takes on the schema discipline of every stored file from its first release. (d) The chat tools behind a profile switch, off by default, as `start_subagent` and `image_generate` are; the story database takes on the same discipline. Recommended since the owner chose the tool form: (d). The tools survive M3 either way, since a dropped simulation leaves them running A1's pipeline. Before that choice the recommendation was (a).
 - [ ] Where M3's systems live. B0 and A1–A4 could be run options of the hidden headless runner (section 14), reusing the engine and the client, or harnesses outside the product. The blind judging tool serves no user, so it could be a script under `tools/` or a page of its own. Recommended: run options for the systems, a script for the judging.
