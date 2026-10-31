@@ -538,7 +538,7 @@ flowchart TB
 
 | Milestone | Deliverables | Exit gate |
 | --- | --- | --- |
-| M0 Skeleton | Database actor and capabilities; schema with append-only triggers; canon import from JSON; `LlmPort` with a replay adapter; one scene replayed from a recorded fixture | The fixture replays identically; the actor refuses a second writer for a branch; a compile-fail test shows `BranchWriter` cannot be cloned |
+| M0 Skeleton | Database actor and capabilities; schema with append-only triggers; canon import from JSON; `LlmPort` with a replay adapter; one scene replayed from a recorded fixture | The fixture replays identically; the actor refuses a second writer for a branch; a compile-time assertion shows `BranchWriter` cannot be cloned (mindfork has no library target, so a compile-fail test cannot run; [docs/fabula.md](../fabula.md) §5) |
 | M1 Simulation | Character and World Master contracts on a live model, their schemas in the shared dialect (section 8); K branches; opening events; witnesses and memory views over the branch path; planted secret tokens | 20 simulated scenes with zero token leaks; at least 99% of calls schema-valid at the first attempt, with each call's mechanism recorded; World Master commits refused by the validators reported per scene |
 | M2 Author loop | Outline, rolling scene plans, pick, write; Reader and Continuity checker; note decisions and up to two revisions; markdown export; the chat tools with their pauses P1–P3 (section 14) | One short story end to end, read by a person; a run killed at any step resumes |
 | M3 Evaluation | B0 and A1–A4 as run options of the hidden headless runner; 12 premises times 3 seeds; a blind judging script under `tools/` | The two decisions in section 11 |
@@ -621,6 +621,8 @@ Recommendation: start Fabula as a separate repository whose core is a library be
 - mindfork's bar applies from the first pull request: a track design plan with its forks confirmed, live smokes, the tools' descriptions under axis A (the role prompts are an English exception, section 15), 80% coverage on new code, and journal entries. ADR 0014 is written with that plan.
 - The simulation stays an experiment until M3 decides it; until then the tools sit behind a switch in the settings, off by default (section 15). If M3 drops the simulation, the removal is a pull request of its own, and A1's pipeline stays if it beats B0 (section 11).
 - The ports stay. `LlmPort` and `Store` are what makes the engine testable offline by replay, not only what made a later move cheap.
+
+The decision is recorded as [ADR 0014](../decisions/0014-fabula-story-engine.md), and the track's stages and pull requests are [docs/fabula.md](../fabula.md).
 
 The facts below come from reading mindfork-rs at 0.23.1 (commit 7a7c06d, 2026-10-31). Claude Code confirmed them against the code the same day; the checklist at the end records what it found, and the table carries the corrections.
 

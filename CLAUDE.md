@@ -70,7 +70,7 @@ multi-provider inference · 0005 Python sandbox as a `wasmer`/WASIX sidecar ·
 neutral import format · 0008 API keys with machine-bound encryption · 0009
 message speech (TTS) · 0010 the subagent as a nested turn · 0011 the
 directed dialogue as a scripted multi-context run · 0012 concurrent tool calls
-in a round · 0013 the messenger bridge.
+in a round · 0013 the messenger bridge · 0014 the Fabula story engine.
 
 ## Key architectural decisions
 
