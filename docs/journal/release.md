@@ -5550,3 +5550,62 @@ No Rust changed and no live stack is involved; the test count is unchanged.
   - The copies of the dev data held real chats and were deleted afterwards.
 - **No rehearsal.** `git diff v0.23.0 -- .github packaging tools` is empty.
   `release_guard.py --tag v0.23.1` accepts the tag; `cargo deny check`: ok.
+- **The draft, checked before anyone else could see it** (§6 step 5).
+  - The owner merged 852 (`c5eadd9b`, 01:15:28Z) and set `v0.23.1` on `c5eadd9b`,
+    which was `origin/main`.
+  - `release.yml` (run 41154519750) was green in all eight jobs in **12 min 20 s**
+    (0.23.0: 17 min 13 s). Windows took the longest at 11 min 00 s, then macOS
+    10 min 30 s, Linux 10 min 03 s, and the demo 3 min 01 s.
+  - It left a draft that was not a prerelease, with fifteen assets — the same set as
+    0.23.0's. Every downloaded file matched `sha256sums.txt`, fourteen of fourteen. Its
+    notes were the `[0.23.1]` section line for line, with the workflow's footer below
+    (31 lines).
+  - **`install.sh` and the six animation files are 0.23.0's byte for byte** — nothing
+    the reel shows moved.
+  - **The released archives.** The Windows zip has 48 entries, as 0.23.0's; its
+    `mindfork.exe` says `mindfork 0.23.1`, its `PRIVACY.md` is effective 2026-10-30.
+    The macOS archive's `mindfork` is a 64-bit Mach-O for arm64 (`cf fa ed fe`, CPU
+    type `0x0100000c`), mode 0755. Not run: there is no Mac here.
+  - **Attestations** verify for the three archives, the installer and `install.sh`; a
+    scratch file exits 1.
+- **The release's subject, on the released binary.** The rubric's four arms again, with
+  the zip's `mindfork.exe` in place of the debug build and the same published 0.23.0
+  and 0.22.0:
+  - *0.23.0 on its backup*: `mindfork backup` of a fresh copy of the dev root (280
+    chats now, at 7) writes `chat 7`, `app_version` 0.23.1; 0.23.0 restores it with no
+    warning, and both `stats` say 280 chats, fingerprint `f1d56eef01238b43`; 0.23.0
+    starts on it (exit 0).
+  - *The way back*: on 0.22.0's root (its restore of the 2026-10-29 pre-migration
+    backup — the old warning, 278 chats at 6), the released binary stamps all 278 chats
+    7 and leaves a `pre-migrate-*.zip` saying `chat 6`; 0.22.0 restores it with **no
+    warning**, 278 chats at 6, fingerprint `015d8483add3e6f4`.
+  - *Control*: 0.23.0's `pre-migrate-*.zip` of the same root says `chat 7`, and 0.22.0
+    warns on it.
+  - The copies of the dev data held real chats and were deleted afterwards.
+- **The interface**, in `console_probe` on the zip's binary (each scenario on data of
+  its own): `first-frame` (8 checks), `full-mode` (13), `keys` (18) and `small-window`
+  (83) passed on their first run, every output kept this time.
+- **Not run this time**: a live turn on the released binary; the installer and the
+  packages beyond what their jobs install.
+- **Published, and the numbers of it.**
+  - **Published at 01:49:03Z by the owner** (immutable), 20 min 29 s after the draft's
+    assets were up (01:28:34Z).
+  - `crates-io.yml` (run 41157136962) ran 01:49:05Z → 01:52:13Z. `mindfork 0.23.1` was
+    on the registry at 01:52:06Z (4 918 868 bytes), **3 min 03 s** after the
+    publication (0.23.0: 2 min 34 s).
+  - `Site` (run 41157372775) started 2 s after `crates.io` completed and deployed at
+    01:52:46Z — **3 min 43 s after the publication** (0.23.0: 3 min 23 s). The hold on
+    the merge had shown as before (run 41154457165): "Is this version out?" green, the
+    build and the deploy skipped.
+  - From outside:
+    - the post answers 200 at `/blog/mindfork-0-23-1/`;
+    - the home page's and the install page's structured data say
+      `"softwareVersion": "0.23.1"`;
+    - the blog's index, `/llms.txt`, the Atom feed and the sitemap list the post;
+    - `releases/latest` resolves to `v0.23.1`, and its `install.sh` is the draft's;
+    - `mindfork.io/demo/mindfork-demo-dark-en.gif` is the release's, byte for byte.
+- **The package managers.** `aur.yml` (run 41157136921) built and installed
+  `mindfork-rs-bin` 0.23.1 (`installed: mindfork 0.23.1`) and stopped at its notice,
+  because there is no key. At 01:53Z, Scoop's bucket and the tap's formula still named
+  0.23.0; their schedules (`20 */4`, `23 */6`) next fire at 04:20Z and 06:23Z. Neither
+  was waited for.
