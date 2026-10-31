@@ -21,8 +21,9 @@
 //! `location.json` (they're about the install, not user data). Additionally, a
 //! `manifest.json` (schema versions + app version) is written into the archive —
 //! metadata for warning on restoring data newer than the running build reads; it
-//! is **not** extracted into the root. A pre-migration backup records the schemas
-//! its files held before the step, not the build's. See [`BackupManifest`].
+//! is **not** extracted into the root. Its schemas are those of the files packed,
+//! not the build's — a pre-migration backup holds them before the step. See
+//! [`BackupManifest`].
 //!
 //! **The database is compacted** on both paths (spec §12.3): a backup packs a
 //! `VACUUM INTO` copy of `data.db` instead of the live file (free pages left by
@@ -82,21 +83,22 @@ use zip::{AesMode, CompressionMethod, ZipArchive, ZipWriter};
 use crate::shared::i18n::Locale;
 use crate::shared::paths::Paths;
 use crate::shared::storage::db;
-use crate::shared::storage::schema::{CHAT_SCHEMA, DB_SCHEMA, PROFILES_SCHEMA, SETTINGS_SCHEMA};
+use crate::shared::storage::schema::{
+    self, CHAT_SCHEMA, DB_SCHEMA, PROFILES_SCHEMA, SETTINGS_SCHEMA,
+};
 
 /// Manifest file name inside the archive (schema-version metadata; not
 /// extracted into the root — read separately by [`read_manifest`]). See
 /// release-engineering.md §3.4.
 const MANIFEST_NAME: &str = "manifest.json";
 
-/// The data schema of each kind of stored file in an archive (ADR 0006 §11).
-///
-/// An ordinary backup records the writing build's own schemas
-/// ([`SchemaVersions::current`]). A **pre-migration** backup records what its
-/// files held **before** the step ([`create_pre_migrate_backup`]): it is the
-/// copy to take back to the release before the step, and this build's schemas
-/// would have that release warn that its own data comes from a newer version
-/// (spec §12.3). There a kind with no file is `0` ([`Default`]): nothing in the
+/// The data schema of each kind of stored file in an archive (ADR 0006 §11):
+/// what the archive **holds**, read from its files as they are packed
+/// ([`SchemaVersions::held_by`]). Not the writing build's: a backup can be
+/// taken of files no start has migrated yet, the pre-migration backup above
+/// all — the copy to take back to the release before the step, which the
+/// build's schemas had warn that its own data came from a newer version
+/// (spec §12.3). A kind with no file is `0` ([`Default`]): nothing in the
 /// archive asks a reader for it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SchemaVersions {
@@ -116,6 +118,44 @@ impl SchemaVersions {
             db: DB_SCHEMA,
         }
     }
+
+    /// The schemas of the files a backup of `paths` packs, read the way the
+    /// start-up reads them (`schema::*_artifact().detect`): `settings.json`,
+    /// `profiles.json`, the **newest** of `chats/*.json` — a reader older than
+    /// one chat refuses that one file — and the `user_version` in the header of
+    /// `packed_db`, the database file that goes into the archive (the compacted
+    /// copy, else the live file; never opened through SQLite — see
+    /// [`db::header_user_version`]). A file that is missing or does not parse
+    /// counts as none: `0`. Never fails — a backup that happens is worth more
+    /// than an exact manifest.
+    fn held_by(paths: &Paths, packed_db: Option<&Path>) -> Self {
+        let chat = schema::chat_artifact();
+        let chats = fs::read_dir(paths.chats_dir())
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension() == Some(OsStr::new("json")))
+            .map(|path| detected(&path, &chat))
+            .max()
+            .unwrap_or(0);
+        let live_db = paths.data_db();
+        Self {
+            settings: detected(&paths.settings_file(), &schema::settings_artifact()),
+            profiles: detected(&paths.profiles_file(), &schema::profiles_artifact()),
+            chat: chats,
+            db: db::header_user_version(packed_db.unwrap_or(&live_db)).unwrap_or(0),
+        }
+    }
+}
+
+/// The schema `art` detects in the JSON file at `path`; `0` — no file, or not
+/// JSON.
+fn detected(path: &Path, art: &schema::JsonArtifact) -> u32 {
+    fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .map_or(0, |value| (art.detect)(&value))
 }
 
 /// One kind of file an archive holds at a schema newer than a reader's.
@@ -474,6 +514,12 @@ impl EntryProgress {
 /// every data entry with AES-256 (`None`/empty → a plain archive). Returns the
 /// path to the created archive. `progress` receives localized lines for a
 /// caller that displays them (`|_| {}` to stay silent).
+///
+/// The manifest records the schemas of the files packed
+/// ([`SchemaVersions::held_by`]), not this build's: the data root may hold
+/// files no start has migrated yet — a pre-migration backup, a `backup` run by
+/// a new version before its first start, the pre-restore copy of a root
+/// restored and not yet opened.
 pub fn create_backup(
     paths: &Paths,
     output: Option<PathBuf>,
@@ -481,43 +527,34 @@ pub fn create_backup(
     fs_root: Option<&Path>,
     password: Option<&str>,
     loc: &Locale,
-    progress: impl FnMut(&str),
+    mut progress: impl FnMut(&str),
 ) -> Result<PathBuf> {
     let out_path = match output {
         Some(p) => p,
         None => default_backup_path(paths, "mindfork-backup"),
     };
+    // A compacted copy is packed in place of the live database (see the module
+    // doc); `None` — there is none, or it couldn't be compacted, and the raw
+    // files go in instead. The scratch file lives until the archive is written.
+    if paths.data_db().is_file() {
+        progress(loc.t("backup.progress.compacting"));
+    }
+    let compact = compacted_db(paths, &out_path);
+    let packed_db = compact.as_ref().map(TempDb::path);
+    let entries = gather_entries(paths, fs_root, packed_db, loc)?;
     let spec = ZipSpec {
         level,
         password,
-        manifest: BackupManifest::written_now(SchemaVersions::current()),
+        manifest: BackupManifest::written_now(SchemaVersions::held_by(paths, packed_db)),
     };
-    pack(paths, out_path, fs_root, &spec, loc, progress)
-}
-
-/// Creates the backup made before a schema step (`backups/pre-migrate-<date>.zip`,
-/// spec §12.2) and returns its path.
-///
-/// Its manifest records `held` — the schemas the files are at **before** the
-/// step — and not this build's: the archive is the way back to the release
-/// before the step, which reads every file in it and must not be told that it
-/// comes from a newer version (spec §12.3). `app_version` still names this
-/// build, the one that wrote it. Maximum compression, no `fs_root` (the config
-/// may itself be about to migrate), and silent: it runs on start-up, before the
-/// TUI.
-pub fn create_pre_migrate_backup(
-    paths: &Paths,
-    held: SchemaVersions,
-    password: Option<&str>,
-    loc: &Locale,
-) -> Result<PathBuf> {
-    let spec = ZipSpec {
-        level: 9,
-        password,
-        manifest: BackupManifest::written_now(held),
-    };
-    let out_path = default_backup_path(paths, "pre-migrate");
-    pack(paths, out_path, None, &spec, loc, |_| {})
+    progress(loc.t("backup.progress.packing"));
+    write_zip(&out_path, &entries, &spec, loc, &mut progress).with_context(|| {
+        loc.tf(
+            "backup.ctx.create_archive",
+            &[("path", &out_path.display().to_string())],
+        )
+    })?;
+    Ok(out_path)
 }
 
 /// How an archive is written: the compression level `0..=9`, the password that
@@ -527,34 +564,6 @@ struct ZipSpec<'a> {
     level: i64,
     password: Option<&'a str>,
     manifest: BackupManifest,
-}
-
-/// Packs the data root into `out_path` as `spec` says — the body of both
-/// [`create_backup`] and [`create_pre_migrate_backup`].
-fn pack(
-    paths: &Paths,
-    out_path: PathBuf,
-    fs_root: Option<&Path>,
-    spec: &ZipSpec<'_>,
-    loc: &Locale,
-    mut progress: impl FnMut(&str),
-) -> Result<PathBuf> {
-    // A compacted copy is packed in place of the live database (see the module
-    // doc); `None` — there is none, or it couldn't be compacted, and the raw
-    // files go in instead. The scratch file lives until the archive is written.
-    if paths.data_db().is_file() {
-        progress(loc.t("backup.progress.compacting"));
-    }
-    let compact = compacted_db(paths, &out_path);
-    let entries = gather_entries(paths, fs_root, compact.as_ref().map(TempDb::path), loc)?;
-    progress(loc.t("backup.progress.packing"));
-    write_zip(&out_path, &entries, spec, loc, &mut progress).with_context(|| {
-        loc.tf(
-            "backup.ctx.create_archive",
-            &[("path", &out_path.display().to_string())],
-        )
-    })?;
-    Ok(out_path)
 }
 
 /// Restores data from archive `archive`, replacing the current data.
@@ -1829,12 +1838,16 @@ mod tests {
             .unwrap()
             .expect("a manifest should be present");
         assert_eq!(m.app_version, env!("CARGO_PKG_VERSION"));
-        assert_eq!(m.schemas.settings, SETTINGS_SCHEMA);
-        assert_eq!(m.schemas.db, DB_SCHEMA);
-        assert!(
-            !m.is_newer_than_current(),
-            "current schemas are not newer than themselves"
-        );
+        // What `seed_data`'s files hold: settings and the chat unstamped (1),
+        // a bare profiles array (1), a database that is not SQLite (0).
+        let held = SchemaVersions {
+            settings: 1,
+            profiles: 1,
+            chat: 1,
+            db: 0,
+        };
+        assert_eq!(m.schemas, held);
+        assert!(!m.is_newer_than_current());
     }
 
     #[test]
@@ -1861,39 +1874,51 @@ mod tests {
         }
     }
 
-    /// A pre-migration backup records the schemas its files held before the
-    /// step, not this build's, and still names the build that wrote it: the
-    /// release before the step reads every file in it and is not warned
-    /// (spec §12.3; 0.22.0 was, on 0.23.0's).
-    #[test]
-    fn a_pre_migrate_backup_records_what_its_files_hold() {
-        let dir = tempfile::tempdir().unwrap();
-        seed_data(dir.path());
-        let paths = Paths::with_root(dir.path());
-        let held = reader_before_the_chat_step();
-        let out = create_pre_migrate_backup(&paths, held.clone(), None, ru()).unwrap();
+    /// A root whose files are at the given schemas: `settings.json` and one
+    /// chat stamped, a bare `profiles.json` array (1), and a database the app
+    /// opened (`DB_SCHEMA`).
+    fn seed_versions(root: &Path, settings: u32, chat: u32) {
+        fs::write(
+            root.join("settings.json"),
+            format!("{{\"schema_version\":{settings}}}"),
+        )
+        .unwrap();
+        fs::write(root.join("profiles.json"), b"[]").unwrap();
+        fs::create_dir_all(root.join("chats")).unwrap();
+        fs::write(
+            root.join("chats").join("a.json"),
+            format!("{{\"v\":{chat}}}"),
+        )
+        .unwrap();
+        crate::shared::storage::db::Db::open(&root.join("data.db")).unwrap();
+    }
 
-        assert_eq!(out.parent(), Some(paths.backups_dir().as_path()));
-        let name = out.file_name().unwrap().to_string_lossy().into_owned();
-        assert!(name.starts_with("pre-migrate-"), "{name}");
+    /// A backup of files no start has migrated yet — a pre-migration backup,
+    /// `backup` run by a new version before its first start — records the
+    /// schemas they hold, not this build's, and still names the build that
+    /// wrote it: the release before the step reads every file in it and is not
+    /// warned (spec §12.3; 0.22.0 was, on 0.23.0's).
+    #[test]
+    fn a_backup_records_what_its_files_hold() {
+        let dir = tempfile::tempdir().unwrap();
+        seed_versions(dir.path(), SETTINGS_SCHEMA, CHAT_SCHEMA - 1);
+        let paths = Paths::with_root(dir.path());
+        let out = create_backup(&paths, None, 1, None, None, ru(), |_| {}).unwrap();
+
         let m = read_manifest(&out).unwrap().expect("a manifest");
-        assert_eq!(m.schemas, held);
+        assert_eq!(m.schemas, reader_before_the_chat_step());
         assert_eq!(m.app_version, env!("CARGO_PKG_VERSION"), "who wrote it");
         assert_eq!(m.newer_than(&reader_before_the_chat_step()), vec![]);
         assert!(!m.is_newer_than_current());
         assert_eq!(m.restore_warning(locale(Lang::En)), None);
-        // What it packs is what an ordinary backup packs.
-        let ordinary = create_backup(&paths, None, 9, None, None, ru(), |_| {}).unwrap();
-        assert_eq!(archive_names(&out), archive_names(&ordinary));
     }
 
-    /// An ordinary backup still records this build's schemas — the app it is
-    /// taken from has brought its files to them — so the release before a step
-    /// is warned, and told which file.
+    /// A backup of files at this build's schemas is newer for the release
+    /// before a step, and the warning names the file.
     #[test]
-    fn an_ordinary_backup_is_newer_for_the_release_before_a_step() {
+    fn a_backup_of_current_files_is_newer_for_the_release_before_a_step() {
         let dir = tempfile::tempdir().unwrap();
-        seed_data(dir.path());
+        seed_versions(dir.path(), SETTINGS_SCHEMA, CHAT_SCHEMA);
         let paths = Paths::with_root(dir.path());
         let out = create_backup(&paths, None, 1, None, None, ru(), |_| {}).unwrap();
 
@@ -1909,28 +1934,74 @@ mod tests {
         );
     }
 
-    /// A pre-migration backup is encrypted like every copy the app makes on its
-    /// own, and its manifest stays readable without the password.
+    /// The chats count by the newest — a reader older than one file refuses
+    /// that file — and only `chats/*.json`, what the start-up reads: a `.bak`
+    /// is not counted, nor a file that is not JSON. A kind with no file, a
+    /// settings file that is not JSON and a database that is not SQLite are 0;
+    /// the backup is made all the same.
     #[test]
-    fn a_pre_migrate_backup_takes_the_password() {
+    fn what_a_backup_records_is_what_the_start_up_would_read() {
         let dir = tempfile::tempdir().unwrap();
-        seed_data(dir.path());
-        let paths = Paths::with_root(dir.path());
-        let held = reader_before_the_chat_step();
-        let out = create_pre_migrate_backup(&paths, held.clone(), Some("pw"), ru()).unwrap();
+        let root = dir.path();
+        fs::write(root.join("settings.json"), b"not json").unwrap();
+        fs::write(root.join("data.db"), b"SQLITE").unwrap();
+        fs::create_dir_all(root.join("chats")).unwrap();
+        for (name, body) in [
+            ("a.json", "{\"v\":6}"),
+            ("b.json", "{\"v\":7}"),
+            ("c.json", "{}"),
+            ("d.json", "{\"v\":"),
+            ("b.bak", "{\"v\":99}"),
+        ] {
+            fs::write(root.join("chats").join(name), body).unwrap();
+        }
+        let paths = Paths::with_root(root);
+        let out = create_backup(&paths, None, 1, None, None, ru(), |_| {}).unwrap();
 
-        assert_eq!(
-            check_password(&out, None).unwrap(),
-            ArchivePassword::Required
-        );
-        assert_eq!(
-            check_password(&out, Some("pw")).unwrap(),
-            ArchivePassword::Ok
-        );
-        assert_eq!(
-            read_manifest(&out).unwrap().expect("a manifest").schemas,
-            held
-        );
+        let m = read_manifest(&out).unwrap().expect("a manifest");
+        let held = SchemaVersions {
+            settings: 0,
+            profiles: 0,
+            chat: 7,
+            db: 0,
+        };
+        assert_eq!(m.schemas, held);
+    }
+
+    /// The copy `restore` makes of a root restored and not yet opened records
+    /// what that root holds — here a chat at the schema before this build's.
+    #[test]
+    fn the_pre_restore_copy_records_what_the_root_holds() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        fs::create_dir_all(&root).unwrap();
+        seed_versions(&root, SETTINGS_SCHEMA, CHAT_SCHEMA - 1);
+        let paths = Paths::with_root(&root);
+        let other = dir.path().join("other");
+        fs::create_dir_all(&other).unwrap();
+        seed_versions(&other, SETTINGS_SCHEMA, CHAT_SCHEMA);
+        let archive = dir.path().join("other.zip");
+        create_backup(
+            &Paths::with_root(&other),
+            Some(archive.clone()),
+            1,
+            None,
+            None,
+            ru(),
+            |_| {},
+        )
+        .unwrap();
+
+        let outcome = restore_backup(&paths, &archive, None, None, ru(), |_| {}).unwrap();
+
+        let RestoreOutcome::Restored {
+            pre_restore: Some(pre),
+        } = outcome
+        else {
+            panic!("expected a restore with a pre-restore copy");
+        };
+        let m = read_manifest(&pre).unwrap().expect("a manifest");
+        assert_eq!(m.schemas, reader_before_the_chat_step());
     }
 
     /// The warning names each file the archive holds at a newer schema, both

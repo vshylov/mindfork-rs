@@ -250,12 +250,32 @@ pub fn vacuum(path: &std::path::Path) -> Result<()> {
 fn is_sqlite_file(path: &std::path::Path) -> bool {
     use std::io::Read;
 
-    const MAGIC: &[u8; 16] = b"SQLite format 3\0";
     let Ok(mut f) = std::fs::File::open(path) else {
         return false;
     };
     let mut head = [0u8; 16];
-    f.read_exact(&mut head).is_ok() && &head == MAGIC
+    f.read_exact(&mut head).is_ok() && &head == SQLITE_MAGIC
+}
+
+/// The first 16 bytes of every SQLite database file.
+const SQLITE_MAGIC: &[u8; 16] = b"SQLite format 3\0";
+
+/// The `user_version` a database file's header records (offset 60, four bytes,
+/// big-endian — SQLite's file format), read from the bytes alone: the backup's
+/// manifest names the version of the database it packs, and opening the file
+/// through SQLite is not free (see [`vacuum_into`]). `None` — not a SQLite
+/// file, or shorter than its header. In WAL mode the header can lag a change
+/// not yet checkpointed; a compacted copy has no WAL.
+pub fn header_user_version(path: &std::path::Path) -> Option<u32> {
+    use std::io::Read;
+
+    let mut head = [0u8; 64];
+    std::fs::File::open(path).ok()?.read_exact(&mut head).ok()?;
+    if &head[..16] != SQLITE_MAGIC {
+        return None;
+    }
+    let [a, b, c, d] = [head[60], head[61], head[62], head[63]];
+    Some(u32::from_be_bytes([a, b, c, d]))
 }
 
 /// The idempotent DB schema (additive; see [`migrate`]).
@@ -678,6 +698,35 @@ mod migrate_tests {
     fn peek_user_version_zero_for_missing_file() {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(peek_user_version(&dir.path().join("nope.db")).unwrap(), 0);
+    }
+
+    /// The header's bytes say what `PRAGMA user_version` says — on a database
+    /// the app opened, on its compacted copy, and on one stamped by hand — and
+    /// a file that is not SQLite, or too short, says nothing.
+    #[test]
+    fn header_user_version_reads_the_pragma_from_the_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("data.db");
+        Db::open(&src).unwrap();
+        assert_eq!(header_user_version(&src), Some(DB_SCHEMA));
+        let dest = dir.path().join("compact.db");
+        vacuum_into(&src, &dest).unwrap();
+        assert_eq!(header_user_version(&dest), Some(DB_SCHEMA));
+
+        let stamped = dir.path().join("stamped.db");
+        set_user_version(&Connection::open(&stamped).unwrap(), 0x0102_0304).unwrap();
+        assert_eq!(header_user_version(&stamped), Some(0x0102_0304));
+        assert_eq!(
+            header_user_version(&stamped),
+            Some(peek_user_version(&stamped).unwrap())
+        );
+
+        let not_a_db = dir.path().join("x.db");
+        std::fs::write(&not_a_db, b"SQLITE").unwrap();
+        assert_eq!(header_user_version(&not_a_db), None);
+        std::fs::write(&not_a_db, SQLITE_MAGIC).unwrap();
+        assert_eq!(header_user_version(&not_a_db), None, "a cut header");
+        assert_eq!(header_user_version(&dir.path().join("none.db")), None);
     }
 
     #[test]

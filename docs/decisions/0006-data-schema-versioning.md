@@ -212,12 +212,13 @@ data); `read_manifest` reads it separately, and `mindfork restore` warns
 data is intact, and the downgrade guard at startup still protects it. An old
 backup without a manifest → `None` (no warning).
 
-**Amended 2026-10-31.** The schemas are those of what the archive **holds**. An
-ordinary backup records the writing build's constants; the pre-migration backup
-records the versions its files were detected at before the step
-(`backup::create_pre_migrate_backup`), because it is the copy that goes back to
-the previous release — recorded at the build's schemas, it had 0.22.0 warn about
-its own data. The warning names each newer file and both schemas (spec §12.3).
+**Amended 2026-10-31.** The schemas are those of what the archive **holds**,
+read from the files as they are packed (`SchemaVersions::held_by`: the start-up's
+detection, the newest chat, the database header's `user_version`), not the
+writing build's constants. A backup can hold files no start has migrated — the
+pre-migration backup, the copy that goes back to the previous release, above all:
+recorded at the build's schemas, it had 0.22.0 warn about its own data. The
+warning names each newer file and both schemas (spec §12.3).
 
 **Deferred** (groundwork):
 
