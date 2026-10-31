@@ -59,6 +59,7 @@ Two rules that follow from that:
 | adopting an **architectural decision** | [docs/decisions/](docs/decisions/) — write a new ADR (list below) |
 | **planning a track** | AGENTS.md §1 · prior art in [docs/research/](docs/research/) (pre-decision) and [docs/history/](docs/history/) (finished plans) |
 | working on the **code workspace** — the project attached to a chat | architecture §8, §10 · spec §9.12 · [docs/journal/tools.md](docs/journal/tools.md) · the finished plan [docs/history/code-workspace.md](docs/history/code-workspace.md) |
+| working on **Fabula**, the story engine — its database, the simulation, the story tools | [docs/fabula.md](docs/fabula.md) (the plan) · [docs/research/fabula-engine.md](docs/research/fabula-engine.md) (the design) · ADR 0014 · [docs/journal/stories.md](docs/journal/stories.md) |
 | installing, running, configuring the engine | [docs/install.md](docs/install.md) |
 | what is left to do | [docs/roadmap.md](docs/roadmap.md) |
 | what the user sees as changed | [CHANGELOG.md](CHANGELOG.md) |
@@ -183,9 +184,9 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-10-31, version 0.23.1)
+## Status (2026-11-01, version 0.23.1)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **4475 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **4524 unit tests
 green, 308 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump and demo-reel regenerators).
 
@@ -198,6 +199,10 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **Fabula, a story engine used from the chat — M0 started** (2026-11-01): the plan and
+  ADR 0014; the story database — an append-only, branched event log behind one actor,
+  one writer per store ([docs/fabula.md](docs/fabula.md),
+  [docs/journal/stories.md](docs/journal/stories.md)).
 - **Image generation — track complete** (2026-10-30): `image_generate` over a
   slot of its own (OpenAI by default, Gemini, the gateway, xAI), off by default;
   editing, a `generated` chat file (chats 6 → 7), a ceiling per turn, a refusal ends
@@ -391,17 +396,6 @@ being recent is dropped, not shortened.
   *diverged*, never as "newer there"; equal fingerprints mean an identical comparison.
   Live **GO**, both stages ([docs/history/data-stats.md](docs/history/data-stats.md), spec §12.4,
   [docs/journal/storage.md](docs/journal/storage.md)).
-- **The release pipeline — what a stranger downloads, and what produced it** (stage 3).
-  The Windows binary needed a Visual C++ runtime nothing ships (`VCRUNTIME140.dll`,
-  measured) — the C runtime is now static, in `.cargo/config.toml` so the tests run on the
-  shipped linkage; a tag is checked against `Cargo.toml` and the CHANGELOG before anything
-  builds and the release comes out a **draft** (`tools/release_guard.py`, its refusals
-  self-tested in `lint`); the licences travel — `THIRD-PARTY-NOTICES.md` from the release's
-  own lock file, the grammar licences, the policy in the Linux packages; `nfpm` and every
-  action are pinned and hash- or SHA-verified with Dependabot keeping them current, and
-  Sonar no longer fails a fork's or Dependabot's pull request
-  ([docs/research/release-pipeline.md](docs/research/release-pipeline.md),
-  [docs/journal/release.md](docs/journal/release.md), [docs/journal/ci.md](docs/journal/ci.md)).
 - **A headless launch (no TTY) exits with code 2** and a one-line reason — the
   TUI cannot be run from an agent's shell; how it *looks* needs a real terminal
   and a person. What a console *holds* can be measured on Windows:

@@ -1,0 +1,93 @@
+{
+  "world": {
+    "rules": [
+      "No magic.",
+      "The harbour gate closes at sunset.",
+      "In the storm no boat leaves the harbour."
+    ]
+  },
+  "locations": [
+    {
+      "key": "harbour",
+      "name": "Harbour",
+      "description": "Stone quays, the harbour master's hut, a storm coming in from the west.",
+      "routes": [
+        { "to": "inn", "ticks": 1 },
+        { "to": "lighthouse", "ticks": 2 },
+        { "to": "warehouse", "ticks": 1 }
+      ],
+      "items": []
+    },
+    {
+      "key": "inn",
+      "name": "The Gull Inn",
+      "description": "A low taproom with a fire and three rooms upstairs.",
+      "routes": [
+        { "to": "harbour", "ticks": 1 },
+        { "to": "chapel", "ticks": 1 }
+      ],
+      "items": ["lantern"]
+    },
+    {
+      "key": "lighthouse",
+      "name": "Lighthouse",
+      "description": "A white tower on the breakwater; the lamp room is reached by ninety steps.",
+      "routes": [{ "to": "harbour", "ticks": 2 }],
+      "items": []
+    },
+    {
+      "key": "chapel",
+      "name": "Seamen's Chapel",
+      "description": "A cold chapel with the names of the drowned on its walls.",
+      "routes": [{ "to": "inn", "ticks": 1 }],
+      "items": []
+    },
+    {
+      "key": "warehouse",
+      "name": "Bonded Warehouse",
+      "description": "Customs storage behind a locked door; tonight's crates wait inside.",
+      "routes": [{ "to": "harbour", "ticks": 1 }],
+      "items": ["crate"]
+    }
+  ],
+  "characters": [
+    {
+      "key": "mara",
+      "name": "Mara",
+      "public": "The harbour master: fifty, curt, respected.",
+      "voice": "Short sentences, harbour slang.",
+      "goals": ["Keep tonight's shipment off the books"],
+      "secrets": [
+        { "key": "bribe", "text": "She took a bribe from the smuggler. [SECRET-MARA-7Q]" }
+      ],
+      "start": { "location": "harbour", "holds": ["ledger"] }
+    },
+    {
+      "key": "silas",
+      "name": "Silas",
+      "public": "A trader from the south, stranded at the inn by the storm.",
+      "voice": "Polite, unhurried, fond of proverbs.",
+      "goals": ["Get the crates aboard before dawn"],
+      "secrets": [
+        { "key": "rifles", "text": "The crates hold rifles, not wine. [SECRET-SILAS-3K]" }
+      ],
+      "start": { "location": "inn", "holds": ["warehouse_key"] }
+    },
+    {
+      "key": "ines",
+      "name": "Ines",
+      "public": "The lighthouse keeper, young and new to the town.",
+      "voice": "Careful, formal, asks questions.",
+      "goals": ["Find out why the harbour master lied to her"],
+      "secrets": [
+        { "key": "signal", "text": "She was paid to dim the lamp at midnight. [SECRET-INES-9D]" }
+      ],
+      "start": { "location": "lighthouse", "holds": ["logbook"] }
+    }
+  ],
+  "style": { "pov": "close third, rotating", "tense": "past" },
+  "arc": {
+    "premise": "A storm traps three people in a harbour town overnight.",
+    "chapters": [{ "goal": "The shipment's secret reaches the wrong person." }]
+  }
+}

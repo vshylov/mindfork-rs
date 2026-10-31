@@ -2101,6 +2101,14 @@ a tolerance: an `f32` field returns the nearest `f32`, and `0.7` is not
 compatibility the attribute is there for.
 — *`mindfork setup --set`, 2026-09-21*.
 
+**`deny_unknown_fields` does not reach a variant without fields.** On an internally
+tagged enum (`#[serde(tag = "type")]`) a struct variant refuses a field it lacks, but a
+unit variant reads `{"type":"public","to":["ines"]}` as `Public` in silence — a whisper
+broadcast to the room. Where the input is a model's reply or a tool's arguments, the
+parse is not the check: validate against the closed schema first, or give the variant an
+empty struct body. Measured by the test that expected the refusal.
+— *Fabula — PR 1, the story database* ([journal/stories.md](journal/stories.md)).
+
 **A new field is additive; a new *value* of an existing enum is not.** An
 unknown key is ignored, but an unknown value fails the parse — and
 `settings.json` is read as a whole, so one value an older binary does not know

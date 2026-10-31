@@ -1,6 +1,6 @@
 # Fabula — a story engine used from the chat: track plan
 
-**Status:** plan (2026-10-31). Every fork of the research is decided by the owner, and
+**Status:** in progress — PR 1 built (2026-11-01). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
 so are the three this plan adds (§6) and where development runs (§4, *The development
 stack*). The design —
 the engine, its stores, its contracts, its evaluation — is
@@ -50,10 +50,10 @@ The layer rule holds (`tools/layer_check.py`): a layer names only the layers bel
 
 | Layer | What lives there |
 | --- | --- |
-| `entities/story.rs` | The domain types: canon, cast sheets, locations, setups, proposals, actions, visibility, events and effects, questions and assumptions |
-| `shared/storage/story/` | The story database and its call-log sibling: the schema with append-only triggers, the database actor on a thread of its own with the only read-write connection, the write capabilities, the read views. `STORY_SCHEMA` joins `shared/storage/schema.rs` |
+| `entities/story/` | The domain types: canon, cast sheets, locations, setups, proposals, actions, visibility, events and effects, questions and assumptions; the canon's deterministic checks; the fold of world state over a branch path and the witnesses. The fold lives here, not in `features`, because the database actor runs it for every commit, and `shared` may name `entities` but never `features` |
+| `shared/storage/story/` | The story database and its call-log sibling: the schema with append-only triggers, the database actor on a thread of its own with the only connections, the write capabilities, the read views (served by the actor too). `STORY_SCHEMA` and `STORY_CALLS_SCHEMA` join `shared/storage/schema.rs` |
 | `shared/api` | The output-schema field on `ChatRequest` and its mapping in each wire (spec §8, §14) |
-| `features/story/` | The engine: the fold of world state over a branch path, witnesses, the deterministic validators, the scene runner, the chapter loop, the reviewers, the pauses; `LlmPort` with the replay adapter and the adapter over `EngineBackend`; the schemas and the dialect's check; the role prompts as English templates beside the code |
+| `features/story/` | The engine: the deterministic validators of proposals, the scene runner, the chapter loop, the reviewers, the pauses; `LlmPort` with the replay adapter and the adapter over `EngineBackend`; the schemas and the dialect's check; the role prompts as English templates beside the code |
 | `features/tools/story.rs` | The three tools' schemas and descriptions, en and ru like every tool's |
 | `app/orchestrator/` | The third background payload beside the sub-agent's and the dialogue's; the landing (the chapter into the chat, the notification); the user's rows after a question, read verbatim for `story_continue`; the pending question's reminder line at the request's tail |
 | `entities/subagent.rs` | `RunKind::Story` |
@@ -119,6 +119,15 @@ slow; a turn takes seconds on a cloud route, and arms run side by side.
 | --- | --- | --- |
 | 1 `feat/story-store` | `entities/story.rs`; the story database: the schema of spec §6 with the call log in its sibling file, the append-only triggers, the actor and its capabilities, `STORY_SCHEMA = 1`; the canon's import and its deterministic checks; the fold and the witnesses over a branch path | Unit tests: `UPDATE` and `DELETE` on `event` refused; a second `BranchWriter` for a branch refused; a branch never sees a sibling's events; the fold and the witnesses on fixtures. `BranchWriter` not being `Clone` is a compile-time assertion (§5). No live run: storage only, said in the PR |
 | 2 `feat/story-ports` | `LlmPort`; the replay adapter keyed by call address (UUIDv5 ids, the prompt hash flagging drift); the adapter over `EngineBackend` with the fallback mechanism (the schema in the prompt, a lenient parse, one repair); the schemas derived from the types and the dialect's check; one scripted scene | **Gate G0:** the fixture replays identically; a second writer is refused; the assertion holds. One `#[ignore]` smoke records the fixture against a gate model |
+
+**PR 1, as built (2026-11-01).** Where the code differs from the spec's sketch of §6 and
+§9, and why, is in [journal/stories.md](journal/stories.md): the fold and the witnesses
+sit in `entities` (§3); reads go through the actor as writes do, so the files keep the
+default rollback journal rather than WAL; every table but `run` and `step` is append-only;
+ids are derived from position, never drawn at random; routes and secrets are arrays of
+closed objects. One finding passes to PR 2: serde reads a stray field on a variant
+without fields in silence, so a reply is validated against its schema before it is
+parsed.
 
 ### M1 — the simulation, live
 
@@ -203,9 +212,9 @@ Its pull requests are cut when M4 starts.
   instead, the ambiguity trick `static_assertions::assert_not_impl_any!` uses.
 - **Coverage.** The deciding code goes into functions a unit test calls, and every file
   of live smokes is named as a test file, as `sonar-project.properties` explains.
-- **CLAUDE.md is 33 bytes under its cap** (30,000). The first code PR adds the story
-  engine's row to the document map and the journal file it points to, so it drops a
-  status line that has stopped being recent.
+- **CLAUDE.md sits near its cap** (30,000 bytes). PR 1 added the story engine's row to
+  the document map and its status line, and dropped the release pipeline's, which had
+  stopped being recent; each later PR keeps to the one line.
 
 ## 6. Forks this plan adds
 

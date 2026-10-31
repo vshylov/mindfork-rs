@@ -13,6 +13,10 @@ pub mod rag;
 pub mod sampling;
 pub mod self_model;
 pub mod self_model_history;
+// Fabula's domain is built and tested ahead of its first production consumer,
+// the background story run (docs/fabula.md §4, PR 8); the allow goes with it.
+#[allow(dead_code)]
+pub mod story;
 pub mod subagent;
 pub mod task;
 pub mod workspace;
