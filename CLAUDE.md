@@ -186,8 +186,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-11-01, version 0.23.1)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **4524 unit tests
-green, 308 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **4567 unit tests
+green, 309 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump and demo-reel regenerators).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -199,9 +199,10 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
-- **Fabula, a story engine used from the chat — M0 started** (2026-11-01): the plan and
-  ADR 0014; the story database — an append-only, branched event log behind one actor,
-  one writer per store ([docs/fabula.md](docs/fabula.md),
+- **Fabula, a story engine used from the chat — M0 done, G0 GO** (2026-11-01): the plan
+  and ADR 0014; the story database — an append-only, branched event log behind one actor,
+  one writer per store; the model port, replayed from the call log by address
+  ([docs/fabula.md](docs/fabula.md),
   [docs/journal/stories.md](docs/journal/stories.md)).
 - **Image generation — track complete** (2026-10-30): `image_generate` over a
   slot of its own (OpenAI by default, Gemini, the gateway, xAI), off by default;

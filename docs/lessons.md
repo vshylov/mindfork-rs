@@ -2109,6 +2109,16 @@ parse is not the check: validate against the closed schema first, or give the va
 empty struct body. Measured by the test that expected the refusal.
 — *Fabula — PR 1, the story database* ([journal/stories.md](journal/stories.md)).
 
+**A `serde_json::Value` sorts its keys.** The crate's `serde_json` is built without
+`preserve_order`, so a `Map` is a `BTreeMap`: whatever goes through a `Value` comes out
+in alphabetical order. Where the order means something, it is lost there. A JSON
+Schema's `properties` are the order a model writes the fields in (the thought before the
+action), and llama.cpp and Anthropic keep it. Write such JSON as text, from a type that
+serializes its fields in order, and carry the text to the wire as it is. Turning on
+`preserve_order` crate-wide is not the fix: it changes the bytes of every file and request
+the application writes.
+— *Fabula — PR 2, the model port and replay* ([journal/stories.md](journal/stories.md)).
+
 **A new field is additive; a new *value* of an existing enum is not.** An
 unknown key is ignored, but an unknown value fails the parse — and
 `settings.json` is read as a whole, so one value an older binary does not know
