@@ -14,6 +14,13 @@ split by subsystem.
 
 ## [Unreleased]
 
+## [0.23.1] — 2026-10-31
+
+**A backup says what it holds.** The backup made before a data upgrade no longer
+warns the version before the upgrade against its own data: every backup now records
+the format of the files it packs, not of the version that made it, and a warning that
+is due names the files that are newer.
+
 ### Fixed
 
 - **A false warning on the way back to the previous version.** Restoring the backup
@@ -25,6 +32,16 @@ split by subsystem.
   first start, and for the copy `restore` makes of data restored but not yet opened. A
   backup 0.23.0 already made still warns, harmlessly. When the warning is due, it now
   names the files that are newer and their format numbers.
+
+### Data
+
+- **A backup's `manifest.json` keeps its shape**: the same four format numbers, now
+  those of the files it packs — for the chats, the newest of them — rather than of the
+  version that wrote it. Nothing is migrated. Checked with the published 0.23.0 and
+  0.22.0: 0.23.0 restores a backup this version made and starts on it, with the same
+  chats; 0.22.0 restores the backup this version makes before upgrading 0.22.0's data
+  with no warning and every chat in it — where the one 0.23.0 makes of the same data
+  still warns.
 
 ## [0.23.0] — 2026-10-30
 
@@ -3762,7 +3779,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.23.0...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.23.1...HEAD
+[0.23.1]: https://github.com/vshylov/mindfork-rs/compare/v0.23.0...v0.23.1
 [0.23.0]: https://github.com/vshylov/mindfork-rs/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/vshylov/mindfork-rs/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/vshylov/mindfork-rs/compare/v0.20.0...v0.21.0
