@@ -211,6 +211,8 @@ CREATE TABLE llm_call (id TEXT PRIMARY KEY,   -- UUIDv5 of run_id, address and a
   created_at TEXT NOT NULL, UNIQUE (run_id, address, attempt));
 ```
 
+The schema as built is `src/shared/storage/story/schema.rs`, whose header lists where it differs from this sketch and why.
+
 **Rust type sketch**
 
 ```rust
@@ -586,9 +588,10 @@ Under option A an `endpoint` names one of mindfork's modes (`managed`, `external
 {
   "world": { "rules": ["No magic.", "The harbour gate closes at sunset."] },
   "locations": [
-    { "key": "harbour", "name": "Harbour", "routes": { "inn": 1, "lighthouse": 2 } },
-    { "key": "inn", "name": "The Gull Inn", "routes": { "harbour": 1 } },
-    { "key": "lighthouse", "name": "Lighthouse", "routes": { "harbour": 2 } }
+    { "key": "harbour", "name": "Harbour",
+      "routes": [{ "to": "inn", "ticks": 1 }, { "to": "lighthouse", "ticks": 2 }] },
+    { "key": "inn", "name": "The Gull Inn", "routes": [{ "to": "harbour", "ticks": 1 }] },
+    { "key": "lighthouse", "name": "Lighthouse", "routes": [{ "to": "harbour", "ticks": 2 }] }
   ],
   "characters": [
     {
@@ -596,7 +599,7 @@ Under option A an `endpoint` names one of mindfork's modes (`managed`, `external
       "public": "The harbour master: fifty, curt, respected.",
       "voice": "Short sentences, harbour slang.",
       "goals": ["Keep tonight's shipment off the books"],
-      "secrets": ["She took a bribe from the smuggler. [SECRET-MARA-7Q]"],
+      "secrets": [{ "key": "bribe", "text": "She took a bribe from the smuggler. [SECRET-MARA-7Q]" }],
       "start": { "location": "harbour", "holds": ["ledger"] }
     }
   ],
@@ -608,7 +611,7 @@ Under option A an `endpoint` names one of mindfork's modes (`managed`, `external
 }
 ```
 
-Routes are measured in scene ticks. The token in brackets is the planted secret that section 11's leak metric looks for.
+Routes are one way and measured in scene ticks. The token in brackets is the planted secret that section 11's leak metric looks for. Routes and secrets are arrays of closed objects, so the canon fits the schema dialect of section 8 when `story_create` takes it as arguments; the full fixture is `src/entities/story/fixtures/harbour.json`.
 
 ## 14. Integration decision: mindfork-rs or a separate project
 

@@ -34,6 +34,16 @@ pub const CHAT_SCHEMA: u32 = 7;
 /// SQLite schema version (`PRAGMA user_version`). The DB migration runner is in
 /// [`crate::shared::storage::db`] (baseline 0→1 + steps in transactions).
 pub const DB_SCHEMA: u32 = 1;
+/// Schema version of a story's database (`PRAGMA user_version`): Fabula's canon,
+/// event log, manuscript and run steps (docs/research/fabula-engine.md §6). Its
+/// runner is in [`crate::shared::storage::story`]; no released build writes one
+/// before the story tools ship (docs/fabula.md §4, PR 8).
+#[allow(dead_code)] // read by the story database, whose first consumer is PR 8
+pub const STORY_SCHEMA: u32 = 1;
+/// Schema version of a story's call log, the sibling file that records every
+/// model call for replay and stays outside backups (spec §6, §15).
+#[allow(dead_code)] // as above
+pub const STORY_CALLS_SCHEMA: u32 = 1;
 
 /// A JSON migration step: a pure transformation "version `< to` → `to`".
 pub struct Step {

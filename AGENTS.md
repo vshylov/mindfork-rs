@@ -169,6 +169,7 @@ links). Pick the file by subsystem, the one the change is *about*:
 | [ci.md](docs/journal/ci.md) | workflows and jobs, caches, Actions minutes, the rented live-test gate, test-side cost work |
 | [quality.md](docs/journal/quality.md) | SonarQube analysis and its backlog, the quality gate, and the gates guarding the repo's own structure |
 | [refactors.md](docs/journal/refactors.md) | god-object splits, SOLID work, single-source consolidations |
+| [stories.md](docs/journal/stories.md) | Fabula, the story engine: its database, the simulation, the Author's loop, the story tools and their evaluation |
 
 ## 5. Commit and PR: model attribution
 

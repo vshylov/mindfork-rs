@@ -7,6 +7,11 @@ mod chat_steps;
 pub mod db;
 pub mod json;
 pub mod schema;
+// A story's database is built and tested ahead of its first production
+// consumer, the background story run (docs/fabula.md §4, PR 8); the allow goes
+// with it.
+#[allow(dead_code)]
+pub mod story;
 
 use anyhow::Result;
 use uuid::Uuid;

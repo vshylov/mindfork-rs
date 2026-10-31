@@ -247,7 +247,7 @@ pub fn vacuum(path: &std::path::Path) -> Result<()> {
 /// database to SQLite, but deliberately reads as `false` here: it is one of the
 /// zero-page cases that provoke the sidecar delete, and there is nothing in it
 /// to compact anyway.
-fn is_sqlite_file(path: &std::path::Path) -> bool {
+pub(crate) fn is_sqlite_file(path: &std::path::Path) -> bool {
     use std::io::Read;
 
     let Ok(mut f) = std::fs::File::open(path) else {

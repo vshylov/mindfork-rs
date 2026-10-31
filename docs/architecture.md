@@ -30,7 +30,7 @@ sources of truth:
   [0013](decisions/0013-messenger-bridge.md) — the messenger bridge: a seat of
   its own for a turn whose chat is not on screen, Telegram first; and
   [0014](decisions/0014-fabula-story-engine.md) — Fabula, a multi-agent story
-  engine inside mindfork, used from the chat through tools (planned, [fabula.md](fabula.md));
+  engine inside mindfork, used from the chat through tools (in progress, [fabula.md](fabula.md));
 - **[docs/install.md](install.md)** — install/run, engine, env.
 
 > Terminology: **engine** = the inference provider behind the `EngineBackend`
@@ -793,6 +793,17 @@ src/
 │  ├─ rag.rs                RagDocument / RagHit
 │  ├─ sampling.rs           SamplingConfig, ReasoningEffort, resolve (three-tier priority)
 │  ├─ self_model.rs         SelfModel — the per-profile self-model (§9)
+│  ├─ story/                Fabula's domain (docs/research/fabula-engine.md §4–§6, docs/fabula.md):
+│  │                        keys the canon fixes and ids a run derives from position (`ch1/sc2/r0/k1/e3`,
+│  │                        never random, so a replay sends the same prompts); canon.rs — Canon and
+│  │                        check() (every problem at once: keys, routes, starts, empty texts);
+│  │                        event.rs — SceneSetup, Proposal, Action, Visibility, Effect, NewEvent/Event,
+│  │                        every union tagged by `type`; world.rs — WorldState::admit, the one gate an
+│  │                        event passes (checked against the state it applies to, applied, its
+│  │                        witnesses computed from presence and visibility), and fold over a path.
+│  │                        Here rather than in features because the story database runs it inside its
+│  │                        actor. No production consumer before the story run (PR 8): the module's
+│  │                        `allow(dead_code)` goes with it
 │  ├─ subagent.rs           SubagentRun/RunKind/RunOutcome — a run's record on its parent chat;
 │  │                        RunProgressKind/SubagentProgress (its position — the status-bar
 │  │                        chip) and ChildView (a transcript's view) — what the screens are told
@@ -857,8 +868,19 @@ src/
    │  ├─ thoughts.rs        streaming <think> parser (falls back to reasoning_content)
    │  └─ mock.rs            mock engine for tests (#[cfg(test)])
    ├─ storage/              storage
-   │  ├─ schema.rs          schema versions (SETTINGS/PROFILES/CHAT/DB_SCHEMA) + pure
-   │  │                     JSON migration scaffold (Step/JsonArtifact/Assessment, ADR 0006)
+   │  ├─ schema.rs          schema versions (SETTINGS/PROFILES/CHAT/DB_SCHEMA, STORY/STORY_CALLS_SCHEMA)
+   │  │                     + pure JSON migration scaffold (Step/JsonArtifact/Assessment, ADR 0006)
+   │  ├─ story/             a story's database (docs/research/fabula-engine.md §6, §9): StoryDb,
+   │  │                     a handle on an actor — a thread of its own owning the only connections
+   │  │                     to the story file and its call-log sibling (outside backups); every read
+   │  │                     and write is a job on it, so a commit's check and its append see one
+   │  │                     state. schema.rs — the tables, append-only triggers on all but run/step,
+   │  │                     the version read before any DDL, the default rollback journal;
+   │  │                     writers.rs — BranchWriter/ReflectionWriter/AuthorWriter/RunLogWriter,
+   │  │                     not Clone (a compile-time assertion), one per store at a time, given
+   │  │                     back on drop; actor.rs — the queries: a branch's path is its ancestry
+   │  │                     up to each fork, the canon is versioned per document. One open per
+   │  │                     file per process
    │  ├─ json.rs            atomic write (write-rename + .bak) for config/profiles/chats
    │  ├─ db/               SQLite + sqlite-vec: notes/RAG, isolated by profile_id.
    │  │  │                 God object broken up by domain (docs/history/refactoring-god-objects.md,
