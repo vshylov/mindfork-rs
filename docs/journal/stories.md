@@ -13,9 +13,10 @@ what was rejected — the reasoning behind the code, not its current shape. For 
 shape read the reference documents named above; for the traps that recur across areas read
 [lessons.md](../lessons.md).
 
-## Entries (1)
+## Entries (2)
 
 - Post-M9: Fabula — PR 1, the story database (done)
+- Post-M9: Fabula — PR 2, the model port and replay; Gate G0 GO (done)
 
 ### Post-M9: Fabula — PR 1, the story database (done)
 
@@ -93,3 +94,83 @@ item; no released build writes a story).
 
 **Gates**: 4524 unit tests green, 308 `#[ignore]`; clippy `-D warnings`, fmt, `cyrillic_scan`,
 `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check` clean.
+
+### Post-M9: Fabula — PR 2, the model port and replay; Gate G0 GO (done)
+
+M0's second half (docs/fabula.md §4): the model port, its two adapters, the replies'
+schemas with their validator and the dialect's check, and one scene played by script, which
+together let a scene be recorded against a model and replayed from its call log. All of it
+sits in `features/story/` under an `allow(dead_code)` until PR 8; nothing is user-visible.
+
+- **`LlmPort` takes a `Schema`, not a `Value`.** The crate's `serde_json` is built without
+  `preserve_order`, so a `Value` sorts its keys: the `Proposal` schema built as one would reach
+  the model with `action` before `private_thought`, while the order of the properties is the
+  order the model writes in (spec §8). `Schema` is the dialect by construction (closed objects,
+  every property required, null unions, tagged unions of closed objects; nothing to write a
+  `$ref` or a bound with) and prints its own JSON in the order declared. `dialect::check` reads
+  that JSON independently and names every rule broken, including more than Anthropic's 16
+  unions. Turning `preserve_order` on crate-wide was rejected: it would change the bytes of
+  every file and request the application writes. **For PR 3:** `ChatRequest` carries the
+  schema's printed text to the wire as it is, never through a `Value` (docs/lessons.md §8).
+- **Derived from the types, checked both ways.** `StorySchema` gives `Proposal`, `Action` and
+  `Visibility` their schemas, with the cast and the map as enums in the canon's order. The tests
+  hold every value of the type to the schema, and every instance the schema allows (one per
+  enum value and union branch) to the type, by parse and round trip. A field that reads as the
+  model's reasoning is avoided: `private_thought` is described as the character's inner voice,
+  story content (spec §8, `reasoning_extraction`).
+- **The validator runs before serde**, as PR 1's finding asked: `{"type":"public","to":[...]}`
+  is refused (`$.visibility.to: is not in the schema`), every violation is reported at once, and
+  an `enum` value matched in another case comes back in the schema's spelling.
+- **One policy for both adapters.** `run_json` and `run_text` take their attempts from an
+  `Attempts` source: a cut or a transient failure is tried once more with the same request; an
+  invalid reply is repaired once, by a turn that quotes the validator; a refusal or a lasting
+  failure ends the call; a cancelled one is never retried. `EngineAdapter` sends each attempt
+  to the `EngineBackend` and records it — request, reply text, how it ended, tokens, cost,
+  latency, thought length, the route that served it — the failures included. `ReplayAdapter`
+  reads attempt N back from the call log, so a replay walks the same retries and repairs as the
+  recorded call. A prompt that hashes differently from the one recorded is served all the same,
+  by address, and reported as drift.
+- **The fallback mechanism only.** `ChatRequest` has no output-schema field until PR 3, so
+  every JSON call puts the schema in the system part (after the stable content, so a prefix
+  cache keeps it), reads the reply leniently (fences and prose stepped over) and records
+  `mechanism = 'fallback'`. One live call per address: a second is refused by the call log;
+  how a resumed step numbers its attempts is PR 6's to decide.
+- **The scripted scene.** The setup is committed as two opening events (what just happened,
+  with everyone present placed at the scene; then the pressure). In round n the characters
+  present propose in parallel from one view of the world, and a fixed rule stands in for M1's
+  World Master: taken in the canon's order from the n-th, the first proposal the world admits
+  is committed as the initiative, one it refuses keeps the world's reason, the rest lapse, and a
+  wait commits nothing; two quiet rounds end the scene. A character's prompt holds its own sheet
+  and secrets, the others' public descriptions and what it witnessed on its path, its own
+  thoughts beside its own deeds; a test plays a hidden deed and finds it only in the actor's
+  next prompt. `SceneOutcome::to_json` is the trace a replay is compared by.
+- **Live, Qwen 3.8 27B on OpenRouter** (`qwen/qwen3.8-27b`, thinking off, temperature 0.8).
+  Unpinned, nine calls went to five providers, and one reply, from Darkbloom, was **the schema
+  itself** (1,232 tokens); the repair that quoted the validator got a valid proposal back
+  (10 attempts, $0.0065). Pinned to DeepInfra through a local pass-through that adds
+  `provider: {only: ["deepinfra"], allow_fallbacks: false}` (the client has no routing knob, by
+  decision), two runs of nine were all valid at the first attempt. The second is the committed
+  fixture: about 1,100 tokens in and 210 out a call, 4.6–8.6 s each, $0.0050 for the scene, no
+  secret token in another character's prompt, and a replay identical to the recording. One
+  thing for M1: Ines spoke her own secret aloud ("I was told to dim the lamp at midnight") in
+  the unpinned run. Only the World Master can turn that into a `Reveal`, and the leak metric
+  counts tokens, not paraphrases.
+- **Gate G0: GO** — the fixture replays identically, with no drift, offline
+  (`the_fixture_recorded_live_replays_identically`); a scene recorded through the engine
+  adapter on a scripted model replays identically twice, with its repair and its retry; a second
+  writer is refused and the not-`Clone` assertion holds (PR 1).
+- **Mutation check:** ten mutants behind an environment switch, one build — the stray-key
+  check, drift detection, the retry, the repair, the rule's rotation, the memory view, the
+  case-insensitive enum, the private part, the dialect's closed object, the cut's status —
+  every one failed a test. A test found its own false positive on the way: "pockets", which
+  it took for the hidden deed, is in the schema's description of `verb`, so it now looks for
+  the deed's own words.
+- **Tests** (+43, 4567): the dialect's rules one by one; the schema's order, its two-way fit
+  with the type, the validator's findings and the lenient read; every turn of the policy; what
+  the engine adapter records for each way a stream ends, a request that cannot be opened and a
+  cancelled run; the scene's rulings, its replay, drift, a missing call, the memory views;
+  the live fixture's replay and its leak count, with a check that the count can see a leak.
+
+**Gates**: 4567 unit tests green, 309 `#[ignore]`; clippy `-D warnings`, fmt, `cyrillic_scan`,
+`link_check`, `doc_index_check`, `layer_check`, `list_scroll_check`, `claude_md_chart --check`
+clean.

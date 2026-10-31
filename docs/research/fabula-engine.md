@@ -413,7 +413,7 @@ pub trait LlmPort: Send + Sync {
 }
 ```
 
-The call's logical address travels with it, so the replay adapter serves recorded replies exactly (section 9).
+The call's logical address travels with it, so the replay adapter serves recorded replies exactly (section 9). As built (PR 2), `json` takes the engine's own `Schema`, printed in the order declared, since a `serde_json::Value` sorts its keys; both adapters walk one policy of retries and repairs, so a replay repeats the live call's ([docs/fabula.md](../fabula.md) §4).
 
 ## 9. Concurrency, determinism and replay
 

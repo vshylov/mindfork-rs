@@ -259,7 +259,8 @@ pub enum Mechanism {
 }
 
 impl Mechanism {
-    fn as_str(self) -> &'static str {
+    /// The stored name.
+    pub fn as_str(self) -> &'static str {
         match self {
             Mechanism::Schema => "schema",
             Mechanism::Fallback => "fallback",
@@ -267,7 +268,8 @@ impl Mechanism {
         }
     }
 
-    fn parse(s: &str) -> Option<Self> {
+    /// The mechanism with this stored name.
+    pub fn parse(s: &str) -> Option<Self> {
         [Mechanism::Schema, Mechanism::Fallback, Mechanism::Text]
             .into_iter()
             .find(|v| v.as_str() == s)
@@ -288,7 +290,8 @@ pub enum CallStatus {
 }
 
 impl CallStatus {
-    fn as_str(self) -> &'static str {
+    /// The stored name.
+    pub fn as_str(self) -> &'static str {
         match self {
             CallStatus::Ok => "ok",
             CallStatus::Cut => "cut",
@@ -297,7 +300,8 @@ impl CallStatus {
         }
     }
 
-    fn parse(s: &str) -> Option<Self> {
+    /// The status with this stored name.
+    pub fn parse(s: &str) -> Option<Self> {
         [
             CallStatus::Ok,
             CallStatus::Cut,
@@ -600,6 +604,13 @@ impl StoryDb {
     ) -> Result<Option<StoredCall>, StoryDbError> {
         let (run, address) = (run.clone(), address.to_owned());
         self.run(move |a| a.call(&run, &address, attempt)).await
+    }
+
+    /// Every call recorded for `run`, in the order recorded: what a fixture
+    /// of the run exports (spec §9).
+    pub async fn calls(&self, run: &RunId) -> Result<Vec<StoredCall>, StoryDbError> {
+        let run = run.clone();
+        self.run(move |a| a.calls(&run)).await
     }
 
     /// Runs raw SQL on the story database, for tests of what the schema

@@ -48,6 +48,10 @@ pub mod rename_chat;
 pub mod sandbox_setup;
 pub mod slash;
 pub mod spellcheck;
+// Fabula's engine is built and tested ahead of its first production consumer,
+// the background story run (docs/fabula.md §4, PR 8); the allow goes with it.
+#[allow(dead_code)]
+pub mod story;
 pub mod terminal_input;
 pub mod themes;
 pub mod time_row;

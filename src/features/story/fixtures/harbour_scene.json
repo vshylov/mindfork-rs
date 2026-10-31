@@ -1,0 +1,942 @@
+{
+  "recorded": {
+    "date": "2026-10-31",
+    "endpoint": "http://127.0.0.1:18790/v1",
+    "mechanism": "fallback",
+    "model": "qwen/qwen3.8-27b",
+    "note": "OpenRouter through a local pass-through that adds provider {only: [deepinfra], allow_fallbacks: false} to every request (docs/fabula.md §4, the development stack)"
+  },
+  "script": {
+    "chapter": 1,
+    "scene": 1,
+    "rerun": 0,
+    "k": 0,
+    "setup": {
+      "location": "harbour",
+      "present": [
+        "mara",
+        "silas",
+        "ines"
+      ],
+      "just_happened": "The last ferry has been cancelled and the storm has shut the harbour for the night. Silas came down from the inn to ask after his crates; Ines came down from the lighthouse to say the lamp's oil will not last till dawn.",
+      "pressure": "The harbour gate closes at sunset, a quarter of an hour from now, and the customs ledger lies open on the harbour master's table."
+    },
+    "intent": "Ines begins to suspect that the ledger is false.",
+    "rounds": 3
+  },
+  "calls": [
+    {
+      "address": "ch1/sc1/r0/k0/round1/mara/propose",
+      "attempt": 1,
+      "role": "character",
+      "model": "qwen/qwen3.8-27b",
+      "params": {
+        "adaptive_decay": null,
+        "adaptive_target": null,
+        "dry_allowed_length": null,
+        "dry_base": null,
+        "dry_multiplier": null,
+        "dry_penalty_last_n": null,
+        "dry_sequence_breakers": null,
+        "dynatemp_exponent": null,
+        "dynatemp_range": null,
+        "frequency_penalty": null,
+        "max_tokens": 4096,
+        "min_p": null,
+        "mirostat": null,
+        "mirostat_eta": null,
+        "mirostat_tau": null,
+        "presence_penalty": null,
+        "reasoning_budget": null,
+        "reasoning_effort": null,
+        "repeat_last_n": null,
+        "repeat_penalty": null,
+        "samplers": null,
+        "seed": null,
+        "temperature": 0.800000011920929,
+        "thinking": false,
+        "top_k": null,
+        "top_n_sigma": null,
+        "top_p": null,
+        "typical_p": null,
+        "verbosity": null,
+        "xtc_probability": null,
+        "xtc_threshold": null
+      },
+      "mechanism": "fallback",
+      "request": {
+        "messages": [
+          {
+            "content": "Round 1. You are at Harbour, with Silas, Ines. You carry: ledger. Lying here: nothing.\n\nWhat you have perceived, oldest first:\n- The last ferry has been cancelled and the storm has shut the harbour for the night. Silas came down from the inn to ask after his crates; Ines came down from the lighthouse to say the lamp's oil will not last till dawn.\n- The harbour gate closes at sunset, a quarter of an hour from now, and the customs ledger lies open on the harbour master's table.\n\nWhat does Mara do now? Write the inner thought first, then the action.",
+            "role": "user"
+          }
+        ],
+        "system": "You play Mara in a story. Each round you decide what Mara does next, in character; the world decides what comes of it.\n\nThe world's rules:\n- No magic.\n- The harbour gate closes at sunset.\n- In the storm no boat leaves the harbour.\n\nThe places:\n- Harbour (`harbour`): Stone quays, the harbour master's hut, a storm coming in from the west.\n- The Gull Inn (`inn`): A low taproom with a fire and three rooms upstairs.\n- Lighthouse (`lighthouse`): A white tower on the breakwater; the lamp room is reached by ninety steps.\n- Seamen's Chapel (`chapel`): A cold chapel with the names of the drowned on its walls.\n- Bonded Warehouse (`warehouse`): Customs storage behind a locked door; tonight's crates wait inside.\n\nYou are Mara (`mara`). The harbour master: fifty, curt, respected.\nYour voice: Short sentences, harbour slang.\nYour goals:\n- Keep tonight's shipment off the books\nYour secrets, which no one else knows unless you reveal them:\n- She took a bribe from the smuggler. [SECRET-MARA-7Q]\n\nThe others, as everyone knows them:\n- Silas (`silas`): A trader from the south, stranded at the inn by the storm.\n- Ines (`ines`): The lighthouse keeper, young and new to the town.\n\nReply with one JSON object that matches this JSON Schema, and nothing else:\n{\"type\":\"object\",\"properties\":{\"private_thought\":{\"type\":\"string\",\"description\":\"What the character thinks and feels at this moment, in their own inner voice. Story content that no other character perceives.\"},\"action\":{\"description\":\"What the character does now.\",\"anyOf\":[{\"type\":\"object\",\"description\":\"Says something aloud.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"speak\"]},\"line\":{\"type\":\"string\",\"description\":\"The words spoken, in the character's voice.\"}},\"required\":[\"type\",\"line\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"Leaves for another place.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"move\"]},\"to\":{\"type\":\"string\",\"description\":\"Where the character goes.\",\"enum\":[\"harbour\",\"inn\",\"lighthouse\",\"chapel\",\"warehouse\"]}},\"required\":[\"type\",\"to\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"Does something, perhaps saying something at the same time.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"act\"]},\"verb\":{\"type\":\"string\",\"description\":\"The deed, such as \\\"slams\\\" or \\\"pockets\\\".\"},\"object\":{\"description\":\"What it is done to, or null.\",\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}]},\"line\":{\"description\":\"What is said meanwhile, or null.\",\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}]}},\"required\":[\"type\",\"verb\",\"object\",\"line\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"Does nothing for now.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"wait\"]}},\"required\":[\"type\"],\"additionalProperties\":false}]},\"targets\":{\"type\":\"array\",\"description\":\"The characters the action is aimed at; empty when it is aimed at no one.\",\"items\":{\"type\":\"string\",\"enum\":[\"mara\",\"silas\",\"ines\"]}},\"visibility\":{\"description\":\"Who can perceive the action.\",\"anyOf\":[{\"type\":\"object\",\"description\":\"Everyone present can perceive it.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"public\"]}},\"required\":[\"type\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"Only the named characters perceive it; they must be present.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"whisper\"]},\"to\":{\"type\":\"array\",\"description\":\"Who hears it.\",\"items\":{\"type\":\"string\",\"enum\":[\"mara\",\"silas\",\"ines\"]}}},\"required\":[\"type\",\"to\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"No one else perceives it.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"hidden\"]}},\"required\":[\"type\"],\"additionalProperties\":false}]}},\"required\":[\"private_thought\",\"action\",\"targets\",\"visibility\"],\"additionalProperties\":false}"
+      },
+      "prompt_sha256": "7a4862aeb6acdcae8db853244d28c195c4c8013a4fee7876df4c932064540adc",
+      "response": {
+        "cancelled": false,
+        "error": null,
+        "served_by": "DeepInfra",
+        "text": "{\n  \"private_thought\": \"Storm's coming in fast. Can't let that ledger get read by any customs man before the gate shuts. That bribe from the smuggler is the only thing keeping this port running smooth, and I ain't going down for a paperwork error. Silas wants his crates, but if the gate locks, it's just dead weight. Ines is useless without oil. Gotta secure the books first. No witnesses.\",\n  \"action\": {\n    \"type\": \"act\",\n    \"verb\": \"shoves\",\n    \"object\": \"the open customs ledger into a waterproof case\",\n    \"line\": \"Gate's closing. No one leaves, no one enters. Keep your voices down.\"\n  },\n  \"targets\": [],\n  \"visibility\": {\n    \"type\": \"hidden\"\n  }\n}",
+        "thought_chars": 0,
+        "transient": false
+      },
+      "status": "ok",
+      "input_tokens": 1029,
+      "output_tokens": 184,
+      "cached_tokens": 0,
+      "cost_usd": 0.00049935,
+      "latency_ms": 6308
+    },
+    {
+      "address": "ch1/sc1/r0/k0/round1/ines/propose",
+      "attempt": 1,
+      "role": "character",
+      "model": "qwen/qwen3.8-27b",
+      "params": {
+        "adaptive_decay": null,
+        "adaptive_target": null,
+        "dry_allowed_length": null,
+        "dry_base": null,
+        "dry_multiplier": null,
+        "dry_penalty_last_n": null,
+        "dry_sequence_breakers": null,
+        "dynatemp_exponent": null,
+        "dynatemp_range": null,
+        "frequency_penalty": null,
+        "max_tokens": 4096,
+        "min_p": null,
+        "mirostat": null,
+        "mirostat_eta": null,
+        "mirostat_tau": null,
+        "presence_penalty": null,
+        "reasoning_budget": null,
+        "reasoning_effort": null,
+        "repeat_last_n": null,
+        "repeat_penalty": null,
+        "samplers": null,
+        "seed": null,
+        "temperature": 0.800000011920929,
+        "thinking": false,
+        "top_k": null,
+        "top_n_sigma": null,
+        "top_p": null,
+        "typical_p": null,
+        "verbosity": null,
+        "xtc_probability": null,
+        "xtc_threshold": null
+      },
+      "mechanism": "fallback",
+      "request": {
+        "messages": [
+          {
+            "content": "Round 1. You are at Harbour, with Mara, Silas. You carry: logbook. Lying here: nothing.\n\nWhat you have perceived, oldest first:\n- The last ferry has been cancelled and the storm has shut the harbour for the night. Silas came down from the inn to ask after his crates; Ines came down from the lighthouse to say the lamp's oil will not last till dawn.\n- The harbour gate closes at sunset, a quarter of an hour from now, and the customs ledger lies open on the harbour master's table.\n\nWhat does Ines do now? Write the inner thought first, then the action.",
+            "role": "user"
+          }
+        ],
+        "system": "You play Ines in a story. Each round you decide what Ines does next, in character; the world decides what comes of it.\n\nThe world's rules:\n- No magic.\n- The harbour gate closes at sunset.\n- In the storm no boat leaves the harbour.\n\nThe places:\n- Harbour (`harbour`): Stone quays, the harbour master's hut, a storm coming in from the west.\n- The Gull Inn (`inn`): A low taproom with a fire and three rooms upstairs.\n- Lighthouse (`lighthouse`): A white tower on the breakwater; the lamp room is reached by ninety steps.\n- Seamen's Chapel (`chapel`): A cold chapel with the names of the drowned on its walls.\n- Bonded Warehouse (`warehouse`): Customs storage behind a locked door; tonight's crates wait inside.\n\nYou are Ines (`ines`). The lighthouse keeper, young and new to the town.\nYour voice: Careful, formal, asks questions.\nYour goals:\n- Find out why the harbour master lied to her\nYour secrets, which no one else knows unless you reveal them:\n- She was paid to dim the lamp at midnight. [SECRET-INES-9D]\n\nThe others, as everyone knows them:\n- Mara (`mara`): The harbour master: fifty, curt, respected.\n- Silas (`silas`): A trader from the south, stranded at the inn by the storm.\n\nReply with one JSON object that matches this JSON Schema, and nothing else:\n{\"type\":\"object\",\"properties\":{\"private_thought\":{\"type\":\"string\",\"description\":\"What the character thinks and feels at this moment, in their own inner voice. Story content that no other character perceives.\"},\"action\":{\"description\":\"What the character does now.\",\"anyOf\":[{\"type\":\"object\",\"description\":\"Says something aloud.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"speak\"]},\"line\":{\"type\":\"string\",\"description\":\"The words spoken, in the character's voice.\"}},\"required\":[\"type\",\"line\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"Leaves for another place.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"move\"]},\"to\":{\"type\":\"string\",\"description\":\"Where the character goes.\",\"enum\":[\"harbour\",\"inn\",\"lighthouse\",\"chapel\",\"warehouse\"]}},\"required\":[\"type\",\"to\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"Does something, perhaps saying something at the same time.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"act\"]},\"verb\":{\"type\":\"string\",\"description\":\"The deed, such as \\\"slams\\\" or \\\"pockets\\\".\"},\"object\":{\"description\":\"What it is done to, or null.\",\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}]},\"line\":{\"description\":\"What is said meanwhile, or null.\",\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}]}},\"required\":[\"type\",\"verb\",\"object\",\"line\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"Does nothing for now.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"wait\"]}},\"required\":[\"type\"],\"additionalProperties\":false}]},\"targets\":{\"type\":\"array\",\"description\":\"The characters the action is aimed at; empty when it is aimed at no one.\",\"items\":{\"type\":\"string\",\"enum\":[\"mara\",\"silas\",\"ines\"]}},\"visibility\":{\"description\":\"Who can perceive the action.\",\"anyOf\":[{\"type\":\"object\",\"description\":\"Everyone present can perceive it.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"public\"]}},\"required\":[\"type\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"Only the named characters perceive it; they must be present.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"whisper\"]},\"to\":{\"type\":\"array\",\"description\":\"Who hears it.\",\"items\":{\"type\":\"string\",\"enum\":[\"mara\",\"silas\",\"ines\"]}}},\"required\":[\"type\",\"to\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"No one else perceives it.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"hidden\"]}},\"required\":[\"type\"],\"additionalProperties\":false}]}},\"required\":[\"private_thought\",\"action\",\"targets\",\"visibility\"],\"additionalProperties\":false}"
+      },
+      "prompt_sha256": "b51c6bab29a80a4f41ba300c5633727a53987aa2ef13811b10eba4d6893b65dd",
+      "response": {
+        "cancelled": false,
+        "error": null,
+        "served_by": "DeepInfra",
+        "text": "{\n  \"private_thought\": \"The storm is a convenient shield. Mara is guarding her ledger like a fortress, yet she is ignoring the fact that the lamp goes dark in two hours. If the light fails, the harbour is a trap. She lied to me about the oil supply, or perhaps she lied about the ferry. I must see that ledger before the gate locks and the truth gets locked with it. I will pretend to be concerned about the lamp, but my eyes will be on the paper.\",\n  \"action\": {\n    \"type\": \"act\",\n    \"verb\": \"step\",\n    \"object\": \"closer to the table\",\n    \"line\": \"Mara, with the oil situation so critical, I must ensure the customs manifest is correct. If the gate closes, we cannot verify the contents of Silas's crates until morning, and I will not be responsible for an error in the record.\"\n  },\n  \"targets\": [\n    \"mara\",\n    \"silas\"\n  ],\n  \"visibility\": {\n    \"type\": \"public\"\n  }\n}",
+        "thought_chars": 0,
+        "transient": false
+      },
+      "status": "ok",
+      "input_tokens": 1036,
+      "output_tokens": 237,
+      "cached_tokens": 0,
+      "cost_usd": 0.000599775,
+      "latency_ms": 7446
+    },
+    {
+      "address": "ch1/sc1/r0/k0/round1/silas/propose",
+      "attempt": 1,
+      "role": "character",
+      "model": "qwen/qwen3.8-27b",
+      "params": {
+        "adaptive_decay": null,
+        "adaptive_target": null,
+        "dry_allowed_length": null,
+        "dry_base": null,
+        "dry_multiplier": null,
+        "dry_penalty_last_n": null,
+        "dry_sequence_breakers": null,
+        "dynatemp_exponent": null,
+        "dynatemp_range": null,
+        "frequency_penalty": null,
+        "max_tokens": 4096,
+        "min_p": null,
+        "mirostat": null,
+        "mirostat_eta": null,
+        "mirostat_tau": null,
+        "presence_penalty": null,
+        "reasoning_budget": null,
+        "reasoning_effort": null,
+        "repeat_last_n": null,
+        "repeat_penalty": null,
+        "samplers": null,
+        "seed": null,
+        "temperature": 0.800000011920929,
+        "thinking": false,
+        "top_k": null,
+        "top_n_sigma": null,
+        "top_p": null,
+        "typical_p": null,
+        "verbosity": null,
+        "xtc_probability": null,
+        "xtc_threshold": null
+      },
+      "mechanism": "fallback",
+      "request": {
+        "messages": [
+          {
+            "content": "Round 1. You are at Harbour, with Mara, Ines. You carry: warehouse_key. Lying here: nothing.\n\nWhat you have perceived, oldest first:\n- The last ferry has been cancelled and the storm has shut the harbour for the night. Silas came down from the inn to ask after his crates; Ines came down from the lighthouse to say the lamp's oil will not last till dawn.\n- The harbour gate closes at sunset, a quarter of an hour from now, and the customs ledger lies open on the harbour master's table.\n\nWhat does Silas do now? Write the inner thought first, then the action.",
+            "role": "user"
+          }
+        ],
+        "system": "You play Silas in a story. Each round you decide what Silas does next, in character; the world decides what comes of it.\n\nThe world's rules:\n- No magic.\n- The harbour gate closes at sunset.\n- In the storm no boat leaves the harbour.\n\nThe places:\n- Harbour (`harbour`): Stone quays, the harbour master's hut, a storm coming in from the west.\n- The Gull Inn (`inn`): A low taproom with a fire and three rooms upstairs.\n- Lighthouse (`lighthouse`): A white tower on the breakwater; the lamp room is reached by ninety steps.\n- Seamen's Chapel (`chapel`): A cold chapel with the names of the drowned on its walls.\n- Bonded Warehouse (`warehouse`): Customs storage behind a locked door; tonight's crates wait inside.\n\nYou are Silas (`silas`). A trader from the south, stranded at the inn by the storm.\nYour voice: Polite, unhurried, fond of proverbs.\nYour goals:\n- Get the crates aboard before dawn\nYour secrets, which no one else knows unless you reveal them:\n- The crates hold rifles, not wine. [SECRET-SILAS-3K]\n\nThe others, as everyone knows them:\n- Mara (`mara`): The harbour master: fifty, curt, respected.\n- Ines (`ines`): The lighthouse keeper, young and new to the town.\n\nReply with one JSON object that matches this JSON Schema, and nothing else:\n{\"type\":\"object\",\"properties\":{\"private_thought\":{\"type\":\"string\",\"description\":\"What the character thinks and feels at this moment, in their own inner voice. Story content that no other character perceives.\"},\"action\":{\"description\":\"What the character does now.\",\"anyOf\":[{\"type\":\"object\",\"description\":\"Says something aloud.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"speak\"]},\"line\":{\"type\":\"string\",\"description\":\"The words spoken, in the character's voice.\"}},\"required\":[\"type\",\"line\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"Leaves for another place.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"move\"]},\"to\":{\"type\":\"string\",\"description\":\"Where the character goes.\",\"enum\":[\"harbour\",\"inn\",\"lighthouse\",\"chapel\",\"warehouse\"]}},\"required\":[\"type\",\"to\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"Does something, perhaps saying something at the same time.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"act\"]},\"verb\":{\"type\":\"string\",\"description\":\"The deed, such as \\\"slams\\\" or \\\"pockets\\\".\"},\"object\":{\"description\":\"What it is done to, or null.\",\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}]},\"line\":{\"description\":\"What is said meanwhile, or null.\",\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}]}},\"required\":[\"type\",\"verb\",\"object\",\"line\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"Does nothing for now.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"wait\"]}},\"required\":[\"type\"],\"additionalProperties\":false}]},\"targets\":{\"type\":\"array\",\"description\":\"The characters the action is aimed at; empty when it is aimed at no one.\",\"items\":{\"type\":\"string\",\"enum\":[\"mara\",\"silas\",\"ines\"]}},\"visibility\":{\"description\":\"Who can perceive the action.\",\"anyOf\":[{\"type\":\"object\",\"description\":\"Everyone present can perceive it.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"public\"]}},\"required\":[\"type\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"Only the named characters perceive it; they must be present.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"whisper\"]},\"to\":{\"type\":\"array\",\"description\":\"Who hears it.\",\"items\":{\"type\":\"string\",\"enum\":[\"mara\",\"silas\",\"ines\"]}}},\"required\":[\"type\",\"to\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"No one else perceives it.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"hidden\"]}},\"required\":[\"type\"],\"additionalProperties\":false}]}},\"required\":[\"private_thought\",\"action\",\"targets\",\"visibility\"],\"additionalProperties\":false}"
+      },
+      "prompt_sha256": "2299d84d0bc8ff60bbb7abd1097e374a8a1be86fb75fcd036671db59e5cfba67",
+      "response": {
+        "cancelled": false,
+        "error": null,
+        "served_by": "DeepInfra",
+        "text": "{\n  \"private_thought\": \"The wind is biting hard, and the gate is about to lock. If I wait for the storm to pass, these crates will rot on the quay, and I'll be stuck here. Mara is busy with her ledger, but I need to get those crates moved. I have the key, so I don't need her permission to open the door, only her tolerance to move the goods. I must be polite, but firm about the urgency. The proverb says 'a stitch in time saves nine,' but here, a minute in time saves the whole cargo.\",\n  \"action\": {\n    \"type\": \"speak\",\n    \"line\": \"Mara, my friend, the wind is turning its teeth, isn't it? I fear the storm will not wait for our papers. I have the key to the warehouse, and I am willing to carry the weight of the delay, but I cannot carry the weight of wet crates. Might we not get them to the quay before the gate closes? A gentle nudge now saves a great deal of trouble later.\"\n  },\n  \"targets\": [\n    \"mara\"\n  ],\n  \"visibility\": {\n    \"type\": \"public\"\n  }\n}",
+        "thought_chars": 0,
+        "transient": false
+      },
+      "status": "ok",
+      "input_tokens": 1036,
+      "output_tokens": 264,
+      "cached_tokens": 0,
+      "cost_usd": 0.0006504,
+      "latency_ms": 8579
+    },
+    {
+      "address": "ch1/sc1/r0/k0/round2/ines/propose",
+      "attempt": 1,
+      "role": "character",
+      "model": "qwen/qwen3.8-27b",
+      "params": {
+        "adaptive_decay": null,
+        "adaptive_target": null,
+        "dry_allowed_length": null,
+        "dry_base": null,
+        "dry_multiplier": null,
+        "dry_penalty_last_n": null,
+        "dry_sequence_breakers": null,
+        "dynatemp_exponent": null,
+        "dynatemp_range": null,
+        "frequency_penalty": null,
+        "max_tokens": 4096,
+        "min_p": null,
+        "mirostat": null,
+        "mirostat_eta": null,
+        "mirostat_tau": null,
+        "presence_penalty": null,
+        "reasoning_budget": null,
+        "reasoning_effort": null,
+        "repeat_last_n": null,
+        "repeat_penalty": null,
+        "samplers": null,
+        "seed": null,
+        "temperature": 0.800000011920929,
+        "thinking": false,
+        "top_k": null,
+        "top_n_sigma": null,
+        "top_p": null,
+        "typical_p": null,
+        "verbosity": null,
+        "xtc_probability": null,
+        "xtc_threshold": null
+      },
+      "mechanism": "fallback",
+      "request": {
+        "messages": [
+          {
+            "content": "Round 2. You are at Harbour, with Mara, Silas. You carry: logbook. Lying here: nothing.\n\nWhat you have perceived, oldest first:\n- The last ferry has been cancelled and the storm has shut the harbour for the night. Silas came down from the inn to ask after his crates; Ines came down from the lighthouse to say the lamp's oil will not last till dawn.\n- The harbour gate closes at sunset, a quarter of an hour from now, and the customs ledger lies open on the harbour master's table.\n\nWhat does Ines do now? Write the inner thought first, then the action.",
+            "role": "user"
+          }
+        ],
+        "system": "You play Ines in a story. Each round you decide what Ines does next, in character; the world decides what comes of it.\n\nThe world's rules:\n- No magic.\n- The harbour gate closes at sunset.\n- In the storm no boat leaves the harbour.\n\nThe places:\n- Harbour (`harbour`): Stone quays, the harbour master's hut, a storm coming in from the west.\n- The Gull Inn (`inn`): A low taproom with a fire and three rooms upstairs.\n- Lighthouse (`lighthouse`): A white tower on the breakwater; the lamp room is reached by ninety steps.\n- Seamen's Chapel (`chapel`): A cold chapel with the names of the drowned on its walls.\n- Bonded Warehouse (`warehouse`): Customs storage behind a locked door; tonight's crates wait inside.\n\nYou are Ines (`ines`). The lighthouse keeper, young and new to the town.\nYour voice: Careful, formal, asks questions.\nYour goals:\n- Find out why the harbour master lied to her\nYour secrets, which no one else knows unless you reveal them:\n- She was paid to dim the lamp at midnight. [SECRET-INES-9D]\n\nThe others, as everyone knows them:\n- Mara (`mara`): The harbour master: fifty, curt, respected.\n- Silas (`silas`): A trader from the south, stranded at the inn by the storm.\n\nReply with one JSON object that matches this JSON Schema, and nothing else:\n{\"type\":\"object\",\"properties\":{\"private_thought\":{\"type\":\"string\",\"description\":\"What the character thinks and feels at this moment, in their own inner voice. Story content that no other character perceives.\"},\"action\":{\"description\":\"What the character does now.\",\"anyOf\":[{\"type\":\"object\",\"description\":\"Says something aloud.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"speak\"]},\"line\":{\"type\":\"string\",\"description\":\"The words spoken, in the character's voice.\"}},\"required\":[\"type\",\"line\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"Leaves for another place.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"move\"]},\"to\":{\"type\":\"string\",\"description\":\"Where the character goes.\",\"enum\":[\"harbour\",\"inn\",\"lighthouse\",\"chapel\",\"warehouse\"]}},\"required\":[\"type\",\"to\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"Does something, perhaps saying something at the same time.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"act\"]},\"verb\":{\"type\":\"string\",\"description\":\"The deed, such as \\\"slams\\\" or \\\"pockets\\\".\"},\"object\":{\"description\":\"What it is done to, or null.\",\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}]},\"line\":{\"description\":\"What is said meanwhile, or null.\",\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}]}},\"required\":[\"type\",\"verb\",\"object\",\"line\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"Does nothing for now.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"wait\"]}},\"required\":[\"type\"],\"additionalProperties\":false}]},\"targets\":{\"type\":\"array\",\"description\":\"The characters the action is aimed at; empty when it is aimed at no one.\",\"items\":{\"type\":\"string\",\"enum\":[\"mara\",\"silas\",\"ines\"]}},\"visibility\":{\"description\":\"Who can perceive the action.\",\"anyOf\":[{\"type\":\"object\",\"description\":\"Everyone present can perceive it.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"public\"]}},\"required\":[\"type\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"Only the named characters perceive it; they must be present.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"whisper\"]},\"to\":{\"type\":\"array\",\"description\":\"Who hears it.\",\"items\":{\"type\":\"string\",\"enum\":[\"mara\",\"silas\",\"ines\"]}}},\"required\":[\"type\",\"to\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"No one else perceives it.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"hidden\"]}},\"required\":[\"type\"],\"additionalProperties\":false}]}},\"required\":[\"private_thought\",\"action\",\"targets\",\"visibility\"],\"additionalProperties\":false}"
+      },
+      "prompt_sha256": "9c361bc417d1effd6614d94bb52dbcaa87246d1ea37273bdb094476dd475a7c6",
+      "response": {
+        "cancelled": false,
+        "error": null,
+        "served_by": "DeepInfra",
+        "text": "{\n  \"private_thought\": \"The ledger is open. This is my chance to see what is actually scheduled for tonight, but I must be careful not to appear as if I am searching for something I was not told. If the harbour master lied about the lamp's status or the ferry, the ledger might hold the truth. I will ask a polite question about the tide tables to justify my gaze.\",\n  \"action\": {\n    \"type\": \"speak\",\n    \"line\": \"Excuse me, Master Mara. I was reviewing the oil reserves and noticed the tide tables. May I glance at the ledger to see if there are any scheduled customs entries that might affect the gate's closing time? I want to ensure I am not keeping the gate open longer than necessary for the storm.\"\n  },\n  \"targets\": [\n    \"mara\"\n  ],\n  \"visibility\": {\n    \"type\": \"public\"\n  }\n}",
+        "thought_chars": 0,
+        "transient": false
+      },
+      "status": "ok",
+      "input_tokens": 1036,
+      "output_tokens": 202,
+      "cached_tokens": 0,
+      "cost_usd": 0.00053415,
+      "latency_ms": 6796
+    },
+    {
+      "address": "ch1/sc1/r0/k0/round2/mara/propose",
+      "attempt": 1,
+      "role": "character",
+      "model": "qwen/qwen3.8-27b",
+      "params": {
+        "adaptive_decay": null,
+        "adaptive_target": null,
+        "dry_allowed_length": null,
+        "dry_base": null,
+        "dry_multiplier": null,
+        "dry_penalty_last_n": null,
+        "dry_sequence_breakers": null,
+        "dynatemp_exponent": null,
+        "dynatemp_range": null,
+        "frequency_penalty": null,
+        "max_tokens": 4096,
+        "min_p": null,
+        "mirostat": null,
+        "mirostat_eta": null,
+        "mirostat_tau": null,
+        "presence_penalty": null,
+        "reasoning_budget": null,
+        "reasoning_effort": null,
+        "repeat_last_n": null,
+        "repeat_penalty": null,
+        "samplers": null,
+        "seed": null,
+        "temperature": 0.800000011920929,
+        "thinking": false,
+        "top_k": null,
+        "top_n_sigma": null,
+        "top_p": null,
+        "typical_p": null,
+        "verbosity": null,
+        "xtc_probability": null,
+        "xtc_threshold": null
+      },
+      "mechanism": "fallback",
+      "request": {
+        "messages": [
+          {
+            "content": "Round 2. You are at Harbour, with Silas, Ines. You carry: ledger. Lying here: nothing.\n\nWhat you have perceived, oldest first:\n- The last ferry has been cancelled and the storm has shut the harbour for the night. Silas came down from the inn to ask after his crates; Ines came down from the lighthouse to say the lamp's oil will not last till dawn.\n- The harbour gate closes at sunset, a quarter of an hour from now, and the customs ledger lies open on the harbour master's table.\n- Mara shoves the open customs ledger into a waterproof case. Mara says: \"Gate's closing. No one leaves, no one enters. Keep your voices down.\"\n  (You thought: Storm's coming in fast. Can't let that ledger get read by any customs man before the gate shuts. That bribe from the smuggler is the only thing keeping this port running smooth, and I ain't going down for a paperwork error. Silas wants his crates, but if the gate locks, it's just dead weight. Ines is useless without oil. Gotta secure the books first. No witnesses.)\n\nWhat does Mara do now? Write the inner thought first, then the action.",
+            "role": "user"
+          }
+        ],
+        "system": "You play Mara in a story. Each round you decide what Mara does next, in character; the world decides what comes of it.\n\nThe world's rules:\n- No magic.\n- The harbour gate closes at sunset.\n- In the storm no boat leaves the harbour.\n\nThe places:\n- Harbour (`harbour`): Stone quays, the harbour master's hut, a storm coming in from the west.\n- The Gull Inn (`inn`): A low taproom with a fire and three rooms upstairs.\n- Lighthouse (`lighthouse`): A white tower on the breakwater; the lamp room is reached by ninety steps.\n- Seamen's Chapel (`chapel`): A cold chapel with the names of the drowned on its walls.\n- Bonded Warehouse (`warehouse`): Customs storage behind a locked door; tonight's crates wait inside.\n\nYou are Mara (`mara`). The harbour master: fifty, curt, respected.\nYour voice: Short sentences, harbour slang.\nYour goals:\n- Keep tonight's shipment off the books\nYour secrets, which no one else knows unless you reveal them:\n- She took a bribe from the smuggler. [SECRET-MARA-7Q]\n\nThe others, as everyone knows them:\n- Silas (`silas`): A trader from the south, stranded at the inn by the storm.\n- Ines (`ines`): The lighthouse keeper, young and new to the town.\n\nReply with one JSON object that matches this JSON Schema, and nothing else:\n{\"type\":\"object\",\"properties\":{\"private_thought\":{\"type\":\"string\",\"description\":\"What the character thinks and feels at this moment, in their own inner voice. Story content that no other character perceives.\"},\"action\":{\"description\":\"What the character does now.\",\"anyOf\":[{\"type\":\"object\",\"description\":\"Says something aloud.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"speak\"]},\"line\":{\"type\":\"string\",\"description\":\"The words spoken, in the character's voice.\"}},\"required\":[\"type\",\"line\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"Leaves for another place.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"move\"]},\"to\":{\"type\":\"string\",\"description\":\"Where the character goes.\",\"enum\":[\"harbour\",\"inn\",\"lighthouse\",\"chapel\",\"warehouse\"]}},\"required\":[\"type\",\"to\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"Does something, perhaps saying something at the same time.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"act\"]},\"verb\":{\"type\":\"string\",\"description\":\"The deed, such as \\\"slams\\\" or \\\"pockets\\\".\"},\"object\":{\"description\":\"What it is done to, or null.\",\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}]},\"line\":{\"description\":\"What is said meanwhile, or null.\",\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}]}},\"required\":[\"type\",\"verb\",\"object\",\"line\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"Does nothing for now.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"wait\"]}},\"required\":[\"type\"],\"additionalProperties\":false}]},\"targets\":{\"type\":\"array\",\"description\":\"The characters the action is aimed at; empty when it is aimed at no one.\",\"items\":{\"type\":\"string\",\"enum\":[\"mara\",\"silas\",\"ines\"]}},\"visibility\":{\"description\":\"Who can perceive the action.\",\"anyOf\":[{\"type\":\"object\",\"description\":\"Everyone present can perceive it.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"public\"]}},\"required\":[\"type\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"Only the named characters perceive it; they must be present.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"whisper\"]},\"to\":{\"type\":\"array\",\"description\":\"Who hears it.\",\"items\":{\"type\":\"string\",\"enum\":[\"mara\",\"silas\",\"ines\"]}}},\"required\":[\"type\",\"to\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"No one else perceives it.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"hidden\"]}},\"required\":[\"type\"],\"additionalProperties\":false}]}},\"required\":[\"private_thought\",\"action\",\"targets\",\"visibility\"],\"additionalProperties\":false}"
+      },
+      "prompt_sha256": "862c310175477740447a422238380b640175372b41d6cf112ac07cf357e2d2c0",
+      "response": {
+        "cancelled": false,
+        "error": null,
+        "served_by": "DeepInfra",
+        "text": "{\n  \"private_thought\": \"Silas is asking questions. Ines is useless, just standing there with empty tins. The gate is closing. If I let Silas think about where those crates are going, he'll ask too many questions. I need to get him out of my sight and away from the ledger. The warehouse is locked, but the storm will keep the customs men inside their hut. I'll tell him the gate is shut and he's stuck. Then I'll lock up the office. No one sees the ledger.\",\n  \"action\": {\n    \"type\": \"speak\",\n    \"line\": \"Gate's shut, trader. Your crates stay put till the storm breaks. Ines, get back to your tower, light what you can. I'm locking up.\"\n  },\n  \"targets\": [\n    \"silas\",\n    \"ines\"\n  ],\n  \"visibility\": {\n    \"type\": \"public\"\n  }\n}",
+        "thought_chars": 0,
+        "transient": false
+      },
+      "status": "ok",
+      "input_tokens": 1155,
+      "output_tokens": 210,
+      "cached_tokens": 0,
+      "cost_usd": 0.000567,
+      "latency_ms": 6879
+    },
+    {
+      "address": "ch1/sc1/r0/k0/round2/silas/propose",
+      "attempt": 1,
+      "role": "character",
+      "model": "qwen/qwen3.8-27b",
+      "params": {
+        "adaptive_decay": null,
+        "adaptive_target": null,
+        "dry_allowed_length": null,
+        "dry_base": null,
+        "dry_multiplier": null,
+        "dry_penalty_last_n": null,
+        "dry_sequence_breakers": null,
+        "dynatemp_exponent": null,
+        "dynatemp_range": null,
+        "frequency_penalty": null,
+        "max_tokens": 4096,
+        "min_p": null,
+        "mirostat": null,
+        "mirostat_eta": null,
+        "mirostat_tau": null,
+        "presence_penalty": null,
+        "reasoning_budget": null,
+        "reasoning_effort": null,
+        "repeat_last_n": null,
+        "repeat_penalty": null,
+        "samplers": null,
+        "seed": null,
+        "temperature": 0.800000011920929,
+        "thinking": false,
+        "top_k": null,
+        "top_n_sigma": null,
+        "top_p": null,
+        "typical_p": null,
+        "verbosity": null,
+        "xtc_probability": null,
+        "xtc_threshold": null
+      },
+      "mechanism": "fallback",
+      "request": {
+        "messages": [
+          {
+            "content": "Round 2. You are at Harbour, with Mara, Ines. You carry: warehouse_key. Lying here: nothing.\n\nWhat you have perceived, oldest first:\n- The last ferry has been cancelled and the storm has shut the harbour for the night. Silas came down from the inn to ask after his crates; Ines came down from the lighthouse to say the lamp's oil will not last till dawn.\n- The harbour gate closes at sunset, a quarter of an hour from now, and the customs ledger lies open on the harbour master's table.\n\nWhat does Silas do now? Write the inner thought first, then the action.",
+            "role": "user"
+          }
+        ],
+        "system": "You play Silas in a story. Each round you decide what Silas does next, in character; the world decides what comes of it.\n\nThe world's rules:\n- No magic.\n- The harbour gate closes at sunset.\n- In the storm no boat leaves the harbour.\n\nThe places:\n- Harbour (`harbour`): Stone quays, the harbour master's hut, a storm coming in from the west.\n- The Gull Inn (`inn`): A low taproom with a fire and three rooms upstairs.\n- Lighthouse (`lighthouse`): A white tower on the breakwater; the lamp room is reached by ninety steps.\n- Seamen's Chapel (`chapel`): A cold chapel with the names of the drowned on its walls.\n- Bonded Warehouse (`warehouse`): Customs storage behind a locked door; tonight's crates wait inside.\n\nYou are Silas (`silas`). A trader from the south, stranded at the inn by the storm.\nYour voice: Polite, unhurried, fond of proverbs.\nYour goals:\n- Get the crates aboard before dawn\nYour secrets, which no one else knows unless you reveal them:\n- The crates hold rifles, not wine. [SECRET-SILAS-3K]\n\nThe others, as everyone knows them:\n- Mara (`mara`): The harbour master: fifty, curt, respected.\n- Ines (`ines`): The lighthouse keeper, young and new to the town.\n\nReply with one JSON object that matches this JSON Schema, and nothing else:\n{\"type\":\"object\",\"properties\":{\"private_thought\":{\"type\":\"string\",\"description\":\"What the character thinks and feels at this moment, in their own inner voice. Story content that no other character perceives.\"},\"action\":{\"description\":\"What the character does now.\",\"anyOf\":[{\"type\":\"object\",\"description\":\"Says something aloud.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"speak\"]},\"line\":{\"type\":\"string\",\"description\":\"The words spoken, in the character's voice.\"}},\"required\":[\"type\",\"line\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"Leaves for another place.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"move\"]},\"to\":{\"type\":\"string\",\"description\":\"Where the character goes.\",\"enum\":[\"harbour\",\"inn\",\"lighthouse\",\"chapel\",\"warehouse\"]}},\"required\":[\"type\",\"to\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"Does something, perhaps saying something at the same time.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"act\"]},\"verb\":{\"type\":\"string\",\"description\":\"The deed, such as \\\"slams\\\" or \\\"pockets\\\".\"},\"object\":{\"description\":\"What it is done to, or null.\",\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}]},\"line\":{\"description\":\"What is said meanwhile, or null.\",\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}]}},\"required\":[\"type\",\"verb\",\"object\",\"line\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"Does nothing for now.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"wait\"]}},\"required\":[\"type\"],\"additionalProperties\":false}]},\"targets\":{\"type\":\"array\",\"description\":\"The characters the action is aimed at; empty when it is aimed at no one.\",\"items\":{\"type\":\"string\",\"enum\":[\"mara\",\"silas\",\"ines\"]}},\"visibility\":{\"description\":\"Who can perceive the action.\",\"anyOf\":[{\"type\":\"object\",\"description\":\"Everyone present can perceive it.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"public\"]}},\"required\":[\"type\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"Only the named characters perceive it; they must be present.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"whisper\"]},\"to\":{\"type\":\"array\",\"description\":\"Who hears it.\",\"items\":{\"type\":\"string\",\"enum\":[\"mara\",\"silas\",\"ines\"]}}},\"required\":[\"type\",\"to\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"No one else perceives it.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"hidden\"]}},\"required\":[\"type\"],\"additionalProperties\":false}]}},\"required\":[\"private_thought\",\"action\",\"targets\",\"visibility\"],\"additionalProperties\":false}"
+      },
+      "prompt_sha256": "1df71248fd843860e65c5fee04a4af799b7e68d1c6b5497d84b0870f98020118",
+      "response": {
+        "cancelled": false,
+        "error": null,
+        "served_by": "DeepInfra",
+        "text": "{\n  \"private_thought\": \"The gate will close in the time it takes to brew a cup of tea. Ines is a distraction; her oil is her problem, not mine. The crates are the prize, and the key is the only way in without rousing a customs officer I cannot bribe. I cannot carry them all, but I can secure the first one. A man who waits for the storm to pass will never get his goods to sea.\",\n  \"action\": {\n    \"type\": \"act\",\n    \"verb\": \"signals\",\n    \"object\": \"Mara to hold the conversation for a moment while I step aside\",\n    \"line\": \"The ledger is open, Mara. I trust the numbers balance. I must attend to a small matter of logistics. One does not leave the cart in the rain.\"\n  },\n  \"targets\": [\n    \"mara\"\n  ],\n  \"visibility\": {\n    \"type\": \"public\"\n  }\n}",
+        "thought_chars": 0,
+        "transient": false
+      },
+      "status": "ok",
+      "input_tokens": 1036,
+      "output_tokens": 214,
+      "cached_tokens": 0,
+      "cost_usd": 0.00055665,
+      "latency_ms": 7215
+    },
+    {
+      "address": "ch1/sc1/r0/k0/round3/mara/propose",
+      "attempt": 1,
+      "role": "character",
+      "model": "qwen/qwen3.8-27b",
+      "params": {
+        "adaptive_decay": null,
+        "adaptive_target": null,
+        "dry_allowed_length": null,
+        "dry_base": null,
+        "dry_multiplier": null,
+        "dry_penalty_last_n": null,
+        "dry_sequence_breakers": null,
+        "dynatemp_exponent": null,
+        "dynatemp_range": null,
+        "frequency_penalty": null,
+        "max_tokens": 4096,
+        "min_p": null,
+        "mirostat": null,
+        "mirostat_eta": null,
+        "mirostat_tau": null,
+        "presence_penalty": null,
+        "reasoning_budget": null,
+        "reasoning_effort": null,
+        "repeat_last_n": null,
+        "repeat_penalty": null,
+        "samplers": null,
+        "seed": null,
+        "temperature": 0.800000011920929,
+        "thinking": false,
+        "top_k": null,
+        "top_n_sigma": null,
+        "top_p": null,
+        "typical_p": null,
+        "verbosity": null,
+        "xtc_probability": null,
+        "xtc_threshold": null
+      },
+      "mechanism": "fallback",
+      "request": {
+        "messages": [
+          {
+            "content": "Round 3. You are at Harbour, with Silas, Ines. You carry: ledger. Lying here: nothing.\n\nWhat you have perceived, oldest first:\n- The last ferry has been cancelled and the storm has shut the harbour for the night. Silas came down from the inn to ask after his crates; Ines came down from the lighthouse to say the lamp's oil will not last till dawn.\n- The harbour gate closes at sunset, a quarter of an hour from now, and the customs ledger lies open on the harbour master's table.\n- Mara shoves the open customs ledger into a waterproof case. Mara says: \"Gate's closing. No one leaves, no one enters. Keep your voices down.\"\n  (You thought: Storm's coming in fast. Can't let that ledger get read by any customs man before the gate shuts. That bribe from the smuggler is the only thing keeping this port running smooth, and I ain't going down for a paperwork error. Silas wants his crates, but if the gate locks, it's just dead weight. Ines is useless without oil. Gotta secure the books first. No witnesses.)\n- Silas signals Mara to hold the conversation for a moment while I step aside. Silas says: \"The ledger is open, Mara. I trust the numbers balance. I must attend to a small matter of logistics. One does not leave the cart in the rain.\"\n\nWhat does Mara do now? Write the inner thought first, then the action.",
+            "role": "user"
+          }
+        ],
+        "system": "You play Mara in a story. Each round you decide what Mara does next, in character; the world decides what comes of it.\n\nThe world's rules:\n- No magic.\n- The harbour gate closes at sunset.\n- In the storm no boat leaves the harbour.\n\nThe places:\n- Harbour (`harbour`): Stone quays, the harbour master's hut, a storm coming in from the west.\n- The Gull Inn (`inn`): A low taproom with a fire and three rooms upstairs.\n- Lighthouse (`lighthouse`): A white tower on the breakwater; the lamp room is reached by ninety steps.\n- Seamen's Chapel (`chapel`): A cold chapel with the names of the drowned on its walls.\n- Bonded Warehouse (`warehouse`): Customs storage behind a locked door; tonight's crates wait inside.\n\nYou are Mara (`mara`). The harbour master: fifty, curt, respected.\nYour voice: Short sentences, harbour slang.\nYour goals:\n- Keep tonight's shipment off the books\nYour secrets, which no one else knows unless you reveal them:\n- She took a bribe from the smuggler. [SECRET-MARA-7Q]\n\nThe others, as everyone knows them:\n- Silas (`silas`): A trader from the south, stranded at the inn by the storm.\n- Ines (`ines`): The lighthouse keeper, young and new to the town.\n\nReply with one JSON object that matches this JSON Schema, and nothing else:\n{\"type\":\"object\",\"properties\":{\"private_thought\":{\"type\":\"string\",\"description\":\"What the character thinks and feels at this moment, in their own inner voice. Story content that no other character perceives.\"},\"action\":{\"description\":\"What the character does now.\",\"anyOf\":[{\"type\":\"object\",\"description\":\"Says something aloud.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"speak\"]},\"line\":{\"type\":\"string\",\"description\":\"The words spoken, in the character's voice.\"}},\"required\":[\"type\",\"line\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"Leaves for another place.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"move\"]},\"to\":{\"type\":\"string\",\"description\":\"Where the character goes.\",\"enum\":[\"harbour\",\"inn\",\"lighthouse\",\"chapel\",\"warehouse\"]}},\"required\":[\"type\",\"to\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"Does something, perhaps saying something at the same time.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"act\"]},\"verb\":{\"type\":\"string\",\"description\":\"The deed, such as \\\"slams\\\" or \\\"pockets\\\".\"},\"object\":{\"description\":\"What it is done to, or null.\",\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}]},\"line\":{\"description\":\"What is said meanwhile, or null.\",\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}]}},\"required\":[\"type\",\"verb\",\"object\",\"line\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"Does nothing for now.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"wait\"]}},\"required\":[\"type\"],\"additionalProperties\":false}]},\"targets\":{\"type\":\"array\",\"description\":\"The characters the action is aimed at; empty when it is aimed at no one.\",\"items\":{\"type\":\"string\",\"enum\":[\"mara\",\"silas\",\"ines\"]}},\"visibility\":{\"description\":\"Who can perceive the action.\",\"anyOf\":[{\"type\":\"object\",\"description\":\"Everyone present can perceive it.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"public\"]}},\"required\":[\"type\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"Only the named characters perceive it; they must be present.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"whisper\"]},\"to\":{\"type\":\"array\",\"description\":\"Who hears it.\",\"items\":{\"type\":\"string\",\"enum\":[\"mara\",\"silas\",\"ines\"]}}},\"required\":[\"type\",\"to\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"No one else perceives it.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"hidden\"]}},\"required\":[\"type\"],\"additionalProperties\":false}]}},\"required\":[\"private_thought\",\"action\",\"targets\",\"visibility\"],\"additionalProperties\":false}"
+      },
+      "prompt_sha256": "2b9375b587a20a4cf269d0e16be34cc83a904ef0ae68265b252b4b2977723632",
+      "response": {
+        "cancelled": false,
+        "error": null,
+        "served_by": "DeepInfra",
+        "text": "{\n  \"private_thought\": \"He's stalling. 'Small matter of logistics.' That's trader talk for 'I'm checking if I can slip past you.' I've got the ledger in the case, but if he wanders off, he might find the warehouse door or worse, talk to Ines. Can't let them split up. Need to keep him tethered to me until the gate locks. If he tries to move crates, I'm shutting him down right here. No one walks off with the goods before I've accounted for them.\",\n  \"action\": {\n    \"type\": \"speak\",\n    \"line\": \"Logistics wait, Silas. Gate locks in ten. You step off this quay, you're stuck till morning. Keep your eyes on me, not the crates.\"\n  },\n  \"targets\": [\n    \"silas\"\n  ],\n  \"visibility\": {\n    \"type\": \"public\"\n  }\n}",
+        "thought_chars": 0,
+        "transient": false
+      },
+      "status": "ok",
+      "input_tokens": 1211,
+      "output_tokens": 208,
+      "cached_tokens": 0,
+      "cost_usd": 0.00057165,
+      "latency_ms": 4640
+    },
+    {
+      "address": "ch1/sc1/r0/k0/round3/ines/propose",
+      "attempt": 1,
+      "role": "character",
+      "model": "qwen/qwen3.8-27b",
+      "params": {
+        "adaptive_decay": null,
+        "adaptive_target": null,
+        "dry_allowed_length": null,
+        "dry_base": null,
+        "dry_multiplier": null,
+        "dry_penalty_last_n": null,
+        "dry_sequence_breakers": null,
+        "dynatemp_exponent": null,
+        "dynatemp_range": null,
+        "frequency_penalty": null,
+        "max_tokens": 4096,
+        "min_p": null,
+        "mirostat": null,
+        "mirostat_eta": null,
+        "mirostat_tau": null,
+        "presence_penalty": null,
+        "reasoning_budget": null,
+        "reasoning_effort": null,
+        "repeat_last_n": null,
+        "repeat_penalty": null,
+        "samplers": null,
+        "seed": null,
+        "temperature": 0.800000011920929,
+        "thinking": false,
+        "top_k": null,
+        "top_n_sigma": null,
+        "top_p": null,
+        "typical_p": null,
+        "verbosity": null,
+        "xtc_probability": null,
+        "xtc_threshold": null
+      },
+      "mechanism": "fallback",
+      "request": {
+        "messages": [
+          {
+            "content": "Round 3. You are at Harbour, with Mara, Silas. You carry: logbook. Lying here: nothing.\n\nWhat you have perceived, oldest first:\n- The last ferry has been cancelled and the storm has shut the harbour for the night. Silas came down from the inn to ask after his crates; Ines came down from the lighthouse to say the lamp's oil will not last till dawn.\n- The harbour gate closes at sunset, a quarter of an hour from now, and the customs ledger lies open on the harbour master's table.\n- Silas signals Mara to hold the conversation for a moment while I step aside. Silas says: \"The ledger is open, Mara. I trust the numbers balance. I must attend to a small matter of logistics. One does not leave the cart in the rain.\"\n\nWhat does Ines do now? Write the inner thought first, then the action.",
+            "role": "user"
+          }
+        ],
+        "system": "You play Ines in a story. Each round you decide what Ines does next, in character; the world decides what comes of it.\n\nThe world's rules:\n- No magic.\n- The harbour gate closes at sunset.\n- In the storm no boat leaves the harbour.\n\nThe places:\n- Harbour (`harbour`): Stone quays, the harbour master's hut, a storm coming in from the west.\n- The Gull Inn (`inn`): A low taproom with a fire and three rooms upstairs.\n- Lighthouse (`lighthouse`): A white tower on the breakwater; the lamp room is reached by ninety steps.\n- Seamen's Chapel (`chapel`): A cold chapel with the names of the drowned on its walls.\n- Bonded Warehouse (`warehouse`): Customs storage behind a locked door; tonight's crates wait inside.\n\nYou are Ines (`ines`). The lighthouse keeper, young and new to the town.\nYour voice: Careful, formal, asks questions.\nYour goals:\n- Find out why the harbour master lied to her\nYour secrets, which no one else knows unless you reveal them:\n- She was paid to dim the lamp at midnight. [SECRET-INES-9D]\n\nThe others, as everyone knows them:\n- Mara (`mara`): The harbour master: fifty, curt, respected.\n- Silas (`silas`): A trader from the south, stranded at the inn by the storm.\n\nReply with one JSON object that matches this JSON Schema, and nothing else:\n{\"type\":\"object\",\"properties\":{\"private_thought\":{\"type\":\"string\",\"description\":\"What the character thinks and feels at this moment, in their own inner voice. Story content that no other character perceives.\"},\"action\":{\"description\":\"What the character does now.\",\"anyOf\":[{\"type\":\"object\",\"description\":\"Says something aloud.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"speak\"]},\"line\":{\"type\":\"string\",\"description\":\"The words spoken, in the character's voice.\"}},\"required\":[\"type\",\"line\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"Leaves for another place.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"move\"]},\"to\":{\"type\":\"string\",\"description\":\"Where the character goes.\",\"enum\":[\"harbour\",\"inn\",\"lighthouse\",\"chapel\",\"warehouse\"]}},\"required\":[\"type\",\"to\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"Does something, perhaps saying something at the same time.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"act\"]},\"verb\":{\"type\":\"string\",\"description\":\"The deed, such as \\\"slams\\\" or \\\"pockets\\\".\"},\"object\":{\"description\":\"What it is done to, or null.\",\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}]},\"line\":{\"description\":\"What is said meanwhile, or null.\",\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}]}},\"required\":[\"type\",\"verb\",\"object\",\"line\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"Does nothing for now.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"wait\"]}},\"required\":[\"type\"],\"additionalProperties\":false}]},\"targets\":{\"type\":\"array\",\"description\":\"The characters the action is aimed at; empty when it is aimed at no one.\",\"items\":{\"type\":\"string\",\"enum\":[\"mara\",\"silas\",\"ines\"]}},\"visibility\":{\"description\":\"Who can perceive the action.\",\"anyOf\":[{\"type\":\"object\",\"description\":\"Everyone present can perceive it.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"public\"]}},\"required\":[\"type\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"Only the named characters perceive it; they must be present.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"whisper\"]},\"to\":{\"type\":\"array\",\"description\":\"Who hears it.\",\"items\":{\"type\":\"string\",\"enum\":[\"mara\",\"silas\",\"ines\"]}}},\"required\":[\"type\",\"to\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"No one else perceives it.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"hidden\"]}},\"required\":[\"type\"],\"additionalProperties\":false}]}},\"required\":[\"private_thought\",\"action\",\"targets\",\"visibility\"],\"additionalProperties\":false}"
+      },
+      "prompt_sha256": "65cae4c1deb58a227d57eb6921fa1484845e7a2933cc41426562a3683cd471f6",
+      "response": {
+        "cancelled": false,
+        "error": null,
+        "served_by": "DeepInfra",
+        "text": "{\n  \"private_thought\": \"Silas's excuse about the cart is transparent. He wants me out of the room. If I stay, I might see what they are discussing, but if I go, I can examine the ledger before it is closed. The lamp's oil is a problem I must solve, but this... this smells of deception. Why would the harbour master lie about the oil if the lamp is simply running low? And why does Silas need me to leave before he speaks to Mara? I must be careful. I will step aside, but I will watch.\",\n  \"action\": {\n    \"type\": \"move\",\n    \"to\": \"inn\"\n  },\n  \"targets\": [],\n  \"visibility\": {\n    \"type\": \"public\"\n  }\n}",
+        "thought_chars": 0,
+        "transient": false
+      },
+      "status": "ok",
+      "input_tokens": 1092,
+      "output_tokens": 171,
+      "cached_tokens": 0,
+      "cost_usd": 0.000484425,
+      "latency_ms": 4797
+    },
+    {
+      "address": "ch1/sc1/r0/k0/round3/silas/propose",
+      "attempt": 1,
+      "role": "character",
+      "model": "qwen/qwen3.8-27b",
+      "params": {
+        "adaptive_decay": null,
+        "adaptive_target": null,
+        "dry_allowed_length": null,
+        "dry_base": null,
+        "dry_multiplier": null,
+        "dry_penalty_last_n": null,
+        "dry_sequence_breakers": null,
+        "dynatemp_exponent": null,
+        "dynatemp_range": null,
+        "frequency_penalty": null,
+        "max_tokens": 4096,
+        "min_p": null,
+        "mirostat": null,
+        "mirostat_eta": null,
+        "mirostat_tau": null,
+        "presence_penalty": null,
+        "reasoning_budget": null,
+        "reasoning_effort": null,
+        "repeat_last_n": null,
+        "repeat_penalty": null,
+        "samplers": null,
+        "seed": null,
+        "temperature": 0.800000011920929,
+        "thinking": false,
+        "top_k": null,
+        "top_n_sigma": null,
+        "top_p": null,
+        "typical_p": null,
+        "verbosity": null,
+        "xtc_probability": null,
+        "xtc_threshold": null
+      },
+      "mechanism": "fallback",
+      "request": {
+        "messages": [
+          {
+            "content": "Round 3. You are at Harbour, with Mara, Ines. You carry: warehouse_key. Lying here: nothing.\n\nWhat you have perceived, oldest first:\n- The last ferry has been cancelled and the storm has shut the harbour for the night. Silas came down from the inn to ask after his crates; Ines came down from the lighthouse to say the lamp's oil will not last till dawn.\n- The harbour gate closes at sunset, a quarter of an hour from now, and the customs ledger lies open on the harbour master's table.\n- Silas signals Mara to hold the conversation for a moment while I step aside. Silas says: \"The ledger is open, Mara. I trust the numbers balance. I must attend to a small matter of logistics. One does not leave the cart in the rain.\"\n  (You thought: The gate will close in the time it takes to brew a cup of tea. Ines is a distraction; her oil is her problem, not mine. The crates are the prize, and the key is the only way in without rousing a customs officer I cannot bribe. I cannot carry them all, but I can secure the first one. A man who waits for the storm to pass will never get his goods to sea.)\n\nWhat does Silas do now? Write the inner thought first, then the action.",
+            "role": "user"
+          }
+        ],
+        "system": "You play Silas in a story. Each round you decide what Silas does next, in character; the world decides what comes of it.\n\nThe world's rules:\n- No magic.\n- The harbour gate closes at sunset.\n- In the storm no boat leaves the harbour.\n\nThe places:\n- Harbour (`harbour`): Stone quays, the harbour master's hut, a storm coming in from the west.\n- The Gull Inn (`inn`): A low taproom with a fire and three rooms upstairs.\n- Lighthouse (`lighthouse`): A white tower on the breakwater; the lamp room is reached by ninety steps.\n- Seamen's Chapel (`chapel`): A cold chapel with the names of the drowned on its walls.\n- Bonded Warehouse (`warehouse`): Customs storage behind a locked door; tonight's crates wait inside.\n\nYou are Silas (`silas`). A trader from the south, stranded at the inn by the storm.\nYour voice: Polite, unhurried, fond of proverbs.\nYour goals:\n- Get the crates aboard before dawn\nYour secrets, which no one else knows unless you reveal them:\n- The crates hold rifles, not wine. [SECRET-SILAS-3K]\n\nThe others, as everyone knows them:\n- Mara (`mara`): The harbour master: fifty, curt, respected.\n- Ines (`ines`): The lighthouse keeper, young and new to the town.\n\nReply with one JSON object that matches this JSON Schema, and nothing else:\n{\"type\":\"object\",\"properties\":{\"private_thought\":{\"type\":\"string\",\"description\":\"What the character thinks and feels at this moment, in their own inner voice. Story content that no other character perceives.\"},\"action\":{\"description\":\"What the character does now.\",\"anyOf\":[{\"type\":\"object\",\"description\":\"Says something aloud.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"speak\"]},\"line\":{\"type\":\"string\",\"description\":\"The words spoken, in the character's voice.\"}},\"required\":[\"type\",\"line\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"Leaves for another place.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"move\"]},\"to\":{\"type\":\"string\",\"description\":\"Where the character goes.\",\"enum\":[\"harbour\",\"inn\",\"lighthouse\",\"chapel\",\"warehouse\"]}},\"required\":[\"type\",\"to\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"Does something, perhaps saying something at the same time.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"act\"]},\"verb\":{\"type\":\"string\",\"description\":\"The deed, such as \\\"slams\\\" or \\\"pockets\\\".\"},\"object\":{\"description\":\"What it is done to, or null.\",\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}]},\"line\":{\"description\":\"What is said meanwhile, or null.\",\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}]}},\"required\":[\"type\",\"verb\",\"object\",\"line\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"Does nothing for now.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"wait\"]}},\"required\":[\"type\"],\"additionalProperties\":false}]},\"targets\":{\"type\":\"array\",\"description\":\"The characters the action is aimed at; empty when it is aimed at no one.\",\"items\":{\"type\":\"string\",\"enum\":[\"mara\",\"silas\",\"ines\"]}},\"visibility\":{\"description\":\"Who can perceive the action.\",\"anyOf\":[{\"type\":\"object\",\"description\":\"Everyone present can perceive it.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"public\"]}},\"required\":[\"type\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"Only the named characters perceive it; they must be present.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"whisper\"]},\"to\":{\"type\":\"array\",\"description\":\"Who hears it.\",\"items\":{\"type\":\"string\",\"enum\":[\"mara\",\"silas\",\"ines\"]}}},\"required\":[\"type\",\"to\"],\"additionalProperties\":false},{\"type\":\"object\",\"description\":\"No one else perceives it.\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"hidden\"]}},\"required\":[\"type\"],\"additionalProperties\":false}]}},\"required\":[\"private_thought\",\"action\",\"targets\",\"visibility\"],\"additionalProperties\":false}"
+      },
+      "prompt_sha256": "28b5d7260d2402e7222565d95b6d71ab02b433715a8d1daaf7532bb0379b8f19",
+      "response": {
+        "cancelled": false,
+        "error": null,
+        "served_by": "DeepInfra",
+        "text": "{\"private_thought\": \"Ines is already drifting away, likely back to her lamp. Mara is watching me with eyes like flint. The gate is a stone throw away. If I walk toward the warehouse now, she will stop me. I must give her a reason to look away, a reason that smells of duty, not theft. I will offer to secure the crates myself, 'for her convenience.' A harbour master who loves her ledger will hate to watch me fumble with heavy boxes. She will let me go to do it 'properly'.\", \"action\": {\"type\": \"speak\", \"line\": \"Mara, I see the ledger. Since the storm keeps us here, I shall make myself useful. I will go to the bonded warehouse and ensure my crates are stacked against the wall, away from the damp. It saves you the trouble of inspecting them before the gate shuts. A man should do his part before he asks for the world.\"}, \"targets\": [\"mara\"], \"visibility\": {\"type\": \"public\"}}",
+        "thought_chars": 0,
+        "transient": false
+      },
+      "status": "ok",
+      "input_tokens": 1185,
+      "output_tokens": 216,
+      "cached_tokens": 0,
+      "cost_usd": 0.00058275,
+      "latency_ms": 6604
+    }
+  ],
+  "outcome": {
+    "branch": "ch1/sc1/r0/k0",
+    "events": [
+      {
+        "event": {
+          "actor": null,
+          "cause": {
+            "type": "setup"
+          },
+          "effects": [
+            {
+              "character": "silas",
+              "to": "harbour",
+              "type": "place"
+            },
+            {
+              "character": "ines",
+              "to": "harbour",
+              "type": "place"
+            }
+          ],
+          "kind": "opening",
+          "location": "harbour",
+          "observable": "The last ferry has been cancelled and the storm has shut the harbour for the night. Silas came down from the inn to ask after his crates; Ines came down from the lighthouse to say the lamp's oil will not last till dawn.",
+          "private": null,
+          "proposal": null,
+          "round": 0,
+          "tick": 0,
+          "visibility": {
+            "type": "public"
+          }
+        },
+        "id": "ch1/sc1/r0/k0/e1",
+        "seq": 1,
+        "witnesses": [
+          "ines",
+          "mara",
+          "silas"
+        ]
+      },
+      {
+        "event": {
+          "actor": null,
+          "cause": {
+            "type": "setup"
+          },
+          "effects": [],
+          "kind": "opening",
+          "location": "harbour",
+          "observable": "The harbour gate closes at sunset, a quarter of an hour from now, and the customs ledger lies open on the harbour master's table.",
+          "private": null,
+          "proposal": null,
+          "round": 0,
+          "tick": 0,
+          "visibility": {
+            "type": "public"
+          }
+        },
+        "id": "ch1/sc1/r0/k0/e2",
+        "seq": 2,
+        "witnesses": [
+          "ines",
+          "mara",
+          "silas"
+        ]
+      },
+      {
+        "event": {
+          "actor": "mara",
+          "cause": {
+            "type": "initiative"
+          },
+          "effects": [],
+          "kind": "action",
+          "location": "harbour",
+          "observable": "Mara shoves the open customs ledger into a waterproof case. Mara says: \"Gate's closing. No one leaves, no one enters. Keep your voices down.\"",
+          "private": "Storm's coming in fast. Can't let that ledger get read by any customs man before the gate shuts. That bribe from the smuggler is the only thing keeping this port running smooth, and I ain't going down for a paperwork error. Silas wants his crates, but if the gate locks, it's just dead weight. Ines is useless without oil. Gotta secure the books first. No witnesses.",
+          "proposal": "ch1/sc1/r0/k0/p1",
+          "round": 1,
+          "tick": 1,
+          "visibility": {
+            "type": "hidden"
+          }
+        },
+        "id": "ch1/sc1/r0/k0/e3",
+        "seq": 3,
+        "witnesses": [
+          "mara"
+        ]
+      },
+      {
+        "event": {
+          "actor": "silas",
+          "cause": {
+            "type": "initiative"
+          },
+          "effects": [],
+          "kind": "action",
+          "location": "harbour",
+          "observable": "Silas signals Mara to hold the conversation for a moment while I step aside. Silas says: \"The ledger is open, Mara. I trust the numbers balance. I must attend to a small matter of logistics. One does not leave the cart in the rain.\"",
+          "private": "The gate will close in the time it takes to brew a cup of tea. Ines is a distraction; her oil is her problem, not mine. The crates are the prize, and the key is the only way in without rousing a customs officer I cannot bribe. I cannot carry them all, but I can secure the first one. A man who waits for the storm to pass will never get his goods to sea.",
+          "proposal": "ch1/sc1/r0/k0/p5",
+          "round": 2,
+          "tick": 2,
+          "visibility": {
+            "type": "public"
+          }
+        },
+        "id": "ch1/sc1/r0/k0/e4",
+        "seq": 4,
+        "witnesses": [
+          "ines",
+          "mara",
+          "silas"
+        ]
+      },
+      {
+        "event": {
+          "actor": "ines",
+          "cause": {
+            "type": "initiative"
+          },
+          "effects": [
+            {
+              "character": "ines",
+              "to": "inn",
+              "type": "move"
+            }
+          ],
+          "kind": "movement",
+          "location": "harbour",
+          "observable": "Ines leaves for The Gull Inn.",
+          "private": "Silas's excuse about the cart is transparent. He wants me out of the room. If I stay, I might see what they are discussing, but if I go, I can examine the ledger before it is closed. The lamp's oil is a problem I must solve, but this... this smells of deception. Why would the harbour master lie about the oil if the lamp is simply running low? And why does Silas need me to leave before he speaks to Mara? I must be careful. I will step aside, but I will watch.",
+          "proposal": "ch1/sc1/r0/k0/p9",
+          "round": 3,
+          "tick": 3,
+          "visibility": {
+            "type": "public"
+          }
+        },
+        "id": "ch1/sc1/r0/k0/e5",
+        "seq": 5,
+        "witnesses": [
+          "ines",
+          "mara",
+          "silas"
+        ]
+      }
+    ],
+    "proposals": [
+      {
+        "character": "mara",
+        "id": "ch1/sc1/r0/k0/p1",
+        "proposal": {
+          "action": {
+            "line": "Gate's closing. No one leaves, no one enters. Keep your voices down.",
+            "object": "the open customs ledger into a waterproof case",
+            "type": "act",
+            "verb": "shoves"
+          },
+          "private_thought": "Storm's coming in fast. Can't let that ledger get read by any customs man before the gate shuts. That bribe from the smuggler is the only thing keeping this port running smooth, and I ain't going down for a paperwork error. Silas wants his crates, but if the gate locks, it's just dead weight. Ines is useless without oil. Gotta secure the books first. No witnesses.",
+          "targets": [],
+          "visibility": {
+            "type": "hidden"
+          }
+        },
+        "reason": null,
+        "round": 1,
+        "verdict": "committed"
+      },
+      {
+        "character": "silas",
+        "id": "ch1/sc1/r0/k0/p2",
+        "proposal": {
+          "action": {
+            "line": "Mara, my friend, the wind is turning its teeth, isn't it? I fear the storm will not wait for our papers. I have the key to the warehouse, and I am willing to carry the weight of the delay, but I cannot carry the weight of wet crates. Might we not get them to the quay before the gate closes? A gentle nudge now saves a great deal of trouble later.",
+            "type": "speak"
+          },
+          "private_thought": "The wind is biting hard, and the gate is about to lock. If I wait for the storm to pass, these crates will rot on the quay, and I'll be stuck here. Mara is busy with her ledger, but I need to get those crates moved. I have the key, so I don't need her permission to open the door, only her tolerance to move the goods. I must be polite, but firm about the urgency. The proverb says 'a stitch in time saves nine,' but here, a minute in time saves the whole cargo.",
+          "targets": [
+            "mara"
+          ],
+          "visibility": {
+            "type": "public"
+          }
+        },
+        "reason": "another proposal took the round",
+        "round": 1,
+        "verdict": "lapsed"
+      },
+      {
+        "character": "ines",
+        "id": "ch1/sc1/r0/k0/p3",
+        "proposal": {
+          "action": {
+            "line": "Mara, with the oil situation so critical, I must ensure the customs manifest is correct. If the gate closes, we cannot verify the contents of Silas's crates until morning, and I will not be responsible for an error in the record.",
+            "object": "closer to the table",
+            "type": "act",
+            "verb": "step"
+          },
+          "private_thought": "The storm is a convenient shield. Mara is guarding her ledger like a fortress, yet she is ignoring the fact that the lamp goes dark in two hours. If the light fails, the harbour is a trap. She lied to me about the oil supply, or perhaps she lied about the ferry. I must see that ledger before the gate locks and the truth gets locked with it. I will pretend to be concerned about the lamp, but my eyes will be on the paper.",
+          "targets": [
+            "mara",
+            "silas"
+          ],
+          "visibility": {
+            "type": "public"
+          }
+        },
+        "reason": "another proposal took the round",
+        "round": 1,
+        "verdict": "lapsed"
+      },
+      {
+        "character": "mara",
+        "id": "ch1/sc1/r0/k0/p4",
+        "proposal": {
+          "action": {
+            "line": "Gate's shut, trader. Your crates stay put till the storm breaks. Ines, get back to your tower, light what you can. I'm locking up.",
+            "type": "speak"
+          },
+          "private_thought": "Silas is asking questions. Ines is useless, just standing there with empty tins. The gate is closing. If I let Silas think about where those crates are going, he'll ask too many questions. I need to get him out of my sight and away from the ledger. The warehouse is locked, but the storm will keep the customs men inside their hut. I'll tell him the gate is shut and he's stuck. Then I'll lock up the office. No one sees the ledger.",
+          "targets": [
+            "silas",
+            "ines"
+          ],
+          "visibility": {
+            "type": "public"
+          }
+        },
+        "reason": "another proposal took the round",
+        "round": 2,
+        "verdict": "lapsed"
+      },
+      {
+        "character": "silas",
+        "id": "ch1/sc1/r0/k0/p5",
+        "proposal": {
+          "action": {
+            "line": "The ledger is open, Mara. I trust the numbers balance. I must attend to a small matter of logistics. One does not leave the cart in the rain.",
+            "object": "Mara to hold the conversation for a moment while I step aside",
+            "type": "act",
+            "verb": "signals"
+          },
+          "private_thought": "The gate will close in the time it takes to brew a cup of tea. Ines is a distraction; her oil is her problem, not mine. The crates are the prize, and the key is the only way in without rousing a customs officer I cannot bribe. I cannot carry them all, but I can secure the first one. A man who waits for the storm to pass will never get his goods to sea.",
+          "targets": [
+            "mara"
+          ],
+          "visibility": {
+            "type": "public"
+          }
+        },
+        "reason": null,
+        "round": 2,
+        "verdict": "committed"
+      },
+      {
+        "character": "ines",
+        "id": "ch1/sc1/r0/k0/p6",
+        "proposal": {
+          "action": {
+            "line": "Excuse me, Master Mara. I was reviewing the oil reserves and noticed the tide tables. May I glance at the ledger to see if there are any scheduled customs entries that might affect the gate's closing time? I want to ensure I am not keeping the gate open longer than necessary for the storm.",
+            "type": "speak"
+          },
+          "private_thought": "The ledger is open. This is my chance to see what is actually scheduled for tonight, but I must be careful not to appear as if I am searching for something I was not told. If the harbour master lied about the lamp's status or the ferry, the ledger might hold the truth. I will ask a polite question about the tide tables to justify my gaze.",
+          "targets": [
+            "mara"
+          ],
+          "visibility": {
+            "type": "public"
+          }
+        },
+        "reason": "another proposal took the round",
+        "round": 2,
+        "verdict": "lapsed"
+      },
+      {
+        "character": "mara",
+        "id": "ch1/sc1/r0/k0/p7",
+        "proposal": {
+          "action": {
+            "line": "Logistics wait, Silas. Gate locks in ten. You step off this quay, you're stuck till morning. Keep your eyes on me, not the crates.",
+            "type": "speak"
+          },
+          "private_thought": "He's stalling. 'Small matter of logistics.' That's trader talk for 'I'm checking if I can slip past you.' I've got the ledger in the case, but if he wanders off, he might find the warehouse door or worse, talk to Ines. Can't let them split up. Need to keep him tethered to me until the gate locks. If he tries to move crates, I'm shutting him down right here. No one walks off with the goods before I've accounted for them.",
+          "targets": [
+            "silas"
+          ],
+          "visibility": {
+            "type": "public"
+          }
+        },
+        "reason": "another proposal took the round",
+        "round": 3,
+        "verdict": "lapsed"
+      },
+      {
+        "character": "silas",
+        "id": "ch1/sc1/r0/k0/p8",
+        "proposal": {
+          "action": {
+            "line": "Mara, I see the ledger. Since the storm keeps us here, I shall make myself useful. I will go to the bonded warehouse and ensure my crates are stacked against the wall, away from the damp. It saves you the trouble of inspecting them before the gate shuts. A man should do his part before he asks for the world.",
+            "type": "speak"
+          },
+          "private_thought": "Ines is already drifting away, likely back to her lamp. Mara is watching me with eyes like flint. The gate is a stone throw away. If I walk toward the warehouse now, she will stop me. I must give her a reason to look away, a reason that smells of duty, not theft. I will offer to secure the crates myself, 'for her convenience.' A harbour master who loves her ledger will hate to watch me fumble with heavy boxes. She will let me go to do it 'properly'.",
+          "targets": [
+            "mara"
+          ],
+          "visibility": {
+            "type": "public"
+          }
+        },
+        "reason": "another proposal took the round",
+        "round": 3,
+        "verdict": "lapsed"
+      },
+      {
+        "character": "ines",
+        "id": "ch1/sc1/r0/k0/p9",
+        "proposal": {
+          "action": {
+            "to": "inn",
+            "type": "move"
+          },
+          "private_thought": "Silas's excuse about the cart is transparent. He wants me out of the room. If I stay, I might see what they are discussing, but if I go, I can examine the ledger before it is closed. The lamp's oil is a problem I must solve, but this... this smells of deception. Why would the harbour master lie about the oil if the lamp is simply running low? And why does Silas need me to leave before he speaks to Mara? I must be careful. I will step aside, but I will watch.",
+          "targets": [],
+          "visibility": {
+            "type": "public"
+          }
+        },
+        "reason": null,
+        "round": 3,
+        "verdict": "committed"
+      }
+    ],
+    "scene": "ch1/sc1/r0"
+  }
+}

@@ -1063,34 +1063,25 @@ impl Actor {
         let row = self
             .calls
             .query_row(
-                "SELECT id, role, model, params_json, mechanism, request_json, prompt_sha256,
-                        response_json, status, input_tokens, output_tokens, cached_tokens,
-                        cost_usd, latency_ms, created_at
-                 FROM llm_call WHERE run_id = ?1 AND address = ?2 AND attempt = ?3",
+                &format!(
+                    "SELECT {CALL_COLUMNS} FROM llm_call
+                     WHERE run_id = ?1 AND address = ?2 AND attempt = ?3"
+                ),
                 params![run.as_str(), address, attempt],
-                |r| {
-                    Ok(CallRow {
-                        id: r.get(0)?,
-                        role: r.get(1)?,
-                        model: r.get(2)?,
-                        params: r.get(3)?,
-                        mechanism: r.get(4)?,
-                        request: r.get(5)?,
-                        prompt_sha256: r.get(6)?,
-                        response: r.get(7)?,
-                        status: r.get(8)?,
-                        input_tokens: r.get(9)?,
-                        output_tokens: r.get(10)?,
-                        cached_tokens: r.get(11)?,
-                        cost_usd: r.get(12)?,
-                        latency_ms: r.get(13)?,
-                        created_at: r.get(14)?,
-                    })
-                },
+                CallRow::read,
             )
             .optional()?;
-        row.map(|row| row.into_call(run, address, attempt))
-            .transpose()
+        row.map(|row| row.into_call(run)).transpose()
+    }
+
+    pub(super) fn calls(&self, run: &RunId) -> Result<Vec<StoredCall>, StoryDbError> {
+        let mut select = self.calls.prepare(&format!(
+            "SELECT {CALL_COLUMNS} FROM llm_call WHERE run_id = ?1 ORDER BY rowid"
+        ))?;
+        let rows = select
+            .query_map([run.as_str()], CallRow::read)?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows.into_iter().map(|row| row.into_call(run)).collect()
     }
 
     #[cfg(test)]
@@ -1105,6 +1096,11 @@ fn call_id(run: &RunId, address: &str, attempt: u32) -> String {
     let name = format!("{run}\n{address}\n{attempt}");
     Uuid::new_v5(&CALL_NAMESPACE, name.as_bytes()).to_string()
 }
+
+/// The columns [`CallRow::read`] reads, in its order.
+const CALL_COLUMNS: &str = "id, role, model, params_json, mechanism, request_json, prompt_sha256,
+    response_json, status, input_tokens, output_tokens, cached_tokens, cost_usd, latency_ms,
+    created_at, address, attempt";
 
 /// A call-log row as selected.
 struct CallRow {
@@ -1123,15 +1119,34 @@ struct CallRow {
     cost_usd: Option<f64>,
     latency_ms: Option<i64>,
     created_at: String,
+    address: String,
+    attempt: u32,
 }
 
 impl CallRow {
-    fn into_call(
-        self,
-        run: &RunId,
-        address: &str,
-        attempt: u32,
-    ) -> Result<StoredCall, StoryDbError> {
+    fn read(r: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
+        Ok(CallRow {
+            id: r.get(0)?,
+            role: r.get(1)?,
+            model: r.get(2)?,
+            params: r.get(3)?,
+            mechanism: r.get(4)?,
+            request: r.get(5)?,
+            prompt_sha256: r.get(6)?,
+            response: r.get(7)?,
+            status: r.get(8)?,
+            input_tokens: r.get(9)?,
+            output_tokens: r.get(10)?,
+            cached_tokens: r.get(11)?,
+            cost_usd: r.get(12)?,
+            latency_ms: r.get(13)?,
+            created_at: r.get(14)?,
+            address: r.get(15)?,
+            attempt: r.get(16)?,
+        })
+    }
+
+    fn into_call(self, run: &RunId) -> Result<StoredCall, StoryDbError> {
         let corrupt = |what: &str, value: &str| {
             StoryDbError::Corrupt(format!("call {} has {what} {value:?}", self.id))
         };
@@ -1143,8 +1158,8 @@ impl CallRow {
         Ok(StoredCall {
             call: NewCall {
                 run: run.clone(),
-                address: address.to_owned(),
-                attempt,
+                address: self.address,
+                attempt: self.attempt,
                 role: self.role,
                 model: self.model,
                 params: serde_json::from_str(&self.params)?,

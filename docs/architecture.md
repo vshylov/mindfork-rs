@@ -628,6 +628,19 @@ src/
 │  │  │                     history renderer — spec §9.11
 │  │  └─ subagent.rs        call_subagent — schema + args; the loop runs it (ADR 0010)
 │  ├─ spellcheck/           check, segment, dict, mod — Hunspell + segmenter + personal dictionary
+│  ├─ story/                Fabula's engine (docs/fabula.md §3, docs/research/fabula-engine.md §7–§9):
+│  │                        port.rs — LlmPort and the one policy every answer walks, live or replayed
+│  │                        (a cut or a transient failure tried once more, an invalid reply repaired
+│  │                        once quoting the validator, a refusal final); engine.rs — the port over
+│  │                        the chat's EngineBackend, every attempt into the call log, the fallback
+│  │                        mechanism until ChatRequest carries a schema (PR 3); replay.rs — the port
+│  │                        over the call log, by address, drift reported; schema.rs — Schema, the
+│  │                        dialect by construction, printed in the order declared (a Value sorts its
+│  │                        keys), derived from the reply types, and the validator that runs before
+│  │                        serde; dialect.rs — the dialect's own check of the printed JSON;
+│  │                        scene.rs — one scene played by script, M0's simulation. No production
+│  │                        consumer before the story run (PR 8): the module's `allow(dead_code)`
+│  │                        goes with it
 │  ├─ profiles.rs           pure profile operations (sanitize_name, ProfileEdit)
 │  ├─ chat_search_sort.rs   chat list filter/sort
 │  ├─ companion_memory.rs   the companion's memory blocks (spec §6.6): the memory cut,
@@ -879,8 +892,8 @@ src/
    │  │                     writers.rs — BranchWriter/ReflectionWriter/AuthorWriter/RunLogWriter,
    │  │                     not Clone (a compile-time assertion), one per store at a time, given
    │  │                     back on drop; actor.rs — the queries: a branch's path is its ancestry
-   │  │                     up to each fork, the canon is versioned per document. One open per
-   │  │                     file per process
+   │  │                     up to each fork, the canon is versioned per document, the call log is
+   │  │                     read by address or a run's whole in order. One open per file per process
    │  ├─ json.rs            atomic write (write-rename + .bak) for config/profiles/chats
    │  ├─ db/               SQLite + sqlite-vec: notes/RAG, isolated by profile_id.
    │  │  │                 God object broken up by domain (docs/history/refactoring-god-objects.md,

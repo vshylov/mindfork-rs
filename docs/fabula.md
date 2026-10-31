@@ -1,6 +1,6 @@
 # Fabula — a story engine used from the chat: track plan
 
-**Status:** in progress — PR 1 built (2026-11-01). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
+**Status:** in progress — M0 done: PRs 1 and 2 built, Gate G0 GO (2026-11-01). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
 so are the three this plan adds (§6) and where development runs (§4, *The development
 stack*). The design —
 the engine, its stores, its contracts, its evaluation — is
@@ -128,6 +128,17 @@ ids are derived from position, never drawn at random; routes and secrets are arr
 closed objects. One finding passes to PR 2: serde reads a stray field on a variant
 without fields in silence, so a reply is validated against its schema before it is
 parsed.
+
+**PR 2, as built (2026-11-01).** The port takes the engine's own `Schema` type rather than a
+`serde_json::Value`: the crate's `serde_json` is built without `preserve_order`, so a `Value`
+sorts its keys, and a schema handed over as one would reach the model with `action` before
+`private_thought`. The schema prints itself in the order declared, and PR 3 carries that text
+to the wire as it is, never through a `Value`. Both adapters feed their attempts through one
+policy, so a replay repeats the live call's retries and repairs. M0's scene is ruled by a fixed
+rule where M1's World Master will rule. **Gate G0: GO.** The fixture recorded against Qwen 3.8
+27B (OpenRouter, pinned to DeepInfra) replays identically and with no drift; a second writer
+is refused and the not-`Clone` assertion holds (PR 1's tests). The figures are in
+[journal/stories.md](journal/stories.md).
 
 ### M1 — the simulation, live
 
