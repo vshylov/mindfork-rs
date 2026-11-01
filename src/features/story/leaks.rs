@@ -37,6 +37,23 @@ pub fn token_of(text: &str) -> Option<&str> {
     (token.len() > TOKEN_PREFIX.len()).then_some(token)
 }
 
+/// `text` without its planted tokens: each bracketed `[SECRET-…]` run is
+/// cut, with the space before it. What the Author and the reviewers are shown
+/// of a secret, so the prose never learns the evaluation's markers.
+pub fn without_tokens(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(&format!("[{TOKEN_PREFIX}")) {
+        let Some(len) = rest[at..].find(']') else {
+            break;
+        };
+        out.push_str(rest[..at].trim_end_matches(' '));
+        rest = &rest[at + len + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
 /// Every secret of the canon whose token `text` carries, compared without
 /// regard to case, in the canon's order.
 pub fn secrets_in<'a>(canon: &'a Canon, text: &str) -> Vec<&'a SecretKey> {

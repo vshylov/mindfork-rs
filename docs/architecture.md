@@ -648,8 +648,21 @@ src/
 │  │                        rulings, with their schemas; prompts.rs — the role prompts, in English:
 │  │                        a character sees what it saw, the World Master the world and the deeds,
 │  │                        never a thought; leaks.rs — the planted secret tokens, the engine's check
-│  │                        and the audit of every character call. No production consumer before the
-│  │                        story run (PR 8): the module's `allow(dead_code)` goes with it
+│  │                        and the audit of every character call, and the secrets' texts shown
+│  │                        without them; chapter.rs — the chapter's loop (PR 6): a run from where
+│  │                        the story stands to its next pause, every step reading the stores before
+│  │                        it calls a model, so a run killed anywhere resumes as a new run at the
+│  │                        first step no run finished; the outline, the rolling scene plans, the
+│  │                        pick (reruns, then the last attempt's pick), the draft, the two reviews
+│  │                        side by side, the triage, at most two revisions, the summary, the pauses
+│  │                        P1–P3 as question rows, the budget checked before every call; author.rs
+│  │                        — the Author's and the reviewers' replies with their schemas, built per
+│  │                        call where its options differ; author_prompts.rs — their prompts: the
+│  │                        Author sees everything but the planted tokens, the Reader only the
+│  │                        published text, the checker the record with its ids; steps.rs — the
+│  │                        steps of every run of a story, read by a resume; export.rs — the story
+│  │                        as markdown. No production consumer before the story run (PR 8): the
+│  │                        module's `allow(dead_code)` goes with it
 │  ├─ profiles.rs           pure profile operations (sanitize_name, ProfileEdit)
 │  ├─ chat_search_sort.rs   chat list filter/sort
 │  ├─ companion_memory.rs   the companion's memory blocks (spec §6.6): the memory cut,
@@ -820,7 +833,10 @@ src/
 │  │                        never random, so a replay sends the same prompts); canon.rs — Canon and
 │  │                        check() (every problem at once: keys, routes, starts, empty texts);
 │  │                        event.rs — SceneSetup, Proposal, Action, Visibility, Effect, NewEvent/Event,
-│  │                        every union tagged by `type`; world.rs — WorldState::admit, the one gate an
+│  │                        every union tagged by `type`; manuscript.rs — the Author's stores beyond
+│  │                        them: the outline, chapter versions and their origin, review notes and
+│  │                        decisions, the pauses' questions and answers, the assumptions;
+│  │                        world.rs — WorldState::admit, the one gate an
 │  │                        event passes (checked against the state it applies to, applied, its
 │  │                        witnesses computed from presence and visibility), and fold over a path.
 │  │                        Here rather than in features because the story database runs it inside its
@@ -906,11 +922,14 @@ src/
    │  │                     and write is a job on it, so a commit's check and its append see one
    │  │                     state. schema.rs — the tables, append-only triggers on all but run/step,
    │  │                     the version read before any DDL, the default rollback journal;
-   │  │                     writers.rs — BranchWriter/ReflectionWriter/AuthorWriter/RunLogWriter,
-   │  │                     not Clone (a compile-time assertion), one per store at a time, given
-   │  │                     back on drop; actor.rs — the queries: a branch's path is its ancestry
-   │  │                     up to each fork, the canon is versioned per document, the call log is
-   │  │                     read by address or a run's whole in order. One open per file per process
+   │  │                     writers.rs — BranchWriter/ReflectionWriter/ReviewWriter/AuthorWriter/
+   │  │                     RunLogWriter, not Clone (a compile-time assertion), one per store at a
+   │  │                     time, given back on drop; actor.rs — the queries: a branch's path is its
+   │  │                     ancestry up to each fork, the canon is versioned per document, the call
+   │  │                     log is read by address or a run's whole in order; actor_manuscript.rs —
+   │  │                     the manuscript's and the pauses' (a review written whole and once, an
+   │  │                     answer with its approval in one transaction, every run's steps, a
+   │  │                     chapter's spend). One open per file per process
    │  ├─ json.rs            atomic write (write-rename + .bak) for config/profiles/chats
    │  ├─ db/               SQLite + sqlite-vec: notes/RAG, isolated by profile_id.
    │  │  │                 God object broken up by domain (docs/history/refactoring-god-objects.md,

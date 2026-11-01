@@ -1,6 +1,6 @@
 # Fabula — a story engine used from the chat: track plan
 
-**Status:** in progress — M0 done (PRs 1 and 2, Gate G0 GO); M1 done (PRs 3–5, Gate G1 GO, 2026-11-01). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
+**Status:** in progress — M0 done (PRs 1 and 2, Gate G0 GO); M1 done (PRs 3–5, Gate G1 GO, 2026-11-01); M2 under way (PR 6, the Author's loop, 2026-11-01). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
 so are the three this plan adds (§6) and where development runs (§4, *The development
 stack*). The design —
 the engine, its stores, its contracts, its evaluation — is
@@ -203,7 +203,26 @@ there rules on little thought. The figures are in [journal/stories.md](journal/s
 | 6 `feat/story-author` | The outline, the rolling scene plans, the pick against its rubric (two reruns, then the least bad), the chapter's draft, the Reader and the Continuity checker, the triage and at most two revisions, the markdown export; the pauses inside the engine: `question` and `assumption` rows, a pause that ends the run, a resume from the paused step; the budget counted per chapter | Live, through the harness: one chapter end to end on a gate model; the run killed at random steps resumes each time |
 | 7 `feat/story-data` | Stories in mindfork's data: `data/stories/<id>.db` inside backups (the directory and the manifest's schema entry), `data/story-logs/` outside them; `mindfork stats` counts stories and compares them by id; a story is hidden and purged with its chat | A backup's round trip; the previous release on a backup that holds stories (docs/lessons.md §8). No live model |
 | 8 `feat/story-run` | The third background payload; `RunKind::Story` with `CHAT_SCHEMA` 7 → 8 as a stamp-only step and its golden fixture; `tools.story`, the timeout and the budget; the landing: the chapter into the chat (§6) and a notification in the profile's language with the summary, the picks, the assumptions and the question; the cancelled landing that names its step; `story_status` | Orchestrator tests on the mock engine; the previous release refusing a chat file of schema 8 politely (AGENTS.md §6) |
-| 9 `feat/story-conversation` | `story_create` and `story_continue`; the user's rows after the question read verbatim; the conservative reading; the evidence rows; the refusals of a woken turn and of `unclear`; the reminder line; spec.md §9.16, the README (experimental), the manual, the help overlay, the CHANGELOG | Live, the gate models as the chat's model: a valid canon from attached sketches; no approval without a user message after the question; a chapter that lands; claims without a call counted. **Gate G2** (spec §13): one short story end to end in the chat, read by the owner |
+| 9 `feat/story-conversation` | `story_create` and `story_continue`; a named scene rerun at P2 (PR 6 builds accept and revise); the user's rows after the question read verbatim; the conservative reading; the evidence rows; the refusals of a woken turn and of `unclear`; the reminder line; spec.md §9.16, the README (experimental), the manual, the help overlay, the CHANGELOG | Live, the gate models as the chat's model: a valid canon from attached sketches; no approval without a user message after the question; a chapter that lands; claims without a call counted. **Gate G2** (spec §13): one short story end to end in the chat, read by the owner |
+
+**PR 6, as built (2026-11-01).** A run goes from where the story stands to its next pause.
+Each step reads the stores before it calls a model, so a run killed anywhere resumes, as a
+new run, at the first step no run finished. A branch a stopped run left half-played is marked
+lost, and a branch under the next index plays in its place. The live kill run found why:
+counted as failed, two kills in a row cost a scene two of its three attempts. The least bad
+pick of spec §7 costs no call, since the last attempt's pick may only pick. The pauses are
+rows. At P2 the human accepts, with notes for the next chapter, or asks for a revision with
+notes; *rerun a named scene* is not built, since it needs the main line to step back, and
+moves to PR 9, which reads what the human asked for. The budget counts every call under the
+chapter's addresses, from the call log. **Live:** one chapter end to end on Qwen 3.8 27B
+(OpenRouter, DeepInfra): 192 calls, every first attempt valid, no leak, 718,865 tokens and
+$0.29 in 39 minutes. Killed at random 4 times on Qwen and 6 times on `gemini-3.8-flash`,
+the chapter resumed each time to its checkpoint. **PR 5's finding, measured:** on
+`gemini-3.8-flash` the schema does not change how much a role thinks; its effort does. At the
+low level the World Master thought a median of 0 tokens under the schema and 0 without it,
+at the high level 1,811 and 1,496, with no slip in any arm. The Continuity checker found
+three planted faults in every call of every arm. No mechanism changes; a role's effort is
+PR 8's to set. The figures are in [journal/stories.md](journal/stories.md).
 
 A release can follow G2: the tools are reachable only with `tools.story` on, and the
 release carries the chat schema's step with the checks AGENTS.md §6 asks for.

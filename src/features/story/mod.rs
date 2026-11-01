@@ -16,9 +16,13 @@
 //!   proposing and the World Master ruling ([`contracts`], [`prompts`]); the
 //!   secrets followed by their planted tokens ([`leaks`]).
 
+pub mod author;
+pub mod author_prompts;
+pub mod chapter;
 pub mod contracts;
 pub mod dialect;
 pub mod engine;
+pub mod export;
 pub mod leaks;
 pub mod port;
 pub mod prompts;
@@ -26,7 +30,12 @@ pub mod replay;
 pub mod scene;
 pub mod schema;
 pub mod simulation;
+pub mod steps;
 
+#[cfg(test)]
+mod chapter_live_tests;
+#[cfg(test)]
+mod continuity_live_tests;
 #[cfg(test)]
 mod scene_live_tests;
 #[cfg(test)]

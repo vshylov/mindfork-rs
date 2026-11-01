@@ -326,6 +326,8 @@ async fn write_chapter(ctx: &Ctx, n: u32) -> anyhow::Result<ChapterId> {
 }
 ```
 
+As built (PR 6), the least bad pick costs no call: on the last attempt the pick's schema has no rerun, so the Author's own pick there is the choice. Each step reads the stores before it calls a model, the pauses are rows, and the summary is written in the human's language before the checkpoint ([docs/fabula.md](../fabula.md) §4).
+
 ## 8. Agent contracts
 
 Every call is stateless: the engine assembles the prompt from the stores and validates the reply against a schema; only the Author's write-and-revise session keeps a short history within one chapter.
@@ -360,7 +362,7 @@ The schema is the contract, and the engine's validator checks every reply agains
 | vLLM, Ollama, LM Studio | `response_format` with `json_schema` (Ollama also takes `format`) | Yes | vLLM constrains only after the reasoning ends when started with `--reasoning-parser`, and from the first token without it; Ollama leaves the thought free since v0.40.0 (September 2026); LM Studio documents nothing about reasoning, and its tracker reports the schema binding the thought, so thinking stays off there |
 | OpenAI | `response_format` on Chat Completions, `text.format` on Responses, with `strict: true` | Yes | The root may not be an `anyOf`; `const` and `oneOf` are not on the supported list; key order is kept |
 | Anthropic | `output_config.format`, generally available (the beta `output_format` is deprecated) | Yes, "in most cases": refusals and `max_tokens` cuts excepted | The grammar does not bind thinking; required properties come out first; the case of `enum` values is not guaranteed; at most 24 optional and 16 union-typed parameters per request; a changed format drops the prompt cache; thinking off is `disabled` on Haiku 5.5, `between_tools` on Sonnet 5.5, and absent on Opus 5.5 and Fable 5.1, which always think and are asked at their lowest effort (measured 2026-11-01, [journal/engine.md](../journal/engine.md)) |
-| Gemini | `generationConfig.responseJsonSchema` beside `responseMimeType: "application/json"`. The API reference recommends `generationConfig.responseFormat.text` instead, but `gemini-2.5-flash` ignores that field in silence and answers in prose, while `responseJsonSchema` holds on 2.5, 3.5, 3.8 and the Gemma 4 the API serves (measured 2026-11-01, [docs/fabula.md](../fabula.md) §4, PR 5) | Yes, by grammar | Unsupported keywords are dropped in silence, not refused; `const` is not listed; key order is kept |
+| Gemini | `generationConfig.responseJsonSchema` beside `responseMimeType: "application/json"`. The API reference recommends `generationConfig.responseFormat.text` instead, but `gemini-2.5-flash` ignores that field in silence and answers in prose, while `responseJsonSchema` holds on 2.5, 3.5, 3.8 and the Gemma 4 the API serves (measured 2026-11-01, [docs/fabula.md](../fabula.md) §4, PR 5) | Yes, by grammar | Unsupported keywords are dropped in silence, not refused; `const` is not listed; key order is kept; the schema does not change how much `gemini-3.8-flash` thinks in a role, its effort does (measured 2026-11-01, PR 6) |
 | xAI | `response_format` with `json_schema` and `strict: true` | Yes, within limits | Lengths are enforced up to 2,048 characters, arrays up to 256 items, objects up to 64 properties; beyond that "conformance relies on model behavior" |
 | DeepSeek | Nowhere: `response_format` takes `json_object` only; strict functions exist on the `/beta` endpoint but cannot be forced in thinking mode | No | JSON mode can answer with blank `content` and `finish_reason: stop`; DeepSeek takes the fallback |
 | OpenRouter | `response_format` with `json_schema`, plus `provider.require_parameters: true` | Per endpoint: some enforce, others treat the schema as a hint | A model's `supported_parameters` lists `structured_outputs`; without `require_parameters` an endpoint may ignore the schema; measurements pin `order` with `allow_fallbacks: false` |
@@ -425,7 +427,7 @@ Work runs in parallel only where nothing shared is written — the intents of a 
 - **Order is narrative order.** Proposals are generated in parallel but committed one at a time, so `seq` orders the events within a branch.
 - **Replay is keyed by address, not by prompt.** Sibling branches often send byte-identical first prompts and receive different replies. Every call is stored under its logical address (run, chapter, scene, rerun, branch, round, role, character, attempt) with a UUIDv5 id; replay serves by address, and the stored prompt hash only flags drift.
 - **Resumable steps.** Each finished step (branch, pick, draft, review, settle) is recorded in `step`; a crashed run resumes at the first missing step. A failed branch does not block the pick while one candidate remains.
-- **Cancellation.** A cancellation token per run drops in-flight calls; partial branches are recorded as failed steps.
+- **Cancellation.** A cancellation token per run drops in-flight calls; partial branches are recorded as failed steps. As built (PR 6), a resume is a new run that reads every run's steps, and a partial branch is marked lost and replaced by a branch under the next index, so an interruption never counts against the scene's attempts ([docs/fabula.md](../fabula.md) §4).
 
 ## 10. Cost model and model allocation
 

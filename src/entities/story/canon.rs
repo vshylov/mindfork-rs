@@ -130,6 +130,10 @@ pub struct Style {
     /// Grammatical tense, "past".
     #[serde(default)]
     pub tense: String,
+    /// The language the prose is written in, "English"; empty for English.
+    /// The role prompts stay English whatever it is (spec §8, §15).
+    #[serde(default)]
+    pub language: String,
 }
 
 /// The story's arc (spec §7): drafted by the Author, approved by the human

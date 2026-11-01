@@ -49,13 +49,14 @@ use super::prompts::{
 };
 use super::scene::{NOT_TAKEN, SceneError, WAITS, opening_events, scripted_event, seed_of};
 use super::schema::{CanonKeys, Schema, StorySchema};
+use super::steps::Steps;
 use crate::entities::chat_file::sha256_hex;
 use crate::entities::story::{
     Action, BranchId, Canon, Cause, CharacterKey, Effect, Event, EventKind, LocationKey, NewEvent,
     Proposal, ProposalVerdict, RunId, SceneId, SceneSetup, Visibility, WorldState,
 };
 use crate::shared::storage::story::{
-    AuthorWriter, BranchWriter, Reflection, ReflectionWriter, StoredProposal, StoryDb,
+    AuthorWriter, BranchWriter, Reflection, ReflectionWriter, StepStatus, StoredProposal, StoryDb,
 };
 
 /// Why a lapsed proposal lapsed: the World Master's ruling left it out.
@@ -323,9 +324,7 @@ pub async fn simulate_scene(
         let branch = BranchId::of_scene(&scene, k);
         let result = match stage.play_branch(&scene, &tip, k).await {
             Ok(played) => BranchResult::Played(played),
-            Err(SceneError::Port(e))
-                if !matches!(e, PortError::Cancelled { .. } | PortError::Store(_)) =>
-            {
+            Err(SceneError::Port(e)) if !stops_the_run(&e) => {
                 tracing::warn!(%branch, error = %e, "a story branch failed");
                 BranchResult::Failed {
                     branch,
@@ -337,6 +336,110 @@ pub async fn simulate_scene(
         branches.push(result);
     }
     Ok(SceneRun { scene, branches })
+}
+
+/// Whether a call's failure stops the whole run rather than its branch: a
+/// cancellation, a spent budget, the store.
+fn stops_the_run(e: &PortError) -> bool {
+    matches!(
+        e,
+        PortError::Cancelled { .. } | PortError::Budget { .. } | PortError::Store(_)
+    )
+}
+
+/// The step that marks a branch lost to a stopped run rather than failed by
+/// its calls: a later run replaces it instead of counting it (`ch1/sc1/r0/k0`
+/// → `ch1/sc1/r0/k0/interrupted`).
+pub fn interrupted_step(branch: &BranchId) -> String {
+    format!("{branch}/interrupted")
+}
+
+/// How one branch of a stored scene came out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchOutcome {
+    /// The branch.
+    pub branch: BranchId,
+    /// What failed; none when it played to its end.
+    pub failed: Option<String>,
+}
+
+/// Plays the stored scene `scene` until `config.branches` of its branches
+/// have come out — played to their end, or failed by their calls — each
+/// forked from `tip` and recorded as a step of its own under its id (spec §9).
+///
+/// A branch a run finished is taken as it stands, and one its calls failed
+/// stays failed. A branch that a stopped run left half-played — it exists
+/// without a step, or the run stopped under it — cannot be taken back, since
+/// its events are in the log; it is recorded failed and marked interrupted
+/// ([`interrupted_step`]), and a branch under the next index takes its place.
+/// So a run killed again and again loses only the branches in flight, never
+/// the scene's attempt: an interruption is not the scene failing (docs/
+/// fabula.md §4, PR 6, found by the live kill run). A cancellation, a spent
+/// budget or the store stops the scene; the outcomes leave the interrupted
+/// branches out.
+pub async fn play_scene(
+    db: &StoryDb,
+    port: &dyn LlmPort,
+    steps: &Steps,
+    (scene, setup): (&SceneId, &SceneSetup),
+    tip: &BranchId,
+    config: &SimConfig,
+) -> Result<Vec<BranchOutcome>, SceneError> {
+    let canon = db.canon().await?.ok_or(SceneError::NoCanon)?;
+    if db.branch(tip).await?.is_none() && tip == &BranchId::genesis() {
+        drop(db.genesis().await?);
+    }
+    let schemas = Schemas::of(&canon);
+    let stage = Stage {
+        db,
+        port,
+        run: steps.run(),
+        canon: &canon,
+        setup,
+        config,
+        schemas: &schemas,
+    };
+    let mut outcomes = Vec::with_capacity(config.branches as usize);
+    let mut k = 0;
+    while outcomes.len() < config.branches as usize {
+        let branch = BranchId::of_scene(scene, k);
+        let lost = interrupted_step(&branch);
+        let failed = match steps.status(branch.as_str()) {
+            Some(StepStatus::Done) => None,
+            Some(StepStatus::Failed) if steps.done(&lost) => {
+                k += 1;
+                continue;
+            }
+            Some(StepStatus::Failed) => Some("failed in an earlier run".to_owned()),
+            None if db.branch(&branch).await?.is_some() => {
+                steps.finish(branch.as_str(), StepStatus::Failed).await?;
+                steps.finish(&lost, StepStatus::Done).await?;
+                k += 1;
+                continue;
+            }
+            None => match stage.play_branch(scene, tip, k).await {
+                Ok(_) => {
+                    steps.finish(branch.as_str(), StepStatus::Done).await?;
+                    None
+                }
+                Err(SceneError::Port(e)) if !stops_the_run(&e) => {
+                    tracing::warn!(%branch, error = %e, "a story branch failed");
+                    steps.finish(branch.as_str(), StepStatus::Failed).await?;
+                    Some(e.to_string())
+                }
+                Err(e) => {
+                    if db.branch(&branch).await?.is_some() {
+                        steps.finish(branch.as_str(), StepStatus::Failed).await?;
+                        steps.finish(&lost, StepStatus::Done).await?;
+                    }
+                    return Err(e);
+                }
+            },
+        };
+        outcomes.push(BranchOutcome { branch, failed });
+        k += 1;
+    }
+    Ok(outcomes)
 }
 
 /// What stays fixed for a scene's branches.

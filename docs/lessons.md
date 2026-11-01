@@ -715,6 +715,17 @@ mechanism is why a field of a `tracing` call shows as uncovered: it is evaluated
 when something listens.
 — *Windows Terminal shows OSC 777 only from Preview 1.26 — a correction*.
 
+**Kill a resumable run more than once — one kill a run hides what compounds.** The story
+engine's offline test killed a chapter at each of its calls in turn, once a run, and every
+resume reached the same checkpoint. The live run was killed four times at random, and two
+kills in a row cut the two branches of one scene in flight. A cut branch could not be
+taken back, so it counted as failed, and each attempt left with no branch counted against
+the scene. Two of its three attempts went that way, one short of asking the human about a
+failure no model made. A lost step is replaced now and counts against nothing; a retry
+budget counts only the failures of what it retries. When a run can resume, test kills in a
+row too: the second one lands on what the first one left.
+— *Fabula — PR 6, the Author's loop*.
+
 ## 3. Measure; do not assume
 
 **Write the user's document from the code, and treat a sentence that cannot be
@@ -807,6 +818,17 @@ Gemma 4. An ignored field fails as prose that reads like the model's choice; a
 refused one fails as a `400`. When two fields disagree, take the one that fails
 loudly, and keep the probe that told them apart.
 — *Fabula PR 5, the schema on the cloud wires*.
+
+**A probe of one prompt at one setting measures that prompt — measure the role before
+acting on it.** PR 5 asked `gemini-3.8-flash` to "think it through" at the lowest level,
+three calls an arm: 69–98 thought tokens under a schema, 737–838 without. It read as
+"a World Master on Gemini 3.x rules on a tenth of its thought", and the fallback was the
+obvious fix. Measured in the role, over 8 scenes an arm: at the low level the World Master
+thought a median of 0 tokens under the schema and 0 without it, and at the high level
+1,811 and 1,496. The setting decided, not the schema, and the fix would have bought
+nothing. Before a single prompt's finding changes a design, run the role it is about, at
+the settings it runs with.
+— *Fabula — PR 6, the Author's loop*.
 
 **Assume the measurement will overturn the plan, because it repeatedly has.** Defender
 was blamed for CI slowness and the runner reported `RealTimeProtectionEnabled = False`;
