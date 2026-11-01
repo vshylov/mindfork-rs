@@ -185,7 +185,7 @@ reqwest = { version = "0.13.4", default-features = false, features = ["json", "s
 # backup's `data.db` from the zip entry straight into memory, so no decrypted copy of an
 # encrypted backup's database ever lands on disk (docs/history/data-stats.md F5). A module of
 # rusqlite itself; it adds no crate.
-rusqlite = { version = "0.40.1", features = ["bundled", "serialize"] }
+rusqlite = { version = "0.41.1", features = ["bundled", "serialize"] }
 scraper = "0.27.0"
 serde = { version = "1.0.228", features = ["derive"] }
 # `raw_value`: a reply's schema rides to the wire as the text it was printed as. A
