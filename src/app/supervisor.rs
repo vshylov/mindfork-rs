@@ -2216,6 +2216,7 @@ mod tests {
             async move {
                 let req = crate::shared::api::ChatRequest {
                     continue_final: false,
+                    output_schema: None,
                     system: None,
                     messages: vec![crate::shared::api::ApiMessage::user("Say OK.".to_string())],
                     sampling: crate::entities::sampling::SamplingConfig {

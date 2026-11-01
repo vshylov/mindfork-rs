@@ -256,6 +256,7 @@ async fn ask_judge(
         },
         tools: Vec::new(),
         continue_final: false,
+        output_schema: None,
     };
     let mut text = String::new();
     match backend

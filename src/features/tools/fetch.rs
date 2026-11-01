@@ -748,6 +748,7 @@ async fn summarize_text(
     };
     let request = ChatRequest {
         continue_final: false,
+        output_schema: None,
         system: Some(system),
         messages: vec![ApiMessage::user(task)],
         sampling,

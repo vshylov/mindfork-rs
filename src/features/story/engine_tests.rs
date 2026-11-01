@@ -292,3 +292,146 @@ async fn a_text_call_sends_the_prompt_as_it_is_and_gives_the_log_back() {
     .await
     .unwrap();
 }
+
+/// A backend that constrains its replies, answers from a script, and keeps
+/// every request it is sent and every time it is asked.
+struct Enforcing {
+    replies: MockBackend,
+    seen: std::sync::Mutex<Vec<ChatRequest>>,
+    asked: std::sync::atomic::AtomicUsize,
+}
+
+impl Enforcing {
+    fn new(replies: MockBackend) -> Arc<Self> {
+        Arc::new(Self {
+            replies,
+            seen: std::sync::Mutex::new(Vec::new()),
+            asked: std::sync::atomic::AtomicUsize::new(0),
+        })
+    }
+
+    fn asked(&self) -> usize {
+        self.asked.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Each request's schema, as the text sent.
+    fn schemas(&self) -> Vec<Option<String>> {
+        self.seen
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|r| r.output_schema.as_ref().map(|s| s.schema.get().to_owned()))
+            .collect()
+    }
+}
+
+#[async_trait::async_trait]
+impl EngineBackend for Enforcing {
+    async fn chat_stream(&self, req: ChatRequest, cancel: CancellationToken) -> Result<ChatStream> {
+        self.seen.lock().unwrap().push(req.clone());
+        self.replies.chat_stream(req, cancel).await
+    }
+
+    async fn enforces_output_schema(&self) -> bool {
+        self.asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        true
+    }
+}
+
+fn call_at(story: &crate::features::story::scene::tests::Story, address: &str) -> CallAddress {
+    CallAddress {
+        run: story.run.clone(),
+        address: address.to_owned(),
+    }
+}
+
+/// docs/fabula.md §4, PR 3: where the backend constrains, every JSON attempt
+/// carries the schema as printed, named for its role, the repair included; the
+/// prompt keeps the schema too; the log says `schema`; and the backend is asked
+/// once for the adapter's life.
+#[tokio::test]
+async fn a_backend_that_constrains_gets_the_schema_with_every_json_attempt() {
+    let (story, log) = fresh_story().await;
+    let backend = Enforcing::new(MockBackend::sequence(vec![
+        reply("{\"mood\": \"sly\"}"),
+        reply("{\"mood\": \"calm\"}"),
+        reply("{\"mood\": \"grim\"}"),
+        reply("The storm came in."),
+    ]));
+    let port = EngineAdapter::new(
+        backend.clone(),
+        log,
+        "mock-model",
+        sampling(),
+        CancellationToken::new(),
+    );
+    let first = call_at(&story, "a");
+    assert!(
+        port.json(&first, Role::Character, &schema(), &prompt())
+            .await
+            .is_ok()
+    );
+    let second = call_at(&story, "b");
+    assert!(
+        port.json(&second, Role::Character, &schema(), &prompt())
+            .await
+            .is_ok()
+    );
+    let prose = call_at(&story, "c");
+    assert!(port.text(&prose, Role::Author, &prompt()).await.is_ok());
+
+    let printed = Some(schema().to_json());
+    assert_eq!(
+        backend.schemas(),
+        [printed.clone(), printed.clone(), printed, None],
+        "the repair is constrained too; prose never is"
+    );
+    let names: Vec<String> = backend
+        .seen
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r.output_schema.as_ref().map(|s| s.name.clone()))
+        .collect();
+    assert_eq!(names, ["character"; 3]);
+    let system = backend.seen.lock().unwrap()[0].system.clone().unwrap();
+    assert!(system.ends_with(&schema().to_json()), "{system}");
+    assert_eq!(backend.asked(), 1);
+
+    let calls = story.db.calls(&story.run).await.unwrap();
+    let mechanisms: Vec<Mechanism> = calls.iter().map(|c| c.call.mechanism).collect();
+    assert_eq!(
+        mechanisms,
+        [
+            Mechanism::Schema,
+            Mechanism::Schema,
+            Mechanism::Schema,
+            Mechanism::Text
+        ]
+    );
+}
+
+/// On the fallback alone the schema stays in the prompt and off the wire,
+/// and the backend is not even asked.
+#[tokio::test]
+async fn the_fallback_alone_never_sends_the_schema() {
+    let (story, log) = fresh_story().await;
+    let backend = Enforcing::new(MockBackend::scripted(reply("{\"mood\": \"calm\"}")));
+    let port = EngineAdapter::new(
+        backend.clone(),
+        log,
+        "mock-model",
+        sampling(),
+        CancellationToken::new(),
+    )
+    .fallback_only();
+    assert!(
+        port.json(&call_at(&story, "a"), Role::Character, &schema(), &prompt())
+            .await
+            .is_ok()
+    );
+    assert_eq!(backend.schemas(), [None]);
+    assert_eq!(backend.asked(), 0);
+    let first = story.db.call(&story.run, "a", 1).await.unwrap().unwrap();
+    assert_eq!(first.call.mechanism, Mechanism::Fallback);
+}

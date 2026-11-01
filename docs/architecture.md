@@ -632,8 +632,9 @@ src/
 │  │                        port.rs — LlmPort and the one policy every answer walks, live or replayed
 │  │                        (a cut or a transient failure tried once more, an invalid reply repaired
 │  │                        once quoting the validator, a refusal final); engine.rs — the port over
-│  │                        the chat's EngineBackend, every attempt into the call log, the fallback
-│  │                        mechanism until ChatRequest carries a schema (PR 3); replay.rs — the port
+│  │                        the chat's EngineBackend, every attempt into the call log, the schema
+│  │                        sent to the provider where it enforces one, else the fallback (the
+│  │                        schema in the prompt either way); replay.rs — the port
 │  │                        over the call log, by address, drift reported; schema.rs — Schema, the
 │  │                        dialect by construction, printed in the order declared (a Value sorts its
 │  │                        keys), derived from the reply types, and the validator that runs before
@@ -828,15 +829,20 @@ src/
 │
 └─ shared/                  infrastructure and utilities (FSD "shared")
    ├─ api/                  inference engine layer (contract + per-family implementations, ADR 0004)
-   │  ├─ contract.rs        EngineBackend, Embedder, ChatRequest/Chunk, ThinkingRef, ToolCallAccumulator (agnostic)
+   │  ├─ contract.rs        EngineBackend, Embedder, ChatRequest/Chunk, ThinkingRef, ToolCallAccumulator (agnostic);
+   │  │                     OutputSchema — a reply's schema as its printed text (a RawValue: a Value would sort
+   │  │                     its properties), and `enforces_output_schema`, false unless a client overrides it
    │  ├─ openai/            OpenAI family:
    │  │  ├─ client.rs+wire.rs   Chat Completions: OpenAiClient (reqwest+SSE, /health probe, embed; local/external/proxy — sampling sent as-is; xAI — `for_xai`: GET /models/{name}, the efforts the model lists;
-   │  │  │                      the OpenRouter gateway — `for_openrouter`: the gateway's dialect, GET /model/{slug}, GET /key, attribution headers)
+   │  │  │                      the OpenRouter gateway — `for_openrouter`: the gateway's dialect, GET /model/{slug}, GET /key, attribution headers;
+   │  │  │                      a schema as `response_format` json_schema, constrained everywhere but DeepSeek and a gateway model whose entry
+   │  │  │                      lacks `structured_outputs`, the gateway asked for `provider.require_parameters`)
    │  │  ├─ gateway_tests.rs    #[cfg(test)]: the gateway client against a local stub — dialect, muted effort, headers, key verdicts
    │  │  ├─ xai_tests.rs        #[cfg(test)]: the xAI client against the same stub — the entry by name, an effort as the model's list has it, a refused parameter
    │  │  └─ responses/          Responses API: ResponsesClient + wire (OpenAI cloud, /v1/responses — reasoning summaries, effort, verbosity)
    │  ├─ gemini/            native Gemini: client.rs + wire.rs (generateContent, x-goog-api-key — thought summaries, thinkingLevel/Budget, per-tool-call thoughtSignature)
-   │  ├─ anthropic/         Anthropic Messages API: client.rs + wire.rs (Claude, /v1/messages)
+   │  ├─ anthropic/         Anthropic Messages API: client.rs + wire.rs (Claude, /v1/messages; a schema as
+   │  │                     `output_config.format` beside the effort)
    │  ├─ catalogue.rs       the provider's model catalogue behind the settings picker: eight
    │  │                     endpoint shapes (OpenAI-compatible / Gemini native / Anthropic /
    │  │                     xAI language-models / OpenRouter's text models / OpenRouter's

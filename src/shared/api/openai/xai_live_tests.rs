@@ -49,6 +49,7 @@ fn declared(var: &str) -> Option<(String, OpenAiClient)> {
 fn turn(sampling: SamplingConfig) -> ChatRequest {
     ChatRequest {
         continue_final: false,
+        output_schema: None,
         system: None,
         messages: vec![ApiMessage::user("Reply with exactly: pong")],
         sampling: SamplingConfig {

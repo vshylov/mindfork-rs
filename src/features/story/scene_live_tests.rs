@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use serde_json::json;
 
-use crate::entities::sampling::SamplingConfig;
+use crate::entities::sampling::{ReasoningEffort, SamplingConfig};
 use crate::features::story::scene::harbour_script;
 use crate::features::story::scene::tests::{leaks, record, replay};
 use crate::shared::api::live_client;
@@ -36,11 +36,14 @@ async fn scene_live_records_the_harbour_fixture() {
     };
     let model = std::env::var("MINDFORK_ENGINE_MODEL").unwrap_or_else(|_| "unnamed".to_owned());
     let url = std::env::var("MINDFORK_ENGINE_URL").unwrap_or_default();
-    // Characters run without thinking (spec §8, §10); the cap leaves room
-    // for a model that thinks anyway.
+    // Characters run without thinking (spec §8, §10), muted the way the
+    // application mutes a turn: `reasoning_budget: 0` is what stops a template
+    // with thinking baked in. The cap leaves room for a model that thinks anyway.
     let sampling = SamplingConfig {
         temperature: Some(0.8),
         thinking: Some(false),
+        reasoning_effort: Some(ReasoningEffort::None),
+        reasoning_budget: Some(0),
         max_tokens: Some(4096),
         ..SamplingConfig::default()
     };
@@ -48,7 +51,6 @@ async fn scene_live_records_the_harbour_fixture() {
         "model": model,
         "endpoint": url,
         "date": chrono::Utc::now().format("%Y-%m-%d").to_string(),
-        "mechanism": "fallback",
         "note": std::env::var("MINDFORK_FABULA_NOTE").ok(),
     });
     let fixture = tokio::time::timeout(

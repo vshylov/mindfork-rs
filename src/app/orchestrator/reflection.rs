@@ -262,6 +262,7 @@ impl Orchestrator {
         };
         let request = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: Some(reflect_system_message(crate::shared::i18n::locale(lang))),
             messages: vec![ApiMessage::user(digest)],
             sampling,

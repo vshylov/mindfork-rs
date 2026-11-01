@@ -42,6 +42,7 @@ fn client_for(var: &str) -> Option<(String, GeminiClient)> {
 fn title_turn() -> ChatRequest {
     ChatRequest {
         continue_final: false,
+        output_schema: None,
         system: Some("Give this conversation a short title. Answer with the title only.".into()),
         messages: vec![ApiMessage::user("How do database indexes work?")],
         sampling: SamplingConfig {

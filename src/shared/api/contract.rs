@@ -248,6 +248,39 @@ pub struct ChatRequest {
     /// keeps it from reaching them. `false` — a request byte-identical to
     /// before the field existed.
     pub continue_final: bool,
+    /// The schema the reply must meet, held by the provider's schema-constrained
+    /// decoding where the backend has one ([`EngineBackend::enforces_output_schema`]):
+    /// `response_format` on Chat Completions, `output_config.format` on Anthropic
+    /// (docs/research/fabula-engine.md §8). The Responses and Gemini wires do not
+    /// read it yet (docs/fabula.md §4, PR 5), and say so by answering `false`. `None`
+    /// — a request byte-identical to before the field existed.
+    pub output_schema: Option<OutputSchema>,
+}
+
+/// A schema for the reply, as the JSON text it was printed as.
+///
+/// The text goes to the wire as it is, never through a [`serde_json::Value`]: a
+/// `Value` sorts its keys, and a schema's properties are the order a model writes
+/// them in, so a sorted schema has a character act before it thinks
+/// (docs/lessons.md §8).
+#[derive(Debug, Clone)]
+pub struct OutputSchema {
+    /// What the schema is called. OpenAI requires a name of letters, digits, `_`
+    /// and `-`, at most 64 of them; llama.cpp and Anthropic do not read it.
+    pub name: String,
+    /// The schema itself.
+    pub schema: Box<serde_json::value::RawValue>,
+}
+
+impl OutputSchema {
+    /// A schema named `name` from its JSON text; an error when the text is not
+    /// one JSON value.
+    pub fn new(name: impl Into<String>, json: String) -> Result<Self, serde_json::Error> {
+        Ok(Self {
+            name: name.into(),
+            schema: serde_json::value::RawValue::from_string(json)?,
+        })
+    }
 }
 
 /// The reason generation finished.
@@ -715,6 +748,22 @@ pub trait EngineBackend: Send + Sync {
     /// so a status alone would name it whatever was asked.
     async fn server_kind(&self) -> ServerKind {
         ServerKind::Other
+    }
+
+    /// Whether this engine holds a reply to [`ChatRequest::output_schema`] by
+    /// schema-constrained decoding, so that its sampler cannot write what the
+    /// schema forbids (docs/research/fabula-engine.md §8).
+    ///
+    /// The sixth question of the same shape as
+    /// [`context_budget`](Self::context_budget), with a default that errs the
+    /// safe way: `false`. A caller that hears it puts the schema in the prompt
+    /// instead (the fallback mechanism), which every model can follow, and its
+    /// validator checks the reply either way. Overridden by
+    /// [`super::openai::OpenAiClient`] (not DeepSeek's API, which takes
+    /// `json_object` only; a gateway's model only when its catalogue lists
+    /// `structured_outputs`) and [`super::AnthropicClient`].
+    async fn enforces_output_schema(&self) -> bool {
+        false
     }
 }
 

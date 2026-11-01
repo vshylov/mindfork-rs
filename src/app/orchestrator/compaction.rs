@@ -637,6 +637,7 @@ impl Orchestrator {
             rolls: chat.compaction.as_ref().map_or(0, |c| c.rolls) + 1,
             request: ChatRequest {
                 continue_final: false,
+                output_schema: None,
                 system: Some(summary_system_message(loc, cfg.summary_words)),
                 messages: vec![ApiMessage::user(user)],
                 sampling,

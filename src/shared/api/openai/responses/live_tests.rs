@@ -41,6 +41,7 @@ fn client_for(var: &str) -> Option<(String, ResponsesClient)> {
 fn title_turn() -> ChatRequest {
     ChatRequest {
         continue_final: false,
+        output_schema: None,
         system: Some("Give this conversation a short title. Answer with the title only.".into()),
         messages: vec![ApiMessage::user("How do database indexes work?")],
         sampling: SamplingConfig {
@@ -59,6 +60,7 @@ fn title_turn() -> ChatRequest {
 fn turn_at(effort: ReasoningEffort) -> ChatRequest {
     ChatRequest {
         continue_final: false,
+        output_schema: None,
         system: None,
         messages: vec![ApiMessage::user("Reply with exactly: pong")],
         sampling: SamplingConfig {

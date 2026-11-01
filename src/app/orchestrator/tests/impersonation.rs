@@ -616,6 +616,7 @@ async fn a_separate_server_or_a_cut_stream_lands_no_sample() {
     let (_d, mut orch, _rx, _chat_id) = bare_with_chat(vec![]);
     let request = || crate::shared::api::ChatRequest {
         continue_final: false,
+        output_schema: None,
         system: Some("persona".into()),
         messages: vec![crate::shared::api::ApiMessage::user("hello")],
         sampling: crate::entities::sampling::SamplingConfig::default(),

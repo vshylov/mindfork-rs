@@ -166,6 +166,7 @@ fn gateway(url: String, model: &str) -> OpenAiClient {
 pub(super) fn turn(sampling: SamplingConfig) -> ChatRequest {
     ChatRequest {
         continue_final: false,
+        output_schema: None,
         system: None,
         messages: vec![ApiMessage::user("hi")],
         sampling,
@@ -603,6 +604,7 @@ async fn a_tools_image_is_re_homed_without_waiting_for_the_catalogue() {
     ];
     let round = ChatRequest {
         continue_final: false,
+        output_schema: None,
         system: None,
         messages: vec![
             ApiMessage::user("what is on the screen?"),
@@ -750,4 +752,76 @@ async fn a_key_is_accepted_refused_or_not_judged_at_all() {
         ),
         "no answer is not a refusal"
     );
+}
+
+/// The gateway's entry for the model the Fabula smokes run on, cut to the keys
+/// this client reads; `structured_outputs` is what says the schema is enforced.
+const QWEN: &str = r#"{"data":{"id":"qwen/qwen3.8-27b","context_length":262144,
+    "architecture":{"input_modalities":["text","image"],"output_modalities":["text"]},
+    "supported_parameters":["max_tokens","reasoning","response_format","structured_outputs","temperature","tools","top_p"]}}"#;
+
+/// A schema whose properties are not in alphabetical order.
+const SCHEMA: &str = r#"{"type":"object","properties":{"thought":{"type":"string"},"act":{"type":"string"}},"required":["thought","act"],"additionalProperties":false}"#;
+
+/// docs/fabula.md §4, PR 3: a model whose entry lists `structured_outputs` is
+/// asked with the schema, in the bytes it was printed as, and with
+/// `require_parameters`, so no endpoint that would take it as a hint answers.
+#[tokio::test]
+async fn a_schema_reaches_the_gateway_as_printed() {
+    const ROUTES: &[Route] = &[
+        ("/v1/model/qwen/qwen3.8-27b", "200 OK", JSON, QWEN),
+        ("/v1/chat/completions", "200 OK", SSE, ONE_CHUNK),
+    ];
+    let (url, server) = stub(2, ROUTES);
+    let client = gateway(url, "qwen/qwen3.8-27b");
+    assert!(client.enforces_output_schema().await);
+    let mut req = turn(SamplingConfig::default());
+    req.output_schema = Some(
+        crate::shared::api::contract::OutputSchema::new("character", SCHEMA.to_owned()).unwrap(),
+    );
+    run(&client, req).await;
+    let seen = server.join().unwrap();
+    let raw = &seen
+        .iter()
+        .find(|s| s.path() == "/v1/chat/completions")
+        .expect("the chat request")
+        .body;
+    assert!(
+        raw.contains(&format!(r#""strict":true,"schema":{SCHEMA}}}"#)),
+        "{raw}"
+    );
+    assert!(
+        raw.contains(r#""provider":{"require_parameters":true}"#),
+        "{raw}"
+    );
+}
+
+/// Silence is a "no": an entry without `structured_outputs`, or no entry at
+/// all, puts the calls on the fallback; so does DeepSeek's API, which takes
+/// `json_object` only. Any other server compiles the schema.
+#[tokio::test]
+async fn only_a_listed_gateway_model_and_a_plain_server_constrain() {
+    const ROUTES: &[Route] = &[(
+        "/v1/model/anthropic/claude-haiku-4.5",
+        "200 OK",
+        JSON,
+        HAIKU,
+    )];
+    let (url, server) = stub(1, ROUTES);
+    let haiku = gateway(url, "anthropic/claude-haiku-4.5");
+    assert!(!haiku.enforces_output_schema().await);
+    server.join().unwrap();
+
+    let (url, server) = stub(1, &[]);
+    assert!(
+        !gateway(url, "qwen/qwen3.8-27b")
+            .enforces_output_schema()
+            .await
+    );
+    server.join().unwrap();
+
+    let plain = || OpenAiClient::new("http://127.0.0.1:9/v1");
+    assert!(!plain().for_deepseek().enforces_output_schema().await);
+    assert!(plain().enforces_output_schema().await);
+    assert!(plain().for_xai().enforces_output_schema().await);
 }

@@ -145,6 +145,7 @@ pub(crate) fn muted() -> ChatRequest {
 pub(crate) fn hello() -> ChatRequest {
     ChatRequest {
         continue_final: false,
+        output_schema: None,
         system: None,
         messages: vec![ApiMessage::user("hi")],
         sampling: Default::default(),

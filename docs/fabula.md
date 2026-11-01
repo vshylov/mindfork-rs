@@ -1,6 +1,6 @@
 # Fabula — a story engine used from the chat: track plan
 
-**Status:** in progress — M0 done: PRs 1 and 2 built, Gate G0 GO (2026-11-01). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
+**Status:** in progress — M0 done (PRs 1 and 2, Gate G0 GO); M1 started: PR 3 built (2026-11-01). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
 so are the three this plan adds (§6) and where development runs (§4, *The development
 stack*). The design —
 the engine, its stores, its contracts, its evaluation — is
@@ -139,6 +139,20 @@ rule where M1's World Master will rule. **Gate G0: GO.** The fixture recorded ag
 27B (OpenRouter, pinned to DeepInfra) replays identically and with no drift; a second writer
 is refused and the not-`Clone` assertion holds (PR 1's tests). The figures are in
 [journal/stories.md](journal/stories.md).
+
+**PR 3, as built (2026-11-01).** `ChatRequest.output_schema` carries the schema as the text
+it was printed as (a `RawValue`; `serde_json` gains its `raw_value` feature), and
+`EngineBackend::enforces_output_schema` says whether a backend constrains to it: `false` by
+default, `true` on Chat Completions except DeepSeek and a gateway model whose catalogue
+lacks `structured_outputs`, and on Anthropic. Through the gateway a schema also asks for
+`provider.require_parameters`; it chooses no provider. The engine adapter keeps the schema
+in the prompt under both mechanisms, since llama.cpp's grammar shows the model no
+description; a managed server with a draft model is put on the fallback by
+`EngineAdapter::fallback_only`, which PR 8 calls. Live on five routes, thinking off and on:
+every first attempt that finished met the schema, and a reply asked in words for a bare
+greeting came back as the schema's object on every route. On Claude the wire cannot turn
+thinking off yet, so "off" there is the model's own adaptive default; PR 4 decides how the
+characters mute it.
 
 ### M1 — the simulation, live
 

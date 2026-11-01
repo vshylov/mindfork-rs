@@ -647,7 +647,6 @@ async fn the_fixture_recorded_live_replays_identically() {
     let (played, drift) = replay(&fixture).await;
     assert_eq!(drift, Vec::new(), "re-record the fixture: scene_live_tests");
     assert_eq!(played.unwrap().to_json(), fixture.outcome);
-    assert!(fixture.calls.iter().all(|c| c.mechanism == "fallback"));
 }
 
 #[test]

@@ -2326,6 +2326,7 @@ fn the_estimate_counts_the_tool_schemas() {
     use crate::shared::api::contract::ToolSchema;
     let bare = crate::shared::api::ChatRequest {
         continue_final: false,
+        output_schema: None,
         system: Some("sys".into()),
         messages: vec![crate::shared::api::ApiMessage::user("hi")],
         sampling: Default::default(),

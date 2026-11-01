@@ -444,6 +444,7 @@ pub(super) fn build_request_in(
     };
     ChatRequest {
         continue_final: false,
+        output_schema: None,
         system,
         messages: api_messages(&messages[upto..], &rows, cx.loc),
         sampling,
