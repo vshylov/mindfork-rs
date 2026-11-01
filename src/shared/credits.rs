@@ -198,7 +198,7 @@ pub const COMPONENTS: &[(&str, &str, &str)] = &[
     ("ratatui", "0.30.2", "MIT"),
     ("regex", "1.13.1", "MIT OR Apache-2.0"),
     ("reqwest", "0.13.5", "MIT OR Apache-2.0"),
-    ("rodio", "0.22.2", "MIT OR Apache-2.0"),
+    ("rodio", "0.23.0", "MIT OR Apache-2.0"),
     ("rusqlite", "0.41.1", "MIT"),
     ("scraper", "0.27.0", "ISC"),
     ("serde", "1.0.229", "MIT OR Apache-2.0"),
