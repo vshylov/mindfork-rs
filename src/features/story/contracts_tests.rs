@@ -2,7 +2,10 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use super::*;
+use super::{
+    CanonKeys, InitiativeRuling, IntentVerdict, Property, ReactionsRuling, ReflectionReply, Schema,
+    StorySchema,
+};
 use crate::entities::story::{Canon, Effect, Severity, fixture_canon};
 use crate::features::story::dialect;
 use crate::features::story::schema::describe;

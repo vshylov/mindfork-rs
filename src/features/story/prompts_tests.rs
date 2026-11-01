@@ -1,6 +1,11 @@
 use std::collections::BTreeSet;
 
-use super::*;
+use super::{
+    BranchId, CharacterKey, CharacterView, Effect, Event, LocationKey, MasterView, Proposal,
+    Reflection, SceneSetup, Severity, Shown, Visibility, WorldState, character_propose,
+    character_react, character_reflect, character_system, label, master_initiative,
+    master_reactions, master_system, present_here,
+};
 use crate::entities::story::{Cause, EventId, EventKind, NewEvent, fixture_canon};
 
 fn event(branch: &BranchId, n: u64, actor: &str, visibility: Visibility, text: &str) -> Event {

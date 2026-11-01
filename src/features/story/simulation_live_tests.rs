@@ -405,7 +405,9 @@ async fn one_scene(
         "calls": calls,
     });
     let file = out.join(format!("scene{n:02}.json"));
-    std::fs::write(&file, serde_json::to_string_pretty(&trace).unwrap()).unwrap();
+    tokio::fs::write(&file, serde_json::to_string_pretty(&trace).unwrap())
+        .await
+        .unwrap();
     eprintln!(
         "scene {n:02} ({}): {} calls, {}/{} first valid, {} leaks, {} deeds, refused {} by ruling and {} by the engine, {} slips, {} s{}",
         plan.setup.location,
@@ -452,7 +454,7 @@ async fn gate(backend: Arc<dyn EngineBackend>, model: &str) {
         },
         PathBuf::from,
     );
-    std::fs::create_dir_all(&out).unwrap();
+    tokio::fs::create_dir_all(&out).await.unwrap();
     eprintln!(
         "{model}: {scenes} scenes, K = {}, up to {} rounds, {parallel} at a time; the backend constrains: {}; traces in {}",
         config.branches,
