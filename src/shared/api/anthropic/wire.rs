@@ -39,8 +39,9 @@ pub struct AntRequest {
     /// Sent only when reasoning is enabled. See docs/journal/engine.md (CoT for Claude).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking: Option<AntThinking>,
-    /// Reasoning depth (`output_config.effort`, GA). Sent only with thinking and
-    /// a set `reasoning_effort` (except `none`).
+    /// Reasoning depth (`output_config.effort`, GA), sent only with thinking and
+    /// a set `reasoning_effort` (except `none`); and the reply's schema
+    /// (`output_config.format`), sent only with one. Absent when neither is.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_config: Option<AntOutputConfig>,
 }
@@ -58,10 +59,26 @@ pub struct AntThinking {
     pub display: &'static str,
 }
 
-/// Anthropic's `output_config`: effort level (`low`/`medium`/`high`/`xhigh`/`max`).
+/// Anthropic's `output_config`: the effort level (`low`/`medium`/`high`/`xhigh`/
+/// `max`) and the reply's format. Each is sent only when set.
 #[derive(Debug, Serialize)]
 pub struct AntOutputConfig {
-    pub effort: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub format: Option<AntFormat>,
+}
+
+/// `output_config.format`: `{type: "json_schema", schema}` (docs/research/
+/// fabula-engine.md §8). The grammar binds the reply and not the thinking, and
+/// the schema's text rides as it was printed, since its properties are the
+/// order Claude writes them in and a `Value` would sort them (docs/lessons.md
+/// §8).
+#[derive(Debug, Serialize)]
+pub struct AntFormat {
+    #[serde(rename = "type")]
+    pub kind: &'static str,
+    pub schema: Box<serde_json::value::RawValue>,
 }
 
 #[derive(Debug, Serialize)]
@@ -170,12 +187,15 @@ pub fn build_request(req: &ChatRequest, model: &str, stream: bool) -> AntRequest
             budget_tokens: None,
             display: "summarized",
         });
-    let output_config = thinking.as_ref().and_then(|_| {
-        req.sampling
-            .reasoning_effort
-            .and_then(ant_effort)
-            .map(|effort| AntOutputConfig { effort })
+    let effort = thinking
+        .as_ref()
+        .and_then(|_| req.sampling.reasoning_effort.and_then(ant_effort));
+    let format = req.output_schema.as_ref().map(|s| AntFormat {
+        kind: "json_schema",
+        schema: s.schema.clone(),
     });
+    let output_config =
+        (effort.is_some() || format.is_some()).then_some(AntOutputConfig { effort, format });
     let mut messages = build_messages(req);
     // The trailing assistant message is the prefill being continued, and
     // Anthropic rejects a prefill that ends in whitespace — the **wire copy**
@@ -226,14 +246,14 @@ fn ant_effort(e: ReasoningEffort) -> Option<&'static str> {
 impl CarriesEffort for AntRequest {
     /// The `output_config.effort` the body carries — sent only with thinking on.
     fn effort(&self) -> Option<&'static str> {
-        self.output_config.as_ref().map(|c| c.effort)
+        self.output_config.as_ref().and_then(|c| c.effort)
     }
 
-    /// Asks for `instead` in place of that effort; with `None` the config goes
-    /// and the model reasons at its own depth.
+    /// Asks for `instead` in place of that effort; with `None` the effort goes
+    /// and the model reasons at its own depth. The format stays either way.
     fn respell_effort(&mut self, instead: Option<&'static str>) {
-        if self.output_config.is_some() {
-            self.output_config = instead.map(|effort| AntOutputConfig { effort });
+        if self.effort().is_some() {
+            self.set_effort(instead);
         }
     }
 }
@@ -246,6 +266,14 @@ const ADAPTIVE: &str = "adaptive";
 const MIN_THINKING_BUDGET: u64 = 1024;
 
 impl AntRequest {
+    /// Sets `output_config.effort`, keeping the format; the config goes when it
+    /// is left with neither.
+    fn set_effort(&mut self, effort: Option<&'static str>) {
+        let format = self.output_config.take().and_then(|c| c.format);
+        self.output_config =
+            (effort.is_some() || format.is_some()).then_some(AntOutputConfig { effort, format });
+    }
+
     /// Whether the body asks for adaptive thinking — the shape a model of the
     /// 4.5 generation refuses.
     pub fn thinks_adaptively(&self) -> bool {
@@ -262,7 +290,7 @@ impl AntRequest {
     /// `display: "summarized"` is taken beside it.
     ///
     /// - **The effort becomes the budget** ([`thinking_budget`]) and
-    ///   `output_config` goes: Sonnet 4.5 and Haiku 4.5 answer any effort with
+    ///   the effort goes (the format stays): Sonnet 4.5 and Haiku 4.5 answer any effort with
     ///   *"This model does not support the effort parameter"*, and one rule
     ///   for the three is worth more than Opus 4.5's `low`…`high`.
     /// - **Half the reply's cap at most.** `max_tokens` covers the thinking and
@@ -274,8 +302,8 @@ impl AntRequest {
         if !self.thinks_adaptively() {
             return;
         }
-        let wished = thinking_budget(self.output_config.as_ref().map(|c| c.effort));
-        self.output_config = None;
+        let wished = thinking_budget(self.effort());
+        self.set_effort(None);
         let room = self.max_tokens / 2;
         self.thinking = (room >= MIN_THINKING_BUDGET).then(|| AntThinking {
             kind: "enabled",
@@ -593,6 +621,7 @@ mod tests {
     fn req(messages: Vec<ApiMessage>) -> ChatRequest {
         ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: Some("Ты — ассистент.".into()),
             messages,
             sampling: SamplingConfig {
@@ -1143,6 +1172,80 @@ mod tests {
             } => assert_eq!(signature, "sig-xyz"),
             other => panic!("expected SignatureDelta, got {other:?}"),
         }
+    }
+    /// A schema whose properties are not in alphabetical order: printed as it
+    /// is, `thought` stays ahead of `act`.
+    const SCHEMA: &str = r#"{"type":"object","properties":{"thought":{"type":"string"},"act":{"type":"string"}},"required":["thought","act"],"additionalProperties":false}"#;
+
+    fn with_schema(mut r: ChatRequest) -> ChatRequest {
+        r.output_schema = Some(
+            crate::shared::api::contract::OutputSchema::new("character", SCHEMA.to_owned())
+                .unwrap(),
+        );
+        r
+    }
+
+    /// `output_config.format` with the schema's text as it was printed, and no
+    /// effort beside it on a turn without thinking (docs/fabula.md §4, PR 3).
+    #[test]
+    fn a_schema_rides_as_output_config_format_in_its_printed_order() {
+        let r = with_schema(req(vec![ApiMessage::user("hi")]));
+        let text = serde_json::to_string(&build_request(&r, "claude-x", true)).unwrap();
+        assert!(
+            text.contains(&format!(
+                r#""output_config":{{"format":{{"type":"json_schema","schema":{SCHEMA}}}}}"#
+            )),
+            "{text}"
+        );
+        assert!(!text.contains("effort"), "{text}");
+    }
+
+    #[test]
+    fn a_schema_and_an_effort_share_output_config() {
+        let mut r = with_schema(req(vec![ApiMessage::user("hi")]));
+        r.sampling.thinking = Some(true);
+        r.sampling.reasoning_effort = Some(ReasoningEffort::Low);
+        let json = serde_json::to_value(build_request(&r, "claude-x", true)).unwrap();
+        assert_eq!(json["output_config"]["effort"], "low");
+        assert_eq!(json["output_config"]["format"]["type"], "json_schema");
+        assert_eq!(json["thinking"]["type"], "adaptive");
+    }
+
+    /// The two rewrites that take the effort away leave the format: a 4.5
+    /// model thinking within a budget, and an effort the model refused.
+    #[test]
+    fn taking_the_effort_away_keeps_the_format() {
+        let mut r = with_schema(req(vec![ApiMessage::user("hi")]));
+        r.sampling.thinking = Some(true);
+        r.sampling.reasoning_effort = Some(ReasoningEffort::High);
+        r.sampling.max_tokens = Some(8192);
+        let mut body = build_request(&r, "claude-x", true);
+        body.think_within_a_budget();
+        let json = serde_json::to_value(&body).unwrap();
+        assert!(json["output_config"].get("effort").is_none(), "{json}");
+        assert_eq!(json["output_config"]["format"]["type"], "json_schema");
+        assert_eq!(json["thinking"]["type"], "enabled");
+
+        let mut body = build_request(&r, "claude-x", true);
+        body.respell_effort(None);
+        assert_eq!(body.effort(), None);
+        let json = serde_json::to_value(&body).unwrap();
+        assert_eq!(json["output_config"]["format"]["type"], "json_schema");
+        body.respell_effort(Some("medium"));
+        assert_eq!(
+            body.effort(),
+            None,
+            "an effort is never added where none was"
+        );
+
+        // Without a schema the config goes with its effort, as before.
+        let mut r = req(vec![ApiMessage::user("hi")]);
+        r.sampling.thinking = Some(true);
+        r.sampling.reasoning_effort = Some(ReasoningEffort::High);
+        let mut body = build_request(&r, "claude-x", true);
+        body.respell_effort(None);
+        let json = serde_json::to_value(&body).unwrap();
+        assert!(json.get("output_config").is_none(), "{json}");
     }
 }
 

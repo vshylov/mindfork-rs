@@ -180,6 +180,7 @@ async fn llama_continues_a_word_boundary_tail() {
     // Asserted arm: the word-boundary cut.
     let req = ChatRequest {
         continue_final: false,
+        output_schema: None,
         system: None,
         messages: fixture(PARTIAL),
         sampling: deterministic(),
@@ -208,6 +209,7 @@ async fn llama_continues_a_word_boundary_tail() {
     // Recorded arm: the mid-word cut (retokenization artifact documentation).
     let req = ChatRequest {
         continue_final: false,
+        output_schema: None,
         system: None,
         messages: fixture(PARTIAL_MIDWORD),
         sampling: deterministic(),
@@ -276,6 +278,7 @@ async fn thinking_model_rejects_prefill_and_the_kwarg_lifts_it() {
         .expect("MINDFORK_ENGINE_URL was read above");
     let req = ChatRequest {
         continue_final: false,
+        output_schema: None,
         system: None,
         messages: fixture(PARTIAL),
         sampling: deterministic(),
@@ -371,6 +374,7 @@ async fn prefill_coexists_with_the_tool_grammar() {
     };
     let req = ChatRequest {
         continue_final: false,
+        output_schema: None,
         system: None,
         messages: vec![
             ApiMessage::user(
@@ -541,6 +545,7 @@ async fn anthropic_continue(
     sampling.thinking = thinking.then_some(true);
     let req = ChatRequest {
         continue_final: true,
+        output_schema: None,
         system: None,
         messages: fixture(partial),
         sampling,
@@ -609,6 +614,7 @@ async fn anthropic_current_model_rejects_prefill() {
     };
     let req = ChatRequest {
         continue_final: false,
+        output_schema: None,
         system: None,
         messages: fixture(PARTIAL),
         sampling: deterministic(),
@@ -650,6 +656,7 @@ async fn gemini_continues_a_trailing_model_turn() {
     );
     let req = ChatRequest {
         continue_final: true,
+        output_schema: None,
         system: None,
         messages: fixture(PARTIAL),
         sampling: deterministic(),
@@ -691,6 +698,7 @@ async fn grok_trailing_assistant_behaviour_is_recorded() {
         .for_xai();
     let req = ChatRequest {
         continue_final: false,
+        output_schema: None,
         system: None,
         messages: fixture(PARTIAL),
         sampling: SamplingConfig {

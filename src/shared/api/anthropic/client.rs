@@ -307,6 +307,14 @@ impl EngineBackend for AnthropicClient {
     async fn vision(&self) -> VisionSupport {
         VisionSupport::Supported
     }
+
+    /// `output_config.format` is generally available, and every model of the
+    /// two current generations takes it (docs/research/fabula-engine.md §8).
+    /// Not a model-name list, for the reason [`Self::vision`] gives: a model that
+    /// refuses the format fails its call with the provider's words.
+    async fn enforces_output_schema(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]
@@ -358,6 +366,7 @@ mod tests {
         let client = AnthropicClient::new(base, "k", "claude-x");
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![crate::shared::api::contract::ApiMessage::user("hi")],
             sampling: Default::default(),
@@ -396,6 +405,7 @@ mod tests {
         let client = AnthropicClient::new(base, "k", "claude-x");
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![crate::shared::api::contract::ApiMessage::user("hi")],
             sampling: Default::default(),
@@ -622,6 +632,14 @@ mod tests {
         assert_eq!(map_stop_reason("refusal"), FinishReason::Filtered);
         assert_eq!(map_stop_reason("weird"), FinishReason::Stop);
     }
+
+    /// Every Claude model of the two current generations takes
+    /// `output_config.format`, so the answer is static (docs/fabula.md §4, PR 3).
+    #[tokio::test]
+    async fn claude_constrains_a_reply_to_its_schema() {
+        let client = AnthropicClient::new("http://127.0.0.1:9", "k", "claude-x");
+        assert!(client.enforces_output_schema().await);
+    }
 }
 
 /// A manual smoke against the real Anthropic API. Marked `#[ignore]` — doesn't run in CI.
@@ -652,6 +670,7 @@ mod ignored_smoke {
         };
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: Some("You are a helpful assistant.".into()),
             messages: vec![ApiMessage::user("Reply with exactly: pong")],
             sampling: SamplingConfig {
@@ -695,6 +714,7 @@ mod ignored_smoke {
         };
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![
                 ApiMessage::user(crate::shared::api::VISION_PROMPT).with_images(vec![
@@ -754,6 +774,7 @@ mod ignored_smoke {
         };
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![ApiMessage::user(
                 "Think step by step: what is 17 * 23? Show brief reasoning.",
@@ -836,6 +857,7 @@ mod ignored_smoke {
              that city.";
         let round1 = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![ApiMessage::user(prompt)],
             sampling: sampling.clone(),
@@ -877,6 +899,7 @@ mod ignored_smoke {
         // Second round: assistant(thinking+signature, tool_use) → tool_result.
         let round2 = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![
                 ApiMessage::user(prompt),

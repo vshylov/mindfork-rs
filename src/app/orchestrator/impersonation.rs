@@ -255,6 +255,7 @@ pub(super) fn build_impersonation_request(
     }
     ChatRequest {
         continue_final: false,
+        output_schema: None,
         system: Some(system),
         messages,
         sampling,

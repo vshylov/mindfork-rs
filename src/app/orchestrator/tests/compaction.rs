@@ -1492,6 +1492,7 @@ async fn the_collect_keeps_the_figure_only_off_a_stream_that_ended() {
     use crate::shared::api::FinishReason;
     let request = || ChatRequest {
         continue_final: false,
+        output_schema: None,
         system: None,
         messages: Vec::new(),
         sampling: Default::default(),

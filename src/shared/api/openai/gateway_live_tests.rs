@@ -110,6 +110,7 @@ async fn run(client: &OpenAiClient, req: ChatRequest) -> Turn {
 fn ask(text: &str, sampling: SamplingConfig) -> ChatRequest {
     ChatRequest {
         continue_final: false,
+        output_schema: None,
         system: None,
         messages: vec![ApiMessage::user(text)],
         sampling,
@@ -201,6 +202,7 @@ async fn a_tool_call_round_trips_live() {
         &client,
         ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![
                 ApiMessage::user(question),
@@ -331,6 +333,7 @@ fn screenshot_round(with_image: bool) -> ChatRequest {
     };
     ChatRequest {
         continue_final: false,
+        output_schema: None,
         system: None,
         messages: vec![
             ApiMessage::user(crate::shared::api::TOOL_VISION_PROMPT),

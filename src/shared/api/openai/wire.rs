@@ -135,6 +135,44 @@ pub struct ChatCompletionRequest {
     pub tools: Option<Vec<WireTool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<&'static str>,
+    /// The schema the reply must meet ([`ChatRequest::output_schema`]):
+    /// `{type: "json_schema", json_schema: {name, strict, schema}}`, the shape
+    /// llama.cpp, vLLM, xAI, OpenAI and OpenRouter read. llama.cpp compiles it to
+    /// a grammar and reads neither `name` nor `strict`; OpenAI requires both
+    /// (docs/research/fabula-engine.md §8). Sent only with a schema.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_format: Option<WireResponseFormat>,
+    /// The gateway's provider preferences. Never set by [`build_chat_request`];
+    /// [`ChatCompletionRequest::for_gateway`] asks for `require_parameters` when
+    /// the body carries a schema, so that no endpoint which treats the schema as
+    /// a hint is routed to. It chooses no provider: the routing stays the
+    /// gateway's (docs/history/gateway-images-and-continue.md §3).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<WireProvider>,
+}
+
+/// `response_format` for a schema. See [`ChatCompletionRequest::response_format`].
+#[derive(Debug, Serialize)]
+pub struct WireResponseFormat {
+    #[serde(rename = "type")]
+    pub kind: &'static str,
+    pub json_schema: WireJsonSchema,
+}
+
+/// The schema inside [`WireResponseFormat`], its text carried as it was printed
+/// (a `Value` would sort it; docs/lessons.md §8).
+#[derive(Debug, Serialize)]
+pub struct WireJsonSchema {
+    pub name: String,
+    pub strict: bool,
+    pub schema: Box<serde_json::value::RawValue>,
+}
+
+/// The gateway's provider preferences: here, only that every parameter of the
+/// request be honoured.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct WireProvider {
+    pub require_parameters: bool,
 }
 
 /// The thinking switch on the wire, in one of the two spellings servers read.
@@ -475,6 +513,15 @@ pub fn build_chat_request(
         add_generation_prompt: req.continue_final.then_some(false),
         tools,
         tool_choice,
+        response_format: req.output_schema.as_ref().map(|schema| WireResponseFormat {
+            kind: "json_schema",
+            json_schema: WireJsonSchema {
+                name: schema.name.clone(),
+                strict: true,
+                schema: schema.schema.clone(),
+            },
+        }),
+        provider: None,
     }
 }
 
@@ -497,7 +544,15 @@ impl ChatCompletionRequest {
     ///
     /// `top_k` and `min_p` stay: the gateway reads both, and the catalogue says
     /// per model whether the provider takes them.
+    ///
+    /// A body with a schema asks for `provider.require_parameters`: without it an
+    /// endpoint may take the schema as a hint (docs/research/fabula-engine.md §8).
     pub fn for_gateway(mut self) -> Self {
+        if self.response_format.is_some() {
+            self.provider = Some(WireProvider {
+                require_parameters: true,
+            });
+        }
         self.repetition_penalty = self.repeat_penalty.take();
         self.repeat_last_n = None;
         self.dynatemp_range = None;
@@ -1157,6 +1212,7 @@ mod tests {
     fn omits_stop_and_none_fields() {
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: Some("sys".into()),
             messages: vec![ApiMessage::user("hi")],
             sampling: SamplingConfig::default(),
@@ -1193,6 +1249,7 @@ mod tests {
     fn a_text_only_request_is_unchanged_by_the_image_support() {
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: Some("be brief".into()),
             messages: vec![
                 ApiMessage::user("hi"),
@@ -1220,6 +1277,7 @@ mod tests {
     fn images_become_content_parts_ahead_of_the_text() {
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![ApiMessage::user("what is this?").with_images(vec![image(
                 "image/png",
@@ -1249,6 +1307,7 @@ mod tests {
     fn several_images_keep_their_order_and_a_labelless_one_emits_no_text_part() {
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![ApiMessage::user("").with_images(vec![
                 image("image/png", "AAA", None),
@@ -1275,6 +1334,7 @@ mod tests {
     fn a_tool_result_without_images_is_unchanged() {
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![ApiMessage::tool("call-1", "42")],
             sampling: SamplingConfig::default(),
@@ -1297,6 +1357,7 @@ mod tests {
     fn a_tool_result_image_follows_the_result_text() {
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![
                 ApiMessage::tool("call-1", "screenshot taken").with_images(vec![image(
@@ -1331,6 +1392,7 @@ mod tests {
     fn an_image_only_tool_result_carries_no_empty_text_part() {
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![ApiMessage::tool("call-1", "").with_images(vec![image(
                 "image/jpeg",
@@ -1402,6 +1464,7 @@ mod tests {
         // tool results are the bare strings a text-only result always was.
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: out,
             sampling: SamplingConfig::default(),
@@ -1432,6 +1495,7 @@ mod tests {
     fn maps_supported_sampling_fields() {
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![ApiMessage::user("hi")],
             sampling: SamplingConfig {
@@ -1501,6 +1565,7 @@ mod tests {
         // Non-empty lists → JSON arrays.
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![ApiMessage::user("hi")],
             sampling: SamplingConfig {
@@ -1519,6 +1584,7 @@ mod tests {
         // Empty lists are NOT sent (otherwise the server would take them as "disable everything").
         let req_empty = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![ApiMessage::user("hi")],
             sampling: SamplingConfig {
@@ -1539,6 +1605,7 @@ mod tests {
         // For an external proxy, the model name is set; for llama-server (None) — it isn't.
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![ApiMessage::user("hi")],
             sampling: SamplingConfig::default(),
@@ -1560,6 +1627,7 @@ mod tests {
     fn effort_none_is_omitted_only_when_asked() {
         let req = |e: ReasoningEffort| ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![ApiMessage::user("hi")],
             sampling: SamplingConfig {
@@ -1645,6 +1713,7 @@ mod tests {
         use crate::shared::api::contract::ToolSchema;
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![ApiMessage::user("hi")],
             sampling: SamplingConfig::default(),
@@ -1665,6 +1734,7 @@ mod tests {
         use crate::shared::api::contract::ApiToolCall;
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![
                 ApiMessage::assistant_tool_calls(
@@ -1721,6 +1791,7 @@ mod tests {
         };
         let req = ChatRequest {
             continue_final: true,
+            output_schema: None,
             system: Some("sys".into()),
             messages: vec![
                 ApiMessage::user("q"),
@@ -1955,6 +2026,7 @@ mod continuation_tests {
             sampling: Default::default(),
             tools: vec![],
             continue_final: false,
+            output_schema: None,
         };
         let off = serde_json::to_value(build_chat_request(&req, true, None, false)).unwrap();
         assert!(off.get("continue_final_message").is_none());
@@ -2474,6 +2546,7 @@ mod xai_effort_tests {
         let body = |thinking: Option<bool>| {
             let req = ChatRequest {
                 continue_final: false,
+                output_schema: None,
                 system: None,
                 messages: vec![ApiMessage::user("hi")],
                 sampling: SamplingConfig {
@@ -2544,6 +2617,7 @@ mod xai_effort_tests {
         use effort::CarriesEffort;
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![ApiMessage::user("hi")],
             sampling: SamplingConfig {
@@ -2570,6 +2644,7 @@ mod prefix_completion_tests {
     fn continuation() -> ChatRequest {
         ChatRequest {
             continue_final: true,
+            output_schema: None,
             system: Some("sys".into()),
             messages: vec![ApiMessage::user("hi"), ApiMessage::assistant("Paris is")],
             sampling: SamplingConfig {
@@ -2635,5 +2710,65 @@ mod prefix_completion_tests {
                 .unwrap()
                 .contains("\"prefix\"")
         );
+    }
+}
+
+/// The reply's schema on the wire (docs/fabula.md §4, PR 3).
+#[cfg(test)]
+mod output_schema_tests {
+    use super::build_chat_request;
+    use crate::shared::api::contract::{ApiMessage, ChatRequest, OutputSchema};
+
+    /// A schema whose properties are not in alphabetical order.
+    const SCHEMA: &str = r#"{"type":"object","properties":{"thought":{"type":"string"},"act":{"type":"string"}},"required":["thought","act"],"additionalProperties":false}"#;
+
+    fn schema_turn() -> ChatRequest {
+        ChatRequest {
+            messages: vec![ApiMessage::user("hi")],
+            output_schema: Some(OutputSchema::new("character", SCHEMA.to_owned()).unwrap()),
+            ..ChatRequest::default()
+        }
+    }
+
+    /// `response_format` in the shape every enforcing server reads, the
+    /// schema's text as it was printed (docs/fabula.md §4, PR 3), and no
+    /// `provider` outside the gateway's dialect.
+    #[test]
+    fn a_schema_rides_as_response_format_in_its_printed_order() {
+        let body = build_chat_request(&schema_turn(), true, None, false);
+        let text = serde_json::to_string(&body).unwrap();
+        assert!(
+            text.contains(&format!(
+                r#""response_format":{{"type":"json_schema","json_schema":{{"name":"character","strict":true,"schema":{SCHEMA}}}}}"#
+            )),
+            "{text}"
+        );
+        assert!(!text.contains("provider"), "{text}");
+    }
+
+    /// Through the gateway a schema asks for endpoints that honour every
+    /// parameter; a body without one asks for nothing new.
+    #[test]
+    fn the_gateway_is_asked_to_honour_a_schema_and_nothing_else() {
+        let body = build_chat_request(&schema_turn(), true, None, false).for_gateway();
+        let json = serde_json::to_value(&body).unwrap();
+        assert_eq!(
+            json["provider"],
+            serde_json::json!({"require_parameters": true})
+        );
+        assert_eq!(json["response_format"]["type"], "json_schema");
+
+        let plain = ChatRequest {
+            messages: vec![ApiMessage::user("hi")],
+            ..ChatRequest::default()
+        };
+        for body in [
+            build_chat_request(&plain, true, None, false),
+            build_chat_request(&plain, true, None, false).for_gateway(),
+        ] {
+            let json = serde_json::to_value(&body).unwrap();
+            assert!(json.get("response_format").is_none(), "{json}");
+            assert!(json.get("provider").is_none(), "{json}");
+        }
     }
 }

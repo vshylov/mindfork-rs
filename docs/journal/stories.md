@@ -13,10 +13,11 @@ what was rejected — the reasoning behind the code, not its current shape. For 
 shape read the reference documents named above; for the traps that recur across areas read
 [lessons.md](../lessons.md).
 
-## Entries (2)
+## Entries (3)
 
 - Post-M9: Fabula — PR 1, the story database (done)
 - Post-M9: Fabula — PR 2, the model port and replay; Gate G0 GO (done)
+- Post-M9: Fabula — PR 3, the reply's schema on the wire (done)
 
 ### Post-M9: Fabula — PR 1, the story database (done)
 
@@ -172,5 +173,96 @@ sits in `features/story/` under an `allow(dead_code)` until PR 8; nothing is use
   the live fixture's replay and its leak count, with a check that the count can see a leak.
 
 **Gates**: 4567 unit tests green, 309 `#[ignore]`; clippy `-D warnings`, fmt, `cyrillic_scan`,
+`link_check`, `doc_index_check`, `layer_check`, `list_scroll_check`, `claude_md_chart --check`
+clean.
+
+### Post-M9: Fabula — PR 3, the reply's schema on the wire (done)
+
+M1's first pull request (docs/fabula.md §4): schema-constrained decoding on the two wires
+development runs on, and the engine adapter using it. Nothing the person sees changes: no
+chat turn sets the field, and every request without a schema is the bytes it was.
+
+- **`ChatRequest.output_schema`, as text.** `OutputSchema` holds the schema's printed JSON
+  in a `serde_json::value::RawValue`, so it reaches the wire byte for byte (`serde_json`
+  gains its `raw_value` feature, which adds no crate). PR 2's finding is why: a `Value` sorts
+  its keys, and the order of the properties is the order a model writes them in. A stub
+  test reads the bytes the gateway receives and finds the schema there unsorted.
+- **Chat Completions:** `response_format: {type: "json_schema", json_schema: {name, strict:
+  true, schema}}`, the shape llama.cpp, vLLM, xAI, OpenAI and OpenRouter read; llama.cpp
+  ignores `name` and `strict`, OpenAI requires both. Through the gateway a body with a schema
+  also carries `provider: {require_parameters: true}`, so no endpoint that would take the
+  schema as a hint is routed to. It chooses no provider, so the decision to keep routing
+  knobs out of the client stands (docs/history/gateway-images-and-continue.md §3).
+- **Anthropic:** `output_config.format: {type: "json_schema", schema}` beside the effort
+  (GA; the beta `output_format` is not used). `AntOutputConfig` carries both, each sent only
+  when set. The two rewrites that take an effort away, thinking within a budget on the 4.5
+  generation and a refused effort level, keep the format.
+- **`EngineBackend::enforces_output_schema`**, the sixth question of its shape, default
+  `false`. The OpenAI-compatible client answers `true`, except for DeepSeek's API (it takes
+  `json_object` only) and a gateway model whose catalogue entry does not list
+  `structured_outputs`; silence there is a "no". The Anthropic client answers `true`, for the
+  same reason `vision` is static: no model-name list. The Responses and Gemini clients keep
+  the default until PR 5. `RetryBackend` delegates it, with its test written alongside, since
+  the five questions before it were each forgotten once (docs/lessons.md §9).
+- **The engine adapter** asks once per adapter. It sends the schema with every JSON attempt,
+  the repair included, where the backend constrains, and records `mechanism = 'schema'`;
+  elsewhere it records `fallback`. **The schema stays in the prompt under both mechanisms.**
+  llama.cpp's grammar shows the model no description, so the prompt is where a field's
+  meaning is read; and with one prompt for both, M1 compares the decoding alone. The prompt
+  hash is unchanged, so PR 2's fixture still replays without drift.
+  `EngineAdapter::fallback_only` is for a managed server with a draft model, whose grammar
+  crashes under `json_schema` (docs/fabula.md §5): the supervisor knows that, the adapter
+  cannot, and PR 8 wires it. The live smoke uses it to measure one mechanism against the
+  other.
+- **Live: the spec's §8 probe as a smoke** (`schema_live_tests`). Each run plays the harbour
+  scene's first round, three characters proposing at once, through the application's own
+  clients. Arms: both mechanisms, thinking off and on; three scenes an arm, one on the local
+  server. Every attempt is read back from the call log.
+
+  | Route | First attempts | Met the schema | Clean JSON, constrained | Clean JSON, fallback | Median output tokens, off / on |
+  | --- | --- | --- | --- | --- | --- |
+  | Claude Haiku 5.5 | 36 | 36 | 18/18 | 18/18 | 438–493 / 230–251 |
+  | Claude Sonnet 5.5 | 36 | 36 | 18/18 | 18/18 | 221–251 / 221–243 |
+  | Qwen 3.8 27B, OpenRouter, DeepInfra | 34 | 34 | 16/16 | 18/18 | 207–217 / 1,078–1,182 |
+  | Gemma 4 31B, OpenRouter, DeepInfra | 36 | 36 | 18/18 | **0/18** | 127–170 / 887–1,043 |
+  | Qwen 3.8 27B Q4_K_M, local llama.cpp b12023 | 12 | 12 | 6/6 | 6/6 | 225–228 / 864–1,527 |
+
+  No attempt needed a retry or a repair. Gemma's fallback replies came in code fences every
+  time, as in the spec's local probe, and the lenient read took them. Under the constraint
+  every reply was clean JSON. Two of Qwen's gateway calls did not return within the smoke's
+  600 s bound, one scene's worth, and DeepInfra's median latency ran from 13 to 98 s that
+  hour, against 4–9 s for the same route in PR 2. A call that never answers is bounded only by
+  the chapter's timeout today. M1 watches for it.
+- **The constraint is the provider's, not the prompt's.** A second smoke asks in words for
+  the single word "hello" and sends a schema the prompt never mentions. Without the schema all
+  five routes said `hello`; with it all five answered `{"mood": "calm"}`. This rules out the
+  reading that the models simply followed the schema in their prompts.
+- **Muting thinking takes the application's three fields.** The smoke's first local run sent
+  `thinking: false` alone, and Qwen 3.8 thought about 6,000 characters a call: a template
+  with thinking baked in stops only at `reasoning_budget: 0`. Both smokes now mute the way
+  `app/orchestrator/title.rs` does (`thinking: false`, effort `none`, budget `0`), and PR 2's
+  fixture smoke was corrected with them; its committed fixture is unaffected, since sampling
+  is not part of the prompt hash (docs/lessons.md, recorded again). Through the gateway the
+  same switch reached the model as `reasoning: {enabled: false}`, and thought was 0 there in
+  either run.
+- **On Claude the wire has no "thinking off" yet.** The 5.5 models think adaptively when
+  `thinking` is not sent, and only Haiku 5.5 takes `disabled`, so the "off" arms there are
+  the model's default. On Haiku 5.5 that default wrote more (438–493 tokens) than adaptive
+  thinking at the lowest effort (230–251). How the characters mute it on Claude is PR 4's to
+  decide (docs/fabula.md §4, *Thinking on Claude*).
+- **Mutation check:** six mutants, one build. Each was killed:
+  - the decorator's delegation;
+  - DeepSeek's refusal;
+  - the catalogue's `structured_outputs`;
+  - the gateway's `require_parameters`;
+  - the format kept when the effort goes;
+  - the adapter sending the schema.
+
+  The sources were restored and the fingerprint checked.
+- **Tests** (+11, 4578; four live smokes): both wires' new shapes and the bytes as sent; requests without a schema
+  unchanged; the gateway answering from its catalogue; the delegation; the adapter's schema
+  on every JSON attempt and never on prose, and the fallback alone never sending it.
+
+**Gates**: 4578 unit tests green, 313 `#[ignore]`; clippy `-D warnings`, fmt, `cyrillic_scan`,
 `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check`, `claude_md_chart --check`
 clean.

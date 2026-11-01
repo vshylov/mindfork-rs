@@ -42,6 +42,7 @@ async fn turn_at(
 ) -> (String, Option<FinishReason>) {
     let req = ChatRequest {
         continue_final: false,
+        output_schema: None,
         system: None,
         messages: vec![ApiMessage::user("Reply with exactly: pong")],
         sampling: SamplingConfig {
@@ -147,6 +148,7 @@ async fn a_thinking_turn_survives_a_model_without_adaptive_thinking() {
     for nth in 1..=2 {
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![ApiMessage::user(
                 "What is 17 * 23? Think it through, then answer with the number.",

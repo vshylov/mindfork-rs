@@ -2,11 +2,13 @@
 //! docs/research/fabula-engine.md §8, §14 *Integration work*): every attempt
 //! goes to the model and into the call log, under its address.
 //!
-//! - **The fallback mechanism only, for now.** `ChatRequest` has no field for
-//!   an output schema until PR 3 of docs/fabula.md §4, so a JSON call puts the
-//!   schema into the prompt, reads the reply leniently and repairs it once
-//!   (spec §8, *The fallback*). The call log says so: `mechanism` is
-//!   `fallback`.
+//! - **Schema-constrained where the engine can, the fallback elsewhere.** A
+//!   JSON call sends its schema as `ChatRequest::output_schema` when the
+//!   backend says it enforces one (`EngineBackend::enforces_output_schema`,
+//!   asked once per adapter), and the call log records `schema`; otherwise it
+//!   records `fallback` (spec §8). The prompt carries the schema either way
+//!   ([`super::port::system_with_schema`]), the reply is read leniently and
+//!   validated, and an invalid one is repaired once.
 //! - **Every attempt is recorded**, the failed ones too, with what the
 //!   provider reported of its cost: what replay serves, what M1 measures and
 //!   what T1's budget counts.
@@ -31,7 +33,8 @@ use super::port::{
 use super::schema::Schema;
 use crate::entities::sampling::SamplingConfig;
 use crate::shared::api::contract::{
-    ApiMessage, ChatChunk, ChatRequest, ChatStream, EngineBackend, FinishReason, Served, TokenUsage,
+    ApiMessage, ChatChunk, ChatRequest, ChatStream, EngineBackend, FinishReason, OutputSchema,
+    Served, TokenUsage,
 };
 use crate::shared::storage::story::{CallStatus, CallUsage, Mechanism, NewCall, RunLogWriter};
 
@@ -42,6 +45,10 @@ pub struct EngineAdapter {
     model: String,
     sampling: SamplingConfig,
     cancel: CancellationToken,
+    /// The backend's answer to `enforces_output_schema`, asked once.
+    enforces: tokio::sync::OnceCell<bool>,
+    /// Never send the schema to the provider, whatever it can do.
+    fallback_only: bool,
 }
 
 impl EngineAdapter {
@@ -60,7 +67,27 @@ impl EngineAdapter {
             model: model.into(),
             sampling,
             cancel,
+            enforces: tokio::sync::OnceCell::new(),
+            fallback_only: false,
         }
+    }
+
+    /// The same adapter on the fallback mechanism alone: for an engine that
+    /// says it constrains and must not be asked to — a managed `llama-server`
+    /// with a draft model, whose grammar crashes under `json_schema` (docs/
+    /// fabula.md §5) — and for measuring one mechanism against the other.
+    pub fn fallback_only(mut self) -> Self {
+        self.fallback_only = true;
+        self
+    }
+
+    /// Whether a JSON call goes out schema-constrained.
+    async fn constrained(&self) -> bool {
+        !self.fallback_only
+            && *self
+                .enforces
+                .get_or_init(|| self.backend.enforces_output_schema())
+                .await
     }
 
     /// Gives the run log's capability back.
@@ -78,11 +105,21 @@ impl LlmPort for EngineAdapter {
         schema: &Schema,
         prompt: &Prompt,
     ) -> Result<Value, PortError> {
+        let constrained = self.constrained().await;
+        let output_schema = constrained.then(|| {
+            OutputSchema::new(role.as_str(), schema.to_json())
+                .expect("a printed schema is one JSON value")
+        });
         let mut live = Live {
             adapter: self,
             call,
             role,
-            mechanism: Mechanism::Fallback,
+            mechanism: if constrained {
+                Mechanism::Schema
+            } else {
+                Mechanism::Fallback
+            },
+            output_schema,
             prompt_sha256: prompt_sha256(prompt, Some(schema)),
         };
         run_json(&mut live, &call.address, schema, prompt).await
@@ -99,6 +136,7 @@ impl LlmPort for EngineAdapter {
             call,
             role,
             mechanism: Mechanism::Text,
+            output_schema: None,
             prompt_sha256: prompt_sha256(prompt, None),
         };
         run_text(&mut live, &call.address, prompt).await
@@ -111,6 +149,8 @@ struct Live<'a> {
     call: &'a CallAddress,
     role: Role,
     mechanism: Mechanism,
+    /// Sent with every attempt when the provider constrains the decoding.
+    output_schema: Option<OutputSchema>,
     prompt_sha256: String,
 }
 
@@ -129,6 +169,7 @@ impl Attempts for Live<'_> {
                 })
                 .collect(),
             sampling: adapter.sampling.clone(),
+            output_schema: self.output_schema.clone(),
             ..ChatRequest::default()
         };
         let started = Instant::now();

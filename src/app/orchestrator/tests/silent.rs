@@ -632,6 +632,7 @@ fn spawn_loop_with(
         ctx,
         request: crate::shared::api::ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: Some(system.to_string()),
             messages: vec![crate::shared::api::ApiMessage::user("reflect")],
             sampling: crate::entities::sampling::SamplingConfig {

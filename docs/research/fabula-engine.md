@@ -398,7 +398,7 @@ What it shows:
 - **The grammar costs 3–4% of throughput** with thinking off: 107 against 111 tokens per second on Qwen 3.5 9B, and 71 against 74 on Gemma 4 12B. llama.cpp checks a sampled token against the grammar and masks the vocabulary only when it rejects one.
 - **Thinking is the expense.** Qwen 3.5 9B wrote 33 times the output of its answer without thinking (5,143 tokens against 158) and Gemma 4 12B nine times (1,300 against 150). Its only failures were cuts at the cap: llama.cpp holds back end-of-sequence until the grammar completes, so a thought that never closes runs to the cap and returns empty content. A local server that thinks bounds the thought with `--reasoning-budget N`, a token budget since [#20297](https://github.com/ggml-org/llama.cpp/pull/20297). Whether thinking buys better decisions is for M1 to measure; the cost model assumes characters without it.
 
-The cloud rates are M1's: this probe ran local models only.
+This probe ran local models only. PR 3 repeated it through mindfork's own clients, on Claude Haiku 5.5 and Sonnet 5.5, on Qwen 3.8 27B and Gemma 4 31B through OpenRouter pinned to DeepInfra, and on Qwen 3.8's gate weights through the local llama.cpp: every first attempt that finished met the schema under either mechanism, the constrained replies were clean JSON on every route, and Gemma's fallback replies came in code fences every time ([journal/stories.md](../journal/stories.md)). M1 measures the rates at scale.
 
 **The model port**
 

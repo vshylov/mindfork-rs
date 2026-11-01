@@ -1079,6 +1079,25 @@ impl EngineBackend for OpenAiClient {
         ServerKind::Other
     }
 
+    /// `response_format` with `json_schema` is how a reply is constrained here
+    /// (docs/research/fabula-engine.md §8): llama.cpp compiles it to a grammar,
+    /// vLLM, Ollama, LM Studio and xAI enforce it. DeepSeek's API takes
+    /// `json_object` only, so its calls take the fallback. Through the gateway it
+    /// is the model's catalogue entry that says: an endpoint honours the schema
+    /// only where `structured_outputs` is listed, and silence is a "no".
+    async fn enforces_output_schema(&self) -> bool {
+        if self.deepseek {
+            return false;
+        }
+        if self.gateway.is_some() {
+            return self
+                .catalogue_entry()
+                .await
+                .is_some_and(|entry| entry.lists_parameter("structured_outputs"));
+        }
+        true
+    }
+
     /// Reads the endpoint's catalogue for the configured model
     /// (`GET /v1/models`), when it carries anything worth reading.
     ///
@@ -1502,6 +1521,7 @@ mod tests {
     fn muted_turn() -> ChatRequest {
         ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![crate::shared::api::ApiMessage::user("hi".to_string())],
             sampling: crate::entities::sampling::SamplingConfig {
@@ -1528,6 +1548,7 @@ mod tests {
         let client = OpenAiClient::new(url);
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![crate::shared::api::ApiMessage::user("hi".to_string())],
             sampling: Default::default(),
@@ -2260,6 +2281,7 @@ mod tests {
         use crate::shared::api::contract::{ApiImage, ApiMessage, ApiToolCall};
         ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![
                 ApiMessage::user("what is on the screen?"),
@@ -3033,6 +3055,7 @@ mod ignored_smoke {
         };
         ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             // The shape a real turn has: the question is asked up front and the tool
             // result is the last message, so the model answers from it. See the Gemini
@@ -3475,6 +3498,7 @@ mod ignored_smoke {
         let code = "import pandas as pd\nimport matplotlib.pyplot as plt\ndf = pd.read_csv('/chat/files/sales.csv')\nax = df.groupby('month')['total'].sum().plot(label='monthly total')\nax.legend(loc='upper left')\nplt.savefig('/chat/files/chart.png')\nprint('saved')";
         ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![
                 ApiMessage::user(
@@ -3558,6 +3582,7 @@ mod ignored_smoke {
         };
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: Some("You are a helpful assistant.".into()),
             messages: vec![ApiMessage::user("Reply with exactly: pong")],
             sampling: SamplingConfig {
@@ -3673,6 +3698,7 @@ mod ignored_smoke {
         };
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![ApiMessage::user("word ".repeat(120_000))],
             sampling: SamplingConfig {
@@ -3715,6 +3741,7 @@ mod ignored_smoke {
     async fn assert_no_self_terminate(client: &OpenAiClient, eos_text: &str) {
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![ApiMessage::user(format!(
                 "Print this token literally and then say DONE: {eos_text}"
@@ -3784,6 +3811,7 @@ mod ignored_smoke {
         };
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![ApiMessage::user(
                 "Call get_weather for Paris. Respond only with the tool call.",
@@ -3832,6 +3860,7 @@ mod ignored_smoke {
         };
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![ApiMessage::user(
                 "Think step by step, then answer: what is 17*23?",
@@ -3884,6 +3913,7 @@ mod ignored_smoke {
         let client = client.with_model(Some(model.clone()));
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![ApiMessage::user(
                 "Think step by step, then answer: what is 17*23?",
@@ -3981,6 +4011,7 @@ mod ignored_smoke {
         // moderate temperature, no tools.
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: Some(
                 "Give this conversation a short title. Answer with the title only.".into(),
             ),
@@ -4027,6 +4058,7 @@ mod ignored_smoke {
         };
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![ApiMessage::user(
                 "Which city hosted the Summer Olympics exactly 32 years before 2024? \
@@ -4134,6 +4166,7 @@ mod ignored_smoke {
         };
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: Some("You are a creative writing assistant.".into()),
             messages: vec![ApiMessage::user(
                 "Write one whimsical sentence about a teapot.",
@@ -4237,6 +4270,7 @@ mod ignored_smoke {
         ] {
             let req = ChatRequest {
                 continue_final: false,
+                output_schema: None,
                 system: Some(system.into()),
                 messages: vec![ApiMessage::user(user)],
                 sampling: SamplingConfig {
@@ -4320,6 +4354,7 @@ mod grok_smoke {
         };
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![ApiMessage::user(
                 "Think step by step: what is 17 * 23? Show brief reasoning.",
@@ -4357,6 +4392,7 @@ mod grok_smoke {
         };
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![
                 ApiMessage::user(crate::shared::api::VISION_PROMPT).with_images(vec![
@@ -4400,6 +4436,7 @@ mod grok_smoke {
         };
         let first = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![ApiMessage::user(
                 "What is the weather in Kyiv? Use the get_weather tool.",
@@ -4435,6 +4472,7 @@ mod grok_smoke {
         );
         let second = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![
                 ApiMessage::user("What is the weather in Kyiv? Use the get_weather tool."),
@@ -4471,6 +4509,7 @@ mod grok_smoke {
         };
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: Some("Be terse.".into()),
             messages: vec![ApiMessage::user("Reply with exactly: pong")],
             sampling: SamplingConfig {

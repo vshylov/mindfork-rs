@@ -22,3 +22,5 @@ pub mod schema;
 
 #[cfg(test)]
 mod scene_live_tests;
+#[cfg(test)]
+mod schema_live_tests;

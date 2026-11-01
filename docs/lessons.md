@@ -909,6 +909,12 @@ have asked for one. What caught it was grepping every site that sets the budget 
 writing the rule; the Responses and Anthropic wires had already read the budget as
 "off", which is the precedent that should have been looked for first.
 — *the thinking switch reaches a gateway*.
+**And again, from the other side**: a new caller muted its turns with `thinking: false`
+alone, and on the local llama.cpp Qwen 3.8 thought about 6,000 characters a call — a
+template with thinking baked in stops only at `reasoning_budget: 0`. A turn is muted
+the way the application mutes its own (`thinking: false`, effort `none`, budget `0`, as
+`app/orchestrator/title.rs` does).
+— *Fabula — PR 3, the reply's schema on the wire*.
 
 **A value the orchestrator sets on its own turns can break only the background.**
 `reasoning_effort: "none"` is never typed by a user — the app sets it for title

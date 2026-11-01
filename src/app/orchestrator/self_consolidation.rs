@@ -184,6 +184,7 @@ impl Orchestrator {
         };
         let request = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: Some(self_consolidate_system_message(loc)),
             messages: vec![ApiMessage::user(digest)],
             sampling,

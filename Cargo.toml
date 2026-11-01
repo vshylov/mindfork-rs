@@ -188,7 +188,11 @@ reqwest = { version = "0.13.4", default-features = false, features = ["json", "s
 rusqlite = { version = "0.40.1", features = ["bundled", "serialize"] }
 scraper = "0.27.0"
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.150"
+# `raw_value`: a reply's schema rides to the wire as the text it was printed as. A
+# `Value` sorts its keys (no `preserve_order` here, on purpose), and the order of a
+# schema's properties is the order a model writes them in (docs/lessons.md §8,
+# shared/api/contract.rs `OutputSchema`). The feature adds no crate.
+serde_json = { version = "1.0.150", features = ["raw_value"] }
 # Integrity check (sha256) of downloaded sandbox assets (Phase 2). Pure Rust.
 sha2 = "0.11"
 single-instance = "0.3.3"

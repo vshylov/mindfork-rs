@@ -546,6 +546,7 @@ mod ignored_smoke {
         };
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: Some("You are a helpful assistant.".into()),
             messages: vec![ApiMessage::user("Reply with exactly: pong")],
             sampling: SamplingConfig {
@@ -608,6 +609,7 @@ mod ignored_smoke {
             };
             ChatRequest {
                 continue_final: false,
+                output_schema: None,
                 system: None,
                 // The shape a real turn has: the question is asked **up front**, and the
                 // tool result is the last message — the model answers from it. A trailing
@@ -680,6 +682,7 @@ mod ignored_smoke {
         };
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![
                 ApiMessage::user(crate::shared::api::VISION_PROMPT).with_images(vec![
@@ -723,6 +726,7 @@ mod ignored_smoke {
         };
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![ApiMessage::user(
                 "Think step by step: what is 17 * 23? Show brief reasoning.",
@@ -774,6 +778,7 @@ mod ignored_smoke {
         };
         let req = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![ApiMessage::user("Call get_weather for Paris.")],
             sampling: SamplingConfig {
@@ -839,6 +844,7 @@ mod ignored_smoke {
              then call get_weather for that city.";
         let round1 = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![ApiMessage::user(prompt)],
             sampling: sampling.clone(),
@@ -879,6 +885,7 @@ mod ignored_smoke {
         // Second round: assistant(functionCall with the signature) + the result.
         let round2 = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: vec![
                 ApiMessage::user(prompt),

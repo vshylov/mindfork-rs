@@ -159,6 +159,7 @@ impl Orchestrator {
         };
         let request = ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: Some(crate::features::rename_chat::title_system_message(loc)),
             messages: vec![ApiMessage::user(digest)],
             sampling,

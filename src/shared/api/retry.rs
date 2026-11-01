@@ -410,6 +410,14 @@ impl EngineBackend for RetryBackend {
     async fn server_kind(&self) -> crate::shared::api::contract::ServerKind {
         self.inner.server_kind().await
     }
+
+    /// The sixth, with its delegation and its test from the start: every cloud
+    /// and external backend is wrapped here, so falling through to the trait's
+    /// `false` would put every story call on the fallback mechanism in silence,
+    /// while the stub tests of the clients passed (docs/lessons.md §9).
+    async fn enforces_output_schema(&self) -> bool {
+        self.inner.enforces_output_schema().await
+    }
 }
 
 #[cfg(test)]
@@ -444,6 +452,7 @@ mod tests {
         model: Option<String>,
         slots: Option<u32>,
         kind: crate::shared::api::contract::ServerKind,
+        schema: bool,
     }
 
     impl Scripted {
@@ -457,6 +466,7 @@ mod tests {
                 model: None,
                 slots: None,
                 kind: crate::shared::api::contract::ServerKind::Other,
+                schema: false,
             })
         }
 
@@ -512,6 +522,10 @@ mod tests {
         async fn server_kind(&self) -> crate::shared::api::contract::ServerKind {
             self.kind
         }
+
+        async fn enforces_output_schema(&self) -> bool {
+            self.schema
+        }
     }
 
     fn err(status: u16, retry_after: Option<Duration>) -> EngineError {
@@ -526,6 +540,7 @@ mod tests {
     fn req() -> ChatRequest {
         ChatRequest {
             continue_final: false,
+            output_schema: None,
             system: None,
             messages: Vec::new(),
             sampling: Default::default(),
@@ -805,6 +820,17 @@ mod tests {
     /// wrapped in this decorator, so a forgotten delegation would report `Unknown`
     /// for a backend that answers `Supported` — image attachments would silently
     /// lose their capability check on all four providers (docs/lessons.md §9).
+    /// The sixth sibling. The default is `false`, so only a `true` the decorator
+    /// could not have produced by falling through proves the delegation.
+    #[tokio::test]
+    async fn the_output_schema_answer_is_delegated() {
+        let mut scripted = Scripted::new(vec![]);
+        Arc::get_mut(&mut scripted).unwrap().schema = true;
+        assert!(RetryBackend::wrap(scripted).enforces_output_schema().await);
+        let backend = RetryBackend::wrap(Scripted::new(vec![]));
+        assert!(!backend.enforces_output_schema().await);
+    }
+
     #[tokio::test]
     async fn vision_is_delegated() {
         // The default is `Unknown`, so a delegation test has to assert on a value

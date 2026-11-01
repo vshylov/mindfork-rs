@@ -191,12 +191,15 @@ pub fn prompt_sha256(prompt: &Prompt, schema: Option<&Schema>) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// The fallback mechanism (spec §8, *The fallback*): the schema in the prompt,
-// a lenient parse, the validator, and one repair quoting its message.
+// The schema in the prompt, a lenient parse, the validator, and one repair
+// quoting its message (spec §8, *The fallback*).
 
-/// What the system part gains under the fallback: the schema itself, after
-/// the stable content, so it is cached with it.
-pub fn fallback_system(prompt: &Prompt, schema: &Schema) -> String {
+/// The system part of a JSON call: the schema itself, after the stable
+/// content, so it is cached with it. Under schema-constrained decoding as well
+/// as under the fallback: llama.cpp's grammar shows the model no description,
+/// so the prompt is where a field's meaning is read, and one prompt for both
+/// mechanisms leaves M1 comparing the decoding alone.
+pub fn system_with_schema(prompt: &Prompt, schema: &Schema) -> String {
     format!(
         "{}\n\nReply with one JSON object that matches this JSON Schema, and nothing else:\n{}",
         prompt.system,
@@ -332,9 +335,10 @@ fn after_failure(answer: &Answer, address: &str, retried: &mut bool) -> Result<(
     })
 }
 
-/// A JSON call under the fallback mechanism: a cut or a transient failure is
-/// tried once more, an invalid reply is repaired once, a refusal fails the
-/// call (spec §8, *What still breaks a reply*).
+/// A JSON call: a cut or a transient failure is tried once more, an invalid
+/// reply is repaired once, a refusal fails the call (spec §8, *What still breaks
+/// a reply*). The same under either mechanism; the source decides whether the
+/// provider constrains the decoding too.
 pub async fn run_json(
     attempts: &mut dyn Attempts,
     address: &str,
@@ -343,7 +347,7 @@ pub async fn run_json(
 ) -> Result<Value, PortError> {
     let mut attempt = Attempt {
         number: 1,
-        system: fallback_system(prompt, schema),
+        system: system_with_schema(prompt, schema),
         turns: vec![Turn {
             role: "user",
             content: prompt.user.clone(),
