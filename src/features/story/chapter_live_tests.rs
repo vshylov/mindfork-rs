@@ -135,10 +135,10 @@ async fn open_in(dir: &Path) -> Opened {
 
 /// A fresh story in `dir` with the fixture canon.
 async fn fresh_in(dir: &Path) -> Opened {
-    if dir.exists() {
-        std::fs::remove_dir_all(dir).unwrap();
+    if tokio::fs::try_exists(dir).await.unwrap_or(false) {
+        tokio::fs::remove_dir_all(dir).await.unwrap();
     }
-    std::fs::create_dir_all(dir).unwrap();
+    tokio::fs::create_dir_all(dir).await.unwrap();
     let mut opened = open_in(dir).await;
     opened.author.import_canon(&fixture_canon()).await.unwrap();
     opened
@@ -367,11 +367,14 @@ async fn report(db: &StoryDb, model: &str, out: &Path, seconds: u64, extra: Valu
         "extra": extra,
     });
     let text = export::markdown(db).await.unwrap();
-    std::fs::write(out.join("chapter.md"), &text).unwrap();
-    std::fs::write(
+    tokio::fs::write(out.join("chapter.md"), &text)
+        .await
+        .unwrap();
+    tokio::fs::write(
         out.join("report.json"),
         serde_json::to_string_pretty(&report).unwrap(),
     )
+    .await
     .unwrap();
     eprintln!(
         "\n{model}: {} calls, {} s; spend {} tokens ({} in, {} out){}; {} leaks",

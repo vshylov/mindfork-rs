@@ -166,7 +166,9 @@ async fn continuity_live_recall_by_mechanism_and_effort() {
         .unwrap_or(5);
     let dir = tempfile::tempdir().unwrap();
     for file in ["story.db", "story.calls.db"] {
-        std::fs::copy(PathBuf::from(&from).join(file), dir.path().join(file)).unwrap();
+        tokio::fs::copy(PathBuf::from(&from).join(file), dir.path().join(file))
+            .await
+            .unwrap();
     }
     let db = StoryDb::open(
         &dir.path().join("story.db"),
