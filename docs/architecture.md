@@ -634,14 +634,22 @@ src/
 │  │                        once quoting the validator, a refusal final); engine.rs — the port over
 │  │                        the chat's EngineBackend, every attempt into the call log, the schema
 │  │                        sent to the provider where it enforces one, else the fallback (the
-│  │                        schema in the prompt either way); replay.rs — the port
+│  │                        schema in the prompt either way), a role's own sampling (thinking off
+│  │                        for the characters); replay.rs — the port
 │  │                        over the call log, by address, drift reported; schema.rs — Schema, the
 │  │                        dialect by construction, printed in the order declared (a Value sorts its
 │  │                        keys), derived from the reply types, and the validator that runs before
 │  │                        serde; dialect.rs — the dialect's own check of the printed JSON;
-│  │                        scene.rs — one scene played by script, M0's simulation. No production
-│  │                        consumer before the story run (PR 8): the module's `allow(dead_code)`
-│  │                        goes with it
+│  │                        scene.rs — one scene played by script, M0's simulation (Gate G0's
+│  │                        fixture); simulation.rs — a scene as K branches of rounds (intent,
+│  │                        initiative, reaction, reflection), every event the World Master writes
+│  │                        held to the folded world and to what its witnesses know before it is
+│  │                        committed; contracts.rs — the reflection and the World Master's two
+│  │                        rulings, with their schemas; prompts.rs — the role prompts, in English:
+│  │                        a character sees what it saw, the World Master the world and the deeds,
+│  │                        never a thought; leaks.rs — the planted secret tokens, the engine's check
+│  │                        and the audit of every character call. No production consumer before the
+│  │                        story run (PR 8): the module's `allow(dead_code)` goes with it
 │  ├─ profiles.rs           pure profile operations (sanitize_name, ProfileEdit)
 │  ├─ chat_search_sort.rs   chat list filter/sort
 │  ├─ companion_memory.rs   the companion's memory blocks (spec §6.6): the memory cut,
@@ -842,7 +850,8 @@ src/
    │  │  └─ responses/          Responses API: ResponsesClient + wire (OpenAI cloud, /v1/responses — reasoning summaries, effort, verbosity)
    │  ├─ gemini/            native Gemini: client.rs + wire.rs (generateContent, x-goog-api-key — thought summaries, thinkingLevel/Budget, per-tool-call thoughtSignature)
    │  ├─ anthropic/         Anthropic Messages API: client.rs + wire.rs (Claude, /v1/messages; a schema as
-   │  │                     `output_config.format` beside the effort)
+   │  │                     `output_config.format` beside the effort; thinking off as `disabled`, or in the
+   │  │                     shape a model's refusal names — `between_tools`, the lowest effort — kept per client)
    │  ├─ catalogue.rs       the provider's model catalogue behind the settings picker: eight
    │  │                     endpoint shapes (OpenAI-compatible / Gemini native / Anthropic /
    │  │                     xAI language-models / OpenRouter's text models / OpenRouter's

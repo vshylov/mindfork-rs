@@ -915,6 +915,11 @@ template with thinking baked in stops only at `reasoning_budget: 0`. A turn is m
 the way the application mutes its own (`thinking: false`, effort `none`, budget `0`, as
 `app/orchestrator/title.rs` does).
 — *Fabula — PR 3, the reply's schema on the wire*.
+**And once more, on the wire itself**: the Anthropic wire sent no `thinking` field for
+a muted turn, reading absence as off — and the 5.5 generation thinks when the field is
+absent, so every muted turn the application ran on Claude thought. An absent switch is
+the provider's default, not "off": find out what the default is, then send the off.
+— *Thinking off reaches Claude*.
 
 **A value the orchestrator sets on its own turns can break only the background.**
 `reasoning_effort: "none"` is never typed by a user — the app sets it for title

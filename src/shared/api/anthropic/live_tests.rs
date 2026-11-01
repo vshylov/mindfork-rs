@@ -197,3 +197,65 @@ async fn a_thinking_turn_survives_a_model_without_adaptive_thinking() {
         "{model} was declared to refuse adaptive thinking, yet nothing was refused — the recovery did not run"
     );
 }
+
+/// Thinking off reaches each Claude model in the shape it takes (docs/
+/// fabula.md §4, *Thinking on Claude*): a muted turn with a reply schema,
+/// asked twice, and how it went out the second time. Haiku 5.5 thinks not
+/// at all; Sonnet 5.5 not before its answer; Opus 5.5 and Fable 5.1 at
+/// their lowest effort. `MINDFORK_ANTHROPIC_MUTE_MODELS`, comma-separated,
+/// picks the models.
+#[tokio::test]
+#[ignore = "requires MINDFORK_ANTHROPIC_KEY (live Anthropic API)"]
+async fn thinking_off_reaches_each_claude_model() {
+    let Ok(key) = std::env::var("MINDFORK_ANTHROPIC_KEY") else {
+        eprintln!("skip: MINDFORK_ANTHROPIC_KEY not set");
+        return;
+    };
+    let models = std::env::var("MINDFORK_ANTHROPIC_MUTE_MODELS").unwrap_or_else(|_| {
+        "claude-haiku-5-5,claude-sonnet-5-5,claude-opus-5-5,claude-fable-5-1".to_owned()
+    });
+    let schema = r#"{"type":"object","properties":{"mood":{"type":"string","enum":["calm","grim"]}},"required":["mood"],"additionalProperties":false}"#;
+    for model in models.split(',').map(str::trim).filter(|m| !m.is_empty()) {
+        let client = AnthropicClient::new("https://api.anthropic.com", key.clone(), model);
+        let mut lines = Vec::new();
+        for turn in 1..=2 {
+            let req = ChatRequest {
+                system: Some("Say how the sea feels tonight.".into()),
+                messages: vec![ApiMessage::user("The storm is coming in.")],
+                sampling: SamplingConfig {
+                    max_tokens: Some(1024),
+                    thinking: Some(false),
+                    reasoning_effort: Some(ReasoningEffort::None),
+                    reasoning_budget: Some(0),
+                    ..Default::default()
+                },
+                output_schema: Some(
+                    crate::shared::api::contract::OutputSchema::new("mood", schema.into()).unwrap(),
+                ),
+                ..ChatRequest::default()
+            };
+            let mut stream = client.chat_stream(req, Default::default()).await.unwrap();
+            let (mut text, mut thought, mut out) = (String::new(), 0, 0);
+            while let Some(chunk) = stream.next().await {
+                match chunk {
+                    ChatChunk::Text(t) => text.push_str(&t),
+                    ChatChunk::Thoughts(t) => thought += t.chars().count(),
+                    ChatChunk::Usage(u) => out = u.completion_tokens,
+                    ChatChunk::Error { message, .. } => panic!("{model}: {message}"),
+                    _ => {}
+                }
+            }
+            let value: serde_json::Value = serde_json::from_str(text.trim())
+                .unwrap_or_else(|e| panic!("{model}: {e}: {text:?}"));
+            assert!(value["mood"].is_string(), "{model}: {text}");
+            lines.push(format!(
+                "turn {turn}: {out} output tokens, {thought} thought chars, {text}"
+            ));
+        }
+        eprintln!(
+            "{model}: thinking off as {:?}\n  {}",
+            client.mutes_as().unwrap_or(super::wire::Mute::Disabled),
+            lines.join("\n  ")
+        );
+    }
+}

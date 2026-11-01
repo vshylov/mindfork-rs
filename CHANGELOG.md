@@ -14,6 +14,16 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Thinking off reaches Claude.** With thinking turned off, Claude Haiku 5.5, Sonnet
+  5.5, Opus 5.5 and Fable 5.1 still thought before every answer: the request left the
+  thinking field out, and the 5.5 generation thinks when it is absent. A turn with
+  thinking off now asks for it off in the shape each model takes: Haiku 5.5 does not
+  think at all, Sonnet 5.5 not before its answer, and Opus 5.5 and Fable 5.1, which
+  always think, think at their lowest effort. The turns the app runs for itself — titles,
+  summaries, a re-asked empty reply — are muted the same way.
+
 ## [0.23.1] — 2026-10-31
 
 **A backup says what it holds.** The backup made before a data upgrade no longer
