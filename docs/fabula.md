@@ -1,6 +1,6 @@
 # Fabula — a story engine used from the chat: track plan
 
-**Status:** in progress — M0 done (PRs 1 and 2, Gate G0 GO); M1: PRs 3 and 4 built, Gate G1 GO (2026-11-01). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
+**Status:** in progress — M0 done (PRs 1 and 2, Gate G0 GO); M1 done (PRs 3–5, Gate G1 GO, 2026-11-01). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
 so are the three this plan adds (§6) and where development runs (§4, *The development
 stack*). The design —
 the engine, its stores, its contracts, its evaluation — is
@@ -174,6 +174,19 @@ gate weights through the local llama.cpp. On every route: no leak, while 10–38
 revealed and shown afterwards; at least 99.89% of first attempts schema-valid (the misses
 were three cuts and errors of 6,418, each taken by the retry); the World Master's refusals
 reported per scene. The figures are in [journal/stories.md](journal/stories.md).
+
+**PR 5, as built (2026-11-01).** Responses sends the schema as `text.format`, strict, beside
+`text.verbosity`; a refusal there comes as a part of its own and ends the turn as filtered, so
+the port records a refusal instead of repairing a reply. Gemini sends it as
+`generationConfig.responseJsonSchema`, not the `responseFormat` this plan named:
+`gemini-2.5-flash` ignores `responseFormat` in silence and answers in prose, while
+`responseJsonSchema` held on every model tried. Both clients now say they enforce a schema.
+Live on `gpt-5.4-mini`, `gpt-6.1-sol`, `gemini-3.8-flash` and `gemini-2.5-flash`: every first
+attempt met the schema, and the bare greeting came back as the schema's object. A small G1
+run on `gpt-5.4-mini` and `gemini-3.8-flash` sent every simulation schema through each
+provider: all first attempts valid, no leak. One finding passes to M2: under a schema,
+Gemini 3.x thinks about a tenth as much and returns no thought summary, so a World Master
+there rules on little thought. The figures are in [journal/stories.md](journal/stories.md).
 
 ### M1 — the simulation, live
 

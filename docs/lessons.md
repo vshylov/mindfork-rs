@@ -797,6 +797,17 @@ minute it costs to send the real body — the same minute would have turned this
 from a shipped wrong conclusion into a finding.
 — *`external` against a gateway*.
 
+**A provider's recommended field is a statement about its newest models — send it
+to the oldest one you serve.** Gemini's API reference marks the older schema fields
+deprecated and recommends `generationConfig.responseFormat`, and the design took
+that field. One request per listed model, before any code: `gemini-2.5-flash`, still
+listed and served, answered `200` and the word "hello" 4 times of 4, the field
+ignored in silence, while the older `responseJsonSchema` held on 2.5, 3.5, 3.8 and
+Gemma 4. An ignored field fails as prose that reads like the model's choice; a
+refused one fails as a `400`. When two fields disagree, take the one that fails
+loudly, and keep the probe that told them apart.
+— *Fabula PR 5, the schema on the cloud wires*.
+
 **Assume the measurement will overturn the plan, because it repeatedly has.** Defender
 was blamed for CI slowness and the runner reported `RealTimeProtectionEnabled = False`;
 vendoring grammars was predicted to *shrink* the binary and added 181 KiB (LTO already

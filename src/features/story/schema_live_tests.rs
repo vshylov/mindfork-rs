@@ -17,7 +17,10 @@
 //! - the OpenAI-compatible engine: `MINDFORK_ENGINE_URL` (+ `_KEY`, `_MODEL`);
 //!   `MINDFORK_ENGINE_DIALECT=openrouter` builds the gateway's client, whose
 //!   catalogue decides the mechanism and which asks for `require_parameters`;
-//! - Claude: `MINDFORK_ANTHROPIC_KEY` and `MINDFORK_FABULA_CLAUDE_MODEL`;
+//! - a cloud's own wire ([`Cloud`]): Claude (`MINDFORK_ANTHROPIC_KEY`,
+//!   `MINDFORK_FABULA_CLAUDE_MODEL`), OpenAI's Responses (`MINDFORK_OPENAI_KEY`,
+//!   `MINDFORK_FABULA_OPENAI_MODEL`), Gemini (`MINDFORK_GEMINI_KEY`,
+//!   `MINDFORK_FABULA_GEMINI_MODEL`);
 //! - `MINDFORK_FABULA_PROBE_SCENES`, the scenes per arm (3 by default, three
 //!   calls each).
 //!
@@ -36,15 +39,75 @@ use crate::features::story::engine::EngineAdapter;
 use crate::features::story::scene::tests::{FixtureCall, fresh_story};
 use crate::features::story::scene::{SceneScript, harbour_script, play_scripted_scene};
 use crate::features::story::schema::{CanonKeys, Property, Schema, StorySchema, extract_object};
-use crate::shared::api::AnthropicClient;
 use crate::shared::api::contract::{
     ApiMessage, ChatChunk, ChatRequest, EngineBackend, OutputSchema,
 };
-use crate::shared::api::live_client;
 use crate::shared::api::retry::RetryBackend;
+use crate::shared::api::{AnthropicClient, GeminiClient, ResponsesClient, live_client};
 
 /// A hung route fails its arm instead of holding the run (docs/lessons.md §2).
 const BOUND: Duration = Duration::from_secs(600);
+
+/// A cloud reached on its own wire, as the application's cloud modes reach it.
+#[derive(Debug, Clone, Copy)]
+pub(super) enum Cloud {
+    Claude,
+    OpenAi,
+    Gemini,
+}
+
+impl Cloud {
+    pub(super) const ALL: [Cloud; 3] = [Cloud::Claude, Cloud::OpenAi, Cloud::Gemini];
+
+    /// The variables that name the key and the model.
+    pub(super) fn vars(self) -> (&'static str, &'static str) {
+        match self {
+            Cloud::Claude => ("MINDFORK_ANTHROPIC_KEY", "MINDFORK_FABULA_CLAUDE_MODEL"),
+            Cloud::OpenAi => ("MINDFORK_OPENAI_KEY", "MINDFORK_FABULA_OPENAI_MODEL"),
+            Cloud::Gemini => ("MINDFORK_GEMINI_KEY", "MINDFORK_FABULA_GEMINI_MODEL"),
+        }
+    }
+
+    /// The backend and the model's name, or `None` when a variable is unset.
+    pub(super) fn backend(self) -> Option<(Arc<dyn EngineBackend>, String)> {
+        let (key, model) = self.vars();
+        let (Ok(key), Ok(model)) = (std::env::var(key), std::env::var(model)) else {
+            return None;
+        };
+        let client: Arc<dyn EngineBackend> = match self {
+            Cloud::Claude => Arc::new(AnthropicClient::new(
+                "https://api.anthropic.com",
+                key,
+                model.clone(),
+            )),
+            Cloud::OpenAi => Arc::new(ResponsesClient::new(
+                "https://api.openai.com/v1",
+                key,
+                model.clone(),
+            )),
+            Cloud::Gemini => Arc::new(GeminiClient::new(
+                "https://generativelanguage.googleapis.com/v1beta",
+                key,
+                model.clone(),
+            )),
+        };
+        Some((RetryBackend::wrap(client), model))
+    }
+}
+
+/// The OpenAI-compatible engine the variables name, the gateway's client when
+/// `MINDFORK_ENGINE_DIALECT=openrouter`.
+pub(super) fn engine_route() -> Option<(Arc<dyn EngineBackend>, String)> {
+    let client = live_client("MINDFORK_ENGINE_URL", "MINDFORK_ENGINE_KEY")?;
+    let gateway = std::env::var("MINDFORK_ENGINE_DIALECT").is_ok_and(|d| d.trim() == "openrouter");
+    let client = if gateway {
+        client.for_openrouter(false)
+    } else {
+        client
+    };
+    let model = std::env::var("MINDFORK_ENGINE_MODEL").unwrap_or_else(|_| "unnamed".to_owned());
+    Some((RetryBackend::wrap(Arc::new(client)), model))
+}
 
 /// One arm: a mechanism and a thinking setting.
 struct Arm {
@@ -264,36 +327,41 @@ async fn probe(backend: Arc<dyn EngineBackend>, model: &str, arms: Vec<Arm>) {
 #[tokio::test]
 #[ignore = "needs a live model: MINDFORK_ENGINE_URL (+ _KEY, _MODEL, MINDFORK_ENGINE_DIALECT=openrouter)"]
 async fn schema_live_probe_on_the_engine() {
-    let Some(client) = live_client("MINDFORK_ENGINE_URL", "MINDFORK_ENGINE_KEY") else {
+    let Some((backend, model)) = engine_route() else {
         eprintln!("skip: MINDFORK_ENGINE_URL not set");
         return;
     };
-    let gateway = std::env::var("MINDFORK_ENGINE_DIALECT").is_ok_and(|d| d.trim() == "openrouter");
-    let client = if gateway {
-        client.for_openrouter(false)
-    } else {
-        client
-    };
-    let model = std::env::var("MINDFORK_ENGINE_MODEL").unwrap_or_else(|_| "unnamed".to_owned());
-    probe(RetryBackend::wrap(Arc::new(client)), &model, arms(None)).await;
+    probe(backend, &model, arms(None)).await;
 }
 
-/// On Claude the wire has no way to turn thinking off (the 5.5 models think by
-/// default), so the "off" arms send no `thinking` and the "on" arms adaptive
+/// The probe on a cloud's own wire: the "off" arms send the application's
+/// mute, which each client spells in its model's terms, and the "on" arms
 /// thinking at the lowest effort; the thought column says what each did.
+async fn probe_on(cloud: Cloud) {
+    let Some((backend, model)) = cloud.backend() else {
+        let (key, model) = cloud.vars();
+        eprintln!("skip: {key} and {model} are needed");
+        return;
+    };
+    probe(backend, &model, arms(Some(ReasoningEffort::Low))).await;
+}
+
 #[tokio::test]
 #[ignore = "needs MINDFORK_ANTHROPIC_KEY + MINDFORK_FABULA_CLAUDE_MODEL"]
 async fn schema_live_probe_on_claude() {
-    let (Ok(key), Ok(model)) = (
-        std::env::var("MINDFORK_ANTHROPIC_KEY"),
-        std::env::var("MINDFORK_FABULA_CLAUDE_MODEL"),
-    ) else {
-        eprintln!("skip: MINDFORK_ANTHROPIC_KEY and MINDFORK_FABULA_CLAUDE_MODEL are needed");
-        return;
-    };
-    let client = AnthropicClient::new("https://api.anthropic.com", key, model.clone());
-    let backend = RetryBackend::wrap(Arc::new(client));
-    probe(backend, &model, arms(Some(ReasoningEffort::Low))).await;
+    probe_on(Cloud::Claude).await;
+}
+
+#[tokio::test]
+#[ignore = "needs MINDFORK_OPENAI_KEY + MINDFORK_FABULA_OPENAI_MODEL"]
+async fn schema_live_probe_on_openai() {
+    probe_on(Cloud::OpenAi).await;
+}
+
+#[tokio::test]
+#[ignore = "needs MINDFORK_GEMINI_KEY + MINDFORK_FABULA_GEMINI_MODEL"]
+async fn schema_live_probe_on_gemini() {
+    probe_on(Cloud::Gemini).await;
 }
 
 /// One reply's text, the stream drained.
@@ -349,29 +417,36 @@ async fn holds_against_the_prompt(backend: Arc<dyn EngineBackend>) {
 #[tokio::test]
 #[ignore = "needs a live model: MINDFORK_ENGINE_URL (+ _KEY, _MODEL, MINDFORK_ENGINE_DIALECT=openrouter)"]
 async fn schema_live_holds_on_the_engine_against_the_prompt() {
-    let Some(client) = live_client("MINDFORK_ENGINE_URL", "MINDFORK_ENGINE_KEY") else {
+    let Some((backend, _)) = engine_route() else {
         eprintln!("skip: MINDFORK_ENGINE_URL not set");
         return;
     };
-    let gateway = std::env::var("MINDFORK_ENGINE_DIALECT").is_ok_and(|d| d.trim() == "openrouter");
-    let client = if gateway {
-        client.for_openrouter(false)
-    } else {
-        client
+    holds_against_the_prompt(backend).await;
+}
+
+async fn holds_on(cloud: Cloud) {
+    let Some((backend, _)) = cloud.backend() else {
+        let (key, model) = cloud.vars();
+        eprintln!("skip: {key} and {model} are needed");
+        return;
     };
-    holds_against_the_prompt(RetryBackend::wrap(Arc::new(client))).await;
+    holds_against_the_prompt(backend).await;
 }
 
 #[tokio::test]
 #[ignore = "needs MINDFORK_ANTHROPIC_KEY + MINDFORK_FABULA_CLAUDE_MODEL"]
 async fn schema_live_holds_on_claude_against_the_prompt() {
-    let (Ok(key), Ok(model)) = (
-        std::env::var("MINDFORK_ANTHROPIC_KEY"),
-        std::env::var("MINDFORK_FABULA_CLAUDE_MODEL"),
-    ) else {
-        eprintln!("skip: MINDFORK_ANTHROPIC_KEY and MINDFORK_FABULA_CLAUDE_MODEL are needed");
-        return;
-    };
-    let client = AnthropicClient::new("https://api.anthropic.com", key, model);
-    holds_against_the_prompt(RetryBackend::wrap(Arc::new(client))).await;
+    holds_on(Cloud::Claude).await;
+}
+
+#[tokio::test]
+#[ignore = "needs MINDFORK_OPENAI_KEY + MINDFORK_FABULA_OPENAI_MODEL"]
+async fn schema_live_holds_on_openai_against_the_prompt() {
+    holds_on(Cloud::OpenAi).await;
+}
+
+#[tokio::test]
+#[ignore = "needs MINDFORK_GEMINI_KEY + MINDFORK_FABULA_GEMINI_MODEL"]
+async fn schema_live_holds_on_gemini_against_the_prompt() {
+    holds_on(Cloud::Gemini).await;
 }

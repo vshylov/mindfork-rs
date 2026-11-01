@@ -292,12 +292,26 @@ impl EngineBackend for GeminiClient {
     async fn vision(&self) -> VisionSupport {
         VisionSupport::Supported
     }
+
+    /// `responseJsonSchema` constrains the reply by grammar on every model
+    /// measured, Gemini 2.5 to 3.8 and the Gemma 4 the API serves
+    /// ([`wire::GenConfig::response_json_schema`]).
+    async fn enforces_output_schema(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::shared::api::sse_stub::{self, collect, serve};
+
+    /// The story engine sends its schemas to Gemini (docs/fabula.md §4, PR 5).
+    #[tokio::test]
+    async fn the_gemini_client_enforces_a_schema() {
+        let client = GeminiClient::new("http://127.0.0.1:9", "k", "gemini-x");
+        assert!(client.enforces_output_schema().await);
+    }
 
     #[test]
     fn finish_mapping() {

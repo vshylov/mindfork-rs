@@ -17,9 +17,11 @@
 //!
 //! `#[ignore]`, skipped without its variables:
 //!
-//! - the OpenAI-compatible engine: `MINDFORK_ENGINE_URL` (+ `_KEY`, `_MODEL`),
-//!   `MINDFORK_ENGINE_DIALECT=openrouter` for the gateway's client;
-//! - Claude: `MINDFORK_ANTHROPIC_KEY` and `MINDFORK_FABULA_CLAUDE_MODEL`;
+//! - a cloud on its own wire, the first whose key and model are set: Claude,
+//!   OpenAI's Responses or Gemini (the variables are the schema smoke's,
+//!   `super::schema_live_tests::Cloud`);
+//! - else the OpenAI-compatible engine: `MINDFORK_ENGINE_URL` (+ `_KEY`,
+//!   `_MODEL`), `MINDFORK_ENGINE_DIALECT=openrouter` for the gateway's client;
 //! - `MINDFORK_FABULA_G1_SCENES` (20), `_K` (3), `_ROUNDS` (8), `_PARALLEL`
 //!   (scenes at once, 4), `_OUT` (where each scene's trace and calls are
 //!   written; `target/fabula/g1-<model>` by default), `_ONLY` (the scenes
@@ -47,10 +49,8 @@ use crate::features::story::leaks::{AuditedCall, Leak, audit};
 use crate::features::story::port::Role;
 use crate::features::story::scene::tests::{FixtureCall, fresh_story};
 use crate::features::story::schema::{CanonKeys, Schema, StorySchema, extract_object};
-use crate::shared::api::AnthropicClient;
+use crate::features::story::schema_live_tests::{Cloud, engine_route};
 use crate::shared::api::contract::EngineBackend;
-use crate::shared::api::live_client;
-use crate::shared::api::retry::RetryBackend;
 
 /// A scene that hangs fails instead of holding the run (docs/lessons.md §2).
 fn bound() -> Duration {
@@ -78,25 +78,13 @@ fn env_or<T: std::str::FromStr>(name: &str, default: T) -> T {
         .unwrap_or(default)
 }
 
-/// The route the variables name: the backend, the model's name, and whether
-/// it is Claude.
+/// The route the variables name: the first cloud whose key and model are set,
+/// else the OpenAI-compatible engine; the backend and the model's name.
 fn route() -> Option<(Arc<dyn EngineBackend>, String)> {
-    if let (Ok(key), Ok(model)) = (
-        std::env::var("MINDFORK_ANTHROPIC_KEY"),
-        std::env::var("MINDFORK_FABULA_CLAUDE_MODEL"),
-    ) {
-        let client = AnthropicClient::new("https://api.anthropic.com", key, model.clone());
-        return Some((RetryBackend::wrap(Arc::new(client)), model));
-    }
-    let client = live_client("MINDFORK_ENGINE_URL", "MINDFORK_ENGINE_KEY")?;
-    let gateway = std::env::var("MINDFORK_ENGINE_DIALECT").is_ok_and(|d| d.trim() == "openrouter");
-    let client = if gateway {
-        client.for_openrouter(false)
-    } else {
-        client
-    };
-    let model = std::env::var("MINDFORK_ENGINE_MODEL").unwrap_or_else(|_| "unnamed".to_owned());
-    Some((RetryBackend::wrap(Arc::new(client)), model))
+    Cloud::ALL
+        .into_iter()
+        .find_map(Cloud::backend)
+        .or_else(engine_route)
 }
 
 /// The characters' sampling: thinking off, as the application mutes a turn.
@@ -564,7 +552,7 @@ async fn gate(backend: Arc<dyn EngineBackend>, model: &str) {
 }
 
 #[tokio::test]
-#[ignore = "needs a live model: MINDFORK_ANTHROPIC_KEY + MINDFORK_FABULA_CLAUDE_MODEL, or MINDFORK_ENGINE_URL (+ _KEY, _MODEL, _DIALECT)"]
+#[ignore = "needs a live model: a cloud key + MINDFORK_FABULA_{CLAUDE,OPENAI,GEMINI}_MODEL, or MINDFORK_ENGINE_URL (+ _KEY, _MODEL, _DIALECT)"]
 async fn simulation_live_gate_g1() {
     let Some((backend, model)) = route() else {
         eprintln!("skip: no live route; see the module's head");
