@@ -44,19 +44,25 @@ pub struct AntRequest {
     /// (`output_config.format`), sent only with one. Absent when neither is.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_config: Option<AntOutputConfig>,
+    /// The shape a muted turn is in; none for a turn that is not muted.
+    #[serde(skip)]
+    pub mute: Option<Mute>,
 }
 
 /// Anthropic's extended-thinking config. `type` is `adaptive` — the only "on"
 /// mode from Opus 4.7 on — or, for the 4.5 generation, which has no adaptive
 /// mode, `enabled` with a `budget_tokens` ([`AntRequest::think_within_a_budget`]);
-/// `display` — `summarized` for a visible CoT, taken by both.
+/// `display` — `summarized` for a visible CoT, taken by both. A muted turn
+/// sends `disabled`, or `between_tools` where the model names it instead
+/// ([`Mute`]); neither takes a `display`.
 #[derive(Debug, Serialize)]
 pub struct AntThinking {
     #[serde(rename = "type")]
     pub kind: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub budget_tokens: Option<u64>,
-    pub display: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display: Option<&'static str>,
 }
 
 /// Anthropic's `output_config`: the effort level (`low`/`medium`/`high`/`xhigh`/
@@ -177,18 +183,32 @@ pub fn build_request(req: &ChatRequest, model: &str, stream: bool) -> AntRequest
     // The sampling's `reasoning_budget` is never sent. A model that has no adaptive
     // mode — the 4.5 generation — refuses this shape, and the client asks again in
     // the other one (`AntRequest::think_within_a_budget`).
+    // Thinking off is sent as `disabled`: the 5.5 generation thinks when the
+    // field is absent, so leaving it out was no "off" at all. A model that takes
+    // no `disabled` says so, and the client asks again in the shape it names
+    // (`Mute`, `refused_mute`).
     // A continuation request (`/continue`, spec §6.4) goes out without it:
     // Anthropic rejects a prefill combined with extended thinking, and resuming
     // a visible reply must not re-open reasoning — the same choice the
     // OpenAI-compatible wire makes with `enable_thinking: false`.
-    let thinking =
-        (req.sampling.thinking == Some(true) && !req.continue_final).then_some(AntThinking {
+    // A turn is muted by either field, as on every other wire: the orchestrator
+    // mutes a re-asked empty round, the director's checkpoints and a page's
+    // summary with `reasoning_budget: 0` and leaves the user's `thinking: true`
+    // in place (docs/lessons.md, *the thinking switch reaches a gateway*).
+    let muted = req.sampling.thinking == Some(false) || req.sampling.reasoning_budget == Some(0);
+    let thinking = match (req.sampling.thinking, req.continue_final) {
+        (_, true) => None,
+        _ if muted => Some(Mute::Disabled.thinking().expect("disabled is a shape")),
+        (Some(true), false) => Some(AntThinking {
             kind: ADAPTIVE,
             budget_tokens: None,
-            display: "summarized",
-        });
+            display: Some("summarized"),
+        }),
+        _ => None,
+    };
     let effort = thinking
         .as_ref()
+        .filter(|t| t.kind == ADAPTIVE)
         .and_then(|_| req.sampling.reasoning_effort.and_then(ant_effort));
     let format = req.output_schema.as_ref().map(|s| AntFormat {
         kind: "json_schema",
@@ -217,6 +237,10 @@ pub fn build_request(req: &ChatRequest, model: &str, stream: bool) -> AntRequest
         system: req.system.clone(),
         messages,
         stream,
+        mute: thinking
+            .as_ref()
+            .is_some_and(|t| t.kind != ADAPTIVE)
+            .then_some(Mute::Disabled),
         tools,
         thinking,
         output_config,
@@ -308,8 +332,101 @@ impl AntRequest {
         self.thinking = (room >= MIN_THINKING_BUDGET).then(|| AntThinking {
             kind: "enabled",
             budget_tokens: Some(wished.min(room)),
-            display: "summarized",
+            display: Some("summarized"),
         });
+    }
+
+    /// Whether the body is a muted turn: it asks for thinking off, in one of
+    /// the shapes a model may take ([`Mute`]).
+    pub fn is_muted(&self) -> bool {
+        self.mute.is_some()
+    }
+
+    /// Rewrites a muted body in `shape`; a body that is not muted is left as
+    /// it is. The format stays either way.
+    pub fn mute_as(&mut self, shape: Mute) {
+        if self.mute.is_none() {
+            return;
+        }
+        self.mute = Some(shape);
+        self.thinking = shape.thinking();
+        self.set_effort((shape == Mute::LowestEffort).then_some(LOWEST_EFFORT));
+    }
+
+    /// The shape a muted body is in.
+    pub fn mute(&self) -> Option<Mute> {
+        self.mute
+    }
+}
+
+/// The lowest effort the API's vocabulary has, for a model that always thinks.
+const LOWEST_EFFORT: &str = "low";
+
+/// How a turn asks for thinking off. Each Claude model takes its own, and the
+/// one it does not take it refuses with a `400` that names the way (measured
+/// 2026-11-01, docs/journal/stories.md, *PR 4*):
+///
+/// | Model | `disabled` | `between_tools` | no `thinking`, effort `low` |
+/// | --- | --- | --- | --- |
+/// | Haiku 5.5, and the generations before 5.5 | taken | refused | taken |
+/// | Sonnet 5.5 | refused, naming `between_tools` | taken | taken |
+/// | Opus 5.5, Fable 5.1 | refused, naming adaptive and the effort | refused | taken |
+///
+/// `between_tools` turns off the thinking before the first output, which is
+/// all of it for a turn that calls no tool. The last shape is no "off": the
+/// model thinks adaptively, as little as its lowest effort lets it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mute {
+    /// `thinking: {type: "disabled"}`.
+    Disabled,
+    /// `thinking: {type: "between_tools"}`, with no other field.
+    BetweenTools,
+    /// No `thinking`, and `output_config.effort: "low"`.
+    LowestEffort,
+}
+
+impl Mute {
+    /// The `thinking` field the shape sends.
+    fn thinking(self) -> Option<AntThinking> {
+        let kind = match self {
+            Mute::Disabled => "disabled",
+            Mute::BetweenTools => "between_tools",
+            Mute::LowestEffort => return None,
+        };
+        Some(AntThinking {
+            kind,
+            budget_tokens: None,
+            display: None,
+        })
+    }
+}
+
+/// The shape to ask again in, when a muted request was refused for the one it
+/// carried: Sonnet 5.5 names `between_tools` in place of `disabled`; a model
+/// that takes neither `disabled` nor `between_tools` is asked at its lowest
+/// effort. A `400` only, and substrings rather than the sentence, because
+/// providers reword; a false positive costs one extra round trip.
+pub fn refused_mute(err: &EngineError, sent: Mute) -> Option<Mute> {
+    if err.status != Some(400) {
+        return None;
+    }
+    let message = err.message.to_lowercase();
+    match sent {
+        Mute::Disabled if message.contains("between_tools") && message.contains("instead") => {
+            Some(Mute::BetweenTools)
+        }
+        Mute::Disabled
+            if message.contains("thinking.type.disabled") && message.contains("not supported") =>
+        {
+            Some(Mute::LowestEffort)
+        }
+        Mute::BetweenTools
+            if message.contains("thinking.type.between_tools")
+                && message.contains("not supported") =>
+        {
+            Some(Mute::LowestEffort)
+        }
+        _ => None,
     }
 }
 
@@ -606,6 +723,21 @@ impl AntUsage {
 /// `claude-haiku-4-5`'s answer to a thinking turn, as it came on 2026-10-01.
 #[cfg(test)]
 pub(super) const ADAPTIVE_REFUSED: &str = r#"{"type":"error","error":{"type":"invalid_request_error","message":"adaptive thinking is not supported on this model"},"request_id":"req_x"}"#;
+
+/// `claude-sonnet-5-5`'s answer to `thinking: {type: "disabled"}`, as it came
+/// on 2026-11-01.
+#[cfg(test)]
+pub(super) const DISABLED_REFUSED_NAMING_BETWEEN_TOOLS: &str = r#"{"type":"error","error":{"type":"invalid_request_error","message":"To turn thinking off on this model, send \"thinking\": {\"type\": \"between_tools\"} instead of {\"type\": \"disabled\"}. The model does not think before responding. The short updates it writes between tool calls come back as thinking blocks."},"request_id":"req_x"}"#;
+
+/// `claude-opus-5-5`'s and `claude-fable-5-1`'s answer to `disabled`, as it
+/// came on 2026-11-01.
+#[cfg(test)]
+pub(super) const DISABLED_REFUSED: &str = r#"{"type":"error","error":{"type":"invalid_request_error","message":"\"thinking.type.disabled\" is not supported for this model. Use \"thinking.type.adaptive\" and \"output_config.effort\" to control thinking behavior."},"request_id":"req_x"}"#;
+
+/// The answer of every model but Sonnet 5.5 to `between_tools`, as it came on
+/// 2026-11-01.
+#[cfg(test)]
+pub(super) const BETWEEN_TOOLS_REFUSED: &str = r#"{"type":"error","error":{"type":"invalid_request_error","message":"\"thinking.type.between_tools\" is not supported for this model."},"request_id":"req_x"}"#;
 
 /// `claude-sonnet-4-6`'s answer to `effort: "xhigh"`, as it came on 2026-10-01 —
 /// the fixture of this module's tests and the client's.
@@ -942,6 +1074,128 @@ mod tests {
         assert!(json.get("output_config").is_none());
     }
 
+    /// The mute the application sends (`thinking: false`, effort `none`,
+    /// budget `0`) asks for thinking off in so many words: the 5.5 generation
+    /// thinks when the field is absent (docs/fabula.md §4, *Thinking on
+    /// Claude*). No `display`, no effort; a continuation sends neither.
+    #[test]
+    fn a_muted_turn_asks_for_thinking_disabled() {
+        let mut r = req(vec![ApiMessage::user("hi")]);
+        r.sampling.thinking = Some(false);
+        r.sampling.reasoning_effort = Some(ReasoningEffort::High);
+        r.sampling.reasoning_budget = Some(0);
+        let body = build_request(&r, "claude-x", true);
+        assert!(body.is_muted());
+        assert_eq!(body.mute(), Some(Mute::Disabled));
+        let json = serde_json::to_value(&body).unwrap();
+        assert_eq!(json["thinking"], serde_json::json!({"type": "disabled"}));
+        assert!(json.get("output_config").is_none(), "{json}");
+        r.continue_final = true;
+        let json = serde_json::to_value(build_request(&r, "claude-x", true)).unwrap();
+        assert!(json.get("thinking").is_none());
+        assert!(!build_request(&req(vec![]), "claude-x", true).is_muted());
+        // The budget mutes alone too: the user's switch stays on beside it on
+        // the turns the orchestrator mutes for itself.
+        let mut r = req(vec![ApiMessage::user("hi")]);
+        r.sampling.thinking = Some(true);
+        r.sampling.reasoning_effort = Some(ReasoningEffort::High);
+        r.sampling.reasoning_budget = Some(0);
+        let json = serde_json::to_value(build_request(&r, "claude-x", true)).unwrap();
+        assert_eq!(json["thinking"], serde_json::json!({"type": "disabled"}));
+        assert!(json.get("output_config").is_none(), "{json}");
+    }
+
+    /// Each shape of thinking off as it goes out, the reply's format kept;
+    /// a body that is not muted is not rewritten.
+    #[test]
+    fn a_muted_body_takes_each_shape_and_keeps_its_format() {
+        let mut r = req(vec![ApiMessage::user("hi")]);
+        r.sampling.thinking = Some(false);
+        r.output_schema = Some(
+            crate::shared::api::contract::OutputSchema::new("mood", r#"{"type":"object"}"#.into())
+                .unwrap(),
+        );
+        let mut body = build_request(&r, "claude-x", true);
+        let sent = |body: &AntRequest| {
+            let json = serde_json::to_value(body).unwrap();
+            (json["thinking"].clone(), json["output_config"].clone())
+        };
+        let format = serde_json::json!({"type": "json_schema", "schema": {"type": "object"}});
+        body.mute_as(Mute::BetweenTools);
+        assert_eq!(
+            sent(&body),
+            (
+                serde_json::json!({"type": "between_tools"}),
+                serde_json::json!({"format": format})
+            )
+        );
+        body.mute_as(Mute::LowestEffort);
+        assert_eq!(
+            sent(&body),
+            (
+                Value::Null,
+                serde_json::json!({"effort": "low", "format": format})
+            )
+        );
+        body.mute_as(Mute::Disabled);
+        assert_eq!(
+            sent(&body),
+            (
+                serde_json::json!({"type": "disabled"}),
+                serde_json::json!({"format": format})
+            )
+        );
+        let mut thinking = thinking_at(ReasoningEffort::High);
+        thinking.mute_as(Mute::LowestEffort);
+        assert!(thinking.thinks_adaptively(), "a thinking turn is not muted");
+        assert_eq!(thinking.effort(), Some("high"));
+    }
+
+    /// The refusals as the API sent them on 2026-11-01, each read as the shape
+    /// to ask again in; anything else is no answer.
+    #[test]
+    fn a_refused_mute_names_the_next_shape() {
+        let refusal = |status: u16, body: &str| {
+            EngineError::status(
+                crate::shared::api::error::SUBJECT_ANTHROPIC,
+                reqwest::StatusCode::from_u16(status).unwrap(),
+                &reqwest::header::HeaderMap::new(),
+                body,
+            )
+        };
+        let refused = |body: &str| refusal(400, body);
+        assert_eq!(
+            refused_mute(
+                &refused(DISABLED_REFUSED_NAMING_BETWEEN_TOOLS),
+                Mute::Disabled
+            ),
+            Some(Mute::BetweenTools)
+        );
+        assert_eq!(
+            refused_mute(&refused(DISABLED_REFUSED), Mute::Disabled),
+            Some(Mute::LowestEffort)
+        );
+        assert_eq!(
+            refused_mute(&refused(BETWEEN_TOOLS_REFUSED), Mute::BetweenTools),
+            Some(Mute::LowestEffort)
+        );
+        // A refusal of another shape than the one sent, of another field, or
+        // not a `400`, is not this one.
+        assert_eq!(
+            refused_mute(&refused(BETWEEN_TOOLS_REFUSED), Mute::Disabled),
+            None
+        );
+        assert_eq!(
+            refused_mute(&refused(DISABLED_REFUSED), Mute::LowestEffort),
+            None
+        );
+        assert_eq!(refused_mute(&refused(EFFORT_REFUSED), Mute::Disabled), None);
+        assert_eq!(
+            refused_mute(&refusal(529, DISABLED_REFUSED), Mute::Disabled),
+            None
+        );
+    }
+
     #[test]
     fn thinking_enabled_sends_adaptive_with_effort() {
         // thinking=true → adaptive+summarized; reasoning_effort → output_config.effort.
@@ -949,7 +1203,7 @@ mod tests {
         let mut r = req(vec![ApiMessage::user("посчитай")]);
         r.sampling.thinking = Some(true);
         r.sampling.reasoning_effort = Some(ReasoningEffort::High);
-        r.sampling.reasoning_budget = Some(0);
+        r.sampling.reasoning_budget = Some(2048);
         let json = serde_json::to_value(build_request(&r, "claude-x", true)).unwrap();
         assert_eq!(json["thinking"]["type"], "adaptive");
         assert_eq!(json["thinking"]["display"], "summarized");

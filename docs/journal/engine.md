@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (110)
+## Entries (111)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -122,6 +122,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the time row, and the user's previous message — the companion track's stage 1 (done)
 - Post-M9: persona drift, measured before it is fought — the companion track's C10 (done)
 - Post-M9: a tool's picture re-homed on every OpenAI-compatible endpoint (done)
+- Post-M9: thinking off reaches Claude (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -7290,3 +7291,42 @@ Gemma 4's replies to English requests into a JSON envelope —
 
 **Gates**: 4398 unit tests green, 300 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check` clean.
+
+### Post-M9: thinking off reaches Claude (done)
+
+Found while building the story engine's characters (docs/fabula.md §4, PR 4), which run
+with thinking off: on Claude a muted turn was not muted. The Anthropic wire sent no
+`thinking` field for one, reading absence as off, and the 5.5 generation thinks when the
+field is absent (PR 3's probe: Haiku 5.5's "off" arms wrote 438–493 tokens, its thinking
+arms at the lowest effort 230–251). Every turn the application mutes for itself — a
+title, a compaction summary, the re-asked empty round, the director's checkpoints, a
+page's summary — thought on Claude, and so did every turn of a user who switched thinking
+off.
+
+- **Measured first** (2026-11-01, one request per shape and model, with and without
+  `output_config.format`):
+
+  | Model | `disabled` | `between_tools` | no `thinking`, effort `low` |
+  | --- | --- | --- | --- |
+  | `claude-haiku-5-5` | taken | `400` | taken |
+  | `claude-sonnet-5-5` | `400`, naming `between_tools` in its place | taken | taken |
+  | `claude-opus-5-5` | `400`: "use adaptive and `output_config.effort`" | `400` | taken |
+  | `claude-fable-5-1` | as Opus 5.5 | `400` | taken |
+
+  The reply's format made no difference to any of them.
+- **The wire** sends a muted turn — `thinking: false`, or `reasoning_budget: 0` beside the
+  user's switch, as every other wire reads it — as `thinking: {type: "disabled"}`, with no
+  `display` and no effort. A continuation sends no `thinking`, as before.
+- **The client** answers the refusal by its words: `between_tools` where the refusal names
+  it, the lowest effort with no `thinking` where `disabled` or `between_tools` is "not
+  supported for this model"; two steps at most, and the shape is kept per client once a
+  request in it is accepted — the rule the effort level and the 4.5 generation's budget
+  already follow. No model-name list.
+- **Live** (`anthropic::live_tests::thinking_off_reaches_each_claude_model`): a muted
+  turn with a schema, twice per model. Haiku 5.5 went out `disabled`, Sonnet 5.5
+  `between_tools` and Opus 5.5 and Fable 5.1 at `low`; each second turn in the kept shape
+  at once; 11–12 output tokens a reply, every reply the schema's object.
+- **Mutation check**, with PR 4's (docs/journal/stories.md): the budget's mute, the reading
+  of Sonnet's refusal and the kept shape were each killed by the tests.
+
+**Gates**: as PR 4's (docs/journal/stories.md).

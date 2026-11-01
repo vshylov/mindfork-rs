@@ -14,7 +14,7 @@ fn proposal_schema() -> Schema {
 
 /// One instance per value of every enum and per branch of every union, the
 /// other properties at their first choice: every shape the schema allows.
-fn instances(schema: &Schema) -> Vec<Value> {
+pub(crate) fn instances(schema: &Schema) -> Vec<Value> {
     match schema {
         Schema::String => vec![json!("x")],
         Schema::Enum(values) => values.iter().map(|v| json!(v)).collect(),

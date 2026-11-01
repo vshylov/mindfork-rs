@@ -254,7 +254,7 @@ async fn play_round(
 
 /// The seed a branch's calls derive from: the first eight bytes of its id's
 /// hash, so a replayed branch has the seed it was recorded with.
-fn seed_of(branch: &BranchId) -> u64 {
+pub(super) fn seed_of(branch: &BranchId) -> u64 {
     let hex = sha256_hex(branch.as_str().as_bytes());
     u64::from_str_radix(&hex[..16], 16).expect("a SHA-256 is hex")
 }
@@ -262,7 +262,7 @@ fn seed_of(branch: &BranchId) -> u64 {
 /// The setup as the branch's opening events: what has just happened, with
 /// everyone present put at the scene's place, then the pressure (spec §6,
 /// *Circumstances become events*).
-fn opening_events(world: &WorldState, setup: &SceneSetup, tick: u32) -> Vec<NewEvent> {
+pub(super) fn opening_events(world: &WorldState, setup: &SceneSetup, tick: u32) -> Vec<NewEvent> {
     let opening = |observable: &str, effects: Vec<Effect>| NewEvent {
         round: 0,
         tick,
@@ -338,7 +338,7 @@ fn rule(
 }
 
 /// The event a proposal would commit; none for a wait.
-fn scripted_event(
+pub(super) fn scripted_event(
     canon: &Canon,
     here: &LocationKey,
     who: &CharacterKey,
@@ -391,17 +391,20 @@ fn scripted_event(
     })
 }
 
-fn name_of<'a>(canon: &'a Canon, who: &'a CharacterKey) -> &'a str {
+/// A character's name in the story's text; the key when the sheet gives none.
+pub(super) fn name_of<'a>(canon: &'a Canon, who: &'a CharacterKey) -> &'a str {
     canon
         .character(who)
-        .map_or(who.as_str(), |c| c.name.as_str())
+        .map(|c| c.name.as_str())
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or(who.as_str())
 }
 
-fn place_of<'a>(canon: &'a Canon, at: &'a LocationKey) -> &'a str {
+pub(super) fn place_of<'a>(canon: &'a Canon, at: &'a LocationKey) -> &'a str {
     canon.location(at).map_or(at.as_str(), |l| l.name.as_str())
 }
 
-fn bullets<'a>(lines: impl IntoIterator<Item = &'a str>) -> String {
+pub(super) fn bullets<'a>(lines: impl IntoIterator<Item = &'a str>) -> String {
     lines
         .into_iter()
         .map(|l| format!("- {l}"))
@@ -409,7 +412,7 @@ fn bullets<'a>(lines: impl IntoIterator<Item = &'a str>) -> String {
         .join("\n")
 }
 
-fn listed(names: &[&str], none: &str) -> String {
+pub(super) fn listed(names: &[&str], none: &str) -> String {
     if names.is_empty() {
         none.to_owned()
     } else {

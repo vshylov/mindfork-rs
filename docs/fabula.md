@@ -1,6 +1,6 @@
 # Fabula — a story engine used from the chat: track plan
 
-**Status:** in progress — M0 done (PRs 1 and 2, Gate G0 GO); M1 started: PR 3 built (2026-11-01). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
+**Status:** in progress — M0 done (PRs 1 and 2, Gate G0 GO); M1: PRs 3 and 4 built, Gate G1 GO (2026-11-01). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
 so are the three this plan adds (§6) and where development runs (§4, *The development
 stack*). The design —
 the engine, its stores, its contracts, its evaluation — is
@@ -93,7 +93,11 @@ slow; a turn takes seconds on a cloud route, and arms run side by side.
   `thinking: {type: "disabled"}`, and only at `high` effort or below. Sonnet 5.5 takes
   `"between_tools"`, which turns off only the thinking before its first output, and Opus 5.5
   and Fable 5.1 always think. So "thinking off for characters" means Haiku 5.5 with thinking
-  disabled, or the lowest effort elsewhere, and M1 measures what that costs.
+  disabled, or the lowest effort elsewhere, and M1 measures what that costs. As built in
+  PR 4, the Anthropic wire sends every muted turn as `disabled`, and the client asks again
+  in the shape the model's refusal names: `between_tools` on Sonnet 5.5, no `thinking`
+  at effort `low` on Opus 5.5 and Fable 5.1. The fix reaches the chat's own muted turns
+  too ([journal/engine.md](journal/engine.md), *Thinking off reaches Claude*).
 - **Which model where.** M1 iterates on Haiku 5.5 and the two open models, since they
   are cheap and M1 judges the shape of decisions. M2's quality runs and the G2 story use
   Sonnet 5.5 or Opus 5.5 as the one model. M3's model is chosen when M3 starts; one
@@ -153,6 +157,23 @@ every first attempt that finished met the schema, and a reply asked in words for
 greeting came back as the schema's object on every route. On Claude the wire cannot turn
 thinking off yet, so "off" there is the model's own adaptive default; PR 4 decides how the
 characters mute it.
+
+**PR 4, as built (2026-11-01).** A scene is K branches of rounds (intent, initiative,
+reaction, reflection), one after another. The World Master proposes and the engine commits:
+every event it writes is held to the folded world and to what its witnesses know before it
+is committed. A refusal there is counted, never repaired. A ruling that does not answer its
+proposals is a slip, recorded and skipped. The World Master is shown each proposal's deed and
+never its thought, which the engine copies into the event. A character sees its own sheet,
+what it perceived, its reflections and the secrets revealed to it. The characters run with
+the application's mute and the World Master with thinking at a low effort. On Claude the mute
+did not reach the model at all, since the 5.5 generation thinks when the field is absent, so
+the Anthropic wire now asks for it off in the shape each model takes (*The development
+stack*, above). **Gate G1: GO.** 20 scenes × 3 branches each on Haiku 5.5, Qwen 3.8 and
+Gemma 4 (the open models through OpenRouter, pinned to DeepInfra), then 5 × 3 on Qwen 3.8's
+gate weights through the local llama.cpp. On every route: no leak, while 10–38 secrets were
+revealed and shown afterwards; at least 99.89% of first attempts schema-valid (the misses
+were three cuts and errors of 6,418, each taken by the retry); the World Master's refusals
+reported per scene. The figures are in [journal/stories.md](journal/stories.md).
 
 ### M1 — the simulation, live
 

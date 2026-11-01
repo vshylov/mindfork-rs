@@ -435,3 +435,44 @@ async fn the_fallback_alone_never_sends_the_schema() {
     let first = story.db.call(&story.run, "a", 1).await.unwrap().unwrap();
     assert_eq!(first.call.mechanism, Mechanism::Fallback);
 }
+
+/// Thinking is a role's setting (spec §8): a role given its own sampling has
+/// its calls sent and recorded with it, and every other role keeps the
+/// adapter's; a second setting for a role replaces the first.
+#[tokio::test]
+async fn a_role_gets_its_own_sampling_and_the_others_keep_the_adapters() {
+    let (story, log) = fresh_story().await;
+    let backend = Enforcing::new(MockBackend::scripted(reply("{\"mood\": \"calm\"}")));
+    let thinking = SamplingConfig {
+        thinking: Some(true),
+        max_tokens: Some(12_000),
+        ..SamplingConfig::default()
+    };
+    let port = EngineAdapter::new(
+        backend.clone(),
+        log,
+        "mock-model",
+        sampling(),
+        CancellationToken::new(),
+    )
+    .with_role_sampling(Role::WorldMaster, SamplingConfig::default())
+    .with_role_sampling(Role::WorldMaster, thinking.clone());
+    for (address, role) in [("a", Role::Character), ("b", Role::WorldMaster)] {
+        assert!(
+            port.json(&call_at(&story, address), role, &schema(), &prompt())
+                .await
+                .is_ok()
+        );
+    }
+    let sent: Vec<SamplingConfig> = backend
+        .seen
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|r| r.sampling.clone())
+        .collect();
+    assert_eq!(sent, [sampling(), thinking.clone()]);
+    let master = story.db.call(&story.run, "b", 1).await.unwrap().unwrap();
+    assert_eq!(master.call.params, serde_json::to_value(&thinking).unwrap());
+    assert_eq!(master.call.role, "world_master");
+}

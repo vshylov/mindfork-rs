@@ -75,6 +75,15 @@ impl CallAddress {
             address: format!("{branch}/round{round}/{who}/{act}"),
         }
     }
+
+    /// The World Master's call in a round of a branch; `act` says which
+    /// (`initiative`, `reactions`).
+    pub fn world_master(run: &RunId, branch: &BranchId, round: u32, act: &str) -> Self {
+        Self {
+            run: run.clone(),
+            address: format!("{branch}/round{round}/world_master/{act}"),
+        }
+    }
 }
 
 /// What a call sends: the stable part first, which providers with prefix
