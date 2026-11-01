@@ -621,6 +621,9 @@ that start a run are PR 8 and PR 9.
   were restored and the fingerprint checked.
 - **Tests:** 4668 unit tests green (+47), 322 `#[ignore]` (+3: the chapter end to end, the chapter
   killed and resumed, the checker's recall probe).
+- **The gate's red on the pull request:** `rust:S7493`, blocking file calls in the live
+  harnesses' async tests (the story directory made and removed, the report written), as on
+  PR 4. They take `tokio::fs` now (docs/lessons.md §10, recorded again).
 
 **Gates**: unit tests green; clippy `-D warnings`, fmt, `cyrillic_scan` (and its
 `--self-test`), `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check`,

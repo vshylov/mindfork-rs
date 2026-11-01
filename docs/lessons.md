@@ -2923,7 +2923,11 @@ blame dates (five in `sandbox_setup` from July). The swap is `tokio::fs::x(..).a
 one call at a time. What the rule does *not* see blocks just the same — `Path::is_file()`
 / `exists()`, and a sync helper called from the async fn (unpacking an archive is the
 heavy part of both setup paths) — so treat a clean analysis as the floor, not the proof.
-— *SonarQube follow-up — blocking file calls in the two setup paths*.
+Recorded again twice, both in `#[ignore]` live harnesses that write their traces from an
+async test: the story engine's PR 4 and PR 6, each a red gate on its pull request. A harness
+is code the rule reads like any other.
+— *SonarQube follow-up — blocking file calls in the two setup paths*; *Fabula — PR 6, the
+Author's loop*.
 
 **`anyhow`'s context is `.with_context(|| ..)` whenever the message is computed.**
 `rust:S2629` flags `.context(loc.t(..).to_string())` and `.context(format!(..))`, because the
