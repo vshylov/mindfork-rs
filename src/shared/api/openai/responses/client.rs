@@ -146,6 +146,10 @@ impl EngineBackend for ResponsesClient {
             // Whether there was at least one tool call — Responses doesn't send finish_reason,
             // the reason is inferred from a function_call item actually appearing in the stream.
             let mut saw_tool_call = false;
+            // Whether the model declined: a completed response whose text is a
+            // refusal ends as filtered, never as a reply (the story engine's
+            // refusal is final, docs/research/fabula-engine.md §8).
+            let mut refused = false;
             loop {
                 tokio::select! {
                     biased;
@@ -179,6 +183,12 @@ impl EngineBackend for ResponsesClient {
                                         | RespEvent::ReasoningTextDelta { delta },
                                     ) if !delta.is_empty() => {
                                         yield ChatChunk::Thoughts(delta);
+                                    }
+                                    Ok(RespEvent::RefusalDelta { delta }) => {
+                                        refused = true;
+                                        if !delta.is_empty() {
+                                            yield ChatChunk::Text(delta);
+                                        }
                                     }
                                     Ok(RespEvent::OutputItemAdded {
                                         output_index,
@@ -215,7 +225,9 @@ impl EngineBackend for ResponsesClient {
                                         if let Some(u) = response.usage {
                                             yield ChatChunk::Usage(u.token_usage());
                                         }
-                                        let reason = if saw_tool_call {
+                                        let reason = if refused {
+                                            FinishReason::Filtered
+                                        } else if saw_tool_call {
                                             FinishReason::ToolCalls
                                         } else {
                                             FinishReason::Stop
@@ -293,6 +305,12 @@ impl EngineBackend for ResponsesClient {
     async fn vision(&self) -> VisionSupport {
         VisionSupport::Supported
     }
+
+    /// `text.format` with `strict: true` constrains the sampler on every
+    /// current OpenAI model; the Responses client serves OpenAI only.
+    async fn enforces_output_schema(&self) -> bool {
+        true
+    }
 }
 
 /// A manual smoke against the real OpenAI Responses API. Marked `#[ignore]` — not in CI.
@@ -337,6 +355,40 @@ mod tests {
             chunks.last(),
             Some(&ChatChunk::Finished(FinishReason::Filtered))
         );
+    }
+
+    /// Under a schema a refusal comes as its own content part: its words land
+    /// as the reply's text, and the completed response ends as filtered, so the
+    /// story engine records a refusal rather than repairing a reply.
+    #[tokio::test]
+    async fn a_refusal_under_a_schema_ends_as_filtered_with_its_words() {
+        let chunks = turn(&[
+            r#"{"type":"response.refusal.delta","delta":"I can't help"}"#,
+            r#"{"type":"response.refusal.delta","delta":" with that."}"#,
+            r#"{"type":"response.refusal.done","refusal":"I can't help with that."}"#,
+            r#"{"type":"response.completed","response":{"usage":{"input_tokens":5,"output_tokens":6}}}"#,
+        ])
+        .await;
+        let text: String = chunks
+            .iter()
+            .filter_map(|c| match c {
+                ChatChunk::Text(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(text, "I can't help with that.");
+        assert_eq!(
+            chunks.last(),
+            Some(&ChatChunk::Finished(FinishReason::Filtered))
+        );
+    }
+
+    /// `text.format` is strict on every OpenAI model, so the story engine
+    /// sends its schemas there (docs/fabula.md §4, PR 5).
+    #[tokio::test]
+    async fn the_responses_client_enforces_a_schema() {
+        let client = ResponsesClient::new("http://127.0.0.1:9", "k", "gpt-x");
+        assert!(client.enforces_output_schema().await);
     }
 
     /// The limit it was always read as stays a limit — and so does an incomplete

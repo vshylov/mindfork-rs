@@ -13,12 +13,13 @@ what was rejected — the reasoning behind the code, not its current shape. For 
 shape read the reference documents named above; for the traps that recur across areas read
 [lessons.md](../lessons.md).
 
-## Entries (4)
+## Entries (5)
 
 - Post-M9: Fabula — PR 1, the story database (done)
 - Post-M9: Fabula — PR 2, the model port and replay; Gate G0 GO (done)
 - Post-M9: Fabula — PR 3, the reply's schema on the wire (done)
 - Post-M9: Fabula — PR 4, the simulation; Gate G1 GO (done)
+- Post-M9: Fabula — PR 5, the reply's schema on the cloud wires (done)
 
 ### Post-M9: Fabula — PR 1, the story database (done)
 
@@ -382,6 +383,97 @@ and the planted secrets followed through every call.
   The sources were restored and the fingerprint checked.
 - **Tests:** 4613 unit tests green (+35), 315 `#[ignore]` (+2: the G1 harness, the Claude
   thinking-off smoke).
+
+**Gates**: unit tests green; clippy `-D warnings`, fmt, `cyrillic_scan` (and its
+`--self-test`), `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check`,
+`claude_md_chart --check` clean.
+
+### Post-M9: Fabula — PR 5, the reply's schema on the cloud wires (done)
+
+M1's last pull request (docs/fabula.md §4): `ChatRequest.output_schema` on the two wires
+PR 3 left, so that a story runs under the constraint whichever cloud the person's model is
+on. Nothing the person sees changes: no chat turn sets the field, and a request without a
+schema is the bytes it was.
+
+- **Measured before written.** One request per model, by hand, with a small schema in the
+  dialect (a tagged union, a nullable enum) and the "say hello" control. Responses held on
+  `gpt-5-nano`, `gpt-5.4-nano`, `gpt-6-luna` and `gpt-6.1-sol`. On Gemini the two fields
+  disagreed:
+
+  | Model | `responseFormat.text` | `responseJsonSchema` | No schema |
+  | --- | --- | --- | --- |
+  | `gemini-3.8-flash` | the object | the object | `hello` |
+  | `gemini-3.5-flash` | the object | the object | `hello` |
+  | `gemini-2.5-flash` | **`hello`**, 4 of 4 | the object | `hello` |
+  | `gemma-4-31b-it` (Gemini API) | the object | the object | `hello` |
+
+  The API reference recommends `responseFormat` and marks the older fields deprecated, and
+  the plan named it. 2.5 ignores it in silence, so the wire sends `responseJsonSchema`. A
+  field the API stops reading would fail as a `400`; a field a model ignores fails as prose
+  (docs/lessons.md §3, recorded). Both fields together were accepted too; one was kept.
+- **Responses:** `text.format: {type: "json_schema", name, strict: true, schema}`, flat,
+  beside `text.verbosity` in one `text` object, which goes out when either is set. The schema
+  is the printed text, as on the other wires.
+- **A refusal on Responses.** Under a schema a model that declines writes a `refusal`
+  content part, streamed as `response.refusal.delta`, and the response still completes. The
+  client used to drop those events, so a refusal would have arrived as an empty reply and
+  been repaired. Now its words land as the text and the turn ends as `Filtered`, which the
+  port records as refused, final (docs/research/fabula-engine.md §8). Chat Completions'
+  `delta.refusal` is not read either; no development route has sent one, so it is left as
+  it is.
+- **Gemini:** `generationConfig` was a `serde_json::Value`, which sorts keys, so the schema
+  could not go inside it. It is now `GenConfig`: the knobs as a flattened map, with
+  `responseMimeType` and `responseJsonSchema` as fields of their own, the schema raw. A body
+  with only a schema still gets a `generationConfig`. The refused-level rewrite works on the
+  map and leaves the schema where it was.
+- **`enforces_output_schema`** answers `true` on both clients, statically, as `vision` does.
+  The Responses client serves OpenAI only. The Gemini client serves every model the API
+  lists for `generateContent`, the Gemma 4 among them, and each one tried held.
+- **One route helper for the smokes.** `schema_live_tests::Cloud` names Claude, Responses and
+  Gemini by their variables (`MINDFORK_{ANTHROPIC,OPENAI,GEMINI}_KEY`,
+  `MINDFORK_FABULA_{CLAUDE,OPENAI,GEMINI}_MODEL`), and `engine_route` the OpenAI-compatible
+  engine. The schema smokes gained the two clouds, and the G1 harness takes the first cloud
+  whose variables are set, then the engine.
+- **Live: the schema probe and the control**, three scenes an arm through the application's
+  clients:
+
+  | Route | First attempts | Met the schema | Clean JSON, constrained | Clean JSON, fallback | Median output tokens, off / on |
+  | --- | --- | --- | --- | --- | --- |
+  | `gpt-5.4-mini` | 36 | 36 | 18/18 | 18/18 | 128–145 / 236–258 |
+  | `gpt-6.1-sol` | 36 | 36 | 18/18 | 18/18 | 100–104 / 109–110 |
+  | `gemini-3.8-flash` | 36 | 36 | 18/18 | 18/18 | 128–152 / 138–143 |
+  | `gemini-2.5-flash` | 36 | 36 | 18/18 | 8/18 | 104–191 / 121–151 |
+
+  No attempt needed a retry or a repair. Gemini 2.5's fallback replies came in code fences
+  10 times of 18, and the lenient read took them. On `gpt-6.1-sol` and `gemini-3.8-flash` the
+  "off" arm is the refusal's answer (`low` for both), so the two arms ask for the same depth
+  there. Asked in words for a bare greeting, all four said `hello` without the schema and
+  `{"mood": "calm"}` with it.
+- **Live: a small G1** (2 scenes × 2 branches × up to 4 rounds) sent every simulation schema
+  through each provider: the World Master's two rulings with their effect unions, the
+  reaction and the reflection.
+
+  | Route | Calls | First valid | Leaks | Refused by ruling / engine | Slips | Tokens in / out |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | `gpt-5.4-mini` | 93 | 93 | 0 | 4 / 0 | 0 | 196,182 / 15,614 |
+  | `gemini-3.8-flash` | 88 | 88 | 0 | 2 / 1 | 0 | 153,818 / 12,718 |
+
+- **Finding for M2: Gemini 3.x thinks less under a schema.** The G1 run's World Master
+  thought 0 characters on `gemini-3.8-flash`. One prompt ("think it through") at
+  `thinkingLevel: low` with `includeThoughts`, three calls an arm: 69–98 thought tokens and no
+  summary under the schema, 737–838 tokens and a summary without it. `gemini-2.5-flash` thought
+  869–1,327 tokens under the schema against 1,546–1,600 without. A World Master on Gemini 3.x
+  rules on a tenth of its thought, and the call log cannot show what thought there was.
+  Whether its rulings suffer is M2's to measure; the fallback keeps the thought.
+- **Mutation check:** 12 mutants, one build. Each was killed:
+  - on Responses: strict off, the format dropped, the `text` object dropped with only a
+    format, the refusal not marked, the client's answer;
+  - on Gemini: the schema dropped, its MIME type dropped, the config dropped with only a
+    schema, the client's answer, the respelt level not written, not removed, and not read.
+
+  The sources were restored and the fingerprint checked.
+- **Tests:** 4621 unit tests green (+8), 319 `#[ignore]` (+4: the probe and the control on
+  each cloud).
 
 **Gates**: unit tests green; clippy `-D warnings`, fmt, `cyrillic_scan` (and its
 `--self-test`), `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check`,

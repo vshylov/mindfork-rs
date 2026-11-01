@@ -839,7 +839,7 @@ src/
    ├─ api/                  inference engine layer (contract + per-family implementations, ADR 0004)
    │  ├─ contract.rs        EngineBackend, Embedder, ChatRequest/Chunk, ThinkingRef, ToolCallAccumulator (agnostic);
    │  │                     OutputSchema — a reply's schema as its printed text (a RawValue: a Value would sort
-   │  │                     its properties), and `enforces_output_schema`, false unless a client overrides it
+   │  │                     its properties), and `enforces_output_schema`, false unless a client overrides it (every cloud wire does)
    │  ├─ openai/            OpenAI family:
    │  │  ├─ client.rs+wire.rs   Chat Completions: OpenAiClient (reqwest+SSE, /health probe, embed; local/external/proxy — sampling sent as-is; xAI — `for_xai`: GET /models/{name}, the efforts the model lists;
    │  │  │                      the OpenRouter gateway — `for_openrouter`: the gateway's dialect, GET /model/{slug}, GET /key, attribution headers;
@@ -847,8 +847,10 @@ src/
    │  │  │                      lacks `structured_outputs`, the gateway asked for `provider.require_parameters`)
    │  │  ├─ gateway_tests.rs    #[cfg(test)]: the gateway client against a local stub — dialect, muted effort, headers, key verdicts
    │  │  ├─ xai_tests.rs        #[cfg(test)]: the xAI client against the same stub — the entry by name, an effort as the model's list has it, a refused parameter
-   │  │  └─ responses/          Responses API: ResponsesClient + wire (OpenAI cloud, /v1/responses — reasoning summaries, effort, verbosity)
-   │  ├─ gemini/            native Gemini: client.rs + wire.rs (generateContent, x-goog-api-key — thought summaries, thinkingLevel/Budget, per-tool-call thoughtSignature)
+   │  │  └─ responses/          Responses API: ResponsesClient + wire (OpenAI cloud, /v1/responses — reasoning summaries, effort, verbosity;
+   │  │                         a schema as `text.format` json_schema, strict; a refusal part ends the turn as filtered)
+   │  ├─ gemini/            native Gemini: client.rs + wire.rs (generateContent, x-goog-api-key — thought summaries, thinkingLevel/Budget, per-tool-call thoughtSignature;
+   │  │                     a schema as `responseJsonSchema`, carried beside the knobs as its printed text)
    │  ├─ anthropic/         Anthropic Messages API: client.rs + wire.rs (Claude, /v1/messages; a schema as
    │  │                     `output_config.format` beside the effort; thinking off as `disabled`, or in the
    │  │                     shape a model's refusal names — `between_tools`, the lowest effort — kept per client)

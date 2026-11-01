@@ -250,10 +250,10 @@ pub struct ChatRequest {
     pub continue_final: bool,
     /// The schema the reply must meet, held by the provider's schema-constrained
     /// decoding where the backend has one ([`EngineBackend::enforces_output_schema`]):
-    /// `response_format` on Chat Completions, `output_config.format` on Anthropic
-    /// (docs/research/fabula-engine.md §8). The Responses and Gemini wires do not
-    /// read it yet (docs/fabula.md §4, PR 5), and say so by answering `false`. `None`
-    /// — a request byte-identical to before the field existed.
+    /// `response_format` on Chat Completions, `output_config.format` on Anthropic,
+    /// `text.format` on Responses, `responseJsonSchema` on Gemini
+    /// (docs/research/fabula-engine.md §8). `None` — a request byte-identical to
+    /// before the field existed.
     pub output_schema: Option<OutputSchema>,
 }
 
@@ -266,7 +266,8 @@ pub struct ChatRequest {
 #[derive(Debug, Clone)]
 pub struct OutputSchema {
     /// What the schema is called. OpenAI requires a name of letters, digits, `_`
-    /// and `-`, at most 64 of them; llama.cpp and Anthropic do not read it.
+    /// and `-`, at most 64 of them, on both its wires; llama.cpp, Anthropic and
+    /// Gemini do not read it.
     pub name: String,
     /// The schema itself.
     pub schema: Box<serde_json::value::RawValue>,
@@ -761,7 +762,8 @@ pub trait EngineBackend: Send + Sync {
     /// validator checks the reply either way. Overridden by
     /// [`super::openai::OpenAiClient`] (not DeepSeek's API, which takes
     /// `json_object` only; a gateway's model only when its catalogue lists
-    /// `structured_outputs`) and [`super::AnthropicClient`].
+    /// `structured_outputs`), [`super::AnthropicClient`], the Responses client
+    /// and the Gemini client.
     async fn enforces_output_schema(&self) -> bool {
         false
     }

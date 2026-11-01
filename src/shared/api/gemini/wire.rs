@@ -35,39 +35,72 @@ pub struct GenRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub generation_config: Option<Value>,
+    pub generation_config: Option<GenConfig>,
+}
+
+/// `generationConfig`: the sampling and thinking knobs, and the reply's schema.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GenConfig {
+    /// The knobs, each sent only when set.
+    #[serde(flatten)]
+    pub knobs: Map<String, Value>,
+    /// `application/json`, which `responseJsonSchema` requires beside it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_mime_type: Option<&'static str>,
+    /// The schema the reply must meet ([`ChatRequest::output_schema`]), as
+    /// the text it was printed as: a field beside the knobs rather than one of
+    /// them, since the knobs are a `Value`, which sorts a schema's keys
+    /// (docs/lessons.md §8).
+    ///
+    /// `responseJsonSchema` and not the `responseFormat` the API reference
+    /// now recommends: `gemini-2.5-flash` ignores `responseFormat` in silence
+    /// and answers in prose, 4 times of 4, where `responseJsonSchema` holds on
+    /// 2.5, 3.5, 3.8 and Gemma 4 alike (measured 2026-11-01, docs/fabula.md
+    /// §4, PR 5). A field the API one day stops reading fails loudly, as a
+    /// `400`; a field a model ignores fails as prose.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_json_schema: Option<Box<serde_json::value::RawValue>>,
 }
 
 /// Gemini 3.x's thinking levels, lowest first.
 const LEVELS: [&str; 4] = ["minimal", "low", "medium", "high"];
 
-/// Where a 3.x body carries its level.
-const LEVEL_AT: &str = "/thinkingConfig/thinkingLevel";
+impl GenConfig {
+    /// The `thinkingConfig` object the knobs carry.
+    fn thinking_mut(&mut self) -> Option<&mut Map<String, Value>> {
+        self.knobs
+            .get_mut("thinkingConfig")
+            .and_then(Value::as_object_mut)
+    }
+}
 
 impl CarriesEffort for GenRequest {
     /// The `thinkingLevel` the body carries — a 3.x body that asks for one.
     fn effort(&self) -> Option<&'static str> {
-        let level = self.generation_config.as_ref()?.pointer(LEVEL_AT)?;
+        let config = self.generation_config.as_ref()?;
+        let level = config.knobs.get("thinkingConfig")?.get("thinkingLevel")?;
         LEVELS.into_iter().find(|l| level.as_str() == Some(l))
     }
 
     /// Asks for `instead` in place of that level; with `None` the level goes
     /// and the model reasons at its own.
     fn respell_effort(&mut self, instead: Option<&'static str>) {
-        let Some(config) = self.generation_config.as_mut() else {
+        let Some(thinking) = self
+            .generation_config
+            .as_mut()
+            .and_then(GenConfig::thinking_mut)
+            .filter(|t| t.contains_key("thinkingLevel"))
+        else {
             return;
         };
-        match (instead, config.pointer_mut(LEVEL_AT)) {
-            (Some(level), Some(slot)) => *slot = json!(level),
-            (None, Some(_)) => {
-                if let Some(thinking) = config
-                    .get_mut("thinkingConfig")
-                    .and_then(Value::as_object_mut)
-                {
-                    thinking.remove("thinkingLevel");
-                }
+        match instead {
+            Some(level) => {
+                thinking.insert("thinkingLevel".into(), json!(level));
             }
-            (_, None) => {}
+            None => {
+                thinking.remove("thinkingLevel");
+            }
         }
     }
 }
@@ -135,9 +168,10 @@ pub fn build_request(req: &ChatRequest, model: &str) -> GenRequest {
     }
 }
 
-/// Assembles `generationConfig` from sampling (`skip`s unset fields). `thinkingConfig`
-/// is added when reasoning is wanted (see [`thinking_config`]).
-fn generation_config(req: &ChatRequest, model: &str) -> Option<Value> {
+/// Assembles `generationConfig` from sampling (`skip`s unset fields) and the
+/// reply's schema. `thinkingConfig` is added when reasoning is wanted (see
+/// [`thinking_config`]).
+fn generation_config(req: &ChatRequest, model: &str) -> Option<GenConfig> {
     let s = &req.sampling;
     let mut cfg = Map::new();
     if let Some(v) = s.max_tokens {
@@ -164,7 +198,12 @@ fn generation_config(req: &ChatRequest, model: &str) -> Option<Value> {
     if let Some(tc) = thinking_config(req, model) {
         cfg.insert("thinkingConfig".into(), tc);
     }
-    (!cfg.is_empty()).then_some(Value::Object(cfg))
+    let schema = req.output_schema.as_ref().map(|s| s.schema.clone());
+    (!cfg.is_empty() || schema.is_some()).then(|| GenConfig {
+        knobs: cfg,
+        response_mime_type: schema.is_some().then_some("application/json"),
+        response_json_schema: schema,
+    })
 }
 
 /// `thinkingConfig` based on sampling and the model's generation. Gemini 3.x controls depth
@@ -1178,5 +1217,81 @@ mod cache_figure_tests {
         assert_eq!(u.cached_tokens, Some(0));
         assert_eq!(u.cache_write_tokens, None);
         assert_eq!(u.reasoning_tokens, 0);
+    }
+}
+
+/// The reply's schema on the wire (docs/fabula.md §4, PR 5).
+#[cfg(test)]
+mod output_schema_tests {
+    use super::build_request;
+    use crate::entities::sampling::SamplingConfig;
+    use crate::shared::api::contract::{ApiMessage, ChatRequest, OutputSchema};
+    use crate::shared::api::effort::CarriesEffort;
+
+    /// A schema whose properties are not in alphabetical order.
+    const SCHEMA: &str = r#"{"type":"object","properties":{"thought":{"type":"string"},"act":{"type":"string"}},"required":["thought","act"],"additionalProperties":false}"#;
+
+    fn schema_turn(sampling: SamplingConfig) -> ChatRequest {
+        ChatRequest {
+            messages: vec![ApiMessage::user("hi")],
+            sampling,
+            output_schema: Some(OutputSchema::new("character", SCHEMA.to_owned()).unwrap()),
+            ..ChatRequest::default()
+        }
+    }
+
+    /// `responseJsonSchema` beside its MIME type, the schema's text as it was
+    /// printed, even in a body that sets nothing else.
+    #[test]
+    fn a_schema_rides_as_response_json_schema_in_its_printed_order() {
+        let body = build_request(&schema_turn(SamplingConfig::default()), "gemini-3.8-flash");
+        let text = serde_json::to_string(&body).unwrap();
+        assert!(
+            text.contains(&format!(
+                r#""generationConfig":{{"responseMimeType":"application/json","responseJsonSchema":{SCHEMA}}}"#
+            )),
+            "{text}"
+        );
+    }
+
+    /// The knobs keep their places beside the schema, and a respelt level
+    /// leaves the schema where it was.
+    #[test]
+    fn the_knobs_and_the_level_live_beside_the_schema() {
+        let mut body = build_request(
+            &schema_turn(SamplingConfig {
+                max_tokens: Some(512),
+                reasoning_budget: Some(0),
+                ..SamplingConfig::default()
+            }),
+            "gemini-3.8-flash",
+        );
+        assert_eq!(body.effort(), Some("minimal"));
+        body.respell_effort(Some("low"));
+        let json = serde_json::to_value(&body).unwrap();
+        let config = &json["generationConfig"];
+        assert_eq!(config["maxOutputTokens"], 512);
+        assert_eq!(config["thinkingConfig"]["thinkingLevel"], "low");
+        assert_eq!(config["responseMimeType"], "application/json");
+        assert_eq!(config["responseJsonSchema"]["required"][0], "thought");
+    }
+
+    /// Without a schema neither field is sent, and a body with no knobs has
+    /// no `generationConfig` at all, as before the field existed.
+    #[test]
+    fn no_schema_sends_neither_field() {
+        let mut turn = schema_turn(SamplingConfig {
+            max_tokens: Some(64),
+            ..SamplingConfig::default()
+        });
+        turn.output_schema = None;
+        let json = serde_json::to_value(build_request(&turn, "gemini-3.8-flash")).unwrap();
+        assert_eq!(
+            json["generationConfig"],
+            serde_json::json!({"maxOutputTokens": 64})
+        );
+        turn.sampling = SamplingConfig::default();
+        let json = serde_json::to_value(build_request(&turn, "gemini-3.8-flash")).unwrap();
+        assert!(json.get("generationConfig").is_none(), "{json}");
     }
 }

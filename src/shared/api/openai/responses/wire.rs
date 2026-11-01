@@ -60,10 +60,31 @@ pub struct RespReasoning {
     pub summary: Option<&'static str>,
 }
 
-/// `text.verbosity` — how verbose the reply is.
+/// `text` — how verbose the reply is, and the schema it must meet. Sent when
+/// either is set.
 #[derive(Debug, Serialize)]
 pub struct RespText {
-    pub verbosity: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verbosity: Option<&'static str>,
+    /// The schema the reply must meet ([`ChatRequest::output_schema`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub format: Option<RespFormat>,
+}
+
+/// `text.format` for a schema: `{type: "json_schema", name, strict, schema}`,
+/// flat, the Responses spelling of Chat Completions' `response_format`.
+/// `strict: true` is what makes the sampler hold to it; OpenAI requires the
+/// `name`. The schema's text goes as it was printed, since a `Value` would sort
+/// its keys (docs/lessons.md §8). Measured on four models from `gpt-5-nano` to
+/// `gpt-6.1-sol` on 2026-11-01: asked in words for a bare greeting, each
+/// answered with the schema's object.
+#[derive(Debug, Serialize)]
+pub struct RespFormat {
+    #[serde(rename = "type")]
+    pub kind: &'static str,
+    pub name: String,
+    pub strict: bool,
+    pub schema: Box<serde_json::value::RawValue>,
 }
 
 /// A function tool in Responses' flat form (`{type,name,description,parameters,strict}`).
@@ -83,6 +104,7 @@ pub struct RespTool {
 /// Builds the Responses request body from the domain [`ChatRequest`]. `model` is required.
 /// From sampling, only `max_tokens`→`max_output_tokens`, `thinking`/
 /// `reasoning_effort`→`reasoning`, `verbosity`→`text` apply — Responses has no other fields.
+/// The reply's schema goes into `text.format` ([`RespFormat`]).
 pub fn build_request(req: &ChatRequest, model: &str, stream: bool) -> RespRequest {
     let s = &req.sampling;
     // reasoning_budget==0 forces "thoughts" off (impersonation/auto-title),
@@ -129,6 +151,14 @@ pub fn build_request(req: &ChatRequest, model: &str, stream: bool) -> RespReques
         )
     };
     let tool_choice = tools.as_ref().map(|_| "auto");
+    let verbosity = s.verbosity.map(|v| v.as_wire());
+    let format = req.output_schema.as_ref().map(|schema| RespFormat {
+        kind: "json_schema",
+        name: schema.name.clone(),
+        strict: true,
+        schema: schema.schema.clone(),
+    });
+    let text = (verbosity.is_some() || format.is_some()).then_some(RespText { verbosity, format });
 
     RespRequest {
         model: model.to_string(),
@@ -139,9 +169,7 @@ pub fn build_request(req: &ChatRequest, model: &str, stream: bool) -> RespReques
         include,
         max_output_tokens: s.max_tokens,
         reasoning,
-        text: s.verbosity.map(|v| RespText {
-            verbosity: v.as_wire(),
-        }),
+        text,
         tools,
         tool_choice,
     }
@@ -337,6 +365,14 @@ pub enum RespEvent {
     /// summary event — handle both (both → `ChatChunk::Thoughts`).
     #[serde(rename = "response.reasoning_text.delta")]
     ReasoningTextDelta {
+        #[serde(default)]
+        delta: String,
+    },
+    /// A model that declines a request under a schema says so in a `refusal`
+    /// content part instead of the text, so the refusal need not meet the
+    /// schema. The client keeps its words and ends the turn as filtered.
+    #[serde(rename = "response.refusal.delta")]
+    RefusalDelta {
         #[serde(default)]
         delta: String,
     },
@@ -1152,5 +1188,55 @@ mod cache_figure_tests {
             (u.prompt_tokens, u.cached_tokens, u.cache_write_tokens),
             (5, None, None)
         );
+    }
+}
+
+/// The reply's schema on the wire (docs/fabula.md §4, PR 5).
+#[cfg(test)]
+mod output_schema_tests {
+    use super::build_request;
+    use crate::entities::sampling::Verbosity;
+    use crate::shared::api::contract::{ApiMessage, ChatRequest, OutputSchema};
+
+    /// A schema whose properties are not in alphabetical order.
+    const SCHEMA: &str = r#"{"type":"object","properties":{"thought":{"type":"string"},"act":{"type":"string"}},"required":["thought","act"],"additionalProperties":false}"#;
+
+    fn schema_turn() -> ChatRequest {
+        ChatRequest {
+            messages: vec![ApiMessage::user("hi")],
+            output_schema: Some(OutputSchema::new("character", SCHEMA.to_owned()).unwrap()),
+            ..ChatRequest::default()
+        }
+    }
+
+    /// `text.format`, flat and strict, the schema's text as it was printed.
+    #[test]
+    fn a_schema_rides_as_text_format_in_its_printed_order() {
+        let text = serde_json::to_string(&build_request(&schema_turn(), "gpt-x", true)).unwrap();
+        assert!(
+            text.contains(&format!(
+                r#""text":{{"format":{{"type":"json_schema","name":"character","strict":true,"schema":{SCHEMA}}}}}"#
+            )),
+            "{text}"
+        );
+    }
+
+    /// The format and the verbosity share the one `text` object, and a turn
+    /// with neither sends no `text` at all.
+    #[test]
+    fn the_format_sits_beside_the_verbosity_and_neither_is_no_text() {
+        let mut turn = schema_turn();
+        turn.sampling.verbosity = Some(Verbosity::Low);
+        let json = serde_json::to_value(build_request(&turn, "gpt-x", true)).unwrap();
+        assert_eq!(json["text"]["verbosity"], "low");
+        assert_eq!(json["text"]["format"]["type"], "json_schema");
+
+        turn.output_schema = None;
+        let json = serde_json::to_value(build_request(&turn, "gpt-x", true)).unwrap();
+        assert_eq!(json["text"], serde_json::json!({"verbosity": "low"}));
+
+        turn.sampling.verbosity = None;
+        let json = serde_json::to_value(build_request(&turn, "gpt-x", true)).unwrap();
+        assert!(json.get("text").is_none(), "{json}");
     }
 }
