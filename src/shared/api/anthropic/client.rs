@@ -5,6 +5,7 @@
 //! Anthropic has no embeddings — [`Embedder`](super::super::contract::Embedder) isn't
 //! implemented here (RAG uses a separate embedder, ADR 0002).
 
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::Result;
@@ -13,7 +14,7 @@ use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
 use tokio_util::sync::CancellationToken;
 
-use super::wire::{self, AntDelta, AntStartBlock, AntStreamEvent, AntUsage};
+use super::wire::{self, AntDelta, AntStartBlock, AntStreamEvent, AntUsage, Mute};
 use crate::shared::api::contract::{
     ChatChunk, ChatRequest, ChatStream, EngineBackend, FinishReason, ThinkingRef, ToolCallDelta,
     VisionSupport,
@@ -45,6 +46,10 @@ pub struct AnthropicClient {
     /// the 4.5 generation. From then on a thinking turn goes out in that shape
     /// at once. Set only once the budgeted request was accepted.
     budget_thinking: AtomicBool,
+    /// The shape of thinking off this model took in place of `disabled` —
+    /// `between_tools` on Sonnet 5.5, the lowest effort on a model that always
+    /// thinks ([`Mute`]). Kept only once a request in it was accepted.
+    mute: Mutex<Option<Mute>>,
 }
 
 impl AnthropicClient {
@@ -61,7 +66,18 @@ impl AnthropicClient {
             model: model.into(),
             efforts: EffortMemo::default(),
             budget_thinking: AtomicBool::new(false),
+            mute: Mutex::new(None),
         }
+    }
+
+    /// The shape this model was found to take for thinking off; none while it
+    /// has not refused `disabled`. For the tests and smokes.
+    #[cfg(test)]
+    pub(super) fn mutes_as(&self) -> Option<Mute> {
+        *self
+            .mute
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Whether this model has been found to think within a budget rather than
@@ -100,6 +116,16 @@ impl AnthropicClient {
         if self.budget_thinking.load(Ordering::Relaxed) {
             body.think_within_a_budget();
         }
+        let learned = *self
+            .mute
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(shape) = learned {
+            body.mute_as(shape);
+        }
+        if body.is_muted() {
+            return self.send_muted(&mut body, cancel).await;
+        }
         let first = effort::send_asking_again(self, &mut body, cancel).await;
         let Err(refused) = &first else {
             return first;
@@ -117,6 +143,40 @@ impl AnthropicClient {
             self.budget_thinking.store(true, Ordering::Relaxed);
         }
         second
+    }
+
+    /// Sends a muted turn, and answers the refusal of its shape (docs/fabula.md
+    /// §4, *Thinking on Claude*): `disabled` first, then the shape the refusal
+    /// names, at most twice — Sonnet 5.5 names `between_tools`, Opus 5.5 and
+    /// Fable 5.1 take neither and are asked at their lowest effort. The shape
+    /// is kept for the client once a request in it was accepted.
+    async fn send_muted(
+        &self,
+        body: &mut wire::AntRequest,
+        cancel: &CancellationToken,
+    ) -> Result<Option<reqwest::Response>, EngineError> {
+        let mut sent = effort::send_asking_again(self, body, cancel).await;
+        for _ in 0..2 {
+            let Err(refused) = &sent else {
+                break;
+            };
+            let Some(next) = body
+                .mute()
+                .and_then(|shape| wire::refused_mute(refused, shape))
+            else {
+                break;
+            };
+            tracing::info!(model = %self.model, shape = ?next, "the model takes another thinking-off shape; asking again");
+            body.mute_as(next);
+            sent = effort::send_asking_again(self, body, cancel).await;
+            if matches!(sent, Ok(Some(_))) {
+                *self
+                    .mute
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(next);
+            }
+        }
+        sent
     }
 
     /// What this model has been found to take in place of the effort `wish` —
@@ -639,6 +699,159 @@ mod tests {
     async fn claude_constrains_a_reply_to_its_schema() {
         let client = AnthropicClient::new("http://127.0.0.1:9", "k", "claude-x");
         assert!(client.enforces_output_schema().await);
+    }
+
+    /// A muted turn: thinking off, as the application's muted turns send it.
+    fn muted() -> ChatRequest {
+        let mut req = sse_stub::hello();
+        req.sampling.thinking = Some(false);
+        req.sampling.reasoning_effort = Some(crate::entities::sampling::ReasoningEffort::None);
+        req.sampling.reasoning_budget = Some(0);
+        req
+    }
+
+    /// Two muted turns against a stub that answers with `replies` in turn; the
+    /// `thinking` and `output_config` of every request it was sent.
+    async fn two_muted_turns(
+        model: &str,
+        replies: &'static [sse_stub::Canned],
+    ) -> (AnthropicClient, Vec<(serde_json::Value, serde_json::Value)>) {
+        let (url, stub) = sse_stub::serve_in_turn(replies);
+        let client = AnthropicClient::new(url, "k", model);
+        for _ in 0..2 {
+            let chunks = collect(
+                client
+                    .chat_stream(muted(), CancellationToken::new())
+                    .await
+                    .expect("the turn survives the refusals"),
+            )
+            .await;
+            assert!(
+                chunks.contains(&ChatChunk::Text("pong".into())),
+                "{chunks:?}"
+            );
+        }
+        let sent = shapes_sent(&stub.join().unwrap());
+        (client, sent)
+    }
+
+    /// Haiku 5.5 and the generations before 5.5 take `disabled` (measured
+    /// 2026-11-01): one request a turn, nothing learned.
+    #[tokio::test]
+    async fn a_muted_turn_goes_out_disabled() {
+        let (client, sent) = two_muted_turns("claude-haiku-5-5", &[REPLY, REPLY]).await;
+        let disabled = (
+            serde_json::json!({"type": "disabled"}),
+            serde_json::Value::Null,
+        );
+        assert_eq!(sent, [disabled.clone(), disabled]);
+        assert_eq!(client.mutes_as(), None);
+    }
+
+    /// Sonnet 5.5 refuses `disabled` and names `between_tools`; the turn is
+    /// asked again in it, and the next turn goes out in it at once.
+    #[tokio::test]
+    async fn a_model_that_names_between_tools_is_asked_in_it() {
+        let (client, sent) = two_muted_turns(
+            "claude-sonnet-5-5",
+            &[
+                (
+                    sse_stub::BAD_REQUEST,
+                    sse_stub::JSON,
+                    wire::DISABLED_REFUSED_NAMING_BETWEEN_TOOLS,
+                ),
+                REPLY,
+                REPLY,
+            ],
+        )
+        .await;
+        let between = (
+            serde_json::json!({"type": "between_tools"}),
+            serde_json::Value::Null,
+        );
+        assert_eq!(
+            sent,
+            [
+                (
+                    serde_json::json!({"type": "disabled"}),
+                    serde_json::Value::Null
+                ),
+                between.clone(),
+                between,
+            ]
+        );
+        assert_eq!(client.mutes_as(), Some(Mute::BetweenTools));
+    }
+
+    /// Opus 5.5 and Fable 5.1 always think: `disabled` is refused, and the
+    /// turn is asked with no `thinking` at the lowest effort, from then on at
+    /// once.
+    #[tokio::test]
+    async fn a_model_that_always_thinks_is_asked_at_its_lowest_effort() {
+        let (client, sent) = two_muted_turns(
+            "claude-opus-5-5",
+            &[
+                (
+                    sse_stub::BAD_REQUEST,
+                    sse_stub::JSON,
+                    wire::DISABLED_REFUSED,
+                ),
+                REPLY,
+                REPLY,
+            ],
+        )
+        .await;
+        let lowest = (
+            serde_json::Value::Null,
+            serde_json::json!({"effort": "low"}),
+        );
+        assert_eq!(
+            sent,
+            [
+                (
+                    serde_json::json!({"type": "disabled"}),
+                    serde_json::Value::Null
+                ),
+                lowest.clone(),
+                lowest,
+            ]
+        );
+        assert_eq!(client.mutes_as(), Some(Mute::LowestEffort));
+    }
+
+    /// The ladder has two steps at most: a `between_tools` refused too goes to
+    /// the lowest effort, and a third refusal is the turn's error, with
+    /// nothing learned from it.
+    #[tokio::test]
+    async fn the_ladder_ends_at_the_lowest_effort_and_a_refusal_there_is_the_error() {
+        let (url, stub) = sse_stub::serve_in_turn(&[
+            (
+                sse_stub::BAD_REQUEST,
+                sse_stub::JSON,
+                wire::DISABLED_REFUSED_NAMING_BETWEEN_TOOLS,
+            ),
+            (
+                sse_stub::BAD_REQUEST,
+                sse_stub::JSON,
+                wire::BETWEEN_TOOLS_REFUSED,
+            ),
+            (
+                sse_stub::BAD_REQUEST,
+                sse_stub::JSON,
+                r#"{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long"}}"#,
+            ),
+        ]);
+        let client = AnthropicClient::new(url, "k", "claude-x");
+        let err = client
+            .chat_stream(muted(), CancellationToken::new())
+            .await
+            .err()
+            .expect("the last refusal is the answer");
+        assert!(err.to_string().contains("prompt is too long"), "{err}");
+        let sent = shapes_sent(&stub.join().unwrap());
+        assert_eq!(sent.len(), 3);
+        assert_eq!(sent[2].1, serde_json::json!({"effort": "low"}));
+        assert_eq!(client.mutes_as(), None);
     }
 }
 

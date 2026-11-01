@@ -29,7 +29,10 @@ use std::fmt;
 use serde::ser::{Serialize, SerializeMap, SerializeSeq, Serializer};
 use serde_json::{Map, Value};
 
-use crate::entities::story::{Action, Canon, CharacterKey, LocationKey, Proposal, Visibility};
+use crate::entities::story::{
+    Action, Canon, CharacterKey, Effect, ItemKey, LocationKey, Proposal, SecretKey, Severity,
+    Visibility,
+};
 
 /// A reply's schema, in the dialect of spec §8.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -552,6 +555,10 @@ pub struct CanonKeys {
     pub characters: Vec<String>,
     /// The map, in the canon's order.
     pub locations: Vec<String>,
+    /// The items, where they start: lying at a location first, then held.
+    pub items: Vec<String>,
+    /// The secrets, in the order of the sheets that list them.
+    pub secrets: Vec<String>,
 }
 
 impl CanonKeys {
@@ -567,6 +574,15 @@ impl CanonKeys {
                 .locations
                 .iter()
                 .map(|l| l.key.as_str().to_owned())
+                .collect(),
+            items: canon
+                .starting_items()
+                .map(|(item, _)| item.as_str().to_owned())
+                .collect(),
+            secrets: canon
+                .characters
+                .iter()
+                .flat_map(|c| c.secrets.iter().map(|s| s.key.as_str().to_owned()))
                 .collect(),
         }
     }
@@ -607,6 +623,110 @@ impl StorySchema for CharacterKey {
 impl StorySchema for LocationKey {
     fn schema(keys: &CanonKeys) -> Schema {
         Schema::Enum(keys.locations.clone())
+    }
+}
+
+impl StorySchema for ItemKey {
+    fn schema(keys: &CanonKeys) -> Schema {
+        Schema::Enum(keys.items.clone())
+    }
+}
+
+impl StorySchema for SecretKey {
+    fn schema(keys: &CanonKeys) -> Schema {
+        Schema::Enum(keys.secrets.clone())
+    }
+}
+
+impl StorySchema for bool {
+    fn schema(_: &CanonKeys) -> Schema {
+        Schema::Boolean
+    }
+}
+
+impl StorySchema for Severity {
+    fn schema(_: &CanonKeys) -> Schema {
+        Schema::Enum(
+            ["minor", "serious", "fatal"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+        )
+    }
+}
+
+/// The effects the World Master may give an action (spec §6, *Typed effects
+/// make state foldable*). A placement is not among them: it is the opening's
+/// alone, committed from the Author's setup. A canon with no items has no
+/// variant that names one, and one with no secrets no `reveal`, since the
+/// dialect refuses an empty `enum`.
+impl StorySchema for Effect {
+    fn schema(keys: &CanonKeys) -> Schema {
+        let who = |name: &str, description: &str| {
+            Property::described(name, description, CharacterKey::schema(keys))
+        };
+        let item = || Property::described("item", "The item.", ItemKey::schema(keys));
+        let mut variants = vec![Variant::new(
+            "move",
+            "A character walks a direct route to another place.",
+            vec![
+                who("character", "Who goes."),
+                Property::described("to", "Where.", LocationKey::schema(keys)),
+            ],
+        )];
+        if !keys.items.is_empty() {
+            variants.extend([
+                Variant::new(
+                    "give",
+                    "An item passes from one character's hands to another's.",
+                    vec![
+                        who("from", "The giver, who holds the item."),
+                        who("to", "The receiver."),
+                        item(),
+                    ],
+                ),
+                Variant::new(
+                    "take",
+                    "A character takes an item from another character, or from where it lies.",
+                    vec![
+                        who("by", "The taker."),
+                        item(),
+                        Property::described(
+                            "from",
+                            "Whose hands it leaves, or null when it lies here.",
+                            Option::<CharacterKey>::schema(keys),
+                        ),
+                    ],
+                ),
+                Variant::new(
+                    "drop",
+                    "A character puts an item down where they are.",
+                    vec![who("by", "Who puts it down."), item()],
+                ),
+            ]);
+        }
+        if !keys.secrets.is_empty() {
+            variants.push(Variant::new(
+                "reveal",
+                "A character learns a secret.",
+                vec![
+                    Property::described("secret", "The secret.", SecretKey::schema(keys)),
+                    who("to", "Who learns it."),
+                ],
+            ));
+        }
+        variants.push(Variant::new(
+            "injure",
+            "A character is hurt.",
+            vec![
+                who("character", "Who."),
+                Property::described("severity", "How badly.", Severity::schema(keys)),
+            ],
+        ));
+        Schema::Tagged {
+            tag: "type".to_owned(),
+            variants,
+        }
     }
 }
 
@@ -714,4 +834,4 @@ impl StorySchema for Visibility {
 
 #[cfg(test)]
 #[path = "schema_tests.rs"]
-mod tests;
+pub(crate) mod tests;

@@ -13,11 +13,12 @@ what was rejected — the reasoning behind the code, not its current shape. For 
 shape read the reference documents named above; for the traps that recur across areas read
 [lessons.md](../lessons.md).
 
-## Entries (3)
+## Entries (4)
 
 - Post-M9: Fabula — PR 1, the story database (done)
 - Post-M9: Fabula — PR 2, the model port and replay; Gate G0 GO (done)
 - Post-M9: Fabula — PR 3, the reply's schema on the wire (done)
+- Post-M9: Fabula — PR 4, the simulation; Gate G1 GO (done)
 
 ### Post-M9: Fabula — PR 1, the story database (done)
 
@@ -266,3 +267,122 @@ chat turn sets the field, and every request without a schema is the bytes it was
 **Gates**: 4578 unit tests green, 313 `#[ignore]`; clippy `-D warnings`, fmt, `cyrillic_scan`,
 `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check`, `claude_md_chart --check`
 clean.
+
+### Post-M9: Fabula — PR 4, the simulation; Gate G1 GO (done)
+
+M1's second pull request (docs/fabula.md §4): the characters and the World Master on a
+live model, a scene as K branches, each character's memory filtered by what it perceived,
+and the planted secrets followed through every call.
+
+- **The round** (spec §7):
+  - *Intent*: every character present proposes at once, from one view; with p = 0.3, drawn
+    from the branch's seed, one is told to break their routine.
+  - *Initiative*: the World Master rules on each intent, feasible or refused with an
+    in-world cause, and picks one; the engine commits it, the other feasible intents lapse,
+    and a world event may follow.
+  - *Reaction*: the initiative's witnesses who are still present answer it; the World
+    Master rules on them in the order they happen, each held to the world the one before
+    left.
+  - *Reflection*: every 3 rounds, through each character's own `ReflectionWriter`.
+
+  A scene ends at 8 rounds, after two rounds with no character's deed, when its place
+  empties, or when the World Master judges its pressure resolved.
+- **The World Master proposes, the engine commits.** Every event it writes passes
+  `WorldState::admit` and a knowledge check before it is committed: a token in what is
+  perceived needs every witness to know its secret once the effects apply, and a token in a
+  thought needs the actor to know it. A refusal there is recorded with the proposal and
+  counted, never repaired. A ruling that does not answer what it was asked, such as a
+  character it was not asked about or an initiator whose intent it did not find feasible,
+  is a slip: recorded and skipped.
+- **What each role sees.**
+  - A character: its own sheet, the others' public lines, the observable part of what it
+    perceived (a whisper to it marked), its own thought under its own deeds, its
+    reflections, and the secrets revealed to it.
+  - The World Master: the rules, the map with its routes, the whole cast with their
+    secrets (a reveal is its to rule on), the folded state, the scene's events with their
+    witnesses, and the setup without the Author's intent. Of each proposal, the deed, its
+    targets and its visibility, never the thought.
+
+  The engine copies the proposal's thought into the event, so a thought cannot reach a
+  witness through the World Master's words.
+- **The contracts** (`contracts.rs`): the reflection, the ruling on the intents and the
+  ruling on the reactions, derived from their types in the dialect.
+  - The cause comes before the verdict, and the rulings before the event they produce.
+  - No field asks for reasoning.
+  - The World Master's effects leave out `place`, which is the opening's alone.
+  - A canon without items or secrets drops the variants that would name one, since the
+    dialect refuses an empty `enum`.
+- **K branches one after another**, forked from the same tip. A branch whose call fails is
+  reported failed and spares its siblings; a cancelled call stops the scene.
+- **Thinking per role** (`EngineAdapter::with_role_sampling`). The characters get the mute
+  (`thinking: false`, effort `none`, budget `0`), the World Master thinking at a low effort.
+  On Claude the mute now reaches the model: the wire change is docs/journal/engine.md,
+  *Thinking off reaches Claude*.
+- **The leak audit** (`leaks.rs`) is independent of the engine's check. It reads every
+  character call back from the call log and finds a planted token the caller was shown, or
+  wrote, before its secret was known at that moment of the branch. The moment is ordered
+  by round and phase: intent, initiative, reaction, reflection.
+- **Gate G1** (`simulation_live_tests`): 20 scenes from the fixture canon, each in a story
+  of its own, K = 3, at most 8 rounds. Five setups are dealt in turn: the harbour with all
+  three, the warehouse, the lighthouse, the inn and the chapel, each with a pressure that
+  leans on a secret.
+
+  | Route | Scenes × K | First attempts | Schema-valid | Leaks | Reveals | Refused by the World Master | Refused by the engine | Slips | Median character reply, tokens | Spend, time |
+  | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+  | Claude Haiku 5.5 | 20 × 3 | 2,101 | 2,101 (100%) | 0 | 10 | 178 | 4 | 32 | 214–235 | about $1.44 at list price; 23 min, 4 scenes at once |
+  | Qwen 3.8 27B, OpenRouter, DeepInfra (bf16) | 20 × 3 | 1,972 | 1,971 (99.95%) | 0 | 23 | 131 | 14 | 0 | 233–256 | $2.40; 54 min, 10 at once |
+  | Gemma 4 31B, OpenRouter, DeepInfra (fp8) | 20 × 3 | 1,888 | 1,886 (99.89%) | 0 | 38 | 154 | 3 | 0 | 138–152 | $1.12; two runs, below |
+  | Qwen 3.8 27B Q4_K_M, the gate's weights, local llama.cpp b12032 | 5 × 3 | 457 | 457 (100%) | 0 | 9 | 27 | 4 | 0 | 237–275 | 91 min, one scene at a time |
+
+  - **No leak on any route, while the secrets moved.** The World Master committed 10–38
+    reveals per route, and characters were shown another's secret 62–180 times on each
+    route after it was revealed to them, never before. No World Master wrote a token into
+    what was perceived; it paraphrased each reveal, so the engine's knowledge check never
+    fired.
+  - **The first attempts that missed** were three of 6,418, and every one was taken by the
+    second attempt; no reply failed its schema.
+    - Qwen 3.8 once, and Gemma 4 once, looped to the 4,096-token cap under the constraint:
+      Qwen on synonyms in a thought, Gemma on whitespace. Gemma did the same once more in a
+      scene that was cut and not scored.
+    - DeepInfra once answered Gemma with an upstream `429`.
+  - **The World Master's refusals.**
+    - By ruling: 0 to 18 per scene.
+    - By the engine: 0 to 3 per scene. The causes were an item the actor did not hold or
+      that did not lie there, a character elsewhere, a move with no direct route, a move to
+      where the character already was, and a whisper to oneself.
+    - Slips: 32 on Haiku, all of one shape. Each was a ruling on a character who had
+      proposed no deed, mostly one not in the scene at all, "refused" because absent. The
+      open models made none. The prompts stay as measured; the shape is M2's to look at.
+  - **Thinking off held its cost.** The median character reply was 214–275 tokens (Gemma's
+    138–152), the cost model's 0.25k. The World Master thought a median of 582 characters
+    a ruling on Haiku and 2,400–2,800 on the open models.
+  - **The harness's bound.** The first Gemma run took 10 scenes at once through DeepInfra.
+    Four of them passed the 45-minute bound in the queue, with a median of 48 s per World
+    Master call there, and the run was stopped. The harness gained `_ONLY` and
+    `_BOUND_SECS`, and the 14 scenes left unfinished ran again 5 at a time with a 3-hour
+    bound. The six that had finished are kept; the four that were cut are kept apart,
+    unscored ($0.23 of spend).
+
+  **Gate G1: GO**, on the three development routes and on the gate's own weights.
+- **Mutation check:** 15 mutants, one build. Each was killed:
+  - the two knowledge checks;
+  - an initiator whose intent was not feasible;
+  - a move without its effect;
+  - the initiator reacting to its own deed;
+  - the stalemate's count;
+  - a failed branch stopping its siblings;
+  - a routine never broken;
+  - secrets told to a character who never learned them;
+  - the World Master shown a thought;
+  - the audit's moments;
+  - a role's own sampling;
+  - on the Anthropic side: the budget's mute, Sonnet's refusal read as `between_tools`, and
+    the kept shape.
+
+  The sources were restored and the fingerprint checked.
+- **Tests:** 4613 unit tests green (+35), 315 `#[ignore]` (+2: the G1 harness, the Claude
+  thinking-off smoke).
+
+**Gates**: unit tests green; clippy `-D warnings`, fmt, `cyrillic_scan` (and its
+`--self-test`), `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check`,
+`claude_md_chart --check` clean.

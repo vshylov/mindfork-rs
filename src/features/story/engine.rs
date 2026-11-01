@@ -44,6 +44,10 @@ pub struct EngineAdapter {
     log: Mutex<RunLogWriter>,
     model: String,
     sampling: SamplingConfig,
+    /// A role's sampling in place of `sampling`: the characters' with
+    /// thinking off, the World Master's with it on (spec §8, *Thinking is a
+    /// role's setting*).
+    roles: Vec<(Role, SamplingConfig)>,
     cancel: CancellationToken,
     /// The backend's answer to `enforces_output_schema`, asked once.
     enforces: tokio::sync::OnceCell<bool>,
@@ -66,6 +70,7 @@ impl EngineAdapter {
             log: Mutex::new(log),
             model: model.into(),
             sampling,
+            roles: Vec::new(),
             cancel,
             enforces: tokio::sync::OnceCell::new(),
             fallback_only: false,
@@ -79,6 +84,21 @@ impl EngineAdapter {
     pub fn fallback_only(mut self) -> Self {
         self.fallback_only = true;
         self
+    }
+
+    /// The same adapter with `sampling` for `role`'s calls.
+    pub fn with_role_sampling(mut self, role: Role, sampling: SamplingConfig) -> Self {
+        self.roles.retain(|(r, _)| *r != role);
+        self.roles.push((role, sampling));
+        self
+    }
+
+    /// The sampling `role`'s calls go out with.
+    fn sampling_for(&self, role: Role) -> &SamplingConfig {
+        self.roles
+            .iter()
+            .find(|(r, _)| *r == role)
+            .map_or(&self.sampling, |(_, s)| s)
     }
 
     /// Whether a JSON call goes out schema-constrained.
@@ -168,7 +188,7 @@ impl Attempts for Live<'_> {
                     _ => ApiMessage::user(t.content.clone()),
                 })
                 .collect(),
-            sampling: adapter.sampling.clone(),
+            sampling: adapter.sampling_for(self.role).clone(),
             output_schema: self.output_schema.clone(),
             ..ChatRequest::default()
         };
@@ -197,7 +217,7 @@ impl Attempts for Live<'_> {
             attempt: attempt.number,
             role: self.role.as_str().to_owned(),
             model: adapter.model.clone(),
-            params: serde_json::to_value(&adapter.sampling).unwrap_or(Value::Null),
+            params: serde_json::to_value(adapter.sampling_for(self.role)).unwrap_or(Value::Null),
             mechanism: self.mechanism,
             request: attempt.to_json(),
             prompt_sha256: self.prompt_sha256.clone(),
