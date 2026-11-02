@@ -42,6 +42,11 @@ split by subsystem.
   that copy within the second it was made gave the new copy the same name: it was written
   over the archive about to be unpacked, and the data the copy kept was lost. A name that
   is taken now gets `-2`, `-3` and so on, for every archive the app names itself.
+- **A file in `chats/` that holds no chat no longer stops the start.** A valid JSON file
+  there that is not a chat — `{}`, a list, a note saved into the folder — refused every
+  start with *"Migrating … produced an unparseable result … This is a migration bug"*,
+  and a list could crash it. Such a file is now skipped with a line in the log and left
+  as it is, as a damaged chat file always was, and the start migrates the rest.
 
 ### Data
 
