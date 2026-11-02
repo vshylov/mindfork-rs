@@ -30,8 +30,15 @@
 //! that has *diverged*. The `--json` form is such a `DataStats` written out, and
 //! [`read_snapshot`] reads it back; [`DataStats::fingerprint`] is a digest of
 //! exactly that identity, so equal fingerprints mean an identical comparison.
+//!
+//! **Stories** (docs/fabula.md §4, PR 7): each `stories/<chat-id>/<story-id>.db`
+//! is read the way `data.db` is — read-only, or from the archive's entry in
+//! memory — and counted as deleted while its chat is hidden (§6 T4). A story
+//! is lined up by its ids and compared by its rows ([`StoryStats::units`]).
+//! The call logs beside them (`story-logs/`) are counted in the data root
+//! only, since no backup holds one.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Read;
 use std::path::Path;
@@ -51,7 +58,8 @@ use crate::features::backup::{self, ArchiveReader, BackupManifest};
 use crate::shared::i18n::Locale;
 use crate::shared::paths::Paths;
 use crate::shared::storage::db::{self, DbStats, KeyedRow};
-use crate::shared::storage::schema::CHAT_SCHEMA;
+use crate::shared::storage::schema::{CHAT_SCHEMA, STORY_SCHEMA};
+use crate::shared::storage::story::{StoryStats, story_stats_of_file, story_stats_of_image};
 
 /// The version of the `--json` shape. Additive fields do not bump it; a
 /// renamed or re-defined one does — and so does one `--compare` cannot work
@@ -68,6 +76,7 @@ const FINGERPRINT_HEX: usize = 16;
 const PROFILES_ENTRY: &str = "profiles.json";
 const DB_ENTRY: &str = "data.db";
 const CHATS_PREFIX: &str = "chats/";
+const STORIES_PREFIX: &str = "stories/";
 /// What makes a zip *a backup of this app*: any one of these, or a chat.
 const BACKUP_MARKERS: &[&str] = &["manifest.json", "settings.json", PROFILES_ENTRY, DB_ENTRY];
 
@@ -88,10 +97,18 @@ pub struct DataStats {
     pub profiles: ProfileTotals,
     pub chats: ChatTotals,
     pub database: DatabaseStats,
+    /// `default`: a snapshot made before stories reads as holding none.
+    #[serde(default)]
+    pub stories: StoryTotals,
     pub sizes: Sizes,
     /// One row per readable chat, sorted by id — what a `diff` of two
     /// machines' snapshots lines up.
     pub chat_list: Vec<ChatRow>,
+    /// One row per readable story, sorted by chat and id. `None` — a snapshot
+    /// made by a version before stories, which says nothing about them; this
+    /// version always reports a list, empty when there are none.
+    #[serde(default)]
+    pub story_list: Option<Vec<StoryRow>>,
 }
 
 /// What was summarized.
@@ -172,6 +189,69 @@ pub struct Sizes {
     /// The counted chat files, uncompressed.
     pub chats_bytes: u64,
     pub database_bytes: u64,
+    /// The counted story files, uncompressed.
+    #[serde(default)]
+    pub stories_bytes: u64,
+    /// The stories' call logs: in the data root only, as no backup holds one.
+    #[serde(default)]
+    pub story_logs_bytes: u64,
+}
+
+/// The stories, counted.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StoryTotals {
+    pub total: usize,
+    /// In a soft-deleted chat (docs/fabula.md §6, T4).
+    pub deleted: usize,
+    /// Under a chat id no readable chat file of this copy has, as
+    /// `<chat-id>/<story-id>`.
+    pub without_chat: Vec<String>,
+    /// Chapters over all stories, and of them those accepted.
+    pub chapters: u64,
+    pub accepted_chapters: u64,
+    /// Questions the stories wait on.
+    pub pending_questions: u64,
+    /// Story files that could not be read, as `<chat-id>/<story-id>.db`.
+    pub unreadable: Vec<String>,
+    /// The highest story schema seen (0 — no stories).
+    pub newest_schema: u32,
+    /// The call logs beside the stories (the data root only).
+    pub call_logs: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StoryRow {
+    pub chat_id: Uuid,
+    pub id: Uuid,
+    /// The title of its chat, when this copy holds a readable chat of that id.
+    pub chat_title: Option<String>,
+    /// Its chat is soft-deleted.
+    pub deleted: bool,
+    pub chapters: u64,
+    pub accepted_chapters: u64,
+    pub pending_questions: u64,
+    /// The story's rows, each `<table>/<key>:<digest>` ([`StoryStats::units`]):
+    /// the identity a comparison works on.
+    pub units: Vec<String>,
+}
+
+/// What a comparison treats as a story's identity, and the fingerprint hashes.
+/// Whether it is deleted is its chat's, and the chat's identity holds that.
+#[derive(Debug, PartialEq, Eq, Serialize)]
+struct StoryIdentity<'a> {
+    chat_id: Uuid,
+    id: Uuid,
+    units: &'a [String],
+}
+
+impl StoryRow {
+    fn identity(&self) -> StoryIdentity<'_> {
+        StoryIdentity {
+            chat_id: self.chat_id,
+            id: self.id,
+            units: &self.units,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -241,10 +321,17 @@ fn keyed_lists(database: &DatabaseStats) -> Option<[&[KeyedRow]; 3]> {
 
 impl DataStats {
     /// A digest of everything [`compare`] looks at to call two copies
-    /// identical: each chat's [`ChatIdentity`] and each database row's key and
-    /// content digest. So **equal fingerprints mean `--compare` would say
-    /// "identical"** — two machines can be checked by reading one line on each.
-    fn fingerprint(chat_list: &[ChatRow], database: &DatabaseStats) -> String {
+    /// identical: each chat's [`ChatIdentity`], each database row's key and
+    /// content digest, and each story's [`StoryIdentity`]. So **equal
+    /// fingerprints mean `--compare` would say "identical"** — two machines
+    /// can be checked by reading one line on each. A copy with no stories
+    /// hashes what a version before stories hashed, so its fingerprint does
+    /// not move with the update.
+    fn fingerprint(
+        chat_list: &[ChatRow],
+        database: &DatabaseStats,
+        stories: &[StoryRow],
+    ) -> String {
         let chats: Vec<_> = chat_list.iter().map(ChatRow::identity).collect();
         let rows: Vec<Vec<(&str, &str)>> = keyed_lists(database)
             .unwrap_or_default()
@@ -256,7 +343,13 @@ impl DataStats {
             })
             .collect();
         // Structs, strings and numbers: nothing in it can fail to serialize.
-        let material = serde_json::to_vec(&(chats, rows)).unwrap_or_default();
+        let material = if stories.is_empty() {
+            serde_json::to_vec(&(chats, rows))
+        } else {
+            let stories: Vec<_> = stories.iter().map(StoryRow::identity).collect();
+            serde_json::to_vec(&(chats, rows, stories))
+        }
+        .unwrap_or_default();
         let mut digest = sha256_hex(&material);
         digest.truncate(FINGERPRINT_HEX);
         digest
@@ -269,6 +362,15 @@ impl DataStats {
             && self.chats.total == 0
             && self.chats.unreadable.is_empty()
             && self.database == DatabaseStats::Missing
+            && !self.stories.any()
+    }
+}
+
+impl StoryTotals {
+    /// Whether there is any story file at all, readable or not: what makes
+    /// the summary say anything about stories.
+    pub fn any(&self) -> bool {
+        self.total > 0 || !self.unreadable.is_empty()
     }
 }
 
@@ -519,6 +621,116 @@ impl Tally {
     }
 }
 
+/// Story files, added one at a time from either source, then joined with the
+/// chats they sit under ([`StoryTally::finish`]).
+#[derive(Default)]
+struct StoryTally {
+    found: Vec<(Uuid, Uuid, StoryStats)>,
+    unreadable: Vec<String>,
+    bytes: u64,
+    call_logs: usize,
+    logs_bytes: u64,
+}
+
+impl StoryTally {
+    /// Adds the story file `name` (`<chat-id>/<story-id>.db`) of `size` bytes.
+    fn add(
+        &mut self,
+        name: &str,
+        (chat, story): (Uuid, Uuid),
+        size: u64,
+        read: Result<StoryStats>,
+    ) {
+        self.bytes += size;
+        match read {
+            Ok(stats) => self.found.push((chat, story, stats)),
+            Err(_) => self.unreadable.push(name.to_string()),
+        }
+    }
+
+    /// The stories of the data root, and the call logs beside them.
+    fn of_root(paths: &Paths) -> Self {
+        let mut tally = Self::default();
+        let dir = paths.stories_dir();
+        for path in backup::story_files(&dir) {
+            if let Some((name, ids)) = story_name(&dir, &path) {
+                tally.add(&name, ids, file_len(&path), story_stats_of_file(&path));
+            }
+        }
+        let logs = paths.story_logs_dir();
+        for path in backup::story_files(&logs) {
+            if story_name(&logs, &path).is_some() {
+                tally.call_logs += 1;
+                tally.logs_bytes += file_len(&path);
+            }
+        }
+        tally
+    }
+
+    /// The stories joined with the chats: a story is deleted while its chat
+    /// is (docs/fabula.md §6, T4).
+    fn finish(self, chats: &[ChatRow]) -> (StoryTotals, Vec<StoryRow>, u64, u64) {
+        let by_id: BTreeMap<Uuid, &ChatRow> = chats.iter().map(|row| (row.id, row)).collect();
+        let mut totals = StoryTotals {
+            call_logs: self.call_logs,
+            unreadable: self.unreadable,
+            ..StoryTotals::default()
+        };
+        totals.unreadable.sort();
+        let mut rows = Vec::new();
+        for (chat_id, id, stats) in self.found {
+            let chat = by_id.get(&chat_id);
+            let deleted = chat.is_some_and(|row| row.deleted);
+            totals.total += 1;
+            totals.deleted += usize::from(deleted);
+            if chat.is_none() {
+                totals.without_chat.push(format!("{chat_id}/{id}"));
+            }
+            totals.chapters += stats.chapters;
+            totals.accepted_chapters += stats.accepted_chapters;
+            totals.pending_questions += stats.pending_questions;
+            totals.newest_schema = totals.newest_schema.max(stats.schema);
+            rows.push(StoryRow {
+                chat_id,
+                id,
+                chat_title: chat.map(|row| row.title.clone()),
+                deleted,
+                chapters: stats.chapters,
+                accepted_chapters: stats.accepted_chapters,
+                pending_questions: stats.pending_questions,
+                units: stats.units,
+            });
+        }
+        totals.without_chat.sort();
+        rows.sort_by_key(|row| (row.chat_id, row.id));
+        (totals, rows, self.bytes, self.logs_bytes)
+    }
+}
+
+/// The chat and story ids a path under `stories/` stands for:
+/// `<chat-id>/<story-id>.db`, the layout `Paths::story_db` names.
+fn story_ids(rel: &str) -> Option<(Uuid, Uuid)> {
+    let (chat, file) = rel.split_once('/')?;
+    let story = file.strip_suffix(".db")?;
+    Some((Uuid::parse_str(chat).ok()?, Uuid::parse_str(story).ok()?))
+}
+
+/// `path` under `dir` as `<chat-id>/<story-id>.db`, with the ids it stands for.
+fn story_name(dir: &Path, path: &Path) -> Option<(String, (Uuid, Uuid))> {
+    let rel = path.strip_prefix(dir).ok()?;
+    let name = rel
+        .components()
+        .map(|part| part.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/");
+    let ids = story_ids(&name)?;
+    Some((name, ids))
+}
+
+fn file_len(path: &Path) -> u64 {
+    fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+}
+
 /// The chat id a file name stands for: `<uuid>.json` — the rule
 /// `JsonStore::chat_files` applies, so `*.bak` and stray files are not chats.
 fn chat_id(file_name: &str) -> Option<Uuid> {
@@ -550,24 +762,29 @@ fn assemble(
     source: Source,
     profiles: ProfileTotals,
     tally: Tally,
-    database: DatabaseStats,
-    database_bytes: u64,
+    (database, database_bytes): (DatabaseStats, u64),
+    stories: StoryTally,
 ) -> DataStats {
     let (chats, chat_list, chats_bytes) = tally.finish();
+    let (stories, story_list, stories_bytes, story_logs_bytes) = stories.finish(&chat_list);
     DataStats {
         format: SNAPSHOT_FORMAT,
         app_version: env!("CARGO_PKG_VERSION").to_string(),
         taken_at: Utc::now(),
-        fingerprint: DataStats::fingerprint(&chat_list, &database),
+        fingerprint: DataStats::fingerprint(&chat_list, &database, &story_list),
         source,
         profiles,
         chats,
         database,
+        stories,
         sizes: Sizes {
             chats_bytes,
             database_bytes,
+            stories_bytes,
+            story_logs_bytes,
         },
         chat_list,
+        story_list: Some(story_list),
     }
 }
 
@@ -611,7 +828,13 @@ pub fn collect_root(paths: &Paths, loc: &Locale) -> Result<DataStats> {
     let source = Source::DataRoot {
         path: paths.root().display().to_string(),
     };
-    Ok(assemble(source, profiles, tally, database, database_bytes))
+    Ok(assemble(
+        source,
+        profiles,
+        tally,
+        (database, database_bytes),
+        StoryTally::of_root(paths),
+    ))
 }
 
 /// Summarizes a backup archive without unpacking it. `password` — already
@@ -647,6 +870,20 @@ pub fn collect_archive(archive: &Path, password: Option<&str>, loc: &Locale) -> 
         }
     }
 
+    let mut stories = StoryTally::default();
+    for entry in &entries {
+        let Some(name) = entry.name.strip_prefix(STORIES_PREFIX) else {
+            continue;
+        };
+        let Some(ids) = story_ids(name) else { continue };
+        let read = reader
+            .with_entry(&entry.name, |stream, size| {
+                story_stats_of_image(stream, usize::try_from(size)?)
+            })
+            .and_then(|found| found.context("the archive lists the story and does not hold it"));
+        stories.add(name, ids, entry.size, read);
+    }
+
     let profiles = reader
         .with_entry(PROFILES_ENTRY, |stream, _| read_all(stream))
         .ok()
@@ -680,8 +917,8 @@ pub fn collect_archive(archive: &Path, password: Option<&str>, loc: &Locale) -> 
         source,
         profiles,
         tally,
-        database,
-        database_bytes.unwrap_or(0),
+        (database, database_bytes.unwrap_or(0)),
+        stories,
     ))
 }
 
@@ -744,17 +981,24 @@ pub fn render_text(stats: &DataStats, loc: &Locale) -> String {
     }));
 
     let c = &stats.chats;
-    if !c.unreadable.is_empty() {
-        out.push(String::new());
-        out.push(loc.tf(
-            "cli.stats.unreadable",
-            &[
-                ("count", &c.unreadable.len().to_string()),
-                ("names", &c.unreadable.join(", ")),
-            ],
-        ));
+    let s = &stats.stories;
+    for (key, names) in [
+        ("cli.stats.unreadable", &c.unreadable),
+        ("cli.stats.unreadable_stories", &s.unreadable),
+        ("cli.stats.stories_without_chat", &s.without_chat),
+    ] {
+        if !names.is_empty() {
+            out.push(String::new());
+            out.push(loc.tf(
+                key,
+                &[
+                    ("count", &names.len().to_string()),
+                    ("names", &names.join(", ")),
+                ],
+            ));
+        }
     }
-    if c.newest_schema > CHAT_SCHEMA {
+    if c.newest_schema > CHAT_SCHEMA || s.newest_schema > STORY_SCHEMA {
         out.push(String::new());
         out.push(loc.t("cli.stats.newer_data").to_string());
     }
@@ -851,17 +1095,43 @@ fn table_rows(stats: &DataStats, loc: &Locale) -> Vec<(String, String)> {
             ),
         ),
     ];
+    let s = &stats.stories;
+    if s.any() {
+        rows.push((
+            "cli.stats.label.stories",
+            loc.tf(
+                "cli.stats.val.stories",
+                &[
+                    ("total", &n(s.total)),
+                    ("deleted", &n(s.deleted)),
+                    ("accepted", &s.accepted_chapters.to_string()),
+                    ("chapters", &s.chapters.to_string()),
+                    ("pending", &s.pending_questions.to_string()),
+                ],
+            ),
+        ));
+    }
     rows.extend(database_rows(&stats.database, loc));
-    rows.push((
-        "cli.stats.label.size",
-        loc.tf(
-            "cli.stats.val.size",
-            &[
-                ("chats", &size(stats.sizes.chats_bytes)),
-                ("database", &size(stats.sizes.database_bytes)),
-            ],
-        ),
-    ));
+    let mut sizes = vec![loc.tf(
+        "cli.stats.val.size",
+        &[
+            ("chats", &size(stats.sizes.chats_bytes)),
+            ("database", &size(stats.sizes.database_bytes)),
+        ],
+    )];
+    if s.any() {
+        sizes.push(loc.tf(
+            "cli.stats.val.size_stories",
+            &[("size", &size(stats.sizes.stories_bytes))],
+        ));
+    }
+    if s.call_logs > 0 {
+        sizes.push(loc.tf(
+            "cli.stats.val.size_story_logs",
+            &[("size", &size(stats.sizes.story_logs_bytes))],
+        ));
+    }
+    rows.push(("cli.stats.label.size", sizes.join("; ")));
     rows.into_iter()
         .map(|(label, value)| (loc.t(label).to_string(), value))
         .collect()

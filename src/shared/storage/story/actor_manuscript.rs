@@ -7,7 +7,7 @@
 //! A child of the actor's module, so it reaches the connections and the
 //! registry of capabilities as the actor's own code does.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rusqlite::{OptionalExtension, params};
 
@@ -674,24 +674,47 @@ impl Actor {
     }
 
     /// What the calls at addresses under `prefix` (`ch1/`) cost, across every
-    /// run and attempt (docs/fabula.md §6, T1).
+    /// run of the story and every attempt (docs/fabula.md §6, T1). A run the
+    /// call log holds and the story does not is left out: a story restored
+    /// from a backup, which carries no log, is behind its log, and that run's
+    /// calls built what the restore took back (docs/fabula.md §4, PR 7).
     pub(in crate::shared::storage::story) fn spend(
         &self,
         prefix: &str,
     ) -> Result<Spend, StoryDbError> {
-        Ok(self.calls.query_row(
-            "SELECT COUNT(*), COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
-                    SUM(cost_usd)
-             FROM llm_call WHERE substr(address, 1, length(?1)) = ?1",
-            [prefix],
-            |r| {
-                Ok(Spend {
-                    calls: r.get::<_, i64>(0)? as u64,
-                    input_tokens: r.get::<_, i64>(1)? as u64,
-                    output_tokens: r.get::<_, i64>(2)? as u64,
-                    cost_usd: r.get(3)?,
-                })
-            },
-        )?)
+        let mut runs = self.story.prepare_cached("SELECT id FROM run")?;
+        let known: BTreeSet<String> = runs
+            .query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        let mut stmt = self.calls.prepare_cached(
+            "SELECT run_id, COUNT(*), COALESCE(SUM(input_tokens), 0),
+                    COALESCE(SUM(output_tokens), 0), SUM(cost_usd)
+             FROM llm_call WHERE substr(address, 1, length(?1)) = ?1 GROUP BY run_id",
+        )?;
+        let rows = stmt.query_map([prefix], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                Spend {
+                    calls: r.get::<_, i64>(1)? as u64,
+                    input_tokens: r.get::<_, i64>(2)? as u64,
+                    output_tokens: r.get::<_, i64>(3)? as u64,
+                    cost_usd: r.get(4)?,
+                },
+            ))
+        })?;
+        let mut total = Spend::default();
+        for row in rows {
+            let (run, spent) = row?;
+            if known.contains(&run) {
+                total.calls += spent.calls;
+                total.input_tokens += spent.input_tokens;
+                total.output_tokens += spent.output_tokens;
+                total.cost_usd = match (total.cost_usd, spent.cost_usd) {
+                    (Some(a), Some(b)) => Some(a + b),
+                    (a, b) => a.or(b),
+                };
+            }
+        }
+        Ok(total)
     }
 }

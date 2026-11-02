@@ -756,8 +756,10 @@ src/
 │  │                        `--json` renderers; nothing is created, migrated or unpacked.
 │  │                        `data_stats/compare.rs` — `--compare`: chats by the ids of their
 │  │                        messages (ahead / diverged), database rows by key and digest,
-│  │                        the verdict; `data_stats/snapshot.rs` — reading the other copy
-│  │                        (a snapshot, format-guarded, or an archive — told by the bytes)
+│  │                        stories by their rows (`storage::story::stats`), the verdict;
+│  │                        `data_stats/snapshot.rs` — reading the other copy
+│  │                        (a snapshot, format-guarded, or an archive — told by the bytes).
+│  │                        A story is deleted while its chat is (docs/fabula.md §6 T4)
 │  ├─ data_migration.rs     schema migration orchestration at startup (ADR 0006): downgrade/
 │  │                        corruption gates, pre-migration backup, control-parse
 │  ├─ terminal_input.rs     CLI terminal input: the hidden backup-password prompt, and
@@ -929,7 +931,11 @@ src/
    │  │                     log is read by address or a run's whole in order; actor_manuscript.rs —
    │  │                     the manuscript's and the pauses' (a review written whole and once, an
    │  │                     answer with its approval in one transaction, every run's steps, a
-   │  │                     chapter's spend). One open per file per process
+   │  │                     chapter's spend over the runs the story knows). A run is numbered past
+   │  │                     the last of either file, since a restore can put a story back behind
+   │  │                     its log. stats.rs — the read-only summary `mindfork stats` takes of a
+   │  │                     file or a backup's image, never through the actor: counts and a unit
+   │  │                     per row (`<table>/<key>:<digest>`). One open per file per process
    │  ├─ json.rs            atomic write (write-rename + .bak) for config/profiles/chats
    │  ├─ db/               SQLite + sqlite-vec: notes/RAG, isolated by profile_id.
    │  │  │                 God object broken up by domain (docs/history/refactoring-god-objects.md,
@@ -4828,7 +4834,9 @@ Principles:
   `data/` subdirectory next to the binary (in dev, `target/debug/data/`; the
   subdirectory separates data from build artifacts/caches): `settings.json`,
   `profiles.json`, `chats/`, `data.db`, `personal_dictionary.txt`,
-  `dictionaries/`, `backups/`, `logs/`. A `defaults.json` file next to the
+  `dictionaries/`, `backups/`, `logs/`, and the chats' stories with their call
+  logs, `stories/<chat-id>/<story-id>.db` and `story-logs/<chat-id>/<story-id>.db`
+  (docs/fabula.md §6 T5). A `defaults.json` file next to the
   binary (always outside `data/`; `Defaults` = `DataLocation`
   `portable`/`system`/`path` + `default_language`) switches the root to a
   standard OS folder (the `directories` crate) or a custom directory, and
@@ -4836,9 +4844,11 @@ Principles:
   docs/history/i18n.md); no file → portable mode + `ru` (the old
   `location.json` is read for backward compatibility). **Backups**
   (`features/backup.rs`): a zip with configurable compression (the `TOP_DIRS`
-  chats/dictionaries/locales/themes/files/workspace + data.db/profiles/settings/personal
+  chats/dictionaries/locales/themes/files/workspace/stories + data.db/profiles/settings/personal
   + `*.bak` + `fs_root` if it's inside the root — one constant for both packing
-  and the restore's clearing, so the two cannot drift); restore is transactional (validation → a
+  and the restore's clearing, so the two cannot drift; `story-logs/` is in neither half,
+  and the manifest records the newest story's schema; an archive the app names itself
+  never takes a name that exists, `-2`, `-3`… after the second's stamp); restore is transactional (validation → a
   pre-restore copy in `backups/` → cleanup → extraction → rollback on
   failure). The archive is **optionally AES-256 encrypted** with a password
   from `--password` or from the settings (stored via `shared/secrets.rs`,

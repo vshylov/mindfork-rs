@@ -23,6 +23,20 @@ split by subsystem.
   think at all, Sonnet 5.5 not before its answer, and Opus 5.5 and Fable 5.1, which
   always think, think at their lowest effort. The turns the app runs for itself — titles,
   summaries, a re-asked empty reply — are muted the same way.
+- **A restore no longer writes over the copy it is restoring.** `restore` first saves the
+  current data as `backups/pre-restore-<date>-<time>.zip`, named to the second. Restoring
+  that copy within the second it was made gave the new copy the same name: it was written
+  over the archive about to be unpacked, and the data the copy kept was lost. A name that
+  is taken now gets `-2`, `-3` and so on, for every archive the app names itself.
+
+### Data
+
+- **Backups carry stories.** A backup now packs `stories/`, where the story tools (still
+  to come, and experimental) keep each chat's stories, and its `manifest.json` records
+  their format. Each story's call log, `story-logs/`, stays out, as `logs/` does: a
+  restore neither packs nor clears it. `mindfork stats` counts the stories, counts one
+  as deleted while its chat is, and compares two copies of a story by what each holds.
+  Data without stories backs up, restores and keeps its fingerprint as before.
 
 ## [0.23.1] — 2026-10-31
 

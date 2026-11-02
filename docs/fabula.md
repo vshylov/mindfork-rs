@@ -1,6 +1,6 @@
 # Fabula — a story engine used from the chat: track plan
 
-**Status:** in progress — M0 done (PRs 1 and 2, Gate G0 GO); M1 done (PRs 3–5, Gate G1 GO, 2026-11-01); M2 under way (PR 6, the Author's loop, 2026-11-01). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
+**Status:** in progress — M0 done (PRs 1 and 2, Gate G0 GO); M1 done (PRs 3–5, Gate G1 GO, 2026-11-01); M2 under way (PR 6, the Author's loop, 2026-11-01; PR 7, stories in mindfork's data, 2026-11-02). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
 so are the three this plan adds (§6) and where development runs (§4, *The development
 stack*). The design —
 the engine, its stores, its contracts, its evaluation — is
@@ -224,6 +224,21 @@ at the high level 1,811 and 1,496, with no slip in any arm. The Continuity check
 three planted faults in every call of every arm. No mechanism changes; a role's effort is
 PR 8's to set. The figures are in [journal/stories.md](journal/stories.md).
 
+**PR 7, as built (2026-11-02).** The owner decided two forks the plan had left open (§6, T4
+and T5): a story is deleted softly, while its chat is hidden, and it lives at
+`stories/<chat-id>/<story-id>.db`, its call log at `story-logs/<chat-id>/<story-id>.db`.
+Backups pack `stories/` and clear it on restore, leave `story-logs/` in neither half, and
+record the newest story's schema in the manifest. `mindfork stats` reads a story read-only,
+counts it and its chapters, and compares two copies of one by a digest of each row, since
+two machines continuing a story write the same positional ids with different content. The
+restore test found that a story put back behind its call log reused a run id the log
+held, so a run is now numbered past the last of either file, and a chapter's budget counts
+only the story's own runs. The round trip found an older defect: restoring the pre-restore
+copy within the second it was made wrote the new copy over it, so an archive the app
+names itself never takes an existing name now. **The previous release** reads a backup
+with stories, unpacks them as unknown files, and leaves them out of its own backups; PR 8's
+release notes say so. The figures are in [journal/stories.md](journal/stories.md).
+
 A release can follow G2: the tools are reachable only with `tools.story` on, and the
 release carries the chat schema's step with the checks AGENTS.md §6 asks for.
 
@@ -310,6 +325,22 @@ The owner accepted all three recommendations on 2026-10-31.
   the assistant reads it in full or by reference and can discuss it, and the person opens
   it as any attachment. (b) As a chat file only, which the assistant reaches through a tool.
   **Owner's decision (2026-10-31): (a).**
+
+PR 7 added two more, since the plan's row and the spec disagreed on the first and the plan
+left the second open. The owner accepted both recommendations on 2026-11-02.
+
+- **T4. What "deleted with its chat" means** (PR 7). mindfork has no hard delete (spec §5):
+  a deleted chat is marked `is_hidden`, and its `files/` and `workspace/` stay on disk.
+  (a) Soft, as the chat's other data *(recommended)*: a story counts as deleted while its
+  chat is hidden, which is read from the chat and never stored twice; its files stay.
+  (b) Hard: hiding the chat removes the story's database and call log, the app's only
+  irreversible delete. **Owner's decision (2026-11-02): (a).**
+- **T5. How a story names its chat** (PR 7). (a) By its path,
+  `stories/<chat-id>/<story-id>.db`, with its call log at
+  `story-logs/<chat-id>/<story-id>.db`, as a chat's `files/<chat-id>/` and
+  `workspace/<chat-id>/` do; a chat may hold several stories, and the schema does not change
+  *(recommended)*. (b) One story per chat, `stories/<chat-id>.db`. (c) `stories/<story-id>.db`
+  with a one-row table naming the chat. **Owner's decision (2026-11-02): (a).**
 
 ## 7. Not in this track
 

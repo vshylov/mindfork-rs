@@ -458,3 +458,69 @@ async fn a_chapters_spend_sums_every_run_and_attempt_under_it() {
     let none = db.spend("ch2/").await.unwrap();
     assert_eq!((none.calls, none.tokens(), none.cost_usd), (0, 0, None));
 }
+
+/// A call of `tokens` prompt tokens at `address`, attempt 1, under `run`.
+fn priced(run: &RunId, address: &str, tokens: u64) -> NewCall {
+    NewCall {
+        run: run.clone(),
+        address: address.to_owned(),
+        attempt: 1,
+        role: "author".to_owned(),
+        model: "m".to_owned(),
+        params: json!({}),
+        mechanism: Mechanism::Text,
+        request: json!({}),
+        prompt_sha256: "h".to_owned(),
+        response: None,
+        status: CallStatus::Ok,
+        usage: CallUsage {
+            input_tokens: Some(tokens),
+            output_tokens: Some(0),
+            cached_tokens: None,
+            cost_usd: None,
+        },
+        latency_ms: None,
+    }
+}
+
+/// A backup carries the story database and leaves its call log out (spec §6,
+/// §15), so a restore can put back a story behind its log. The run the log
+/// knows and the story does not is another timeline: the next run is numbered
+/// past it, since run ids are positional and a reused one collides with its
+/// calls, and the chapter's spend leaves it out (docs/fabula.md §4, PR 7).
+#[tokio::test]
+async fn a_story_restored_behind_its_call_log_runs_on_and_counts_its_own_calls() {
+    let dir = tempfile::tempdir().unwrap();
+    let (story, calls) = (dir.path().join("story.db"), dir.path().join("calls.db"));
+    let db = StoryDb::open(&story, &calls).await.unwrap();
+    let mut log = db.run_log_writer().await.unwrap();
+    let first = log.start_run(&json!({})).await.unwrap();
+    log.record_call(priced(&first, "ch1/outline", 100))
+        .await
+        .unwrap();
+    drop(log);
+    db.close().await.unwrap();
+    let backup = dir.path().join("story.backup.db");
+    tokio::fs::copy(&story, &backup).await.unwrap();
+
+    let db = StoryDb::open(&story, &calls).await.unwrap();
+    let mut log = db.run_log_writer().await.unwrap();
+    let lost = log.start_run(&json!({})).await.unwrap();
+    assert_eq!(lost, RunId::nth(2));
+    log.record_call(priced(&lost, "ch1/sc1/plan", 1000))
+        .await
+        .unwrap();
+    drop(log);
+    db.close().await.unwrap();
+
+    tokio::fs::copy(&backup, &story).await.unwrap();
+    let db = StoryDb::open(&story, &calls).await.unwrap();
+    let mut log = db.run_log_writer().await.unwrap();
+    let next = log.start_run(&json!({})).await.unwrap();
+    assert_eq!(next, RunId::nth(3));
+    log.record_call(priced(&next, "ch1/sc1/plan", 10))
+        .await
+        .unwrap();
+    let spend = db.spend("ch1/").await.unwrap();
+    assert_eq!((spend.calls, spend.input_tokens), (2, 110));
+}

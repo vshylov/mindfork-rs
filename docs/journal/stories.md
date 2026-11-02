@@ -13,7 +13,7 @@ what was rejected — the reasoning behind the code, not its current shape. For 
 shape read the reference documents named above; for the traps that recur across areas read
 [lessons.md](../lessons.md).
 
-## Entries (6)
+## Entries (7)
 
 - Post-M9: Fabula — PR 1, the story database (done)
 - Post-M9: Fabula — PR 2, the model port and replay; Gate G0 GO (done)
@@ -21,6 +21,7 @@ shape read the reference documents named above; for the traps that recur across 
 - Post-M9: Fabula — PR 4, the simulation; Gate G1 GO (done)
 - Post-M9: Fabula — PR 5, the reply's schema on the cloud wires (done)
 - Post-M9: Fabula — PR 6, the Author's loop (done)
+- Post-M9: Fabula — PR 7, stories in mindfork's data (done)
 
 ### Post-M9: Fabula — PR 1, the story database (done)
 
@@ -628,3 +629,95 @@ that start a run are PR 8 and PR 9.
 **Gates**: unit tests green; clippy `-D warnings`, fmt, `cyrillic_scan` (and its
 `--self-test`), `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check`,
 `claude_md_chart --check` clean.
+
+### Post-M9: Fabula — PR 7, stories in mindfork's data (done)
+
+M2's second pull request (docs/fabula.md §4): where a story lives in the data directory,
+what a backup does with it, and what `mindfork stats` says of it. No model is called, and
+nothing the person sees changes until a story exists, which the chat tools of PR 8 and
+PR 9 make. Data without stories backs up, restores and keeps its fingerprint as before.
+
+- **Two forks the plan left open, decided by the owner (2026-11-02, docs/fabula.md §6).**
+  *T4:* the plan's row said a story is "hidden and purged with its chat", while mindfork
+  has no hard delete (spec §5): a deleted chat is only marked, and its `files/` and
+  `workspace/` stay. A story counts as deleted while its chat is hidden, read from the
+  chat and never stored twice, and its files stay. *T5:* a story names its chat by its
+  path, `stories/<chat-id>/<story-id>.db`, with its call log at
+  `story-logs/<chat-id>/<story-id>.db`, as `files/<chat-id>/` does. A chat may hold
+  several stories, and the story's schema does not change (`Paths::story_db`,
+  `Paths::story_log`).
+- **Backups** (`features/backup.rs`). `stories` joins the one list of directories a
+  backup packs and a restore clears. The files are packed as they lie: a story is written
+  only through its actor, under the default rollback journal, and `backup` and `restore`
+  hold the single-instance lock. `story-logs` is in neither half, by the owner's decision
+  of 2026-10-31 (spec §15). The manifest records `story`, the newest `user_version` among
+  the stories, read from each file's header as `data.db`'s is; a manifest without it reads
+  as holding none, and `restore` warns when a story is newer than the build.
+- **Found by the restore test: a story put back behind its call log reused a run id.**
+  Runs were numbered by counting the story's own (`run1`, `run2`), and the log keys every
+  call by `(run, address, attempt)`. Restoring a backup brings the story back without the
+  runs it made since, while the log keeps their calls; the next run took `run2` again,
+  and its first call would have hit the log's unique key. A run is now numbered past the
+  last of either file, and a chapter's spend counts only the calls of runs the story knows,
+  since the lost run's calls built what the restore took back (docs/lessons.md §8,
+  recorded). Replay is unchanged: a replay records its calls after its run starts.
+- **`mindfork stats`** (`features/data_stats.rs`). Each story is read the way `data.db`
+  is, read-only from the root or from the archive's entry in memory
+  (`storage::story::stats`), never through the actor, which would run the DDL and take the
+  file's claim. The summary counts the stories with the part in deleted chats, chapters
+  and the accepted ones, and unanswered questions, and names a story under a chat this
+  copy holds no readable file of, and an unreadable story file. The size line adds the
+  stories, and in the live data the call logs. None of it is printed where there is no
+  story file.
+- **Compared by rows, not ids alone.** A story's identity is a unit per row,
+  `<table>/<key>:<digest>`, twelve hex digits of the row's SHA-256. Every table is
+  append-only and ids come from position, so two copies share the rows written before they
+  parted, and a side that holds every unit of the other's is ahead. Two machines answering
+  one question their own way write `answer/q2` twice with two contents, and the story is
+  diverged. A witness belongs to its event's unit, as the two are written together; a step
+  counts once done, without its time, since a done step may be recorded again. The
+  snapshot gains `stories` and `story_list`; a snapshot made before them has no list, and
+  is compared all the same, with a caveat when the side that was read holds stories. The
+  fingerprint hashes what it hashed before when a copy has no stories, so two machines on
+  either side of the update still compare by one line.
+- **The previous release on a backup that holds stories** (docs/lessons.md §8). The
+  summary's fixture data root with two stories, one of them in a deleted chat, written by
+  `write_a_data_root_with_stories` (`#[ignore]`). Then this build's binary and 0.23.1's,
+  built from its tag, each with a data root of its own. No model is called.
+
+  | Step | Binary | What happened |
+  | --- | --- | --- |
+  | `stats` | this build | 2 stories, 1 of them deleted; 3 of 4 chapters accepted; 1 question waiting; stories 408 KB, call logs 32 KB |
+  | `backup` | this build | both stories packed, no call log; the manifest's `story` is 1 |
+  | `stats` of that archive | 0.23.1 | read, with the stories left out, and no "newer version" note: it ignores the manifest's new field |
+  | `restore` into an empty root | 0.23.1 | the stories unpacked, as files it does not know |
+  | `backup` of that root | 0.23.1 | no story in it: its list of directories predates them |
+  | `stats --compare` with 0.23.1's snapshot | this build | the caveat that the other side's stories were not compared |
+  | `stats --compare` with 0.23.1's backup | this build | "only here: 2", and the verdict that this copy holds everything |
+  | `restore` over a root holding another story | 0.23.1 | the other story stays, since its restore does not clear `stories/`; this build names it as a story without a chat |
+  | `restore` of 0.23.1's backup, then of its pre-restore copy, in one second | this build | the defect below; after the fix, both copies kept, and the fingerprint back to the first one |
+
+  A release with stories changes nothing in how 0.23.x reads the data. But a person who
+  goes back to 0.23.x after writing stories gets backups without them, and a restore that
+  leaves stories behind. PR 8, which makes stories, says so in its release notes.
+- **Found by the round trip: a restore wrote over the copy it was restoring.** Not a
+  story's defect, and older than the track. `restore` first saves the root as
+  `backups/pre-restore-<date>-<time>.zip`, named to the second. Restoring that copy within
+  the second it was made named the new copy the same, so the new copy, of a root without
+  the stories, was written over the archive, and that was what got unpacked. The stories
+  the copy was there to keep were gone. An archive the app names itself now never takes a
+  name that exists (`-2`, `-3`…); the test takes every name of the next six seconds and
+  failed on the old code (docs/journal/storage.md).
+- **Mutation check:** 23 mutants in one pass and one build, all killed. They covered the
+  run numbering and the spend's filter, both halves of a backup, the manifest's field and
+  its warning, the three rules of a unit (done steps only, no time, the witnesses), the
+  counts, a story deleted with its chat, one without a chat, the fingerprint both ways,
+  the caveat, the verdict, the comparison's classes, the archive's stories, the call logs,
+  the text's row, and a copy holding only a story. Two would have survived the tests as
+  first written, the witnesses' fold and the copy holding only a story; each got a test
+  before the pass. The sources were restored and the fingerprint checked. The overwrite's
+  fix came after the pass; its test was seen failing on the old code first.
+- **Tests:** 4687 unit tests green (+19), 323 `#[ignore]` (+1: the data root with stories).
+
+**Gates**: unit tests green; clippy `-D warnings`, fmt, `cyrillic_scan`, `link_check`,
+`doc_index_check`, `layer_check`, `list_scroll_check`, `claude_md_chart --check` clean.

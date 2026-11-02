@@ -12,13 +12,18 @@
 //!   `workspace/` — the change journals of chats' code workspaces, spec §9.12: the
 //!   **pre-image** of every file the assistant edited, which exists nowhere else once
 //!   the file is overwritten, so a restore without them can show a change but not put
-//!   it back);
+//!   it back); `stories/` — each chat's Fabula stories, `stories/<chat-id>/<story-id>.db`
+//!   (docs/fabula.md §6 T5), packed as they lie: every read and write of one goes
+//!   through its database actor and the default rollback journal, and a backup holds
+//!   the single-instance lock, so no story is mid-write while it is packed;
 //! - all `*.bak` at the root (`settings.bak`, `profiles.bak`);
 //! - the file-tools "sandbox" directory (`config.tools.fs_root`) — **only if**
 //!   it lies inside the data root.
 //!
-//! Excluded: `backups/`, `logs/`, and the install-defaults files `defaults.json`/
-//! `location.json` (they're about the install, not user data). Additionally, a
+//! Excluded: `backups/`, `logs/`, `story-logs/` (each story's call log, kept for
+//! replay and outside backups by the owner's decision, docs/research/fabula-engine.md
+//! §15: a restore neither packs nor clears it), and the install-defaults files
+//! `defaults.json`/`location.json` (they're about the install, not user data). Additionally, a
 //! `manifest.json` (schema versions + app version) is written into the archive —
 //! metadata for warning on restoring data newer than the running build reads; it
 //! is **not** extracted into the root. Its schemas are those of the files packed,
@@ -84,7 +89,7 @@ use crate::shared::i18n::Locale;
 use crate::shared::paths::Paths;
 use crate::shared::storage::db;
 use crate::shared::storage::schema::{
-    self, CHAT_SCHEMA, DB_SCHEMA, PROFILES_SCHEMA, SETTINGS_SCHEMA,
+    self, CHAT_SCHEMA, DB_SCHEMA, PROFILES_SCHEMA, SETTINGS_SCHEMA, STORY_SCHEMA,
 };
 
 /// Manifest file name inside the archive (schema-version metadata; not
@@ -106,6 +111,10 @@ pub struct SchemaVersions {
     pub profiles: u32,
     pub chat: u32,
     pub db: u32,
+    /// The newest of `stories/*/*.db`. `default`: a manifest written before
+    /// stories reads as holding none, which is what it holds.
+    #[serde(default)]
+    pub story: u32,
 }
 
 impl SchemaVersions {
@@ -116,6 +125,7 @@ impl SchemaVersions {
             profiles: PROFILES_SCHEMA,
             chat: CHAT_SCHEMA,
             db: DB_SCHEMA,
+            story: STORY_SCHEMA,
         }
     }
 
@@ -125,7 +135,8 @@ impl SchemaVersions {
     /// one chat refuses that one file — and the `user_version` in the header of
     /// `packed_db`, the database file that goes into the archive (the compacted
     /// copy, else the live file; never opened through SQLite — see
-    /// [`db::header_user_version`]). A file that is missing or does not parse
+    /// [`db::header_user_version`]), and the newest `user_version` among the
+    /// stories, read the same way. A file that is missing or does not parse
     /// counts as none: `0`. Never fails — a backup that happens is worth more
     /// than an exact manifest.
     fn held_by(paths: &Paths, packed_db: Option<&Path>) -> Self {
@@ -145,8 +156,29 @@ impl SchemaVersions {
             profiles: detected(&paths.profiles_file(), &schema::profiles_artifact()),
             chat: chats,
             db: db::header_user_version(packed_db.unwrap_or(&live_db)).unwrap_or(0),
+            story: story_files(&paths.stories_dir())
+                .iter()
+                .filter_map(|path| db::header_user_version(path))
+                .max()
+                .unwrap_or(0),
         }
     }
+}
+
+/// The story databases under `dir`: `<chat-id>/<story-id>.db`, the layout
+/// `Paths::story_db` names. Whatever else lies there is packed, not read.
+pub(crate) fn story_files(dir: &Path) -> Vec<PathBuf> {
+    let mut found: Vec<PathBuf> = fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|chat| chat.path().is_dir())
+        .flat_map(|chat| fs::read_dir(chat.path()).into_iter().flatten().flatten())
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file() && path.extension() == Some(OsStr::new("db")))
+        .collect();
+    found.sort();
+    found
 }
 
 /// The schema `art` detects in the JSON file at `path`; `0` — no file, or not
@@ -201,6 +233,7 @@ impl BackupManifest {
             ("profiles.json", a.profiles, r.profiles),
             ("chats/*.json", a.chat, r.chat),
             ("data.db", a.db, r.db),
+            ("stories/*/*.db", a.story, r.story),
         ]
         .into_iter()
         .filter(|(_, found, supported)| found > supported)
@@ -283,6 +316,7 @@ const DB_FILES: &[&str] = &["data.db", "data.db-wal", "data.db-shm"];
 ///
 /// One list for both halves — what a backup packs and what a restore clears — so a
 /// directory cannot be packed and then survive a restore, or be cleared and not come back.
+/// `story-logs` is in neither half, by design (the module doc).
 const TOP_DIRS: &[&str] = &[
     "chats",
     "dictionaries",
@@ -290,6 +324,7 @@ const TOP_DIRS: &[&str] = &[
     "themes",
     "files",
     "workspace",
+    "stories",
 ];
 
 /// A packing entry: the source's absolute path + its name inside the archive (with `/`).
@@ -1168,10 +1203,29 @@ pub fn backup_settings(paths: &Paths) -> Result<BackupSettings> {
     })
 }
 
-/// Auto-name for an archive in `backups/`: `<prefix>-YYYYMMDD-HHMMSS.zip`.
+/// Auto-name for an archive in `backups/`: `<prefix>-YYYYMMDD-HHMMSS.zip`, or
+/// with `-2`, `-3`… when that name is taken ([`unused_name`]).
 pub(crate) fn default_backup_path(paths: &Paths, prefix: &str) -> PathBuf {
-    let stamp = Local::now().format("%Y%m%d-%H%M%S");
-    paths.backups_dir().join(format!("{prefix}-{stamp}.zip"))
+    let stamp = Local::now().format("%Y%m%d-%H%M%S").to_string();
+    unused_name(&paths.backups_dir(), prefix, &stamp)
+}
+
+/// `<prefix>-<stamp>.zip` in `dir`, or the first of `<prefix>-<stamp>-2.zip`,
+/// `-3`… that does not exist. The stamp is to the second, and a name taken
+/// twice in one second was one file: a restore of the pre-restore copy made in
+/// that second wrote its own copy over the archive it was about to unpack. The
+/// check and the write are not one step; `backup`, `restore` and the start-up's
+/// pre-migration backup hold the single-instance lock, so none of them races
+/// another.
+fn unused_name(dir: &Path, prefix: &str, stamp: &str) -> PathBuf {
+    let first = dir.join(format!("{prefix}-{stamp}.zip"));
+    if !first.exists() {
+        return first;
+    }
+    (2u32..)
+        .map(|n| dir.join(format!("{prefix}-{stamp}-{n}.zip")))
+        .find(|path| !path.exists())
+        .unwrap_or(first)
 }
 
 #[cfg(test)]
@@ -1272,7 +1326,11 @@ mod tests {
             b"{\"entries\":[]}",
         )
         .unwrap();
+        fs::create_dir_all(root.join("stories").join("c1")).unwrap();
+        fs::write(root.join("stories").join("c1").join("s1.db"), b"story").unwrap();
         // Must not end up in the backup:
+        fs::create_dir_all(root.join("story-logs").join("c1")).unwrap();
+        fs::write(root.join("story-logs").join("c1").join("s1.db"), b"calls").unwrap();
         fs::create_dir_all(root.join("logs")).unwrap();
         fs::write(root.join("logs").join("mindfork.log"), b"log").unwrap();
         fs::create_dir_all(root.join("backups")).unwrap();
@@ -1357,14 +1415,18 @@ mod tests {
             // The pre-images of what the assistant edited in a chat's project: the one
             // thing that track stores which cannot be recomputed (spec §9.12).
             "workspace/c1/journal.json",
+            // A chat's story (docs/fabula.md §6, T5).
+            "stories/c1/s1.db",
         ] {
             assert!(
                 names.contains(&expected.to_string()),
                 "missing {expected} in {names:?}"
             );
         }
-        // Logs, the backups directory, and the defaults files are not included.
+        // Logs, the stories' call logs (spec §15), the backups directory, and
+        // the defaults files are not included.
         assert!(!names.iter().any(|n| n.starts_with("logs/")));
+        assert!(!names.iter().any(|n| n.starts_with("story-logs/")));
         assert!(!names.iter().any(|n| n.starts_with("backups/")));
         assert!(!names.contains(&"location.json".to_string()));
         assert!(!names.contains(&"defaults.json".to_string()));
@@ -1432,6 +1494,20 @@ mod tests {
             b"{}",
         )
         .unwrap();
+        // A story the archive does not carry, and a call log, which no archive
+        // carries: the first is cleared, the second stays (spec §15).
+        fs::create_dir_all(dst.path().join("stories").join("other")).unwrap();
+        fs::write(dst.path().join("stories").join("other").join("s.db"), b"x").unwrap();
+        fs::write(
+            dst.path().join("stories").join("c1").join("s1.db"),
+            b"newer",
+        )
+        .unwrap();
+        fs::write(
+            dst.path().join("story-logs").join("c1").join("s1.db"),
+            b"its calls",
+        )
+        .unwrap();
         let dst_paths = Paths::with_root(dst.path());
 
         let outcome = restore_backup(&dst_paths, &archive_path, None, None, ru(), |_| {}).unwrap();
@@ -1471,6 +1547,18 @@ mod tests {
         assert!(
             !dst.path().join("workspace").join("other").exists(),
             "a journal the archive does not carry survived the restore"
+        );
+        // The stories are packed and cleared together; the call logs are in
+        // neither half, so the one here is still here.
+        let stories = dst.path().join("stories");
+        assert_eq!(
+            fs::read(stories.join("c1").join("s1.db")).unwrap(),
+            b"story"
+        );
+        assert!(!stories.join("other").exists());
+        assert_eq!(
+            fs::read(dst.path().join("story-logs").join("c1").join("s1.db")).unwrap(),
+            b"its calls"
         );
         // The backups directory is preserved (it holds the pre-restore copy).
         assert!(dst.path().join("backups").exists());
@@ -1514,6 +1602,81 @@ mod tests {
             zone_of(&dst.path().join("chats").join("a.json")),
             None,
             "only files/ is marked"
+        );
+    }
+
+    /// The copy a restore makes first is auto-named to the second. Restoring
+    /// that copy in the second it was made named the new copy as the archive
+    /// being restored, wrote it over that archive, and unpacked it: the data
+    /// the copy was there to keep was gone (found by PR 7's round trip,
+    /// docs/journal/storage.md). Every name a restore could pick in the next
+    /// seconds is taken here, so whichever it picks, nothing there may change.
+    #[test]
+    fn a_restore_never_writes_its_copy_over_an_archive_already_there() {
+        let src = tempfile::tempdir().unwrap();
+        seed_data(src.path());
+        fs::write(src.path().join("settings.json"), b"{\"v\":42}").unwrap();
+        let archive = src.path().join("a.zip");
+        let src_paths = Paths::with_root(src.path());
+        create_backup(
+            &src_paths,
+            Some(archive.clone()),
+            1,
+            None,
+            None,
+            ru(),
+            |_| {},
+        )
+        .unwrap();
+        let dst = tempfile::tempdir().unwrap();
+        seed_data(dst.path());
+        let dst_paths = Paths::with_root(dst.path());
+        let now = Local::now();
+        let names: Vec<PathBuf> = (0..6)
+            .map(|s| {
+                let at = now + chrono::Duration::seconds(s);
+                let name = format!("pre-restore-{}.zip", at.format("%Y%m%d-%H%M%S"));
+                dst_paths.backups_dir().join(name)
+            })
+            .collect();
+        for name in &names {
+            fs::copy(&archive, name).unwrap();
+        }
+        let before: Vec<Vec<u8>> = names.iter().map(|n| fs::read(n).unwrap()).collect();
+
+        let outcome = restore_backup(&dst_paths, &names[0], None, None, ru(), |_| {}).unwrap();
+
+        let RestoreOutcome::Restored {
+            pre_restore: Some(copy),
+        } = outcome
+        else {
+            panic!("expected a restore with a pre-restore copy");
+        };
+        assert!(!names.contains(&copy), "{copy:?} took an archive's name");
+        for (name, bytes) in names.iter().zip(&before) {
+            assert_eq!(&fs::read(name).unwrap(), bytes, "{name:?} was written over");
+        }
+        assert_eq!(
+            fs::read(dst.path().join("settings.json")).unwrap(),
+            b"{\"v\":42}"
+        );
+    }
+
+    /// An auto-name that is taken gets `-2`, `-3`…: two copies made in one
+    /// second are two files.
+    #[test]
+    fn an_auto_name_never_takes_an_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let stamp = "20260101-000000";
+        assert_eq!(
+            unused_name(dir.path(), "p", stamp),
+            dir.path().join("p-20260101-000000.zip")
+        );
+        fs::write(dir.path().join("p-20260101-000000.zip"), b"").unwrap();
+        fs::write(dir.path().join("p-20260101-000000-2.zip"), b"").unwrap();
+        assert_eq!(
+            unused_name(dir.path(), "p", stamp),
+            dir.path().join("p-20260101-000000-3.zip")
         );
     }
 
@@ -1845,6 +2008,7 @@ mod tests {
             profiles: 1,
             chat: 1,
             db: 0,
+            story: 0,
         };
         assert_eq!(m.schemas, held);
         assert!(!m.is_newer_than_current());
@@ -1859,6 +2023,7 @@ mod tests {
                 profiles: PROFILES_SCHEMA,
                 chat: CHAT_SCHEMA,
                 db: DB_SCHEMA,
+                story: STORY_SCHEMA,
             },
             created_at: "2030-01-01T00:00:00+00:00".into(),
         };
@@ -1874,9 +2039,30 @@ mod tests {
         }
     }
 
+    /// A story the engine's own store wrote, with its call log: the story
+    /// database at `STORY_SCHEMA` under its chat (docs/fabula.md §6, T5).
+    pub(crate) fn seed_story(root: &Path, chat: &str, story: &str) {
+        use crate::shared::storage::story::StoryDb;
+        let paths = Paths::with_root(root);
+        let (db, log) = (paths.story_db(chat, story), paths.story_log(chat, story));
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let store = StoryDb::open(&db, &log).await.unwrap();
+                let mut author = store.author_writer().await.unwrap();
+                author
+                    .import_canon(&crate::entities::story::fixture_canon())
+                    .await
+                    .unwrap();
+                drop(author);
+                store.close().await.unwrap();
+            });
+    }
+
     /// A root whose files are at the given schemas: `settings.json` and one
-    /// chat stamped, a bare `profiles.json` array (1), and a database the app
-    /// opened (`DB_SCHEMA`).
+    /// chat stamped, a bare `profiles.json` array (1), a database the app
+    /// opened (`DB_SCHEMA`), and a story its store wrote (`STORY_SCHEMA`).
     fn seed_versions(root: &Path, settings: u32, chat: u32) {
         fs::write(
             root.join("settings.json"),
@@ -1891,6 +2077,7 @@ mod tests {
         )
         .unwrap();
         crate::shared::storage::db::Db::open(&root.join("data.db")).unwrap();
+        seed_story(root, "a", "s");
     }
 
     /// A backup of files no start has migrated yet — a pre-migration backup,
@@ -1964,6 +2151,7 @@ mod tests {
             profiles: 0,
             chat: 7,
             db: 0,
+            story: 0,
         };
         assert_eq!(m.schemas, held);
     }
@@ -2002,6 +2190,65 @@ mod tests {
         };
         let m = read_manifest(&pre).unwrap().expect("a manifest");
         assert_eq!(m.schemas, reader_before_the_chat_step());
+    }
+
+    /// The stories count by the newest, read from each file's header as the
+    /// database's is: the one a reader cannot open is the one to warn about.
+    /// Only `stories/<chat>/<story>.db` is a story; a call log is not packed
+    /// and not counted (spec §15).
+    #[test]
+    fn a_backup_records_the_newest_story() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        seed_story(root, "a", "older");
+        let paths = Paths::with_root(root);
+        let newer = paths.story_db("b", "newer");
+        fs::create_dir_all(newer.parent().unwrap()).unwrap();
+        let conn = rusqlite::Connection::open(&newer).unwrap();
+        conn.execute_batch(&format!("PRAGMA user_version = {};", STORY_SCHEMA + 1))
+            .unwrap();
+        drop(conn);
+        let stray = paths.stories_dir().join("b").join("readme.txt");
+        fs::write(&stray, b"not a story").unwrap();
+        let log = paths.story_log("c", "far-newer");
+        fs::create_dir_all(log.parent().unwrap()).unwrap();
+        let conn = rusqlite::Connection::open(&log).unwrap();
+        conn.execute_batch("PRAGMA user_version = 99;").unwrap();
+        drop(conn);
+
+        let out = create_backup(&paths, None, 1, None, None, ru(), |_| {}).unwrap();
+
+        let m = read_manifest(&out).unwrap().expect("a manifest");
+        assert_eq!(m.schemas.story, STORY_SCHEMA + 1);
+        assert_eq!(
+            m.newer_schemas(),
+            vec![NewerSchema {
+                file: "stories/*/*.db",
+                found: STORY_SCHEMA + 1,
+                supported: STORY_SCHEMA,
+            }]
+        );
+        let names = archive_names(&out);
+        assert!(
+            names.contains(&"stories/b/readme.txt".to_string()),
+            "{names:?}"
+        );
+        assert!(
+            !names.iter().any(|n| n.starts_with("story-logs/")),
+            "{names:?}"
+        );
+    }
+
+    /// A manifest written before stories has no `story`, and reads as holding
+    /// none: what such an archive holds.
+    #[test]
+    fn a_manifest_before_stories_holds_none() {
+        let written = r#"{"app_version":"0.23.1",
+            "schemas":{"settings":7,"profiles":1,"chat":7,"db":1},
+            "created_at":"2026-10-31T01:00:00+00:00"}"#;
+        let m: BackupManifest = serde_json::from_str(written).unwrap();
+        assert_eq!(m.schemas.story, 0);
+        assert!(!m.is_newer_than_current());
     }
 
     /// The warning names each file the archive holds at a newer schema, both

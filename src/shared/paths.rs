@@ -369,6 +369,38 @@ impl Paths {
         self.root.join("files")
     }
 
+    /// The chats' stories (`stories/<chat-id>/<story-id>.db`, docs/fabula.md §6
+    /// T5): each a Fabula database under its chat's id, as `files/<chat-id>/`
+    /// is. User data, so `features::backup` packs it; a story counts as deleted
+    /// while its chat is hidden (T4).
+    pub fn stories_dir(&self) -> PathBuf {
+        self.root.join("stories")
+    }
+
+    /// The stories' call logs (`story-logs/<chat-id>/<story-id>.db`): every
+    /// model call, for replay. Outside backups by the owner's decision
+    /// (docs/research/fabula-engine.md §15): a restore neither packs nor
+    /// clears it.
+    pub fn story_logs_dir(&self) -> PathBuf {
+        self.root.join("story-logs")
+    }
+
+    /// The database of story `story_id` in chat `chat_id`.
+    #[allow(dead_code)] // the story tools open it, from PR 8 (docs/fabula.md §4)
+    pub fn story_db(&self, chat_id: &str, story_id: &str) -> PathBuf {
+        self.stories_dir()
+            .join(chat_id)
+            .join(format!("{story_id}.db"))
+    }
+
+    /// The call log of story `story_id` in chat `chat_id`.
+    #[allow(dead_code)] // as above
+    pub fn story_log(&self, chat_id: &str, story_id: &str) -> PathBuf {
+        self.story_logs_dir()
+            .join(chat_id)
+            .join(format!("{story_id}.db"))
+    }
+
     /// The disposable search cache (`cache.db`) — a full-text index over chat
     /// content. Derived data: deleting it is a supported repair, and
     /// `features/backup.rs` leaves it out of archives by construction (its
@@ -543,6 +575,26 @@ mod tests {
         let f = p.chat_file("abc123");
         assert!(f.ends_with("abc123.json"));
         assert_eq!(f.parent(), Some(p.chats_dir().as_path()));
+    }
+
+    /// A story and its call log sit under their chat's id, in two directories
+    /// of their own: the first goes into backups and the second does not
+    /// (docs/fabula.md §6, T5).
+    #[test]
+    fn a_story_and_its_call_log_are_named_by_their_chat_and_their_id() {
+        let p = Paths::with_root("data-root");
+        let db = p.story_db("chat", "story");
+        assert_eq!(db, Path::new("data-root/stories/chat/story.db"));
+        let log = p.story_log("chat", "story");
+        assert_eq!(log, Path::new("data-root/story-logs/chat/story.db"));
+        assert_eq!(
+            db.parent().unwrap().parent(),
+            Some(p.stories_dir().as_path())
+        );
+        assert_eq!(
+            log.parent().unwrap().parent(),
+            Some(p.story_logs_dir().as_path())
+        );
     }
 
     #[test]
