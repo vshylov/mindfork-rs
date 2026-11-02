@@ -81,7 +81,11 @@ fn story_ids(dir: &Path) -> Vec<String> {
         .filter_map(Result::ok)
         .map(|e| e.path())
         .filter(|p| p.is_file() && p.extension().is_some_and(|x| x == "db"))
-        .filter_map(|p| p.file_stem().and_then(|s| s.to_str()).map(str::to_owned))
+        .filter_map(|p| {
+            p.file_stem()
+                .and_then(std::ffi::OsStr::to_str)
+                .map(str::to_owned)
+        })
         .collect();
     ids.sort();
     ids
