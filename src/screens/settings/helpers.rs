@@ -846,6 +846,7 @@ pub(super) fn gate_hint(gate: ToolGate, loc: &'static Locale) -> &'static str {
         ToolGate::Background => "ui.settings.gate.background",
         ToolGate::Followups => "ui.settings.gate.followups",
         ToolGate::ImageGen => "ui.settings.gate.image_gen",
+        ToolGate::Story => "ui.settings.gate.story",
     })
 }
 

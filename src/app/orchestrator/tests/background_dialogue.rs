@@ -314,6 +314,7 @@ fn start_dialogue_is_gated_by_the_setting() {
         background,
         followups: false,
         image_gen: false,
+        story: false,
         history: false,
         workspace: false,
         workspace_commands: Default::default(),

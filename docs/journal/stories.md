@@ -13,7 +13,7 @@ what was rejected — the reasoning behind the code, not its current shape. For 
 shape read the reference documents named above; for the traps that recur across areas read
 [lessons.md](../lessons.md).
 
-## Entries (7)
+## Entries (8)
 
 - Post-M9: Fabula — PR 1, the story database (done)
 - Post-M9: Fabula — PR 2, the model port and replay; Gate G0 GO (done)
@@ -22,6 +22,7 @@ shape read the reference documents named above; for the traps that recur across 
 - Post-M9: Fabula — PR 5, the reply's schema on the cloud wires (done)
 - Post-M9: Fabula — PR 6, the Author's loop (done)
 - Post-M9: Fabula — PR 7, stories in mindfork's data (done)
+- Post-M9: Fabula — PR 8, the story run in the background (done)
 
 ### Post-M9: Fabula — PR 1, the story database (done)
 
@@ -721,3 +722,119 @@ PR 9 make. Data without stories backs up, restores and keeps its fingerprint as 
 
 **Gates**: unit tests green; clippy `-D warnings`, fmt, `cyrillic_scan`, `link_check`,
 `doc_index_check`, `layer_check`, `list_scroll_check`, `claude_md_chart --check` clean.
+
+### Post-M9: Fabula — PR 8, the story run in the background (done)
+
+M2's third pull request (docs/fabula.md §4): a story's run goes out as the third
+background payload, beside the sub-agent's and the dialogue's, and lands in its chat.
+Nothing starts one yet — `story_create` and `story_continue` are PR 9 — so the payload is
+built and proved on the mock engine, and the one tool a person can reach is `story_status`,
+behind `tools.story`, off by default.
+
+- **Two forks the plan left open, decided by the owner (2026-11-02, docs/fabula.md §6).**
+  *T6:* T1 named the budget's unit, not its amount. A chapter is bounded by 2,000,000
+  tokens, about twice the 718,865 a chapter of three scenes took on Qwen 3.8 27B in PR 6,
+  and by no dollar cap unless one is set: Anthropic reports no cost, so a default in
+  dollars would bound one provider only. *T7:* a story run takes a background slot, as a
+  dialogue does, so one cap bounds the background load; a story has one run at a time
+  either way.
+- **The payload** (`app/orchestrator/story_runs.rs`, `RunSpec::Story`). It shares every
+  later step with the other two: the seat, the record on the call that started it, the
+  landing by id, the notification and its wake, `/subagents stop`, the tasks screen, the
+  cancel on a chat's deletion. What runs is `features::story::run::run`: the story opened
+  from `stories/<chat-id>/<story-id>.db`, the engine of PR 6 on the turn's own backend, every
+  role on the one model with the sampling G1 and PR 6 measured (characters muted, the World
+  Master and the reviewers at a low effort, the Author at a medium one with room for a
+  chapter), each call under the app's session budget (`EngineAdapter::with_sessions`, a
+  permit for the stream's length, priced as a run's request is). A managed server with a
+  draft model is put on the fallback (`needs_fallback`). The engine reports no rounds, so
+  the run's mirror stays its placeholder until it lands.
+- **The time limit cancels the calls, not the run.** `tools.story_run_timeout_secs` (6 h,
+  T2) fires a child of the run's token that only the calls hold; the engine stops at the
+  step in flight and records it, exactly as for a stop, and the landing reads it as timed
+  out. Dropping the future instead would have left the step unrecorded.
+- **One run per story** (`features/story/board.rs`). A run claims its story on a board the
+  orchestrator holds before it opens the files, and a second is refused with the first one's
+  address; the run writes the address of each call it makes there, which `story_status`
+  reports and a quit names. A story has one actor at a time, so this is also what keeps two
+  runs from opening one file.
+- **The landing.** The chapter a checkpoint asks about lands as an attachment of the chat,
+  `<story> — chapter <n>.md`, its source one per chapter, so a revision replaces the version
+  before it (T3). Its mode is decided at the landing, against the chat's budget as it is
+  then, without the version it replaces: the run cannot see the chat. The notification, in
+  the profile's language under the task prefix, carries the summary, the Author's note on
+  each scene kept (a rerun's request is no pick), the assumptions, the question and what
+  the run cost. A run that stops short says where and what continuing does: stopped, timed
+  out, its budget spent, a call that gave nothing usable, a story that could not open. A
+  spent budget reads as *failed* in the list; the landing says what was spent.
+- **Found while wiring the landing: a story's record would have been retitled at every
+  landing.** A background run is auto-titled when it lands, as a turn's child is, which for
+  a story means a model call per chapter renaming a record named after its story. A story's
+  run is not auto-titled.
+- **A quit** lands the run at once from its mirror, cancelled, with a line naming the call it
+  was in, read from the board; the task's own end, arriving after, lands nothing twice.
+- **`story_status`** (`features/tools/story.rs`) reads every story of the chat read-only
+  (`storage::story::status`), through an actor over read-only connections, beside a run
+  that holds the story's own: no DDL, no claim, a busy timeout over a write in flight, an
+  empty call log when the log is gone. The reads are the actor's own, so the status and
+  the run cannot read a row differently.
+- **`CHAT_SCHEMA` 7 → 8**, a stamp: a run's `kind` may read `story`, a strict enum, and one
+  such run is enough for 0.23.1 to skip a chat in silence. The golden v7 fixture holds a
+  background dialogue and a generated picture. The settings take no step: the switch, the
+  time limit and the budget are `tools` fields an older reader ignores.
+- **The modules' `allow(dead_code)` stays, with a new reason.** It was to go with PR 8,
+  the first production consumer. The run reaches the engine from production now, but taking
+  the allow away showed 75 items the run does not reach: the canon's import and checks, the
+  answer's resolution (`story_create`, `story_continue`, PR 9), the replay and the
+  harnesses' scenes (M3). The allow goes with the last of them; the comments say so.
+- **The previous release on schema 8** (AGENTS.md §6). 0.23.1, built from its tag
+  in PR 7, and this build, each from a directory of its own with its data beside it; the
+  seed is 0.23.1's own root from PR 7 (two chats at 7, the stories PR 7 restored), its
+  fixture's deliberately broken chat files taken out. `import` of a bare
+  `mindfork-import` document is the start-up path run headless. No model is called.
+
+  | Step | Binary | What happened |
+  | --- | --- | --- |
+  | `import` on its own root | 0.23.1 | exit 0; fingerprint `ce8df1c0f34ed851` |
+  | `import` on that root | this build | exit 0; both chats stamped 8; one `pre-migrate-*.zip` whose manifest says `chat 7` |
+  | `import` on the migrated root | 0.23.1 | exit 1: *"…created by a newer version of mindfork (schema 8, supported 7). Update the app or restore a backup."*; every file as it was |
+  | `restore` of the pre-migration backup into an empty root | 0.23.1 | no warning, exit 0; chats at 7, fingerprint `ce8df1c0f34ed851` again; then it starts (exit 0) |
+  | `backup` of the migrated root | this build | the manifest says `chat 8` |
+  | `restore` of that backup | 0.23.1 | done, with the warning *"…(chats/*.json: schema 8, supported 7)…"* |
+  | a chat with a `kind: story` run, stamped 8 | 0.23.1 | refused as above, naming the file |
+  | the same chat stamped 7, as with no step | 0.23.1 | `import` passes (exit 0): nothing refuses it, and the chat would be skipped in silence where the list is read, which is what the stamp is for |
+  | the golden v7 file | 0.23.1, then this build | taken (exit 0); stepped to 8 (exit 0) |
+
+  *Found on the way, older than the track:* a chat file that is valid JSON but no chat —
+  the fixture's `{}` — stops every start, 0.23.1's included, with *"Migrating … produced
+  an unparseable result … This is a migration bug; please report it"*, where a damaged
+  chat file is meant to be skipped (spec §12.2). Not fixed here; it is a follow-up.
+- **Live, on a model** (`story_run_live`, `#[ignore]`): the fixture story, its canon
+  approved, run three times over through `run` with the app's session budget at one
+  permit — to a chapter budget of 40,000 tokens, to a stop by its token three seconds into
+  a call, and to a time limit of 20 seconds — each resuming where the one before stopped.
+
+  | Route | Budget run | Stop | Time limit |
+  | --- | --- | --- | --- |
+  | Claude Haiku 5.5 | 10 calls, 46,484 tokens, stopped at `ch1/sc1/r0` | 2 calls; the board showed `…/k1/round1/ines/propose` | 7 calls, timed out at `ch1/sc1/r0` |
+  | Qwen 3.8 27B (OpenRouter, DeepInfra) | 17 calls, 41,741 tokens, $0.023 | 1 call, cut | 3 calls, 2,952 tokens, $0.0013 |
+
+  Every permit came back after every run, and the board was empty after the last. A budget
+  is checked before each call, so a chapter passes it by the last call's tokens (46,484 of
+  40,000 on Haiku). The first run's landing found two things, both fixed: the chapter's
+  assumptions rode on every stop, though they belong beside the checkpoint's question
+  (spec §14), so a stop now carries only where it stopped; and a cost under a cent read
+  as $0.00, so it is now shown to the hundredth of a cent.
+- **Mutation check:** 31 mutants in one pass and one build: 30 killed, two of them by a
+  hang the pass's own timeout caught (no cancel at the deadline, no step on the board). The survivor was the turn's own gate — `tools.story` read
+  into the request's tools — which no test checked above `effective_tool_ids`; a turn now
+  shows `story_status` offered only with the switch on, and was seen failing with the
+  gate forced on. The sources were restored and the fingerprint checked. Before the pass,
+  four tests were added where a mutant would have lived: a rerun's request among the picks,
+  the version a pause asks about among two, the replaced version left out of the budget,
+  and the record's tokens and outcomes.
+- **Tests:** 4723 unit tests green (+36), 324 `#[ignore]` (+1: `story_run_live`).
+
+**Gates**: unit tests green; clippy `-D warnings`, fmt, `cyrillic_scan`, `link_check`,
+`doc_index_check`, `layer_check`, `list_scroll_check`, `claude_md_chart --check` clean;
+the settings screenshots regenerated (the Tools section's count, the profile's new tool).

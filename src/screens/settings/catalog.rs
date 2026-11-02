@@ -1308,6 +1308,41 @@ impl SettingsScreen {
                 .describe(loc.t("ui.settings.desc.workspace_max_rounds")),
             ],
         ));
+        // The story engine (docs/fabula.md): a group of its own, last, since it
+        // is experimental and runs for hours rather than minutes.
+        rows.extend(grouped(
+            loc.t("ui.settings.group.story"),
+            vec![
+                row(
+                    FieldId::TStory,
+                    loc.t("ui.settings.field.story"),
+                    FieldKind::Toggle(t.story),
+                )
+                .describe(loc.t("ui.settings.desc.story")),
+                row(
+                    FieldId::TStoryTimeout,
+                    loc.t("ui.settings.field.story_timeout"),
+                    FieldKind::Text(t.story_run_timeout_secs.to_string()),
+                )
+                .describe(loc.t("ui.settings.desc.story_timeout")),
+                row(
+                    FieldId::TStoryBudgetTokens,
+                    loc.t("ui.settings.field.story_budget_tokens"),
+                    FieldKind::Text(t.story_budget_tokens.to_string()),
+                )
+                .describe(loc.t("ui.settings.desc.story_budget_tokens")),
+                // Empty — no dollar cap (docs/fabula.md §6, T6).
+                row(
+                    FieldId::TStoryBudgetUsd,
+                    loc.t("ui.settings.field.story_budget_usd"),
+                    FieldKind::Text(
+                        t.story_budget_usd
+                            .map_or_else(String::new, |usd| usd.to_string()),
+                    ),
+                )
+                .describe(loc.t("ui.settings.desc.story_budget_usd")),
+            ],
+        ));
         rows
     }
 
@@ -2307,6 +2342,7 @@ impl SettingsScreen {
             ToolGate::Background => !self.config.tools.subagent_background,
             ToolGate::Followups => !profile.companion.followups,
             ToolGate::ImageGen => !self.config.image_gen.enabled,
+            ToolGate::Story => !self.config.tools.story,
         }
     }
 

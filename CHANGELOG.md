@@ -14,6 +14,20 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Added (experimental)
+
+- **A story chapter written in the background.** Under Settings → Tools → *Stories
+  (experimental)* — off by default — the story engine's runs go out as background tasks
+  the way a background sub-agent's do: each takes the story from where it stands to its
+  next pause on the chat's own model, takes a background slot, and lands in the chat.
+  The chapter arrives as an attachment, and a task notification carries its summary, why
+  each scene was kept, the choices made without asking and the question for you. A run
+  is bounded by a time limit (6 hours) and the chapter's budget (2,000,000 tokens; a
+  dollar cap where the provider reports cost), and one stopped, timed out or cut short by
+  quitting says where it stopped and resumes there. `story_status` tells the assistant
+  where each story of the chat stands. The tools that create a story and continue it come
+  next, so for now there is nothing to start.
+
 ### Fixed
 
 - **Thinking off reaches Claude.** With thinking turned off, Claude Haiku 5.5, Sonnet
@@ -37,6 +51,12 @@ split by subsystem.
   restore neither packs nor clears it. `mindfork stats` counts the stories, counts one
   as deleted while its chat is, and compares two copies of a story by what each holds.
   Data without stories backs up, restores and keeps its fingerprint as before.
+- **Chat files move to schema 8** for the record a story's run leaves in its chat. The
+  step changes nothing in a file but its version, and the start backs every chat up
+  first, as for every step. 0.23.1 refuses the migrated data as a newer version's;
+  the pre-migration backup is the way back. **Going back to 0.23.x after writing
+  stories:** that version restores a backup with stories but leaves them out of its own
+  backups.
 
 ## [0.23.1] — 2026-10-31
 

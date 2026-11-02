@@ -22,7 +22,7 @@ use uuid::Uuid;
 
 use crate::app::events::AppEvent;
 use crate::entities::message::{Message, MessageRole};
-use crate::entities::subagent::{RunOutcome, SubagentRun};
+use crate::entities::subagent::{RunKind, RunOutcome, SubagentRun};
 use crate::features::tools::ChatEffect;
 
 use super::generation::{self, BackgroundMessage, BackgroundSpawn, BackgroundStart, TurnProgress};
@@ -232,6 +232,7 @@ impl Orchestrator {
         let mut stored = Vec::new();
         let mut live = false;
         let mut landed = false;
+        let attachment_cfg = self.config.attachments;
         if let Some(chat) = self.chat_mut(chat_id) {
             live = chat.child(run_id).is_some();
             if let Some(record) = chat.child_mut_including_deleted(run_id) {
@@ -240,6 +241,12 @@ impl Orchestrator {
             }
             for effect in effects {
                 match effect {
+                    // A story's chapter is decided against the chat as it is
+                    // now; a sub-agent's tool decided its own (spec §9.7).
+                    ChatEffect::AddAttachment(mut a) if kind == RunKind::Story => {
+                        super::story_runs::decide_mode(&mut a, &chat.attachments, &attachment_cfg);
+                        attached.push(*a);
+                    }
                     ChatEffect::AddAttachment(a) => attached.push(*a),
                     ChatEffect::AddChatFile(f) => stored.push(*f),
                     // Identity effects went to the run itself; only the environment's
@@ -260,8 +267,11 @@ impl Orchestrator {
         self.list_stored_files(chat_id, stored);
         self.emit_chat_list();
         // Titled at landing like a turn child (spec §9.3.2): the run's
-        // question and reply arrive together here too.
-        self.maybe_auto_title_run(run_id);
+        // question and reply arrive together here too. A story's run is named
+        // after its story, which a model call per chapter would only rename.
+        if kind != RunKind::Story {
+            self.maybe_auto_title_run(run_id);
+        }
         if !live {
             return;
         }
@@ -271,8 +281,9 @@ impl Orchestrator {
         // run's own closing result either way.
         let loc = self.profile_locale_of(chat_id);
         let key = match kind {
-            crate::entities::subagent::RunKind::Dialogue => "tool.start_dialogue.notification",
-            _ => "tool.start_subagent.notification",
+            RunKind::Dialogue => "tool.start_dialogue.notification",
+            RunKind::Story => "tool.story.notification",
+            RunKind::Subagent => "tool.start_subagent.notification",
         };
         let text = loc.tf(
             key,
@@ -389,6 +400,14 @@ impl Orchestrator {
             run.background = true;
             run.outcome = Some(RunOutcome::Cancelled);
             run.finished_at = Some(chrono::Utc::now());
+            // A story's run names the step it was at (docs/fabula.md §4, PR 8):
+            // the stores keep everything finished, and the next run resumes
+            // from the first step no run finished (spec §9).
+            if run.kind == RunKind::Story {
+                let loc = self.profile_locale_of(seat.chat);
+                run.messages
+                    .push(super::story_runs::quit_line(loc, &self.story_board, run.id));
+            }
             if let Some(record) = self
                 .chat_mut(seat.chat)
                 .and_then(|c| c.child_mut_including_deleted(run.id))

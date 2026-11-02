@@ -34,6 +34,7 @@ pub mod python;
 pub mod rag;
 mod reach;
 pub mod self_model;
+pub mod story;
 pub mod subagent;
 pub mod web;
 pub mod youtube;
@@ -135,6 +136,10 @@ pub struct ToolContext {
     /// at its round's end, and `attachment_search` waits on it for a file still being
     /// indexed (docs/research/attachment-birth-turn.md §5, G1–G2).
     pub index_board: Arc<crate::features::attachment_index::IndexBoard>,
+    /// The story runs out in the background (docs/fabula.md §4, PR 8): what
+    /// `story_status` reports of a run in progress. One board, the
+    /// orchestrator's.
+    pub story_board: Arc<crate::features::story::board::StoryBoard>,
     /// Whether an embedding server is configured at all — what a tool that attaches a
     /// file may promise about searching it (G4). Configured but down is not told apart:
     /// the index then fails fast and the search says there is none.
@@ -271,6 +276,8 @@ pub struct ToolDeps {
     pub embedder: Arc<dyn Embedder>,
     /// See [`ToolContext::index_board`].
     pub index_board: Arc<crate::features::attachment_index::IndexBoard>,
+    /// See [`ToolContext::story_board`].
+    pub story_board: Arc<crate::features::story::board::StoryBoard>,
     /// See [`ToolContext::embed_configured`].
     pub embed_configured: bool,
 }
@@ -401,6 +408,7 @@ impl ToolContext {
             user_times: turn.user_times,
             attachments: turn.attachments,
             index_board: deps.index_board,
+            story_board: deps.story_board,
             embed_configured: deps.embed_configured,
             attachment_cfg: params.attachments,
             history: turn.history,
@@ -875,6 +883,8 @@ pub struct ToolGates {
     /// `image_gen.enabled` — `image_generate` (spec §9.15). Off by default, and
     /// off for a turn nobody is waiting for, whatever the switch says (F7).
     pub image_gen: bool,
+    /// `tools.story` — the story tools (docs/fabula.md). Off by default.
+    pub story: bool,
     /// Whether **this chat** has a compacted-away range (spec §6.7, S12).
     pub history: bool,
     /// Whether **this chat** has a code project attached (spec §9.12).
@@ -929,6 +939,7 @@ pub fn effective_tool_ids(enabled: &[ToolId], gates: &ToolGates) -> Vec<ToolId> 
                 Some(meta::ToolGate::Background) => gates.background,
                 Some(meta::ToolGate::Followups) => gates.followups,
                 Some(meta::ToolGate::ImageGen) => gates.image_gen,
+                Some(meta::ToolGate::Story) => gates.story,
                 None => true,
             }
         })
@@ -1080,6 +1091,9 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     reg.register(Arc::new(subagent::StartSubagent));
     reg.register(Arc::new(dialogue::RunDialogue));
     reg.register(Arc::new(dialogue::StartDialogue));
+    // The story engine's tools (docs/fabula.md): gated by `tools.story` in
+    // `effective_tool_ids`, so at the default no request carries them.
+    reg.register(Arc::new(story::StoryStatusTool));
     // Both tools follow addresses the model picked, so both are built on a client that
     // refuses local and private ones (docs/research/fetch-url-address-policy.md, fork F1).
     let policy = crate::shared::net::AddressPolicy::from_allow_private(cfg.web_allow_private);
@@ -1339,6 +1353,7 @@ pub(crate) mod testkit {
             embedder: Arc::new(MockEmbedder::new(16)),
             // Tests run with a (mock) embedder.
             index_board: Arc::new(crate::features::attachment_index::IndexBoard::new()),
+            story_board: Arc::default(),
             embed_configured: true,
         };
         let mut turn = test_turn(profile_id);
@@ -1412,6 +1427,7 @@ pub(crate) mod testkit {
             embedder,
             // Tests run with a (mock) embedder.
             index_board: Arc::new(crate::features::attachment_index::IndexBoard::new()),
+            story_board: Arc::default(),
             embed_configured: true,
         };
         let ctx = ToolContext::new(deps, test_params(), test_turn(profile_id));

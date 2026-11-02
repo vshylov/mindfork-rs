@@ -807,6 +807,7 @@ impl Orchestrator {
                 // (docs/history/image-generation.md §6.6, F7). A messenger's turn
                 // is someone's, and draws.
                 image_gen: self.config.image_gen.enabled && !woken,
+                story: self.config.tools.story,
                 history: history_upto.is_some(),
                 workspace: workspace.is_some(),
                 // Which slots carry a line, so a `code_test` with nothing to
@@ -3942,12 +3943,15 @@ pub(super) struct BackgroundStart {
 }
 
 /// What a background run *is* (docs/research/background-dialogues.md F5): a
-/// sub-agent over its `ChildSpec`, or a directed scene over its own. The two
-/// share every later step — the seat, the landing by id, the notification,
-/// the stop — so only the start and the spawn branch.
+/// sub-agent over its `ChildSpec`, a directed scene over its own, or a story's
+/// run (docs/fabula.md §4, PR 8; [`super::story_runs`]). They share every later
+/// step — the seat, the landing by id, the notification, the stop — so only
+/// the start and the spawn branch.
 pub(super) enum RunSpec {
     Subagent(Box<ChildSpec>),
     Dialogue(Box<DialogueSpec>),
+    #[allow(dead_code)] // built by `story_continue`'s call (docs/fabula.md §4, PR 9)
+    Story(Box<super::story_runs::StorySpec>),
 }
 
 /// A background dialogue's start (F3): the parsed scene plus the director's
@@ -3973,6 +3977,7 @@ impl BackgroundStart {
         match &self.spec {
             RunSpec::Subagent(spec) => spec.run_id,
             RunSpec::Dialogue(spec) => spec.run_id,
+            RunSpec::Story(spec) => spec.run_id(),
         }
     }
 
@@ -3997,6 +4002,43 @@ impl BackgroundStart {
                 background: true,
             },
             RunSpec::Dialogue(spec) => spec.placeholder(),
+            RunSpec::Story(spec) => spec.placeholder(),
+        }
+    }
+}
+
+/// A story run's start as `story_continue`'s call will hand one over (docs/
+/// fabula.md §4, PR 9): the slot taken, and the parts of a turn a story run
+/// reads — the backend and the slots — over defaults for the rest.
+#[cfg(test)]
+impl BackgroundStart {
+    pub(super) fn story_for_test(
+        spec: super::story_runs::StorySpec,
+        backend: Arc<dyn EngineBackend>,
+        background: Arc<BackgroundSlots>,
+    ) -> Self {
+        background.take().expect("a free background slot");
+        let tools = crate::shared::config::ToolSettings::default();
+        Self {
+            spec: RunSpec::Story(Box::new(spec)),
+            parts: SharedParts {
+                backend,
+                registry: Arc::new(ToolRegistry::new()),
+                image_cfg: Default::default(),
+                max_rounds: 1,
+                workspace_max_rounds: 1,
+                subagent: SubagentLimits::from_config(&tools),
+                concurrent_calls: 1,
+                engine_mode: ServerMode::default(),
+                continuation_supported: false,
+                history_carries_tools: false,
+                endpoint_sampling_fields: None,
+                model_name: None,
+                ui_loc: crate::shared::i18n::locale(crate::shared::i18n::Lang::En),
+                compaction_enabled: false,
+                compaction_summary: None,
+                background,
+            },
         }
     }
 }
@@ -4126,6 +4168,12 @@ impl BackgroundSlots {
         }
     }
 
+    /// How many slots are taken: the runs out.
+    #[cfg(test)]
+    pub(super) fn out(&self) -> u32 {
+        self.out.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     fn release(&self) {
         use std::sync::atomic::Ordering::SeqCst;
         let _ = self
@@ -4190,6 +4238,7 @@ pub(super) fn spawn_background_run(
         // budget (F4); its participants have no tools, so there is no tool
         // context to hand one to.
         RunSpec::Dialogue(spec) => spec.cancel.clone(),
+        RunSpec::Story(spec) => spec.cancel.clone(),
     };
     // The run's progress goes on a channel of its own and is forwarded under
     // its generation id, so the orchestrator can tell it from the turn's;
@@ -4283,6 +4332,20 @@ pub(super) fn spawn_background_run(
                 .run_parsed(args)
                 .await;
                 (result, Vec::new())
+            }
+            // The story engine on the turn's backend, its every call under the
+            // app's budget (docs/fabula.md §3); it reports no rounds, so the
+            // run's mirror stays its placeholder until it lands.
+            RunSpec::Story(spec) => {
+                let (run, text, effects) = spec
+                    .run(shared.backend.clone(), shared.sessions.clone())
+                    .await;
+                let result = CallResult {
+                    text,
+                    images: Vec::new(),
+                    subagent: Some(Box::new(run)),
+                };
+                (result, effects)
             }
         };
         slots.release();

@@ -75,6 +75,7 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
         TFs => toggle(|c| c.tools.fs_enabled = !c.tools.fs_enabled),
         TConfirmDangerous => toggle(|c| c.tools.confirm_dangerous = !c.tools.confirm_dangerous),
         TSubBackground => toggle(|c| c.tools.subagent_background = !c.tools.subagent_background),
+        TStory => toggle(|c| c.tools.story = !c.tools.story),
         TSubBackgroundWake => {
             toggle(|c| c.tools.subagent_background_wake = !c.tools.subagent_background_wake)
         }
@@ -688,6 +689,31 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
         TQuitSettle => {
             int(|c, t| c.tools.quit_settle_secs = parse_opt_num(t, c.tools.quit_settle_secs))
         }
+        TStoryTimeout => int(|c, t| {
+            if let Ok(v) = t.parse() {
+                c.tools.story_run_timeout_secs = v;
+            }
+        }),
+        TStoryBudgetTokens => int(|c, t| {
+            if let Ok(v) = t.parse() {
+                c.tools.story_budget_tokens = v;
+            }
+        }),
+        // Empty reads "no dollar cap"; a negative or unreadable amount leaves the
+        // value as it was.
+        TStoryBudgetUsd => spec(
+            Access::Text(|c, t| {
+                if t.is_empty() {
+                    c.tools.story_budget_usd = None;
+                } else if let Ok(v) = t.parse::<f64>()
+                    && v.is_finite()
+                    && v >= 0.0
+                {
+                    c.tools.story_budget_usd = Some(v);
+                }
+            }),
+            Some(NumKind::Float),
+        ),
         RagTarget => int(|c, t| {
             if let Ok(v) = t.parse() {
                 c.rag.chunk_target_chars = v;

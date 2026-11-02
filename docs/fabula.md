@@ -1,7 +1,7 @@
 # Fabula — a story engine used from the chat: track plan
 
-**Status:** in progress — M0 done (PRs 1 and 2, Gate G0 GO); M1 done (PRs 3–5, Gate G1 GO, 2026-11-01); M2 under way (PR 6, the Author's loop, 2026-11-01; PR 7, stories in mindfork's data, 2026-11-02). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
-so are the three this plan adds (§6) and where development runs (§4, *The development
+**Status:** in progress — M0 done (PRs 1 and 2, Gate G0 GO); M1 done (PRs 3–5, Gate G1 GO, 2026-11-01); M2 under way (PR 6, the Author's loop, 2026-11-01; PR 7, stories in mindfork's data, 2026-11-02; PR 8, the story run in the background, 2026-11-02). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
+so are the seven this plan adds (§6) and where development runs (§4, *The development
 stack*). The design —
 the engine, its stores, its contracts, its evaluation — is
 [research/fabula-engine.md](research/fabula-engine.md) (*the spec* below), and the
@@ -239,6 +239,25 @@ names itself never takes an existing name now. **The previous release** reads a 
 with stories, unpacks them as unknown files, and leaves them out of its own backups; PR 8's
 release notes say so. The figures are in [journal/stories.md](journal/stories.md).
 
+**PR 8, as built (2026-11-02).** The owner decided two forks the plan had left open (§6, T6
+and T7): a chapter's budget is 2,000,000 tokens with no dollar cap unless one is set, and a
+story run takes a background slot as a dialogue does. The run is the third background payload
+(`RunSpec::Story`): PR 6's engine on the turn's backend, every role on the one model with the
+sampling G1 and PR 6 measured, each call under the app's session budget, one run per story
+claimed on a board the tools read. The time limit cancels the calls, not the run, so the
+engine records the step either way. The chapter lands as an attachment of its chat, decided
+against the chat's budget at the landing, and the notification carries the summary, the
+picks, the assumptions and the question; a quit names the call the run was in. Wiring the
+landing found that a story's record would have been auto-titled by a model call at every
+chapter; it no longer is. `story_status` reads the chat's stories read-only beside a run.
+`CHAT_SCHEMA` moves 7 → 8 by a stamp, and the engine modules keep their `allow(dead_code)`
+for what PR 9 and M3 still have to reach. **The previous release** refuses the migrated
+data as a newer version's and restores its pre-migration backup with no warning, to the same
+fingerprint. **Live** on Claude Haiku 5.5 and Qwen 3.8 27B, a story run stopped at its budget,
+at a stop and at its time limit, each resuming where the last stopped, every permit of the
+session budget given back. The figures are in
+[journal/stories.md](journal/stories.md).
+
 A release can follow G2: the tools are reachable only with `tools.story` on, and the
 release carries the chat schema's step with the checks AGENTS.md §6 asks for.
 
@@ -311,7 +330,7 @@ Its pull requests are cut when M4 starts.
 
 ## 6. Forks this plan adds
 
-The owner accepted all three recommendations on 2026-10-31.
+The owner accepted the first three recommendations on 2026-10-31.
 
 - **T1. The budget's unit** (PR 6). (a) Tokens per chapter on every provider, plus a
   dollar cap where the provider reports cost, as OpenRouter does *(recommended)*.
@@ -341,6 +360,20 @@ left the second open. The owner accepted both recommendations on 2026-11-02.
   `workspace/<chat-id>/` do; a chat may hold several stories, and the schema does not change
   *(recommended)*. (b) One story per chat, `stories/<chat-id>.db`. (c) `stories/<story-id>.db`
   with a one-row table naming the chat. **Owner's decision (2026-11-02): (a).**
+
+PR 8 added two more: T1 set the budget's unit but not its amount, and the plan said nothing
+of the background slots. The owner accepted both recommendations on 2026-11-02.
+
+- **T6. The chapter's default budget** (PR 8). (a) 2,000,000 tokens, no dollar cap unless
+  one is set *(recommended)*: about twice the 718,865 tokens a chapter of three scenes took on
+  Qwen 3.8 27B in PR 6, so a chapter of four with its reruns and revisions fits; a default in
+  dollars would bound OpenRouter alone, since Anthropic reports no cost. (b) 2,000,000 tokens
+  and $5. (c) No limit beyond the timeout. **Owner's decision (2026-11-02): (a).**
+- **T7. Whether a story run takes a background slot** (`tools.subagent_background_max`, 2 by
+  default; PR 8). (a) Yes, as a background dialogue does *(recommended)*: one bound on the
+  background load; a chapter holds its slot for hours, so at the default one is left for
+  sub-agents and dialogues; a story has one run at a time either way. (b) No: stories counted
+  apart, bounded only by one run per story. **Owner's decision (2026-11-02): (a).**
 
 ## 7. Not in this track
 

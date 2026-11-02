@@ -576,11 +576,59 @@ mod tests {
             "the settings take no step"
         );
         let mut chat = read(paths.chat_file(id));
-        assert_eq!(chat["v"], json!(7));
+        // Stamped 7, and on to wherever the chain ends now.
+        assert_eq!(chat["v"], json!(schema::CHAT_SCHEMA));
         chat["v"] = json!(6);
         let before: Value = serde_json::from_str(chat_before).unwrap();
         assert_eq!(chat, before, "the chat holds what it held");
         assert_eq!(pre_migrate_backups(&paths), 1, "one pre-migrate backup");
+
+        run(&paths, ru()).unwrap();
+        assert_eq!(pre_migrate_backups(&paths), 1);
+    }
+
+    /// A root as 0.23.1 left it — settings at 7, a chat at 7 holding a dialogue
+    /// run out in the background and a generated picture — through the real
+    /// registry: the chat alone is backed up and stamped 8, the first schema in
+    /// which a run may be a story's (docs/fabula.md §4, PR 8); the settings
+    /// need no step, since the story's switch, timeout and budget are fields an
+    /// older reader ignores; nothing moves, and the next start finds nothing to
+    /// do. The backup records the chat at 7, what 0.23.1 restores without the
+    /// "newer version" warning.
+    #[test]
+    fn run_stamps_a_root_of_the_version_before_story_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(dir.path());
+        let mut settings_before: Value =
+            serde_json::from_str(include_str!("../shared/storage/fixtures/settings_v6.json"))
+                .unwrap();
+        settings_before["schema_version"] = json!(7);
+        write(
+            &paths.settings_file(),
+            &serde_json::to_string_pretty(&settings_before).unwrap(),
+        );
+        write(&paths.profiles_file(), "[]");
+        let id = "7d1a0b2c-3e4f-4a5b-8c6d-7e8f9a0b1c2d";
+        let chat_before =
+            include_str!("../shared/storage/fixtures/chat_v7_background_dialogue.json");
+        write(&paths.chat_file(id), chat_before);
+
+        run(&paths, ru()).unwrap();
+
+        let read = |path: PathBuf| -> Value {
+            serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap()
+        };
+        assert_eq!(
+            read(paths.settings_file()),
+            settings_before,
+            "the settings take no step"
+        );
+        let mut chat = read(paths.chat_file(id));
+        assert_eq!(chat["v"], json!(8));
+        chat["v"] = json!(7);
+        let before: Value = serde_json::from_str(chat_before).unwrap();
+        assert_eq!(chat, before, "the chat holds what it held");
+        assert_eq!(pre_migrate_manifest(&paths).schemas.chat, 7);
 
         run(&paths, ru()).unwrap();
         assert_eq!(pre_migrate_backups(&paths), 1);

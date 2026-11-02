@@ -246,7 +246,12 @@ pub(super) fn ledgers() -> Vec<Ledger> {
             ],
         }),
         // `dialogue` is what the 2→3 step is for.
-        ledger!(RunKind in Chats { 2 => [Subagent = "subagent"], 3 => [Dialogue = "dialogue"] }),
+        // `story` is what the 7→8 stamp is for (`chat_steps::chat_to_v8`).
+        ledger!(RunKind in Chats {
+            2 => [Subagent = "subagent"],
+            3 => [Dialogue = "dialogue"],
+            8 => [Story = "story"],
+        }),
         ledger!(RunOutcome in Chats {
             2 => [
                 Completed = "completed", Cancelled = "cancelled", TimedOut = "timed_out",

@@ -481,3 +481,50 @@ async fn a_role_gets_its_own_sampling_and_the_others_keep_the_adapters() {
     assert_eq!(master.call.params, serde_json::to_value(&thinking).unwrap());
     assert_eq!(master.call.role, "world_master");
 }
+
+/// Every call takes the app's session budget (docs/fabula.md §3): with its one
+/// permit held — the chat's turn streaming — a call waits, and streams once
+/// the turn's stream ends; cancelled while it waits, it records nothing.
+#[tokio::test]
+async fn a_call_waits_for_the_session_budget_and_a_cancel_while_waiting_records_nothing() {
+    use crate::shared::session_budget::SessionBudget;
+    let (story, log) = fresh_story().await;
+    let budget = Arc::new(SessionBudget::new(1, None));
+    let cancel = CancellationToken::new();
+    let port = EngineAdapter::new(
+        Arc::new(MockBackend::sequence(vec![reply("{\"mood\": \"grim\"}")])),
+        log,
+        "mock-model",
+        sampling(),
+        cancel.clone(),
+    )
+    .with_sessions(budget.clone());
+    let (schema, prompt) = (schema(), prompt());
+    let call = |address: &str| CallAddress {
+        run: story.run.clone(),
+        address: address.to_owned(),
+    };
+
+    let turn = budget.acquire(0, &CancellationToken::new()).await.unwrap();
+    let first = call("ch1/sc1/a");
+    let mut pending = std::pin::pin!(port.json(&first, Role::Character, &schema, &prompt));
+    let waited = tokio::time::timeout(std::time::Duration::from_millis(100), &mut pending).await;
+    assert!(waited.is_err(), "the call waits for the turn's permit");
+    drop(turn);
+    assert_eq!(pending.await.unwrap(), json!({"mood": "grim"}));
+
+    let _turn = budget.acquire(0, &CancellationToken::new()).await.unwrap();
+    let second = call("ch1/sc1/b");
+    let waiting = port.json(&second, Role::Character, &schema, &prompt);
+    cancel.cancel();
+    assert!(matches!(waiting.await, Err(PortError::Cancelled { .. })));
+    assert!(
+        story
+            .db
+            .call(&story.run, "ch1/sc1/b", 1)
+            .await
+            .unwrap()
+            .is_none(),
+        "a call that never streamed is not an attempt"
+    );
+}

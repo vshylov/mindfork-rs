@@ -186,8 +186,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-11-02, version 0.23.1)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **4687 unit tests
-green, 323 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **4723 unit tests
+green, 324 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump and demo-reel regenerators).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -205,7 +205,8 @@ being recent is dropped, not shortened.
   the reply's schema enforced by the provider on every wire; scenes
   simulated as K branches, a World Master ruling, no secret leaked; a chapter
   planned, picked, drafted, reviewed and revised, paused for the human, resumed
-  wherever it was killed; a story backed up and in `stats` ([docs/fabula.md](docs/fabula.md),
+  wherever it was killed; a story backed up and in `stats`; a chapter run in the
+  background, landed in its chat with its question ([docs/fabula.md](docs/fabula.md),
   [docs/journal/stories.md](docs/journal/stories.md)).
 - **Image generation — track complete** (2026-10-30): `image_generate` over a
   slot of its own (OpenAI by default, Gemini, the gateway, xAI), off by default;
@@ -376,15 +377,6 @@ being recent is dropped, not shortened.
   / `machine-id` measurements
   ([docs/research/cloud-provisioning.md](docs/research/cloud-provisioning.md) §7–§8,
   [docs/journal/release.md](docs/journal/release.md), install.md §1, §3.3–§3.4).
-- **`mindfork setup` — a working managed engine from one command** (stage 1 of
-  the provisioning track). Sandbox + llama.cpp + the model, projector, embedder
-  and context **written** into the settings (the env variables only override),
-  `--set KEY=VALUE` guarded by a round trip through the config's types, and
-  `--verify`, which starts what the app will start and reports `/props`.
-  Validated before any download; a failed step does not stop the rest. Live **GO**
-  on Windows/CPU; Linux and a GPU ride on the pod probe
-  ([docs/research/cloud-provisioning.md](docs/research/cloud-provisioning.md) §4,
-  spec §3.4, [docs/journal/engine.md](docs/journal/engine.md)).
 - **The site waits for the release.** The release PR's merge deployed its own
   post 25 min 28 s before the release was public (measured on 0.10.2). `site.yml`
   now holds a deploy while `Cargo.toml` names an unpublished version and runs

@@ -73,6 +73,22 @@ impl JsonStore {
         self.paths.files_dir()
     }
 
+    /// The database of story `story_id` in chat `chat_id` (docs/fabula.md §6,
+    /// T5). See [`Paths::story_db`].
+    pub fn story_db(&self, chat_id: &str, story_id: &str) -> std::path::PathBuf {
+        self.paths.story_db(chat_id, story_id)
+    }
+
+    /// The call log of that story, outside backups. See [`Paths::story_log`].
+    pub fn story_log(&self, chat_id: &str, story_id: &str) -> std::path::PathBuf {
+        self.paths.story_log(chat_id, story_id)
+    }
+
+    /// The stories of chat `chat_id`: a database per story (`stories/<chat-id>/`).
+    pub fn chat_stories_dir(&self, chat_id: &str) -> std::path::PathBuf {
+        self.paths.stories_dir().join(chat_id)
+    }
+
     // ---------- config ----------
 
     /// Loads the config; returns the default if the file is missing.

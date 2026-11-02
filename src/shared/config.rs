@@ -1150,6 +1150,16 @@ pub const DEFAULT_SUBAGENT_BACKGROUND_MAX: u32 = 2;
 /// dialogue on a local thinking model is ~25 sequential requests, measured at
 /// up to ~8 minutes in the stage-0 probe (two-agent-dialogue.md §5.2).
 pub const DEFAULT_DIALOGUE_RUN_TIMEOUT_SECS: u64 = 1800;
+/// Default time limit for one story run (`tools.story_run_timeout_secs`,
+/// docs/fabula.md §6, T2 (a)): six hours, a backstop for a hung run, while the
+/// chapter's budget bounds the spend. A chapter takes about an hour on a local
+/// 12B model and twice that on a 27B one, before reruns.
+pub const DEFAULT_STORY_RUN_TIMEOUT_SECS: u64 = 6 * 60 * 60;
+/// Default token budget of one chapter (`tools.story_budget_tokens`,
+/// docs/fabula.md §6, T6 (a)): about twice the 718,865 tokens a chapter of
+/// three scenes took on Qwen 3.8 27B (docs/journal/stories.md, PR 6), so a
+/// chapter of four with its reruns and revisions fits.
+pub const DEFAULT_STORY_BUDGET_TOKENS: u64 = 2_000_000;
 /// Default code-execution timeout in the Wasmer sandbox (seconds). More generous
 /// than the local interpreter's (10s): WASM interpretation is ~2–5× slower than native.
 /// See docs/research/python-wasmer-sandbox.md.
@@ -1364,6 +1374,24 @@ pub struct ToolSettings {
     /// How many background runs may be out at once; a `start_subagent` past
     /// the cap is refused with a result that says so (research §4.8).
     pub subagent_background_max: u32,
+    /// Offer the story tools (Fabula, docs/fabula.md; spec §9.16) — the story
+    /// engine run from the chat, a chapter written in the background. **Off**
+    /// by default until the evaluation decides the engine (docs/fabula.md §4,
+    /// M3): the tools are absent from the catalog and nothing about a turn
+    /// changes. A story run takes a background slot, as a dialogue does
+    /// (`subagent_background_max`, docs/fabula.md §6, T7 (a)).
+    pub story: bool,
+    /// Time limit for one story run, in seconds: from where the story stands
+    /// to its next pause (docs/fabula.md §6, T2). A run it ends resumes from
+    /// its first unfinished step when the story is continued.
+    pub story_run_timeout_secs: u64,
+    /// A chapter's budget in tokens, prompt and reply, every call under the
+    /// chapter in every run (docs/fabula.md §6, T1 (a), T6 (a)); `0` — none.
+    pub story_budget_tokens: u64,
+    /// A chapter's budget in dollars, counted where the provider reports a
+    /// call's cost, as OpenRouter does; `None`, the default — none (T6 (a)).
+    #[serde(default)]
+    pub story_budget_usd: Option<f64>,
     /// Ask the user before the agentic loop runs a tool marked dangerous
     /// (`Tool::danger()` — spec §9.8). Off by default: opt-in, so the loop
     /// behaves exactly as before until the user turns it on.
@@ -1410,6 +1438,10 @@ impl Default for ToolSettings {
             subagent_background: false,
             subagent_background_wake: true,
             subagent_background_max: DEFAULT_SUBAGENT_BACKGROUND_MAX,
+            story: false,
+            story_run_timeout_secs: DEFAULT_STORY_RUN_TIMEOUT_SECS,
+            story_budget_tokens: DEFAULT_STORY_BUDGET_TOKENS,
+            story_budget_usd: None,
             confirm_dangerous: false,
             mcp_images: true,
             python_images: true,
@@ -3670,6 +3702,12 @@ mod tests {
             c.tools.dialogue_run_timeout_secs,
             DEFAULT_DIALOGUE_RUN_TIMEOUT_SECS
         );
+        // The story tools are off until the evaluation decides them, with a
+        // six-hour run and a two-million-token chapter (docs/fabula.md §6).
+        assert!(!c.tools.story);
+        assert_eq!(c.tools.story_run_timeout_secs, 6 * 60 * 60);
+        assert_eq!(c.tools.story_budget_tokens, 2_000_000);
+        assert_eq!(c.tools.story_budget_usd, None);
         // Parallel sessions and sub-agents are opt-in: one stream and one run
         // at a time until the user says otherwise (docs/research/parallel-subagents.md R4).
         assert_eq!(c.engine.managed.sessions, DEFAULT_SESSIONS);

@@ -1158,6 +1158,7 @@ mod tests {
             embedder: embedder.clone(),
             // Tests run with a (mock) embedder.
             index_board: std::sync::Arc::new(crate::features::attachment_index::IndexBoard::new()),
+            story_board: std::sync::Arc::default(),
             embed_configured: true,
         };
         let mk = |pid| super::super::testkit::ctx_with_deps(pid, deps.clone());

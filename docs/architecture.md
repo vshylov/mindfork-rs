@@ -322,6 +322,11 @@ src/
 │  │  ├─ tool_loop.rs       shared "silent" agentic loop for background tasks (reflection/consolidation)
 │  │  ├─ background.rs      slot registry for silent background tasks (BgSlot by BackgroundKind)
 │  │  ├─ background_runs.rs sub-agent runs out in the background: seats, landing by id, the notification (spec §9.3.2)
+│  │  ├─ story_runs.rs      a story's run out in the background, the third payload (spec §9.16,
+│  │  │                     docs/fabula.md PR 8): its spec and placeholder, the run on the turn's
+│  │  │                     backend under the app's budget, the landing — the record, the
+│  │  │                     notification's body, the chapter's attachment decided against the chat
+│  │  │                     at the landing, the line a quit leaves
 │  │  ├─ tasks.rs           the tasks screen's snapshot (AppEvent::TaskList): rows off the seats,
 │  │  │                     the turn's children and the chats' records (spec §11.10)
 │  │  ├─ notes_view.rs      the notes screen's snapshot (AppEvent::NotesView) and its edits
@@ -626,6 +631,9 @@ src/
 │  │  │                     decided (profile, not this chat, nothing hidden);
 │  │  │                     search over `cache.db` scoped in SQL, reads via the
 │  │  │                     history renderer — spec §9.11
+│  │  ├─ story.rs           story_status (gate ToolGate::Story = tools.story) and the words a story
+│  │  │                     run's landing is told in: the notification, the question, the stop,
+│  │  │                     the quit — model-facing, so in the profile's language (spec §9.16)
 │  │  └─ subagent.rs        call_subagent — schema + args; the loop runs it (ADR 0010)
 │  ├─ spellcheck/           check, segment, dict, mod — Hunspell + segmenter + personal dictionary
 │  ├─ story/                Fabula's engine (docs/fabula.md §3, docs/research/fabula-engine.md §7–§9):
@@ -661,8 +669,15 @@ src/
 │  │                        Author sees everything but the planted tokens, the Reader only the
 │  │                        published text, the checker the record with its ids; steps.rs — the
 │  │                        steps of every run of a story, read by a resume; export.rs — the story
-│  │                        as markdown. No production consumer before the story run (PR 8): the
-│  │                        module's `allow(dead_code)` goes with it
+│  │                        as markdown; board.rs — the story runs out: a story claimed by one run
+│  │                        at a time, the call each is in, what `story_status` and a quit read;
+│  │                        run.rs — a run as the app starts it (PR 8): the story opened from its
+│  │                        chat's directory, every role on the chat's one model with its own
+│  │                        sampling, the time limit cancelling the calls so the engine stops at a
+│  │                        step, the landing's data read from the stores. The run reaches the
+│  │                        engine from production; what it does not reach yet (the canon's import,
+│  │                        the answer's resolution, the replay) keeps the module's
+│  │                        `allow(dead_code)` until PR 9 and M3
 │  ├─ profiles.rs           pure profile operations (sanitize_name, ProfileEdit)
 │  ├─ chat_search_sort.rs   chat list filter/sort
 │  ├─ companion_memory.rs   the companion's memory blocks (spec §6.6): the memory cut,
@@ -842,9 +857,10 @@ src/
 │  │                        event passes (checked against the state it applies to, applied, its
 │  │                        witnesses computed from presence and visibility), and fold over a path.
 │  │                        Here rather than in features because the story database runs it inside its
-│  │                        actor. No production consumer before the story run (PR 8): the module's
-│  │                        `allow(dead_code)` goes with it
-│  ├─ subagent.rs           SubagentRun/RunKind/RunOutcome — a run's record on its parent chat;
+│  │                        actor. Reached from production through the story run (PR 8); the canon's
+│  │                        checks keep the module's `allow(dead_code)` until `story_create` (PR 9)
+│  ├─ subagent.rs           SubagentRun/RunKind/RunOutcome — a run's record on its parent chat
+│  │                        (RunKind::Story since CHAT_SCHEMA 8);
 │  │                        RunProgressKind/SubagentProgress (its position — the status-bar
 │  │                        chip) and ChildView (a transcript's view) — what the screens are told
 │  ├─ followup.rs           Followup/FollowupState/QuietHours — a return the companion planned
@@ -935,7 +951,9 @@ src/
    │  │                     the last of either file, since a restore can put a story back behind
    │  │                     its log. stats.rs — the read-only summary `mindfork stats` takes of a
    │  │                     file or a backup's image, never through the actor: counts and a unit
-   │  │                     per row (`<table>/<key>:<digest>`). One open per file per process
+   │  │                     per row (`<table>/<key>:<digest>`). status.rs — where a story stands
+   │  │                     for `story_status`, read through an actor over read-only connections
+   │  │                     beside a run that holds the story's own. One open per file per process
    │  ├─ json.rs            atomic write (write-rename + .bak) for config/profiles/chats
    │  ├─ db/               SQLite + sqlite-vec: notes/RAG, isolated by profile_id.
    │  │  │                 God object broken up by domain (docs/history/refactoring-god-objects.md,
@@ -3157,6 +3175,7 @@ by `ToolGroup` (`Ord`).
 | Awareness      | `call_subagent` — a **loop-executed** tool (ADR 0010): the loop runs a nested `TurnLoop` with the turn's tools minus itself, `history_*` and the self-model family, over the parent's environment; no history, no nesting; the transcript lives on the call's record (`SubagentRun`) |
 | Awareness      | `start_subagent` — the background twin (spec §9.3.2, gate `ToolGate::Background` = `tools.subagent_background`): the same call returns at once and the run outlives the turn, its result delivered as a task notification; the record lands as a placeholder and is filled in by id (`orchestrator/background_runs.rs`) |
 | Awareness      | `start_dialogue` — the same twin for a directed scene (spec §9.13, the same gate): the call returns with the scene's address, the director's closing result arrives as a task notification, and the director's brief is the conversation as it was at the call (`features/tools/dialogue.rs`, `DialogueSpec`) |
+| Awareness      | `story_status` — where the chat's stories stand (spec §9.16, gate `ToolGate::Story` = `tools.story`, off): read-only, from the story files beside a run that may be writing them, with the run's call from the board. The story's runs go out as the third background payload (`orchestrator/story_runs.rs`), started by `story_continue` (docs/fabula.md, PR 9) |
 | Conversation control | `send_followup_message` / `rewrite_current_message` — **control flow** (optional, off by default): recognized by the agentic loop, not `Tool::invoke`. The same settings group also holds the read-back pair `history_read`/`history_search` (the folded range of *this* chat, offered only while one exists — spec §6.7) and the cross-chat pair `chat_search`/`chat_read` (the profile's *other* chats — **optional, off by default**; spec §9.11) |
 | Self-model     | `get_self_model`, `reflect`, `update_self_model`, `update_user_model`, `add_insight` — **optional, off by default**: a per-profile "self-model" in SQLite (description + goals + a model of the interlocutor), written directly through `storage` (not via `ChatEffect`). Observations ("narrative") moved into `@self` notes — they're consolidated by note tools (`consolidate_narrative` was removed). **Details in §9** |
 | Plugins (MCP)  | `mcp__<server>__<tool>` — **dynamic** `McpTool` wrappers around external MCP servers' tools (`features/tools/mcp.rs`; description/schema is a snapshot of the server, per-call timeout + `ctx.cancel` cancellation, result clipping). Not part of the static `CATALOG`: the registry is rebuilt on `McpManager` events (`rebuild_registry`), and the UI catalog rides an `McpSnapshot` inside `AppEvent::Settings`; the `effective_tool_ids` gate is by the `mcp__` prefix + `config.mcp.enabled`. Double opt-in + TOFU catalog pinning. See spec §9.6, ADR 0007 |

@@ -287,6 +287,35 @@ fn append_only_ddl(table: &str) -> String {
 /// database (by its header, before SQLite touches it) and one a newer build
 /// wrote (by its version, before any DDL), then brings it to this build's
 /// schema.
+/// `path` opened read-only, as [`super::status`] reads a story a run may be
+/// writing: no DDL runs and no claim is taken, so the file is left as it was;
+/// a schema newer than this build's is refused as [`open_file`] refuses it.
+/// The busy timeout lets a read wait out a write in flight, since the files
+/// keep the rollback journal (docs/journal/stories.md, PR 1).
+pub(super) fn open_read_only(path: &Path, spec: &FileSpec) -> Result<Connection, StoryDbError> {
+    if !is_sqlite_file(path) {
+        return Err(StoryDbError::NotADatabase {
+            file: spec.name,
+            path: path.to_owned(),
+        });
+    }
+    let conn = Connection::open_with_flags(
+        path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    let found: u32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
+    if found > spec.current {
+        return Err(StoryDbError::NewerSchema {
+            file: spec.name,
+            path: path.to_owned(),
+            found,
+            supported: spec.current,
+        });
+    }
+    Ok(conn)
+}
+
 pub(super) fn open_file(path: &Path, spec: &FileSpec) -> Result<Connection, StoryDbError> {
     let exists_with_content = std::fs::metadata(path).is_ok_and(|m| m.len() > 0);
     if exists_with_content && !is_sqlite_file(path) {
