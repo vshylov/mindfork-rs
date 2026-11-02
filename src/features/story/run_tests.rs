@@ -453,7 +453,7 @@ fn the_roles_sample_as_measured() {
 fn the_settings_shape_the_chapter_and_the_mechanism() {
     let mut tools = ToolSettings::default();
     let config = chapter_config(&tools, "Russian");
-    assert_eq!(config.budget.tokens, Some(2_000_000));
+    assert_eq!(config.budget.tokens, Some(6_000_000));
     assert_eq!(config.budget.usd, None);
     assert_eq!(config.human_language, "Russian");
     assert_eq!(config.max_scenes, ChapterConfig::default().max_scenes);

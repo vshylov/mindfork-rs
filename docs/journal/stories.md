@@ -13,7 +13,7 @@ what was rejected — the reasoning behind the code, not its current shape. For 
 shape read the reference documents named above; for the traps that recur across areas read
 [lessons.md](../lessons.md).
 
-## Entries (8)
+## Entries (9)
 
 - Post-M9: Fabula — PR 1, the story database (done)
 - Post-M9: Fabula — PR 2, the model port and replay; Gate G0 GO (done)
@@ -23,6 +23,7 @@ shape read the reference documents named above; for the traps that recur across 
 - Post-M9: Fabula — PR 6, the Author's loop (done)
 - Post-M9: Fabula — PR 7, stories in mindfork's data (done)
 - Post-M9: Fabula — PR 8, the story run in the background (done)
+- Post-M9: Fabula — PR 9, the story driven from the chat; Gate G2 (done)
 
 ### Post-M9: Fabula — PR 1, the story database (done)
 
@@ -839,3 +840,131 @@ behind `tools.story`, off by default.
 **Gates**: unit tests green; clippy `-D warnings`, fmt, `cyrillic_scan`, `link_check`,
 `doc_index_check`, `layer_check`, `list_scroll_check`, `claude_md_chart --check` clean;
 the settings screenshots regenerated (the Tools section's count, the profile's new tool).
+
+### Post-M9: Fabula — PR 9, the story driven from the chat; Gate G2 (done)
+
+M2's fourth pull request (docs/fabula.md §4): `story_create` and `story_continue`, so a
+person makes a story from the chat and every answer it waits for is their own words. With it
+the engine is reachable end to end from a chat turn, behind `tools.story`, off by default.
+
+- **Forks decided by the owner (2026-11-02, docs/fabula.md §6).** *T8:* the named scene
+  rerun at P2 needs the main line to step back, with the scenes after it, the chapter's text
+  and its review made again under addresses of their own; it is PR 10, and until then a
+  request to replay a scene reads as `change` and revises the text. *T9:* G2 on Claude
+  Sonnet 5.5. *T10:* G2 in Russian, run by Claude Code through the orchestrator with the
+  person scripted. *T11* (during G2): the chapter's default budget is 6,000,000 tokens.
+- **`story_create`** (`features/tools/story/conversation.rs`, `features/story/conversation.rs`)
+  is an ordinary tool. The canon arrives as an object (or as a JSON string some models send)
+  and `Canon`'s own parse refuses a misspelt field by name. Its checks run first; the reply
+  schemas built on its keys are held to the dialect only once they pass, since a repeated key
+  breaks every schema built on it and the model needs the cause, not twelve echoes of it
+  (found live). A canon that passes is stored under an id made from the title — its words
+  lowercased, letters and digits of any script, `-` between, at most 40 characters, Windows'
+  device names avoided, `-2` when taken — and P1 opens with no model call: the engine's
+  first step asks for the canon's approval before anything, so `advance` runs over a port
+  that refuses every call. Called again with `story`, it replaces the draft while the canon
+  is unapproved; the id must be one of the chat's own files, so an argument never names a
+  path of its choosing (`../<other chat>/x` reached another chat's story before the check,
+  shown by a mutant).
+- **`story_continue`** is loop-executed, as `start_dialogue` is (`app/orchestrator/
+  generation_story.rs`, a child module of `generation.rs` so it reaches the loop's parts).
+  - *The rows.* When the turn begins, the orchestrator reads every story of the chat that no
+    run holds and, for each question waiting, takes the person's rows after it was put to
+    them: after the canon's last change for P1, after the landing that carried it for P2 and
+    P3 (the newest notification of a run on that story's `story_continue` records), never
+    before the question's own row. Notification rows are never user rows, and attachments
+    and tool results are not rows at all, so a sketch that says "approved" approves nothing.
+  - *The reading* (`features/story/answer.rs`) is one schema-constrained call of the chat's
+    model, a role of its own (`Role::Listener`, low effort): the question in the engine's
+    words, what the person was shown (the canon in brief, the chapter's summary), and their
+    rows quoted as data, oldest first, a voice note marked as the recogniser's. It returns
+    `{answers, changes, decision}`, the evidence before the decision; P1 and P2 accept
+    approve, change or unclear, P3 answer or unclear. Unclear, a decision the question does
+    not accept, and a change that names no change resolve nothing.
+  - *The refusals.* A turn that answers no message of the person's — a woken one, whose
+    `UserMessageTimes.answering` is empty — and rows that read as unclear are refused with
+    "the user has not answered the story's question yet; ask them", as is a call in the very
+    turn that asked. The slot is taken before the reading, so a capped background pays for
+    no reading it cannot act on, and given back on every refusal.
+  - *The resolution* is the answer row: the decision, the notes for the Author — the
+    person's changes and words, and apart from them the assistant's `notes` marked as its
+    own — and the evidence: each message's id, time and quote (2,000 characters at most),
+    the reading itself. An approved canon opens chapter 1, an accepted chapter the next, a
+    change reaches the Author as the person's notes, and a change to the canon starts no
+    run: the assistant revises the draft and asks again. Accepting the last chapter finishes
+    the story with no run. With no question waiting it resumes a stopped run, unless the
+    chapter's budget is spent; a finished story starts nothing.
+  - *The claim.* The story is claimed on the board for the run before its files are opened
+    and kept for it; the run accepts a claim in its own name, so nothing writes the story
+    between the answer and the run.
+- **The reminder line.** While a question waits, the request's last user-side message — the
+  one the turn answers, or a woken turn's notification — carries one line naming it, in the
+  request's copy only; every earlier message stays as the last request sent it.
+- **Both tools are withheld from a sub-agent**: their answers are the person's own.
+- **The modules' `allow(dead_code)` stays for M3**: 49 items remain unreached (the replay,
+  the harnesses' scenes, the leak audit, the export), down from 75.
+- **Live, the gate models as the chat's model** (`story_chat_live_canon_and_approval`,
+  `#[ignore]`): English sketches attached, "build the canon and create the story", then the
+  approval turn played five times from the stored P1, each trial's run stopped after a
+  second.
+
+  | Model (route) | Canon stored after | Premature `story_continue` | Approval turn: called / claimed without a call / neither |
+  | --- | --- | --- | --- |
+  | Claude Haiku 5.5 | 3 calls | 0 | 3 / 0 / 0 (3 trials) |
+  | Qwen 3.8 27B (OpenRouter, DeepInfra) | 3 calls | 0 | 5 / 0 / 0 |
+  | Gemma 4 31B (OpenRouter, DeepInfra fp8) | 2 calls | 0 | 5 / 0 / 0 |
+
+  Every refused canon was fixed on the next call, and the refusals were what the models
+  tripped on: an item listed both where it lies and in a hand (Haiku, Qwen), `voice` inside
+  `start` (Gemma), the title inside the canon (Qwen), and after a refusal a call naming
+  `story` for a story that was never stored (Haiku). Fixed: the duplicate item says it
+  starts in two places, the dialect is checked only after the canon's own checks, a new
+  story's refusal says it has no id yet, and a title inside the canon is taken as the
+  title.
+- **A chapter on a gate model** (`story_chat_live_story`, Qwen 3.8 27B, English): the canon
+  composed, approved in the person's words, and the chapter's run out — 320 calls, then
+  stopped by the default budget, 2,017,368 tokens of 2,000,000 ($0.55), at the third of four
+  scenes. It landed as it should: the woken turn called `story_status`, said the budget was
+  spent and where to raise it, and resumed when asked. The default had come from PR 6's
+  harness chapter (three scenes, six rounds, 718,865 tokens); the app's own shape is four
+  scenes of up to eight rounds. With G2's figure it made T11.
+- **Gate G2** (`story_chat_live_story`, Claude Sonnet 5.5, a Russian profile; T9, T10): sketches
+  written for the check, "The Last Ferry", attached — a northern island, a keeper who
+  did not light the lamp the night her brother drowned, an inspector come to close it, a
+  shopkeeper who hid the logbook — and the person scripted by where the story stood. The
+  assistant composed the canon in two calls (the first had `routes` inside `world`), showed
+  it, and called `story_continue` on the approval; every landing woke a turn that put the
+  question in its own words, and every acceptance was read from the person's message.
+
+  | | Calls | Prompt tokens | Reply tokens | Cost (list price) |
+  | --- | --- | --- | --- | --- |
+  | Chapter 1 (four scenes, the draft accepted) | 492 | 5,629,710 | 169,223 | $12.95 |
+  | Chapter 2 (four scenes, the second revision accepted) | 380 | 8,383,836 | 145,259 | $18.22 |
+  | The whole story, readings included | 875 | 14,017,889 | 314,563 | $31.18 |
+
+  The story is 2,696 words (1,606 and 1,090), finished, both chapters accepted; the owner
+  reads it with the chat's transcript. Three things it found:
+  - *The default budget stopped the first chapter in its second scene* (2,010,278 tokens,
+    238 calls), and the script's "go on" restarted a run seven times, each stopping before
+    its first call. `story_continue` now refuses a chapter whose budget is spent, says what
+    was spent and where to raise it, and keeps an answer read on the way; with the Qwen run
+    the owner raised the default to 6,000,000 (T11). G2 ran on at 8,000,000 for chapter 1;
+    chapter 2's projection passed what the owner had approved, so the run was stopped, the
+    owner chose to finish it, and it resumed at 14,000,000 from the step it was at.
+  - *Accepting the last chapter started a run* that could only find the story finished, and
+    the started line said the story went on. `story_continue` now records the acceptance
+    and says the story is finished, starting nothing.
+  - *A chapter's cost grows with the story.* No call read Anthropic's cache — nothing asks it
+    to — and a character's call carries every reflection it has written since the story
+    began: the average character prompt was 5,801 tokens in chapter 1's first scene, 14,359
+    in its fourth and 17,879 in chapter 2's first; the World Master's 8,209, 20,409 and
+    24,951. A memory window and the cache breakpoints are the levers (docs/fabula.md §5);
+    the roadmap carries them.
+- **Mutation check:** 27 mutants in one pass and one build: 24 killed. The survivors got a
+  test each, seen failing with the mutant: the dialect's echo of a canon problem, a woken
+  turn's `story_continue` (driven through the orchestrator: the person answers, a background
+  sub-agent lands, and the woken turn's call is refused with no reading made), and a path in
+  `story` reaching another chat's story. The sources were restored and the fingerprint
+  checked. The two fixes G2 found came after the pass, each with its own test.
+- **Tests:** 4756 unit tests green (+27 over 4729), 326 `#[ignore]` (+2: the two live
+  checks).

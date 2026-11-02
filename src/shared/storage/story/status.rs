@@ -9,10 +9,12 @@
 
 use std::path::Path;
 
+use chrono::{DateTime, Utc};
+
 use super::Spend;
 use super::StoryDbError;
 use super::actor::Actor;
-use crate::entities::story::Question;
+use crate::entities::story::{Question, QuestionBody};
 
 /// One chapter as far as it was written.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,6 +40,11 @@ pub struct StoryStatus {
     pub chapters: Vec<ChapterState>,
     /// The question waiting for the human's answer, if one is.
     pub pending: Option<Question>,
+    /// Since when the pending question stands as the human sees it: when it
+    /// was asked, or, for the canon's, when the canon last changed, if later
+    /// (spec §14, *The answer is the user's own words*). A reply before it
+    /// answers something else.
+    pub pending_since: Option<DateTime<Utc>>,
     /// The first chapter of the arc with no accepted version: the one a run
     /// works on; `None` once every planned chapter is accepted.
     pub open_chapter: Option<u32>,
@@ -80,15 +87,35 @@ pub fn story_status_of(story: &Path, calls: &Path) -> Result<StoryStatus, StoryD
         .into_iter()
         .find(|(_, answer)| answer.is_none())
         .map(|(q, _)| q);
+    let pending_since = match &pending {
+        Some(q) => asked_since(&actor, q)?,
+        None => None,
+    };
     Ok(StoryStatus {
         premise: canon.as_ref().map(|c| c.arc.premise.clone()),
         planned,
         canon_approved: actor.canon_approved()?,
         chapters,
         pending,
+        pending_since,
         open_chapter,
         spend,
     })
+}
+
+/// Since when `question` stands: when it was asked, or, for the canon's,
+/// when the canon last changed — a revision of the draft canon is a question
+/// put again.
+pub(super) fn asked_since(
+    actor: &Actor,
+    question: &Question,
+) -> Result<Option<DateTime<Utc>>, StoryDbError> {
+    let asked = actor.asked_at(&question.id)?;
+    let changed = match question.body {
+        QuestionBody::Canon => actor.canon_changed_at()?,
+        _ => None,
+    };
+    Ok(asked.max(changed))
 }
 
 #[cfg(test)]

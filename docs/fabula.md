@@ -1,7 +1,7 @@
 # Fabula — a story engine used from the chat: track plan
 
-**Status:** in progress — M0 done (PRs 1 and 2, Gate G0 GO); M1 done (PRs 3–5, Gate G1 GO, 2026-11-01); M2 under way (PR 6, the Author's loop, 2026-11-01; PR 7, stories in mindfork's data, 2026-11-02; PR 8, the story run in the background, 2026-11-02). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
-so are the seven this plan adds (§6) and where development runs (§4, *The development
+**Status:** in progress — M0 done (PRs 1 and 2, Gate G0 GO); M1 done (PRs 3–5, Gate G1 GO, 2026-11-01); M2 under way (PR 6, the Author's loop, 2026-11-01; PR 7, stories in mindfork's data, 2026-11-02; PR 8, the story run in the background, 2026-11-02; PR 9, the story driven from the chat, 2026-11-02). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
+so are the ten this plan adds (§6) and where development runs (§4, *The development
 stack*). The design —
 the engine, its stores, its contracts, its evaluation — is
 [research/fabula-engine.md](research/fabula-engine.md) (*the spec* below), and the
@@ -203,7 +203,8 @@ there rules on little thought. The figures are in [journal/stories.md](journal/s
 | 6 `feat/story-author` | The outline, the rolling scene plans, the pick against its rubric (two reruns, then the least bad), the chapter's draft, the Reader and the Continuity checker, the triage and at most two revisions, the markdown export; the pauses inside the engine: `question` and `assumption` rows, a pause that ends the run, a resume from the paused step; the budget counted per chapter | Live, through the harness: one chapter end to end on a gate model; the run killed at random steps resumes each time |
 | 7 `feat/story-data` | Stories in mindfork's data: `data/stories/<id>.db` inside backups (the directory and the manifest's schema entry), `data/story-logs/` outside them; `mindfork stats` counts stories and compares them by id; a story is hidden and purged with its chat | A backup's round trip; the previous release on a backup that holds stories (docs/lessons.md §8). No live model |
 | 8 `feat/story-run` | The third background payload; `RunKind::Story` with `CHAT_SCHEMA` 7 → 8 as a stamp-only step and its golden fixture; `tools.story`, the timeout and the budget; the landing: the chapter into the chat (§6) and a notification in the profile's language with the summary, the picks, the assumptions and the question; the cancelled landing that names its step; `story_status` | Orchestrator tests on the mock engine; the previous release refusing a chat file of schema 8 politely (AGENTS.md §6) |
-| 9 `feat/story-conversation` | `story_create` and `story_continue`; a named scene rerun at P2 (PR 6 builds accept and revise); the user's rows after the question read verbatim; the conservative reading; the evidence rows; the refusals of a woken turn and of `unclear`; the reminder line; spec.md §9.16, the README (experimental), the manual, the help overlay, the CHANGELOG | Live, the gate models as the chat's model: a valid canon from attached sketches; no approval without a user message after the question; a chapter that lands; claims without a call counted. **Gate G2** (spec §13): one short story end to end in the chat, read by the owner |
+| 9 `feat/story-conversation` | `story_create` and `story_continue`; the user's rows after the question read verbatim; the conservative reading; the evidence rows; the refusals of a woken turn and of `unclear`; the reminder line; spec.md §9.16, the README (experimental), the manual, the help overlay, the CHANGELOG | Live, the gate models as the chat's model: a valid canon from attached sketches; no approval without a user message after the question; a chapter that lands; claims without a call counted. **Gate G2** (spec §13): one short story end to end in the chat, read by the owner |
+| 10 `feat/story-rerun` | A named scene rerun at P2 (T8): the main line steps back to the scene asked for, the scenes after it and the chapter's text are made again under addresses of their own, and the reading of the human's reply gains the request | Engine tests on replay; live, one chapter's scene rerun at its checkpoint |
 
 **PR 6, as built (2026-11-01).** A run goes from where the story stands to its next pause.
 Each step reads the stores before it calls a model, so a run killed anywhere resumes, as a
@@ -213,7 +214,7 @@ counted as failed, two kills in a row cost a scene two of its three attempts. Th
 pick of spec §7 costs no call, since the last attempt's pick may only pick. The pauses are
 rows. At P2 the human accepts, with notes for the next chapter, or asks for a revision with
 notes; *rerun a named scene* is not built, since it needs the main line to step back, and
-moves to PR 9, which reads what the human asked for. The budget counts every call under the
+moves to PR 10 (T8), after PR 9 reads what the human asked for. The budget counts every call under the
 chapter's addresses, from the call log. **Live:** one chapter end to end on Qwen 3.8 27B
 (OpenRouter, DeepInfra): 192 calls, every first attempt valid, no leak, 718,865 tokens and
 $0.29 in 39 minutes. Killed at random 4 times on Qwen and 6 times on `gemini-3.8-flash`,
@@ -258,6 +259,26 @@ at a stop and at its time limit, each resuming where the last stopped, every per
 session budget given back. The figures are in
 [journal/stories.md](journal/stories.md).
 
+**PR 9, as built (2026-11-02).** The owner decided four forks (§6, T8–T11): the named scene
+rerun is PR 10, G2 runs on Claude Sonnet 5.5 in Russian, and the chapter's default budget is
+6,000,000 tokens. `story_create` stores the canon the call carries as a draft, refused with every
+problem named, under an id made from the title, and opens P1 with no model call. `story_continue`
+is executed by the turn's loop: the person's rows written after the question was put — after the
+canon's last change, after the landing that carried a chapter's or a scene's question — are read
+verbatim by one schema-constrained call, conservatively; a woken turn and an unclear reading
+resolve nothing, and the resolution records the messages' ids and quotes with the assistant's
+notes apart. A change to the canon starts no run, the last chapter accepted finishes the story,
+and a chapter whose budget is spent starts nothing. While a question waits, every request
+carries a reminder line at its tail. **Live:** on Claude Haiku 5.5, Qwen 3.8 27B and Gemma 4 31B
+a canon was composed from attached sketches in two or three calls, none tried to approve for the
+person, and the approval turn called the tool every time (13 of 13, no claim without a call); a
+Qwen chapter landed and was resumed. **Gate G2:** "The Last Ferry" (in Russian), two chapters and 2,696 words
+in Russian on Sonnet 5.5, finished in the chat from the sketches to the last acceptance — 875
+calls, 14.0 million prompt tokens, about $31 at list price, none of it from Anthropic's cache.
+The run found the spent budget restarted in vain, the empty run after the last chapter, and the
+cost's growth with the story (§5); the first two are fixed. G2's verdict is the owner's reading.
+The figures are in [journal/stories.md](journal/stories.md).
+
 A release can follow G2: the tools are reachable only with `tools.story` on, and the
 release carries the chat schema's step with the checks AGENTS.md §6 asks for.
 
@@ -268,8 +289,8 @@ candidates for the owner to choose from (spec §15).
 
 | PR | Content | Proof |
 | --- | --- | --- |
-| 10 `feat/story-eval` | The hidden runner: no line in `--help`, the single-instance lock skipped, stories written into its output directory and not into the data; the systems F, B0 and A1–A4 as run options; the export of the markdown and the JSON trace; the 12 premises frozen in the repository with their SHA-256 | Unit tests of each system's wiring; a live run of one premise through every system |
-| 11 `feat/story-judge` | `tools/fabula_judge.py`: pairs shown blind in random order, verdicts as JSON, the binomial test; the LLM panel of other model families through OpenRouter, both orders; the calibration check against the three humans' majority | `--self-test` against fixtures, run in `lint` like the other tools' |
+| 11 `feat/story-eval` | The hidden runner: no line in `--help`, the single-instance lock skipped, stories written into its output directory and not into the data; the systems F, B0 and A1–A4 as run options; the export of the markdown and the JSON trace; the 12 premises frozen in the repository with their SHA-256 | Unit tests of each system's wiring; a live run of one premise through every system |
+| 12 `feat/story-judge` | `tools/fabula_judge.py`: pairs shown blind in random order, verdicts as JSON, the binomial test; the LLM panel of other model families through OpenRouter, both orders; the calibration check against the three humans' majority | `--self-test` against fixtures, run in `lint` like the other tools' |
 
 Then the run itself, outside any pull request: 36 pairs for each of the two decisions
 (and the ablations), the calibration by three people, and the decision rule of spec §11,
@@ -324,6 +345,13 @@ Its pull requests are cut when M4 starts.
   instead, the ambiguity trick `static_assertions::assert_not_impl_any!` uses.
 - **Coverage.** The deciding code goes into functions a unit test calls, and every file
   of live smokes is named as a test file, as `sonar-project.properties` explains.
+- **A chapter's cost grows with the story** (found in G2, PR 9). A character's call carries
+  every reflection it has written since the story began, and the World Master's the scene's
+  record, so the average character call grew from 5,800 prompt tokens in chapter 1's first scene
+  to 17,900 in chapter 2's, and a chapter on Claude Sonnet 5.5 took 5.8 million tokens with no
+  cache read: nothing asks Anthropic to cache. A memory window per character (the newest
+  reflections and a summary of the rest) and Anthropic's cache breakpoints are the two levers;
+  M4's long form needs the first.
 - **CLAUDE.md sits near its cap** (30,000 bytes). PR 1 added the story engine's row to
   the document map and its status line, and dropped the release pipeline's, which had
   stopped being recent; each later PR keeps to the one line.
@@ -374,6 +402,36 @@ of the background slots. The owner accepted both recommendations on 2026-11-02.
   background load; a chapter holds its slot for hours, so at the default one is left for
   sub-agents and dialogues; a story has one run at a time either way. (b) No: stories counted
   apart, bounded only by one run per story. **Owner's decision (2026-11-02): (a).**
+
+PR 9 added three more, and how its gate is run. The owner accepted every recommendation on
+2026-11-02.
+
+- **T8. Where the named scene rerun goes** (PR 9). P2's fourth answer, *rerun a named scene*, needs
+  the main line to step back: the scenes after the one named, the chapter's text and its review
+  made again, under addresses of their own, since every store is append-only. (a) A pull request of
+  its own after PR 9 *(recommended)*: PR 9 is large already and G2 does not need it; until then a
+  request to rerun a scene reads as `change`, the Author revises the text with it, and the tool says
+  the scene itself is not played again. (b) In PR 9, as the plan had it. **Owner's decision
+  (2026-11-02): (a)**, as PR 10 `feat/story-rerun`.
+- **T9. G2's model** (PR 9): one model for the chat and every role. (a) Claude Sonnet 5.5
+  *(recommended)*: about $2 a chapter at PR 6's 720,000 tokens, and thinking off for the
+  characters (`between_tools`). (b) Claude Opus 5.5: about twice the price, and it always thinks.
+  (c) Qwen 3.8 27B: about $0.30 a chapter, weaker prose; it runs the tools' live checks anyway.
+  **Owner's decision (2026-11-02): (a).**
+- **T10. G2's language** (PR 9). (a) Russian *(recommended)*: the owner reads it in their own
+  language, and the profile's Russian tool texts are exercised; the prose is Russian under English
+  role prompts before §15's measurement after M3. (b) English. **Owner's decision (2026-11-02):
+  (a).** G2 is run by Claude Code through the orchestrator, the human's replies scripted, and the
+  owner reads the chat's transcript and the story.
+- **T11. The chapter's default budget, again** (PR 9, during G2). T6's 2,000,000 tokens rested on
+  PR 6's harness chapter; the app's own shape (four scenes, eight rounds) spent 2,000,000 by the
+  third of four scenes on Qwen 3.8 27B ($0.55), and a whole chapter took 5.8 million on Claude
+  Sonnet 5.5, so out of the box no chapter finished on any model tried. (a) 6,000,000 tokens
+  *(recommended)*: a Qwen chapter fits with room and a Sonnet one just; at most about $13 a
+  chapter on Sonnet and $1.60 on Qwen spent unasked. (b) Keep 2,000,000, which the user raises,
+  told where by `story_continue`'s refusal. The owner first kept (b) on the Sonnet figure alone,
+  then chose (a) on 2026-11-02 once the Qwen run showed the same. **Owner's decision
+  (2026-11-02): (a).**
 
 ## 7. Not in this track
 

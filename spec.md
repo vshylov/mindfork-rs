@@ -2635,8 +2635,49 @@ here [ADR 0014](docs/decisions/0014-fabula-story-engine.md). The engine is an
 experiment until its evaluation (docs/fabula.md §4, M3), so the tools sit behind
 **`tools.story`, off by default**: off, none of them is in the catalog's effective
 set and no request differs by a byte. A profile can turn them off in its tool list
-as any tool. This section describes what is built so far; `story_create` and
-`story_continue`, which make a story and start its runs, come with the next stage.
+as any tool. The person uses it from the chat: they attach sketches of the work
+([§9.7](#97-chat-file-attachments-file-attach)), the assistant composes the canon
+with them and stores it with `story_create`, and each answer the story waits for is
+the person's own words, read when the assistant calls `story_continue`. A scene is
+not played again at a checkpoint yet (docs/fabula.md §6, T8): a request to replay
+one reaches the Author as notes for revising the chapter's text.
+
+- **`story_create`** is synchronous. The canon arrives as the call's arguments —
+  the world's rules, the map with its routes, the cast with goals and secrets, the
+  style and the arc of chapters — and the engine's checks refuse it with every
+  problem named: keys, routes, starts, empty texts, and the reply schemas built on
+  the canon's keys held to the schema dialect. A canon that passes is stored as a
+  draft under an id made from the story's title (its words in lower case, any
+  script, safe as a file name, `-2` when taken), and P1 opens at once with no model
+  call. Called again with `story`, it replaces the draft until the canon is
+  approved; an approved canon no longer changes this way.
+- **`story_continue`** is executed by the turn's loop, as `start_dialogue` is. The
+  answer does not come from its arguments: the orchestrator takes the person's
+  rows written after the question was put to them — after the canon's last
+  revision for P1, after the landing that carried it for P2 and P3 — verbatim, in
+  the terminal or through the profile's bridge. Notification rows, attachments and
+  tool results never count. One schema-constrained call of the same model (the
+  Listener) reads the question and those rows conservatively: a question back, a
+  hedge or half an answer is `change` or `unclear`, never `approve`. A turn that
+  answers no message of the person's — one the app woke on a notification — and an
+  unclear reading resolve nothing, and the tool says "the user has not answered the
+  story's question yet; ask them". The resolution is a row the story owns: the
+  question, the decision, the person's messages' ids and quotes, and the
+  assistant's `notes` recorded as its own. An approved canon opens chapter 1, an
+  accepted chapter settles and the next one starts — the last one accepted finishes
+  the story, with no run — a change reaches the Author as
+  the person's notes, and a change to the canon starts no run — the assistant
+  revises the draft and asks again. With no question waiting, it resumes a run
+  that stopped short. A chapter whose budget is spent starts no run, which would
+  stop before its first call: the tool says what was spent and where the budget is
+  raised, and an answer read on the way is kept. It takes the background slot
+  before the reading's call and claims the story for the run before its files are
+  opened.
+- **The reminder line.** While a question waits, every turn's request carries one
+  line naming it, appended to the request's last user-side message — the one the
+  turn answers, or a woken turn's notification — in the request's copy only, so a
+  reply that answers the question meets the reminder in the same turn and every
+  earlier message stays as the last request sent it.
 
 - **Where a story lives.** `stories/<chat-id>/<story-id>.db`, its call log at
   `story-logs/<chat-id>/<story-id>.db`; a chat may hold several. The database is
@@ -2666,8 +2707,8 @@ as any tool. This section describes what is built so far; `story_create` and
   one run at a time; a second is refused with the first one's address.
 - **Its bounds.** `tools.story_run_timeout_secs` (6 h, T2 (a)) cancels the run's
   calls, not the run: the engine stops at the step in flight and records it. The
-  chapter's budget is `tools.story_budget_tokens` (2,000,000, prompt and reply,
-  every call of the chapter in every run; `0` — none, T6 (a)) and
+  chapter's budget is `tools.story_budget_tokens` (6,000,000, prompt and reply,
+  every call of the chapter in every run; `0` — none; docs/fabula.md §6, T11 (a)) and
   `tools.story_budget_usd` (empty — none), counted where the provider reports a
   call's cost; it is checked before each call, and a spent one stops the run there.
 - **The landing.** The chapter a checkpoint asks about is attached to the chat as

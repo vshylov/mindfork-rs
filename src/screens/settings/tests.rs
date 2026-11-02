@@ -5756,7 +5756,7 @@ fn story_rows_close_the_tools_section_in_a_group_of_their_own() {
     }
     assert!(matches!(rows[first].kind, FieldKind::Toggle(false)));
     assert!(matches!(&rows[first + 1].kind, FieldKind::Text(v) if v == "21600"));
-    assert!(matches!(&rows[first + 2].kind, FieldKind::Text(v) if v == "2000000"));
+    assert!(matches!(&rows[first + 2].kind, FieldKind::Text(v) if v == "6000000"));
     assert!(matches!(&rows[first + 3].kind, FieldKind::Text(v) if v.is_empty()));
 }
 

@@ -751,6 +751,8 @@ mod settings;
 mod silent;
 mod speak_replies_live;
 mod story;
+mod story_conversation;
+mod story_live;
 mod subagent;
 mod tasks;
 mod time_rows_live;

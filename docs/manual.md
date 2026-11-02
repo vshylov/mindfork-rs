@@ -488,6 +488,7 @@ per-tool toggles, so a companion can be given less than the machine allows.
 | **Image generation** | `image_generate` — the assistant draws when you ask, and `/image generate` draws for you; needs an OpenAI, Gemini, OpenRouter or xAI key, by the group's **Provider** row, and works whatever your chat engine is. Every picture is paid for |
 | **MCP servers** | tools from any Model Context Protocol server; a double opt-in, and a server that changes its tool list has to be re-confirmed |
 | **Background runs (subagent/dialogue)** | `start_subagent` and `start_dialogue` — work that outlives the reply |
+| **Story tools** (experimental) | `story_create`, `story_continue` and `story_status` — a story the assistant writes chapter by chapter with you ([Stories](#stories-experimental)) |
 
 Two tools are always available and always safe: `calculate` and `current_time` —
 no network, no disk.
@@ -569,6 +570,45 @@ cancels it.
 
 When a background run finishes, the assistant reports it in the chat if that chat
 is open and idle; otherwise the chat list marks it unread.
+
+### Stories (experimental)
+
+Turn on **Story tools** in `Ctrl+P → Tools → Stories (experimental)`. The story engine is an
+experiment: characters act out each scene, a world master rules on what happens,
+and an author picks how the scene went and writes the chapter — every role played
+by the chat's own model, so a chapter takes many calls and an hour or more.
+
+1. **Attach your sketches** — `/file attach notes.md` — and ask for a story of
+   them: "make a short story of two chapters from my sketches".
+2. **The canon.** The assistant composes it — the world's rules, the places and
+   the ways between them, the characters with their goals and secrets, the style,
+   the chapters — and stores it as a draft. It shows you the premise, the cast and
+   the chapters and asks whether you approve. Ask for changes and it revises the
+   draft and asks again.
+3. **Your answer is your own words.** When you approve, the assistant calls
+   `story_continue`, and the app reads **the messages you wrote since the
+   question**, not the assistant's summary of them: "yes, go ahead" approves, while
+   "maybe?" or a question back does not, and the assistant is told to ask you. A
+   turn the app started by itself, on a notification, cannot answer for you.
+4. **A chapter in the background.** It is written as a background run (`F7` lists
+   it). When it is done it lands in the chat as an attachment,
+   `<story> — chapter 1.md`, with a note of what it is about, why each scene was
+   kept and what was chosen without asking you, and the assistant asks whether you
+   accept it. Accept it, with wishes for the next chapter if you like, or ask for
+   changes and the chapter is revised. Asking to play a single scene again is not
+   built yet: such a request revises the chapter's text.
+
+A chapter is bounded by **Story: run time limit** (6 hours) and **Story: chapter
+budget (tokens)** (6,000,000), with an optional **Story: chapter budget ($)** where
+the provider reports cost. A run that stops — on a limit, `F6`, or quitting the app —
+says where it stopped, and "go on" resumes it from there; a chapter whose budget is
+spent starts nothing until you raise the budget. A chapter's cost depends much on the
+model and grows with the story: a two-chapter story took about 14 million tokens on
+Claude Sonnet 5.5 (some $30), the second chapter more than the first, so raise the
+budget before you start one there. "What is my story doing?"
+gets an answer from `story_status`, never a guess. While a chapter runs, the
+chat's own replies wait their turn for the engine, unless it serves more than one
+session.
 
 ## 7. Reading aloud
 

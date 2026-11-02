@@ -186,6 +186,68 @@ pub fn needs_fallback(mode: ServerMode, spec_type: SpecType) -> bool {
     mode == ServerMode::Managed && spec_type.needs_draft_model()
 }
 
+/// What a story's run takes from the settings, snapshotted with the turn
+/// that starts it: the time limit, the chapter's budget, and whether the
+/// engine may be asked to constrain the decoding.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoryParams {
+    /// `tools.story_run_timeout_secs`.
+    pub timeout: Duration,
+    /// The chapter's budget and the engine's shape ([`chapter_config`]),
+    /// before the human's language is known.
+    pub tools: ToolSettings,
+    /// [`needs_fallback`] for the chat's engine.
+    pub fallback_only: bool,
+}
+
+impl Default for StoryParams {
+    fn default() -> Self {
+        Self::of(
+            &ToolSettings::default(),
+            ServerMode::default(),
+            SpecType::default(),
+        )
+    }
+}
+
+impl StoryParams {
+    /// The parameters under `tools`, for an engine in `mode` with `spec_type`.
+    pub fn of(tools: &ToolSettings, mode: ServerMode, spec_type: SpecType) -> Self {
+        Self {
+            timeout: Duration::from_secs(tools.story_run_timeout_secs.max(1)),
+            tools: tools.clone(),
+            fallback_only: needs_fallback(mode, spec_type),
+        }
+    }
+
+    /// The chapter's budget under these settings.
+    pub fn budget(&self) -> Budget {
+        chapter_config(&self.tools, "").budget
+    }
+
+    /// The run of story `story` of chat `chat`, as `run`, over its `files`, on
+    /// `model`, telling the human in `human_language`.
+    pub fn run(
+        &self,
+        (chat, story, run): (Uuid, &str, Uuid),
+        files: &super::conversation::StoryFiles,
+        model: &str,
+        human_language: &str,
+    ) -> StoryRun {
+        StoryRun {
+            chat,
+            story: story.to_owned(),
+            run,
+            db: files.db.clone(),
+            log: files.log.clone(),
+            model: model.to_owned(),
+            config: chapter_config(&self.tools, human_language),
+            timeout: self.timeout,
+            fallback_only: self.fallback_only,
+        }
+    }
+}
+
 /// The port with the call in flight written to the board.
 struct Watched<'a> {
     inner: &'a dyn LlmPort,
@@ -226,11 +288,17 @@ pub async fn run(
     board: &StoryBoard,
     cancel: CancellationToken,
 ) -> Landed {
-    if let Err(held) = board.claim(spec.chat, &spec.story, spec.run) {
-        return Landed::failed(format!(
-            "the story is being written by another run already ({})",
-            held.run
-        ));
+    // `story_continue` claims the story for this very run while it reads the
+    // person's answer, so the claim it hands over is the run's own.
+    match board.claim(spec.chat, &spec.story, spec.run) {
+        Ok(()) => {}
+        Err(held) if held.run == spec.run => {}
+        Err(held) => {
+            return Landed::failed(format!(
+                "the story is being written by another run already ({})",
+                held.run
+            ));
+        }
     }
     let landed = match run_claimed(spec, backend, sessions, board, cancel).await {
         Ok(landed) => landed,

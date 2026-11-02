@@ -1,8 +1,9 @@
 //! Orchestrator tests — a story's run out in the **background**
 //! (docs/fabula.md §4, PR 8): the third payload beside the sub-agent's and the
 //! dialogue's. The record a `story_continue` call leaves is staged by hand (the
-//! call is PR 9's), the run spawns through the same seat every background run
-//! takes, and its end lands by id: the chapter as an attachment of the chat,
+//! call itself is tested in [`super::story_conversation`]), the run spawns
+//! through the same seat every background run takes, and its end lands by id:
+//! the chapter as an attachment of the chat,
 //! the question as a task notification in the profile's language, the slot and
 //! the story given back. A stop names the step the run stopped at; a quit lands
 //! it from its mirror with the step the board showed. The engine is a mock

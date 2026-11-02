@@ -57,7 +57,7 @@ fn env_or<T: std::str::FromStr>(name: &str, default: T) -> T {
 }
 
 /// The route the variables name: G1's.
-pub(super) fn route() -> Option<(Arc<dyn EngineBackend>, String)> {
+pub(crate) fn route() -> Option<(Arc<dyn EngineBackend>, String)> {
     Cloud::ALL
         .into_iter()
         .find_map(Cloud::backend)

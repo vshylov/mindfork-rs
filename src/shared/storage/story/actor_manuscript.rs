@@ -9,6 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use chrono::{DateTime, Utc};
 use rusqlite::{OptionalExtension, params};
 
 use super::{Actor, check, now};
@@ -21,6 +22,13 @@ use crate::shared::storage::story::{Spend, StepStatus, StoredPick, StoredScene, 
 
 fn corrupt(what: String) -> StoryDbError {
     StoryDbError::Corrupt(what)
+}
+
+/// A stored timestamp, as the actor writes them (RFC 3339).
+fn stamp(at: &str) -> Result<DateTime<Utc>, StoryDbError> {
+    DateTime::parse_from_rfc3339(at)
+        .map(|at| at.with_timezone(&Utc))
+        .map_err(|e| corrupt(format!("timestamp {at:?}: {e}")))
 }
 
 impl Actor {
@@ -547,6 +555,33 @@ impl Actor {
             ));
         }
         Ok(out)
+    }
+
+    /// When the question `question` was asked; `None` for no such question.
+    pub(in crate::shared::storage::story) fn asked_at(
+        &self,
+        question: &QuestionId,
+    ) -> Result<Option<DateTime<Utc>>, StoryDbError> {
+        let at: Option<String> = self
+            .story
+            .query_row(
+                "SELECT created_at FROM question WHERE id = ?1",
+                [question.as_str()],
+                |r| r.get(0),
+            )
+            .optional()?;
+        at.map(|at| stamp(&at)).transpose()
+    }
+
+    /// When the canon last changed: its newest document's version, an import
+    /// that removed one included; `None` before the first import.
+    pub(in crate::shared::storage::story) fn canon_changed_at(
+        &self,
+    ) -> Result<Option<DateTime<Utc>>, StoryDbError> {
+        let at: Option<String> =
+            self.story
+                .query_row("SELECT MAX(created_at) FROM canon_doc", [], |r| r.get(0))?;
+        at.map(|at| stamp(&at)).transpose()
     }
 
     /// Records the human's answer to a question, with what it settles in the
