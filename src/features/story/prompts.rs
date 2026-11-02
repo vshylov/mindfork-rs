@@ -95,7 +95,7 @@ pub fn character_system(canon: &Canon, who: &CharacterKey) -> String {
 }
 
 /// The items `holder` has, in the canon's order.
-fn items_of<'a>(canon: &'a Canon, world: &WorldState, holder: &Holder) -> Vec<&'a str> {
+pub(super) fn items_of<'a>(canon: &'a Canon, world: &WorldState, holder: &Holder) -> Vec<&'a str> {
     canon
         .starting_items()
         .filter(|(item, _)| world.holder(item) == Some(holder))
@@ -334,11 +334,11 @@ pub fn master_system(canon: &Canon) -> String {
     )
 }
 
-fn plural(n: u32) -> &'static str {
+pub(super) fn plural(n: u32) -> &'static str {
     if n == 1 { "" } else { "s" }
 }
 
-fn severity(s: Severity) -> &'static str {
+pub(super) fn severity(s: Severity) -> &'static str {
     match s {
         Severity::Minor => "minor",
         Severity::Serious => "serious",
@@ -382,7 +382,7 @@ pub fn label(event: &Event, branch: &BranchId) -> String {
     }
 }
 
-fn effect_text(canon: &Canon, effect: &Effect) -> String {
+pub(super) fn effect_text(canon: &Canon, effect: &Effect) -> String {
     let n = |who: &CharacterKey| name_of(canon, who).to_owned();
     match effect {
         Effect::Move { character, to } | Effect::Place { character, to } => {
@@ -402,7 +402,7 @@ fn effect_text(canon: &Canon, effect: &Effect) -> String {
     }
 }
 
-fn visibility_text(canon: &Canon, visibility: &Visibility) -> String {
+pub(super) fn visibility_text(canon: &Canon, visibility: &Visibility) -> String {
     match visibility {
         Visibility::Public => "openly".to_owned(),
         Visibility::Whisper { to } => {

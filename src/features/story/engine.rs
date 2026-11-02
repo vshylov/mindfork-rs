@@ -38,10 +38,14 @@ use crate::shared::api::contract::{
 };
 use crate::shared::storage::story::{CallStatus, CallUsage, Mechanism, NewCall, RunLogWriter};
 
+/// The run log's capability, shared between the adapter, which records the
+/// calls, and the chapter's loop, which records the steps (spec §9).
+pub type SharedLog = Arc<Mutex<RunLogWriter>>;
+
 /// The port over a live engine.
 pub struct EngineAdapter {
     backend: Arc<dyn EngineBackend>,
-    log: Mutex<RunLogWriter>,
+    log: SharedLog,
     model: String,
     sampling: SamplingConfig,
     /// A role's sampling in place of `sampling`: the characters' with
@@ -65,9 +69,21 @@ impl EngineAdapter {
         sampling: SamplingConfig,
         cancel: CancellationToken,
     ) -> Self {
+        Self::sharing(backend, Arc::new(Mutex::new(log)), model, sampling, cancel)
+    }
+
+    /// The same over a run log the caller shares: the chapter's loop
+    /// records its steps through it while the adapter records the calls.
+    pub fn sharing(
+        backend: Arc<dyn EngineBackend>,
+        log: SharedLog,
+        model: impl Into<String>,
+        sampling: SamplingConfig,
+        cancel: CancellationToken,
+    ) -> Self {
         Self {
             backend,
-            log: Mutex::new(log),
+            log,
             model: model.into(),
             sampling,
             roles: Vec::new(),
@@ -110,9 +126,10 @@ impl EngineAdapter {
                 .await
     }
 
-    /// Gives the run log's capability back.
-    pub fn into_log(self) -> RunLogWriter {
-        self.log.into_inner()
+    /// Gives the run log's capability back; none while another holder
+    /// shares it.
+    pub fn into_log(self) -> Option<RunLogWriter> {
+        Arc::try_unwrap(self.log).ok().map(Mutex::into_inner)
     }
 }
 
@@ -210,6 +227,10 @@ impl Attempts for Live<'_> {
         );
         let mut response = answer.to_json();
         response["thought_chars"] = json!(reply.thought_chars);
+        // What the provider counted of the thinking, where it counts it apart:
+        // a thought it does not show is still billed (docs/journal/
+        // stories.md, PR 5's finding on Gemini 3.x).
+        response["reasoning_tokens"] = json!(reply.usage.map(|u| u.reasoning_tokens));
         response["served_by"] = json!(reply.served.as_ref().and_then(|s| s.provider.clone()));
         let record = NewCall {
             run: self.call.run.clone(),

@@ -12,8 +12,9 @@ use serde_json::Value;
 
 use super::{NewCall, StepStatus, StoryDb, StoryDbError};
 use crate::entities::story::{
-    BranchId, Canon, CharacterKey, NewEvent, Proposal, ProposalId, ProposalVerdict, RunId, SceneId,
-    SceneSetup,
+    Assumption, BranchId, Canon, ChapterId, ChapterOutline, ChapterVersion, CharacterKey, Decided,
+    NewEvent, NewNote, NoteId, Proposal, ProposalId, ProposalVerdict, Question, QuestionBody,
+    QuestionId, Resolution, Reviewer, RunId, SceneId, SceneSetup, VersionOrigin,
 };
 
 use super::CommittedEvent;
@@ -37,7 +38,13 @@ macro_rules! assert_not_clone {
     )+};
 }
 
-assert_not_clone!(BranchWriter, ReflectionWriter, AuthorWriter, RunLogWriter);
+assert_not_clone!(
+    BranchWriter,
+    ReflectionWriter,
+    ReviewWriter,
+    AuthorWriter,
+    RunLogWriter
+);
 
 /// The capabilities move into the tasks that use them, and the handle is
 /// shared between those tasks.
@@ -46,6 +53,7 @@ const _: fn() = || {
     fn shared<T: Send + Sync>() {}
     send::<BranchWriter>();
     send::<ReflectionWriter>();
+    send::<ReviewWriter>();
     send::<AuthorWriter>();
     send::<RunLogWriter>();
     shared::<StoryDb>();
@@ -200,10 +208,151 @@ impl AuthorWriter {
     }
 }
 
+impl AuthorWriter {
+    /// Stores chapter `chapter`'s outline; refused once it has one.
+    pub async fn add_outline(
+        &mut self,
+        chapter: u32,
+        outline: &ChapterOutline,
+    ) -> Result<(), StoryDbError> {
+        let (outline, token) = (outline.clone(), self.token);
+        self.db
+            .run(move |a| a.add_outline(token, chapter, &outline))
+            .await
+    }
+
+    /// Stores the next version of chapter `number`: a draft as its first, a
+    /// revision or the human's revision after one.
+    pub async fn add_chapter(
+        &mut self,
+        number: u32,
+        origin: VersionOrigin,
+        text: &str,
+    ) -> Result<ChapterVersion, StoryDbError> {
+        let (text, token) = (text.to_owned(), self.token);
+        self.db
+            .run(move |a| a.add_chapter(token, number, origin, &text))
+            .await
+    }
+
+    /// Stores a final version's summary.
+    pub async fn add_summary(
+        &mut self,
+        chapter: &ChapterId,
+        summary: &str,
+    ) -> Result<(), StoryDbError> {
+        let (chapter, summary, token) = (chapter.clone(), summary.to_owned(), self.token);
+        self.db
+            .run(move |a| a.add_summary(token, &chapter, &summary))
+            .await
+    }
+
+    /// Records the decisions on a version's notes, all in one go.
+    pub async fn record_decisions(
+        &mut self,
+        chapter: &ChapterId,
+        decisions: &[Decided],
+    ) -> Result<(), StoryDbError> {
+        let (chapter, decisions, token) = (chapter.clone(), decisions.to_vec(), self.token);
+        self.db
+            .run(move |a| a.record_decisions(token, &chapter, &decisions))
+            .await
+    }
+
+    /// Asks a pause's question at `step` of `run`; refused while another
+    /// waits.
+    pub async fn add_question(
+        &mut self,
+        run: &RunId,
+        step: &str,
+        body: &QuestionBody,
+    ) -> Result<Question, StoryDbError> {
+        let (run, step, body, token) = (run.clone(), step.to_owned(), body.clone(), self.token);
+        self.db
+            .run(move |a| a.add_question(token, &run, &step, &body))
+            .await
+    }
+
+    /// Records the human's answer to a question, with the approval or the
+    /// acceptance it carries.
+    pub async fn resolve(
+        &mut self,
+        question: &QuestionId,
+        resolution: &Resolution,
+    ) -> Result<(), StoryDbError> {
+        let (question, resolution, token) = (question.clone(), resolution.clone(), self.token);
+        self.db
+            .run(move |a| a.resolve(token, &question, &resolution))
+            .await
+    }
+
+    /// Records an assumption `role` made at `step` of `run`; its id.
+    pub async fn add_assumption(
+        &mut self,
+        run: &RunId,
+        step: &str,
+        role: &str,
+        assumption: &Assumption,
+    ) -> Result<String, StoryDbError> {
+        let (run, step, role, assumption, token) = (
+            run.clone(),
+            step.to_owned(),
+            role.to_owned(),
+            assumption.clone(),
+            self.token,
+        );
+        self.db
+            .run(move |a| a.add_assumption(token, &run, &step, &role, &assumption))
+            .await
+    }
+}
+
 impl Drop for AuthorWriter {
     fn drop(&mut self) {
         let token = self.token;
         self.db.post(move |a| a.release_author(token));
+    }
+}
+
+/// A reviewer's capability over its notes on one chapter version (spec §5,
+/// *Store ownership*: each reviewer writes its own notes).
+pub struct ReviewWriter {
+    db: StoryDb,
+    chapter: ChapterId,
+    reviewer: Reviewer,
+    token: u64,
+}
+
+impl ReviewWriter {
+    pub(super) fn new(db: StoryDb, chapter: ChapterId, reviewer: Reviewer, token: u64) -> Self {
+        Self {
+            db,
+            chapter,
+            reviewer,
+            token,
+        }
+    }
+
+    /// Writes the review's notes, all in one transaction; their ids. A
+    /// version is reviewed once by each reviewer.
+    pub async fn write(&mut self, notes: &[NewNote]) -> Result<Vec<NoteId>, StoryDbError> {
+        let (chapter, reviewer, token, notes) = (
+            self.chapter.clone(),
+            self.reviewer,
+            self.token,
+            notes.to_vec(),
+        );
+        self.db
+            .run(move |a| a.write_notes(&chapter, reviewer, token, &notes))
+            .await
+    }
+}
+
+impl Drop for ReviewWriter {
+    fn drop(&mut self) {
+        let (chapter, reviewer, token) = (self.chapter.clone(), self.reviewer, self.token);
+        self.db
+            .post(move |a| a.release_review(&chapter, reviewer, token));
     }
 }
 

@@ -30,6 +30,7 @@ fn reply(text: &str) -> Vec<ChatChunk> {
         ChatChunk::Usage(TokenUsage {
             prompt_tokens: 120,
             completion_tokens: 30,
+            reasoning_tokens: 12,
             cached_tokens: Some(100),
             ..TokenUsage::default()
         }),
@@ -99,6 +100,10 @@ async fn a_json_call_is_recorded_with_its_request_reply_and_cost() {
     let response = recorded.response.as_ref().unwrap();
     assert_eq!(response["text"], "{\"mood\": \"grim\"}");
     assert_eq!(response["thought_chars"], 21);
+    assert_eq!(
+        response["reasoning_tokens"], 12,
+        "a thought billed is kept, shown or not"
+    );
     assert_eq!(response["served_by"], "DeepInfra");
     assert_eq!(recorded.usage.input_tokens, Some(120));
     assert_eq!(recorded.usage.output_tokens, Some(30));
@@ -283,7 +288,7 @@ async fn a_text_call_sends_the_prompt_as_it_is_and_gives_the_log_back() {
     assert_eq!(first.call.request["system"], "You are Mara.");
     assert_eq!(first.call.prompt_sha256, prompt_sha256(&prompt(), None));
     // The capability comes back whole: the run log can be written again.
-    let mut log = port.into_log();
+    let mut log = port.into_log().expect("the log is the adapter's alone");
     log.finish_step(
         &story.run,
         "ch1/draft",

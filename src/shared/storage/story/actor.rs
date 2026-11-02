@@ -18,9 +18,12 @@ use super::{
     StoredCall, StoredProposal, StoryDbError,
 };
 use crate::entities::story::{
-    BranchId, Canon, Cause, CharacterKey, Event, EventId, EventKind, NewEvent, Proposal,
-    ProposalId, ProposalVerdict, Refusal, RunId, SceneId, SceneSetup, WorldState,
+    BranchId, Canon, Cause, ChapterId, CharacterKey, Event, EventId, EventKind, NewEvent, Proposal,
+    ProposalId, ProposalVerdict, Refusal, Reviewer, RunId, SceneId, SceneSetup, WorldState,
 };
+
+#[path = "actor_manuscript.rs"]
+mod manuscript;
 
 /// A job for the actor's thread.
 pub(super) type Job = Box<dyn FnOnce(&mut Actor) + Send>;
@@ -52,6 +55,7 @@ struct Writers {
     run_log: Option<u64>,
     branches: HashMap<BranchId, u64>,
     reflections: HashMap<(BranchId, CharacterKey), u64>,
+    reviews: HashMap<(ChapterId, Reviewer), u64>,
 }
 
 impl Writers {

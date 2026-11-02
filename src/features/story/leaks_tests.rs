@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 
 use super::{
     AuditedCall, BranchId, Cause, Effect, Event, EventKind, Phase, SecretKey, WorldState, audit,
-    secrets_in, token_of, unknown_secrets,
+    secrets_in, token_of, unknown_secrets, without_tokens,
 };
 use crate::entities::story::{EventId, NewEvent, Visibility, fixture_canon};
 
@@ -18,6 +18,21 @@ fn a_token_is_the_bracketed_secret_run() {
     assert_eq!(token_of("[SECRET-]"), None);
     assert_eq!(token_of("[SECRET-OPEN"), None);
     assert_eq!(token_of("[NOTE-1] [SECRET-X]"), Some("SECRET-X"));
+}
+
+#[test]
+fn the_author_is_shown_a_secret_without_its_token() {
+    assert_eq!(
+        without_tokens("She took a bribe. [SECRET-MARA-7Q]"),
+        "She took a bribe."
+    );
+    assert_eq!(
+        without_tokens("[SECRET-A] one [SECRET-B], two"),
+        " one, two"
+    );
+    assert_eq!(without_tokens("no token"), "no token");
+    assert_eq!(without_tokens("open [SECRET-X"), "open [SECRET-X");
+    assert_eq!(without_tokens("[NOTE-1] kept"), "[NOTE-1] kept");
 }
 
 #[test]

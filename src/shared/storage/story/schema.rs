@@ -22,6 +22,13 @@
 //!   document by a version whose `body_json` is null.
 //! - **`llm_call.cost_usd`**: the dollar cap applies where a provider reports
 //!   cost (docs/fabula.md §6, T1).
+//! - **The manuscript's own tables** (docs/fabula.md §4, PR 6): `outline`
+//!   holds a chapter's goals; `chapter` records each version's `origin`
+//!   (draft, revision, the human's revision), and a version's summary is a
+//!   row of `chapter_summary`, since it is written only once the version is
+//!   final; `question`, `answer` and `assumption` are the pauses (spec §14).
+//!   The file was in no release when they came, so the sketch's `chapter`
+//!   changed in place.
 //! - **The default rollback journal, not WAL.** Every read and write goes
 //!   through the database actor, so WAL's concurrent readers buy nothing, and
 //!   a backup can take the file as `data.db`'s is taken (`VACUUM INTO` from a
@@ -123,24 +130,33 @@ CREATE TABLE IF NOT EXISTS reflection (
     body              TEXT NOT NULL,
     goal_changes_json TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS outline (
+    chapter_no INTEGER PRIMARY KEY,
+    body_json  TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS chapter (
     id      TEXT PRIMARY KEY,
     number  INTEGER NOT NULL,
     version INTEGER NOT NULL,
+    origin  TEXT NOT NULL CHECK (origin IN ('draft', 'revision', 'human')),
     text_md TEXT NOT NULL,
-    summary TEXT,
     UNIQUE (number, version)
+);
+CREATE TABLE IF NOT EXISTS chapter_summary (
+    chapter_id TEXT PRIMARY KEY REFERENCES chapter(id),
+    summary    TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS review_note (
     id            TEXT PRIMARY KEY,
     chapter_id    TEXT NOT NULL REFERENCES chapter(id),
-    reviewer      TEXT NOT NULL,
+    reviewer      TEXT NOT NULL CHECK (reviewer IN ('reader', 'continuity')),
     anchor        TEXT,
     kind          TEXT NOT NULL,
-    severity      TEXT NOT NULL,
+    severity      TEXT NOT NULL CHECK (severity IN ('low', 'high')),
     body          TEXT NOT NULL,
     evidence_json TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS review_note_by_chapter ON review_note(chapter_id);
 CREATE TABLE IF NOT EXISTS pick (
     scene_id  TEXT PRIMARY KEY REFERENCES scene(id),
     branch_id TEXT REFERENCES branch(id),
@@ -155,6 +171,29 @@ CREATE TABLE IF NOT EXISTS note_decision (
     decision TEXT NOT NULL CHECK (decision IN ('accepted', 'rejected', 'deferred')),
     reason   TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS question (
+    id         TEXT PRIMARY KEY,
+    run_id     TEXT NOT NULL REFERENCES run(id),
+    step       TEXT NOT NULL,
+    kind       TEXT NOT NULL CHECK (kind IN ('canon', 'chapter', 'scene')),
+    body_json  TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS answer (
+    question_id   TEXT PRIMARY KEY REFERENCES question(id),
+    decision      TEXT NOT NULL CHECK (decision IN ('approve', 'change', 'answer')),
+    notes         TEXT NOT NULL,
+    evidence_json TEXT NOT NULL,
+    created_at    TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS assumption (
+    id     TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES run(id),
+    step   TEXT NOT NULL,
+    role   TEXT NOT NULL,
+    doubt  TEXT NOT NULL,
+    choice TEXT NOT NULL
+);
 ";
 
 /// The story database's tables whose rows are never updated or deleted.
@@ -167,11 +206,16 @@ pub(super) const STORY_APPEND_ONLY: &[&str] = &[
     "event",
     "event_witness",
     "reflection",
+    "outline",
     "chapter",
+    "chapter_summary",
     "review_note",
     "pick",
     "chapter_acceptance",
     "note_decision",
+    "question",
+    "answer",
+    "assumption",
 ];
 
 /// The call log: every model call, keyed by its logical address so a replay

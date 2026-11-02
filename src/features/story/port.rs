@@ -143,6 +143,15 @@ pub enum PortError {
         /// The address.
         address: String,
     },
+    /// The chapter's budget is spent: the call was not made (docs/fabula.md
+    /// §6, T1).
+    #[error("the chapter's budget is spent before {address}: {spent}")]
+    Budget {
+        /// The address of the call not made.
+        address: String,
+        /// What was spent, against what limit, in words.
+        spent: String,
+    },
     /// The story database refused or failed.
     #[error(transparent)]
     Store(#[from] StoryDbError),

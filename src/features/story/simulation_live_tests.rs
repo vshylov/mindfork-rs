@@ -27,7 +27,10 @@
 //!   written; `target/fabula/g1-<model>` by default), `_ONLY` (the scenes
 //!   to run, `1,3,7-9`, in place of all of them), `_BOUND_SECS` (a scene's
 //!   bound, 2700: a slow route's queue under many scenes at once can pass it);
-//! - `MINDFORK_FABULA_WM_THINKING` (`on`), `MINDFORK_FABULA_WM_EFFORT` (`low`).
+//! - `MINDFORK_FABULA_WM_THINKING` (`on`), `MINDFORK_FABULA_WM_EFFORT` (`low`);
+//! - `MINDFORK_FABULA_MECHANISM=fallback`: the schema in the prompt only, never
+//!   sent to the provider, for measuring one mechanism against the other
+//!   (docs/fabula.md §4, PR 6: Gemini 3.x under a schema).
 //!
 //! `cargo test simulation_live -- --ignored --nocapture --test-threads=1`
 
@@ -87,8 +90,13 @@ fn route() -> Option<(Arc<dyn EngineBackend>, String)> {
         .or_else(engine_route)
 }
 
+/// Whether the variables ask for the fallback mechanism alone.
+pub(super) fn fallback_asked() -> bool {
+    std::env::var("MINDFORK_FABULA_MECHANISM").is_ok_and(|v| v.trim() == "fallback")
+}
+
 /// The characters' sampling: thinking off, as the application mutes a turn.
-fn character_sampling() -> SamplingConfig {
+pub(super) fn character_sampling() -> SamplingConfig {
     SamplingConfig {
         temperature: Some(0.8),
         thinking: Some(false),
@@ -100,7 +108,7 @@ fn character_sampling() -> SamplingConfig {
 }
 
 /// The World Master's: thinking on at a low effort, unless asked otherwise.
-fn master_sampling() -> SamplingConfig {
+pub(super) fn master_sampling() -> SamplingConfig {
     let on = std::env::var("MINDFORK_FABULA_WM_THINKING").map_or(true, |v| v.trim() != "off");
     if !on {
         return SamplingConfig {
@@ -220,6 +228,10 @@ struct SceneTally {
     output_tokens: u64,
     cost_usd: f64,
     thought_chars: u64,
+    /// The World Master's first attempts: reasoning tokens each, as the
+    /// provider counted them.
+    master_reasoning: Vec<u64>,
+    master_calls: usize,
     leaks: Vec<Leak>,
     branches_failed: Vec<String>,
     endings: Vec<String>,
@@ -248,6 +260,12 @@ impl SceneTally {
                 continue;
             }
             self.calls += 1;
+            if call.role == "world_master" {
+                self.master_calls += 1;
+                if let Some(n) = response["reasoning_tokens"].as_u64() {
+                    self.master_reasoning.push(n);
+                }
+            }
             let entry = self.by_role.entry(call.role.clone()).or_default();
             entry.0 += 1;
             let text = response["text"].as_str().unwrap_or_default();
@@ -318,6 +336,11 @@ async fn one_scene(
         CancellationToken::new(),
     )
     .with_role_sampling(Role::WorldMaster, master_sampling());
+    let port = if fallback_asked() {
+        port.fallback_only()
+    } else {
+        port
+    };
     let all = setups();
     let (setup, intent) = all[n % all.len()].clone();
     let plan = ScenePlan {
@@ -444,10 +467,15 @@ async fn gate(backend: Arc<dyn EngineBackend>, model: &str) {
     );
     tokio::fs::create_dir_all(&out).await.unwrap();
     eprintln!(
-        "{model}: {scenes} scenes, K = {}, up to {} rounds, {parallel} at a time; the backend constrains: {}; traces in {}",
+        "{model}: {scenes} scenes, K = {}, up to {} rounds, {parallel} at a time; the backend constrains: {}{}; traces in {}",
         config.branches,
         config.max_rounds,
         backend.enforces_output_schema().await,
+        if fallback_asked() {
+            ", the fallback asked"
+        } else {
+            ""
+        },
         out.display()
     );
     let picked = chosen(scenes);
@@ -527,6 +555,26 @@ async fn gate(backend: Arc<dyn EngineBackend>, model: &str) {
          ({waits} waits); refused by the World Master {by_ruling}, by the engine {by_engine}; slips {slips}"
     );
     eprintln!("tokens in {input}, out {output}; thought chars {thought}; cost ${cost:.4}");
+    let mut reasoning: Vec<u64> = tallies
+        .iter()
+        .flat_map(|t| t.master_reasoning.iter().copied())
+        .collect();
+    reasoning.sort_unstable();
+    let master_calls = sum(|t| t.master_calls);
+    if !reasoning.is_empty() {
+        let pct = |p: usize| reasoning[(reasoning.len() - 1) * p / 100];
+        eprintln!(
+            "World Master: {master_calls} rulings; reasoning tokens p25 {} / median {} / p75 {} / max {}, mean {:.0}; \
+             slips {:.3} and engine refusals {:.3} a ruling",
+            pct(25),
+            pct(50),
+            pct(75),
+            pct(100),
+            reasoning.iter().sum::<u64>() as f64 / reasoning.len() as f64,
+            slips as f64 / master_calls.max(1) as f64,
+            by_engine as f64 / master_calls.max(1) as f64,
+        );
+    }
     for t in &tallies {
         for line in t
             .invalid

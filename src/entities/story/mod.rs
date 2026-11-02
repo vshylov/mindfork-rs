@@ -19,6 +19,7 @@
 
 mod canon;
 mod event;
+mod manuscript;
 mod world;
 
 // The domain's whole surface; the engine that names the rest arrives from
@@ -32,6 +33,12 @@ pub use canon::{
 pub use event::{
     Action, Cause, Effect, Event, EventKind, NewEvent, Proposal, ProposalVerdict, SceneSetup,
     Severity, Visibility,
+};
+#[allow(unused_imports)]
+pub use manuscript::{
+    Assumption, ChapterId, ChapterOutline, ChapterVersion, Decided, Decision, NewNote,
+    NoteDecision, NoteId, NoteKind, NoteSeverity, QUESTION_KINDS, Question, QuestionBody,
+    QuestionId, Resolution, ReviewNote, Reviewer, StoredAssumption, VersionOrigin,
 };
 #[allow(unused_imports)]
 pub use world::{Admitted, FoldError, Holder, Refusal, WorldState};

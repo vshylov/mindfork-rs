@@ -186,8 +186,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-11-01, version 0.23.1)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **4621 unit tests
-green, 319 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **4668 unit tests
+green, 322 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump and demo-reel regenerators).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -203,8 +203,9 @@ being recent is dropped, not shortened.
   the plan and ADR 0014; the story database — an append-only, branched event log behind
   one actor, one writer per store; the model port, replayed from the call log by address;
   the reply's schema enforced by the provider on every wire; scenes
-  simulated as K branches, a World Master ruling, no secret leaked
-  ([docs/fabula.md](docs/fabula.md),
+  simulated as K branches, a World Master ruling, no secret leaked; a chapter
+  planned, picked, drafted, reviewed and revised, paused for the human, resumed
+  wherever it was killed ([docs/fabula.md](docs/fabula.md),
   [docs/journal/stories.md](docs/journal/stories.md)).
 - **Image generation — track complete** (2026-10-30): `image_generate` over a
   slot of its own (OpenAI by default, Gemini, the gateway, xAI), off by default;

@@ -13,13 +13,14 @@ what was rejected — the reasoning behind the code, not its current shape. For 
 shape read the reference documents named above; for the traps that recur across areas read
 [lessons.md](../lessons.md).
 
-## Entries (5)
+## Entries (6)
 
 - Post-M9: Fabula — PR 1, the story database (done)
 - Post-M9: Fabula — PR 2, the model port and replay; Gate G0 GO (done)
 - Post-M9: Fabula — PR 3, the reply's schema on the wire (done)
 - Post-M9: Fabula — PR 4, the simulation; Gate G1 GO (done)
 - Post-M9: Fabula — PR 5, the reply's schema on the cloud wires (done)
+- Post-M9: Fabula — PR 6, the Author's loop (done)
 
 ### Post-M9: Fabula — PR 1, the story database (done)
 
@@ -474,6 +475,155 @@ schema is the bytes it was.
   The sources were restored and the fingerprint checked.
 - **Tests:** 4621 unit tests green (+8), 319 `#[ignore]` (+4: the probe and the control on
   each cloud).
+
+**Gates**: unit tests green; clippy `-D warnings`, fmt, `cyrillic_scan` (and its
+`--self-test`), `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check`,
+`claude_md_chart --check` clean.
+
+### Post-M9: Fabula — PR 6, the Author's loop (done)
+
+M2's first pull request (docs/fabula.md §4): a chapter from the canon's approval to its
+checkpoint, every step of it resumable. Nothing the person sees changes; the chat tools
+that start a run are PR 8 and PR 9.
+
+- **The loop** (`chapter.rs`, spec §7). One run goes from where the story stands to its
+  next pause:
+  - *P1*: an unapproved canon asks for its approval, and the run ends.
+  - *The outline*: the chapter's goals, set once.
+  - *Scene by scene*: the Author plans the next scene from the scenes kept so far, or ends
+    the chapter; the world plays it as K branches; the Author scores each against its
+    intent and the four measures (tension, surprise, truth to character, consequences)
+    and keeps one, or asks for the scene again under changed circumstances.
+  - *The draft*, from the kept scenes' full traces.
+  - *Review*: the Reader and the Continuity checker side by side; the engine's own check
+    for a planted marker in the prose rides with the checker as a high note.
+  - *Triage and revision*: the Author decides each note, a note it leaves out deferred,
+    and revises while an accepted high note stands, at most twice. The last revision is
+    not reviewed again, as in spec §7's loop.
+  - *The summary* of the final version, in the human's language, then *P2*.
+- **The least bad pick costs no call.** The spec has a separate `least_bad` call when the
+  reruns run out. Here the last attempt's pick schema has no rerun variant, and its
+  prompt says no rerun is left, so the Author's own last pick is the choice.
+- **A scene whose every branch fails** is played again as it was, and after
+  `1 + max_reruns` such attempts the run asks the human (*P3*). The human's answer plans
+  the scene again with their words.
+- **The stores are the state.** Each step reads what is stored before it calls a model,
+  so a run killed anywhere resumes, as a new run, from the first step no run finished
+  (spec §9). A step whose outcome has no row of its own, the Author ending the chapter,
+  is known by its step. Writes come in an order a kill between them cannot break: a
+  rerun's scene is stored before the pick that asks for it.
+- **A lost branch is replaced, not counted** — found by the live kill run, below. A branch
+  a stopped run left half-played cannot be taken back, since its events are in the log;
+  it is recorded failed, marked `…/interrupted`, and a branch under the next index plays
+  in its place. The pick never sees it, and it never counts against the scene.
+- **The pauses** are rows (spec §14): a `question` (canon, chapter or scene) ends the run,
+  one waits at a time, and a run that finds one waiting starts nothing. An `answer`
+  carries its approval in the same transaction: an approved canon's documents, an
+  accepted chapter's acceptance. A change at P2 revises the chapter with the human's notes,
+  a version of origin `human`, which is not reviewed again. An `assumption` records a
+  doubt an Author's reply met and the choice it made; the checkpoint lists them.
+- **The budget** (T1 (a)): every call under the chapter's addresses, in every run and
+  attempt, from the call log. It is checked before each call, in tokens on every provider
+  and in dollars where the provider reports them, and a spent one stops the run there.
+- **The store** (`actor_manuscript.rs`): `outline`, `chapter_summary`, `question`,
+  `answer` and `assumption`, all append-only, and `chapter.origin`. A version's summary
+  has a row of its own, since it is written only once the version is final. The file was in
+  no release, so `chapter` changed in place and `STORY_SCHEMA` stays 1. A `ReviewWriter` per
+  version and reviewer writes a review whole, once.
+- **The contracts** (`author.rs`). The deciding fields come last. No field is named like
+  the model's reasoning: the spec's `rationale` and `reason` are `human_note` and
+  `critique`. A schema is built per call where the call's options differ: the first plan
+  cannot end the chapter, the last attempt cannot rerun, a pick names only the branches
+  that played, a triage only its notes. The dialect wants two branches in a union, so a
+  union left with one is printed as its closed object, its tag a one-value `enum`.
+- **What each role sees** (`author_prompts.rs`): the Author everything, the arc and every
+  secret included, but never a planted token; the Reader only the published chapters and
+  the new one; the checker the record of the kept scenes with every event's id and what
+  each character knew when the chapter opened, but not the Author's intent.
+- **The story's language** is `Style::language`, English when empty; the human's language
+  is a run's setting, for the summary, a pick's note and the assumptions.
+- **The markdown export** (`export.rs`): each chapter's accepted version, or its latest.
+- **Live: one chapter end to end** (`chapter_live_tests`), the fixture story through the
+  application's clients: the characters muted, the World Master at a low effort, the
+  Author at a medium one, the reviewers at a low one.
+
+  | Route | Shape: K, rounds, scenes at most | Calls | Leaks | Scenes kept | The chapter | Notes, triaged | Tokens | Spend, time |
+  | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+  | Qwen 3.8 27B, OpenRouter, DeepInfra (bf16) | 3, 6, 3 | 192 | 0 | 2, no rerun | 1,592 words, not revised | 12, 6: all accepted, all low | 718,865 | $0.29; 39 min |
+  | `gemini-3.8-flash` | 2, 3, 2 | 101 | 0 | 2, no rerun | 1,572 words, not revised | 5, 1 | 261,456 | 6 min |
+
+  - No call needed a second attempt, on either route.
+  - On Qwen the Author ended the chapter itself after two of its three scenes, its goal
+    met; on Gemini the cap of two ended it.
+  - Qwen's Author recorded 12 assumptions, Gemini's 4. Each was a real question the human
+    could have been asked: who the "wrong person" of the arc is, whether Mara knows Ines
+    was paid, how hard a shove should cost Mara in the morning.
+  - The prose follows the record: the lines spoken, who learns which secret and when. It
+    shows no planted marker and no key in backticks.
+  - Qwen's chapter cost 718,865 tokens. The characters took 385 thousand (130 calls), the
+    World Master 242 thousand (51), the Author 71 thousand (9) and the two reviewers 22
+    thousand. The spec's model estimated 1.8 million for eight rounds and no reruns; these
+    scenes ended sooner. That figure, and three attempts a scene, bound PR 8's default
+    budget.
+  - On Gemini the Continuity checker returned no finding with 0 reasoning tokens; on Qwen
+    it thought 6,895 tokens and found one low contradiction. The measurement below shows
+    the empty list was the chapter, not the checker.
+- **Live: killed and resumed** (`chapter_live_killed_and_resumed`). The run is killed at a
+  random moment, the database closed and opened again, and the story resumed, until it
+  reaches its checkpoint:
+
+  | Route | Shape | Kills | Branches lost | Reruns | Reached |
+  | --- | --- | --- | --- | --- | --- |
+  | `gemini-3.8-flash`, before the fix | 2, 4, 2 | 4, after 46–82 s | 4, counted as failed | 2 of scene 1's 3 attempts, both for the kills | P2 |
+  | `gemini-3.8-flash` | 2, 4, 2 | 6, after 48–76 s | 5, each replaced | 1, the Author's own | P2, after a revision |
+  | Qwen 3.8 27B, OpenRouter, DeepInfra | 3, 6, 3 | 4, after 90–339 s | 3, each replaced | none | P2: 3 scenes, 311 calls, 1.48 million tokens, $0.56, 95 min, no leak |
+
+  The first run found the defect: two kills in a row cut both branches of scene 1 in
+  flight, each attempt that lost them counted as failed, and one more would have asked the
+  human about a failure no model made (docs/lessons.md §2, recorded). After the fix, scene
+  2 lost three of its branches to kills and still had two to choose from; its rerun was
+  the Author's ("neither branch achieved the scene's intent").
+- **PR 5's finding, measured: the effort sets how much Gemini 3.x thinks, not the schema.**
+  Two measurements on `gemini-3.8-flash`. The call log now keeps the provider's count of
+  reasoning tokens (`response.reasoning_tokens`), shown or not.
+  - *The World Master, in the simulation.* The G1 harness, 8 scenes × K = 2 × up to 6
+    rounds an arm, run side by side. The World Master's effort is low or high, and its
+    schema is sent to the provider or kept in the prompt only
+    (`MINDFORK_FABULA_MECHANISM=fallback`).
+
+    | Arm | Rulings | Reasoning tokens a ruling, median (p25–p75) | Mean | Intents refused | Slips, engine refusals | First attempts valid |
+    | --- | --- | --- | --- | --- | --- | --- |
+    | schema, low | 140 | 0 (0–0) | 1 | 18 | 0, 0 | 400/401 |
+    | fallback, low | 154 | 0 (0–0) | 15 | 16 | 0, 0 | 446/446 |
+    | schema, high | 145 | 1,811 (1,145–3,601) | 3,955 | 36 | 0, 0 | 422/422 |
+    | fallback, high | 137 | 1,496 (926–4,226) | 4,055 | 33 | 0, 0 | 399/403 |
+
+  - *A judging role, with known answers* (`continuity_live_tests`). The Continuity checker
+    read the debug chapter with three faults written into it: a secret known too early, a
+    character put elsewhere, a death the record contradicts. Five calls an arm, the same
+    four arms. Every call found all three faults and nothing else. The median reasoning
+    tokens were 0 and 0 at the low level, 7,037 and 7,093 at the high one.
+
+  At the low level the World Master thought nothing with the schema or without it, and at
+  the high level as much either way, its thought summaries returned (889 thousand
+  characters against 927 thousand). PR 5's finding was one prompt's at one level
+  (docs/lessons.md §3, recorded). The rulings showed no difference either: no slip and no
+  engine refusal in any arm. What thinking changed was strictness: at the high level the
+  World Master refused twice as many intents. No mechanism changes; a role's effort is the
+  setting that matters, and PR 8 sets it.
+  - Two incidents, each taken by the policy. One character reply of 401 ended filtered,
+    on Silas, who speaks in proverbs, and its branch failed as designed. In the fallback
+    arm at the high level four rulings thought up to the 16,384-token cap; the retry took
+    three of them, and the fourth failed its branch.
+- **Mutation check:** 22 mutants in two passes, one build each. The first pass killed 17 of
+  18; the survivor, the plan asked for again when the world refuses it, got a test and
+  died in the second, with the three mutants of the lost branch's replacement. The sources
+  were restored and the fingerprint checked.
+- **Tests:** 4668 unit tests green (+47), 322 `#[ignore]` (+3: the chapter end to end, the chapter
+  killed and resumed, the checker's recall probe).
+- **The gate's red on the pull request:** `rust:S7493`, blocking file calls in the live
+  harnesses' async tests (the story directory made and removed, the report written), as on
+  PR 4. They take `tokio::fs` now (docs/lessons.md §10, recorded again).
 
 **Gates**: unit tests green; clippy `-D warnings`, fmt, `cyrillic_scan` (and its
 `--self-test`), `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check`,

@@ -24,7 +24,7 @@ mod actor;
 mod schema;
 mod writers;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError, mpsc};
 
@@ -32,12 +32,13 @@ use serde_json::Value;
 use tokio::sync::oneshot;
 
 use crate::entities::story::{
-    BranchId, Canon, CanonProblem, CharacterKey, Event, EventId, Proposal, ProposalId,
-    ProposalVerdict, Refusal, RunId, SceneId, WorldState,
+    BranchId, Canon, CanonProblem, ChapterId, ChapterOutline, ChapterVersion, CharacterKey,
+    Decided, Event, EventId, Proposal, ProposalId, ProposalVerdict, Question, QuestionId, Refusal,
+    Resolution, ReviewNote, Reviewer, RunId, SceneId, SceneSetup, StoredAssumption, WorldState,
 };
 use actor::{Actor, Job};
 
-pub use writers::{AuthorWriter, BranchWriter, ReflectionWriter, RunLogWriter};
+pub use writers::{AuthorWriter, BranchWriter, ReflectionWriter, ReviewWriter, RunLogWriter};
 
 /// Why the story database refused or failed. The texts are for logs and for
 /// the engine; a person sees what the story tools make of them.
@@ -152,6 +153,20 @@ pub enum StoryDbError {
     /// Stored data that does not read back, or no longer folds.
     #[error("the story database is inconsistent: {0}")]
     Corrupt(String),
+    /// A row of the manuscript written twice: an outline, a summary, a
+    /// review, a decision, an answer.
+    #[error("{0} exists already")]
+    Exists(String),
+    /// A row of the manuscript the story does not have.
+    #[error("there is no {0}")]
+    Unknown(String),
+    /// A chapter version out of its order: a draft after a version, a
+    /// revision before one.
+    #[error("out of order: {0}")]
+    OutOfOrder(String),
+    /// A question asked while another waits for its answer.
+    #[error("question {0} waits for its answer")]
+    QuestionPending(QuestionId),
 }
 
 fn join(problems: &[CanonProblem]) -> String {
@@ -221,6 +236,55 @@ pub struct Reflection {
     pub body: String,
     /// The goals it changed.
     pub goal_changes: Vec<String>,
+}
+
+/// A scene as the Author stored it: where it sits, its circumstances and the
+/// Author's private intent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredScene {
+    /// Its id.
+    pub id: SceneId,
+    /// The chapter.
+    pub chapter: u32,
+    /// The scene within it.
+    pub scene: u32,
+    /// The rerun.
+    pub rerun: u32,
+    /// The given circumstances.
+    pub setup: SceneSetup,
+    /// The Author's intent.
+    pub intent: String,
+}
+
+/// A scene's pick: the branch that extends the main line, or none when a
+/// rerun was wanted, and why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredPick {
+    /// The branch picked; none for a rerun.
+    pub branch: Option<BranchId>,
+    /// The note for the human.
+    pub rationale: String,
+}
+
+/// What a set of calls cost, as the call log recorded it (docs/fabula.md §6,
+/// T1: tokens on every provider, dollars where the provider reports them).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Spend {
+    /// The attempts recorded.
+    pub calls: u64,
+    /// Prompt tokens.
+    pub input_tokens: u64,
+    /// Reply tokens.
+    pub output_tokens: u64,
+    /// Dollars, where any call reported them.
+    pub cost_usd: Option<f64>,
+}
+
+impl Spend {
+    /// Prompt and reply tokens together: what the budget counts.
+    pub fn tokens(&self) -> u64 {
+        self.input_tokens + self.output_tokens
+    }
 }
 
 /// How a resumable step ended (spec §9).
@@ -613,6 +677,104 @@ impl StoryDb {
         self.run(move |a| a.calls(&run)).await
     }
 
+    /// The writer of `reviewer`'s notes on one chapter version.
+    pub async fn review_writer(
+        &self,
+        chapter: &ChapterId,
+        reviewer: Reviewer,
+    ) -> Result<ReviewWriter, StoryDbError> {
+        let id = chapter.clone();
+        let token = self.run(move |a| a.issue_review(&id, reviewer)).await?;
+        Ok(ReviewWriter::new(
+            self.clone(),
+            chapter.clone(),
+            reviewer,
+            token,
+        ))
+    }
+
+    /// Whether every document of the canon as it stands is approved (P1).
+    pub async fn canon_approved(&self) -> Result<bool, StoryDbError> {
+        self.run(|a| a.canon_approved()).await
+    }
+
+    /// Chapter `chapter`'s outline.
+    pub async fn outline(&self, chapter: u32) -> Result<Option<ChapterOutline>, StoryDbError> {
+        self.run(move |a| a.outline(chapter)).await
+    }
+
+    /// Chapter `chapter`'s scenes, every rerun, by scene and rerun.
+    pub async fn scenes_of(&self, chapter: u32) -> Result<Vec<StoredScene>, StoryDbError> {
+        self.run(move |a| a.scenes_of(chapter)).await
+    }
+
+    /// A scene's pick.
+    pub async fn pick_of(&self, scene: &SceneId) -> Result<Option<StoredPick>, StoryDbError> {
+        let scene = scene.clone();
+        self.run(move |a| a.pick_of(&scene)).await
+    }
+
+    /// Chapter `number`'s versions, oldest first.
+    pub async fn chapter_versions(&self, number: u32) -> Result<Vec<ChapterVersion>, StoryDbError> {
+        self.run(move |a| a.chapter_versions(number)).await
+    }
+
+    /// A chapter version's summary.
+    pub async fn summary(&self, chapter: &ChapterId) -> Result<Option<String>, StoryDbError> {
+        let chapter = chapter.clone();
+        self.run(move |a| a.summary(&chapter)).await
+    }
+
+    /// Whether a chapter version is accepted (P2).
+    pub async fn accepted(&self, chapter: &ChapterId) -> Result<bool, StoryDbError> {
+        let chapter = chapter.clone();
+        self.run(move |a| a.accepted(&chapter)).await
+    }
+
+    /// A chapter version's review notes, in the order written.
+    pub async fn notes(&self, chapter: &ChapterId) -> Result<Vec<ReviewNote>, StoryDbError> {
+        let chapter = chapter.clone();
+        self.run(move |a| a.notes(&chapter)).await
+    }
+
+    /// The Author's decisions on a chapter version's notes.
+    pub async fn decisions(&self, chapter: &ChapterId) -> Result<Vec<Decided>, StoryDbError> {
+        let chapter = chapter.clone();
+        self.run(move |a| a.decisions(&chapter)).await
+    }
+
+    /// Every question with its answer, in the order asked.
+    pub async fn questions(&self) -> Result<Vec<(Question, Option<Resolution>)>, StoryDbError> {
+        self.run(|a| a.questions()).await
+    }
+
+    /// The question that waits for its answer, if one does.
+    pub async fn pending_question(&self) -> Result<Option<Question>, StoryDbError> {
+        Ok(self
+            .questions()
+            .await?
+            .into_iter()
+            .find(|(_, a)| a.is_none())
+            .map(|(q, _)| q))
+    }
+
+    /// The assumptions made at steps under `prefix` (`ch1/`), oldest first.
+    pub async fn assumptions(&self, prefix: &str) -> Result<Vec<StoredAssumption>, StoryDbError> {
+        let prefix = prefix.to_owned();
+        self.run(move |a| a.assumptions(&prefix)).await
+    }
+
+    /// How each step address ended across all of the story's runs.
+    pub async fn all_steps(&self) -> Result<BTreeMap<String, StepStatus>, StoryDbError> {
+        self.run(|a| a.all_steps()).await
+    }
+
+    /// What the calls at addresses under `prefix` cost, across every run.
+    pub async fn spend(&self, prefix: &str) -> Result<Spend, StoryDbError> {
+        let prefix = prefix.to_owned();
+        self.run(move |a| a.spend(&prefix)).await
+    }
+
     /// Runs raw SQL on the story database, for tests of what the schema
     /// itself refuses.
     #[cfg(test)]
@@ -629,5 +791,7 @@ impl StoryDb {
     }
 }
 
+#[cfg(test)]
+mod manuscript_tests;
 #[cfg(test)]
 mod tests;
