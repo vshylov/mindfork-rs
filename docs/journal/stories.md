@@ -808,7 +808,8 @@ behind `tools.story`, off by default.
   *Found on the way, older than the track:* a chat file that is valid JSON but no chat —
   the fixture's `{}` — stops every start, 0.23.1's included, with *"Migrating … produced
   an unparseable result … This is a migration bug; please report it"*, where a damaged
-  chat file is meant to be skipped (spec §12.2). Not fixed here; it is a follow-up.
+  chat file is meant to be skipped (spec §12.2). Not fixed here; fixed by the next
+  pull request (docs/journal/storage.md, "a chat file that holds no chat").
 - **Live, on a model** (`story_run_live`, `#[ignore]`): the fixture story, its canon
   approved, run three times over through `run` with the app's session budget at one
   permit — to a chapter budget of 40,000 tokens, to a stop by its token three seconds into

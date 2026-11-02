@@ -2918,7 +2918,11 @@ Invariants:
   (localized);
 - **hardened reads**: a corrupt `settings.json`/`profiles.json` → refuse to
   start; a corrupt `chats/<id>.json` → skipped with a `warn`, the file is left
-  untouched (`json.rs::load_chats`);
+  untouched (`json.rs::load_chats`); so is one at an older schema that holds no
+  chat — not a JSON object, or an object that parses as a `Chat` neither before
+  its steps nor after them (`data_migration::holds_no_chat`): it stays out of the
+  plan, so it takes no backup and no step. The control-parse refusal is for a
+  file that parsed as a `Chat` before its steps — a step's fault;
 - **the typed gate**: `assess_file` gives a `settings.json`/`profiles.json` at
   the current version the same `control_parse` a migrated one gets — over the
   file's **bytes**, where serde's error keeps its line and column — and a value

@@ -11,9 +11,10 @@
 //! version → `> current` — **refuse to start** (data newer than the app, F10); a corrupt
 //! `settings.json`/`profiles.json` — **refuse** (F11), and so is one at the current version
 //! that does not parse into its typed structure (docs/research/settings-typed-parse.md);
-//! a corrupt `chats/<id>.json` — skip
-//! with a `warn`; `< current` — into the plan. A non-empty plan → **one** backup before any write
-//! (a failure → the migration doesn't start) → run the steps + control-parse + an atomic write.
+//! a corrupt `chats/<id>.json`, or one that holds no chat before its steps or after
+//! them (`holds_no_chat`) — skip with a `warn`; `< current` — into the plan. A non-empty
+//! plan → **one** backup before any write (a failure → the migration doesn't start) → run
+//! the steps + control-parse + an atomic write.
 //!
 //! `settings.json` is at schema 2 (the sub-agent track's step, `schema::settings_to_v2`);
 //! `profiles.json` and the chat files are still at 1. The engine is additionally covered
@@ -104,12 +105,17 @@ fn run_with(
             Ok(None) => {}
             Ok(Some(v)) => match chat.assess(&v) {
                 Assessment::UpToDate => {}
-                Assessment::Migrate { from } => plan.push(Planned {
-                    path,
-                    kind: Kind::Chat,
-                    from,
-                    value: v,
-                }),
+                Assessment::Migrate { from } => match holds_no_chat(&v, chat, from) {
+                    // Skipped and left as it is, as a file that is not JSON is (F11).
+                    Some(why) => tracing::warn!(file = %path.display(), reason = %why,
+                        "migration: skipped a chat file that holds no chat"),
+                    None => plan.push(Planned {
+                        path,
+                        kind: Kind::Chat,
+                        from,
+                        value: v,
+                    }),
+                },
                 Assessment::Downgrade { from } => {
                     bail!(downgrade_msg(
                         loc,
@@ -293,6 +299,39 @@ where
         Kind::Profiles => Vec::<Profile>::deserialize(de).map(drop),
         Kind::Chat => Chat::deserialize(de).map(drop),
     }
+}
+
+/// Why a chat file at an older schema stays out of the plan, or `None` when it
+/// holds a chat to migrate.
+///
+/// A file in `chats/` holds a chat when it parses as one — before its steps,
+/// or after them, which is what the input of a step that changes the shape
+/// looks like. A file that parses neither way (`{}`, an array, a note saved
+/// there by hand) is no chat: it is skipped and left on disk, as a file that is
+/// not JSON is, and the start goes on (spec §12.2). It used to be read as
+/// schema 1 — it has no `v` — stepped, and refused by the control parse as a
+/// migration bug, on every start.
+///
+/// The control parse keeps the refusal it was written for: a file that parses
+/// as a chat before its steps and not after them is a step's fault, and
+/// `run_with` refuses it when it applies the steps. Every chat an older
+/// release wrote parses before its steps today (a test holds the fixtures to
+/// it); a future breaking step whose input does not would leave a file it
+/// broke skipped rather than refused — on disk, unchanged, either way.
+fn holds_no_chat(v: &Value, art: &JsonArtifact, from: u32) -> Option<String> {
+    // A chat is an object, and the steps index their value as one: on an
+    // array or a string that panics.
+    if !v.is_object() {
+        return Some("not a JSON object".into());
+    }
+    // A chat as it stands goes into the plan; a step that breaks it is refused there.
+    let Err(before) = control_parse(Kind::Chat, v) else {
+        return None;
+    };
+    let parses_after = art
+        .apply_steps(v.clone(), from)
+        .is_ok_and(|migrated| control_parse(Kind::Chat, &migrated).is_ok());
+    (!parses_after).then(|| before.to_string())
 }
 
 /// All `chats/*.json` (sorted for determinism). No directory → empty.
@@ -906,6 +945,239 @@ mod tests {
         );
         // A corrupt chat is skipped with a warn, startup doesn't fail, no migration happens.
         run(&paths, ru()).unwrap();
+    }
+
+    /// A chat at the schema before the last step, as 0.23.1 wrote it.
+    const CHAT_AT_7: &str =
+        include_str!("../shared/storage/fixtures/chat_v7_background_dialogue.json");
+    const CHAT_AT_7_ID: &str = "7d1a0b2c-3e4f-4a5b-8c6d-7e8f9a0b1c2d";
+
+    /// A file in `chats/` that is JSON but no chat — `{}` — is read as schema
+    /// 1, as is any file without `v`. It used to be stepped and then refused by
+    /// the control parse as a migration bug, on every start (found by Fabula's
+    /// PR 8 live check, docs/journal/stories.md). It is skipped now and left as
+    /// it is, and the chat beside it is migrated.
+    #[test]
+    fn run_skips_an_empty_object_in_chats_and_migrates_the_rest() {
+        let (_dir, paths) = root_with(&valid_settings_json(), "[]");
+        let stray = paths.chats_dir().join("notes-to-self.json");
+        write(&stray, "{}");
+        write(&paths.chat_file(CHAT_AT_7_ID), CHAT_AT_7);
+
+        run(&paths, en()).unwrap();
+
+        assert_eq!(fs::read_to_string(&stray).unwrap(), "{}");
+        assert!(!stray.with_extension("bak").exists());
+        let chat: Value =
+            serde_json::from_str(&fs::read_to_string(paths.chat_file(CHAT_AT_7_ID)).unwrap())
+                .unwrap();
+        assert_eq!(chat["v"], json!(schema::CHAT_SCHEMA));
+        assert_eq!(pre_migrate_backups(&paths), 1);
+
+        // The skipped file is not planned: the next start takes no backup for it.
+        run(&paths, en()).unwrap();
+        assert_eq!(pre_migrate_backups(&paths), 1);
+        assert_eq!(fs::read_to_string(&stray).unwrap(), "{}");
+    }
+
+    /// JSON that is not an object holds no chat either, and is skipped before
+    /// any step runs: the steps index their value as an object, which panics on
+    /// an array or a string. Alone in the root, it plans no backup.
+    #[test]
+    fn run_skips_json_that_is_not_an_object_in_chats() {
+        for raw in ["[]", r#"[{"id": 1}]"#, r#""a note""#, "42", "true", "null"] {
+            let (_dir, paths) = root_with(&valid_settings_json(), "[]");
+            let stray = paths.chats_dir().join("stray.json");
+            write(&stray, raw);
+
+            run(&paths, en()).unwrap();
+
+            assert_eq!(fs::read_to_string(&stray).unwrap(), raw, "{raw}");
+            assert!(nothing_was_written(&paths, &stray), "{raw}");
+        }
+    }
+
+    /// A synthetic chat artifact at `current = 2` over the given steps.
+    fn synth_chat(steps: &'static [schema::Step]) -> JsonArtifact {
+        JsonArtifact {
+            name: "chats/<id>.json",
+            current: 2,
+            detect: schema::chat_artifact().detect,
+            steps,
+        }
+    }
+
+    /// A broken step: `messages` becomes a string, which no chat parses.
+    fn break_messages(mut v: Value) -> Result<Value> {
+        v["messages"] = json!("lost");
+        v["v"] = json!(2);
+        Ok(v)
+    }
+    const BREAKING_STEPS: &[schema::Step] = &[schema::Step {
+        to: 2,
+        summary: "test: a broken step",
+        apply: break_messages,
+    }];
+
+    /// A real chat at schema 1, as text: today's chat with `v` set back.
+    fn chat_at_1() -> String {
+        let mut chat: Value = serde_json::from_str(&valid_chat_json()).unwrap();
+        chat["v"] = json!(1);
+        chat.to_string()
+    }
+
+    /// The control arm: the refusal stays for what it was meant for. A file
+    /// that parses as a chat before its steps and not after them is a step's
+    /// fault, and the start is refused naming the file, which is left as it was.
+    /// A `{}` beside it does not change that.
+    #[test]
+    fn run_refuses_a_step_that_breaks_a_real_chat() {
+        let (_dir, paths) = root_with(&valid_settings_json(), "[]");
+        let raw = chat_at_1();
+        let file = paths.chat_file("88888888-8888-4888-8888-888888888888");
+        write(&file, &raw);
+        write(&paths.chats_dir().join("notes-to-self.json"), "{}");
+
+        let err = run_with(
+            &paths,
+            en(),
+            &schema::settings_artifact(),
+            &schema::profiles_artifact(),
+            &synth_chat(BREAKING_STEPS),
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("migration bug"), "{err}");
+        assert!(err.contains(&file.display().to_string()), "{err}");
+        assert_eq!(fs::read_to_string(&file).unwrap(), raw);
+        assert!(!file.with_extension("bak").exists());
+    }
+
+    /// A step of the shape a breaking change takes — a field renamed.
+    fn rename_heading_to_title(mut v: Value) -> Result<Value> {
+        if let Some(obj) = v.as_object_mut()
+            && let Some(heading) = obj.remove("heading")
+        {
+            obj.insert("title".into(), heading);
+        }
+        v["v"] = json!(2);
+        Ok(v)
+    }
+    const RENAMING_STEPS: &[schema::Step] = &[schema::Step {
+        to: 2,
+        summary: "test: a field renamed",
+        apply: rename_heading_to_title,
+    }];
+
+    /// A file that parses as a chat only once its steps have run — what the
+    /// input of a breaking step looks like — is a chat, and is migrated; a `{}`
+    /// beside it is stepped too, still holds no chat, and is skipped.
+    #[test]
+    fn run_migrates_a_chat_that_parses_only_after_its_steps() {
+        let (_dir, paths) = root_with(&valid_settings_json(), "[]");
+        let mut chat: Value = serde_json::from_str(&chat_at_1()).unwrap();
+        let title = chat.as_object_mut().unwrap().remove("title").unwrap();
+        chat["heading"] = title.clone();
+        let file = paths.chat_file("99999999-9999-4999-8999-999999999999");
+        write(&file, &chat.to_string());
+        let stray = paths.chats_dir().join("notes-to-self.json");
+        write(&stray, "{}");
+
+        run_with(
+            &paths,
+            en(),
+            &schema::settings_artifact(),
+            &schema::profiles_artifact(),
+            &synth_chat(RENAMING_STEPS),
+        )
+        .unwrap();
+
+        let after: Chat = serde_json::from_str(&fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(after.v, 2);
+        assert_eq!(json!(after.title), title);
+        assert_eq!(fs::read_to_string(&stray).unwrap(), "{}");
+    }
+
+    fn refuse_everything(_: Value) -> Result<Value> {
+        bail!("test: the step refuses")
+    }
+    const FAILING_STEPS: &[schema::Step] = &[schema::Step {
+        to: 2,
+        summary: "test: a failing step",
+        apply: refuse_everything,
+    }];
+
+    /// A step that fails is one more reason to skip a file that holds no chat;
+    /// on a chat it is a migration bug, and the start is refused as before.
+    #[test]
+    fn a_failing_step_skips_a_non_chat_and_refuses_a_chat() {
+        let (_dir, paths) = root_with(&valid_settings_json(), "[]");
+        let stray = paths.chats_dir().join("notes-to-self.json");
+        write(&stray, "{}");
+        let artifacts = |paths: &Paths| {
+            run_with(
+                paths,
+                en(),
+                &schema::settings_artifact(),
+                &schema::profiles_artifact(),
+                &synth_chat(FAILING_STEPS),
+            )
+        };
+
+        artifacts(&paths).unwrap();
+        assert_eq!(fs::read_to_string(&stray).unwrap(), "{}");
+        assert!(nothing_was_written(&paths, &stray));
+
+        let raw = chat_at_1();
+        let file = paths.chat_file("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+        write(&file, &raw);
+        let err = format!("{:#}", artifacts(&paths).unwrap_err());
+        assert!(err.contains("the step refuses"), "{err}");
+        assert_eq!(fs::read_to_string(&file).unwrap(), raw);
+    }
+
+    /// What the line between the two rests on: every chat an older release
+    /// wrote parses as today's `Chat` before its steps — each chat step so far
+    /// is additive or a stamp — so a step that broke one is refused, not
+    /// skipped. A breaking step whose input no longer parses takes its fixture
+    /// out of this list, and with it that guarantee for files of that age: a
+    /// file the step then breaks is skipped and left on disk instead.
+    #[test]
+    fn every_older_chat_fixture_parses_as_a_chat_before_its_steps() {
+        for (name, raw) in [
+            (
+                "v1",
+                include_str!("../shared/storage/fixtures/chat_v1_call_subagent.json"),
+            ),
+            (
+                "v3",
+                include_str!("../shared/storage/fixtures/chat_v3_cut_run_title.json"),
+            ),
+            (
+                "v4",
+                include_str!("../shared/storage/fixtures/chat_v4_effort_xhigh.json"),
+            ),
+            (
+                "v5",
+                include_str!("../shared/storage/fixtures/chat_v5_external_deepseek.json"),
+            ),
+            (
+                "v6",
+                include_str!("../shared/storage/fixtures/chat_v6_sandbox_file.json"),
+            ),
+            ("v7", CHAT_AT_7),
+        ] {
+            let v: Value = serde_json::from_str(raw).unwrap();
+            assert!(
+                matches!(
+                    schema::chat_artifact().assess(&v),
+                    Assessment::Migrate { .. }
+                ),
+                "{name}"
+            );
+            control_parse(Kind::Chat, &v).unwrap_or_else(|e| panic!("{name}: {e}"));
+        }
     }
 
     // A synthetic settings artifact at "current = 2" with a 1→2 step: checks the full

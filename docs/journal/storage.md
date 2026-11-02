@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (29)
+## Entries (30)
 
 - Post-M9: persisting the input-box draft in the chat file (done)
 - Post-M9: persisting deleted exchanges in the chat file (`Ctrl+E`/`Ctrl+R`) (done)
@@ -41,6 +41,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the pre-migration backup records the schemas it holds (done)
 - Post-M9: every backup's manifest records the schemas its files hold (done)
 - Post-M9: a restore no longer writes over the copy it is restoring (done)
+- Post-M9: a chat file that holds no chat no longer stops the start (done)
 
 ### Post-M9: persisting the input-box draft in the chat file (done)
 - **Unsaved input-box text is stored on the chat and restored on
@@ -1691,3 +1692,60 @@ than the track; fixed in the same pull request, since its test is that PR's proo
   taken by copies of its archive leaves each of them byte for byte as it was, takes a
   name of its own, and restores the archive; it failed on the old code, the copy taking
   the archive's name. And the naming itself: a free name, then `-3` after two taken.
+
+### Post-M9: a chat file that holds no chat no longer stops the start (done)
+
+Found by the live check of Fabula's PR 8 (docs/journal/stories.md), in code older than
+the track; fixed on its own branch.
+
+- **The defect.** A file in `chats/` that is valid JSON but no chat — `{}`, a note saved
+  there by hand — has no `v`, so the start read it as schema 1, ran the chat steps over it
+  and then refused it at the control parse: *"Migrating … produced an unparseable result
+  … This is a migration bug; please report it."* Every start, 0.23.1's included, where
+  spec §12.2 and release-engineering.md F11 say a chat file that does not parse is skipped
+  and left on disk. An array was worse: the steps index their value as an object
+  (`v["v"] = …`), and `serde_json` panics on an array — exit 101. Each refused start also
+  took a fresh pre-migration backup first, since the stray was planned again every time,
+  and the chats sorted before it had already been written.
+- **The line between a file that holds no chat and a step's fault** (decided here). The
+  control parse's refusal is there to catch a step that broke a chat, and only a file
+  that was a chat before its steps can be broken by one. So a chat file at an older schema
+  goes into the plan only when it holds a chat (`data_migration::holds_no_chat`):
+  - not a JSON object → skipped before any step runs;
+  - parses as today's `Chat` before its steps → planned; a step that breaks it is
+    refused as before, naming the file;
+  - parses before its steps neither as it stands nor after them (the steps are pure, so
+    they are run once at planning time) → skipped with a `warn` that names serde's reason
+    (``missing field `id` ``), left byte for byte, and **not planned**: no backup, no step,
+    no `.bak`.
+  "After them" is for the input of a future breaking step — a field renamed — which does
+  not parse before the step and does after; such a file is migrated. Every chat an older
+  release wrote parses before its steps today (each chat step is additive or a stamp), and
+  a test holds the six golden fixtures to it. The price, written where the next author of
+  a breaking step will see it (that test's doc): a file of that age which the new step
+  then breaks is skipped rather than refused — on disk and unchanged either way.
+- **Rejected.** A shape check (an object with `id` and `messages` is a chat): a real chat
+  damaged by hand — one misspelt role — would then refuse the start, which is the case
+  F11 exists for. Skipping at the apply step instead of at planning: the stray stays in
+  the plan and costs a backup on every start, as it did. `settings.json` and
+  `profiles.json` keep their refusals; only the chat files are skipped (F11).
+- **Live, GO** — Windows 11, debug builds: the main checkout's (without the fix) as the
+  control, and this branch's. Each root is a copy of the binary with `data/` beside it:
+  English settings at 7, a profile, the golden chat at 7 (`chat_v7_background_dialogue`)
+  and `chats/notes-to-self.json` holding `{}` or `[]`.
+
+  | Start | `{}` | `[]` |
+  |---|---|---|
+  | `import` of an empty file, control | exit 1, the "migration bug" refusal; the next start the same, a second pre-migration backup | exit 101, the panic in `index.rs`; a second backup the next time |
+  | `import`, this branch | exit 0; the chat stamped 8, the stray byte for byte, one backup, the `warn` with ``missing field `id` ``; the next start: exit 0, still one backup | exit 0, the same, the reason `not a JSON object` |
+  | the TUI in a hidden console (`console_probe.Session`), control | the refusal on screen, *"Press Enter to close this window"* | exit 101 in 0.1 s |
+  | the TUI, this branch | the chat open on its title, *A scene in the background*; `Ctrl+Q`, exit 0 | the same |
+- **Tests** (+6, 4729): `{}` beside a chat at 7 is skipped and the chat migrated, the next
+  start taking no second backup; six JSON values that are not objects are skipped with
+  nothing written (the array panicked before); a step that breaks a real chat is still
+  refused, naming the file, with a `{}` beside it; a chat that parses only after its steps
+  is migrated and the `{}` beside it skipped; a failing step skips a non-chat and refuses
+  a chat; every older golden chat fixture parses as a `Chat` before its steps. The four
+  that exercise the defect failed on the old code.
+
+**Gates**: 4729 unit tests green, 324 `#[ignore]`; clippy `-D warnings`, fmt, `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.
