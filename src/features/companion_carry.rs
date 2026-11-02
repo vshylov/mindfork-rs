@@ -48,7 +48,9 @@ use crate::features::backup::{self, ArchiveReader, SchemaVersions};
 use crate::shared::i18n::Locale;
 use crate::shared::paths::Paths;
 use crate::shared::storage::db::ForkCopy;
-use crate::shared::storage::schema::{CHAT_SCHEMA, DB_SCHEMA, PROFILES_SCHEMA, SETTINGS_SCHEMA};
+use crate::shared::storage::schema::{
+    CHAT_SCHEMA, DB_SCHEMA, PROFILES_SCHEMA, SETTINGS_SCHEMA, STORY_SCHEMA,
+};
 use crate::shared::storage::{Db, JsonStore, Storage};
 
 /// What `companion.json` says the archive is.
@@ -81,6 +83,7 @@ impl CarryManifest {
                 profiles: PROFILES_SCHEMA,
                 chat: CHAT_SCHEMA,
                 db: DB_SCHEMA,
+                story: STORY_SCHEMA,
             },
             created_at: Local::now().to_rfc3339(),
         }

@@ -633,6 +633,7 @@ mod tests {
             profiles: 1,
             chat: 6,
             db: 0,
+            story: 0,
         };
         assert_eq!(m.schemas, before_the_step);
         assert_eq!(m.app_version, env!("CARGO_PKG_VERSION"), "who wrote it");

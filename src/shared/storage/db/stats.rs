@@ -103,8 +103,9 @@ pub fn stats_of_image(image: impl Read, size: usize) -> Result<DbStats> {
 }
 
 /// The database file at `path`, opened read-only behind the header check.
-/// Shared with the self-model's timeline ([`super::timeline`]).
-pub(super) fn open_file(path: &Path) -> Result<Connection> {
+/// Shared with the self-model's timeline ([`super::timeline`]) and a story's
+/// summary (`storage::story::stats`).
+pub(in crate::shared::storage) fn open_file(path: &Path) -> Result<Connection> {
     if !super::is_sqlite_file(path) {
         bail!("{} is not a SQLite database", path.display());
     }
@@ -118,7 +119,7 @@ pub(super) fn open_file(path: &Path) -> Result<Connection> {
 }
 
 /// A database image loaded into memory — nothing of it reaches the disk.
-pub(super) fn open_image(image: impl Read, size: usize) -> Result<Connection> {
+pub(in crate::shared::storage) fn open_image(image: impl Read, size: usize) -> Result<Connection> {
     let mut conn = Connection::open_in_memory()?;
     conn.deserialize_read_exact(rusqlite::MAIN_DB, image, size, true)
         .context("loading the database image")?;
@@ -195,7 +196,7 @@ fn rows(conn: &Connection, table: &str, sql: &str) -> Result<Vec<KeyedRow>> {
     Ok(listed)
 }
 
-pub(super) fn has_table(conn: &Connection, table: &str) -> Result<bool> {
+pub(in crate::shared::storage) fn has_table(conn: &Connection, table: &str) -> Result<bool> {
     let found: i64 = conn.query_row(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
         [table],

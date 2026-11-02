@@ -21,14 +21,20 @@
 //! Notes, knowledge-base sources and self-models are edited in place and have
 //! no such history: they are lined up by key, told apart by a content digest
 //! and ordered by their own timestamp (G5).
+//!
+//! A story is lined up by its chat's id and its own, and compared by its rows
+//! (`StoryRow::units`): nothing in a story changes in place, so a side that
+//! holds every row of the other's is **ahead**, and one id under two contents
+//! is a row each side lacks, which makes the story **diverged** (docs/fabula.md
+//! §4, PR 7).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use uuid::Uuid;
 
-use super::{ChatRow, DataStats, DatabaseStats, SNAPSHOT_FORMAT, Source};
+use super::{ChatRow, DataStats, DatabaseStats, SNAPSHOT_FORMAT, Source, StoryRow};
 use crate::shared::i18n::Locale;
 use crate::shared::storage::db::KeyedRow;
 
@@ -73,8 +79,23 @@ pub struct CopyInfo {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Caveat {
-    UnreadableChats { side: Side, count: usize },
-    DatabaseNotCompared { side: Side, error: String },
+    UnreadableChats {
+        side: Side,
+        count: usize,
+    },
+    DatabaseNotCompared {
+        side: Side,
+        error: String,
+    },
+    UnreadableStories {
+        side: Side,
+        count: usize,
+    },
+    /// That side is a snapshot made before stories, while the other holds
+    /// some: its stories, if any, are unknown.
+    StoriesNotCompared {
+        side: Side,
+    },
 }
 
 /// What differs between two copies of a chat holding the same messages.
@@ -118,6 +139,48 @@ pub struct ChatComparison {
     pub details: Vec<ChatDiff>,
 }
 
+/// A story that differs between the copies, or is on one side only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StoryDiff {
+    pub chat_id: Uuid,
+    pub id: Uuid,
+    /// Its chat's title, from whichever side holds the chat.
+    pub chat_title: Option<String>,
+    pub deleted: bool,
+    /// Accepted chapters on each side; `None` — the story is not there at all.
+    pub chapters_here: Option<u64>,
+    pub chapters_there: Option<u64>,
+    /// Rows held on this side only, and on the other only.
+    pub here: usize,
+    pub there: usize,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct StoryComparison {
+    pub same: usize,
+    pub only_here: Vec<StoryDiff>,
+    pub only_there: Vec<StoryDiff>,
+    pub ahead_here: Vec<StoryDiff>,
+    pub ahead_there: Vec<StoryDiff>,
+    pub diverged: Vec<StoryDiff>,
+}
+
+impl StoryComparison {
+    /// Whether either side has a story at all: what makes the text say anything.
+    fn any(&self) -> bool {
+        self.same > 0
+            || [
+                &self.only_here,
+                &self.only_there,
+                &self.ahead_here,
+                &self.ahead_there,
+                &self.diverged,
+            ]
+            .iter()
+            .any(|list| !list.is_empty())
+    }
+}
+
 /// One database row that is not the same on both sides, with each side's time.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct KeyedDiff {
@@ -150,6 +213,7 @@ pub struct Comparison {
     pub notes: KeyedComparison,
     pub knowledge_base: KeyedComparison,
     pub self_models: KeyedComparison,
+    pub stories: StoryComparison,
 }
 
 // ------------------------------------------------------------ the comparison
@@ -171,7 +235,14 @@ pub fn compare(here: &DataStats, there: &DataStats, there_snapshot: Option<Strin
                 error: error.clone(),
             });
         }
+        if !copy.stories.unreadable.is_empty() {
+            caveats.push(Caveat::UnreadableStories {
+                side,
+                count: copy.stories.unreadable.len(),
+            });
+        }
     }
+    let stories = stories_of(here, there, &mut caveats);
     let chats = compare_chats(&here.chat_list, &there.chat_list);
     // A database that could not be read is not "no notes": with either side
     // unreadable the three families are left uncompared, and a caveat says so.
@@ -188,12 +259,13 @@ pub fn compare(here: &DataStats, there: &DataStats, there_snapshot: Option<Strin
         app_version: env!("CARGO_PKG_VERSION").to_string(),
         here: copy_info(here, None),
         there: copy_info(there, there_snapshot),
-        verdict: verdict(&chats, families),
+        verdict: verdict(&chats, families, &stories),
         caveats,
         chats,
         notes,
         knowledge_base,
         self_models,
+        stories,
     }
 }
 
@@ -325,6 +397,85 @@ fn compare_chats(here: &[ChatRow], there: &[ChatRow]) -> ChatComparison {
     out
 }
 
+impl StoryDiff {
+    fn lone(row: &StoryRow, side: Side) -> Self {
+        let (chapters_here, chapters_there, here, there) = match side {
+            Side::Here => (Some(row.accepted_chapters), None, row.units.len(), 0),
+            Side::There => (None, Some(row.accepted_chapters), 0, row.units.len()),
+        };
+        Self {
+            chat_id: row.chat_id,
+            id: row.id,
+            chat_title: row.chat_title.clone(),
+            deleted: row.deleted,
+            chapters_here,
+            chapters_there,
+            here,
+            there,
+        }
+    }
+
+    fn pair(here: &StoryRow, there: &StoryRow) -> Self {
+        let (mine, theirs): (BTreeSet<&String>, BTreeSet<&String>) =
+            (here.units.iter().collect(), there.units.iter().collect());
+        Self {
+            chat_id: here.chat_id,
+            id: here.id,
+            chat_title: here.chat_title.clone().or_else(|| there.chat_title.clone()),
+            deleted: here.deleted,
+            chapters_here: Some(here.accepted_chapters),
+            chapters_there: Some(there.accepted_chapters),
+            here: mine.difference(&theirs).count(),
+            there: theirs.difference(&mine).count(),
+        }
+    }
+}
+
+/// The stories compared, or none when a side is a snapshot made before them,
+/// which says nothing about them. Only a newer version writes a story, so an
+/// older one holds a story only from a newer version's backup: the caveat is
+/// due when the side that was read holds stories, and noise when neither side
+/// shows any.
+fn stories_of(here: &DataStats, there: &DataStats, caveats: &mut Vec<Caveat>) -> StoryComparison {
+    let (h, t) = (&here.story_list, &there.story_list);
+    if let (Some(h), Some(t)) = (h, t) {
+        return compare_stories(h, t);
+    }
+    for (side, list, other) in [(Side::Here, h, t), (Side::There, t, h)] {
+        if list.is_none() && other.as_ref().is_some_and(|o| !o.is_empty()) {
+            caveats.push(Caveat::StoriesNotCompared { side });
+        }
+    }
+    StoryComparison::default()
+}
+
+fn compare_stories(here: &[StoryRow], there: &[StoryRow]) -> StoryComparison {
+    let mut others: BTreeMap<(Uuid, Uuid), &StoryRow> = there
+        .iter()
+        .map(|row| ((row.chat_id, row.id), row))
+        .collect();
+    let mut out = StoryComparison::default();
+    for row in here {
+        let Some(other) = others.remove(&(row.chat_id, row.id)) else {
+            out.only_here.push(StoryDiff::lone(row, Side::Here));
+            continue;
+        };
+        let diff = StoryDiff::pair(row, other);
+        match (diff.here > 0, diff.there > 0) {
+            (true, true) => out.diverged.push(diff),
+            (true, false) => out.ahead_here.push(diff),
+            (false, true) => out.ahead_there.push(diff),
+            // The same rows are the identity the fingerprint hashes.
+            (false, false) => out.same += 1,
+        }
+    }
+    out.only_there = others
+        .into_values()
+        .map(|row| StoryDiff::lone(row, Side::There))
+        .collect();
+    out
+}
+
 /// Orders two stored timestamps: as instants when both parse, else as text —
 /// which agrees for the UTC RFC 3339 the app writes.
 fn order(here: &str, there: &str) -> std::cmp::Ordering {
@@ -370,7 +521,11 @@ fn compare_keyed(here: &[KeyedRow], there: &[KeyedRow]) -> KeyedComparison {
 /// Whether a side holds something the other lacks. A difference whose
 /// direction is unknown counts for **both**: the verdict errs towards "each
 /// has something", never towards "this one has everything".
-fn verdict(chats: &ChatComparison, families: [&KeyedComparison; 3]) -> Verdict {
+fn verdict(
+    chats: &ChatComparison,
+    families: [&KeyedComparison; 3],
+    stories: &StoryComparison,
+) -> Verdict {
     let unordered = families.iter().any(|f| !f.differing.is_empty());
     let here = !chats.only_here.is_empty()
         || !chats.ahead_here.is_empty()
@@ -378,14 +533,20 @@ fn verdict(chats: &ChatComparison, families: [&KeyedComparison; 3]) -> Verdict {
         || unordered
         || families
             .iter()
-            .any(|f| !f.only_here.is_empty() || !f.newer_here.is_empty());
+            .any(|f| !f.only_here.is_empty() || !f.newer_here.is_empty())
+        || !stories.only_here.is_empty()
+        || !stories.ahead_here.is_empty()
+        || !stories.diverged.is_empty();
     let there = !chats.only_there.is_empty()
         || !chats.ahead_there.is_empty()
         || !chats.diverged.is_empty()
         || unordered
         || families
             .iter()
-            .any(|f| !f.only_there.is_empty() || !f.newer_there.is_empty());
+            .any(|f| !f.only_there.is_empty() || !f.newer_there.is_empty())
+        || !stories.only_there.is_empty()
+        || !stories.ahead_there.is_empty()
+        || !stories.diverged.is_empty();
     match (here, there) {
         (true, true) => Verdict::EachHasSomething,
         (true, false) => Verdict::HereHasAll,
@@ -429,11 +590,19 @@ pub fn render_comparison_text(c: &Comparison, loc: &Locale) -> String {
     for (label, family) in families {
         out.push(format!("{}: {}", loc.t(label), keyed_counts(family, loc)));
     }
+    if c.stories.any() {
+        out.push(format!(
+            "{}: {}",
+            loc.t("cli.stats.label.stories"),
+            story_counts(&c.stories, loc)
+        ));
+    }
 
     out.extend(chat_sections(&c.chats, loc));
     for (label, family) in families {
         out.extend(keyed_sections(loc.t(label), family, loc));
     }
+    out.extend(story_sections(&c.stories, loc));
     out.join("\n")
 }
 
@@ -466,6 +635,17 @@ fn caveat_line(caveat: &Caveat, loc: &Locale) -> String {
         Caveat::DatabaseNotCompared { side, error } => loc.tf(
             "cli.stats.cmp.caveat.database",
             &[("side", side_name(*side, loc)), ("err", error)],
+        ),
+        Caveat::UnreadableStories { side, count } => loc.tf(
+            "cli.stats.cmp.caveat.unreadable_stories",
+            &[
+                ("side", side_name(*side, loc)),
+                ("count", &count.to_string()),
+            ],
+        ),
+        Caveat::StoriesNotCompared { side } => loc.tf(
+            "cli.stats.cmp.caveat.stories",
+            &[("side", side_name(*side, loc))],
         ),
     }
 }
@@ -504,6 +684,21 @@ fn chat_counts(chats: &ChatComparison, loc: &Locale) -> String {
             ("ahead_there", &n(&chats.ahead_there)),
             ("diverged", &n(&chats.diverged)),
             ("details", &n(&chats.details)),
+        ],
+    )
+}
+
+fn story_counts(stories: &StoryComparison, loc: &Locale) -> String {
+    let n = |list: &Vec<StoryDiff>| list.len().to_string();
+    loc.tf(
+        "cli.stats.cmp.counts.stories",
+        &[
+            ("same", &stories.same.to_string()),
+            ("only_here", &n(&stories.only_here)),
+            ("only_there", &n(&stories.only_there)),
+            ("ahead_here", &n(&stories.ahead_here)),
+            ("ahead_there", &n(&stories.ahead_there)),
+            ("diverged", &n(&stories.diverged)),
         ],
     )
 }
@@ -555,6 +750,45 @@ fn chat_sections(chats: &ChatComparison, loc: &Locale) -> Vec<String> {
         section(family, kind, lines, loc)
     })
     .collect()
+}
+
+fn story_sections(stories: &StoryComparison, loc: &Locale) -> Vec<String> {
+    let family = loc.t("cli.stats.label.stories");
+    [
+        ("cli.stats.cmp.kind.only_here", &stories.only_here),
+        ("cli.stats.cmp.kind.only_there", &stories.only_there),
+        ("cli.stats.cmp.kind.ahead_here", &stories.ahead_here),
+        ("cli.stats.cmp.kind.ahead_there", &stories.ahead_there),
+        ("cli.stats.cmp.kind.diverged_story", &stories.diverged),
+    ]
+    .into_iter()
+    .flat_map(|(kind, list)| {
+        let lines = list.iter().map(|diff| story_line(diff, loc)).collect();
+        section(family, kind, lines, loc)
+    })
+    .collect()
+}
+
+/// `  <chat-id>/<story-id>  <what differs>  <chat title>`.
+fn story_line(diff: &StoryDiff, loc: &Locale) -> String {
+    let mut what = match (diff.chapters_here, diff.chapters_there) {
+        (Some(count), None) | (None, Some(count)) => loc.tf(
+            "cli.stats.cmp.detail.chapters",
+            &[("count", &count.to_string())],
+        ),
+        _ => loc.tf(
+            "cli.stats.cmp.detail.records",
+            &[
+                ("here", &diff.here.to_string()),
+                ("there", &diff.there.to_string()),
+            ],
+        ),
+    };
+    if diff.deleted {
+        what = format!("{what}, {}", loc.t("cli.stats.cmp.detail.deleted_chat"));
+    }
+    let title = diff.chat_title.as_deref().unwrap_or_default();
+    format!("  {}/{}  {what}  {title}", diff.chat_id, diff.id)
 }
 
 fn keyed_sections(family: &str, keyed: &KeyedComparison, loc: &Locale) -> Vec<String> {
@@ -629,5 +863,7 @@ fn keyed_line(diff: &KeyedDiff, loc: &Locale) -> String {
     format!("  {}  {times}", diff.key)
 }
 
+#[cfg(test)]
+mod story_tests;
 #[cfg(test)]
 mod tests;

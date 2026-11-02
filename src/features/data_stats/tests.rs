@@ -160,7 +160,7 @@ fn assert_database(database: &DatabaseStats, root: &Root) {
 
 /// Every file under `dir`, with its size and content hash stand-in (the bytes
 /// themselves) — "untouched" means this is equal before and after.
-fn snapshot(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+pub(super) fn snapshot(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
     let mut out = Vec::new();
     let mut pending = vec![dir.to_path_buf()];
     while let Some(next) = pending.pop() {

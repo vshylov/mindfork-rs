@@ -957,10 +957,25 @@ impl Actor {
 
     pub(super) fn start_run(&mut self, token: u64, config: &Value) -> Result<RunId, StoryDbError> {
         check(self.writers.run_log.as_ref(), token)?;
-        let count: i64 = self
-            .story
-            .query_row("SELECT COUNT(*) FROM run", [], |r| r.get(0))?;
-        let id = RunId::nth(count as u64 + 1);
+        // Numbered past the last run of **either** file. A backup carries the
+        // story and leaves its call log out (spec §15), so a restore can put
+        // back a story behind its log; a run id the log already holds would
+        // collide with that run's calls (docs/fabula.md §4, PR 7).
+        let last = |conn: &rusqlite::Connection, sql: &str| -> Result<u64, StoryDbError> {
+            Ok(conn
+                .query_row(sql, [], |r| r.get::<_, Option<i64>>(0))?
+                .unwrap_or(0) as u64)
+        };
+        let in_story = last(
+            &self.story,
+            "SELECT MAX(CAST(substr(id, 4) AS INTEGER)) FROM run WHERE id GLOB 'run[1-9]*'",
+        )?;
+        let in_log = last(
+            &self.calls,
+            "SELECT MAX(CAST(substr(run_id, 4) AS INTEGER)) FROM llm_call
+             WHERE run_id GLOB 'run[1-9]*'",
+        )?;
+        let id = RunId::nth(in_story.max(in_log) + 1);
         self.story.execute(
             "INSERT INTO run (id, config_json, started_at) VALUES (?1, ?2, ?3)",
             params![id.as_str(), serde_json::to_string(config)?, now()],

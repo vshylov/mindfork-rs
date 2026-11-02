@@ -2328,6 +2328,17 @@ was a `- "zeroize",` line under its entry.
 — *`chacha20poly1305` 0.10.1 → 0.11.0 — the nonce API, and a wipe that became
 optional*, *`zip` 2.4.2 → 8.6.0 — what a green build does not say about a bump*.
 
+**Two files that travel apart cannot share a counter.** A story's database goes into
+backups and its call log does not, by decision. Runs were numbered by counting the
+database's (`run1`, `run2`), and the log keys every call by its run. A restore puts the
+database back behind its log; the next run takes an id the log already holds, and its
+first call collides with the lost run's under the log's unique key. Whatever is numbered
+by position across two files with different lives (a backup, a sync, a cache) takes its
+next number past the highest in **either** file, and whatever sums over the second (a
+budget) counts only what the first knows. A test that restores one file and keeps the
+other finds it; a round trip of both does not.
+— *Fabula PR 7, stories in mindfork's data*.
+
 ## 9. Live runs and model behaviour
 
 **A smoke about what the model is shown must also look at the shape of what it

@@ -16,13 +16,13 @@ use crate::shared::paths::Paths;
 use crate::shared::storage::{JsonStore, Storage};
 
 /// A data root and a byte copy of it: *here* and *there*.
-struct Pair {
-    here: Root,
-    _there_dir: tempfile::TempDir,
-    there: Paths,
+pub(super) struct Pair {
+    pub(super) here: Root,
+    pub(super) _there_dir: tempfile::TempDir,
+    pub(super) there: Paths,
 }
 
-fn copy_tree(from: &Path, to: &Path) {
+pub(super) fn copy_tree(from: &Path, to: &Path) {
     fs::create_dir_all(to).unwrap();
     for entry in fs::read_dir(from).unwrap() {
         let entry = entry.unwrap();
@@ -48,20 +48,20 @@ fn pair() -> Pair {
 }
 
 impl Pair {
-    fn compared(&self) -> Comparison {
+    pub(super) fn compared(&self) -> Comparison {
         let here = collect_root(&self.here.paths, en()).unwrap();
         let there = collect_root(&self.there, en()).unwrap();
         compare(&here, &there, None)
     }
 
-    fn fingerprints(&self) -> (String, String) {
+    pub(super) fn fingerprints(&self) -> (String, String) {
         let c = self.compared();
         (c.here.fingerprint, c.there.fingerprint)
     }
 }
 
 /// The fixture's chat that has messages, a deleted exchange and a sub-agent run.
-fn busy(paths: &Paths) -> Chat {
+pub(super) fn busy(paths: &Paths) -> Chat {
     let chats = JsonStore::new(paths.clone()).load_chats().unwrap();
     chats.into_iter().find(|c| c.title == "busy").unwrap()
 }
@@ -326,7 +326,11 @@ fn different_content_under_one_time_counts_for_both_sides() {
     assert_eq!(keyed_shape(&differing), [0, 0, 0, 0, 0, 1]);
     let empty = KeyedComparison::default();
     assert_eq!(
-        verdict(&ChatComparison::default(), [&differing, &empty, &empty]),
+        verdict(
+            &ChatComparison::default(),
+            [&differing, &empty, &empty],
+            &StoryComparison::default()
+        ),
         Verdict::EachHasSomething
     );
     // The same digest is the same note, whatever the clocks say.

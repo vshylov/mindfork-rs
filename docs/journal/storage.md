@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (28)
+## Entries (29)
 
 - Post-M9: persisting the input-box draft in the chat file (done)
 - Post-M9: persisting deleted exchanges in the chat file (`Ctrl+E`/`Ctrl+R`) (done)
@@ -40,6 +40,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: character cards — `mindfork import` reads the community's personas (done)
 - Post-M9: the pre-migration backup records the schemas it holds (done)
 - Post-M9: every backup's manifest records the schemas its files hold (done)
+- Post-M9: a restore no longer writes over the copy it is restoring (done)
 
 ### Post-M9: persisting the input-box draft in the chat file (done)
 - **Unsaved input-box text is stored on the chat and restored on
@@ -1667,3 +1668,26 @@ deferred).
   pre-migrate entry point went with it.
 
 **Gates**: 4475 unit tests green, 308 `#[ignore]`; clippy `-D warnings`, fmt, `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check` clean.
+
+### Post-M9: a restore no longer writes over the copy it is restoring (done)
+
+Found by the live round trip of Fabula's PR 7 (docs/journal/stories.md), in code older
+than the track; fixed in the same pull request, since its test is that PR's proof.
+
+- **The defect.** Every archive the app names itself is `<prefix>-<date>-<time>.zip`
+  under `backups/`, to the second (`default_backup_path`): the pre-restore copy, the
+  pre-migration backup, `backup` without `-o`, a companion export. Two named in one second
+  were one file, and `File::create` truncates. The case that loses data: `restore` saves
+  the root as a pre-restore copy before it clears it. Restoring *that copy* within the
+  second it was made named the new copy the same: the copy of the current root was
+  written over the archive, and then unpacked. The data the copy was kept for was gone,
+  with nothing said. Live, the two restores ran in one second on a small root
+  (`pre-restore-20261102-032244.zip` twice), and the stories of the first root were lost.
+- **The fix.** A taken name gets `-2`, `-3` and so on (`unused_name`). The check and the
+  write are not one step, but `backup`, `restore` and the start-up's pre-migration backup
+  hold the single-instance lock, so none of them races another. The rule is in the naming,
+  not in `restore`, so every caller has it, a companion export included.
+- **Tests** (+2): a restore with every pre-restore name of the next six seconds already
+  taken by copies of its archive leaves each of them byte for byte as it was, takes a
+  name of its own, and restores the archive; it failed on the old code, the copy taking
+  the archive's name. And the naming itself: a free name, then `-3` after two taken.
