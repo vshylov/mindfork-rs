@@ -1,0 +1,104 @@
+{
+  "v": 7,
+  "id": "7d1a0b2c-3e4f-4a5b-8c6d-7e8f9a0b1c2d",
+  "profile_id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+  "title": "A scene in the background",
+  "created_at": "2026-11-01T09:00:00Z",
+  "modified_at": "2026-11-01T09:20:00Z",
+  "system_message": "You are an assistant.",
+  "character_names": {
+    "user": "You",
+    "assistant": "Assistant",
+    "system": "System"
+  },
+  "messages": [
+    {
+      "id": "d0000000-0000-0000-0000-000000000001",
+      "role": "user",
+      "text": "Stage the cafe scene in the background and draw the cafe.",
+      "timestamp": "2026-11-01T09:00:00Z"
+    },
+    {
+      "id": "d0000000-0000-0000-0000-000000000002",
+      "role": "assistant",
+      "text": "Started; here is the cafe.",
+      "timestamp": "2026-11-01T09:00:30Z",
+      "tool_calls": [
+        {
+          "id": "call_1",
+          "name": "start_dialogue",
+          "arguments": {
+            "a": {
+              "name": "Mara",
+              "system_message": "barista"
+            },
+            "b": {
+              "name": "Jonas",
+              "system_message": "customer"
+            },
+            "opening": {
+              "speaker": "b",
+              "text": "Wrong drink?"
+            },
+            "scene": "Cafe."
+          },
+          "result": "The dialogue «Mara ↔ Jonas» started in the background.",
+          "subagent": {
+            "id": "e0000000-0000-0000-0000-000000000001",
+            "kind": "dialogue",
+            "title": "Mara ↔ Jonas",
+            "created_at": "2026-11-01T09:00:10Z",
+            "finished_at": "2026-11-01T09:12:00Z",
+            "system_message": "",
+            "participants": [
+              {
+                "name": "Mara",
+                "system_message": "barista"
+              },
+              {
+                "name": "Jonas",
+                "system_message": "customer"
+              }
+            ],
+            "messages": [
+              {
+                "id": "e0000000-0000-0000-0000-00000000000a",
+                "role": "user",
+                "text": "Wrong drink?",
+                "timestamp": "2026-11-01T09:00:10Z"
+              },
+              {
+                "id": "e0000000-0000-0000-0000-00000000000b",
+                "role": "assistant",
+                "text": "Sorry! Remaking it now.",
+                "timestamp": "2026-11-01T09:06:00Z"
+              }
+            ],
+            "outcome": "completed",
+            "tokens": 412,
+            "background": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "d0000000-0000-0000-0000-000000000003",
+      "role": "tool",
+      "text": "The dialogue «Mara ↔ Jonas» started in the background.",
+      "timestamp": "2026-11-01T09:00:11Z",
+      "tool_call_id": "call_1",
+      "tool_name": "start_dialogue"
+    }
+  ],
+  "files": [
+    {
+      "id": "f0000000-0000-0000-0000-000000000007",
+      "name": "image-1.png",
+      "origin": "generated",
+      "mime": "image/png",
+      "bytes": 183402,
+      "sha256": "3c2a1b0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b",
+      "added_at": "2026-11-01T09:00:29Z"
+    }
+  ]
+}

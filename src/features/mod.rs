@@ -48,8 +48,11 @@ pub mod rename_chat;
 pub mod sandbox_setup;
 pub mod slash;
 pub mod spellcheck;
-// Fabula's engine is built and tested ahead of its first production consumer,
-// the background story run (docs/fabula.md §4, PR 8); the allow goes with it.
+// Fabula's engine is reached from production through the background story
+// run (docs/fabula.md §4, PR 8); what the run does not reach yet — the canon's
+// import and checks and the answer's resolution (`story_create`,
+// `story_continue`, PR 9), the replay and the harnesses' scenes (M3) — is
+// built and tested ahead of those consumers. The allow goes with the last of them.
 #[allow(dead_code)]
 pub mod story;
 pub mod terminal_input;

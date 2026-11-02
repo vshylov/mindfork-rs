@@ -679,6 +679,15 @@ enum FieldId {
     /// How long a quit waits for the app's own background tasks to land
     /// (`tools.quit_settle_secs`; empty — until they do).
     TQuitSettle,
+    /// Offer the story tools (`tools.story`, docs/fabula.md), off by default.
+    TStory,
+    /// The time limit of one story run, in seconds (`tools.story_run_timeout_secs`).
+    TStoryTimeout,
+    /// A chapter's token budget (`tools.story_budget_tokens`; 0 — none).
+    TStoryBudgetTokens,
+    /// A chapter's dollar budget where the provider reports cost
+    /// (`tools.story_budget_usd`; empty — none).
+    TStoryBudgetUsd,
     /// Ask before the agentic loop runs a tool marked dangerous
     /// (`tools.confirm_dangerous`, spec §9.8).
     TConfirmDangerous,

@@ -62,6 +62,7 @@ mod search;
 mod self_consolidation;
 mod settings;
 mod slots;
+mod story_runs;
 mod tasks;
 mod title;
 mod tool_loop;
@@ -302,6 +303,7 @@ pub async fn run(deps: OrchestratorDeps) {
             crate::shared::config::DEFAULT_SUBAGENT_BACKGROUND_MAX,
         )),
         index_board: Arc::new(crate::features::attachment_index::IndexBoard::new()),
+        story_board: Arc::default(),
         pending_landings: Vec::new(),
         session_budget_memo: None,
         active_id: None,
@@ -803,6 +805,10 @@ struct Orchestrator {
     /// attachments here, the landing starts only what nobody has, and a held
     /// end-of-index note waits here for its attachment to land.
     index_board: Arc<crate::features::attachment_index::IndexBoard>,
+    /// The story runs out in the background (docs/fabula.md §4, PR 8): which
+    /// story each one holds and the call it is in. Shared with the runs, which
+    /// claim and release it, and with the tools, which read it.
+    story_board: Arc<crate::features::story::board::StoryBoard>,
     /// Runs that ended while a turn was running in their chat: their
     /// records land with that turn, and so do they (research §4.4, §5).
     pending_landings: Vec<background_runs::PendingLanding>,
@@ -1743,6 +1749,7 @@ impl Orchestrator {
             engine: backend,
             embedder: self.engines.embedder(),
             index_board: self.index_board.clone(),
+            story_board: self.story_board.clone(),
             embed_configured: !matches!(
                 self.engines.status_of(engines::Server::Embed),
                 ServerStatus::NotConfigured

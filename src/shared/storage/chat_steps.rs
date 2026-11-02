@@ -1,5 +1,8 @@
 //! Chat-file migration steps (ADR 0006; the registry is [`super::schema`]).
 //!
+//! **7 → 8** (`chat_to_v8`): no shape change — the stamp of the first schema
+//! in which a run's `kind` may read `story`.
+//!
 //! **6 → 7** (`chat_to_v7`): no shape change — the stamp of the first schema
 //! in which a stored file's origin may read `generated`.
 //!
@@ -89,6 +92,20 @@ pub(super) fn chat_to_v6(mut v: Value) -> Result<Value> {
 /// downgraded in place as well as for a chat file copied by hand.
 pub(super) fn chat_to_v7(mut v: Value) -> Result<Value> {
     v["v"] = json!(7);
+    Ok(v)
+}
+
+/// `chats/<id>.json` 7 → 8: no shape change, like [`chat_to_v7`]. 8 is the
+/// first schema in which a run's `kind` may read `"story"` — a chapter of a
+/// Fabula story written in the background (docs/fabula.md §4, PR 8; spec §14
+/// of docs/research/fabula-engine.md) — and the kind is a strict enum, as the
+/// dialogue's step to 3 found ([`chat_to_v3`]): one such run is enough for
+/// 0.23.1 to skip the whole chat in silence. The settings hold the story's
+/// switch, timeout and budget as fields an older reader ignores, so they take
+/// no stamp, and this one answers for a root downgraded in place as well as
+/// for a chat file copied by hand.
+pub(super) fn chat_to_v8(mut v: Value) -> Result<Value> {
+    v["v"] = json!(8);
     Ok(v)
 }
 
@@ -413,6 +430,50 @@ mod tests {
         chat.files[0].origin = crate::entities::chat_file::FileOrigin::Generated;
         let written = serde_json::to_value(&chat).unwrap();
         assert_eq!(written["files"][0]["origin"], json!("generated"));
+    }
+
+    /// A chat file as 0.23.1 wrote it: `v = 7`, a dialogue run out in the
+    /// background (`start_dialogue`) — the kind of record a story run joins —
+    /// and a generated picture, the value schema 7 is for.
+    const V7_CHAT: &str = include_str!("fixtures/chat_v7_background_dialogue.json");
+
+    #[test]
+    fn the_v7_fixture_holds_nothing_a_chat_drops() {
+        let fixture: Value = serde_json::from_str(V7_CHAT).unwrap();
+        let chat: Chat = serde_json::from_value(fixture.clone()).unwrap();
+        assert_eq!(chat.v, 7);
+        let read_back = serde_json::to_value(&chat).unwrap();
+        assert_eq!(
+            super::super::schema::dropped_paths(&fixture, &read_back),
+            Vec::<String>::new()
+        );
+    }
+
+    /// 7 → 8 is the version and nothing else, and a second pass finds nothing
+    /// to do. The run keeps the kind it had; `story` is a kind a chat file
+    /// may hold from now on, and does.
+    #[test]
+    fn the_story_stamp_is_v8_and_touches_nothing_else() {
+        let before: Value = serde_json::from_str(V7_CHAT).unwrap();
+        let after = chat_to_v8(before.clone()).unwrap();
+        assert_eq!(after["v"], json!(8));
+        let mut restamped = after.clone();
+        restamped["v"] = json!(7);
+        assert_eq!(restamped, before, "every other value is where it was");
+        assert_eq!(chat_to_v8(after.clone()).unwrap(), after);
+
+        let mut chat: Chat = serde_json::from_value(after).unwrap();
+        let run = chat.messages[1].tool_calls[0]
+            .subagent
+            .as_deref_mut()
+            .unwrap();
+        assert_eq!(run.kind, crate::entities::subagent::RunKind::Dialogue);
+        run.kind = crate::entities::subagent::RunKind::Story;
+        let written = serde_json::to_value(&chat).unwrap();
+        assert_eq!(
+            written["messages"][1]["tool_calls"][0]["subagent"]["kind"],
+            json!("story")
+        );
     }
 
     #[test]

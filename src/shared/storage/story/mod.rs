@@ -23,6 +23,7 @@
 mod actor;
 mod schema;
 mod stats;
+mod status;
 mod writers;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -40,6 +41,9 @@ use crate::entities::story::{
 use actor::{Actor, Job};
 
 pub use stats::{StoryStats, story_stats_of_file, story_stats_of_image};
+#[cfg(test)]
+pub use status::ChapterState;
+pub use status::{StoryStatus, story_status_of};
 pub use writers::{AuthorWriter, BranchWriter, ReflectionWriter, ReviewWriter, RunLogWriter};
 
 /// Why the story database refused or failed. The texts are for logs and for

@@ -276,6 +276,7 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
             crate::shared::config::DEFAULT_SUBAGENT_BACKGROUND_MAX,
         )),
         index_board: Arc::new(crate::features::attachment_index::IndexBoard::new()),
+        story_board: Arc::default(),
         pending_landings: Vec::new(),
         session_budget_memo: None,
         imp_cancel: None,
@@ -749,6 +750,7 @@ mod self_model_history_live;
 mod settings;
 mod silent;
 mod speak_replies_live;
+mod story;
 mod subagent;
 mod tasks;
 mod time_rows_live;

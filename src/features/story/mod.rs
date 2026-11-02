@@ -18,6 +18,7 @@
 
 pub mod author;
 pub mod author_prompts;
+pub mod board;
 pub mod chapter;
 pub mod contracts;
 pub mod dialect;
@@ -27,6 +28,7 @@ pub mod leaks;
 pub mod port;
 pub mod prompts;
 pub mod replay;
+pub mod run;
 pub mod scene;
 pub mod schema;
 pub mod simulation;
@@ -36,6 +38,8 @@ pub mod steps;
 mod chapter_live_tests;
 #[cfg(test)]
 mod continuity_live_tests;
+#[cfg(test)]
+mod run_live_tests;
 #[cfg(test)]
 mod scene_live_tests;
 #[cfg(test)]

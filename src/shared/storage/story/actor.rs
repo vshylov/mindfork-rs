@@ -208,6 +208,25 @@ impl Actor {
         })
     }
 
+    /// An actor over read-only connections, for a summary that must leave the
+    /// files as they were ([`super::status`]): it serves reads alone, on the
+    /// caller's thread, and no writer is ever issued by it. A story whose call
+    /// log is gone — the log stays outside backups — reads with an empty one.
+    pub(super) fn read_only(story: &Path, calls: &Path) -> Result<Self, StoryDbError> {
+        let calls = if calls.exists() {
+            schema::open_read_only(calls, &CALLS_FILE)?
+        } else {
+            schema::open_file(Path::new(":memory:"), &CALLS_FILE)?
+        };
+        Ok(Self {
+            story: schema::open_read_only(story, &STORY_FILE)?,
+            calls,
+            writers: Writers::default(),
+            canon: None,
+            closing: None,
+        })
+    }
+
     /// Runs jobs until every sender is gone or a close arrives; the close's
     /// acknowledgement, sent by the caller once the claim on the file is
     /// given back. The connections close when `self` drops, on return.

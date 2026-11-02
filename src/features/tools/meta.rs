@@ -37,6 +37,10 @@ pub enum ToolGate {
     /// `image_generate` is offered only while it is on — off by default, since
     /// every call is paid (docs/history/image-generation.md F7).
     ImageGen,
+    /// The story engine's switch (`config.tools.story`, docs/fabula.md): the
+    /// story tools are offered only while it is on — off by default, until the
+    /// evaluation decides the engine (docs/fabula.md §4, M3).
+    Story,
 }
 
 /// Semantic group of a tool (the group heading in profile toggles). Variant order

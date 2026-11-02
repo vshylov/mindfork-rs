@@ -5725,6 +5725,84 @@ fn background_rows_save_their_fields() {
     }
 }
 
+// ---------- Stories (tools.story*, docs/fabula.md §4, PR 8) ----------
+
+/// The story rows are a group of their own, the last of the Tools section:
+/// the switch (off), the run's time limit, the chapter's token budget and its
+/// dollar budget (empty — none), each described.
+#[test]
+fn story_rows_close_the_tools_section_in_a_group_of_their_own() {
+    let s = screen();
+    let rows = s.tool_fields();
+    let ids: Vec<FieldId> = rows.iter().rev().take(4).rev().map(|r| r.id).collect();
+    assert_eq!(
+        ids,
+        [
+            FieldId::TStory,
+            FieldId::TStoryTimeout,
+            FieldId::TStoryBudgetTokens,
+            FieldId::TStoryBudgetUsd,
+        ]
+    );
+    let first = rows.len() - 4;
+    assert_ne!(
+        rows[first].group,
+        rows[first - 1].group,
+        "a group of its own"
+    );
+    for r in &rows[first..] {
+        assert_eq!(r.group, rows[first].group);
+        assert!(r.description.is_some(), "{:?} is described", r.id);
+    }
+    assert!(matches!(rows[first].kind, FieldKind::Toggle(false)));
+    assert!(matches!(&rows[first + 1].kind, FieldKind::Text(v) if v == "21600"));
+    assert!(matches!(&rows[first + 2].kind, FieldKind::Text(v) if v == "2000000"));
+    assert!(matches!(&rows[first + 3].kind, FieldKind::Text(v) if v.is_empty()));
+}
+
+/// The switch toggles; the limit and the token budget store what is typed;
+/// the dollar budget stores an amount, empties to none, and keeps its value
+/// for a negative one.
+#[test]
+fn story_rows_save_their_fields() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Tools);
+    goto_field(&mut s, FieldId::TStory);
+    match s.handle_key(key(KeyCode::Char(' '))) {
+        Some(SettingsIntent::SaveConfig(c)) => assert!(c.tools.story),
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+    let edit = |s: &mut SettingsScreen, field: FieldId, text: &str| {
+        goto_section(s, Section::Tools);
+        goto_field(s, field);
+        s.handle_key(key(KeyCode::Enter));
+        s.handle_key(ctrl('k'));
+        for c in text.chars() {
+            s.handle_key(key(KeyCode::Char(c)));
+        }
+        s.handle_key(key(KeyCode::Enter))
+    };
+    let saved = |intent: Option<SettingsIntent>| match intent {
+        Some(SettingsIntent::SaveConfig(c)) => c.tools,
+        other => panic!("expected SaveConfig, got {other:?}"),
+    };
+    let tools = saved(edit(&mut screen(), FieldId::TStoryTimeout, "3600"));
+    assert_eq!(tools.story_run_timeout_secs, 3600);
+    let tools = saved(edit(&mut screen(), FieldId::TStoryBudgetTokens, "0"));
+    assert_eq!(tools.story_budget_tokens, 0);
+    let tools = saved(edit(&mut screen(), FieldId::TStoryBudgetUsd, "2.5"));
+    assert_eq!(tools.story_budget_usd, Some(2.5));
+    let mut s = screen();
+    s.config.tools.story_budget_usd = Some(3.0);
+    let tools = saved(edit(&mut s, FieldId::TStoryBudgetUsd, ""));
+    assert_eq!(tools.story_budget_usd, None);
+    let mut s = screen();
+    s.config.tools.story_budget_usd = Some(3.0);
+    if let Some(SettingsIntent::SaveConfig(c)) = edit(&mut s, FieldId::TStoryBudgetUsd, "-1") {
+        assert_eq!(c.tools.story_budget_usd, Some(3.0));
+    }
+}
+
 /// The local interpreter's limit is stored in its own field and never in the sandbox's —
 /// the two floors are far apart — and `0` reads as no limit, as it does for the sandbox.
 #[test]

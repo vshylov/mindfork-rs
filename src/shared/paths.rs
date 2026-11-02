@@ -386,7 +386,6 @@ impl Paths {
     }
 
     /// The database of story `story_id` in chat `chat_id`.
-    #[allow(dead_code)] // the story tools open it, from PR 8 (docs/fabula.md §4)
     pub fn story_db(&self, chat_id: &str, story_id: &str) -> PathBuf {
         self.stories_dir()
             .join(chat_id)
@@ -394,7 +393,6 @@ impl Paths {
     }
 
     /// The call log of story `story_id` in chat `chat_id`.
-    #[allow(dead_code)] // as above
     pub fn story_log(&self, chat_id: &str, story_id: &str) -> PathBuf {
         self.story_logs_dir()
             .join(chat_id)

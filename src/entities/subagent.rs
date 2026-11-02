@@ -32,6 +32,13 @@ pub enum RunKind {
     /// `CHAT_SCHEMA` 2→3 bump exists for: an older binary fails to parse it,
     /// and the version guard turns that into a polite refusal.
     Dialogue,
+    /// A Fabula story's run in the background (docs/fabula.md §4, PR 8): the
+    /// story from where it stands to its next pause, its chapter landed in the
+    /// chat as an attachment and its question as a task notification. The
+    /// story's own state is in its database (`stories/<chat-id>/<story-id>.db`);
+    /// the record says only that the run happened and how it ended. Writing
+    /// this variant is what the `CHAT_SCHEMA` 7→8 stamp exists for.
+    Story,
 }
 
 /// One of a dialogue run's two speakers (spec §9.13): the display name the

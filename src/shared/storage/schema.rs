@@ -30,19 +30,17 @@ pub const SETTINGS_SCHEMA: u32 = 7;
 /// Schema version of `profiles.json`.
 pub const PROFILES_SCHEMA: u32 = 1;
 /// Schema version of a chat file `chats/<id>.json`.
-pub const CHAT_SCHEMA: u32 = 7;
+pub const CHAT_SCHEMA: u32 = 8;
 /// SQLite schema version (`PRAGMA user_version`). The DB migration runner is in
 /// [`crate::shared::storage::db`] (baseline 0→1 + steps in transactions).
 pub const DB_SCHEMA: u32 = 1;
 /// Schema version of a story's database (`PRAGMA user_version`): Fabula's canon,
 /// event log, manuscript and run steps (docs/research/fabula-engine.md §6). Its
 /// runner is in [`crate::shared::storage::story`]; no released build writes one
-/// before the story tools ship (docs/fabula.md §4, PR 8).
-#[allow(dead_code)] // read by the story database, whose first consumer is PR 8
+/// before the story tools ship (docs/fabula.md §4).
 pub const STORY_SCHEMA: u32 = 1;
 /// Schema version of a story's call log, the sibling file that records every
 /// model call for replay and stays outside backups (spec §6, §15).
-#[allow(dead_code)] // as above
 pub const STORY_CALLS_SCHEMA: u32 = 1;
 
 /// A JSON migration step: a pure transformation "version `< to` → `to`".
@@ -371,6 +369,11 @@ const CHAT_STEPS: &[Step] = &[
         summary: "a stored file's origin may read generated",
         apply: super::chat_steps::chat_to_v7,
     },
+    Step {
+        to: 8,
+        summary: "chat files may carry story runs (RunKind::Story)",
+        apply: super::chat_steps::chat_to_v8,
+    },
 ];
 
 pub fn chat_artifact() -> JsonArtifact {
@@ -513,19 +516,20 @@ mod tests {
         // budget that has to cover reasoning, the version that lets a mode
         // name the OpenRouter gateway, the one that lets an effort read
         // `max`, the self-model cap left at 0.9.4's default, then the version
-        // that lets a mode name DeepSeek's API); chats took six (the sub-agent
+        // that lets a mode name DeepSeek's API); chats took seven (the sub-agent
         // transcripts, the dialogue-run stamp, spec §9.13, the cut run titles,
-        // spec §11.2, the same `max` stamp, the same `deepseek` stamp, then the
-        // one that lets a stored file be a generated picture, spec §9.15);
-        // profiles are still dormant.
+        // spec §11.2, the same `max` stamp, the same `deepseek` stamp, the one
+        // that lets a stored file be a generated picture, spec §9.15, then the
+        // one that lets a run be a story's, docs/fabula.md §4); profiles are
+        // still dormant.
         let settings = settings_artifact();
         assert_eq!(settings.current, 7);
         let reached: Vec<u32> = settings.steps.iter().map(|s| s.to).collect();
         assert_eq!(reached, [2, 3, 4, 5, 6, 7]);
         let chats = chat_artifact();
-        assert_eq!(chats.current, 7);
+        assert_eq!(chats.current, 8);
         let reached: Vec<u32> = chats.steps.iter().map(|s| s.to).collect();
-        assert_eq!(reached, [2, 3, 4, 5, 6, 7]);
+        assert_eq!(reached, [2, 3, 4, 5, 6, 7, 8]);
         let profiles = profiles_artifact();
         assert_eq!(profiles.current, 1);
         assert!(profiles.steps.is_empty());

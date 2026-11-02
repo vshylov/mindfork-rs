@@ -36,7 +36,9 @@ use crate::shared::api::contract::{
     ApiMessage, ChatChunk, ChatRequest, ChatStream, EngineBackend, FinishReason, OutputSchema,
     Served, TokenUsage,
 };
+use crate::shared::session_budget::{SessionBudget, Shape};
 use crate::shared::storage::story::{CallStatus, CallUsage, Mechanism, NewCall, RunLogWriter};
+use crate::shared::tokens::estimate_prompt;
 
 /// The run log's capability, shared between the adapter, which records the
 /// calls, and the chapter's loop, which records the steps (spec §9).
@@ -57,6 +59,11 @@ pub struct EngineAdapter {
     enforces: tokio::sync::OnceCell<bool>,
     /// Never send the schema to the provider, whatever it can do.
     fallback_only: bool,
+    /// The app's session budget, which every call takes as a background
+    /// dialogue's lines do (docs/fabula.md §3): at `sessions = 1` a story's
+    /// calls and the chat's turns take turns request by request. `None` — no
+    /// budget, as the harnesses run.
+    sessions: Option<Arc<SessionBudget>>,
 }
 
 impl EngineAdapter {
@@ -90,6 +97,7 @@ impl EngineAdapter {
             cancel,
             enforces: tokio::sync::OnceCell::new(),
             fallback_only: false,
+            sessions: None,
         }
     }
 
@@ -99,6 +107,12 @@ impl EngineAdapter {
     /// fabula.md §5) — and for measuring one mechanism against the other.
     pub fn fallback_only(mut self) -> Self {
         self.fallback_only = true;
+        self
+    }
+
+    /// The same adapter with every call under `sessions`.
+    pub fn with_sessions(mut self, sessions: Arc<SessionBudget>) -> Self {
+        self.sessions = Some(sessions);
         self
     }
 
@@ -208,6 +222,28 @@ impl Attempts for Live<'_> {
             sampling: adapter.sampling_for(self.role).clone(),
             output_schema: self.output_schema.clone(),
             ..ChatRequest::default()
+        };
+        // A permit of the app's budget for the stream's length, priced as a
+        // run's request is; a cancellation while waiting is the run's.
+        let _session = match &adapter.sessions {
+            Some(budget) => {
+                let need = budget.price(
+                    Shape::Run,
+                    estimate_prompt(
+                        request.system.as_deref(),
+                        request.messages.iter().map(|m| m.content.as_str()),
+                    ),
+                    0,
+                    request.sampling.max_tokens.map(|m| m as u64),
+                );
+                let Some(reservation) = budget.acquire(need, &adapter.cancel).await else {
+                    return Err(PortError::Cancelled {
+                        address: self.call.address.clone(),
+                    });
+                };
+                Some(reservation)
+            }
+            None => None,
         };
         let started = Instant::now();
         let stream = adapter
