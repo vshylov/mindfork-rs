@@ -1,6 +1,6 @@
 # Fabula — a story engine used from the chat: track plan
 
-**Status:** in progress — M0 done (PRs 1 and 2, Gate G0 GO); M1 done (PRs 3–5, Gate G1 GO, 2026-11-01); M2 under way (PR 6, the Author's loop, 2026-11-01; PR 7, stories in mindfork's data, 2026-11-02; PR 8, the story run in the background, 2026-11-02; PR 9, the story driven from the chat, 2026-11-02). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
+**Status:** in progress — M0 done (PRs 1 and 2, Gate G0 GO); M1 done (PRs 3–5, Gate G1 GO, 2026-11-01); M2 under way (PR 6, the Author's loop, 2026-11-01; PR 7, stories in mindfork's data, 2026-11-02; PR 8, the story run in the background, 2026-11-02; PR 9, the story driven from the chat, 2026-11-02; Gate G2 GO, 2026-11-03). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
 so are the ten this plan adds (§6) and where development runs (§4, *The development
 stack*). The design —
 the engine, its stores, its contracts, its evaluation — is
@@ -276,8 +276,48 @@ Qwen chapter landed and was resumed. **Gate G2:** "The Last Ferry" (in Russian),
 in Russian on Sonnet 5.5, finished in the chat from the sketches to the last acceptance — 875
 calls, 14.0 million prompt tokens, about $31 at list price, none of it from Anthropic's cache.
 The run found the spent budget restarted in vain, the empty run after the last chapter, and the
-cost's growth with the story (§5); the first two are fixed. G2's verdict is the owner's reading.
+cost's growth with the story (§5); the first two are fixed. **Gate G2 GO**: the owner's reading, 2026-11-03.
 The figures are in [journal/stories.md](journal/stories.md).
+
+**What G2's readers found (2026-11-03).** The owner read the story and passed the gate: a very
+good result for Claude Sonnet 5.5. The owner also gave it to two other models for review, Gemini 4 Argon
+and Claude Fable 5.1 at its maximum effort. Both called the prose strong for machine text — spare,
+concrete, without filler — and named the same strengths and the same faults.
+
+- *What holds:* the continuity of things, numbers and address (a sign blown down in one scene is
+  picked up in the next; "three days" to the ferry is two on the second evening; who says *ty*
+  and who *vy* to whom); the asymmetry of knowledge, three secrets kept and spent on time, the
+  reader shown what the inspector misses; the shopkeeper's voice, distinct from the other two; the
+  motifs echoed across the chapters (the lamp lit together, the moss scraped off a cross, the
+  briefcase left unopened).
+- *What fails is the story's deeper logic, not its language:*
+  - **Planted clues that never pay off.** A logbook entry "in another hand" becomes "her own shaking
+    hand", then "empty"; footsteps on the path end chapter 1 and are never someone's; the
+    shopkeeper's steering him from a wall leads nowhere.
+  - **Time and kinship that do not add up.** A father "lost a few years ago" lies under an old,
+    mossed cross; "son of Marya, who left with him" has no clear referent, so the genealogy reads
+    wrong.
+  - **Every conflict resolved at once, at no cost.** Chapter 2 opens all three secrets in an evening
+    and a morning; everyone forgives everyone, thanks run through the lines seven times, and the
+    dead brother's letter absolves the keeper; a letter that long, written at the helm in a storm,
+    strains belief.
+  - **Lines that report the scene's state.** The inspector and the keeper speak in the same clipped
+    telegraph, stating plans and boundaries aloud as if to the engine.
+  - **A summary that contradicts itself.** Chapter 1's summary has the shopkeeper hide something in
+    the chapel and carry something out of it; the text says the latter. Summaries are context for
+    the chapters after, so this is drift at its source.
+  - **What the reviewers let pass.** Who sits where, a pronoun's referent; and both chapters run the
+    same course (an evening indoors, the lamp at night, the graves at dawn), which a longer story
+    would show.
+- *What it says of the engine.* The world state and what each character knows hold; what is missing
+  is bookkeeping above them. The readers' proposals: a register of open threads, each closed or
+  marked as left open; a table of dated facts (ages, deaths, "how long ago") checked by arithmetic
+  as the ferry's days were; summaries made from the accepted text alone and checked for
+  contradiction; a cheap pass of its own for staging and referents; and for the planner and the
+  characters — opposing goals in a scene, someone paying a price, no line that opens on thanks or
+  agreement, intentions shown rather than stated. None is decided: they are candidates for the
+  Author's and the reviewers' prompts and checks, and whether they come before M3 is the owner's
+  call, since M3 measures the simulation against one agent writing alone under the same Author.
 
 A release can follow G2: the tools are reachable only with `tools.story` on, and the
 release carries the chat schema's step with the checks AGENTS.md §6 asks for.

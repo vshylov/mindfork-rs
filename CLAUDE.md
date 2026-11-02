@@ -199,7 +199,7 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
-- **Fabula, a story engine used from the chat — G0 GO, G1 GO** (2026-11-01):
+- **Fabula, a story engine used from the chat — G0, G1, G2 GO** (2026-11-03):
   the plan and ADR 0014; the story database — an append-only, branched event log behind
   one actor, one writer per store; the model port, replayed from the call log by address;
   the reply's schema enforced by the provider on every wire; scenes

@@ -23,7 +23,7 @@ shape read the reference documents named above; for the traps that recur across 
 - Post-M9: Fabula — PR 6, the Author's loop (done)
 - Post-M9: Fabula — PR 7, stories in mindfork's data (done)
 - Post-M9: Fabula — PR 8, the story run in the background (done)
-- Post-M9: Fabula — PR 9, the story driven from the chat; Gate G2 (done)
+- Post-M9: Fabula — PR 9, the story driven from the chat; Gate G2 GO (done)
 
 ### Post-M9: Fabula — PR 1, the story database (done)
 
@@ -841,7 +841,7 @@ behind `tools.story`, off by default.
 `doc_index_check`, `layer_check`, `list_scroll_check`, `claude_md_chart --check` clean;
 the settings screenshots regenerated (the Tools section's count, the profile's new tool).
 
-### Post-M9: Fabula — PR 9, the story driven from the chat; Gate G2 (done)
+### Post-M9: Fabula — PR 9, the story driven from the chat; Gate G2 GO (done)
 
 M2's fourth pull request (docs/fabula.md §4): `story_create` and `story_continue`, so a
 person makes a story from the chat and every answer it waits for is their own words. With it
@@ -942,8 +942,14 @@ the engine is reachable end to end from a chat turn, behind `tools.story`, off b
   | Chapter 2 (four scenes, the second revision accepted) | 380 | 8,383,836 | 145,259 | $18.22 |
   | The whole story, readings included | 875 | 14,017,889 | 314,563 | $31.18 |
 
-  The story is 2,696 words (1,606 and 1,090), finished, both chapters accepted; the owner
-  reads it with the chat's transcript. Three things it found:
+  The story is 2,696 words (1,606 and 1,090), finished, both chapters accepted. **G2 GO**
+  (2026-11-03): the owner read it with the chat's transcript and passed the gate, and two
+  other models' reviews — Gemini 4 Argon, Claude Fable 5.1 at its maximum effort — agreed:
+  strong, spare prose with its things, numbers and secrets kept, and the faults in its deeper
+  logic — clues planted and never paid, a timeline and a kinship that do not add up, every
+  conflict resolved at once at no cost, lines that report the scene's state, and chapter 1's
+  summary contradicting itself. Their proposals are in docs/fabula.md, *What G2's readers
+  found*, undecided. Three things the run itself found:
   - *The default budget stopped the first chapter in its second scene* (2,010,278 tokens,
     238 calls), and the script's "go on" restarted a run seven times, each stopping before
     its first call. `story_continue` now refuses a chapter whose budget is spent, says what
