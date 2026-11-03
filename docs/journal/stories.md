@@ -1052,10 +1052,14 @@ left out because the main line has to step back, and PR 9 read as a revision unt
     twice running on the first take's draft, which stopped the run; a later attempt fitted.
     The reviewers' cap is a candidate for a model that thinks this long.
   - *A woken turn resumed a stopped run unasked.* After the stop the woken assistant called
-    `story_continue` by itself, which resumes with no question waiting, and did again as the
+    `story_continue` by itself, which resumed with no question waiting, and did again as the
     test's process went down. Nothing the person had to decide was decided for them, but the
-    calls were spent on the assistant's word; whether a woken turn may resume is the owner's
-    call, left open.
+    calls were spent on the assistant's word — and the code let the same happen after a stop
+    the person made with `F6`, and loop on a step that fails every time until the budget
+    was spent. The owner chose (T14 (a)): a woken turn resumes nothing (`ContinueRefusal::
+    NotAsked`), the woken assistant says where and why the story stopped and asks, and the
+    stops' landings say that going on is the user's to ask. A mutant that lets the woken
+    resume through is killed.
   - *The harness gave up as the run's time limit fell*: it waited the limit itself, so the
     take's run (over three hours at about 22 tokens a second) was cut by the test's own exit,
     and the story resumed from the step it was at, the two branches lost to the cuts each

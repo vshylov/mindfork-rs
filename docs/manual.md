@@ -606,8 +606,9 @@ by the chat's own model, so a chapter takes many calls and an hour or more.
 
 A chapter is bounded by **Story: run time limit** (6 hours) and **Story: chapter
 budget (tokens)** (6,000,000), with an optional **Story: chapter budget ($)** where
-the provider reports cost. A run that stops — on a limit, `F6`, or quitting the app —
-says where it stopped, and "go on" resumes it from there; a chapter whose budget is
+the provider reports cost. A run that stops — on a limit, `F6`, a call that failed, or
+quitting the app — says where it stopped, and "go on" resumes it from there; the
+assistant never resumes it on its own, only when you ask. A chapter whose budget is
 spent starts nothing until you raise the budget. A chapter's cost depends much on the
 model and grows with the story: a two-chapter story took about 14 million tokens on
 Claude Sonnet 5.5 (some $30), the second chapter more than the first, so raise the

@@ -288,6 +288,7 @@ fn every_text_reads_filled_in_both_languages() {
                 spent: "2000100 tokens of 2000000".to_owned(),
             },
             ContinueRefusal::NotAnswered,
+            ContinueRefusal::NotAsked,
             ContinueRefusal::Unclear(unclear),
             ContinueRefusal::Failed("refused".to_owned()),
         ] {
@@ -351,6 +352,13 @@ fn every_text_reads_filled_in_both_languages() {
                 "chat://abc"
             ),
             "a rerun is not a revision"
+        );
+        // A woken turn's resume says the decision is the user's and names
+        // the call to make once they have made it.
+        let woken = continue_refusal_text(loc, "harbour", &ContinueRefusal::NotAsked, None);
+        assert!(
+            woken.contains("story_continue") && woken.contains("harbour"),
+            "{woken}"
         );
         filled(&canon_change_text(loc, "harbour", "- Make Mara older."));
         filled(&finished_text(loc, "harbour", 2));

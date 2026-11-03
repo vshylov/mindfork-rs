@@ -9,7 +9,8 @@
 //!   id, until the canon is approved.
 //! - **Continuing** answers the pending question from the person's own rows
 //!   ([`super::answer`]) and gives the run its story; with no question
-//!   pending it resumes a run that stopped short. A turn that answers no
+//!   pending it resumes a run that stopped short — on a turn that answers the
+//!   person, never on one the app woke (T14). A turn that answers no
 //!   message of the person's, or rows that read as unclear, resolve nothing.
 //!   At a chapter's checkpoint the reading is shown the chapter's scenes by
 //!   number, so a reply may ask for one to be played again (PR 10).
@@ -377,6 +378,11 @@ pub enum ContinueRefusal {
     /// A question waits and the person has not answered it: no message of
     /// theirs since it was put, or a turn that answers none.
     NotAnswered,
+    /// No question waits, and the turn answers no message of the person's:
+    /// one the app woke on a run's notification may not resume the run,
+    /// since whether a stopped story goes on is the person's to say (the
+    /// owner's decision, docs/fabula.md §6, T14).
+    NotAsked,
     /// Their messages read as no decision.
     Unclear(ReadingReply),
     /// The reading's call failed.
@@ -461,6 +467,8 @@ async fn settle(
     let Some(question) = db.pending_question().await? else {
         return if open_chapter(db, &canon).await?.is_none() {
             Err(ContinueRefusal::Finished)
+        } else if !answering.answering {
+            Err(ContinueRefusal::NotAsked)
         } else {
             Ok(Continued::Start(None))
         };

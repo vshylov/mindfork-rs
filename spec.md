@@ -2670,7 +2670,11 @@ take (below).
   the person's notes, a reply that names one of the chapter's scenes opens its next
   take, and a change to the canon starts no run — the assistant
   revises the draft and asks again. With no question waiting, it resumes a run
-  that stopped short. A chapter whose budget is spent starts no run, which would
+  that stopped short, but only on a turn that answers the person: a turn the app
+  woke on a run's notification is refused, since whether a stopped story goes on
+  — after a stop the person made, a time limit, a call that failed — is the
+  person's to say (docs/fabula.md §6, T14 (a)); the woken assistant says where and
+  why it stopped and asks. A chapter whose budget is spent starts no run, which would
   stop before its first call: the tool says what was spent and where the budget is
   raised, and an answer read on the way is kept. It takes the background slot
   before the reading's call and claims the story for the run before its files are

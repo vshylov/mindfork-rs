@@ -335,7 +335,7 @@ request to play scene 2 again was read as a rerun of scene 2, and the take carri
 played scenes 2–3 again and a fourth the first take had not had, and reached its own
 checkpoint at version 6 — 1,227 calls, $3.00 in all, the take twice the first making's 3.8
 million tokens. The run found the Continuity checker cut at its cap on Qwen, a woken turn
-resuming a stopped run unasked (left to the owner), and a harness that gave up as the run's
+resuming a stopped run unasked (now refused, T14), and a harness that gave up as the run's
 time limit fell (fixed). The figures are in [journal/stories.md](journal/stories.md). M2 is
 done.
 
@@ -493,7 +493,7 @@ PR 9 added three more, and how its gate is run. The owner accepted every recomme
   then chose (a) on 2026-11-02 once the Qwen run showed the same. **Owner's decision
   (2026-11-02): (a).**
 
-PR 10 added two more. The owner accepted both recommendations on 2026-11-03.
+PR 10 added three more. The owner accepted every recommendation on 2026-11-03.
 
 - **T12. A take's budget** (PR 10). Playing scene 2 of four again is most of a chapter: some 4
   million tokens on Claude Sonnet 5.5, where the first making had spent most of the chapter's
@@ -508,6 +508,18 @@ PR 10 added two more. The owner accepted both recommendations on 2026-11-03.
   PR 9's live checks ran, about $1.50 *(recommended)*. (b) Claude Sonnet 5.5, as G2, some
   $20–25: better prose, which a check of the mechanism does not need. **Owner's decision
   (2026-11-03): (a).**
+- **T14. Whether a woken turn may resume a stopped run** (PR 10, found live). A run that
+  stops short of a question — stopped by the person (`F6`), at its time limit, at a call
+  that gave nothing usable — lands with a notification that wakes the assistant, and
+  `story_continue` refused a woken turn only an *answer*: with no question waiting it
+  resumed. On Qwen the woken assistant did so after a failed step, unasked. Nothing stopped
+  it after the person's own stop either, or a step that fails every time from looping —
+  stop, wake, resume, stop — until the chapter's budget was spent. (a) A woken turn
+  resumes nothing; it says where and why the story stopped and asks, and the person's
+  word resumes *(recommended)*: one rule for every stop, the loop closed, at the cost of a
+  message after a transient failure the person is told of anyway. (b) Refuse it only
+  after the person's own stop: the loop stays. (c) Allow one woken resume per stopped
+  step. (d) Leave it. **Owner's decision (2026-11-03): (a)**, in PR 10.
 
 ## 7. Not in this track
 

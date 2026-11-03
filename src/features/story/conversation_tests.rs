@@ -491,6 +491,16 @@ async fn nothing_pending_resumes_and_finished_or_held_stories_are_refused() {
         drop(author);
         db.close().await.unwrap();
     }
+    // A turn the app woke on a notification resumes nothing: whether the
+    // story goes on is the person's to say (T14); the claim is given back.
+    let woken = Answering {
+        pending: None,
+        answering: false,
+        notes: Some("It only stopped at a cut; going on."),
+    };
+    let (_, refused) = f.prepare(woken, backend.clone()).await;
+    assert_eq!(refused, Err(ContinueRefusal::NotAsked));
+    assert!(f.board.of_chat(f.chat).is_empty(), "nothing is held");
     let (run, prepared) = f.prepare(none, backend.clone()).await;
     assert_eq!(prepared, Ok(Continued::Start(None)));
     // Held by that run: a second is refused with it.

@@ -34,7 +34,9 @@ split by subsystem.
   scenes stay as they were. The new version lands with its own question. Nothing of the
   first version is changed or lost, and the new one has a chapter's budget of its own. A
   request to change how the chapter is told, not what happens in it, still revises the
-  text.
+  text. A run that stops short — stopped by you, at its time limit, at a failed call — is
+  resumed only when you ask: the assistant, woken by its notification, says where it
+  stopped and asks you, and never goes on by itself.
 - **A story chapter written in the background.** Under Settings → Tools → *Stories
   (experimental)* — off by default — the story engine's runs go out as background tasks
   the way a background sub-agent's do: each takes the story from where it stands to its

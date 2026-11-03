@@ -463,6 +463,7 @@ pub fn continue_refusal_text(
             "tool.story_continue.result.budget",
             &[("id", id), ("n", &chapter.to_string()), ("spent", spent)],
         ),
+        ContinueRefusal::NotAsked => loc.tf("tool.story_continue.result.not_asked", &[("id", id)]),
         ContinueRefusal::NotAnswered => loc.tf(
             "tool.story_continue.result.not_answered",
             &[("id", id), ("question", &question())],
