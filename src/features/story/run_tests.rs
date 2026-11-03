@@ -20,8 +20,13 @@ use crate::entities::story::{
     Assumption, BranchId, Decision, QuestionBody, Resolution, SceneSetup, VersionOrigin,
     fixture_canon,
 };
+use crate::entities::story::{
+    ChapterArc, ChapterId, Decided, NewNote, NoteDecision, NoteId, NoteKind, NoteSeverity,
+    Register, Reviewer, Thread,
+};
 use crate::features::story::board::StoryBoard;
 use crate::features::story::chapter::{ChapterConfig, Stop};
+use crate::features::story::keeper::LeftOpen;
 use crate::features::story::port::Role;
 use crate::shared::api::contract::{
     ChatChunk, ChatRequest, ChatStream, EngineBackend, FinishReason,
@@ -303,6 +308,96 @@ async fn a_chapter_at_its_checkpoint_lands_with_its_summary_picks_and_assumption
     );
 }
 
+/// Chapter 1's checkpoint with two threads its register leaves open: the
+/// Author kept the first open on purpose and accepted the note on the second.
+async fn with_open_threads(db: &StoryDb, author: &mut AuthorWriter) {
+    at_checkpoint(db, author).await;
+    let thread = |n: usize, question: &str| Thread {
+        id: format!("ch1.thread{n}"),
+        question: question.to_owned(),
+        quote: "a quote".to_owned(),
+    };
+    author
+        .add_register(
+            &ChapterId::of(1, 2),
+            &Register {
+                opened: vec![
+                    thread(1, "Whose steps were on the path?"),
+                    thread(2, "Who wrote the log's last line?"),
+                ],
+                paid: Vec::new(),
+                facts: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    let note = |n: usize| NewNote {
+        kind: NoteKind::OpenThread,
+        severity: NoteSeverity::High,
+        anchor: Some(format!("ch1.thread{n}")),
+        body: "Unpaid.".to_owned(),
+        evidence: Vec::new(),
+    };
+    let draft = ChapterId::of(1, 1);
+    db.review_writer(&draft, Reviewer::Continuity)
+        .await
+        .unwrap()
+        .write(&[note(1), note(2)])
+        .await
+        .unwrap();
+    let decided = |n: usize, decision, reason: &str| Decided {
+        note: NoteId::new(format!("ch1/v1/continuity/n{n}")),
+        decision,
+        reason: reason.to_owned(),
+    };
+    author
+        .record_decisions(
+            &draft,
+            &[
+                decided(1, NoteDecision::Rejected, "Left for the reader."),
+                decided(2, NoteDecision::Accepted, "Pay it off."),
+            ],
+        )
+        .await
+        .unwrap();
+}
+
+/// At the arc's last chapter the landing lists the threads the story leaves
+/// open, with the Author's reason where it kept one open; a chapter before
+/// the last lists none (docs/fabula.md §6, T16).
+#[tokio::test]
+async fn the_last_chapter_lands_with_the_threads_it_leaves_open() {
+    let fixture = story(async |db, author| with_open_threads(db, author).await).await;
+    let landed = run_on(&fixture.spec, Arc::default(), &StoryBoard::new()).await;
+    assert_eq!(
+        landed.left_open,
+        [
+            LeftOpen {
+                question: "Whose steps were on the path?".into(),
+                reason: Some("Left for the reader.".into()),
+            },
+            LeftOpen {
+                question: "Who wrote the log's last line?".into(),
+                reason: None,
+            },
+        ],
+        "a note the Author accepted gives no reason to leave it"
+    );
+
+    let fixture = story(async |db, author| {
+        with_open_threads(db, author).await;
+        let mut canon = fixture_canon();
+        canon.arc.chapters.push(ChapterArc {
+            goal: "Ines decides whom to trust.".into(),
+        });
+        author.import_canon(&canon).await.unwrap();
+    })
+    .await;
+    let landed = run_on(&fixture.spec, Arc::default(), &StoryBoard::new()).await;
+    assert!(landed.chapter.is_some());
+    assert!(landed.left_open.is_empty(), "not the arc's last chapter");
+}
+
 /// Stopped while its first call hangs, the run stops at that step, which the
 /// board showed while it ran; nothing was accepted, and the next run starts
 /// from the same step.
@@ -448,6 +543,14 @@ fn the_roles_sample_as_measured() {
     let (_, author) = roles.iter().find(|(r, _)| *r == Role::Author).unwrap();
     assert_eq!(author.reasoning_effort, Some(ReasoningEffort::Medium));
     assert_eq!(author.max_tokens, Some(32_000));
+    for role in [Role::Reader, Role::Continuity, Role::CanonKeeper] {
+        let (_, sampling) = roles.iter().find(|(r, _)| *r == role).unwrap();
+        assert_eq!(
+            sampling.max_tokens,
+            Some(32_000),
+            "{role:?}: PR 10 found 16,384 cut on Qwen"
+        );
+    }
     assert!(!roles.iter().any(|(r, _)| *r == Role::Character));
 }
 

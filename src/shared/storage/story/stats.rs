@@ -50,6 +50,7 @@ const UNIT_TABLES: &[(&str, &str, &str)] = &[
     ("outline", "chapter_no", ""),
     ("chapter", "id", ""),
     ("chapter_summary", "chapter_id", ""),
+    ("chapter_register", "chapter_id", ""),
     ("review_note", "id", ""),
     ("pick", "scene_id", ""),
     ("chapter_acceptance", "chapter_id", ""),

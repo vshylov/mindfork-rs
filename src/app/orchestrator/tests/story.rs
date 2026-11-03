@@ -323,6 +323,7 @@ fn a_story_records_end_reads_as_the_run_ended() {
             chapter: None,
             picks: Vec::new(),
             assumptions: Vec::new(),
+            left_open: Vec::new(),
             spent: Spend {
                 calls: 3,
                 input_tokens: 900,
@@ -347,6 +348,7 @@ fn a_story_records_end_reads_as_the_run_ended() {
         }),
         picks: Vec::new(),
         assumptions: Vec::new(),
+        left_open: Vec::new(),
         spent: Spend::default(),
     };
     let (_, _, effects) = spec.land(&with_chapter);

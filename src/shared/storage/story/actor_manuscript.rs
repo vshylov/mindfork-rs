@@ -16,7 +16,7 @@ use super::{Actor, check, now};
 use crate::entities::story::{
     Assumption, BranchId, ChapterId, ChapterOutline, ChapterVersion, Decided, Decision, EventId,
     NewNote, NoteDecision, NoteId, NoteKind, NoteSeverity, Question, QuestionBody, QuestionId,
-    Resolution, ReviewNote, Reviewer, RunId, SceneId, SceneSetup, StoredAssumption, Take,
+    Register, Resolution, ReviewNote, Reviewer, RunId, SceneId, SceneSetup, StoredAssumption, Take,
     VersionOrigin,
 };
 use crate::shared::storage::story::{
@@ -276,6 +276,39 @@ impl Actor {
                 |r| r.get(0),
             )
             .optional()?)
+    }
+
+    pub(in crate::shared::storage::story) fn add_register(
+        &mut self,
+        token: u64,
+        chapter: &ChapterId,
+        register: &Register,
+    ) -> Result<(), StoryDbError> {
+        check(self.writers.author.as_ref(), token)?;
+        self.require_chapter(chapter)?;
+        if self.register(chapter)?.is_some() {
+            return Err(StoryDbError::Exists(format!("the register of {chapter}")));
+        }
+        self.story.execute(
+            "INSERT INTO chapter_register (chapter_id, body_json) VALUES (?1, ?2)",
+            params![chapter.as_str(), serde_json::to_string(register)?],
+        )?;
+        Ok(())
+    }
+
+    pub(in crate::shared::storage::story) fn register(
+        &self,
+        chapter: &ChapterId,
+    ) -> Result<Option<Register>, StoryDbError> {
+        let body: Option<String> = self
+            .story
+            .query_row(
+                "SELECT body_json FROM chapter_register WHERE chapter_id = ?1",
+                [chapter.as_str()],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(body.map(|b| serde_json::from_str(&b)).transpose()?)
     }
 
     pub(in crate::shared::storage::story) fn accepted(

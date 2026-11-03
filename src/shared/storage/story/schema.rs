@@ -34,6 +34,11 @@
 //!   earlier build wrote gains it on open with no step, and an answer's
 //!   `decision` stays `change`: the take's row, keyed by the question, is
 //!   what says the change is a rerun.
+//! - **`chapter_register`** (docs/fabula.md §4, PR 11): a version's register,
+//!   the Canon keeper's reading of its text (threads opened and paid off,
+//!   facts of time, age and kinship) as one JSON body, written once beside
+//!   its summary. A table of its own too: no step, and a story begun before
+//!   it is given its registers on the way.
 //! - **The default rollback journal, not WAL.** Every read and write goes
 //!   through the database actor, so WAL's concurrent readers buy nothing, and
 //!   a backup can take the file as `data.db`'s is taken (`VACUUM INTO` from a
@@ -151,6 +156,10 @@ CREATE TABLE IF NOT EXISTS chapter_summary (
     chapter_id TEXT PRIMARY KEY REFERENCES chapter(id),
     summary    TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS chapter_register (
+    chapter_id TEXT PRIMARY KEY REFERENCES chapter(id),
+    body_json  TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS review_note (
     id            TEXT PRIMARY KEY,
     chapter_id    TEXT NOT NULL REFERENCES chapter(id),
@@ -228,6 +237,7 @@ pub(super) const STORY_APPEND_ONLY: &[&str] = &[
     "outline",
     "chapter",
     "chapter_summary",
+    "chapter_register",
     "review_note",
     "pick",
     "chapter_acceptance",

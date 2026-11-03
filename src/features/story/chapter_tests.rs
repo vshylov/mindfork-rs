@@ -274,7 +274,23 @@ pub(super) fn story(address: &str, prompt: &Prompt) -> Result<Reply, PortError> 
                 "## The storm\n\nRevised at {address}."
             )));
         }
-        "summary" => return Ok(Reply::Text("Mara keeps the harbour shut.".into())),
+        "summary" | "summary-again" => {
+            return Ok(Reply::Text("Mara keeps the harbour shut.".into()));
+        }
+        "summary-check" => json!({"faults": []}),
+        "register" if prompt.user.contains("`ch1.thread1`") => json!({
+            "paid": [{"thread": "ch1.thread1", "how": "The boats come back."}],
+            "opened": [],
+            "facts": [],
+        }),
+        "register" => json!({
+            "opened": [{"quote": "Mara waits", "question": "What is Mara waiting for?"}],
+            "facts": [{
+                "quote": "the storm",
+                "stated_by": "narration",
+                "fact": "The storm has blown for three days.",
+            }],
+        }),
         "reader" => json!({
             "confusions": [{"anchor": "Mara waits", "note": "Who is Mara?", "severity": "high"}],
             "slow_passages": [],
@@ -421,6 +437,32 @@ impl Open {
     pub(super) async fn open_only() -> Self {
         open().await
     }
+
+    /// The story closed, `between` run on its file, and opened again: how a
+    /// later build opens a file an earlier one wrote.
+    pub(super) async fn reopened(self, between: impl FnOnce(&std::path::Path)) -> Self {
+        let Open {
+            _dir,
+            db,
+            author,
+            log,
+        } = self;
+        drop((author, log));
+        db.close().await.unwrap();
+        let story = _dir.path().join("story.db");
+        between(&story);
+        let db = StoryDb::open(&story, &_dir.path().join("story.calls.db"))
+            .await
+            .unwrap();
+        let author = db.author_writer().await.unwrap();
+        let log = Arc::new(tokio::sync::Mutex::new(db.run_log_writer().await.unwrap()));
+        Open {
+            _dir,
+            db,
+            author,
+            log,
+        }
+    }
 }
 
 pub(super) fn paused_at(outcome: &Outcome) -> &QuestionBody {
@@ -556,7 +598,9 @@ async fn a_chapter_runs_from_its_outline_to_its_checkpoint() {
             "ch1/v2/reader",
             "ch1/v2/continuity",
             "ch1/v2/triage",
+            "ch1/v2/register",
             "ch1/v2/summary",
+            "ch1/v2/summary-check",
         ]
     );
     // What each step was shown.
@@ -998,7 +1042,7 @@ async fn a_failed_author_call_stops_the_run_and_the_next_run_asks_it_again() {
     );
     assert_eq!(
         again.len(),
-        9,
+        11,
         "the write, the reviews and the rest: {again:?}"
     );
     assert!(calls > again.len());
