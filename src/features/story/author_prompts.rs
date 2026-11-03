@@ -392,14 +392,64 @@ fn kept_text(canon: &Canon, kept: &[Kept], showing: Showing) -> String {
         .join("\n\n")
 }
 
+/// Why a scene is planned again: the human's word on it.
+#[derive(Debug, Clone, Copy)]
+pub enum Again<'a> {
+    /// Every attempt failed, and the human answered P3 with these notes.
+    Failed(&'a str),
+    /// The human read the chapter and asked at P2 for this scene to be
+    /// played again with the ones after it (docs/fabula.md §4, PR 10): what
+    /// they asked, and the scene as it was set before, with its intent.
+    Asked {
+        /// Their notes; empty when they only asked for it to be played again.
+        notes: &'a str,
+        /// The scene's setup and intent in the take before.
+        before: Option<(&'a SceneSetup, &'a str)>,
+    },
+}
+
+impl Again<'_> {
+    fn text(&self, canon: &Canon) -> String {
+        match self {
+            Again::Failed(notes) if notes.trim().is_empty() => String::new(),
+            Again::Failed(notes) => format!(
+                "\n\nThis scene failed on every attempt, and the story's human author asked for it \
+                 to be planned again: {notes}"
+            ),
+            Again::Asked { notes, before } => {
+                let mut text = "\n\nThe story's human author read this chapter and asked for this \
+                                scene to be played again, and the scenes after it with it."
+                    .to_owned();
+                if let Some((setup, intent)) = before {
+                    text.push_str(&format!(
+                        "\nThe scene as it was set before: {}\nYour intent for it then: {intent}",
+                        setup_text(canon, setup)
+                    ));
+                }
+                if notes.trim().is_empty() {
+                    text.push_str("\nThey asked for no change in particular.");
+                } else {
+                    text.push_str(&format!("\nWhat they asked:\n{}", notes.trim()));
+                }
+                text.push_str(
+                    "\nPlan it again: keep what served the chapter, and change what they asked \
+                     to change.",
+                );
+                text
+            }
+        }
+    }
+}
+
 /// The plan of the chapter's next scene, or its end (spec §7, step 2). With
-/// `notes`, the human asked for this scene to be planned again.
+/// `again`, the human asked for this scene to be planned again, and the
+/// chapter may not end here.
 pub fn plan(
     ctx: &ChapterContext,
     kept: &[Kept],
     world: &WorldState,
     (scene, most): (u32, u32),
-    notes: Option<&str>,
+    again: Option<Again>,
 ) -> Prompt {
     let kept_so_far = if kept.is_empty() {
         String::new()
@@ -409,17 +459,12 @@ pub fn plan(
             kept_text(ctx.canon, kept, TO_AUTHOR)
         )
     };
-    let again = notes
-        .filter(|n| !n.trim().is_empty())
-        .map_or(String::new(), |n| {
-            format!(
-                "\n\nThis scene failed on every attempt, and the story's human author asked for it \
-             to be planned again: {n}"
-            )
-        });
-    let ask = if scene == 1 {
+    // A scene asked for again is played: the chapter does not end at it.
+    let must_play = scene == 1 || again.is_some();
+    let again = again.map_or(String::new(), |a| a.text(ctx.canon));
+    let ask = if must_play {
         format!(
-            "Plan scene 1 of at most {most}: first your private intent for it, then its \
+            "Plan scene {scene} of at most {most}: first your private intent for it, then its \
              circumstances."
         )
     } else if scene == most {
@@ -446,13 +491,21 @@ pub fn plan(
 }
 
 /// The pick among a scene's branches (spec §7, step 4), each shown under its
-/// label (`k0`).
+/// label (`k0`). In a take (PR 10), `asked` is what the human asked of the
+/// chapter, which the pick weighs too.
 pub fn pick(
     ctx: &ChapterContext,
     (scene, setup, intent): (u32, &SceneSetup, &str),
     shown: &[(String, &Trace)],
     reruns_left: u32,
+    asked: Option<&str>,
 ) -> Prompt {
+    let asked = asked
+        .map(str::trim)
+        .filter(|a| !a.is_empty())
+        .map_or(String::new(), |a| {
+            format!("\nWhat the story's human author asked of this chapter:\n{a}")
+        });
     let versions: Vec<String> = shown
         .iter()
         .map(|(label, trace)| format!("Version {label}:\n{}", trace_text(ctx.canon, trace, false)))
@@ -469,7 +522,7 @@ pub fn pick(
     Prompt {
         system: author_system(ctx.canon, ctx.human_language),
         user: format!(
-            "Chapter {}. Its goals:\n{}\n\nScene {scene}, {}\nYour intent for it: {intent}\n\n\
+            "Chapter {}. Its goals:\n{}\n\nScene {scene}, {}\nYour intent for it: {intent}{asked}\n\n\
              The world played it {} time{} from the same moment; each version below is what \
              happened in it.\n\n{}\n\n\
              Read each version against your intent and four measures: tension, surprise, truth \

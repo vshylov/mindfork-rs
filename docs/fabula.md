@@ -319,6 +319,26 @@ concrete, without filler — and named the same strengths and the same faults.
   Author's and the reviewers' prompts and checks, and whether they come before M3 is the owner's
   call, since M3 measures the simulation against one agent writing alone under the same Author.
 
+**PR 10, as built (2026-11-03).** The owner decided two forks (§6, T12–T13): a take's budget
+is its own, and the live check runs on Qwen 3.8 27B. At P2 the reading is shown the chapter's
+scenes by number and may return `rerun` with one of them; the answer is recorded as a change
+with a **take** of the chapter beside it, in one transaction, in a table of its own (no
+schema step). The take carries the scenes before the one named; the next run plans that
+scene again with the person's request and its old setup, plays it and every scene after it
+— each scene's attempts numbered past its last, the take's plans at `ch1/t2/…` — and drafts,
+reviews and summarizes the chapter anew from the chapter's next version, revisions counted
+within the take. The main line runs through each chapter's latest take; every request made at
+the chapter's checkpoints reaches the take's prompts. Engine tests on the scripted port kill
+a take at each of its calls and replay a story through a take from its addresses alone.
+**Live:** on Qwen 3.8 27B in Russian, chapter 1 landed with its three scenes numbered, the
+request to play scene 2 again was read as a rerun of scene 2, and the take carried scene 1,
+played scenes 2–3 again and a fourth the first take had not had, and reached its own
+checkpoint at version 6 — 1,227 calls, $3.00 in all, the take twice the first making's 3.8
+million tokens. The run found the Continuity checker cut at its cap on Qwen, a woken turn
+resuming a stopped run unasked (left to the owner), and a harness that gave up as the run's
+time limit fell (fixed). The figures are in [journal/stories.md](journal/stories.md). M2 is
+done.
+
 A release can follow G2: the tools are reachable only with `tools.story` on, and the
 release carries the chat schema's step with the checks AGENTS.md §6 asks for.
 
@@ -472,6 +492,22 @@ PR 9 added three more, and how its gate is run. The owner accepted every recomme
   told where by `story_continue`'s refusal. The owner first kept (b) on the Sonnet figure alone,
   then chose (a) on 2026-11-02 once the Qwen run showed the same. **Owner's decision
   (2026-11-02): (a).**
+
+PR 10 added two more. The owner accepted both recommendations on 2026-11-03.
+
+- **T12. A take's budget** (PR 10). Playing scene 2 of four again is most of a chapter: some 4
+  million tokens on Claude Sonnet 5.5, where the first making had spent most of the chapter's
+  6,000,000 already. (a) Each take has the chapter's budget of its own, counting the chapter's
+  calls in the runs after it began *(recommended)*: the person asked for the rerun, and the
+  budget is there to stop a chapter that runs away, not one asked for again; each further
+  take is spent at the person's word. (b) One budget for the chapter and all its takes: on
+  Sonnet a rerun would nearly always stop at it, and the person would raise it, told where
+  by the refusal. **Owner's decision (2026-11-03): (a).**
+- **T13. The live check's model** (PR 10): a chapter to its checkpoint, a scene asked for
+  again in the chat, the take to its own checkpoint. (a) Qwen 3.8 27B through OpenRouter, as
+  PR 9's live checks ran, about $1.50 *(recommended)*. (b) Claude Sonnet 5.5, as G2, some
+  $20–25: better prose, which a check of the mechanism does not need. **Owner's decision
+  (2026-11-03): (a).**
 
 ## 7. Not in this track
 

@@ -26,8 +26,15 @@ split by subsystem.
   the messages you wrote since the question, never the assistant's summary of them, and
   a hedge or a question back approves nothing. The chapter is then written in the
   background and lands in the chat with its question. While a question waits, the
-  assistant is reminded of it on every turn. Replaying a single scene at a checkpoint
-  comes later; for now such a request revises the chapter's text.
+  assistant is reminded of it on every turn.
+- **A scene played again at a chapter's checkpoint.** A chapter lands with its scenes
+  numbered; ask for one of them by its number — "play scene 2 again, this time she keeps
+  her secret" — and that scene and every one after it are played again from where the
+  scene before it ended, and the chapter is written anew from them, while the earlier
+  scenes stay as they were. The new version lands with its own question. Nothing of the
+  first version is changed or lost, and the new one has a chapter's budget of its own. A
+  request to change how the chapter is told, not what happens in it, still revises the
+  text.
 - **A story chapter written in the background.** Under Settings → Tools → *Stories
   (experimental)* — off by default — the story engine's runs go out as background tasks
   the way a background sub-agent's do: each takes the story from where it stands to its

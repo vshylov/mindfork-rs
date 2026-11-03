@@ -11,6 +11,8 @@
 //!   ([`super::answer`]) and gives the run its story; with no question
 //!   pending it resumes a run that stopped short. A turn that answers no
 //!   message of the person's, or rows that read as unclear, resolve nothing.
+//!   At a chapter's checkpoint the reading is shown the chapter's scenes by
+//!   number, so a reply may ask for one to be played again (PR 10).
 //!
 //! Both claim the story on the board first, as a run does, so a chat tool
 //! and a run never hold one story's files at once.
@@ -38,7 +40,7 @@ use crate::entities::sampling::{ReasoningEffort, SamplingConfig};
 use crate::entities::story::{Canon, Decision, Proposal, Question, QuestionBody};
 use crate::shared::api::contract::EngineBackend;
 use crate::shared::session_budget::SessionBudget;
-use crate::shared::storage::story::{StoryDb, StoryDbError};
+use crate::shared::storage::story::{KeptPick, StoryDb, StoryDbError};
 
 /// A story's two files: its database and its call log.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -328,13 +330,24 @@ pub fn listener_sampling() -> SamplingConfig {
     }
 }
 
+/// What the person decided, as the run goes on with it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Resolved {
+    /// The question answered.
+    pub body: QuestionBody,
+    /// The decision.
+    pub decision: Decision,
+    /// At P2, the scene asked to be played again with the ones after it.
+    pub rerun: Option<u32>,
+}
+
 /// What `story_continue` settled.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Continued {
     /// The run may start: with what the person decided, or, with no question
     /// pending, to resume where the last run stopped. The story stays claimed
     /// for the run.
-    Start(Option<(QuestionBody, Decision)>),
+    Start(Option<Resolved>),
     /// The person asked for the canon to change: recorded, and no run starts —
     /// the assistant revises the draft with `story_create` and asks again.
     CanonChange(String),
@@ -431,7 +444,8 @@ async fn room_for(db: &StoryDb, budget: Budget) -> Result<(), ContinueRefusal> {
     let Some(chapter) = open_chapter(db, &canon).await? else {
         return Ok(());
     };
-    let spend = db.spend(&format!("ch{chapter}/")).await?;
+    // A take's budget is its own (docs/fabula.md §6, T12).
+    let spend = db.chapter_spend(chapter).await?;
     match budget.spent(&spend) {
         Some(spent) => Err(ContinueRefusal::BudgetSpent { chapter, spent }),
         None => Ok(()),
@@ -457,7 +471,12 @@ async fn settle(
         }
         _ => return Err(ContinueRefusal::NotAnswered),
     };
-    let shown = shown(db, &canon, &question.body).await?;
+    let kept = match question.body {
+        QuestionBody::Chapter { chapter, .. } => db.kept_scenes(chapter).await?,
+        _ => Vec::new(),
+    };
+    let scenes = u32::try_from(kept.len()).unwrap_or(u32::MAX);
+    let shown = shown(db, &canon, &question.body, &kept).await?;
     let log: SharedLog = Arc::new(Mutex::new(db.run_log_writer().await?));
     let reading_run = log
         .lock()
@@ -481,10 +500,10 @@ async fn settle(
         run: reading_run,
         address: format!("{}/read", question.id),
     };
-    let reply = read_reply(&adapter, &call, &question.body, &shown, rows)
+    let reply = read_reply(&adapter, &call, (&question.body, scenes), &shown, rows)
         .await
         .map_err(|e| ContinueRefusal::Failed(e.to_string()))?;
-    let Some(resolved) = resolution(&question.body, &reply, rows, answering.notes) else {
+    let Some(resolved) = resolution((&question.body, scenes), &reply, rows, answering.notes) else {
         return Err(ContinueRefusal::Unclear(reply));
     };
     let mut author = db.author_writer().await?;
@@ -498,7 +517,11 @@ async fn settle(
     {
         return Ok(Continued::Finished(chapter));
     }
-    Ok(Continued::Start(Some((question.body, resolved.decision))))
+    Ok(Continued::Start(Some(Resolved {
+        body: question.body,
+        decision: resolved.decision,
+        rerun: resolved.rerun,
+    })))
 }
 
 /// The first chapter of the arc with no accepted version; `None` once the
@@ -517,9 +540,61 @@ async fn open_chapter(db: &StoryDb, canon: &Canon) -> Result<Option<u32>, StoryD
 }
 
 /// What the person was shown with the question, as the reading quotes it:
-/// the canon in brief at P1, the chapter's summary at P2; P3's question
-/// carries its own.
-async fn shown(db: &StoryDb, canon: &Canon, body: &QuestionBody) -> Result<String, StoryDbError> {
+/// the canon in brief at P1, the chapter's summary and its `kept` scenes by
+/// number at P2; P3's question carries its own.
+async fn shown(
+    db: &StoryDb,
+    canon: &Canon,
+    body: &QuestionBody,
+    kept: &[KeptPick],
+) -> Result<String, StoryDbError> {
+    let mut text = shown_head(db, canon, body).await?;
+    if !kept.is_empty() {
+        text.push_str("\n\n");
+        text.push_str(&scenes_brief(canon, kept));
+    }
+    Ok(text)
+}
+
+/// The chapter's scenes as the person was shown them with its question: by
+/// number, where and with whom, and the Author's note on keeping each, in
+/// the person's language. A chapter keeps its scenes numbered from 1 with no
+/// gap, so the numbers are the labels the reading may name.
+pub fn scenes_brief(canon: &Canon, kept: &[KeptPick]) -> String {
+    let mut out = "The chapter's scenes, by number:".to_owned();
+    for k in kept {
+        let place = canon
+            .location(&k.scene.setup.location)
+            .map_or(k.scene.setup.location.as_str(), |l| l.name.trim());
+        let names: Vec<&str> = k
+            .scene
+            .setup
+            .present
+            .iter()
+            .map(|key| match canon.character(key) {
+                Some(c) if !c.name.trim().is_empty() => c.name.trim(),
+                _ => key.as_str(),
+            })
+            .collect();
+        out.push_str(&format!(
+            "\n{}. At {place}, with {}.",
+            k.scene.scene,
+            names.join(", ")
+        ));
+        let note = k.rationale.trim();
+        if !note.is_empty() {
+            out.push(' ');
+            out.push_str(note);
+        }
+    }
+    out
+}
+
+async fn shown_head(
+    db: &StoryDb,
+    canon: &Canon,
+    body: &QuestionBody,
+) -> Result<String, StoryDbError> {
     Ok(match body {
         QuestionBody::Canon => canon_brief(canon),
         QuestionBody::Chapter { chapter, version } => {

@@ -48,8 +48,8 @@ pub struct StoryStatus {
     /// The first chapter of the arc with no accepted version: the one a run
     /// works on; `None` once every planned chapter is accepted.
     pub open_chapter: Option<u32>,
-    /// What the open chapter has cost so far, in every run (docs/fabula.md
-    /// §6, T1); nothing when the call log is gone.
+    /// What the open chapter has cost so far, in every run of its latest take
+    /// (docs/fabula.md §6, T1, T12); nothing when the call log is gone.
     pub spend: Spend,
 }
 
@@ -79,7 +79,7 @@ pub fn story_status_of(story: &Path, calls: &Path) -> Result<StoryStatus, StoryD
     let open_chapter =
         (1..=planned).find(|n| !chapters.iter().any(|c| c.number == *n && c.accepted));
     let spend = match open_chapter {
-        Some(n) => actor.spend(&format!("ch{n}/"))?,
+        Some(n) => actor.chapter_spend(n)?,
         None => Spend::default(),
     };
     let pending = actor

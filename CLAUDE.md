@@ -184,9 +184,9 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-11-02, version 0.23.1)
+## Status (2026-11-03, version 0.23.1)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **4755 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **4767 unit tests
 green, 326 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump and demo-reel regenerators).
 
@@ -207,7 +207,8 @@ being recent is dropped, not shortened.
   planned, picked, drafted, reviewed and revised, paused for the human, resumed
   wherever it was killed; a story backed up and in `stats`; a chapter run in the
   background, landed in its chat with its question; a story created and continued from the
-  chat, every answer the person's own words ([docs/fabula.md](docs/fabula.md),
+  chat, every answer the person's own words; a scene named at a checkpoint played again
+  ([docs/fabula.md](docs/fabula.md),
   [docs/journal/stories.md](docs/journal/stories.md)).
 - **Image generation — track complete** (2026-10-30): `image_generate` over a
   slot of its own (OpenAI by default, Gemini, the gateway, xAI), off by default;

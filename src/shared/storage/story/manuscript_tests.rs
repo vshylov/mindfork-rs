@@ -43,6 +43,7 @@ fn resolution(decision: Decision, notes: &str) -> Resolution {
         decision,
         notes: notes.into(),
         evidence: json!({"messages": ["m7"]}),
+        rerun: None,
     }
 }
 

@@ -36,7 +36,8 @@ use tokio::sync::oneshot;
 use crate::entities::story::{
     BranchId, Canon, CanonProblem, ChapterId, ChapterOutline, ChapterVersion, CharacterKey,
     Decided, Event, EventId, Proposal, ProposalId, ProposalVerdict, Question, QuestionId, Refusal,
-    Resolution, ReviewNote, Reviewer, RunId, SceneId, SceneSetup, StoredAssumption, WorldState,
+    Resolution, ReviewNote, Reviewer, RunId, SceneId, SceneSetup, StoredAssumption, Take,
+    WorldState,
 };
 use actor::{Actor, Job};
 
@@ -173,6 +174,14 @@ pub enum StoryDbError {
     /// A question asked while another waits for its answer.
     #[error("question {0} waits for its answer")]
     QuestionPending(QuestionId),
+    /// A rerun the answer cannot ask for (docs/fabula.md §4, PR 10).
+    #[error("scene {scene} cannot be played again: {why}")]
+    BadRerun {
+        /// The scene named.
+        scene: u32,
+        /// Why not.
+        why: String,
+    },
 }
 
 fn join(problems: &[CanonProblem]) -> String {
@@ -268,6 +277,18 @@ pub struct StoredScene {
 pub struct StoredPick {
     /// The branch picked; none for a rerun.
     pub branch: Option<BranchId>,
+    /// The note for the human.
+    pub rationale: String,
+}
+
+/// A scene the main line keeps: the attempt, the branch picked for it, and
+/// the pick's note for the human (docs/fabula.md §4, PR 10).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeptPick {
+    /// The attempt.
+    pub scene: StoredScene,
+    /// The branch that extends the main line.
+    pub branch: BranchId,
     /// The note for the human.
     pub rationale: String,
 }
@@ -653,10 +674,29 @@ impl StoryDb {
         self.run(move |a| a.reflections(&branch, &character)).await
     }
 
-    /// The main line's tip: the branch picked for the latest scene with a
-    /// pick, else genesis; none before genesis (spec §6).
+    /// The main line's tip: the branch kept for the last scene of the latest
+    /// chapter that keeps one, in that chapter's latest take, else genesis;
+    /// none before genesis (spec §6; docs/fabula.md §4, PR 10).
     pub async fn main_line_tip(&self) -> Result<Option<BranchId>, StoryDbError> {
         self.run(|a| a.main_line_tip()).await
+    }
+
+    /// Chapter `chapter`'s latest take; `None` while it has only its first
+    /// (docs/fabula.md §4, PR 10).
+    pub async fn take_of(&self, chapter: u32) -> Result<Option<Take>, StoryDbError> {
+        self.run(move |a| a.take_of(chapter)).await
+    }
+
+    /// The scenes chapter `chapter` keeps in its latest take, in order: the
+    /// main line through the chapter.
+    pub async fn kept_scenes(&self, chapter: u32) -> Result<Vec<KeptPick>, StoryDbError> {
+        self.run(move |a| a.kept_scenes(chapter)).await
+    }
+
+    /// What chapter `chapter`'s latest take has cost, against its budget
+    /// (docs/fabula.md §6, T12).
+    pub async fn chapter_spend(&self, chapter: u32) -> Result<Spend, StoryDbError> {
+        self.run(move |a| a.chapter_spend(chapter)).await
     }
 
     /// The steps of `run` and how each ended, in the order first recorded.

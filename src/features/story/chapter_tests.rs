@@ -31,19 +31,21 @@ use crate::shared::storage::story::{AuthorWriter, StepStatus, StoredScene, Story
 use crate::shared::storage::story::{CallStatus, CallUsage, Mechanism, NewCall};
 
 /// What the script answers.
-enum Reply {
+#[derive(Debug, Clone, PartialEq)]
+pub(super) enum Reply {
     Json(Value),
     Text(String),
 }
 
-type Answer = dyn Fn(&str, &Prompt) -> Result<Reply, PortError> + Send + Sync;
+pub(super) type Answer = dyn Fn(&str, &Prompt) -> Result<Reply, PortError> + Send + Sync;
 
 /// A port that answers each call from a script on its address, holds every
-/// JSON answer to its schema, keeps the calls, and with a fuse hangs at its
-/// n-th call, as a process killed mid-call would.
-struct Script {
+/// JSON answer to its schema, keeps the calls and what it answered, and with
+/// a fuse hangs at its n-th call, as a process killed mid-call would.
+pub(super) struct Script {
     answer: Arc<Answer>,
     seen: Mutex<Vec<(String, Prompt)>>,
+    replies: Mutex<Vec<(String, Reply)>>,
     schemas: Mutex<Vec<(String, String)>>,
     count: AtomicUsize,
     fuse: Option<(Fuse, Arc<Notify>)>,
@@ -57,17 +59,18 @@ enum Fuse {
 }
 
 impl Script {
-    fn new(answer: Arc<Answer>) -> Self {
+    pub(super) fn new(answer: Arc<Answer>) -> Self {
         Self {
             answer,
             seen: Mutex::new(Vec::new()),
+            replies: Mutex::new(Vec::new()),
             schemas: Mutex::new(Vec::new()),
             count: AtomicUsize::new(0),
             fuse: None,
         }
     }
 
-    fn fused(answer: Arc<Answer>, at: usize, blown: Arc<Notify>) -> Self {
+    pub(super) fn fused(answer: Arc<Answer>, at: usize, blown: Arc<Notify>) -> Self {
         Self {
             fuse: Some((Fuse::Nth(at), blown)),
             ..Self::new(answer)
@@ -81,7 +84,7 @@ impl Script {
         }
     }
 
-    fn addresses(&self) -> Vec<String> {
+    pub(super) fn addresses(&self) -> Vec<String> {
         self.seen
             .lock()
             .unwrap()
@@ -90,8 +93,18 @@ impl Script {
             .collect()
     }
 
+    /// Every call it answered, with the answer, in the order made.
+    pub(super) fn replies(&self) -> Vec<(String, Reply)> {
+        self.replies.lock().unwrap().clone()
+    }
+
+    /// Every call it was asked, with the prompt, in the order made.
+    pub(super) fn prompts(&self) -> Vec<(String, Prompt)> {
+        self.seen.lock().unwrap().clone()
+    }
+
     /// The schema the call at `address` was sent, as printed.
-    fn schema_at(&self, address: &str) -> String {
+    pub(super) fn schema_at(&self, address: &str) -> String {
         self.schemas
             .lock()
             .unwrap()
@@ -101,7 +114,7 @@ impl Script {
             .unwrap_or_else(|| panic!("no JSON call at {address}"))
     }
 
-    fn prompt_at(&self, address: &str) -> Prompt {
+    pub(super) fn prompt_at(&self, address: &str) -> Prompt {
         self.seen
             .lock()
             .unwrap()
@@ -128,7 +141,14 @@ impl Script {
             .lock()
             .unwrap()
             .push((call.address.clone(), prompt.clone()));
-        (self.answer)(&call.address, prompt)
+        let reply = (self.answer)(&call.address, prompt);
+        if let Ok(reply) = &reply {
+            self.replies
+                .lock()
+                .unwrap()
+                .push((call.address.clone(), reply.clone()));
+        }
+        reply
     }
 }
 
@@ -230,7 +250,7 @@ fn pick_first(prompt: &Prompt) -> Value {
 /// The story every test starts from: Mara speaks, everyone else waits, the
 /// World Master lets her, two scenes then the end; the reviewers raise one
 /// high note on the draft, which the Author accepts, and nothing after.
-fn story(address: &str, prompt: &Prompt) -> Result<Reply, PortError> {
+pub(super) fn story(address: &str, prompt: &Prompt) -> Result<Reply, PortError> {
     let (who, act) = tail(address);
     let value = match act {
         "propose" if who == "mara" => says("mara", "We wait out the storm."),
@@ -290,13 +310,13 @@ fn story(address: &str, prompt: &Prompt) -> Result<Reply, PortError> {
 }
 
 /// The same with one round a branch.
-fn short() -> ChapterConfig {
+pub(super) fn short() -> ChapterConfig {
     let mut config = config();
     config.sim.max_rounds = 1;
     config
 }
 
-fn config() -> ChapterConfig {
+pub(super) fn config() -> ChapterConfig {
     ChapterConfig {
         sim: SimConfig {
             branches: 2,
@@ -311,11 +331,11 @@ fn config() -> ChapterConfig {
 
 /// An open story with the harbour canon, the Author's capability and the run
 /// log, shared.
-struct Open {
+pub(super) struct Open {
     _dir: tempfile::TempDir,
-    db: StoryDb,
-    author: AuthorWriter,
-    log: SharedLog,
+    pub(super) db: StoryDb,
+    pub(super) author: AuthorWriter,
+    pub(super) log: SharedLog,
 }
 
 async fn open() -> Open {
@@ -338,7 +358,7 @@ async fn open() -> Open {
 }
 
 impl Open {
-    async fn advance(&mut self, port: &dyn LlmPort, config: &ChapterConfig) -> Outcome {
+    pub(super) async fn advance(&mut self, port: &dyn LlmPort, config: &ChapterConfig) -> Outcome {
         advance(Engine {
             db: &self.db,
             author: &mut self.author,
@@ -350,7 +370,23 @@ impl Open {
         .unwrap()
     }
 
-    async fn answer(&mut self, decision: Decision, notes: &str) {
+    pub(super) async fn answer(&mut self, decision: Decision, notes: &str) {
+        self.resolve_with(decision, notes, None).await.unwrap();
+    }
+
+    /// The pending question answered at P2 with a rerun of scene `scene`.
+    pub(super) async fn rerun(&mut self, scene: u32, notes: &str) {
+        self.resolve_with(Decision::Change, notes, Some(scene))
+            .await
+            .unwrap();
+    }
+
+    pub(super) async fn resolve_with(
+        &mut self,
+        decision: Decision,
+        notes: &str,
+        rerun: Option<u32>,
+    ) -> Result<(), crate::shared::storage::story::StoryDbError> {
         let question = self
             .db
             .pending_question()
@@ -364,14 +400,14 @@ impl Open {
                 decision,
                 notes: notes.into(),
                 evidence: json!(null),
+                rerun,
             },
         )
         .await
-        .unwrap();
     }
 
     /// Opened, with the canon approved.
-    async fn approved() -> Self {
+    pub(super) async fn approved() -> Self {
         let mut open = Self::open_only().await;
         let port = Script::new(Arc::new(story));
         assert_eq!(
@@ -382,12 +418,12 @@ impl Open {
         open
     }
 
-    async fn open_only() -> Self {
+    pub(super) async fn open_only() -> Self {
         open().await
     }
 }
 
-fn paused_at(outcome: &Outcome) -> &QuestionBody {
+pub(super) fn paused_at(outcome: &Outcome) -> &QuestionBody {
     match outcome {
         Outcome::Paused(q) => &q.body,
         other => panic!("not paused: {other:?}"),

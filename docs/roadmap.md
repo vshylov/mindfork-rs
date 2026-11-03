@@ -29,9 +29,9 @@ evidence. Adding or closing an item is part of every task's documentation step
 ## Most valuable next
 
 **Fabula, the story engine, is the track under way** ([fabula.md](fabula.md)): built
-through PR 9 — a story created and driven from the chat, every chapter written in the
-background; Gate G2 GO on a two-chapter story — with the named scene rerun (PR 10) and the
-evaluation (M3) next. G2's readers left a list of the engine's faults of logic, undecided
+through PR 10 — a story created and driven from the chat, every chapter written in the
+background, a scene named at a checkpoint played again with the ones after it; Gate G2 GO
+on a two-chapter story — with the evaluation (M3) next. G2's readers left a list of the engine's faults of logic, undecided
 ([fabula.md](fabula.md), *What G2's readers found*). M3's
 verdict decides whether the long form (M4) is built; until then the story tools stay
 behind `tools.story`, off.

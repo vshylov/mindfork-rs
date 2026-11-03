@@ -105,9 +105,10 @@ pub struct Landed {
     pub ending: Ending,
     /// The chapter the pause asks about, at P2.
     pub chapter: Option<LandedChapter>,
-    /// At a pause about a chapter, the Author's note on each scene it kept,
-    /// in order.
-    pub picks: Vec<String>,
+    /// At a pause about a chapter, the Author's note on each scene it keeps
+    /// in its latest take, by the scene's number, in order: the numbers a
+    /// reply may name to play a scene again (PR 10).
+    pub picks: Vec<(u32, String)>,
     /// And that chapter's assumptions: what a role chose where it could have
     /// asked (spec §14, *Pauses*). Neither rides on a run that stopped short.
     pub assumptions: Vec<Assumption>,
@@ -458,12 +459,9 @@ async fn landing(db: &StoryDb, ending: Ending) -> Result<Landed, StoryDbError> {
             text: asked.text,
         });
     }
-    for scene in db.scenes_of(n).await? {
-        if let Some(pick) = db.pick_of(&scene.id).await?
-            && pick.branch.is_some()
-            && !pick.rationale.trim().is_empty()
-        {
-            landed.picks.push(pick.rationale);
+    for kept in db.kept_scenes(n).await? {
+        if !kept.rationale.trim().is_empty() {
+            landed.picks.push((kept.scene.scene, kept.rationale));
         }
     }
     landed.assumptions = db

@@ -192,6 +192,7 @@ impl Opened {
             decision,
             notes: notes.to_owned(),
             evidence: json!({"harness": true}),
+            rerun: None,
         };
         resolve(&mut self.author, &question.id, &resolution)
             .await

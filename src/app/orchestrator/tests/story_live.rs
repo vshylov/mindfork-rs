@@ -16,7 +16,11 @@
 //!   a run left one there, is taken up where it stands; `MINDFORK_FABULA_BUDGET` is
 //!   the chapter's budget in tokens (the default's). Gate G2 is
 //!   this test on Claude Sonnet 5.5, in Russian (`MINDFORK_FABULA_LANG=ru`;
-//!   docs/fabula.md §6, T9–T10).
+//!   docs/fabula.md §6, T9–T10). With `MINDFORK_FABULA_RERUN=<scene>` the
+//!   person answers the first chapter's checkpoint by asking for that scene
+//!   to be played again, and the chapter's take lands as a landing of its own
+//!   (PR 10; with `MINDFORK_FABULA_CHAPTERS=2` the script ends at the take's
+//!   checkpoint); the takes are reported with the story.
 //!
 //! Routes as the engine's own live checks take them
 //! (`features::story::chapter_live_tests::route`): Claude with
@@ -75,6 +79,8 @@ struct Lines {
     accept_last: &'static str,
     scene: &'static str,
     resume: &'static str,
+    /// A scene asked for again at the checkpoint: `{n}` is its number.
+    rerun: &'static str,
 }
 
 const EN: Lines = Lines {
@@ -86,6 +92,8 @@ build the canon and create the story.",
     accept_last: "I accept the chapter. Thank you, the story is done.",
     scene: "Try the scene again as you see fit.",
     resume: "Go on with the story.",
+    rerun: "Play scene {n} again, please: this time the secret must not come out in it; let \
+the scene end with it still kept.",
 };
 
 const RU: Lines = Lines {
@@ -97,6 +105,8 @@ const RU: Lines = Lines {
     accept_last: "Главу принимаю. Спасибо, история готова.",
     scene: "Попробуй сцену ещё раз, как считаешь нужным.",
     resume: "Продолжай историю.",
+    rerun: "Переиграй, пожалуйста, сцену {n}: на этот раз тайна в ней не должна раскрыться, \
+пусть сцена закончится, а секрет останется при герое.",
 };
 
 fn lang() -> Lang {
@@ -497,13 +507,14 @@ fn progress(state: Option<&(String, StoryStatus)>) -> Option<(Option<String>, us
 }
 
 /// What the person says next, from where the story stands; `None` when the
-/// script is done.
+/// script is done. `rerun` is the scene to ask for again at the next
+/// chapter's checkpoint, until it has been asked.
 fn next_line(
     lines: &'static Lines,
     state: Option<&(String, StoryStatus)>,
-    landed: u32,
-    chapters: u32,
-) -> Option<&'static str> {
+    (landed, chapters): (u32, u32),
+    rerun: &mut Option<u32>,
+) -> Option<String> {
     Some(
         match state.map(|(_, s)| (s.pending.as_ref().map(|q| &q.body), s)) {
             None => lines.build,
@@ -511,6 +522,9 @@ fn next_line(
             Some((Some(QuestionBody::Chapter { chapter, .. }), s)) => {
                 if landed >= chapters {
                     return None;
+                }
+                if let Some(scene) = rerun.take() {
+                    return Some(lines.rerun.replace("{n}", &scene.to_string()));
                 }
                 if *chapter >= s.planned {
                     lines.accept_last
@@ -521,7 +535,44 @@ fn next_line(
             Some((Some(QuestionBody::Scene { .. }), _)) => lines.scene,
             Some((None, s)) if s.open_chapter.is_none() && s.planned > 0 => return None,
             Some((None, _)) => lines.resume,
-        },
+        }
+        .to_owned(),
+    )
+}
+
+/// Chapter 1's takes as the story holds them: each take's first scene, what
+/// it carried and replaced, and the scenes the latest keeps (PR 10).
+async fn takes_report(root: &Path, chat: Uuid, id: &str) -> String {
+    let storage = Storage::open(Paths::with_root(root)).unwrap();
+    let json = storage.json();
+    let db = StoryDb::open(
+        &json.story_db(&chat.to_string(), id),
+        &json.story_log(&chat.to_string(), id),
+    )
+    .await
+    .unwrap();
+    let take = db.take_of(1).await.unwrap();
+    let kept: Vec<String> = db
+        .kept_scenes(1)
+        .await
+        .unwrap()
+        .iter()
+        .map(|k| k.scene.id.to_string())
+        .collect();
+    let versions: Vec<String> = db
+        .chapter_versions(1)
+        .await
+        .unwrap()
+        .iter()
+        .map(|v| format!("{} {}", v.id, v.origin.as_str()))
+        .collect();
+    let spend = db.chapter_spend(1).await.unwrap();
+    db.close().await.unwrap();
+    format!(
+        "take: {take:?}\nchapter 1 keeps: {kept:?}\nversions: {versions:?}\nthe latest take spent \
+         {} tokens in {} calls",
+        spend.tokens(),
+        spend.calls
     )
 }
 
@@ -536,6 +587,7 @@ async fn story_chat_live_story() {
     let lang = lang();
     let lines = if lang == Lang::Ru { &RU } else { &EN };
     let chapters: u32 = env_or("MINDFORK_FABULA_CHAPTERS", 99);
+    let mut rerun = Some(env_or("MINDFORK_FABULA_RERUN", 0u32)).filter(|n| *n > 0);
     let base = out_dir("story-live");
     let root = base.join("data");
     // A root a run left behind is taken up where it stands.
@@ -545,24 +597,30 @@ async fn story_chat_live_story() {
     let started = Instant::now();
     let mut app = App::start(&root, backend, config(mode, &model)).await;
     let mut landed = 0u32;
-    let mut line =
-        next_line(lines, story_of(&app.root, app.chat).as_ref(), 0, chapters).unwrap_or(lines.open);
+    let mut line = next_line(
+        lines,
+        story_of(&app.root, app.chat).as_ref(),
+        (0, chapters),
+        &mut rerun,
+    )
+    .unwrap_or_else(|| lines.open.to_owned());
     // A turn that moves the story nowhere twice running ends the script: a
     // spent budget, a model that will not call.
     let mut idle = 0;
     let mut last = progress(story_of(&app.root, app.chat).as_ref());
     for _turn in 0..16 {
-        app.say(line).await;
+        app.say(&line).await;
         app.settle().await;
         // A run went out: wait for its landing and the turn the app wakes.
         if app.out > 0 {
             eprintln!("--- a run is out ({:?} in)", started.elapsed());
             loop {
+                // The run's own limit plus the landing and the woken turn: a
+                // wait of the limit alone gave up as the limit cancelled the
+                // run, before it landed (PR 10's live run).
+                let limit = env_or("MINDFORK_FABULA_TIMEOUT", 3 * 60 * 60u64) + 15 * 60;
                 let woke = app
-                    .reply(Duration::from_secs(env_or(
-                        "MINDFORK_FABULA_TIMEOUT",
-                        3 * 60 * 60,
-                    )))
+                    .reply(Duration::from_secs(limit))
                     .await
                     .expect("the run lands within its time limit");
                 eprintln!("<<< (woken) {woke}");
@@ -581,7 +639,7 @@ async fn story_chat_live_story() {
             eprintln!("--- the story did not move for two turns; the script ends");
             break;
         }
-        let Some(next) = next_line(lines, state.as_ref(), landed, chapters) else {
+        let Some(next) = next_line(lines, state.as_ref(), (landed, chapters), &mut rerun) else {
             break;
         };
         line = next;
@@ -593,6 +651,7 @@ async fn story_chat_live_story() {
         Some((id, status)) => {
             let text = story_markdown(&root, chat_id, &id).await;
             std::fs::write(base.join("story.md"), &text).unwrap();
+            eprintln!("\n=== {}", takes_report(&root, chat_id, &id).await);
             format!(
                 "story «{id}»: {} of {} chapters accepted, finished: {}; {} words",
                 status.chapters.iter().filter(|c| c.accepted).count(),

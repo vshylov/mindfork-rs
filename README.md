@@ -149,7 +149,8 @@ a checkout with a recent stable Rust. On a rented GPU box or in a container, the
   ended.
 - **Stories, chapter by chapter (experimental).** Attach your sketches and the
   assistant composes a canon with you; a story engine then acts out each scene with
-  the characters, picks how it went and writes the chapter in the background. Every
+  the characters, picks how it went and writes the chapter in the background; ask
+  for a scene by its number and it is played again, with the ones after it. Every
   approval is your own words, read from your messages — never the assistant's
   summary of them. Off by default.
 - **Your code project, contained.** Attach a directory and the assistant can

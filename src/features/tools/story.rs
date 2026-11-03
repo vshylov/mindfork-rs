@@ -272,7 +272,12 @@ pub fn landing_text(loc: &Locale, landed: &Landed, attached: Option<&str>) -> St
     if !landed.picks.is_empty() {
         parts.push(listed(
             loc.t("tool.story.landing.picks"),
-            landed.picks.iter().map(|p| p.trim().to_owned()),
+            landed.picks.iter().map(|(scene, note)| {
+                loc.tf(
+                    "tool.story.landing.pick",
+                    &[("n", &scene.to_string()), ("note", note.trim())],
+                )
+            }),
         ));
     }
     if !landed.assumptions.is_empty() {
