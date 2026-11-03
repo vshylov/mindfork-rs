@@ -64,6 +64,7 @@ fn status() -> StoryStatus {
             chapter: 2,
             version: 1,
         })),
+        pending_since: None,
         open_chapter: Some(2),
         spend: Spend {
             calls: 4,
@@ -132,6 +133,7 @@ fn the_status_names_every_state_of_a_story() {
         canon_approved: false,
         chapters: Vec::new(),
         pending: None,
+        pending_since: None,
         open_chapter: None,
         spend: Spend::default(),
     };

@@ -16,17 +16,28 @@ split by subsystem.
 
 ### Added (experimental)
 
+- **Stories written from the chat.** With Settings → Tools → *Stories (experimental)*
+  on, attach your sketches of a story (`/file attach`) and ask the assistant to make a
+  story of them: it composes the canon — the world's rules, the places, the characters
+  with their goals and secrets, the style, the chapters — and stores it with
+  `story_create`, which refuses a canon with a problem and names each one. Nothing runs
+  until you approve the canon, and every answer the story waits for — the canon, each
+  chapter — is your own words: when the assistant calls `story_continue`, the app reads
+  the messages you wrote since the question, never the assistant's summary of them, and
+  a hedge or a question back approves nothing. The chapter is then written in the
+  background and lands in the chat with its question. While a question waits, the
+  assistant is reminded of it on every turn. Replaying a single scene at a checkpoint
+  comes later; for now such a request revises the chapter's text.
 - **A story chapter written in the background.** Under Settings → Tools → *Stories
   (experimental)* — off by default — the story engine's runs go out as background tasks
   the way a background sub-agent's do: each takes the story from where it stands to its
   next pause on the chat's own model, takes a background slot, and lands in the chat.
   The chapter arrives as an attachment, and a task notification carries its summary, why
   each scene was kept, the choices made without asking and the question for you. A run
-  is bounded by a time limit (6 hours) and the chapter's budget (2,000,000 tokens; a
+  is bounded by a time limit (6 hours) and the chapter's budget (6,000,000 tokens; a
   dollar cap where the provider reports cost), and one stopped, timed out or cut short by
   quitting says where it stopped and resumes there. `story_status` tells the assistant
-  where each story of the chat stands. The tools that create a story and continue it come
-  next, so for now there is nothing to start.
+  where each story of the chat stands.
 
 ### Fixed
 
@@ -50,8 +61,8 @@ split by subsystem.
 
 ### Data
 
-- **Backups carry stories.** A backup now packs `stories/`, where the story tools (still
-  to come, and experimental) keep each chat's stories, and its `manifest.json` records
+- **Backups carry stories.** A backup now packs `stories/`, where the story tools
+  (experimental) keep each chat's stories, and its `manifest.json` records
   their format. Each story's call log, `story-logs/`, stays out, as `logs/` does: a
   restore neither packs nor clears it. `mindfork stats` counts the stories, counts one
   as deleted while its chat is, and compares two copies of a story by what each holds.

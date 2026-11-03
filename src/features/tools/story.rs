@@ -1,8 +1,10 @@
 //! The story tools (docs/fabula.md §3; docs/research/fabula-engine.md §14,
 //! *Tools*): their schemas, descriptions and results, en and ru like every
 //! tool's, and the words a story run's landing is told in. Offered only while
-//! `tools.story` is on ([`ToolGate::Story`]). PR 8 builds `story_status` and
-//! the landing; `story_create` and `story_continue` follow in PR 9.
+//! `tools.story` is on ([`ToolGate::Story`]). PR 8 built `story_status` and
+//! the landing; PR 9 `story_create`, `story_continue` (a loop-executed tool,
+//! like `start_dialogue`: the orchestrator reads the person's answer and
+//! starts the run) and the request's reminder line.
 //!
 //! **Model-facing, so in the profile's language** (axis A): the status, the
 //! notification and the question it carries are read by the assistant, which
@@ -22,6 +24,10 @@ use crate::features::story::chapter::Stop;
 use crate::features::story::run::{Ending, Landed};
 use crate::shared::i18n::Locale;
 use crate::shared::storage::story::{Spend, StoryStatus, story_status_of};
+
+pub mod conversation;
+
+pub use conversation::{STORY_CONTINUE_ID, STORY_CREATE_ID, StoryContinueTool, StoryCreateTool};
 
 /// `story_status`: where the chat's stories stand.
 pub const STORY_STATUS_ID: &str = "story_status";
@@ -73,7 +79,7 @@ impl Tool for StoryStatusTool {
 }
 
 /// The ids of the stories in a chat's directory, `<id>.db`, sorted.
-fn story_ids(dir: &Path) -> Vec<String> {
+pub fn story_ids(dir: &Path) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
@@ -337,7 +343,6 @@ fn ending_text(loc: &Locale, ending: &Ending) -> String {
 /// The name of the human's language as the engine's English prompts put it
 /// (`ChapterConfig::human_language`): what a story's summaries, picks and
 /// questions are written in — the profile's (spec §15).
-#[allow(dead_code)] // `story_continue` builds the chapter's configuration (docs/fabula.md §4, PR 9)
 pub fn human_language(loc: &Locale) -> &str {
     loc.t("tool.story.language")
 }

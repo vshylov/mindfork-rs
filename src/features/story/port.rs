@@ -33,6 +33,9 @@ pub enum Role {
     Continuity,
     /// Proposes the deltas a chapter makes to the canon.
     CanonKeeper,
+    /// Reads the human's reply to a pause (spec §14, *The answer is the
+    /// user's own words*).
+    Listener,
 }
 
 impl Role {
@@ -45,6 +48,7 @@ impl Role {
             Role::Reader => "reader",
             Role::Continuity => "continuity",
             Role::CanonKeeper => "canon_keeper",
+            Role::Listener => "listener",
         }
     }
 }

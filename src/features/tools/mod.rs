@@ -140,6 +140,13 @@ pub struct ToolContext {
     /// `story_status` reports of a run in progress. One board, the
     /// orchestrator's.
     pub story_board: Arc<crate::features::story::board::StoryBoard>,
+    /// The stories' questions waiting for the person when the turn began,
+    /// with the rows they wrote since (docs/fabula.md §4, PR 9): what
+    /// `story_continue` may read as an answer. Set by the orchestrator; empty
+    /// unless the turn offers the story tools.
+    pub story_pending: Arc<[crate::features::story::conversation::PendingAnswer]>,
+    /// What a story's run takes from the settings (`config.tools`).
+    pub story_params: crate::features::story::run::StoryParams,
     /// Whether an embedding server is configured at all — what a tool that attaches a
     /// file may promise about searching it (G4). Configured but down is not told apart:
     /// the index then fails fast and the search says there is none.
@@ -313,6 +320,8 @@ pub struct ToolParams {
     pub workspace: crate::shared::config::WorkspaceSettings,
     /// The encoding detector's hint for local files. See [`ToolContext::file_hint`].
     pub file_hint: Option<&'static str>,
+    /// See [`ToolContext::story_params`].
+    pub story_params: crate::features::story::run::StoryParams,
     /// See [`ToolConfig::named_secrets`] — the workspace commands' half of it, since the
     /// model may have edited the build script they run.
     pub named_secrets: std::sync::Arc<[String]>,
@@ -339,6 +348,11 @@ impl ToolParams {
             workspace: cfg.workspace,
             file_hint: crate::shared::text_decode::tld_hint(cfg.interface.language),
             named_secrets: crate::shared::config::named_key_env_vars(cfg).into(),
+            story_params: crate::features::story::run::StoryParams::of(
+                &cfg.tools,
+                cfg.engine.mode,
+                cfg.engine.managed.spec_type,
+            ),
         }
     }
 }
@@ -409,6 +423,8 @@ impl ToolContext {
             attachments: turn.attachments,
             index_board: deps.index_board,
             story_board: deps.story_board,
+            story_pending: Arc::default(),
+            story_params: params.story_params,
             embed_configured: deps.embed_configured,
             attachment_cfg: params.attachments,
             history: turn.history,
@@ -1094,6 +1110,8 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     // The story engine's tools (docs/fabula.md): gated by `tools.story` in
     // `effective_tool_ids`, so at the default no request carries them.
     reg.register(Arc::new(story::StoryStatusTool));
+    reg.register(Arc::new(story::StoryCreateTool));
+    reg.register(Arc::new(story::StoryContinueTool));
     // Both tools follow addresses the model picked, so both are built on a client that
     // refuses local and private ones (docs/research/fetch-url-address-policy.md, fork F1).
     let policy = crate::shared::net::AddressPolicy::from_allow_private(cfg.web_allow_private);
@@ -1295,6 +1313,7 @@ pub(crate) mod testkit {
             workspace: crate::shared::config::WorkspaceSettings::default(),
             file_hint: None,
             named_secrets: Vec::new().into(),
+            story_params: crate::features::story::run::StoryParams::default(),
         }
     }
 

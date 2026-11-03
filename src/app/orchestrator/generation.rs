@@ -884,6 +884,18 @@ impl Orchestrator {
         } else {
             Vec::new()
         };
+        // The questions the chat's stories wait on, with the person's rows since
+        // each was put to them (docs/fabula.md §4, PR 9): what `story_continue`
+        // reads as an answer, and what the request's reminder line names. Read
+        // only when the turn offers the tool.
+        let story_pending = if allowed
+            .iter()
+            .any(|t| t == crate::features::tools::story::STORY_CONTINUE_ID)
+        {
+            super::story_runs::pending_answers(&self.storage, &self.story_board, chat_ref)
+        } else {
+            Vec::new()
+        };
         // What the companion knew when the conversation in front of the model
         // began (docs/research/companion-platform.md C2): one cut for both of its
         // blocks, so each is the same text from turn to turn and the prompt's
@@ -1016,6 +1028,8 @@ impl Orchestrator {
                     loc: profile_loc,
                 },
             );
+            // A story's question rides at the request's tail while it waits.
+            super::story_runs::remind(&mut request, profile_loc, &story_pending);
             observations_by = observation_query(chat, compact_cfg.enabled);
             // `turn` is built by the last access to `chat`; after this the `chat`
             // borrow ends and `self` (deps/config) can be read for `new`.
@@ -1072,11 +1086,13 @@ impl Orchestrator {
                 sessions: Some(sessions.clone()),
                 silent_lane: false,
             };
-            ctx = ToolContext::new(
+            let mut turn_ctx = ToolContext::new(
                 self.tool_deps(backend.clone()),
                 ToolParams::from_config(&self.config),
                 turn,
             );
+            turn_ctx.story_pending = std::sync::Arc::from(story_pending);
+            ctx = turn_ctx;
         }
 
         // The history already ends with the partial being continued —
@@ -1653,6 +1669,10 @@ fn apply_effects(chat: &mut crate::entities::chat::Chat, effects: Vec<ChatEffect
     }
     landed
 }
+
+// `story_continue`'s interception: a child module, so it reaches the loop's parts.
+#[path = "generation_story.rs"]
+mod story_call;
 
 /// What the generation task needs to put the companion's notes into the system
 /// prompt (docs/research/companion-platform.md C2 (a)).
@@ -3094,6 +3114,9 @@ impl TurnLoop<'_> {
             } else if self.is_group_call(call, rewrite) {
                 self.queue_group_call(call, i, &mut group, &mut results);
                 i += 1;
+            } else if self.is_story_continue(call, rewrite) {
+                results[i] = Some(self.resolve_story_continue(call).await);
+                i += 1;
             } else if self.is_background_call(call, rewrite) {
                 results[i] = Some(self.resolve_background_call(call));
                 i += 1;
@@ -3950,7 +3973,6 @@ pub(super) struct BackgroundStart {
 pub(super) enum RunSpec {
     Subagent(Box<ChildSpec>),
     Dialogue(Box<DialogueSpec>),
-    #[allow(dead_code)] // built by `story_continue`'s call (docs/fabula.md §4, PR 9)
     Story(Box<super::story_runs::StorySpec>),
 }
 
@@ -4007,7 +4029,7 @@ impl BackgroundStart {
     }
 }
 
-/// A story run's start as `story_continue`'s call will hand one over (docs/
+/// A story run's start as `story_continue`'s call hands one over (docs/
 /// fabula.md §4, PR 9): the slot taken, and the parts of a turn a story run
 /// reads — the backend and the slots — over defaults for the rest.
 #[cfg(test)]

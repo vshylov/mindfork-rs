@@ -28,6 +28,14 @@ evidence. Adding or closing an item is part of every task's documentation step
 
 ## Most valuable next
 
+**Fabula, the story engine, is the track under way** ([fabula.md](fabula.md)): built
+through PR 9 — a story created and driven from the chat, every chapter written in the
+background; Gate G2 GO on a two-chapter story — with the named scene rerun (PR 10) and the
+evaluation (M3) next. G2's readers left a list of the engine's faults of logic, undecided
+([fabula.md](fabula.md), *What G2's readers found*). M3's
+verdict decides whether the long form (M4) is built; until then the story tools stay
+behind `tools.story`, off.
+
 The last two code tracks — small windows, and the reasoning effort a model
 does not have — closed on 2026-09-30 and 2026-10-01 and ship together in
 0.14.0 ([Closed](#closed)); what the first left is listed in its research's
@@ -211,6 +219,18 @@ effort tiers — have all closed
 
 ### Tools and MCP
 
+- **A story's cost: a character's memory window and Anthropic's cache** — **deferred** to the
+  Fabula track ([fabula.md](fabula.md) §5): G2 on Claude Sonnet 5.5 (PR 9) read 14 million
+  prompt tokens with no cache read, and a character's call grew threefold from the first
+  chapter to the second, since it carries every reflection it ever wrote. What would bring it
+  forward: the long form (M4), or a chapter's price on a cloud model.
+- **Models per role in a story** — **deferred** (the owner's decision, 2026-10-31,
+  [research/fabula-engine.md](research/fabula-engine.md) §14–§15). Every role runs on the
+  chat's one model. The groundwork it needs is known: a pure client factory taken out of
+  `cloud_chat_setup` and moved into `shared/api`, so the engine in `features` can reach it
+  under the layer rule, a pool of per-role clients over it, and a session budget per
+  provider. What would bring it back: M3 showing that one role's quality, not the
+  simulation, is what holds a story back.
 - **What the withheld-image notes leave on Qwen 3.6** — **on demand**. The notes for
   `tools.mcp_images` off were reworded on 2026-10-11 — "You cannot see…", "this is not an
   error, and another call will not change it" — and now hold on Qwen 3.8, Gemma 4 and

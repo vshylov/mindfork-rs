@@ -222,7 +222,7 @@ pub enum CanonProblem {
     },
     /// Two of one kind share a key, compared without regard to case. For an
     /// item it means the item starts in two places.
-    #[error("{kind} key {key:?} is used more than once; keys are compared without regard to case")]
+    #[error("{}", duplicate_text(*kind, key))]
     DuplicateKey {
         /// What the key names.
         kind: KeyKind,
@@ -275,6 +275,21 @@ pub enum CanonProblem {
         /// Their start.
         location: LocationKey,
     },
+}
+
+fn duplicate_text(kind: KeyKind, key: &str) -> String {
+    match kind {
+        // An item has one place to start: the model composing a canon lists
+        // it both where it lies and in a hand, and needs to be told which
+        // rule that breaks (live, PR 9).
+        KeyKind::Item => format!(
+            "item key {key:?} starts in more than one place; an item lies at one location \
+             or is held by one character when the story starts"
+        ),
+        _ => format!(
+            "{kind} key {key:?} is used more than once; keys are compared without regard to case"
+        ),
+    }
 }
 
 fn empty_text(field: CanonField, key: &str) -> String {
@@ -661,6 +676,10 @@ mod tests {
                 kind: KeyKind::Location,
                 key: "inn".into(),
             },
+            CanonProblem::DuplicateKey {
+                kind: KeyKind::Item,
+                key: "logbook".into(),
+            },
             CanonProblem::EmptyText {
                 field: CanonField::CharacterPublic,
                 key: "mara".into(),
@@ -683,6 +702,8 @@ mod tests {
                 "secret key \"a b\" is not a valid key: use 1 to 64 characters, \
                  with no spaces, slashes or control characters",
                 "location key \"inn\" is used more than once; keys are compared without regard to case",
+                "item key \"logbook\" starts in more than one place; an item lies at one location \
+                 or is held by one character when the story starts",
                 "character \"mara\" has an empty public description",
                 "the arc's premise is empty",
                 "chapter 2 of the arc has an empty goal",

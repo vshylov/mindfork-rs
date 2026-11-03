@@ -60,7 +60,9 @@ use crate::entities::story::{
     NewNote, NoteDecision, NoteKind, NoteSeverity, Question, QuestionBody, QuestionId, Resolution,
     ReviewNote, Reviewer, RunId, VersionOrigin, WorldState,
 };
-use crate::shared::storage::story::{AuthorWriter, StepStatus, StoredScene, StoryDb, StoryDbError};
+use crate::shared::storage::story::{
+    AuthorWriter, Spend, StepStatus, StoredScene, StoryDb, StoryDbError,
+};
 
 /// A chapter's spending limits (docs/fabula.md §6, T1 (a)); none is no limit.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -287,21 +289,32 @@ impl Budgeted<'_> {
             return Ok(());
         }
         let spend = self.db.spend(&self.prefix).await?;
-        let over = |spent: String| PortError::Budget {
-            address: call.address.clone(),
-            spent,
-        };
-        if let Some(limit) = self.budget.tokens
+        match self.budget.spent(&spend) {
+            Some(spent) => Err(PortError::Budget {
+                address: call.address.clone(),
+                spent,
+            }),
+            None => Ok(()),
+        }
+    }
+}
+
+impl Budget {
+    /// What `spend` has spent of this budget, in words, once it is spent;
+    /// `None` while there is room — the check before every call, and
+    /// `story_continue`'s before a run (docs/fabula.md §4, PR 9).
+    pub fn spent(&self, spend: &Spend) -> Option<String> {
+        if let Some(limit) = self.tokens
             && spend.tokens() >= limit
         {
-            return Err(over(format!("{} tokens of {limit}", spend.tokens())));
+            return Some(format!("{} tokens of {limit}", spend.tokens()));
         }
-        if let (Some(limit), Some(cost)) = (self.budget.usd, spend.cost_usd)
+        if let (Some(limit), Some(cost)) = (self.usd, spend.cost_usd)
             && cost >= limit
         {
-            return Err(over(format!("${cost:.4} of ${limit:.2}")));
+            return Some(format!("${cost:.4} of ${limit:.2}"));
         }
-        Ok(())
+        None
     }
 }
 

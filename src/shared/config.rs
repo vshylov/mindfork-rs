@@ -1156,10 +1156,12 @@ pub const DEFAULT_DIALOGUE_RUN_TIMEOUT_SECS: u64 = 1800;
 /// 12B model and twice that on a 27B one, before reruns.
 pub const DEFAULT_STORY_RUN_TIMEOUT_SECS: u64 = 6 * 60 * 60;
 /// Default token budget of one chapter (`tools.story_budget_tokens`,
-/// docs/fabula.md §6, T6 (a)): about twice the 718,865 tokens a chapter of
-/// three scenes took on Qwen 3.8 27B (docs/journal/stories.md, PR 6), so a
-/// chapter of four with its reruns and revisions fits.
-pub const DEFAULT_STORY_BUDGET_TOKENS: u64 = 2_000_000;
+/// docs/fabula.md §6, T11 (a), which replaced T6's 2,000,000): the app's own
+/// chapter shape spent 2,000,000 tokens by the third of four scenes on Qwen 3.8
+/// 27B and 5.8 million on a whole chapter on Claude Sonnet 5.5 (PR 9's live
+/// runs, docs/journal/stories.md), so a Qwen chapter fits with room and a
+/// Sonnet one just.
+pub const DEFAULT_STORY_BUDGET_TOKENS: u64 = 6_000_000;
 /// Default code-execution timeout in the Wasmer sandbox (seconds). More generous
 /// than the local interpreter's (10s): WASM interpretation is ~2–5× slower than native.
 /// See docs/research/python-wasmer-sandbox.md.
@@ -3706,7 +3708,7 @@ mod tests {
         // six-hour run and a two-million-token chapter (docs/fabula.md §6).
         assert!(!c.tools.story);
         assert_eq!(c.tools.story_run_timeout_secs, 6 * 60 * 60);
-        assert_eq!(c.tools.story_budget_tokens, 2_000_000);
+        assert_eq!(c.tools.story_budget_tokens, 6_000_000);
         assert_eq!(c.tools.story_budget_usd, None);
         // Parallel sessions and sub-agents are opt-in: one stream and one run
         // at a time until the user says otherwise (docs/research/parallel-subagents.md R4).

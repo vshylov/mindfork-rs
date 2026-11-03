@@ -39,8 +39,9 @@ pub const START_SUBAGENT_ID: &str = "start_subagent";
 /// the read-back pair over the *parent's* folded history, and the self-model
 /// family — the profile persona's identity, which a persona the parent
 /// composed must not write into — and the follow-ups, a return the companion
-/// promises the person in its own conversation (spec §9.3.6). Everything else
-/// the turn offers, the sub-agent gets.
+/// promises the person in its own conversation (spec §9.3.6), and the two story
+/// tools that write a story, whose answers are the person's own (spec §9.16).
+/// Everything else the turn offers, the sub-agent gets.
 pub fn withheld_from_subagent(id: &str) -> bool {
     id == CALL_SUBAGENT_ID
         || id == START_SUBAGENT_ID
@@ -51,6 +52,8 @@ pub fn withheld_from_subagent(id: &str) -> bool {
         || super::self_model::is_self_model_tool(id)
         || id == super::followups::FOLLOWUP_PLAN_ID
         || id == super::followups::FOLLOWUP_CANCEL_ID
+        || id == super::story::STORY_CREATE_ID
+        || id == super::story::STORY_CONTINUE_ID
 }
 
 /// The parsed arguments of one call.
