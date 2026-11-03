@@ -18,7 +18,16 @@
 //!    high-severity note stands, at most `max_revisions` times; the last
 //!    revision is not reviewed again (spec §7's loop).
 //! 6. **The summary** of the final version, in the human's language, and
-//!    **P2**: accept it, or revise it with the human's notes.
+//!    **P2**: accept it, revise it with the human's notes, or play one of its
+//!    scenes again.
+//! 7. **A take** (docs/fabula.md §4, PR 10): a scene the human named at P2
+//!    is played again with every scene after it. The chapter's next take
+//!    carries the scenes before it over, plans the named one again with what
+//!    the human asked and its old setup beside it, plays it and the ones
+//!    after it, and drafts, reviews and summarizes the chapter again. Its
+//!    rows are new rows: each scene's attempts from its floor on, plans under
+//!    `ch1/t2/…`, versions from the take's first; and its budget counts only
+//!    its own runs (§6, T12).
 //!
 //! **The stores are the state.** Nothing the run decided lives only in
 //! memory: each step reads what is stored before it calls a model, so a run
@@ -30,9 +39,9 @@
 //! at a plan) is known by its step.
 //!
 //! **The budget** (docs/fabula.md §6, T1) counts every call under the
-//! chapter's addresses, in every run and attempt: tokens on every provider,
-//! dollars where the provider reports them. It is checked before each call,
-//! and a spent one stops the run there.
+//! chapter's addresses, in every run and attempt of its latest take (T12):
+//! tokens on every provider, dollars where the provider reports them. It is
+//! checked before each call, and a spent one stops the run there.
 //!
 //! **A pause ends the run** (spec §14): its question is a row, the run
 //! returns, and the next run starts only once the question is answered
@@ -47,7 +56,7 @@ use super::author::{
     ContinuityReply, OutlineReply, PickChoice, PickReply, PlanReply, ReaderRemark, ReaderReply,
     SceneDraft, TriageReply,
 };
-use super::author_prompts::{self as prompts, ChapterContext, Kept, Trace};
+use super::author_prompts::{self as prompts, Again, ChapterContext, Kept, Trace};
 use super::engine::SharedLog;
 use super::leaks;
 use super::port::{CallAddress, LlmPort, PortError, Prompt, Role, decide};
@@ -58,7 +67,7 @@ use super::steps::Steps;
 use crate::entities::story::{
     Assumption, BranchId, Canon, ChapterOutline, ChapterVersion, Decided, Decision, EventId,
     NewNote, NoteDecision, NoteKind, NoteSeverity, Question, QuestionBody, QuestionId, Resolution,
-    ReviewNote, Reviewer, RunId, VersionOrigin, WorldState,
+    ReviewNote, Reviewer, RunId, Take, VersionOrigin, WorldState,
 };
 use crate::shared::storage::story::{
     AuthorWriter, Spend, StepStatus, StoredScene, StoryDb, StoryDbError,
@@ -203,13 +212,14 @@ pub async fn advance(engine: Engine<'_>) -> Result<Outcome, StoryError> {
         port: Budgeted {
             inner: port,
             db,
-            prefix: String::new(),
+            chapter: None,
             budget: config.budget,
         },
         config,
         keys: CanonKeys::of(&canon),
         canon,
         run,
+        take: None,
     };
     match story.go().await {
         Ok(outcome) => Ok(outcome),
@@ -224,8 +234,9 @@ pub async fn advance(engine: Engine<'_>) -> Result<Outcome, StoryError> {
 
 /// Records the human's answer to the pending question `question` (spec §14):
 /// P1 approved opens chapter 1, P2 approved accepts the chapter and its notes
-/// reach the next one, a change revises the chapter with them, and an
-/// answered P3 plans the scene again. The next [`advance`] acts on it.
+/// reach the next one, a change revises the chapter with them or, naming a
+/// scene, opens its next take (PR 10), and an answered P3 plans the scene
+/// again. The next [`advance`] acts on it.
 pub async fn resolve(
     author: &mut AuthorWriter,
     question: &QuestionId,
@@ -278,8 +289,8 @@ fn scene_halt(step: &str, e: SceneError) -> Halt {
 struct Budgeted<'a> {
     inner: &'a dyn LlmPort,
     db: &'a StoryDb,
-    /// The chapter's addresses, `ch1/`.
-    prefix: String,
+    /// The chapter being written; none before the first.
+    chapter: Option<u32>,
     budget: Budget,
 }
 
@@ -288,7 +299,10 @@ impl Budgeted<'_> {
         if self.budget == Budget::default() {
             return Ok(());
         }
-        let spend = self.db.spend(&self.prefix).await?;
+        let spend = match self.chapter {
+            Some(n) => self.db.chapter_spend(n).await?,
+            None => self.db.spend("").await?,
+        };
         match self.budget.spent(&spend) {
             Some(spent) => Err(PortError::Budget {
                 address: call.address.clone(),
@@ -366,6 +380,8 @@ struct Run<'a> {
     canon: Canon,
     keys: CanonKeys,
     run: RunId,
+    /// The chapter's latest take, while it has more than its first.
+    take: Option<Take>,
 }
 
 impl Run<'_> {
@@ -431,7 +447,8 @@ impl Run<'_> {
     }
 
     /// The prompts' shared part for chapter `n`: the accepted chapters'
-    /// summaries, the previous chapter, the human's notes on it, the goals.
+    /// summaries, the previous chapter, the human's notes on it — and, in a
+    /// take, what they asked at this chapter's checkpoints — and the goals.
     async fn context(&self, n: u32, goals: Vec<String>) -> Go<Context> {
         let mut summaries = Vec::new();
         let mut previous = None;
@@ -453,12 +470,68 @@ impl Run<'_> {
                 previous = Some(version.text);
             }
         }
+        if self.take.is_some() {
+            let asked = self.asked_at_checkpoints(n).await?;
+            human_notes = match (human_notes, asked) {
+                (Some(before), Some(asked)) => Some(format!("{before}\n\n{asked}")),
+                (before, asked) => before.or(asked),
+            };
+        }
         Ok(Context {
             summaries,
             previous,
             human_notes,
             goals,
         })
+    }
+
+    /// What the human asked at chapter `n`'s checkpoints, oldest first: each
+    /// revision and each scene played again, with their notes. A take's
+    /// prompts carry them, so a rerun forgets no earlier request.
+    async fn asked_at_checkpoints(&self, n: u32) -> Go<Option<String>> {
+        let mut parts = Vec::new();
+        for (question, answer) in self.db.questions().await? {
+            let (QuestionBody::Chapter { chapter, version }, Some(answer)) =
+                (question.body, answer)
+            else {
+                continue;
+            };
+            if chapter != n || answer.decision != Decision::Change {
+                continue;
+            }
+            let what = match answer.rerun {
+                Some(scene) => format!(
+                    "After reading version {version} of this chapter, they asked for scene \
+                     {scene} to be played again, and the scenes after it with it."
+                ),
+                None => {
+                    format!(
+                        "After reading version {version} of this chapter, they asked for a revision."
+                    )
+                }
+            };
+            let notes = answer.notes.trim();
+            parts.push(if notes.is_empty() {
+                what
+            } else {
+                format!("{what}\n{notes}")
+            });
+        }
+        Ok((!parts.is_empty()).then(|| parts.join("\n\n")))
+    }
+
+    /// The take's first version of the chapter's text; 1 in the first take.
+    fn first_version(&self) -> u32 {
+        self.take.as_ref().map_or(1, |t| t.first_version)
+    }
+
+    /// Where the Author plans scene `m` of chapter `n`: a take's plans are
+    /// its own, since the first take's step may have ended the chapter there.
+    fn plan_address(&self, n: u32, m: u32) -> String {
+        match &self.take {
+            Some(take) => format!("ch{n}/t{}/sc{m}/plan", take.number),
+            None => format!("ch{n}/sc{m}/plan"),
+        }
     }
 
     fn view<'c>(&'c self, n: u32, ctx: &'c Context) -> ChapterContext<'c> {
@@ -514,11 +587,19 @@ impl Run<'_> {
     /// Chapter `n` from where it stands to its checkpoint; `Ok` when it is
     /// accepted already.
     async fn chapter(&mut self, n: u32) -> Go<()> {
-        self.port.prefix = format!("ch{n}/");
+        self.port.chapter = Some(n);
+        self.take = self.db.take_of(n).await?;
         let goals = self.outline(n).await?;
         let ctx = self.context(n, goals).await?;
         let kept = self.scenes(n, &ctx).await?;
-        let versions = self.db.chapter_versions(n).await?;
+        let first = self.first_version();
+        let versions: Vec<ChapterVersion> = self
+            .db
+            .chapter_versions(n)
+            .await?
+            .into_iter()
+            .filter(|v| v.version >= first)
+            .collect();
         if let Some(latest) = versions.last() {
             match self.checkpoint_of(n, latest.version).await? {
                 Some((_, Some(answer))) if answer.decision == Decision::Approve => return Ok(()),
@@ -606,22 +687,45 @@ impl Run<'_> {
         }
     }
 
-    /// Chapter `n`'s scenes, kept one by one (spec §7, steps 2–5).
+    /// Chapter `n`'s scenes, kept one by one (spec §7, steps 2–5); in a take,
+    /// those before its first carried over as the last take kept them.
     async fn scenes(&mut self, n: u32, ctx: &Context) -> Go<Vec<KeptScene>> {
         let mut kept: Vec<KeptScene> = Vec::new();
-        for m in 1..=self.config.max_scenes {
+        let take = self.take.clone();
+        let carried = take.as_ref().map_or(0, |t| t.carried.len());
+        for line in self.db.kept_scenes(n).await?.into_iter().take(carried) {
+            let trace = self.trace(&line.branch).await?;
+            kept.push(KeptScene {
+                stored: line.scene,
+                trace,
+            });
+        }
+        let from = take.as_ref().map_or(1, |t| t.from_scene);
+        for m in from..=self.config.max_scenes {
             let planned = self.attempts(n, m).await?;
             if planned.is_empty() {
-                let address = format!("ch{n}/sc{m}/plan");
+                let address = self.plan_address(n, m);
                 if self.steps.done(&address) {
                     break;
                 }
-                let Some(draft) = self.plan(n, m, ctx, &kept, None, &address).await? else {
+                let before = match take.as_ref().filter(|t| t.from_scene == m) {
+                    Some(t) => self.replaced_scene(n, t).await?,
+                    None => None,
+                };
+                let again = take
+                    .as_ref()
+                    .filter(|t| t.from_scene == m)
+                    .map(|t| Again::Asked {
+                        notes: &t.notes,
+                        before: before.as_ref().map(|s| (&s.setup, s.intent.as_str())),
+                    });
+                let Some(draft) = self.plan(n, m, ctx, &kept, again, &address).await? else {
                     self.steps.finish(&address, StepStatus::Done).await?;
                     break;
                 };
+                let floor = take.as_ref().map_or(0, |t| t.floor(m));
                 self.author
-                    .add_scene((n, m, 0), &draft.setup(), draft.intent.trim())
+                    .add_scene((n, m, floor), &draft.setup(), draft.intent.trim())
                     .await?;
                 self.steps.finish(&address, StepStatus::Done).await?;
             }
@@ -632,11 +736,25 @@ impl Run<'_> {
         Ok(kept)
     }
 
-    /// Scene `m`'s attempts, by rerun.
+    /// Scene `m`'s attempts in the chapter's latest take, by rerun.
     async fn attempts(&self, n: u32, m: u32) -> Go<Vec<StoredScene>> {
+        let floor = self.take.as_ref().map_or(0, |t| t.floor(m));
         let mut rows = self.db.scenes_of(n).await?;
-        rows.retain(|s| s.scene == m);
+        rows.retain(|s| s.scene == m && s.rerun >= floor);
         Ok(rows)
+    }
+
+    /// The scene `take` plays again first, as the take before it kept it.
+    async fn replaced_scene(&self, n: u32, take: &Take) -> Go<Option<StoredScene>> {
+        let Some(id) = take.replaced.first() else {
+            return Ok(None);
+        };
+        Ok(self
+            .db
+            .scenes_of(n)
+            .await?
+            .into_iter()
+            .find(|s| &s.id == id))
     }
 
     fn kept_view<'k>(kept: &'k [KeptScene]) -> Vec<Kept<'k>> {
@@ -659,18 +777,18 @@ impl Run<'_> {
         m: u32,
         ctx: &Context,
         kept: &[KeptScene],
-        notes: Option<&str>,
+        again: Option<Again<'_>>,
         address: &str,
     ) -> Go<Option<SceneDraft>> {
         let world = self.world_now().await?;
-        let may_end = m > 1 && notes.is_none();
+        let may_end = m > 1 && again.is_none();
         let schema = PlanReply::schema_for(&self.keys, may_end);
         let mut prompt = prompts::plan(
             &self.view(n, ctx),
             &Self::kept_view(kept),
             &world,
             (m, self.config.max_scenes),
-            notes,
+            again,
         );
         let mut at = address.to_owned();
         for attempt in 0..2 {
@@ -754,14 +872,17 @@ impl Run<'_> {
                 let notes = Some(answer.notes.as_str()).filter(|s| !s.trim().is_empty());
                 let notes = notes.unwrap_or("Try the scene again.");
                 let draft = self
-                    .plan(n, m, ctx, kept, Some(notes), &address)
+                    .plan(n, m, ctx, kept, Some(Again::Failed(notes)), &address)
                     .await?
                     .expect("a plan asked again has no end");
                 self.next_attempt(&current, &draft, "the human asked for the scene again")
                     .await?;
                 continue;
             }
-            let since = asked.map_or(0, |(rerun, _)| rerun + 1);
+            // A take counts its own attempts: from the scene's floor, or from
+            // the last P3 answered in it.
+            let floor = self.take.as_ref().map_or(0, |t| t.floor(m));
+            let since = asked.map_or(floor, |(rerun, _)| (rerun + 1).max(floor));
             let attempt = current.rerun + 1 - since;
             let most = 1 + self.config.max_reruns;
             let address = current.id.to_string();
@@ -866,11 +987,13 @@ impl Run<'_> {
         }
         let labels: Vec<String> = traces.iter().map(|(l, _)| l.clone()).collect();
         let shown: Vec<(String, &Trace)> = traces.iter().map(|(l, t)| (l.clone(), t)).collect();
+        let asked = self.take.as_ref().and(ctx.human_notes.as_deref());
         let prompt = prompts::pick(
             &self.view(n, ctx),
             (current.scene, &current.setup, &current.intent),
             &shown,
             reruns_left,
+            asked,
         );
         let schema = PickReply::schema_for(&self.keys, &labels, reruns_left > 0);
         let reply: PickReply = self
@@ -902,7 +1025,7 @@ impl Run<'_> {
     // ---------- the text ----------
 
     async fn draft(&mut self, n: u32, ctx: &Context, kept: &[KeptScene]) -> Go<ChapterVersion> {
-        let address = format!("ch{n}/v1/write");
+        let address = format!("ch{n}/v{}/write", self.first_version());
         let prompt = prompts::write(
             &self.view(n, ctx),
             &Self::kept_view(kept),
@@ -952,7 +1075,8 @@ impl Run<'_> {
     }
 
     /// Reviews and revisions until no accepted high-severity note stands, at
-    /// most `max_revisions` times: the version that ends the loop.
+    /// most `max_revisions` times in the take: the version that ends the
+    /// loop.
     async fn review_loop(
         &mut self,
         n: u32,
@@ -961,8 +1085,8 @@ impl Run<'_> {
         mut version: ChapterVersion,
     ) -> Go<ChapterVersion> {
         loop {
-            if version.origin == VersionOrigin::Human || version.version > self.config.max_revisions
-            {
+            let in_take = version.version + 1 - self.first_version();
+            if version.origin == VersionOrigin::Human || in_take > self.config.max_revisions {
                 return Ok(version);
             }
             let notes = self.review(n, kept, &version).await?;
@@ -1309,3 +1433,7 @@ pub(crate) fn decisions_of(shown: &[(String, &ReviewNote)], reply: &TriageReply)
 #[cfg(test)]
 #[path = "chapter_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "take_tests.rs"]
+mod take_tests;

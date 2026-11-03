@@ -703,7 +703,7 @@ The owner's decisions (2026-10-31), taken after option A: Fabula is used from th
 *Pauses.* The engine stops only at defined points, each recorded as a step:
 
 - P1, before chapter 1: the canon and the arc are approved or changed.
-- P2, after each chapter: accept it, ask for a revision, rerun a named scene, or leave notes for the next chapter.
+- P2, after each chapter: accept it, ask for a revision, rerun a named scene, or leave notes for the next chapter. As built (PR 10), a rerun opens the chapter's next *take*: the scenes before the one named are carried over, that scene and every one after it are planned and played again under addresses of their own (each scene's attempts numbered past its last, the take's plans at `ch1/t2/…`, its versions after the chapter's last), and the chapter is drafted and reviewed anew; nothing of the earlier take is changed ([docs/fabula.md](../fabula.md) §4, §6 T8, T12).
 - P3, when every branch of a scene fails three times running (section 7).
 - P4, from M4: the canon deltas a chapter proposes.
 

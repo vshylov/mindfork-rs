@@ -20,7 +20,7 @@ use super::{human_language, question_text, story_ids};
 use crate::entities::profile::ToolId;
 use crate::entities::story::{Canon, Decision, QuestionBody};
 use crate::features::story::conversation::{
-    ContinueRefusal, CreateRefusal, PendingAnswer, StoryFiles, create, story_id,
+    ContinueRefusal, CreateRefusal, PendingAnswer, Resolved, StoryFiles, create, story_id,
 };
 use crate::shared::i18n::Locale;
 
@@ -384,19 +384,25 @@ pub fn create_refusal_text(
 }
 
 /// What a started run goes on with, in the started line.
-fn resolved_text(loc: &Locale, resolved: Option<&(QuestionBody, Decision)>) -> String {
-    match resolved {
-        None => loc.t("tool.story_continue.resolved.resume").to_owned(),
-        Some((QuestionBody::Canon, _)) => loc.t("tool.story_continue.resolved.canon").to_owned(),
-        Some((QuestionBody::Chapter { chapter, .. }, Decision::Approve)) => loc.tf(
+fn resolved_text(loc: &Locale, resolved: Option<&Resolved>) -> String {
+    let Some(resolved) = resolved else {
+        return loc.t("tool.story_continue.resolved.resume").to_owned();
+    };
+    match (&resolved.body, resolved.decision, resolved.rerun) {
+        (QuestionBody::Canon, _, _) => loc.t("tool.story_continue.resolved.canon").to_owned(),
+        (QuestionBody::Chapter { chapter, .. }, Decision::Approve, _) => loc.tf(
             "tool.story_continue.resolved.accepted",
             &[("n", &chapter.to_string())],
         ),
-        Some((QuestionBody::Chapter { chapter, .. }, _)) => loc.tf(
+        (QuestionBody::Chapter { chapter, .. }, _, Some(scene)) => loc.tf(
+            "tool.story_continue.resolved.rerun",
+            &[("n", &chapter.to_string()), ("scene", &scene.to_string())],
+        ),
+        (QuestionBody::Chapter { chapter, .. }, _, None) => loc.tf(
             "tool.story_continue.resolved.revise",
             &[("n", &chapter.to_string())],
         ),
-        Some((QuestionBody::Scene { chapter, scene, .. }, _)) => loc.tf(
+        (QuestionBody::Scene { chapter, scene, .. }, _, _) => loc.tf(
             "tool.story_continue.resolved.scene",
             &[
                 ("chapter", &chapter.to_string()),
@@ -408,12 +414,7 @@ fn resolved_text(loc: &Locale, resolved: Option<&(QuestionBody, Decision)>) -> S
 
 /// `story_continue`'s result when the run started: what the person decided,
 /// and the run's address.
-pub fn started_text(
-    loc: &Locale,
-    id: &str,
-    resolved: Option<&(QuestionBody, Decision)>,
-    address: &str,
-) -> String {
+pub fn started_text(loc: &Locale, id: &str, resolved: Option<&Resolved>, address: &str) -> String {
     loc.tf(
         "tool.story_continue.result.started",
         &[
@@ -425,7 +426,7 @@ pub fn started_text(
 }
 
 /// What the run's record is asked, its first message: the same words.
-pub fn brief_text(loc: &Locale, resolved: Option<&(QuestionBody, Decision)>) -> String {
+pub fn brief_text(loc: &Locale, resolved: Option<&Resolved>) -> String {
     resolved_text(loc, resolved)
 }
 
@@ -462,6 +463,7 @@ pub fn continue_refusal_text(
             "tool.story_continue.result.budget",
             &[("id", id), ("n", &chapter.to_string()), ("spent", spent)],
         ),
+        ContinueRefusal::NotAsked => loc.tf("tool.story_continue.result.not_asked", &[("id", id)]),
         ContinueRefusal::NotAnswered => loc.tf(
             "tool.story_continue.result.not_answered",
             &[("id", id), ("question", &question())],

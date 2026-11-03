@@ -55,6 +55,7 @@ fn answer(decision: Decision) -> Resolution {
         decision,
         notes: String::new(),
         evidence: json!(null),
+        rerun: None,
     }
 }
 

@@ -592,16 +592,23 @@ by the chat's own model, so a chapter takes many calls and an hour or more.
    turn the app started by itself, on a notification, cannot answer for you.
 4. **A chapter in the background.** It is written as a background run (`F7` lists
    it). When it is done it lands in the chat as an attachment,
-   `<story> — chapter 1.md`, with a note of what it is about, why each scene was
-   kept and what was chosen without asking you, and the assistant asks whether you
-   accept it. Accept it, with wishes for the next chapter if you like, or ask for
-   changes and the chapter is revised. Asking to play a single scene again is not
-   built yet: such a request revises the chapter's text.
+   `<story> — chapter 1.md`, with a note of what it is about, its scenes by number
+   with why each was kept, and what was chosen without asking you, and the
+   assistant asks whether you accept it. Accept it, with wishes for the next chapter
+   if you like, or ask for changes and the chapter's text is revised.
+5. **A scene played again.** When you want something to *happen* differently, not
+   just be told differently, ask for that scene by its number: "play scene 2 again —
+   this time she keeps her secret". That scene and every scene after it are played
+   again from where the scene before it ended, and the chapter is written anew from
+   them; the earlier scenes stay as they were. The new version lands as the chapter
+   did, and you can accept it or ask again. Its budget is a chapter's own: playing
+   scenes again does not spend the first version's.
 
 A chapter is bounded by **Story: run time limit** (6 hours) and **Story: chapter
 budget (tokens)** (6,000,000), with an optional **Story: chapter budget ($)** where
-the provider reports cost. A run that stops — on a limit, `F6`, or quitting the app —
-says where it stopped, and "go on" resumes it from there; a chapter whose budget is
+the provider reports cost. A run that stops — on a limit, `F6`, a call that failed, or
+quitting the app — says where it stopped, and "go on" resumes it from there; the
+assistant never resumes it on its own, only when you ask. A chapter whose budget is
 spent starts nothing until you raise the budget. A chapter's cost depends much on the
 model and grows with the story: a two-chapter story took about 14 million tokens on
 Claude Sonnet 5.5 (some $30), the second chapter more than the first, so raise the

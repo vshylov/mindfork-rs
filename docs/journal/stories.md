@@ -13,7 +13,7 @@ what was rejected — the reasoning behind the code, not its current shape. For 
 shape read the reference documents named above; for the traps that recur across areas read
 [lessons.md](../lessons.md).
 
-## Entries (9)
+## Entries (10)
 
 - Post-M9: Fabula — PR 1, the story database (done)
 - Post-M9: Fabula — PR 2, the model port and replay; Gate G0 GO (done)
@@ -24,6 +24,7 @@ shape read the reference documents named above; for the traps that recur across 
 - Post-M9: Fabula — PR 7, stories in mindfork's data (done)
 - Post-M9: Fabula — PR 8, the story run in the background (done)
 - Post-M9: Fabula — PR 9, the story driven from the chat; Gate G2 GO (done)
+- Post-M9: Fabula — PR 10, a scene played again at the checkpoint (done)
 
 ### Post-M9: Fabula — PR 1, the story database (done)
 
@@ -974,3 +975,94 @@ the engine is reachable end to end from a chat turn, behind `tools.story`, off b
   checked. The two fixes G2 found came after the pass, each with its own test.
 - **Tests:** 4756 unit tests green (+27 over 4729), 326 `#[ignore]` (+2: the two live
   checks).
+
+### Post-M9: Fabula — PR 10, a scene played again at the checkpoint (done)
+
+M2's last pull request (docs/fabula.md §4): P2's fourth answer, *rerun a named scene*, which PR 6
+left out because the main line has to step back, and PR 9 read as a revision until it could.
+
+- **Forks decided by the owner (2026-11-03, docs/fabula.md §6).** *T12:* a take has the
+  chapter's budget of its own, counting the chapter's calls in the runs after it began. *T13:*
+  the live check on Qwen 3.8 27B through OpenRouter. Both as recommended.
+- **The take.** Every store is append-only and every id positional, and `scene` is unique by
+  (chapter, scene, rerun), so a scene played again cannot reuse its number: a take's
+  attempts continue each scene's rerun count. A new table, `take` (no schema step: a file an
+  earlier build wrote gains it on open), keyed by the P2 question whose answer asked for it,
+  records what the take stands on: the scenes carried (those the last take kept before the
+  one named), the ones it replaces, each scene's **floor** — one past the attempts it had —
+  the take's first version, and the last run before it. The answer stays `change`; the take's
+  row is what says the change is a rerun, written in the answer's transaction, refused unless
+  the checkpoint is the chapter's latest version's and the scene one it keeps. Two things
+  were rejected: a `rerun` decision in `answer`, which would have meant a new CHECK constraint
+  and a schema step, and attempts told apart by insertion order, since `VACUUM INTO` (how a
+  backup takes the file) may renumber a table's rowids.
+- **The main line runs through each chapter's latest take** (`kept_scenes`, `main_line_tip`
+  in the actor): the carried scenes, then from the take's first scene each scene's kept
+  attempt from its floor on, until a scene has none. With no take it is what the old query
+  gave, the latest pick, so every harness and stored story reads as before.
+- **The engine** (`chapter.rs`) runs the latest take: the carried scenes' traces read back,
+  the named scene planned again with the person's request and its old setup in the prompt
+  (`Again::Asked`) and no way to end the chapter there, every scene after it planned again,
+  the draft at `ch1/v<first>/write`, revisions counted within the take. A take's plans are
+  addressed `ch1/t2/sc3/plan`: the first take's step there may have *ended* the chapter (a
+  done step with no row), and the take must ask again — which the live run did. Every request
+  the person made at the chapter's checkpoints reaches the take's prompts through the
+  chapter's context, and the pick's too. P3 inside a take counts from the floor.
+- **The reading** (`answer.rs`) is shown the chapter's scenes by number — where, with whom,
+  the Author's note on keeping each — and at P2 takes a fourth decision, `rerun`, with a
+  `scene` among the chapter's numbers (an enum, so a number it does not keep cannot be
+  named). What happens is a rerun, how it is told a revision; a rerun that names no scene is
+  unclear. The landing lists the scenes by number, and `story_continue`'s description, the
+  question and the started line say what a rerun does.
+- **Tests** (`take_tests.rs`, a sibling of the chapter's on its scripted port): scene 2 of two
+  played again — scene 1 carried, `ch1/sc2/r1` forked from scene 1's branch, scene 3 planned
+  again, the take's own draft reviewed and summarized, accepted and finished; a take of a take
+  from scene 1, forked from genesis, both requests in its prompts; the refusals; the budget;
+  a take killed at each of its calls and resumed to its checkpoint; and a story through a
+  take replayed from what was recorded at each address, every address asked once and every
+  prompt the same. **Mutation check:** ten mutants on the take, one build each: nine killed;
+  the survivor — the carried scenes dropped from the engine's own list, so the take's draft
+  would be written without scene 1 — got the assertion that kills it.
+- **Live, Qwen 3.8 27B** (`story_chat_live_story` with `MINDFORK_FABULA_RERUN=2`; OpenRouter,
+  DeepInfra, a Russian profile, the sketches of G2): the canon, its approval, chapter 1 to its
+  checkpoint, *"Play scene 2 again, please: this time the secret must not come out in it"* (in Russian),
+  and the take to its own checkpoint.
+
+  | | Calls | Prompt tokens | Reply tokens | Cost |
+  | --- | --- | --- | --- | --- |
+  | Chapter 1, the first take (three scenes, v1–v3) | 470 | 3,405,583 | 403,590 | $1.18 |
+  | The take from scene 2 (three scenes played, v4–v6) | 755 | 7,062,556 | 474,517 | $1.82 |
+  | The whole run, readings included | 1,227 | 10,470,450 | 878,310 | $3.00 |
+
+  The landing listed the three scenes by number and the woken assistant offered to play one
+  again; the reading took the request as a rerun of scene 2 with one call. The take carried
+  scene 1 and replaced scenes 2 and 3, from floors 1 and 1. Scene 2 was played as `r1`, forked
+  from scene 1's kept branch; scene 3 was planned again, played as `r1`, and asked for again by
+  the Author itself (`r2`, its reruns counted from the take's floor); and where the first take's
+  Author had ended the chapter at scene 4's plan, the take's planned and played a fourth scene.
+  The chapter was drafted (v4) and revised twice (v5, v6) — the take's own two — and the
+  checkpoint asks about v6, 1,191 words against the first take's 1,133. The keeper's
+  confession, spoken in the first take's scene 2 ("I did not light the lamp… it is my fault"),
+  is not spoken in the take's, as asked. Things the run found:
+  - *The take cost twice the first making*, 7.5 million tokens against 3.8: a fourth scene,
+    the Author's own rerun of scene 3, and prompts that grow with the record (§5's finding).
+    The owner raised the run's budget from 6,000,000 to 8,000,000 when the take neared it,
+    and approved the run's cost beyond the estimate ($3.00 against about $1.50).
+  - *The Continuity checker's reply was cut at its cap* (16,384 tokens) four times on Qwen, and
+    twice running on the first take's draft, which stopped the run; a later attempt fitted.
+    The reviewers' cap is a candidate for a model that thinks this long.
+  - *A woken turn resumed a stopped run unasked.* After the stop the woken assistant called
+    `story_continue` by itself, which resumed with no question waiting, and did again as the
+    test's process went down. Nothing the person had to decide was decided for them, but the
+    calls were spent on the assistant's word — and the code let the same happen after a stop
+    the person made with `F6`, and loop on a step that fails every time until the budget
+    was spent. The owner chose (T14 (a)): a woken turn resumes nothing (`ContinueRefusal::
+    NotAsked`), the woken assistant says where and why the story stopped and asks, and the
+    stops' landings say that going on is the user's to ask. A mutant that lets the woken
+    resume through is killed.
+  - *The harness gave up as the run's time limit fell*: it waited the limit itself, so the
+    take's run (over three hours at about 22 tokens a second) was cut by the test's own exit,
+    and the story resumed from the step it was at, the two branches lost to the cuts each
+    replaced under the next index, the scene's attempt kept. The wait is now the limit plus
+    fifteen minutes.
+- **Tests:** 4767 unit tests green (+11 over 4756), 326 `#[ignore]`.

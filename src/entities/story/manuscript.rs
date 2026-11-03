@@ -364,6 +364,61 @@ pub struct Resolution {
     pub notes: String,
     /// What it rests on.
     pub evidence: serde_json::Value,
+    /// At P2, with `change`: the scene the human asked to be played again,
+    /// by its number, with every scene after it — the chapter's next
+    /// [`Take`] (docs/fabula.md §4, PR 10). `None` revises the text.
+    pub rerun: Option<u32>,
+}
+
+/// A chapter made again from one of its scenes (docs/fabula.md §4, PR 10;
+/// §6, T8): the human asked at P2 for scene `from_scene` to be played again.
+/// The scenes before it are carried over as the last take kept them; that
+/// scene and every one after it are planned and played again, and the
+/// chapter's text is drafted, reviewed and summarized again from them.
+///
+/// Every store is append-only, so nothing of the last take is changed: the
+/// take's rows are new rows under addresses of their own. A scene's attempts
+/// in this take are those from its floor on, a rerun number past every
+/// attempt the scene had when the take began; the take's versions are those
+/// from `first_version` on. Take 1 is the chapter's first making and has no
+/// row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Take {
+    /// The chapter.
+    pub chapter: u32,
+    /// The take, from 2.
+    pub number: u32,
+    /// The scene played again first.
+    pub from_scene: u32,
+    /// The P2 question whose answer asked for it.
+    pub question: QuestionId,
+    /// What the human asked for with it: the answer's notes.
+    pub notes: String,
+    /// The scenes kept before `from_scene`, carried over, in order.
+    pub carried: Vec<super::SceneId>,
+    /// The scenes the last take kept from `from_scene` on, which this one
+    /// plays again, in order.
+    pub replaced: Vec<super::SceneId>,
+    /// Each scene's first rerun number in this take; a scene not named had
+    /// no attempt yet, and starts at 0.
+    pub floors: std::collections::BTreeMap<u32, u32>,
+    /// The take's first version of the chapter's text: its draft.
+    pub first_version: u32,
+    /// The last run before the take: its budget counts the chapter's calls
+    /// in the runs after it (docs/fabula.md §6, T12).
+    pub after_run: u64,
+}
+
+impl Take {
+    /// The take's id, `ch1/t2`.
+    pub fn id(&self) -> String {
+        format!("ch{}/t{}", self.chapter, self.number)
+    }
+
+    /// Scene `scene`'s first rerun number in this take.
+    pub fn floor(&self, scene: u32) -> u32 {
+        self.floors.get(&scene).copied().unwrap_or(0)
+    }
 }
 
 /// A doubt a role met inside a chapter and the choice it made instead of

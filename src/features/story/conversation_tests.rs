@@ -10,8 +10,8 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::{
-    Answering, ContinueRefusal, Continued, CreateRefusal, Listener, PendingAnswer, StoryFiles,
-    create, dialect_problems, prepare, story_id,
+    Answering, ContinueRefusal, Continued, CreateRefusal, Listener, PendingAnswer, Resolved,
+    StoryFiles, create, dialect_problems, prepare, story_id,
 };
 use crate::entities::story::{
     Canon, ChapterArc, Decision, Question, QuestionBody, VersionOrigin, fixture_canon,
@@ -317,10 +317,11 @@ async fn an_approval_is_recorded_and_the_story_kept_for_its_run() {
         .await;
     assert_eq!(
         prepared,
-        Ok(Continued::Start(Some((
-            QuestionBody::Canon,
-            Decision::Approve
-        ))))
+        Ok(Continued::Start(Some(Resolved {
+            body: QuestionBody::Canon,
+            decision: Decision::Approve,
+            rerun: None,
+        })))
     );
     let held = f.board.of_chat(f.chat);
     assert_eq!(held.len(), 1);
@@ -348,6 +349,68 @@ async fn an_approval_is_recorded_and_the_story_kept_for_its_run() {
         1,
         "the reading's one call"
     );
+    db.close().await.unwrap();
+}
+
+/// At a chapter's checkpoint the reading is shown the chapter's scenes by
+/// number, and a reply that names one opens the chapter's next take; the run
+/// goes on with the rerun (docs/fabula.md §4, PR 10).
+#[tokio::test]
+async fn a_reply_naming_a_scene_plays_it_again() {
+    let f = fixture();
+    for dir in [f.files.db.parent(), f.files.log.parent()]
+        .into_iter()
+        .flatten()
+    {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    let question = {
+        let db = f.db().await;
+        let mut author = db.author_writer().await.unwrap();
+        author.import_canon(&fixture_canon()).await.unwrap();
+        crate::features::story::run::tests::at_checkpoint(&db, &mut author).await;
+        let question = db.pending_question().await.unwrap().unwrap();
+        drop(author);
+        db.close().await.unwrap();
+        question
+    };
+    let p = pending(
+        &question,
+        &["Переиграй первую сцену: пусть Мара промолчит."],
+    );
+    let (run, prepared) = f
+        .prepare(
+            answering(&p),
+            reading(
+                json!({"answers": [], "changes": ["Мара промолчит."], "scene": "1",
+                           "decision": "rerun"}),
+            ),
+        )
+        .await;
+    assert_eq!(
+        prepared,
+        Ok(Continued::Start(Some(Resolved {
+            body: question.body.clone(),
+            decision: Decision::Change,
+            rerun: Some(1),
+        })))
+    );
+    f.board.release(run);
+    let db = f.db().await;
+    let take = db.take_of(1).await.unwrap().expect("the take is stored");
+    assert_eq!(take.from_scene, 1);
+    assert!(take.notes.contains("Мара промолчит."), "{}", take.notes);
+    // The reading was shown the scenes by number, and offered the rerun.
+    let reading_run = crate::entities::story::RunId::nth(3);
+    let calls = db.calls(&reading_run).await.unwrap();
+    assert_eq!(calls.len(), 1);
+    let request = calls[0].call.request.to_string();
+    assert!(
+        request.contains("The chapter's scenes, by number:")
+            && request.contains("1. At Harbour, with Mara, Silas. The quarrel shows the debt."),
+        "{request}"
+    );
+    assert!(request.contains("rerun"), "{request}");
     db.close().await.unwrap();
 }
 
@@ -420,6 +483,7 @@ async fn nothing_pending_resumes_and_finished_or_held_stories_are_refused() {
                     decision: Decision::Approve,
                     notes: String::new(),
                     evidence: json!(null),
+                    rerun: None,
                 },
             )
             .await
@@ -427,6 +491,16 @@ async fn nothing_pending_resumes_and_finished_or_held_stories_are_refused() {
         drop(author);
         db.close().await.unwrap();
     }
+    // A turn the app woke on a notification resumes nothing: whether the
+    // story goes on is the person's to say (T14); the claim is given back.
+    let woken = Answering {
+        pending: None,
+        answering: false,
+        notes: Some("It only stopped at a cut; going on."),
+    };
+    let (_, refused) = f.prepare(woken, backend.clone()).await;
+    assert_eq!(refused, Err(ContinueRefusal::NotAsked));
+    assert!(f.board.of_chat(f.chat).is_empty(), "nothing is held");
     let (run, prepared) = f.prepare(none, backend.clone()).await;
     assert_eq!(prepared, Ok(Continued::Start(None)));
     // Held by that run: a second is refused with it.
@@ -466,6 +540,7 @@ async fn nothing_pending_resumes_and_finished_or_held_stories_are_refused() {
                     decision: Decision::Approve,
                     notes: String::new(),
                     evidence: json!(null),
+                    rerun: None,
                 },
             )
             .await
@@ -593,6 +668,7 @@ async fn accepting_the_last_chapter_finishes_the_story() {
                     decision: Decision::Approve,
                     notes: String::new(),
                     evidence: json!(null),
+                    rerun: None,
                 },
             )
             .await

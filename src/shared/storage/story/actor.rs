@@ -551,19 +551,17 @@ impl Actor {
         Ok(())
     }
 
+    /// The main line's tip: the last scene the latest chapter keeps, in its
+    /// latest take ([`Actor::kept_scenes`]); a chapter whose take keeps none
+    /// yet steps back to the one before it, and the first to genesis.
     pub(super) fn main_line_tip(&mut self) -> Result<Option<BranchId>, StoryDbError> {
-        let picked: Option<String> = self
-            .story
-            .query_row(
-                "SELECT p.branch_id FROM pick p JOIN scene s ON s.id = p.scene_id
-                 WHERE p.branch_id IS NOT NULL
-                 ORDER BY s.chapter_no DESC, s.scene_no DESC, s.rerun DESC LIMIT 1",
-                [],
-                |r| r.get(0),
-            )
-            .optional()?;
-        if let Some(branch) = picked {
-            return Ok(Some(BranchId::new(branch)));
+        let last: Option<u32> =
+            self.story
+                .query_row("SELECT MAX(chapter_no) FROM scene", [], |r| r.get(0))?;
+        for chapter in (1..=last.unwrap_or(0)).rev() {
+            if let Some(kept) = self.kept_scenes(chapter)?.pop() {
+                return Ok(Some(kept.branch));
+            }
         }
         let genesis = BranchId::genesis();
         Ok(self.branch_info(&genesis)?.map(|_| genesis))

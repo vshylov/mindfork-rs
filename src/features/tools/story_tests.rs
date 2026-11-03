@@ -195,7 +195,7 @@ fn a_checkpoint_lands_with_everything_the_user_decides_on() {
             text: "## One".to_owned(),
             summary: Some("  Mara learns of the debt. ".to_owned()),
         }),
-        picks: vec!["The quarrel shows the debt.".to_owned()],
+        picks: vec![(2, "The quarrel shows the debt.".to_owned())],
         assumptions: vec![Assumption {
             doubt: "Whether Silas lies.".to_owned(),
             choice: "He lies.".to_owned(),
@@ -216,7 +216,8 @@ fn a_checkpoint_lands_with_everything_the_user_decides_on() {
     for want in [
         "Chapter 1 is written (version 2) and attached to this chat as «s1 — chapter 1.md».",
         "Summary: Mara learns of the debt.\n",
-        "Why these scenes were kept:\n- The quarrel shows the debt.",
+        "The chapter's scenes by number, and why each was kept:\n- Scene 2: The quarrel shows \
+         the debt.",
         "could have been asked:\n- Whether Silas lies. — chosen: He lies.",
         "chapter 1 (version 2): accept it",
         "Ask them in your own words",
@@ -381,6 +382,7 @@ async fn the_tool_reads_the_chats_stories_and_the_run_out() {
                     decision: Decision::Approve,
                     notes: String::new(),
                     evidence: json!(null),
+                    rerun: None,
                 },
             )
             .await

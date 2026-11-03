@@ -672,7 +672,12 @@ src/
 │  │                        first step no run finished; the outline, the rolling scene plans, the
 │  │                        pick (reruns, then the last attempt's pick), the draft, the two reviews
 │  │                        side by side, the triage, at most two revisions, the summary, the pauses
-│  │                        P1–P3 as question rows, the budget checked before every call; author.rs
+│  │                        P1–P3 as question rows, the budget checked before every call; a take
+│  │                        (PR 10) — a scene named at P2 played again with the ones after it: the
+│  │                        scenes before it carried, each scene's attempts from its floor on, the
+│  │                        take's plans at `ch1/t2/…`, its versions from its first, its own budget;
+│  │                        take_tests.rs — the take on the scripted port, killed at every call and
+│  │                        replayed by address; author.rs
 │  │                        — the Author's and the reviewers' replies with their schemas, built per
 │  │                        call where its options differ; author_prompts.rs — their prompts: the
 │  │                        Author sees everything but the planted tokens, the Reader only the
@@ -685,7 +690,8 @@ src/
 │  │                        sampling, the time limit cancelling the calls so the engine stops at a
 │  │                        step, the landing's data read from the stores; answer.rs — the
 │  │                        person's reply to a pause read by one schema-constrained call (the
-│  │                        Listener), conservatively, and the resolution with its evidence (PR 9);
+│  │                        Listener), conservatively, and the resolution with its evidence (PR 9),
+│  │                        at P2 a scene to play again named by its number (PR 10);
 │  │                        conversation.rs — what the chat tools do to a story's files: an id from
 │  │                        the title, the draft stored and P1 opened with no call, the pending
 │  │                        question answered from the person's rows and the story claimed for the
@@ -866,7 +872,8 @@ src/
 │  │                        event.rs — SceneSetup, Proposal, Action, Visibility, Effect, NewEvent/Event,
 │  │                        every union tagged by `type`; manuscript.rs — the Author's stores beyond
 │  │                        them: the outline, chapter versions and their origin, review notes and
-│  │                        decisions, the pauses' questions and answers, the assumptions;
+│  │                        decisions, the pauses' questions and answers, the assumptions, and a
+│  │                        chapter's take (PR 10: carried, replaced, the floors, its first version);
 │  │                        world.rs — WorldState::admit, the one gate an
 │  │                        event passes (checked against the state it applies to, applied, its
 │  │                        witnesses computed from presence and visibility), and fold over a path.
@@ -960,8 +967,10 @@ src/
    │  │                     ancestry up to each fork, the canon is versioned per document, the call
    │  │                     log is read by address or a run's whole in order; actor_manuscript.rs —
    │  │                     the manuscript's and the pauses' (a review written whole and once, an
-   │  │                     answer with its approval in one transaction, every run's steps, a
-   │  │                     chapter's spend over the runs the story knows). A run is numbered past
+   │  │                     answer with its approval or its take in one transaction, every run's
+   │  │                     steps, a chapter's spend over the runs the story knows, its latest
+   │  │                     take's alone); the main line runs through each chapter's latest take
+   │  │                     (`kept_scenes`, `main_line_tip`). A run is numbered past
    │  │                     the last of either file, since a restore can put a story back behind
    │  │                     its log. stats.rs — the read-only summary `mindfork stats` takes of a
    │  │                     file or a backup's image, never through the actor: counts and a unit

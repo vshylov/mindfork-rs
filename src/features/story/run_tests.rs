@@ -138,6 +138,7 @@ fn approve() -> Resolution {
         decision: Decision::Approve,
         notes: String::new(),
         evidence: json!(null),
+        rerun: None,
     }
 }
 
@@ -288,7 +289,11 @@ async fn a_chapter_at_its_checkpoint_lands_with_its_summary_picks_and_assumption
             summary: Some("Mara learns of the debt.".to_owned()),
         })
     );
-    assert_eq!(landed.picks, ["The quarrel shows the debt."]);
+    assert_eq!(
+        landed.picks,
+        [(1, "The quarrel shows the debt.".to_owned())],
+        "by the scene's number"
+    );
     assert_eq!(
         landed.assumptions,
         [Assumption {

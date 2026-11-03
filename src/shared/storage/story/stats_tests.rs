@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::json;
 
-use super::{StoryStats, story_stats_of_file, story_stats_of_image};
+use super::{StoryStats, UNIT_TABLES, story_stats_of_file, story_stats_of_image};
 use crate::entities::story::{
     Decision, QuestionBody, QuestionId, Resolution, VersionOrigin, fixture_canon,
 };
@@ -74,6 +74,7 @@ fn approve() -> Resolution {
         decision: Decision::Approve,
         notes: String::new(),
         evidence: json!(null),
+        rerun: None,
     }
 }
 
@@ -178,6 +179,7 @@ async fn units_tell_a_story_continued_from_one_continued_apart() {
         decision: Decision::Change,
         notes: "Slower.".to_owned(),
         evidence: json!(null),
+        rerun: None,
     };
     author.resolve(&waiting, &change).await.unwrap();
     drop(author);
@@ -256,4 +258,17 @@ async fn an_events_witnesses_are_part_of_its_unit() {
     assert_eq!((unit(&base).len(), unit(&seen).len()), (1, 1));
     assert_ne!(unit(&base), unit(&seen));
     assert_eq!(seen.units.len(), base.units.len(), "no unit of its own");
+}
+
+/// Every table a story appends to is compared row by row, a new one too (the
+/// take, PR 10): a witness rides with its event's unit.
+#[test]
+fn every_append_only_table_has_units() {
+    let compared: Vec<&str> = UNIT_TABLES.iter().map(|(table, _, _)| *table).collect();
+    for table in super::super::schema::STORY_APPEND_ONLY {
+        assert!(
+            *table == "event_witness" || compared.contains(table),
+            "{table} is not compared"
+        );
+    }
 }

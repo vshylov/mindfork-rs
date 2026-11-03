@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use super::{
-    ChapterContext, Kept, Trace, author_system, continuity, pick, plan, reader, revise,
+    Again, ChapterContext, Kept, Trace, author_system, continuity, pick, plan, reader, revise,
     story_language, triage, write,
 };
 use crate::entities::story::{
@@ -149,12 +149,71 @@ fn a_plan_is_shown_the_kept_scenes_and_offered_the_end_after_the_first() {
     tokenless(&second);
     let last = plan(&view, &kept, &world, (4, 4), None);
     assert!(last.user.contains("the chapter's last"));
-    let again = plan(&view, &[], &world, (1, 4), Some("Put Ines in it."));
+    let again = plan(
+        &view,
+        &[],
+        &world,
+        (1, 4),
+        Some(Again::Failed("Put Ines in it.")),
+    );
     assert!(
         again
             .user
             .contains("asked for it to be planned again: Put Ines in it.")
     );
+    // A scene asked for again is played: the chapter cannot end at it.
+    let failed = plan(&view, &kept, &world, (2, 4), Some(Again::Failed("x")));
+    assert!(failed.user.contains("Plan scene 2 of at most 4"));
+    assert!(!failed.user.contains("end the chapter"));
+}
+
+/// A scene the human asked at P2 to be played again is planned with what
+/// they asked and its old setup beside it, and may not end the chapter
+/// (docs/fabula.md §4, PR 10).
+#[test]
+fn a_scene_asked_for_again_is_planned_with_its_old_setup_and_the_request() {
+    let canon = fixture_canon();
+    let goals = vec!["The secret surfaces.".to_owned()];
+    let summaries = Vec::new();
+    let view = ctx(&canon, &goals, &summaries);
+    let world = WorldState::initial(&canon);
+    let old = setup();
+    let asked = Again::Asked {
+        notes: "The human asked for these changes:\n- Mara keeps quiet.",
+        before: Some((&old, "Squeeze Mara.")),
+    };
+    let prompt = plan(&view, &[], &world, (2, 4), Some(asked));
+    let user = &prompt.user;
+    assert!(
+        user.contains("asked for this scene to be played again"),
+        "{user}"
+    );
+    assert!(
+        user.contains("The scene as it was set before: at Harbour"),
+        "{user}"
+    );
+    assert!(user.contains("Your intent for it then: Squeeze Mara."));
+    assert!(
+        user.contains("What they asked:\nThe human asked for these changes:\n- Mara keeps quiet.")
+    );
+    assert!(user.contains("Plan scene 2 of at most 4"));
+    assert!(!user.contains("end the chapter"));
+    tokenless(&prompt);
+    let bare = plan(
+        &view,
+        &[],
+        &world,
+        (1, 4),
+        Some(Again::Asked {
+            notes: " ",
+            before: None,
+        }),
+    );
+    assert!(
+        bare.user
+            .contains("They asked for no change in particular.")
+    );
+    assert!(!bare.user.contains("as it was set before"));
 }
 
 #[test]
@@ -166,7 +225,7 @@ fn a_pick_reads_every_version_and_says_when_no_rerun_is_left() {
     let t = trace();
     let setup = setup();
     let shown = vec![("k0".to_owned(), &t), ("k2".to_owned(), &t)];
-    let with = pick(&view, (1, &setup, "Squeeze Mara."), &shown, 2);
+    let with = pick(&view, (1, &setup, "Squeeze Mara."), &shown, 2, None);
     assert!(with.user.contains("Version k0:") && with.user.contains("Version k2:"));
     assert!(with.user.contains("played it 2 times"));
     assert!(with.user.contains("(2 reruns left)"));
@@ -175,9 +234,22 @@ fn a_pick_reads_every_version_and_says_when_no_rerun_is_left() {
             .contains("Mara thought: If they find the bribe, I am done.")
     );
     tokenless(&with);
-    let last = pick(&view, (1, &setup, "x"), &shown[..1], 0);
+    assert!(!with.user.contains("asked of this chapter"));
+    let last = pick(&view, (1, &setup, "x"), &shown[..1], 0, None);
     assert!(last.user.contains("No reruns are left"));
     assert!(last.user.contains("played it 1 time "));
+    // In a take, the pick weighs what the human asked of the chapter.
+    let take = pick(
+        &view,
+        (2, &setup, "x"),
+        &shown[..1],
+        0,
+        Some("Mara keeps quiet."),
+    );
+    assert!(
+        take.user
+            .contains("Your intent for it: x\nWhat the story's human author asked of this chapter:\nMara keeps quiet.")
+    );
 }
 
 #[test]

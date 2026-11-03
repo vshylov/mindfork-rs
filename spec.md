@@ -2638,9 +2638,10 @@ set and no request differs by a byte. A profile can turn them off in its tool li
 as any tool. The person uses it from the chat: they attach sketches of the work
 ([§9.7](#97-chat-file-attachments-file-attach)), the assistant composes the canon
 with them and stores it with `story_create`, and each answer the story waits for is
-the person's own words, read when the assistant calls `story_continue`. A scene is
-not played again at a checkpoint yet (docs/fabula.md §6, T8): a request to replay
-one reaches the Author as notes for revising the chapter's text.
+the person's own words, read when the assistant calls `story_continue`. At a
+chapter's checkpoint the person may also ask for one of its scenes to be played
+again, by its number: the chapter is then made again from that scene, as its next
+take (below).
 
 - **`story_create`** is synchronous. The canon arrives as the call's arguments —
   the world's rules, the map with its routes, the cast with goals and secrets, the
@@ -2666,13 +2667,37 @@ one reaches the Author as notes for revising the chapter's text.
   assistant's `notes` recorded as its own. An approved canon opens chapter 1, an
   accepted chapter settles and the next one starts — the last one accepted finishes
   the story, with no run — a change reaches the Author as
-  the person's notes, and a change to the canon starts no run — the assistant
+  the person's notes, a reply that names one of the chapter's scenes opens its next
+  take, and a change to the canon starts no run — the assistant
   revises the draft and asks again. With no question waiting, it resumes a run
-  that stopped short. A chapter whose budget is spent starts no run, which would
+  that stopped short, but only on a turn that answers the person: a turn the app
+  woke on a run's notification is refused, since whether a stopped story goes on
+  — after a stop the person made, a time limit, a call that failed — is the
+  person's to say (docs/fabula.md §6, T14 (a)); the woken assistant says where and
+  why it stopped and asks. A chapter whose budget is spent starts no run, which would
   stop before its first call: the tool says what was spent and where the budget is
   raised, and an answer read on the way is kept. It takes the background slot
   before the reading's call and claims the story for the run before its files are
   opened.
+- **A scene played again** (docs/fabula.md §4, PR 10; §6, T8 (a)). At P2 the
+  reading is shown the chapter's scenes by number — where, with whom, the Author's
+  note on keeping each — and takes a fourth decision, `rerun`, with the scene's
+  number among them: a request to change what happens in a scene is a rerun, one to
+  change how the chapter is told a revision, and a rerun that names no scene the
+  chapter keeps is unclear. The answer is recorded as a change with a **take** of
+  the chapter beside it, in one transaction, refused unless the checkpoint is the
+  chapter's latest version's and the scene one it keeps. The take carries the
+  scenes before the one named over as they were kept; the next run plans that scene
+  again — the person's request and its old setup in the prompt, and no way to end
+  the chapter there — plays it and every scene after it, each planned again, and
+  drafts, reviews and summarizes the chapter anew, so the checkpoint asks about the
+  take's own version. Nothing of the earlier take changes, every store being
+  append-only: the take's attempts are numbered past each scene's last, its plans
+  are addressed `ch<n>/t<k>/sc<m>/plan`, its versions follow the chapter's last, and
+  it resumes and replays by address as any run does. The main line runs through
+  the latest take of each chapter; every request the person made at the chapter's
+  checkpoints reaches the take's prompts, the pick's included; a take's budget is
+  its own (T12 (a)), and a person may ask for a take of a take.
 - **The reminder line.** While a question waits, every turn's request carries one
   line naming it, appended to the request's last user-side message — the one the
   turn answers, or a woken turn's notification — in the request's copy only, so a
@@ -2708,7 +2733,8 @@ one reaches the Author as notes for revising the chapter's text.
 - **Its bounds.** `tools.story_run_timeout_secs` (6 h, T2 (a)) cancels the run's
   calls, not the run: the engine stops at the step in flight and records it. The
   chapter's budget is `tools.story_budget_tokens` (6,000,000, prompt and reply,
-  every call of the chapter in every run; `0` — none; docs/fabula.md §6, T11 (a)) and
+  every call of the chapter in every run of its latest take; `0` — none;
+  docs/fabula.md §6, T11 (a), T12 (a)) and
   `tools.story_budget_usd` (empty — none), counted where the provider reports a
   call's cost; it is checked before each call, and a spent one stops the run there.
 - **The landing.** The chapter a checkpoint asks about is attached to the chat as
@@ -2717,7 +2743,8 @@ one reaches the Author as notes for revising the chapter's text.
   replacing the attachment of its earlier version (T3 (a)). The notification, in
   the profile's language under the prefix every task notification has — not a
   message from the user, granting nothing — carries the summary, the Author's
-  note on each scene kept, the assumptions made where the user could have been
+  note on each scene kept, by the scene's number (the numbers a reply may name to
+  play one again), the assumptions made where the user could have been
   asked, the question, and what the run cost; the woken assistant puts the
   question to the user in its own words. A run that stopped short says where and
   what continuing does: stopped, its time limit, its budget, a call that gave

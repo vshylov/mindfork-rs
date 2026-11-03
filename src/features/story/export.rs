@@ -82,6 +82,7 @@ mod tests {
                     decision: crate::entities::story::Decision::Approve,
                     notes: String::new(),
                     evidence: json!(null),
+                    rerun: None,
                 },
             )
             .await

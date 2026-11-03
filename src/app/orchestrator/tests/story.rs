@@ -172,7 +172,7 @@ async fn a_chapter_lands_as_an_attachment_and_its_question_as_a_notification() {
         "The story run «The harbour»",
         "attached to this chat as «s1 — chapter 1.md»",
         "Summary: Mara learns of the debt.",
-        "- The quarrel shows the debt.",
+        "- Scene 1: The quarrel shows the debt.",
         "- Whether Silas lies. — chosen: He lies.",
         "chapter 1 (version 2): accept it",
     ] {

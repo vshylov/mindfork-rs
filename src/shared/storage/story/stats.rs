@@ -57,6 +57,7 @@ const UNIT_TABLES: &[(&str, &str, &str)] = &[
     ("question", "id", ""),
     ("answer", "question_id", ""),
     ("assumption", "id", ""),
+    ("take", "id", ""),
 ];
 
 /// What `mindfork stats` reports of one story.

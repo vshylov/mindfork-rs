@@ -29,6 +29,11 @@
 //!   final; `question`, `answer` and `assumption` are the pauses (spec §14).
 //!   The file was in no release when they came, so the sketch's `chapter`
 //!   changed in place.
+//! - **`take`** (docs/fabula.md §4, PR 10): a chapter made again from a
+//!   scene the human named at P2. It is a table of its own, so a file an
+//!   earlier build wrote gains it on open with no step, and an answer's
+//!   `decision` stays `change`: the take's row, keyed by the question, is
+//!   what says the change is a rerun.
 //! - **The default rollback journal, not WAL.** Every read and write goes
 //!   through the database actor, so WAL's concurrent readers buy nothing, and
 //!   a backup can take the file as `data.db`'s is taken (`VACUUM INTO` from a
@@ -194,6 +199,20 @@ CREATE TABLE IF NOT EXISTS assumption (
     doubt  TEXT NOT NULL,
     choice TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS take (
+    id            TEXT PRIMARY KEY,
+    chapter_no    INTEGER NOT NULL,
+    take_no       INTEGER NOT NULL CHECK (take_no >= 2),
+    from_scene    INTEGER NOT NULL CHECK (from_scene >= 1),
+    question_id   TEXT NOT NULL UNIQUE REFERENCES question(id),
+    carried_json  TEXT NOT NULL,
+    replaced_json TEXT NOT NULL,
+    floors_json   TEXT NOT NULL,
+    first_version INTEGER NOT NULL,
+    after_run     INTEGER NOT NULL,
+    created_at    TEXT NOT NULL,
+    UNIQUE (chapter_no, take_no)
+);
 ";
 
 /// The story database's tables whose rows are never updated or deleted.
@@ -216,6 +235,7 @@ pub(super) const STORY_APPEND_ONLY: &[&str] = &[
     "question",
     "answer",
     "assumption",
+    "take",
 ];
 
 /// The call log: every model call, keyed by its logical address so a replay
