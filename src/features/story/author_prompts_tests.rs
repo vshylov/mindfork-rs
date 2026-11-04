@@ -319,7 +319,6 @@ fn the_checker_sees_the_record_with_its_ids_and_not_the_authors_intent() {
         &WorldState::initial(&canon),
         &kept,
         "## One\n\nText.",
-        (&SoFar::default(), false),
     );
     assert!(prompt.user.contains("`ch1/sc1/r0/k1/e2` Round 1 · Mara"));
     assert!(

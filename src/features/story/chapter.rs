@@ -14,7 +14,10 @@
 //! 4. **The draft**, from the kept scenes' full traces.
 //! 5. **Review**: the Reader and the Continuity checker, side by side; the
 //!    engine's own check for a planted marker in the prose rides with the
-//!    checker. The Author decides each note, and revises while an accepted
+//!    checker, and so does the Canon keeper's check of the chapter against
+//!    the published chapters' register (PR 11): their facts, their threads,
+//!    its times added up, and in the arc's last chapter each thread still
+//!    open. The Author decides each note, and revises while an accepted
 //!    high-severity note stands, at most `max_revisions` times; the last
 //!    revision is not reviewed again (spec §7's loop).
 //! 6. **The register and the summary** of the final version, both the
@@ -23,7 +26,7 @@
 //!    states, and a summary in the human's language checked against the
 //!    text. Then **P2**: accept it, revise it with the human's notes, or play
 //!    one of its scenes again. The accepted chapters' registers reach the
-//!    next chapter's prompts and its Continuity checker.
+//!    next chapter's prompts and the keeper's check of it.
 //! 7. **A take** (docs/fabula.md §4, PR 10): a scene the human named at P2
 //!    is played again with every scene after it. The chapter's next take
 //!    carries the scenes before it over, plans the named one again with what
@@ -1191,21 +1194,22 @@ impl Run<'_> {
             None => self.world_now().await?,
         };
         let reader_prompt = prompts::reader(&published, &version.text);
-        let checker_prompt = prompts::continuity(
-            &self.canon,
-            &opened,
-            &Self::kept_view(kept),
-            &version.text,
-            (&ctx.register, ctx.last),
-        );
-        // In the arc's last chapter the checker may name a thread left open.
+        let checker_prompt =
+            prompts::continuity(&self.canon, &opened, &Self::kept_view(kept), &version.text);
+        // The Canon keeper's check against the published chapters' register
+        // rides with the checker's (PR 11): one batch of notes, so a resume
+        // asks both again or neither. In the arc's last chapter it may name a
+        // thread left open.
+        let held_at = format!("{}/register-check", version.id);
+        let held_prompt = keeper::register_check_prompt(&ctx.register, n, &version.text, ctx.last);
         let open = if ctx.last {
             ctx.register.open_ids()
         } else {
             Vec::new()
         };
         let reader_schema = ReaderReply::schema(&self.keys);
-        let checker_schema = ContinuityReply::schema_for(&self.keys, !open.is_empty());
+        let checker_schema = ContinuityReply::schema(&self.keys);
+        let held_schema = ContinuityReply::schema_for(&self.keys, !open.is_empty());
         let reader = async {
             if need_reader {
                 Some(
@@ -1224,11 +1228,19 @@ impl Run<'_> {
         let checker = async {
             if need_checker {
                 Some(
-                    self.ask_json::<ContinuityReply>(
-                        &checker_at,
-                        Role::Continuity,
-                        &checker_schema,
-                        &checker_prompt,
+                    join(
+                        self.ask_json::<ContinuityReply>(
+                            &checker_at,
+                            Role::Continuity,
+                            &checker_schema,
+                            &checker_prompt,
+                        ),
+                        self.ask_json::<ContinuityReply>(
+                            &held_at,
+                            Role::CanonKeeper,
+                            &held_schema,
+                            &held_prompt,
+                        ),
                     )
                     .await,
                 )
@@ -1246,19 +1258,21 @@ impl Run<'_> {
                 .await?;
             self.steps.finish(&reader_at, StepStatus::Done).await?;
         }
-        if let Some(reply) = checked {
+        if let Some((checked, held)) = checked {
             let known: Vec<&EventId> = kept
                 .iter()
                 .flat_map(|k| k.trace.events.iter().map(|e| &e.id))
                 .collect();
             let mut written = markers_in(&self.canon, &version.text);
-            written.extend(checker_notes(reply?, &known, &open));
+            written.extend(checker_notes(checked?, &known, &[]));
+            written.extend(checker_notes(held?, &[], &open));
             self.db
                 .review_writer(&version.id, Reviewer::Continuity)
                 .await?
                 .write(&written)
                 .await?;
             self.steps.finish(&checker_at, StepStatus::Done).await?;
+            self.steps.finish(&held_at, StepStatus::Done).await?;
         }
         Ok(self.db.notes(&version.id).await?)
     }

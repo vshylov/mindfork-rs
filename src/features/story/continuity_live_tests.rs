@@ -33,7 +33,6 @@ use tokio_util::sync::CancellationToken;
 use super::author::ContinuityReply;
 use super::author_prompts::{self, Kept, Trace};
 use super::engine::EngineAdapter;
-use super::keeper::SoFar;
 use super::leaks::without_tokens;
 use super::port::{CallAddress, Role, decide};
 use super::schema::{CanonKeys, StorySchema};
@@ -232,8 +231,7 @@ async fn continuity_live_recall_by_mechanism_and_effort() {
             trace: t,
         })
         .collect();
-    let prompt =
-        author_prompts::continuity(&canon, &opened, &view, &planted, (&SoFar::default(), false));
+    let prompt = author_prompts::continuity(&canon, &opened, &view, &planted);
     let schema = ContinuityReply::schema(&CanonKeys::of(&canon));
     let mut log = db.run_log_writer().await.unwrap();
     let run = log

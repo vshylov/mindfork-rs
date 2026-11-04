@@ -355,6 +355,39 @@ pub fn summary_prompt(
     }
 }
 
+/// The check of chapter `chapter` against the register before it: the
+/// published chapters' facts and open threads, and the chapter's text,
+/// nothing else. In the arc's `last` chapter it reports each open thread the
+/// chapter does not pay off.
+pub fn register_check_prompt(so_far: &SoFar, chapter: u32, text: &str, last: bool) -> Prompt {
+    let last = if last && !so_far.open.is_empty() {
+        "\n\nThis is the story's last chapter: report each open thread above that it does not \
+         pay off as an `open_thread` finding, the thread's id as its anchor; the Author decides \
+         whether it stays open."
+    } else {
+        ""
+    };
+    Prompt {
+        system: "You check a new chapter of a story published a chapter at a time against what \
+                 the published chapters established: the facts of time, age and kinship they \
+                 state and the threads they left open, as their register lists them. The \
+                 narration's facts hold; a character's word may be wrong or a lie, but then the \
+                 text must let the reader see it. Report each place where the new chapter tells \
+                 a listed fact otherwise, or tells otherwise what a thread showed (a mark, a \
+                 written line, a sound), naming the fact or the thread by its id. Check every \
+                 statement of time, age, date, duration and kinship in the chapter against the \
+                 facts listed and against the chapter's own other statements, by arithmetic, \
+                 and write the sum out in the note: ages, years and \"how long ago\" must add \
+                 up. Style and pace are not yours to judge."
+            .to_owned(),
+        user: format!(
+            "{}\n\nChapter {chapter}:\n\n{text}\n\nReport every place where it departs from \
+             what was published, or does not add up.{last}",
+            so_far.text().trim_start()
+        ),
+    }
+}
+
 /// The check of `summary` against the chapter's text.
 pub fn summary_check_prompt(text: &str, summary: &str) -> Prompt {
     Prompt {

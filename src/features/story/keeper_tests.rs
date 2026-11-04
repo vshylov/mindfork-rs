@@ -2,8 +2,8 @@
 //! register so far, the schemas and the prompts (docs/fabula.md §4, PR 11).
 
 use super::{
-    FactReply, PayoffReply, RegisterReply, SoFar, SummaryFault, ThreadReply, register_of,
-    register_prompt, summary_check_prompt, summary_prompt,
+    FactReply, PayoffReply, RegisterReply, SoFar, SummaryFault, ThreadReply, register_check_prompt,
+    register_of, register_prompt, summary_check_prompt, summary_prompt,
 };
 use crate::entities::story::{Fact, Payoff, Register, Thread, fixture_canon};
 use crate::features::story::schema::CanonKeys;
@@ -181,9 +181,32 @@ fn the_keepers_prompts_hold_the_text_and_nothing_of_the_canon() {
     assert!(second.user.contains("`ch1.fact1`"));
     let canon = fixture_canon();
     let secret = &canon.characters[0].secrets[0].text;
+    let held = register_check_prompt(&after_chapter_one(), 2, text, true);
+    assert!(
+        held.user
+            .starts_with("Threads the published chapters left open")
+    );
+    assert!(
+        held.user.contains("`ch1.fact1`")
+            && held.user.contains(
+                "Chapter 2:
+
+## Light"
+            )
+    );
+    assert!(held.user.contains("This is the story's last chapter"));
+    assert!(held.system.contains("by arithmetic"));
+    let middle = register_check_prompt(&after_chapter_one(), 2, text, false);
+    assert!(!middle.user.contains("last chapter"), "not the arc's last");
+    let nothing_open = register_check_prompt(&SoFar::default(), 1, text, true);
+    assert!(
+        !nothing_open.user.contains("last chapter"),
+        "no thread to report"
+    );
     for prompt in [
         &first,
         &second,
+        &held,
         &summary_prompt("Russian", text, None),
         &summary_check_prompt(text, "A summary."),
     ] {

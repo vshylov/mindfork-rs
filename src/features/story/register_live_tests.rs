@@ -33,8 +33,8 @@ use super::author::{ContinuityReply, FindingKind};
 use super::author_prompts::{self, Kept, Trace};
 use super::engine::EngineAdapter;
 use super::keeper::{
-    RegisterReply, SoFar, SummaryCheck, accepted_version, register_of, register_prompt,
-    summary_check_prompt, summary_prompt,
+    RegisterReply, SoFar, SummaryCheck, accepted_version, register_check_prompt, register_of,
+    register_prompt, summary_check_prompt, summary_prompt,
 };
 use super::port::{CallAddress, LlmPort, Role, decide};
 use super::run::role_sampling;
@@ -55,6 +55,34 @@ fn hides_in_the_chapel(summary: &str) -> bool {
     summary
         .split(['.', '!', '?', ';'])
         .any(|s| holds(s, &["часовн"], &["пряч", "спрят"]))
+}
+
+/// What a check of chapter 2 found of the three known faults: the logbook's
+/// line gone empty, the father's "few years ago" against the old cross and
+/// the twenty-eight years, and the footsteps left open (by their thread's id).
+/// A finding that names the years and then clears them is none.
+fn scored(reply: &ContinuityReply, footsteps: Option<&str>) -> [bool; 3] {
+    let about = |words: &[&str]| {
+        reply
+            .findings
+            .iter()
+            .any(|f| holds(&format!("{} {}", f.anchor, f.note), &[], words))
+    };
+    let years = reply.findings.iter().any(|f| {
+        holds(&f.note, &[], &["несколько лет", "few years"])
+            && !holds(
+                &f.note,
+                &[],
+                &["нарушения нет", "не противоречит", "no contradiction"],
+            )
+    });
+    let open = footsteps.is_some_and(|id| {
+        reply
+            .findings
+            .iter()
+            .any(|f| f.kind == FindingKind::OpenThread && f.anchor.trim().trim_matches('`') == id)
+    });
+    [about(&["пуст", "empty", "blank"]), years, open]
 }
 
 /// The ports a probe asks through: one per role, sampled as the app does.
@@ -180,22 +208,25 @@ async fn register_live_known_answers_on_g2() {
     let keeper = ports.of(Role::CanonKeeper);
     let checker = ports.of(Role::Continuity);
     // name → hits, runs
-    let mut tally: Vec<(&str, usize, usize)> = [
+    let mut tally: Vec<(String, usize, usize)> = [
         "old summary's chapel named",
         "new summary keeps out of the chapel",
         "ch1 thread: the other hand",
         "ch1 thread: the footsteps",
         "ch1 fact: a few years ago",
-        "ch2 finding: the line gone empty",
-        "ch2 finding: the years",
-        "ch2 open thread: the footsteps",
+        "ch2 checker: the line gone empty",
+        "ch2 checker: the years",
+        "ch2 checker: the footsteps left open",
+        "ch2 register check: the line gone empty",
+        "ch2 register check: the years",
+        "ch2 register check: the footsteps left open",
         "ch2 pays off the footsteps",
     ]
     .into_iter()
-    .map(|k| (k, 0, 0))
+    .map(|k| (k.to_owned(), 0, 0))
     .collect();
     let mut count = |name: &str, hit: bool| {
-        let row = tally.iter_mut().find(|(k, _, _)| *k == name).unwrap();
+        let row = tally.iter_mut().find(|(k, _, _)| k == name).unwrap();
         row.2 += 1;
         if hit {
             row.1 += 1;
@@ -310,51 +341,48 @@ async fn register_live_known_answers_on_g2() {
         );
         let mut so_far = SoFar::default();
         so_far.add(1, &first);
-        // Chapter 2, the arc's last, checked against it.
-        let prompt =
-            author_prompts::continuity(&canon, &opened2, &view2, &ch2.text, (&so_far, true));
-        let reply: Result<ContinuityReply, _> = decide(
-            &checker,
-            &ports.call(format!("probe/{i}/ch2-continuity")),
-            Role::Continuity,
-            &ContinuityReply::schema_for(&keys, !so_far.open.is_empty()),
-            &prompt,
-        )
-        .await;
-        match reply {
-            Ok(reply) => {
-                for f in &reply.findings {
-                    eprintln!(
-                        "#{i} ch2 {:?}, {:?}: «{}» {}",
-                        f.kind, f.severity, f.anchor, f.note
-                    );
+        // Chapter 2, the arc's last, checked against it: by the Continuity
+        // checker with the record, and by the keeper's own check on the text.
+        let checks = [
+            (
+                "checker",
+                &checker,
+                Role::Continuity,
+                author_prompts::continuity(&canon, &opened2, &view2, &ch2.text),
+            ),
+            (
+                "register check",
+                &keeper,
+                Role::CanonKeeper,
+                register_check_prompt(&so_far, 2, &ch2.text, true),
+            ),
+        ];
+        for (arm, port, role, prompt) in checks {
+            let reply: Result<ContinuityReply, _> = decide(
+                port,
+                &ports.call(format!("probe/{i}/ch2-{}", arm.replace(' ', "-"))),
+                role,
+                &ContinuityReply::schema_for(&keys, !so_far.open.is_empty()),
+                &prompt,
+            )
+            .await;
+            let reply = match reply {
+                Ok(reply) => reply,
+                Err(e) => {
+                    eprintln!("#{i} ch2 {arm} failed: {e}");
+                    continue;
                 }
-                let about = |words: &[&str]| {
-                    reply
-                        .findings
-                        .iter()
-                        .any(|f| holds(&format!("{} {}", f.anchor, f.note), &[], words))
-                };
-                count("ch2 finding: the line gone empty", about(&["пуст"]));
-                // A finding that names the years and then clears them is none.
-                count(
-                    "ch2 finding: the years",
-                    reply.findings.iter().any(|f| {
-                        holds(&f.note, &["несколько лет"], &[])
-                            && !holds(&f.note, &[], &["нарушения нет", "не противоречит"])
-                    }),
-                );
-                count(
-                    "ch2 open thread: the footsteps",
-                    footsteps.as_ref().is_some_and(|id| {
-                        reply.findings.iter().any(|f| {
-                            f.kind == FindingKind::OpenThread
-                                && f.anchor.trim().trim_matches('`') == id
-                        })
-                    }),
+            };
+            for f in &reply.findings {
+                eprintln!(
+                    "#{i} ch2 {arm} {:?}, {:?}: «{}» {}",
+                    f.kind, f.severity, f.anchor, f.note
                 );
             }
-            Err(e) => eprintln!("#{i} ch2 continuity failed: {e}"),
+            let [empty, years, open] = scored(&reply, footsteps.as_deref());
+            count(&format!("ch2 {arm}: the line gone empty"), empty);
+            count(&format!("ch2 {arm}: the years"), years);
+            count(&format!("ch2 {arm}: the footsteps left open"), open);
         }
         // Chapter 2's register against chapter 1's.
         let reply: Result<RegisterReply, _> = decide(

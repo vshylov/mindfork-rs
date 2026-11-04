@@ -17,8 +17,8 @@
 //!   prose is in the story's own language, `Style::language`.
 //! - **The story's register** (docs/fabula.md §4, PR 11): the threads the
 //!   published chapters left open and the facts of time, age and kinship
-//!   they state reach every prompt that reads the story so far, and the
-//!   Continuity checker's. The summary is the Canon keeper's
+//!   they state reach every prompt that reads the story so far. The register,
+//!   its check of a chapter and the summary are the Canon keeper's
 //!   ([`super::keeper`]), from the text alone.
 
 use super::keeper::SoFar;
@@ -711,15 +711,8 @@ pub fn reader(published: &[(u32, String)], text: &str) -> Prompt {
 
 /// The Continuity checker's prompt (spec §8): the canon, what the cast knew
 /// when the chapter opened, the kept scenes' record with every event's id,
-/// the published chapters' register (PR 11), and the chapter. In the arc's
-/// `last` chapter it reports each thread still open (docs/fabula.md §6, T16).
-pub fn continuity(
-    canon: &Canon,
-    opened: &WorldState,
-    kept: &[Kept],
-    text: &str,
-    (register, last): (&SoFar, bool),
-) -> Prompt {
+/// and the chapter.
+pub fn continuity(canon: &Canon, opened: &WorldState, kept: &[Kept], text: &str) -> Prompt {
     let cast: Vec<String> = canon
         .characters
         .iter()
@@ -753,32 +746,17 @@ pub fn continuity(
              skip and change point of view, but it may not contradict the record, and a \
              character in it knows only what they have perceived: a secret only once it was \
              revealed to them. Report each place where the chapter departs from the record or \
-             the canon, with the ids of the events that show it. Nor may it contradict the \
-             published chapters: the facts they state and the threads they left open are \
-             listed with the record. Hold the chapter to each of them: where it tells a listed \
-             fact otherwise, or tells otherwise what a thread showed (a mark, a written line, a \
-             sound), report it, naming the fact or the thread by its id. Check every statement \
-             of time, age, date, duration and kinship in the chapter against them, against the \
-             canon and against the chapter itself, by arithmetic: ages, years and \"how long \
-             ago\" must add up. Style and pace are not yours to judge.\n\nThe world's rules:\n{}\n\nThe places:\n{}\n\n\
-             The cast:\n{}",
+             the canon, with the ids of the events that show it. Style and pace are not yours \
+             to judge.\n\nThe world's rules:\n{}\n\nThe places:\n{}\n\nThe cast:\n{}",
             bullets(canon.world.rules.iter().map(String::as_str)),
             bullets(places.iter().map(String::as_str)),
             bullets(cast.iter().map(String::as_str)),
         ),
         user: format!(
-            "When the chapter opened:\n{}{}\n\nThe record of its scenes, in order:\n\n{}\n\n\
-             The chapter:\n\n{text}\n\nReport every departure.{}",
+            "When the chapter opened:\n{}\n\nThe record of its scenes, in order:\n\n{}\n\n\
+             The chapter:\n\n{text}\n\nReport every departure.",
             world_lines(canon, opened),
-            register.text(),
             kept_text(canon, kept, TO_CHECKER),
-            if last && !register.open.is_empty() {
-                " This is the story's last chapter: report each open thread it does not pay off \
-                 as an `open_thread` finding, the thread's id as its anchor; the Author decides \
-                 whether it stays open."
-            } else {
-                ""
-            },
         ),
     }
 }

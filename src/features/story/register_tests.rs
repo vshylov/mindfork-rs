@@ -89,7 +89,9 @@ async fn the_keeper_reads_the_text_alone_and_the_next_chapter_reads_its_register
         })
     );
     assert!(
-        !port.schema_at("ch1/v1/continuity").contains("open_thread"),
+        !port
+            .schema_at("ch1/v1/register-check")
+            .contains("open_thread"),
         "not the last chapter"
     );
 
@@ -113,11 +115,18 @@ async fn the_keeper_reads_the_text_alone_and_the_next_chapter_reads_its_register
         );
         assert!(prompt.system.contains("by arithmetic"), "{at}");
     }
-    let checker = port.prompt_at("ch2/v1/continuity");
+    assert!(
+        !port.prompt_at("ch2/v1/continuity").user.contains(THREAD),
+        "the record's checker reads the record"
+    );
+    let checker = port.prompt_at("ch2/v1/register-check");
     assert!(checker.user.contains(THREAD) && checker.user.contains(FACT));
     assert!(checker.system.contains("by arithmetic"));
     assert!(checker.user.contains("This is the story's last chapter"));
-    assert!(port.schema_at("ch2/v1/continuity").contains("open_thread"));
+    assert!(
+        port.schema_at("ch2/v1/register-check")
+            .contains("open_thread")
+    );
     let register = port.prompt_at("ch2/v2/register");
     assert!(register.user.contains(THREAD));
     assert!(
@@ -158,7 +167,7 @@ async fn a_thread_the_last_chapter_leaves_unpaid_is_the_authors_to_keep_with_its
         if address.ends_with("/register") {
             return Ok(Reply::Json(json!({"paid": [], "opened": [], "facts": []})));
         }
-        if address == "ch2/v1/continuity" {
+        if address == "ch2/v1/register-check" {
             return Ok(Reply::Json(json!({"findings": [
                 {
                     "anchor": " `ch1.thread1` ",
