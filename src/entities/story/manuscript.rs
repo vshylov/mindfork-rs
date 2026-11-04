@@ -251,6 +251,18 @@ pub enum NoteKind {
     /// chapter does not pay off; its anchor is the thread's id (docs/fabula.md
     /// §6, T16).
     OpenThread,
+    /// The staging pass (docs/fabula.md §4, PR 12): a character where the text
+    /// did not take them, or holding what they put down or never took up.
+    Staging,
+    /// The staging pass: a pronoun, a "who" or a tie of kin a reader cannot
+    /// place, or places on the wrong person.
+    Referent,
+    /// The staging pass: a line that states a plan, a decision or a boundary
+    /// aloud where a deed would show it.
+    Announced,
+    /// The staging pass: a reply that opens on thanks, apology or agreement
+    /// the moment does not call for.
+    Thanks,
 }
 
 stored_names!(NoteKind {
@@ -264,6 +276,10 @@ stored_names!(NoteKind {
     Timeline => "timeline",
     Token => "token",
     OpenThread => "open_thread",
+    Staging => "staging",
+    Referent => "referent",
+    Announced => "announced",
+    Thanks => "thanks",
 });
 
 impl NoteKind {

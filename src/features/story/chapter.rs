@@ -17,7 +17,9 @@
 //!    checker, and so does the Canon keeper's check of the chapter against
 //!    the published chapters' register (PR 11): their facts, their threads,
 //!    its times added up, and in the arc's last chapter each thread still
-//!    open. The Author decides each note, and revises while an accepted
+//!    open; so does the staging pass on the text alone (PR 12): who is where
+//!    and holds what, whose pronoun and whose kin, a line that announces a
+//!    plan or opens on thanks. The Author decides each note, and revises while an accepted
 //!    high-severity note stands, at most `max_revisions` times; the last
 //!    revision is not reviewed again (spec §7's loop).
 //! 6. **The register and the summary** of the final version, both the
@@ -56,7 +58,7 @@
 
 use std::collections::BTreeMap;
 
-use futures_util::future::join;
+use futures_util::future::{join, join3};
 use serde_json::{Value, json};
 
 use super::author::{
@@ -71,6 +73,7 @@ use super::port::{CallAddress, LlmPort, PortError, Prompt, Role, decide};
 use super::scene::SceneError;
 use super::schema::{CanonKeys, Schema, StorySchema};
 use super::simulation::{SimConfig, play_scene};
+use super::staging::{self, StagingReply};
 use super::steps::Steps;
 use crate::entities::story::{
     Assumption, BranchId, Canon, ChapterOutline, ChapterVersion, Decided, Decision, EventId,
@@ -1198,9 +1201,10 @@ impl Run<'_> {
             prompts::continuity(&self.canon, &opened, &Self::kept_view(kept), &version.text);
         // The Canon keeper's check against the published chapters' register
         // rides with the checker's (PR 11): one batch of notes, so a resume
-        // asks both again or neither. In the arc's last chapter it may name a
-        // thread left open. With no register yet — chapter 1 — there is
-        // nothing to hold the chapter to, and it is not asked.
+        // asks them all again or none. In the arc's last chapter it may name
+        // a thread left open. With no register yet — chapter 1 — there is
+        // nothing to hold the chapter to, and it is not asked. The staging
+        // pass (PR 12) rides there too, on every chapter.
         let hold = !ctx.register.is_empty();
         let held_at = format!("{}/register-check", version.id);
         let held_prompt = keeper::register_check_prompt(&ctx.register, n, &version.text, ctx.last);
@@ -1212,6 +1216,9 @@ impl Run<'_> {
         let reader_schema = ReaderReply::schema(&self.keys);
         let checker_schema = ContinuityReply::schema(&self.keys);
         let held_schema = ContinuityReply::schema_for(&self.keys, !open.is_empty());
+        let staged_at = format!("{}/staging", version.id);
+        let staged_prompt = staging::staging_prompt(&ctx.summaries, &version.text);
+        let staged_schema = StagingReply::schema(&self.keys);
         let reader = async {
             if need_reader {
                 Some(
@@ -1230,7 +1237,7 @@ impl Run<'_> {
         let checker = async {
             if need_checker {
                 Some(
-                    join(
+                    join3(
                         self.ask_json::<ContinuityReply>(
                             &checker_at,
                             Role::Continuity,
@@ -1252,6 +1259,12 @@ impl Run<'_> {
                                 None
                             }
                         },
+                        self.ask_json::<StagingReply>(
+                            &staged_at,
+                            Role::Continuity,
+                            &staged_schema,
+                            &staged_prompt,
+                        ),
                     )
                     .await,
                 )
@@ -1269,7 +1282,7 @@ impl Run<'_> {
                 .await?;
             self.steps.finish(&reader_at, StepStatus::Done).await?;
         }
-        if let Some((checked, held)) = checked {
+        if let Some((checked, held, staged)) = checked {
             let known: Vec<&EventId> = kept
                 .iter()
                 .flat_map(|k| k.trace.events.iter().map(|e| &e.id))
@@ -1279,6 +1292,7 @@ impl Run<'_> {
             if let Some(held) = held {
                 written.extend(checker_notes(held?, &[], &open));
             }
+            written.extend(staging::staging_notes(staged?));
             self.db
                 .review_writer(&version.id, Reviewer::Continuity)
                 .await?
@@ -1288,6 +1302,7 @@ impl Run<'_> {
             if hold {
                 self.steps.finish(&held_at, StepStatus::Done).await?;
             }
+            self.steps.finish(&staged_at, StepStatus::Done).await?;
         }
         Ok(self.db.notes(&version.id).await?)
     }
@@ -1591,3 +1606,7 @@ mod take_tests;
 #[cfg(test)]
 #[path = "register_tests.rs"]
 mod register_tests;
+
+#[cfg(test)]
+#[path = "craft_tests.rs"]
+mod craft_tests;

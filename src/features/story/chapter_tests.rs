@@ -19,7 +19,7 @@ use crate::entities::story::{
     BranchId, Decision, EventId, NewNote, NoteDecision, NoteKind, NoteSeverity, QuestionBody,
     Resolution, ReviewNote, Reviewer, RunId, VersionOrigin, WorldState,
 };
-use crate::entities::story::{ChapterId, CharacterKey, SceneId, fixture_canon};
+use crate::entities::story::{ChapterArc, ChapterId, CharacterKey, SceneId, fixture_canon};
 use crate::features::story::author::{ReaderReply, SceneDraft, TriageReply};
 use crate::features::story::engine::SharedLog;
 use crate::features::story::port::{CallAddress, LlmPort, PortError, Prompt, Role};
@@ -298,6 +298,7 @@ pub(super) fn story(address: &str, prompt: &Prompt) -> Result<Reply, PortError> 
             "best_moment": "The quay in the rain.",
         }),
         "register-check" => json!({"findings": []}),
+        "staging" => json!({"findings": []}),
         "continuity" => json!({"findings": [{
             "anchor": "Mara waits",
             "evidence": ["ch1/sc1/r0/k0/e3", "`ch1/sc2/r0/k0/e3`", "ch1/sc1/r0/k1/e3"],
@@ -473,6 +474,21 @@ pub(super) fn paused_at(outcome: &Outcome) -> &QuestionBody {
     }
 }
 
+/// A story whose arc has two chapters, its canon approved.
+pub(super) async fn two_chapters() -> Open {
+    let mut open = Open::open_only().await;
+    let mut canon = fixture_canon();
+    canon.arc.chapters.push(ChapterArc {
+        goal: "Ines decides whom to trust.".into(),
+    });
+    open.author.import_canon(&canon).await.unwrap();
+    let port = Script::new(Arc::new(story));
+    let outcome = open.advance(&port, &config()).await;
+    assert_eq!(paused_at(&outcome), &QuestionBody::Canon);
+    open.answer(Decision::Approve, "").await;
+    open
+}
+
 #[tokio::test]
 async fn a_story_asks_for_its_canon_first_and_a_pending_question_starts_no_run() {
     let mut open = open().await;
@@ -594,10 +610,12 @@ async fn a_chapter_runs_from_its_outline_to_its_checkpoint() {
             "ch1/v1/write",
             "ch1/v1/reader",
             "ch1/v1/continuity",
+            "ch1/v1/staging",
             "ch1/v1/triage",
             "ch1/v2/revise",
             "ch1/v2/reader",
             "ch1/v2/continuity",
+            "ch1/v2/staging",
             "ch1/v2/triage",
             "ch1/v2/register",
             "ch1/v2/summary",
@@ -1043,7 +1061,7 @@ async fn a_failed_author_call_stops_the_run_and_the_next_run_asks_it_again() {
     );
     assert_eq!(
         again.len(),
-        11,
+        13,
         "the write, the reviews and the rest: {again:?}"
     );
     assert!(calls > again.len());

@@ -281,3 +281,19 @@ fn the_cast_here_is_the_living_at_the_place() {
     world = world.admit(&canon, &killing).unwrap().state;
     assert!(present_here(&canon, &world, &here).is_empty());
 }
+
+#[test]
+fn a_character_is_told_that_a_line_is_a_deed() {
+    let canon = fixture_canon();
+    let system = character_system(&canon, &"mara".into());
+    let rules = system.split("The world's rules:").next().unwrap();
+    assert!(rules.contains("What you say is part of what you do."));
+    assert!(rules.contains("Act on a plan or a boundary rather than announce it"));
+    assert!(rules.contains("open no reply on thanks, apology or agreement"));
+    assert!(rules.contains("not in a line that names it"));
+    let master = master_system(&canon);
+    assert!(
+        !master.contains("What you say is part of what you do."),
+        "the World Master rules, it does not speak"
+    );
+}

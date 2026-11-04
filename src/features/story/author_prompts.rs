@@ -20,6 +20,13 @@
 //!   they state reach every prompt that reads the story so far. The register,
 //!   its check of a chapter and the summary are the Canon keeper's
 //!   ([`super::keeper`]), from the text alone.
+//! - **The craft** (docs/fabula.md §4, PR 12; §6, T17): a scene's intent
+//!   names whose goals collide in it and what it may cost; the rules pace
+//!   the reveals and let no conflict end without a price; the prose's rules
+//!   keep a line from announcing a plan, opening on thanks unbidden, or
+//!   naming a want a deed would show. The characters' rules say the same
+//!   ([`super::prompts`]), and the staging pass checks the lines
+//!   ([`super::staging`]).
 
 use super::keeper::SoFar;
 use super::leaks::without_tokens;
@@ -145,6 +152,12 @@ const AUTHORING: &str = "How to author:\n\
 - You control circumstances; the characters control their choices. A scene's setup says who \
 is where, what has just happened and what pressure the world applies, never what a character \
 will do or feel.\n\
+- A scene is a collision. In your intent for it, name whose goals collide in it and what it may \
+cost someone. No conflict ends without a price: a confession, a pardon or a win costs someone \
+something they hold (a standing, a hope, a bond, a secret's safety); set the pressure so that it \
+does, and keep the version where it is paid.\n\
+- Pace the reveals: a secret is spent where it costs its keeper most, one at a time. A chapter \
+that opens every secret in one evening leaves the story nothing to tell.\n\
 - Every scene is played several times from the same moment, and the versions differ. You read \
 them all and keep the one that serves the chapter best.\n\
 - What happened is what the record says. In the prose you may reorder, compress, skip and \
@@ -565,7 +578,11 @@ fn writing_rules(canon: &Canon, words: (u32, u32)) -> String {
         "Write in {}, in {}, in the {} tense, between {} and {} words. Tell what the record \
          holds: you may reorder, compress, skip and change point of view, but never contradict \
          it, and never let a character know what they have not perceived. Keep each \
-         character's voice. The record's keys are not the story's words: never write a key in \
+         character's voice. In the dialogue, the characters act on a plan or a boundary rather \
+         than announce it, open no reply on thanks, apology or agreement the moment does not \
+         call for, and show a want in a deed rather than in a line that names it: a line of the \
+         record that does otherwise may be cut or shown in what they do, as long as what \
+         happened stays. The record's keys are not the story's words: never write a key in \
          backticks. Begin with the chapter's title as a level-two markdown heading (`## `). \
          Reply with the chapter's text and nothing else.",
         story_language(canon),

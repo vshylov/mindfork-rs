@@ -457,7 +457,7 @@ Characters run with thinking off (section 8). With it on, a proposal's output gr
 
 Two pre-registered decisions settle M3: whether Fabula continues (F against B0), and whether the simulation earns its place (F against A1).
 
-**Systems compared** (the Author's model is the same everywhere; F is the MVP, without voice review or the Canon keeper's deltas — since PR 11 every system's Author loop has the keeper's register and summary, [docs/fabula.md](../fabula.md) §4)
+**Systems compared** (the Author's model is the same everywhere; F is the MVP, without voice review or the Canon keeper's deltas — since PR 11 every system's Author loop has the keeper's register and summary, and since PR 12 the craft's rules and the staging pass, [docs/fabula.md](../fabula.md) §4)
 
 | Id | System | What it isolates |
 | --- | --- | --- |

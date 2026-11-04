@@ -1,5 +1,3 @@
-use serde::Serialize;
-use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use super::{
@@ -8,10 +6,8 @@ use super::{
 };
 use crate::entities::story::NoteKind;
 use crate::entities::story::fixture_canon;
-use crate::features::story::dialect;
-use crate::features::story::schema::describe;
-use crate::features::story::schema::tests::instances;
-use crate::features::story::schema::{CanonKeys, Schema, StorySchema};
+use crate::features::story::schema::tests::holds;
+use crate::features::story::schema::{CanonKeys, StorySchema};
 
 fn keys() -> CanonKeys {
     CanonKeys::of(&fixture_canon())
@@ -19,22 +15,6 @@ fn keys() -> CanonKeys {
 
 fn labels(names: &[&str]) -> Vec<String> {
     names.iter().map(|n| (*n).to_owned()).collect()
-}
-
-/// Every instance the schema allows reads as `T` and writes back the same,
-/// and the schema keeps the dialect.
-fn holds<T: DeserializeOwned + Serialize>(schema: &Schema) -> usize {
-    assert_eq!(dialect::check(&schema.to_value()), Vec::new());
-    let all = instances(schema);
-    for instance in &all {
-        let checked = schema
-            .validate(instance)
-            .unwrap_or_else(|v| panic!("{instance}: {}", describe(&v)));
-        let parsed: T = serde_json::from_value(checked.clone())
-            .unwrap_or_else(|e| panic!("{checked} does not read as its type: {e}"));
-        assert_eq!(serde_json::to_value(parsed).unwrap(), checked);
-    }
-    all.len()
 }
 
 #[test]
@@ -211,4 +191,17 @@ fn a_draft_and_a_rerun_carry_the_same_scene() {
     };
     assert_eq!(kept.rerun(), None);
     assert_eq!(FindingKind::Timeline.note_kind(), NoteKind::Timeline);
+}
+
+#[test]
+fn a_scenes_intent_names_the_collision_and_its_price() {
+    let keys = keys();
+    for may_end in [false, true] {
+        let plan = PlanReply::schema_for(&keys, may_end).to_json();
+        assert!(
+            plan.contains("whose goals collide in it, and what it may cost someone"),
+            "{plan}"
+        );
+        assert!(plan.contains("no character and no World Master ever sees it"));
+    }
 }

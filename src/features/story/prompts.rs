@@ -16,6 +16,10 @@
 //!   folded state, the scene's events with their witnesses, the setup without
 //!   the intent, and each proposal's deed and target; never a character's
 //!   private thought, which the engine copies into the event itself.
+//! - **A line is a deed** (docs/fabula.md §4, PR 12; §6, T17): a character
+//!   acts on a plan or a boundary rather than announcing it, opens no reply
+//!   on thanks or agreement the moment does not call for, and lets a want
+//!   show in what it does.
 
 use super::port::Prompt;
 use super::scene::{bullets, listed, name_of, place_of};
@@ -53,7 +57,10 @@ perceived it.\n\
 by everyone who perceives it.\n\
 - One action at a time, in your own voice. A whisper reaches only the characters you name, \
 who must be with you; a hidden action is perceived by no one else.\n\
-- To wait is to let the moment pass.";
+- To wait is to let the moment pass.\n\
+- What you say is part of what you do. Act on a plan or a boundary rather than announce it; \
+open no reply on thanks, apology or agreement the moment does not call for; let what you want \
+show in what you do, not in a line that names it.";
 
 /// The stable part of a character's prompt: how to play, the world's rules,
 /// the map, their own sheet, and the others as everyone knows them.

@@ -1,39 +1,14 @@
-use serde::Serialize;
-use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use super::{
-    CanonKeys, InitiativeRuling, IntentVerdict, Property, ReactionsRuling, ReflectionReply, Schema,
-    StorySchema,
+    CanonKeys, InitiativeRuling, IntentVerdict, ReactionsRuling, ReflectionReply, StorySchema,
 };
 use crate::entities::story::{Canon, Effect, Severity, fixture_canon};
 use crate::features::story::dialect;
-use crate::features::story::schema::describe;
-use crate::features::story::schema::tests::instances;
+use crate::features::story::schema::tests::holds;
 
 fn keys() -> CanonKeys {
     CanonKeys::of(&fixture_canon())
-}
-
-/// Every instance the schema allows reads as `T` and writes back the same,
-/// and the schema keeps the dialect.
-fn holds<T: DeserializeOwned + Serialize>(schema: &Schema) -> usize {
-    // A union is never a root (spec §8): one is checked as a property.
-    let root = match schema {
-        Schema::Object(_) => schema.clone(),
-        _ => Schema::Object(vec![Property::new("value", schema.clone())]),
-    };
-    assert_eq!(dialect::check(&root.to_value()), Vec::new());
-    let all = instances(schema);
-    for instance in &all {
-        let checked = schema
-            .validate(instance)
-            .unwrap_or_else(|v| panic!("{instance}: {}", describe(&v)));
-        let parsed: T = serde_json::from_value(checked.clone())
-            .unwrap_or_else(|e| panic!("{checked} does not read as its type: {e}"));
-        assert_eq!(serde_json::to_value(parsed).unwrap(), checked);
-    }
-    all.len()
 }
 
 #[test]

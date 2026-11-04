@@ -384,3 +384,39 @@ fn a_triage_and_a_revision_show_the_notes_by_label() {
     );
     assert!(human.user.contains("More rain."));
 }
+
+#[test]
+fn the_craft_reaches_the_plans_the_draft_and_the_revisions() {
+    let canon = fixture_canon();
+    let system = author_system(&canon, "Russian");
+    assert!(system.contains("A scene is a collision."));
+    assert!(system.contains("name whose goals collide in it and what it may cost someone"));
+    assert!(system.contains("No conflict ends without a price"));
+    assert!(system.contains("keep the version where it is paid"));
+    assert!(system.contains("Pace the reveals"));
+    assert!(system.contains("every secret in one evening"));
+    let goals = vec!["g".to_owned()];
+    let summaries = Vec::new();
+    let view = ctx(&canon, &goals, &summaries);
+    let t = trace();
+    let setup = setup();
+    let kept = [Kept {
+        scene: 1,
+        setup: &setup,
+        intent: "i",
+        trace: &t,
+    }];
+    let lines = "act on a plan or a boundary rather than announce it, open no reply on thanks, \
+                 apology or agreement the moment does not call for, and show a want in a deed";
+    let draft = write(&view, &kept, (1, 2));
+    let revision = revise(&view, &kept, "## One\n\nOld.", &[], (1, 2));
+    for prompt in [&draft, &revision] {
+        assert!(prompt.user.contains(lines));
+        assert!(prompt.user.contains("as long as what happened stays"));
+        assert!(prompt.system.contains("A scene is a collision."));
+    }
+    let world = WorldState::initial(&canon);
+    let planned = plan(&view, &[], &world, (1, 3), None);
+    assert!(planned.system.contains("No conflict ends without a price"));
+    assert!(!planned.user.contains(lines), "the plan sets no lines");
+}

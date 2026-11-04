@@ -135,8 +135,9 @@ impl SceneDraft {
         vec![
             Property::described(
                 "intent",
-                "What you, the Author, hope this scene does for the chapter, in one or two \
-                 sentences. Private: no character and no World Master ever sees it.",
+                "What you, the Author, hope this scene does for the chapter, in one to three \
+                 sentences: whose goals collide in it, and what it may cost someone. Private: \
+                 no character and no World Master ever sees it.",
                 String::schema(keys),
             ),
             Property::described(

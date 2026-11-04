@@ -10,10 +10,10 @@ use std::sync::Arc;
 use serde_json::json;
 
 use super::checker_notes;
-use super::tests::{Open, Reply, Script, config, paused_at, story};
+use super::tests::{Open, Reply, Script, config, paused_at, story, two_chapters};
 use crate::entities::story::NoteSeverity;
 use crate::entities::story::{
-    ChapterArc, ChapterId, Decision, Fact, NoteKind, QuestionBody, Register, Thread, fixture_canon,
+    ChapterId, Decision, Fact, NoteKind, QuestionBody, Register, Thread, fixture_canon,
 };
 use crate::features::story::author::{ContinuityReply, Finding, FindingKind};
 use crate::features::story::keeper::{LeftOpen, left_open};
@@ -24,21 +24,6 @@ use crate::features::story::schema::CanonKeys;
 const THREAD: &str = "- `ch1.thread1` (chapter 1): What is Mara waiting for? (\"Mara waits\")";
 const FACT: &str = "- `ch1.fact1` (chapter 1, stated by narration): The storm has blown for three \
                     days. (\"the storm\")";
-
-/// A story whose arc has two chapters, its canon approved.
-async fn two_chapters() -> Open {
-    let mut open = Open::open_only().await;
-    let mut canon = fixture_canon();
-    canon.arc.chapters.push(ChapterArc {
-        goal: "Ines decides whom to trust.".into(),
-    });
-    open.author.import_canon(&canon).await.unwrap();
-    let port = Script::new(Arc::new(story));
-    let outcome = open.advance(&port, &config()).await;
-    assert_eq!(paused_at(&outcome), &QuestionBody::Canon);
-    open.answer(Decision::Approve, "").await;
-    open
-}
 
 fn checkpoint(chapter: u32, version: u32) -> QuestionBody {
     QuestionBody::Chapter { chapter, version }

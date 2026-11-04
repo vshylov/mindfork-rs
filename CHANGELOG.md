@@ -48,6 +48,14 @@ split by subsystem.
   checkpoint names the ones left, with the Author's reason where it gave one. A chapter's
   summary is now written from its text alone and checked against it, so a secret the text
   does not tell cannot slip into it.
+- **Scenes that cost something, lines that do something.** A story's scenes are planned as
+  collisions — whose goals clash in each and what it may cost someone — its secrets spent
+  one at a time where they cost most, and no conflict settled for free. Its characters act
+  on what they decide rather than announce it, and do not open reply after reply on thanks
+  or agreement. Each chapter is also read for its staging — who is where and holds what,
+  whose "he" and whose son, a line that only states a plan, a reply that opens on thanks —
+  and what that reading finds goes to the chapter's review with the other notes. How much
+  of it holds depends on the model.
 - **A story chapter written in the background.** Under Settings → Tools → *Stories
   (experimental)* — off by default — the story engine's runs go out as background tasks
   the way a background sub-agent's do: each takes the story from where it stands to its
