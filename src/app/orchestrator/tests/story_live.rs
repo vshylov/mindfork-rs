@@ -11,7 +11,7 @@
 //! - `story_chat_live_story` — a story end to end: the sketches, the canon,
 //!   its approval, each chapter landed and accepted, until the story is
 //!   finished or `MINDFORK_FABULA_CHAPTERS` chapters have landed. The chat's
-//!   transcript and the story's markdown are written to
+//!   transcript, the story's markdown and its registers (PR 11) are written to
 //!   `MINDFORK_FABULA_OUT` (`target/fabula/story-live-<time>`), whose `data/`, when
 //!   a run left one there, is taken up where it stands; `MINDFORK_FABULA_BUDGET` is
 //!   the chapter's budget in tokens (the default's). Gate G2 is
@@ -576,6 +576,52 @@ async fn takes_report(root: &Path, chat: Uuid, id: &str) -> String {
     )
 }
 
+/// Every version's register and summary, chapter by chapter (PR 11): the
+/// threads opened and paid off, the facts stated.
+async fn registers_report(root: &Path, chat: Uuid, id: &str) -> String {
+    let storage = Storage::open(Paths::with_root(root)).unwrap();
+    let json = storage.json();
+    let db = StoryDb::open(
+        &json.story_db(&chat.to_string(), id),
+        &json.story_log(&chat.to_string(), id),
+    )
+    .await
+    .unwrap();
+    let mut out = String::new();
+    for n in 1.. {
+        let versions = db.chapter_versions(n).await.unwrap();
+        if versions.is_empty() {
+            break;
+        }
+        for v in versions {
+            let Some(register) = db.register(&v.id).await.unwrap() else {
+                continue;
+            };
+            out.push_str(&format!("\n## {}\n", v.id));
+            for t in &register.opened {
+                out.push_str(&format!(
+                    "- opens {}: {} («{}»)\n",
+                    t.id, t.question, t.quote
+                ));
+            }
+            for p in &register.paid {
+                out.push_str(&format!("- pays {}: {}\n", p.thread, p.how));
+            }
+            for f in &register.facts {
+                out.push_str(&format!(
+                    "- fact {} ({}): {} («{}»)\n",
+                    f.id, f.stated_by, f.fact, f.quote
+                ));
+            }
+            if let Some(summary) = db.summary(&v.id).await.unwrap() {
+                out.push_str(&format!("- summary: {summary}\n"));
+            }
+        }
+    }
+    db.close().await.unwrap();
+    out
+}
+
 /// A story end to end, the person scripted by where the story stands.
 #[tokio::test]
 #[ignore = "needs a live route"]
@@ -628,8 +674,22 @@ async fn story_chat_live_story() {
                     break;
                 }
             }
-            landed += 1;
-            eprintln!("--- landed {landed} ({:?} in)", started.elapsed());
+            // Only a chapter's checkpoint counts: a run the time limit
+            // stopped lands too, and counted, it ended a two-chapter
+            // script at chapter 1 (PR 11's live run).
+            let at_chapter = matches!(
+                story_of(&app.root, app.chat)
+                    .as_ref()
+                    .and_then(|(_, s)| s.pending.as_ref())
+                    .map(|q| &q.body),
+                Some(QuestionBody::Chapter { .. })
+            );
+            if at_chapter {
+                landed += 1;
+                eprintln!("--- landed {landed} ({:?} in)", started.elapsed());
+            } else {
+                eprintln!("--- a run stopped ({:?} in)", started.elapsed());
+            }
         }
         let state = story_of(&app.root, app.chat);
         let now = progress(state.as_ref());
@@ -652,6 +712,9 @@ async fn story_chat_live_story() {
             let text = story_markdown(&root, chat_id, &id).await;
             std::fs::write(base.join("story.md"), &text).unwrap();
             eprintln!("\n=== {}", takes_report(&root, chat_id, &id).await);
+            let registers = registers_report(&root, chat_id, &id).await;
+            std::fs::write(base.join("registers.md"), &registers).unwrap();
+            eprintln!("\n=== the registers:{registers}");
             format!(
                 "story «{id}»: {} of {} chapters accepted, finished: {}; {} words",
                 status.chapters.iter().filter(|c| c.accepted).count(),

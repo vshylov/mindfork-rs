@@ -291,6 +291,18 @@ pub fn landing_text(loc: &Locale, landed: &Landed, attached: Option<&str>) -> St
             }),
         ));
     }
+    if !landed.left_open.is_empty() {
+        parts.push(listed(
+            loc.t("tool.story.landing.left_open"),
+            landed.left_open.iter().map(|t| match t.reason.as_deref() {
+                Some(reason) => loc.tf(
+                    "tool.story.landing.left_open_reason",
+                    &[("question", t.question.trim()), ("reason", reason)],
+                ),
+                None => t.question.trim().to_owned(),
+            }),
+        ));
+    }
     parts.push(ending_text(loc, &landed.ending));
     if landed.spent.calls > 0 {
         parts.push(loc.tf(

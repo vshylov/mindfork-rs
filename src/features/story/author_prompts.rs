@@ -13,9 +13,15 @@
 //!   event's id, the canon, and what each character knew when the chapter
 //!   opened, so a finding can cite its evidence.
 //! - **The human's language** is the language of what the human reads: a
-//!   pick's note, an assumption, a chapter's summary (spec §8, §15). The prose
-//!   is in the story's own language, `Style::language`.
+//!   pick's note, an assumption, a critique of a note (spec §8, §15). The
+//!   prose is in the story's own language, `Style::language`.
+//! - **The story's register** (docs/fabula.md §4, PR 11): the threads the
+//!   published chapters left open and the facts of time, age and kinship
+//!   they state reach every prompt that reads the story so far. The register,
+//!   its check of a chapter and the summary are the Canon keeper's
+//!   ([`super::keeper`]), from the text alone.
 
+use super::keeper::SoFar;
 use super::leaks::without_tokens;
 use super::port::Prompt;
 use super::prompts::{effect_text, items_of, plural, severity, visibility_text};
@@ -75,6 +81,10 @@ pub struct ChapterContext<'a> {
     pub human_notes: Option<&'a str>,
     /// The chapter's goals; empty before its outline.
     pub goals: &'a [String],
+    /// The published chapters' register: the threads open, the facts stated.
+    pub register: &'a SoFar,
+    /// Whether this is the arc's last chapter.
+    pub last: bool,
 }
 
 impl ChapterContext<'_> {
@@ -90,8 +100,8 @@ impl ChapterContext<'_> {
             .map_or("none set", |c| c.goal.as_str())
     }
 
-    /// The story so far, the previous chapter, and the human's notes, as
-    /// far as there are any.
+    /// The story so far, its register, the previous chapter, and the
+    /// human's notes, as far as there are any.
     fn so_far(&self) -> String {
         let mut text = String::new();
         if !self.summaries.is_empty() {
@@ -104,6 +114,13 @@ impl ChapterContext<'_> {
                 "\n\nThe story so far, a summary per chapter:\n{}",
                 bullets(lines.iter().map(String::as_str))
             ));
+        }
+        text.push_str(&self.register.text());
+        if self.last && !self.register.open.is_empty() {
+            text.push_str(
+                "\nThis is the arc's last chapter: pay off each open thread, or leave one open \
+                 only on purpose.",
+            );
         }
         if let Some(previous) = self.previous {
             text.push_str(&format!(
@@ -133,6 +150,10 @@ them all and keep the one that serves the chapter best.\n\
 - What happened is what the record says. In the prose you may reorder, compress, skip and \
 change point of view, but never contradict the record, and a character knows only what they \
 have perceived.\n\
+- A thread the story opens (a clue, a sound with no source, an act left unexplained) is a \
+promise to the reader: pay it off in time, or let it go on purpose.\n\
+- The story's facts of time, age and kinship add up: an age, a year, a death and a \
+\"how long ago\" agree with each other, by arithmetic.\n\
 - Refer to characters and places by their keys in setups.";
 
 /// The stable part of every Author prompt: how to author, the world, the
@@ -641,19 +662,6 @@ pub fn revise(
     }
 }
 
-/// The final version's summary, for the human and for the chapters after.
-pub fn summary(ctx: &ChapterContext, text: &str) -> Prompt {
-    Prompt {
-        system: author_system(ctx.canon, ctx.human_language),
-        user: format!(
-            "Chapter {} as it stands:\n\n{text}\n\n\
-             Summarize it in {} for the story's human author, in three to six sentences: what \
-             happens, and who learns what. Reply with the summary and nothing else.",
-            ctx.number, ctx.human_language,
-        ),
-    }
-}
-
 /// The Author's decisions on a version's notes, each shown under its label
 /// (`n1`).
 pub fn triage(ctx: &ChapterContext, text: &str, shown: &[(String, &ReviewNote)]) -> Prompt {
@@ -664,9 +672,12 @@ pub fn triage(ctx: &ChapterContext, text: &str, shown: &[(String, &ReviewNote)])
             "Chapter {} as it stands:\n\n{text}\n\nThe reviewers' notes on it:\n{}\n\n\
              Decide each note: accepted when your revision will act on it, rejected when it is \
              wrong or not worth acting on, deferred when it belongs to a later chapter. A note \
-             the record shows to be wrong is rejected.",
+             the record shows to be wrong is rejected, and a thread you leave open on purpose \
+             is rejected with why. Write each critique in {}: the story's human author may \
+             read it.",
             ctx.number,
             bullets(notes.iter().map(String::as_str)),
+            ctx.human_language,
         ),
     }
 }

@@ -29,6 +29,7 @@ use uuid::Uuid;
 use super::board::StoryBoard;
 use super::chapter::{self, Budget, ChapterConfig, Engine, Outcome, Stop};
 use super::engine::{EngineAdapter, SharedLog};
+use super::keeper::{LeftOpen, left_open};
 use super::port::{CallAddress, LlmPort, PortError, Prompt, Role};
 use super::schema::Schema;
 use crate::entities::sampling::{ReasoningEffort, SamplingConfig};
@@ -112,6 +113,9 @@ pub struct Landed {
     /// And that chapter's assumptions: what a role chose where it could have
     /// asked (spec §14, *Pauses*). Neither rides on a run that stopped short.
     pub assumptions: Vec<Assumption>,
+    /// At the arc's last chapter, the threads the story leaves open, with the
+    /// Author's reasons (docs/fabula.md §6, T16).
+    pub left_open: Vec<LeftOpen>,
     /// What this run's calls cost.
     pub spent: Spend,
 }
@@ -123,6 +127,7 @@ impl Landed {
             chapter: None,
             picks: Vec::new(),
             assumptions: Vec::new(),
+            left_open: Vec::new(),
             spent: Spend::default(),
         }
     }
@@ -153,7 +158,9 @@ pub fn role_sampling() -> Vec<(Role, SamplingConfig)> {
         max_tokens: Some(max_tokens),
         ..SamplingConfig::default()
     };
-    let reviewer = thinking(0.4, ReasoningEffort::Low, 16_384);
+    // The reviewers' cap was 16,384 until PR 10 found the Continuity
+    // checker's reply cut there four times on Qwen 3.8 27B (PR 11).
+    let reviewer = thinking(0.4, ReasoningEffort::Low, 32_000);
     vec![
         (
             Role::WorldMaster,
@@ -427,6 +434,7 @@ async fn landing(db: &StoryDb, ending: Ending) -> Result<Landed, StoryDbError> {
         chapter: None,
         picks: Vec::new(),
         assumptions: Vec::new(),
+        left_open: Vec::new(),
         spent: Spend::default(),
         ending,
     };
@@ -452,6 +460,10 @@ async fn landing(db: &StoryDb, ending: Ending) -> Result<Landed, StoryDbError> {
             .into_iter()
             .find(|v| v.version == *version)
     {
+        let chapters = db.canon().await?.map_or(0, |c| c.arc.chapters.len());
+        if n as usize == chapters {
+            landed.left_open = left_open(db, n, &asked).await?;
+        }
         landed.chapter = Some(LandedChapter {
             number: n,
             version: *version,

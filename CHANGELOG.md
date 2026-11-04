@@ -37,6 +37,17 @@ split by subsystem.
   text. A run that stops short — stopped by you, at its time limit, at a failed call — is
   resumed only when you ask: the assistant, woken by its notification, says where it
   stopped and asks you, and never goes on by itself.
+- **A story keeps its own books.** After each chapter the story notes, from the chapter's
+  text alone, the questions it leaves its reader with — a clue, footsteps nobody explains
+  — the earlier ones it answers, and what it says of ages, dates, deaths and who is whose
+  kin. The next chapters are planned and written with that list before them, and checked
+  against it: a chapter that says a written line was blank when an earlier one showed it
+  in another hand, or puts "a few years ago" against twenty-eight, can be caught in the
+  chapter's review (how often depends on the model). In the last chapter the Author is
+  asked to answer every question still open or leave it open on purpose, and the last
+  checkpoint names the ones left, with the Author's reason where it gave one. A chapter's
+  summary is now written from its text alone and checked against it, so a secret the text
+  does not tell cannot slip into it.
 - **A story chapter written in the background.** Under Settings → Tools → *Stories
   (experimental)* — off by default — the story engine's runs go out as background tasks
   the way a background sub-agent's do: each takes the story from where it stands to its

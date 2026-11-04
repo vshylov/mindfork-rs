@@ -12,6 +12,7 @@ use crate::entities::story::{
     Visibility, fixture_canon,
 };
 use crate::entities::story::{Decided, NoteDecision};
+use crate::features::story::keeper::SoFar;
 use crate::features::story::port::Prompt;
 use crate::shared::storage::story::Reflection;
 
@@ -88,8 +89,16 @@ fn ctx<'a>(
         previous: None,
         human_notes: Some("More rain."),
         goals,
+        register: &NOTHING_NOTED,
+        last: false,
     }
 }
+
+/// A register with nothing in it, as before the first chapter.
+static NOTHING_NOTED: SoFar = SoFar {
+    open: Vec::new(),
+    facts: Vec::new(),
+};
 
 /// No planted token reaches the Author or a reviewer.
 fn tokenless(prompt: &Prompt) {

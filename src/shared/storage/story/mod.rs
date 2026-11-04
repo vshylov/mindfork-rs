@@ -36,7 +36,7 @@ use tokio::sync::oneshot;
 use crate::entities::story::{
     BranchId, Canon, CanonProblem, ChapterId, ChapterOutline, ChapterVersion, CharacterKey,
     Decided, Event, EventId, Proposal, ProposalId, ProposalVerdict, Question, QuestionId, Refusal,
-    Resolution, ReviewNote, Reviewer, RunId, SceneId, SceneSetup, StoredAssumption, Take,
+    Register, Resolution, ReviewNote, Reviewer, RunId, SceneId, SceneSetup, StoredAssumption, Take,
     WorldState,
 };
 use actor::{Actor, Job};
@@ -769,6 +769,12 @@ impl StoryDb {
     pub async fn summary(&self, chapter: &ChapterId) -> Result<Option<String>, StoryDbError> {
         let chapter = chapter.clone();
         self.run(move |a| a.summary(&chapter)).await
+    }
+
+    /// A chapter version's register (docs/fabula.md §4, PR 11).
+    pub async fn register(&self, chapter: &ChapterId) -> Result<Option<Register>, StoryDbError> {
+        let chapter = chapter.clone();
+        self.run(move |a| a.register(&chapter)).await
     }
 
     /// Whether a chapter version is accepted (P2).

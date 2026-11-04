@@ -7,6 +7,10 @@
 //!
 //! Every row is written once and never changed: a revision is a new version
 //! of its chapter, an answer a row beside its question.
+//!
+//! A version's **register** (docs/fabula.md §4, PR 11) is what the Canon
+//! keeper read in its text alone: the threads it opens, the earlier ones it
+//! pays off, and the facts of time, age and kinship it states.
 
 use serde::{Deserialize, Serialize};
 
@@ -108,6 +112,68 @@ pub struct ChapterOutline {
     pub goals: Vec<String>,
 }
 
+/// A thread a chapter opens: a clue, a sound with no source, a promise, an
+/// act left unexplained — what the text leaves its reader to wonder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Thread {
+    /// Its id, `ch1.thread2`: the chapter that opened it and its ordinal.
+    pub id: String,
+    /// What the reader is left to wonder, in a sentence.
+    pub question: String,
+    /// A short quote of where the text plants it.
+    pub quote: String,
+}
+
+/// An earlier thread a chapter pays off.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Payoff {
+    /// The thread's id.
+    pub thread: String,
+    /// How the chapter pays it off, in a sentence.
+    pub how: String,
+}
+
+/// A fact of time, age or kinship a chapter's text states.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Fact {
+    /// Its id, `ch1.fact3`.
+    pub id: String,
+    /// The fact, plainly, with its numbers.
+    pub fact: String,
+    /// Who states it: the narration, or the character who says it, who may
+    /// be wrong or lying.
+    pub stated_by: String,
+    /// A short quote of where the text states it.
+    pub quote: String,
+}
+
+/// A chapter version's register, written once at its checkpoint.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Register {
+    /// The threads it opens, in the text's order.
+    pub opened: Vec<Thread>,
+    /// The earlier threads it pays off.
+    pub paid: Vec<Payoff>,
+    /// The facts it states.
+    pub facts: Vec<Fact>,
+}
+
+impl Register {
+    /// The id of chapter `chapter`'s `n`-th thread, from 1.
+    pub fn thread_id(chapter: u32, n: usize) -> String {
+        format!("ch{chapter}.thread{n}")
+    }
+
+    /// The id of chapter `chapter`'s `n`-th fact, from 1.
+    pub fn fact_id(chapter: u32, n: usize) -> String {
+        format!("ch{chapter}.fact{n}")
+    }
+}
+
 /// Where a chapter's version came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -181,6 +247,10 @@ pub enum NoteKind {
     /// A planted secret's marker copied into the prose: the engine's own
     /// deterministic check, not a model's.
     Token,
+    /// In the arc's last chapter, a thread the story left open that the
+    /// chapter does not pay off; its anchor is the thread's id (docs/fabula.md
+    /// §6, T16).
+    OpenThread,
 }
 
 stored_names!(NoteKind {
@@ -193,6 +263,7 @@ stored_names!(NoteKind {
     CastError => "cast_error",
     Timeline => "timeline",
     Token => "token",
+    OpenThread => "open_thread",
 });
 
 impl NoteKind {

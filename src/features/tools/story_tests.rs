@@ -16,6 +16,7 @@ use crate::entities::story::{
 };
 use crate::features::story::board::RunView;
 use crate::features::story::chapter::Stop;
+use crate::features::story::keeper::LeftOpen;
 use crate::features::story::run::{Ending, Landed, LandedChapter};
 use crate::features::tools::Tool;
 use crate::features::tools::testkit::ctx_with_storage_lang;
@@ -178,6 +179,7 @@ fn landed(ending: Ending) -> Landed {
         chapter: None,
         picks: Vec::new(),
         assumptions: Vec::new(),
+        left_open: Vec::new(),
         spent: Spend::default(),
     }
 }
@@ -200,6 +202,16 @@ fn a_checkpoint_lands_with_everything_the_user_decides_on() {
             doubt: "Whether Silas lies.".to_owned(),
             choice: "He lies.".to_owned(),
         }],
+        left_open: vec![
+            LeftOpen {
+                question: " Whose steps were on the path? ".to_owned(),
+                reason: Some("Left for the reader.".to_owned()),
+            },
+            LeftOpen {
+                question: "Who wrote the log's last line?".to_owned(),
+                reason: None,
+            },
+        ],
         spent: Spend {
             calls: 12,
             input_tokens: 9000,
@@ -219,6 +231,8 @@ fn a_checkpoint_lands_with_everything_the_user_decides_on() {
         "The chapter's scenes by number, and why each was kept:\n- Scene 2: The quarrel shows \
          the debt.",
         "could have been asked:\n- Whether Silas lies. — chosen: He lies.",
+        "Threads the story leaves open at its end:\n- Whose steps were on the path? — the \
+         Author: Left for the reader.\n- Who wrote the log's last line?\n",
         "chapter 1 (version 2): accept it",
         "Ask them in your own words",
         "This run made 12 model call(s), 10000 tokens.",

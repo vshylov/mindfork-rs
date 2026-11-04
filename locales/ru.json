@@ -834,6 +834,8 @@
   "tool.story.landing.pick": "Сцена {n}: {note}",
   "tool.story.landing.assumptions": "Решения, принятые там, где можно было спросить пользователя:",
   "tool.story.landing.assumption": "{doubt} — выбрано: {choice}",
+  "tool.story.landing.left_open": "Нити, которые история оставляет открытыми к концу:",
+  "tool.story.landing.left_open_reason": "{question} — Автор: {reason}",
   "tool.story.landing.question": "История ждёт ответа пользователя: {question} Спроси его своими словами и дождись ответа; пока он не ответит, ничего не продолжится.",
   "tool.story.landing.finished": "Все главы арки приняты: история закончена.",
   "tool.story.landing.cancelled": "Прогон остановлен на шаге {step}. Ничего законченного не потеряно: если пользователь попросит продолжить, история продолжится с этого шага.",

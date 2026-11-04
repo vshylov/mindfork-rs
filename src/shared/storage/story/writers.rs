@@ -14,7 +14,7 @@ use super::{NewCall, StepStatus, StoryDb, StoryDbError};
 use crate::entities::story::{
     Assumption, BranchId, Canon, ChapterId, ChapterOutline, ChapterVersion, CharacterKey, Decided,
     NewEvent, NewNote, NoteId, Proposal, ProposalId, ProposalVerdict, Question, QuestionBody,
-    QuestionId, Resolution, Reviewer, RunId, SceneId, SceneSetup, VersionOrigin,
+    QuestionId, Register, Resolution, Reviewer, RunId, SceneId, SceneSetup, VersionOrigin,
 };
 
 use super::CommittedEvent;
@@ -244,6 +244,18 @@ impl AuthorWriter {
         let (chapter, summary, token) = (chapter.clone(), summary.to_owned(), self.token);
         self.db
             .run(move |a| a.add_summary(token, &chapter, &summary))
+            .await
+    }
+
+    /// Stores a final version's register (docs/fabula.md §4, PR 11).
+    pub async fn add_register(
+        &mut self,
+        chapter: &ChapterId,
+        register: &Register,
+    ) -> Result<(), StoryDbError> {
+        let (chapter, register, token) = (chapter.clone(), register.clone(), self.token);
+        self.db
+            .run(move |a| a.add_register(token, &chapter, &register))
             .await
     }
 

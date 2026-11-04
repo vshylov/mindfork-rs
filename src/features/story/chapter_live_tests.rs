@@ -75,13 +75,14 @@ fn author_sampling() -> SamplingConfig {
     }
 }
 
-/// The reviewers': thinking on at a low effort.
+/// The reviewers' and the Canon keeper's: thinking on at a low effort, the
+/// cap PR 11 raised from 16,384 (`super::run::role_sampling`).
 fn reviewer_sampling() -> SamplingConfig {
     SamplingConfig {
         temperature: Some(0.4),
         thinking: Some(true),
         reasoning_effort: Some(ReasoningEffort::Low),
-        max_tokens: Some(16_384),
+        max_tokens: Some(32_000),
         ..SamplingConfig::default()
     }
 }
@@ -156,7 +157,8 @@ impl Opened {
         .with_role_sampling(Role::WorldMaster, master_sampling())
         .with_role_sampling(Role::Author, author_sampling())
         .with_role_sampling(Role::Reader, reviewer_sampling())
-        .with_role_sampling(Role::Continuity, reviewer_sampling());
+        .with_role_sampling(Role::Continuity, reviewer_sampling())
+        .with_role_sampling(Role::CanonKeeper, reviewer_sampling());
         if fallback_asked() {
             port.fallback_only()
         } else {

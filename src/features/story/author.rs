@@ -473,6 +473,8 @@ pub enum FindingKind {
     CastError,
     /// Events in an order the log does not allow.
     Timeline,
+    /// In the arc's last chapter, a thread left open and not paid off.
+    OpenThread,
 }
 
 impl FindingKind {
@@ -483,6 +485,7 @@ impl FindingKind {
             FindingKind::KnowledgeLeak => NoteKind::KnowledgeLeak,
             FindingKind::CastError => NoteKind::CastError,
             FindingKind::Timeline => NoteKind::Timeline,
+            FindingKind::OpenThread => NoteKind::OpenThread,
         }
     }
 }
@@ -513,6 +516,29 @@ pub struct ContinuityReply {
 
 impl StorySchema for ContinuityReply {
     fn schema(keys: &CanonKeys) -> Schema {
+        Self::schema_for(keys, false)
+    }
+}
+
+impl ContinuityReply {
+    /// The checker's schema; with `open_threads`, in the arc's last chapter
+    /// with threads open, a finding may name one the chapter leaves unpaid
+    /// (docs/fabula.md §6, T16).
+    pub fn schema_for(keys: &CanonKeys, open_threads: bool) -> Schema {
+        let mut kinds = strings(&["contradiction", "knowledge_leak", "cast_error", "timeline"]);
+        let mut kind = "contradiction: the text says what the events, the canon or a published \
+                        chapter contradict; knowledge_leak: a character acts on, or the text \
+                        tells through them, what they have not perceived; cast_error: a \
+                        character where the events do not put them; timeline: events in an \
+                        order the record does not allow, or times that do not add up."
+            .to_owned();
+        if open_threads {
+            kinds.push("open_thread".to_owned());
+            kind.push_str(
+                " open_thread: an open thread listed above that this last chapter does not pay \
+                 off; its anchor is the thread's id.",
+            );
+        }
         let finding = Schema::Object(vec![
             Property::described(
                 "anchor",
@@ -530,19 +556,7 @@ impl StorySchema for ContinuityReply {
                 "What the text says against the record, in a sentence.",
                 String::schema(keys),
             ),
-            Property::described(
-                "kind",
-                "contradiction: the text says what the events or the canon contradict; \
-                 knowledge_leak: a character acts on, or the text tells through them, what they \
-                 have not perceived; cast_error: a character where the events do not put them; \
-                 timeline: events in an order the record does not allow.",
-                Schema::Enum(strings(&[
-                    "contradiction",
-                    "knowledge_leak",
-                    "cast_error",
-                    "timeline",
-                ])),
-            ),
+            Property::described("kind", &kind, Schema::Enum(kinds)),
             Property::described(
                 "severity",
                 "high when it breaks the story's logic; low for a detail.",

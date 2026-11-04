@@ -14,12 +14,19 @@
 //! 4. **The draft**, from the kept scenes' full traces.
 //! 5. **Review**: the Reader and the Continuity checker, side by side; the
 //!    engine's own check for a planted marker in the prose rides with the
-//!    checker. The Author decides each note, and revises while an accepted
+//!    checker, and so does the Canon keeper's check of the chapter against
+//!    the published chapters' register (PR 11): their facts, their threads,
+//!    its times added up, and in the arc's last chapter each thread still
+//!    open. The Author decides each note, and revises while an accepted
 //!    high-severity note stands, at most `max_revisions` times; the last
 //!    revision is not reviewed again (spec §7's loop).
-//! 6. **The summary** of the final version, in the human's language, and
-//!    **P2**: accept it, revise it with the human's notes, or play one of its
-//!    scenes again.
+//! 6. **The register and the summary** of the final version, both the
+//!    Canon keeper's from its text alone (docs/fabula.md §4, PR 11): the
+//!    threads it opens and pays off, the facts of time, age and kinship it
+//!    states, and a summary in the human's language checked against the
+//!    text. Then **P2**: accept it, revise it with the human's notes, or play
+//!    one of its scenes again. The accepted chapters' registers reach the
+//!    next chapter's prompts and the keeper's check of it.
 //! 7. **A take** (docs/fabula.md §4, PR 10): a scene the human named at P2
 //!    is played again with every scene after it. The chapter's next take
 //!    carries the scenes before it over, plans the named one again with what
@@ -53,11 +60,12 @@ use futures_util::future::join;
 use serde_json::{Value, json};
 
 use super::author::{
-    ContinuityReply, OutlineReply, PickChoice, PickReply, PlanReply, ReaderRemark, ReaderReply,
-    SceneDraft, TriageReply,
+    ContinuityReply, FindingKind, OutlineReply, PickChoice, PickReply, PlanReply, ReaderRemark,
+    ReaderReply, SceneDraft, TriageReply,
 };
 use super::author_prompts::{self as prompts, Again, ChapterContext, Kept, Trace};
 use super::engine::SharedLog;
+use super::keeper::{self, RegisterReply, SoFar, SummaryCheck, SummaryFault};
 use super::leaks;
 use super::port::{CallAddress, LlmPort, PortError, Prompt, Role, decide};
 use super::scene::SceneError;
@@ -66,8 +74,8 @@ use super::simulation::{SimConfig, play_scene};
 use super::steps::Steps;
 use crate::entities::story::{
     Assumption, BranchId, Canon, ChapterOutline, ChapterVersion, Decided, Decision, EventId,
-    NewNote, NoteDecision, NoteKind, NoteSeverity, Question, QuestionBody, QuestionId, Resolution,
-    ReviewNote, Reviewer, RunId, Take, VersionOrigin, WorldState,
+    NewNote, NoteDecision, NoteKind, NoteSeverity, Question, QuestionBody, QuestionId, Register,
+    Resolution, ReviewNote, Reviewer, RunId, Take, VersionOrigin, WorldState,
 };
 use crate::shared::storage::story::{
     AuthorWriter, Spend, StepStatus, StoredScene, StoryDb, StoryDbError,
@@ -368,6 +376,10 @@ struct Context {
     previous: Option<String>,
     human_notes: Option<String>,
     goals: Vec<String>,
+    /// The accepted chapters' register before this one.
+    register: SoFar,
+    /// Whether this is the arc's last chapter.
+    last: bool,
 }
 
 /// One run.
@@ -422,12 +434,7 @@ impl Run<'_> {
     }
 
     async fn accepted_version(&self, n: u32) -> Go<Option<ChapterVersion>> {
-        for version in self.db.chapter_versions(n).await?.into_iter().rev() {
-            if self.db.accepted(&version.id).await? {
-                return Ok(Some(version));
-            }
-        }
-        Ok(None)
+        Ok(keeper::accepted_version(self.db, n).await?)
     }
 
     /// The P2 question about version `version` of chapter `n`, with its
@@ -447,9 +454,11 @@ impl Run<'_> {
     }
 
     /// The prompts' shared part for chapter `n`: the accepted chapters'
-    /// summaries, the previous chapter, the human's notes on it — and, in a
-    /// take, what they asked at this chapter's checkpoints — and the goals.
-    async fn context(&self, n: u32, goals: Vec<String>) -> Go<Context> {
+    /// summaries and register, the previous chapter, the human's notes on it
+    /// — and, in a take, what they asked at this chapter's checkpoints — and
+    /// the goals.
+    async fn context(&mut self, n: u32, goals: Vec<String>) -> Go<Context> {
+        let register = self.register_so_far(n).await?;
         let mut summaries = Vec::new();
         let mut previous = None;
         let mut human_notes = None;
@@ -482,7 +491,47 @@ impl Run<'_> {
             previous,
             human_notes,
             goals,
+            register,
+            last: n as usize == self.canon.arc.chapters.len(),
         })
+    }
+
+    /// The register before chapter `n`, from the accepted chapters'
+    /// registers; one that a story begun before them lacks is made on the
+    /// way, from the accepted text.
+    async fn register_so_far(&mut self, n: u32) -> Go<SoFar> {
+        let mut so_far = SoFar::default();
+        for k in 1..n {
+            let Some(version) = self.accepted_version(k).await? else {
+                continue;
+            };
+            let register = match self.db.register(&version.id).await? {
+                Some(register) => register,
+                None => self.make_register(k, &version, &so_far).await?,
+            };
+            so_far.add(k, &register);
+        }
+        Ok(so_far)
+    }
+
+    /// The Canon keeper's register of `version` of chapter `n`, read from its
+    /// text against the register before it, and stored.
+    async fn make_register(
+        &mut self,
+        n: u32,
+        version: &ChapterVersion,
+        so_far: &SoFar,
+    ) -> Go<Register> {
+        let address = format!("{}/register", version.id);
+        let prompt = keeper::register_prompt(so_far, n, &version.text, &self.config.human_language);
+        let schema = RegisterReply::schema_for(&self.keys, &so_far.open_ids());
+        let reply: RegisterReply = self
+            .ask_json(&address, Role::CanonKeeper, &schema, &prompt)
+            .await?;
+        let register = keeper::register_of(n, reply, so_far);
+        self.author.add_register(&version.id, &register).await?;
+        self.steps.finish(&address, StepStatus::Done).await?;
+        Ok(register)
     }
 
     /// What the human asked at chapter `n`'s checkpoints, oldest first: each
@@ -543,6 +592,8 @@ impl Run<'_> {
             previous: ctx.previous.as_deref(),
             human_notes: ctx.human_notes.as_deref(),
             goals: &ctx.goals,
+            register: &ctx.register,
+            last: ctx.last,
         }
     }
 
@@ -1089,7 +1140,7 @@ impl Run<'_> {
             if version.origin == VersionOrigin::Human || in_take > self.config.max_revisions {
                 return Ok(version);
             }
-            let notes = self.review(n, kept, &version).await?;
+            let notes = self.review(n, ctx, kept, &version).await?;
             let triaged: Vec<&ReviewNote> =
                 notes.iter().filter(|n| n.note.kind.is_triaged()).collect();
             if triaged.is_empty() {
@@ -1120,6 +1171,7 @@ impl Run<'_> {
     async fn review(
         &mut self,
         n: u32,
+        ctx: &Context,
         kept: &[KeptScene],
         version: &ChapterVersion,
     ) -> Go<Vec<ReviewNote>> {
@@ -1144,8 +1196,22 @@ impl Run<'_> {
         let reader_prompt = prompts::reader(&published, &version.text);
         let checker_prompt =
             prompts::continuity(&self.canon, &opened, &Self::kept_view(kept), &version.text);
+        // The Canon keeper's check against the published chapters' register
+        // rides with the checker's (PR 11): one batch of notes, so a resume
+        // asks both again or neither. In the arc's last chapter it may name a
+        // thread left open. With no register yet — chapter 1 — there is
+        // nothing to hold the chapter to, and it is not asked.
+        let hold = !ctx.register.is_empty();
+        let held_at = format!("{}/register-check", version.id);
+        let held_prompt = keeper::register_check_prompt(&ctx.register, n, &version.text, ctx.last);
+        let open = if ctx.last {
+            ctx.register.open_ids()
+        } else {
+            Vec::new()
+        };
         let reader_schema = ReaderReply::schema(&self.keys);
         let checker_schema = ContinuityReply::schema(&self.keys);
+        let held_schema = ContinuityReply::schema_for(&self.keys, !open.is_empty());
         let reader = async {
             if need_reader {
                 Some(
@@ -1164,11 +1230,28 @@ impl Run<'_> {
         let checker = async {
             if need_checker {
                 Some(
-                    self.ask_json::<ContinuityReply>(
-                        &checker_at,
-                        Role::Continuity,
-                        &checker_schema,
-                        &checker_prompt,
+                    join(
+                        self.ask_json::<ContinuityReply>(
+                            &checker_at,
+                            Role::Continuity,
+                            &checker_schema,
+                            &checker_prompt,
+                        ),
+                        async {
+                            if hold {
+                                Some(
+                                    self.ask_json::<ContinuityReply>(
+                                        &held_at,
+                                        Role::CanonKeeper,
+                                        &held_schema,
+                                        &held_prompt,
+                                    )
+                                    .await,
+                                )
+                            } else {
+                                None
+                            }
+                        },
                     )
                     .await,
                 )
@@ -1186,19 +1269,25 @@ impl Run<'_> {
                 .await?;
             self.steps.finish(&reader_at, StepStatus::Done).await?;
         }
-        if let Some(reply) = checked {
+        if let Some((checked, held)) = checked {
             let known: Vec<&EventId> = kept
                 .iter()
                 .flat_map(|k| k.trace.events.iter().map(|e| &e.id))
                 .collect();
             let mut written = markers_in(&self.canon, &version.text);
-            written.extend(checker_notes(reply?, &known));
+            written.extend(checker_notes(checked?, &known, &[]));
+            if let Some(held) = held {
+                written.extend(checker_notes(held?, &[], &open));
+            }
             self.db
                 .review_writer(&version.id, Reviewer::Continuity)
                 .await?
                 .write(&written)
                 .await?;
             self.steps.finish(&checker_at, StepStatus::Done).await?;
+            if hold {
+                self.steps.finish(&held_at, StepStatus::Done).await?;
+            }
         }
         Ok(self.db.notes(&version.id).await?)
     }
@@ -1255,20 +1344,65 @@ impl Run<'_> {
         Ok(decisions)
     }
 
-    /// The version's summary, then P2.
+    /// The version's register and summary, both the Canon keeper's from its
+    /// text alone (PR 11), then P2.
     async fn checkpoint(&mut self, n: u32, ctx: &Context, version: &ChapterVersion) -> Go<Halt> {
+        if self.db.register(&version.id).await?.is_none() {
+            self.make_register(n, version, &ctx.register).await?;
+        }
         if self.db.summary(&version.id).await?.is_none() {
-            let address = format!("{}/summary", version.id);
-            let prompt = prompts::summary(&self.view(n, ctx), &version.text);
-            let summary = self.ask_text(&address, Role::Author, &prompt).await?;
+            let summary = self.summarize(version).await?;
             self.author.add_summary(&version.id, &summary).await?;
-            self.steps.finish(&address, StepStatus::Done).await?;
+            self.steps
+                .finish(&format!("{}/summary", version.id), StepStatus::Done)
+                .await?;
         }
         let body = QuestionBody::Chapter {
             chapter: n,
             version: version.version,
         };
         self.ask(&format!("{}/checkpoint", version.id), body).await
+    }
+}
+
+impl Run<'_> {
+    /// The summary of `version` from its text alone, checked against the
+    /// text, and written once more against what the check found; nothing is
+    /// stored until it is final.
+    async fn summarize(&self, version: &ChapterVersion) -> Go<String> {
+        let language = &self.config.human_language;
+        let at = |step: &str| format!("{}/{step}", version.id);
+        let first = self
+            .ask_text(
+                &at("summary"),
+                Role::CanonKeeper,
+                &keeper::summary_prompt(language, &version.text, None),
+            )
+            .await?;
+        let check: SummaryCheck = self
+            .ask_json(
+                &at("summary-check"),
+                Role::CanonKeeper,
+                &SummaryCheck::schema(&self.keys),
+                &keeper::summary_check_prompt(&version.text, &first),
+            )
+            .await?;
+        let faults: Vec<SummaryFault> = check
+            .faults
+            .into_iter()
+            .filter(|f| !f.sentence.trim().is_empty())
+            .collect();
+        if faults.is_empty() {
+            return Ok(first);
+        }
+        let again = self
+            .ask_text(
+                &at("summary-again"),
+                Role::CanonKeeper,
+                &keeper::summary_prompt(language, &version.text, Some((&first, &faults))),
+            )
+            .await?;
+        Ok(if again.is_empty() { first } else { again })
     }
 }
 
@@ -1359,12 +1493,28 @@ pub(crate) fn reader_notes(reply: ReaderReply) -> Vec<NewNote> {
 }
 
 /// The Continuity checker's findings as notes, the evidence held to the
-/// events of the kept scenes: an id the record does not have is dropped.
-pub(crate) fn checker_notes(reply: ContinuityReply, known: &[&EventId]) -> Vec<NewNote> {
+/// events of the kept scenes: an id the record does not have is dropped. A
+/// thread left open is kept only when its anchor names one of the `open`
+/// threads, and anchored by its id (docs/fabula.md §6, T16).
+pub(crate) fn checker_notes(
+    reply: ContinuityReply,
+    known: &[&EventId],
+    open: &[String],
+) -> Vec<NewNote> {
     reply
         .findings
         .into_iter()
         .filter(|f| !f.note.trim().is_empty())
+        .filter_map(|mut f| {
+            if f.kind == FindingKind::OpenThread {
+                let id = f.anchor.trim().trim_matches('`').to_owned();
+                if !open.contains(&id) {
+                    return None;
+                }
+                f.anchor = id;
+            }
+            Some(f)
+        })
         .map(|f| NewNote {
             kind: f.kind.note_kind(),
             severity: f.severity,
@@ -1437,3 +1587,7 @@ mod tests;
 #[cfg(test)]
 #[path = "take_tests.rs"]
 mod take_tests;
+
+#[cfg(test)]
+#[path = "register_tests.rs"]
+mod register_tests;

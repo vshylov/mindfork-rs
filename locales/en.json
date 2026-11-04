@@ -833,6 +833,8 @@
   "tool.story.landing.pick": "Scene {n}: {note}",
   "tool.story.landing.assumptions": "Choices made where the user could have been asked:",
   "tool.story.landing.assumption": "{doubt} — chosen: {choice}",
+  "tool.story.landing.left_open": "Threads the story leaves open at its end:",
+  "tool.story.landing.left_open_reason": "{question} — the Author: {reason}",
   "tool.story.landing.question": "The story waits for the user's answer: {question} Ask them in your own words and wait for their reply; nothing goes on until they answer.",
   "tool.story.landing.finished": "Every chapter of the story's arc is accepted: the story is finished.",
   "tool.story.landing.cancelled": "The run was stopped at step {step}. Nothing finished is lost: if the user asks to go on, continuing the story resumes from that step.",

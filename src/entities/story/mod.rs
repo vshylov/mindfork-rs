@@ -36,9 +36,10 @@ pub use event::{
 };
 #[allow(unused_imports)]
 pub use manuscript::{
-    Assumption, ChapterId, ChapterOutline, ChapterVersion, Decided, Decision, NewNote,
-    NoteDecision, NoteId, NoteKind, NoteSeverity, QUESTION_KINDS, Question, QuestionBody,
-    QuestionId, Resolution, ReviewNote, Reviewer, StoredAssumption, Take, VersionOrigin,
+    Assumption, ChapterId, ChapterOutline, ChapterVersion, Decided, Decision, Fact, NewNote,
+    NoteDecision, NoteId, NoteKind, NoteSeverity, Payoff, QUESTION_KINDS, Question, QuestionBody,
+    QuestionId, Register, Resolution, ReviewNote, Reviewer, StoredAssumption, Take, Thread,
+    VersionOrigin,
 };
 #[allow(unused_imports)]
 pub use world::{Admitted, FoldError, Holder, Refusal, WorldState};

@@ -26,6 +26,7 @@ pub mod conversation;
 pub mod dialect;
 pub mod engine;
 pub mod export;
+pub mod keeper;
 pub mod leaks;
 pub mod port;
 pub mod prompts;
@@ -40,6 +41,8 @@ pub mod steps;
 pub(crate) mod chapter_live_tests;
 #[cfg(test)]
 mod continuity_live_tests;
+#[cfg(test)]
+mod register_live_tests;
 #[cfg(test)]
 mod run_live_tests;
 #[cfg(test)]
