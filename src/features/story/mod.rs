@@ -35,6 +35,7 @@ pub mod run;
 pub mod scene;
 pub mod schema;
 pub mod simulation;
+pub mod staging;
 pub mod steps;
 
 #[cfg(test)]
@@ -51,3 +52,5 @@ mod scene_live_tests;
 mod schema_live_tests;
 #[cfg(test)]
 mod simulation_live_tests;
+#[cfg(test)]
+mod staging_live_tests;

@@ -212,3 +212,16 @@ fn a_draft_and_a_rerun_carry_the_same_scene() {
     assert_eq!(kept.rerun(), None);
     assert_eq!(FindingKind::Timeline.note_kind(), NoteKind::Timeline);
 }
+
+#[test]
+fn a_scenes_intent_names_the_collision_and_its_price() {
+    let keys = keys();
+    for may_end in [false, true] {
+        let plan = PlanReply::schema_for(&keys, may_end).to_json();
+        assert!(
+            plan.contains("whose goals collide in it, and what it may cost someone"),
+            "{plan}"
+        );
+        assert!(plan.contains("no character and no World Master ever sees it"));
+    }
+}

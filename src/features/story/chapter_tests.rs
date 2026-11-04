@@ -298,6 +298,7 @@ pub(super) fn story(address: &str, prompt: &Prompt) -> Result<Reply, PortError> 
             "best_moment": "The quay in the rain.",
         }),
         "register-check" => json!({"findings": []}),
+        "staging" => json!({"findings": []}),
         "continuity" => json!({"findings": [{
             "anchor": "Mara waits",
             "evidence": ["ch1/sc1/r0/k0/e3", "`ch1/sc2/r0/k0/e3`", "ch1/sc1/r0/k1/e3"],
@@ -594,10 +595,12 @@ async fn a_chapter_runs_from_its_outline_to_its_checkpoint() {
             "ch1/v1/write",
             "ch1/v1/reader",
             "ch1/v1/continuity",
+            "ch1/v1/staging",
             "ch1/v1/triage",
             "ch1/v2/revise",
             "ch1/v2/reader",
             "ch1/v2/continuity",
+            "ch1/v2/staging",
             "ch1/v2/triage",
             "ch1/v2/register",
             "ch1/v2/summary",
@@ -1043,7 +1046,7 @@ async fn a_failed_author_call_stops_the_run_and_the_next_run_asks_it_again() {
     );
     assert_eq!(
         again.len(),
-        11,
+        13,
         "the write, the reviews and the rest: {again:?}"
     );
     assert!(calls > again.len());
