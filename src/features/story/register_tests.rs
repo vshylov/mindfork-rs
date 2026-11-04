@@ -90,9 +90,10 @@ async fn the_keeper_reads_the_text_alone_and_the_next_chapter_reads_its_register
     );
     assert!(
         !port
-            .schema_at("ch1/v1/register-check")
-            .contains("open_thread"),
-        "not the last chapter"
+            .addresses()
+            .iter()
+            .any(|a| a.starts_with("ch1/") && a.ends_with("/register-check")),
+        "nothing published to hold chapter 1 to"
     );
 
     open.answer(Decision::Approve, "").await;

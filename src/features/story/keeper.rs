@@ -248,6 +248,11 @@ impl SoFar {
             .extend(register.facts.iter().map(|f| (chapter, f.clone())));
     }
 
+    /// Nothing open and nothing stated: no chapter to hold a new one to.
+    pub fn is_empty(&self) -> bool {
+        self.open.is_empty() && self.facts.is_empty()
+    }
+
     /// The ids of the open threads.
     pub fn open_ids(&self) -> Vec<String> {
         self.open.iter().map(|(_, t)| t.id.clone()).collect()

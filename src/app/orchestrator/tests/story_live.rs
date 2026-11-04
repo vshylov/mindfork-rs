@@ -674,8 +674,22 @@ async fn story_chat_live_story() {
                     break;
                 }
             }
-            landed += 1;
-            eprintln!("--- landed {landed} ({:?} in)", started.elapsed());
+            // Only a chapter's checkpoint counts: a run the time limit
+            // stopped lands too, and counted, it ended a two-chapter
+            // script at chapter 1 (PR 11's live run).
+            let at_chapter = matches!(
+                story_of(&app.root, app.chat)
+                    .as_ref()
+                    .and_then(|(_, s)| s.pending.as_ref())
+                    .map(|q| &q.body),
+                Some(QuestionBody::Chapter { .. })
+            );
+            if at_chapter {
+                landed += 1;
+                eprintln!("--- landed {landed} ({:?} in)", started.elapsed());
+            } else {
+                eprintln!("--- a run stopped ({:?} in)", started.elapsed());
+            }
         }
         let state = story_of(&app.root, app.chat);
         let now = progress(state.as_ref());

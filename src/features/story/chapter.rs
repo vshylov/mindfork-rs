@@ -1199,7 +1199,9 @@ impl Run<'_> {
         // The Canon keeper's check against the published chapters' register
         // rides with the checker's (PR 11): one batch of notes, so a resume
         // asks both again or neither. In the arc's last chapter it may name a
-        // thread left open.
+        // thread left open. With no register yet — chapter 1 — there is
+        // nothing to hold the chapter to, and it is not asked.
+        let hold = !ctx.register.is_empty();
         let held_at = format!("{}/register-check", version.id);
         let held_prompt = keeper::register_check_prompt(&ctx.register, n, &version.text, ctx.last);
         let open = if ctx.last {
@@ -1235,12 +1237,21 @@ impl Run<'_> {
                             &checker_schema,
                             &checker_prompt,
                         ),
-                        self.ask_json::<ContinuityReply>(
-                            &held_at,
-                            Role::CanonKeeper,
-                            &held_schema,
-                            &held_prompt,
-                        ),
+                        async {
+                            if hold {
+                                Some(
+                                    self.ask_json::<ContinuityReply>(
+                                        &held_at,
+                                        Role::CanonKeeper,
+                                        &held_schema,
+                                        &held_prompt,
+                                    )
+                                    .await,
+                                )
+                            } else {
+                                None
+                            }
+                        },
                     )
                     .await,
                 )
@@ -1265,14 +1276,18 @@ impl Run<'_> {
                 .collect();
             let mut written = markers_in(&self.canon, &version.text);
             written.extend(checker_notes(checked?, &known, &[]));
-            written.extend(checker_notes(held?, &[], &open));
+            if let Some(held) = held {
+                written.extend(checker_notes(held?, &[], &open));
+            }
             self.db
                 .review_writer(&version.id, Reviewer::Continuity)
                 .await?
                 .write(&written)
                 .await?;
             self.steps.finish(&checker_at, StepStatus::Done).await?;
-            self.steps.finish(&held_at, StepStatus::Done).await?;
+            if hold {
+                self.steps.finish(&held_at, StepStatus::Done).await?;
+            }
         }
         Ok(self.db.notes(&version.id).await?)
     }
