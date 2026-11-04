@@ -1,7 +1,7 @@
 # Fabula — a story engine used from the chat: track plan
 
-**Status:** in progress — M0 done (PRs 1 and 2, Gate G0 GO); M1 done (PRs 3–5, Gate G1 GO, 2026-11-01); M2 under way (PR 6, the Author's loop, 2026-11-01; PR 7, stories in mindfork's data, 2026-11-02; PR 8, the story run in the background, 2026-11-02; PR 9, the story driven from the chat, 2026-11-02; Gate G2 GO, 2026-11-03). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
-so are the ten this plan adds (§6) and where development runs (§4, *The development
+**Status:** in progress — M0 done (PRs 1 and 2, Gate G0 GO); M1 done (PRs 3–5, Gate G1 GO, 2026-11-01); M2 done (PR 6, the Author's loop, 2026-11-01; PR 7, stories in mindfork's data, 2026-11-02; PR 8, the story run in the background, 2026-11-02; PR 9, the story driven from the chat, 2026-11-02; Gate G2 GO, 2026-11-03; PR 10, a scene played again, 2026-11-03); before M3, the readers' findings under way (PRs 11–12, from 2026-11-04). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
+so are the eighteen this plan adds (§6) and where development runs (§4, *The development
 stack*). The design —
 the engine, its stores, its contracts, its evaluation — is
 [research/fabula-engine.md](research/fabula-engine.md) (*the spec* below), and the
@@ -342,6 +342,46 @@ done.
 A release can follow G2: the tools are reachable only with `tools.story` on, and the
 release carries the chat schema's step with the checks AGENTS.md §6 asks for.
 
+### Before M3 — what G2's readers found
+
+The owner chose on 2026-11-04 to act on the readers' findings before M3, in two pull requests
+(§6, T15–T18). M3 measures the simulation against one agent writing alone under the same Author,
+so what the Author's loop gains, every system there gains; the characters' rules are the
+simulation's own. Two causes are in the code: the summary was written by the Author with the
+whole canon before it, so the secret of the shopkeeper's hiding place went into a summary of a
+text that shows her carrying something out; and the Continuity checker reads the chapter against
+its own scenes' record alone, so a chapter that contradicts a published one is checked by no one.
+
+| PR | Content | Proof |
+| --- | --- | --- |
+| 11 `feat/story-ledger` | The Canon keeper's first part (spec §5): at a chapter's checkpoint it reads the version's text alone, with no canon and no record, and writes the story's **register**: the threads the chapter opens (a clue, a sound with no source, a promise, an act left unexplained), the earlier ones it pays off, and the facts of time, age and kinship it states, each with its quote and who states it. The **summary** is written from the text alone too; a check of its own names any sentence of it the text does not bear out, and the summary is written once more against them. The plans, the draft and the revisions see the open threads and the facts. The Continuity checker sees them, checks every statement of time, age and kinship against them, the canon and the chapter itself, and in the arc's last chapter reports each thread still open, which the Author pays off or rejects with its reason (T16); that chapter's checkpoint lists the threads left open with the reasons. The reviewers' and the keeper's reply cap goes from 16,384 to 32,000 tokens (PR 10's finding). The register is a table of its own: no schema step | Engine tests on the scripted port: one register per version, read by the next chapter's prompts; a story from before the register given one on the way; a run killed at each new call resumes. Live: known-answer probes on G2's own chapters, on Claude Sonnet 5.5 and Qwen 3.8 27B — chapter 1's summary without the chapel the canon put in it; its register with the logbook's other hand and the footsteps; chapter 2 checked against it finds the line gone empty and "a few years ago" against twenty-eight years. A two-chapter story on Qwen to its end |
+| 12 `feat/story-craft` | The scenes and the lines (T17). A scene's intent names whose goals collide in it and what it may cost someone; the Author's rules pace the reveals and let no conflict end without a price. The characters act on a plan or a boundary instead of announcing it, open no reply on thanks or agreement the moment does not call for, and let a want show in the deed; the prose's rules say the same. A **staging pass** of its own, cheap and on the text alone, reads who is where and holds what, whose pronoun and whose kin, and marks a line that announces a plan or opens on thanks; its notes ride with the Continuity checker's | Engine tests of the prompts and of the pass's notes. Live: the pass on G2's chapter 2 finds "son of Marya, who left with him"; a story on Qwen; then **G2 again** on Claude Sonnet 5.5 from the same sketches, read by the owner against the first (T18) |
+
+**PR 11, as built (2026-11-04).** The owner decided four forks (§6, T15–T18). At each
+checkpoint the Canon keeper reads the version's text alone and writes its register — threads
+opened and paid off, facts of time, age and kinship with who states them, ids given by position
+— and then the summary, which a check of its own reads against the text; with a fault named,
+the summary is written once more against it. The plans, the draft and the revisions read the
+accepted chapters' registers, and in the arc's last chapter a line asks for each thread to be
+paid off or left open on purpose. Where the table gives the check to the Continuity checker, it
+is a call of the keeper's own (`…/register-check`, on the chapter's text and the register
+alone) beside the checker's from chapter 2, its findings written in the checker's batch: given
+to the checker first, the register was held to nothing on Qwen 3.8 27B, so the checker's prompt
+is main's again. In the last chapter that check reports each thread still open, and the last
+landing lists the threads the register still holds open, each with the Author's reason where it
+decided against a note. A table of its own, no schema step; a story begun before it is given
+its registers on the way; the reviewers' cap is 32,000. **Live:** on G2's own chapters, three
+runs a probe, the keeper's reading held on both models — the old summary's chapel named and
+kept out of the new one, the footsteps a thread, "a few years ago" a fact; the logbook's other
+hand was a thread on Sonnet in 3 of 3 once the wording was sharpened, on Qwen in 0–1. Chapter 2
+held to the register found the footsteps still open in 3 of 3 and the twenty-eight years in 2
+on Sonnet, none of the three faults on Qwen. A two-chapter story on Qwen in Russian finished in
+the chat at the default budget, 884 calls and $2.55: chapter 2 paid off five of chapter 1's
+seven threads, the landing listed the four still open, and the keeper's check reported none of
+them; the harness's three-hour limit (the app's is six) stopped chapter 1 once, and the woken
+turn asked before anything resumed. The figures are in
+[journal/stories.md](journal/stories.md).
+
 ### M3 — the evaluation
 
 Before it starts, two judges besides the owner are found, and Claude drafts the premise
@@ -349,8 +389,8 @@ candidates for the owner to choose from (spec §15).
 
 | PR | Content | Proof |
 | --- | --- | --- |
-| 11 `feat/story-eval` | The hidden runner: no line in `--help`, the single-instance lock skipped, stories written into its output directory and not into the data; the systems F, B0 and A1–A4 as run options; the export of the markdown and the JSON trace; the 12 premises frozen in the repository with their SHA-256 | Unit tests of each system's wiring; a live run of one premise through every system |
-| 12 `feat/story-judge` | `tools/fabula_judge.py`: pairs shown blind in random order, verdicts as JSON, the binomial test; the LLM panel of other model families through OpenRouter, both orders; the calibration check against the three humans' majority | `--self-test` against fixtures, run in `lint` like the other tools' |
+| 13 `feat/story-eval` | The hidden runner: no line in `--help`, the single-instance lock skipped, stories written into its output directory and not into the data; the systems F, B0 and A1–A4 as run options; the export of the markdown and the JSON trace; the 12 premises frozen in the repository with their SHA-256 | Unit tests of each system's wiring; a live run of one premise through every system |
+| 14 `feat/story-judge` | `tools/fabula_judge.py`: pairs shown blind in random order, verdicts as JSON, the binomial test; the LLM panel of other model families through OpenRouter, both orders; the calibration check against the three humans' majority | `--self-test` against fixtures, run in `lint` like the other tools' |
 
 Then the run itself, outside any pull request: 36 pairs for each of the two decisions
 (and the ablations), the calibration by three people, and the decision rule of spec §11,
@@ -520,6 +560,32 @@ PR 10 added three more. The owner accepted every recommendation on 2026-11-03.
   message after a transient failure the person is told of anyway. (b) Refuse it only
   after the person's own stop: the loop stays. (c) Allow one woken resume per stopped
   step. (d) Leave it. **Owner's decision (2026-11-03): (a)**, in PR 10.
+
+The readers' findings added four more (§4, *Before M3*). The owner accepted every
+recommendation on 2026-11-04.
+
+- **T15. When the findings are acted on, and how they are cut.** (a) Two pull requests before
+  M3 *(recommended)*: the bookkeeping first — the register of threads and facts, the summary
+  from the text alone, the new chapter checked against the published ones, the reviewers' cap —
+  then the craft: the rules of the scenes and the lines, and the staging pass. (b) The
+  bookkeeping before M3 and the craft after it, so M3 measures the characters as G2 had them.
+  (c) One pull request. **Owner's decision (2026-11-04): (a).**
+- **T16. Threads still open at the last chapter.** (a) In the arc's last chapter the Continuity
+  checker reports each thread still open, the Author pays it off or rejects the note with its
+  reason, and that chapter's checkpoint lists the threads left open with the reasons
+  *(recommended)*: a thread left open is the Author's choice, said aloud. (b) Only listed at the
+  last checkpoint, with no note and no revision. (c) Every thread must be paid off.
+  **Owner's decision (2026-11-04): (a).**
+- **T17. How strict the rules of the scenes and the lines are.** (a) In the Author's and the
+  characters' prompts, a scene's intent naming whose goals collide and what it may cost, and the
+  staging pass marking a line that announces a plan or opens on thanks *(recommended)*. (b) In
+  the prompts alone. (c) Fields of their own in the plan (the collision, the price) and a fifth
+  measure in the pick's rubric, which changes spec §7. **Owner's decision (2026-11-04): (a).**
+- **T18. How the findings are proved live.** (a) Known-answer probes on G2's own chapters, a
+  story on Qwen 3.8 27B in each pull request (about $3–5 each), and once both have landed G2
+  again on Claude Sonnet 5.5, for the owner to read against the first (about $35–45)
+  *(recommended)*. (b) Without G2 again. (c) G2 again alone. **Owner's decision (2026-11-04):
+  (a).**
 
 ## 7. Not in this track
 

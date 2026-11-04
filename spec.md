@@ -2727,7 +2727,8 @@ take (below).
   each call under the app's session budget, so at `sessions = 1` a chapter's calls
   and the chat's turns take turns request by request. The characters run muted,
   the World Master and the reviewers think at a low effort and the Author at a
-  medium one. A managed server with a draft model is never asked to constrain the
+  medium one; a reviewer's and the Canon keeper's reply may run to 32,000 tokens,
+  as the Author's does (16,384 cut the Continuity checker's on Qwen 3.8 27B). A managed server with a draft model is never asked to constrain the
   decoding, since its grammar crashes under it (docs/fabula.md §5). A story has
   one run at a time; a second is refused with the first one's address.
 - **Its bounds.** `tools.story_run_timeout_secs` (6 h, T2 (a)) cancels the run's
@@ -2737,6 +2738,21 @@ take (below).
   docs/fabula.md §6, T11 (a), T12 (a)) and
   `tools.story_budget_usd` (empty — none), counted where the provider reports a
   call's cost; it is checked before each call, and a spent one stops the run there.
+- **The register** (docs/fabula.md §4, PR 11). At each checkpoint the Canon keeper
+  reads the version's text alone — no canon, no record, no plan — and writes its
+  register: the threads it opens (what the text leaves its reader to wonder: a
+  clue, a sound with no source, an act left unexplained), the earlier ones it pays
+  off, and the facts of time, age and kinship it states, each with its quote and
+  who states it. It writes the summary from the text alone too, checks it against
+  the text in a call of its own, and writes it once more against what the check
+  found. The accepted chapters' registers reach the next chapter's plans, draft and
+  revisions, and a check of the keeper's own beside the Continuity checker's, on the
+  chapter's text and the register alone, from chapter 2 (chapter 1 has nothing
+  published to be held to): it holds the chapter to every fact and thread listed and
+  adds up its times, ages and kin; its notes are the checker's for the triage. In the arc's last chapter it reports each thread still open, and the
+  Author pays it off or rejects the note with its reason (T16 (a)). The register is a table of the story's
+  database (`chapter_register`), added with no schema step; a story begun before it
+  is given one on the way, from the accepted text.
 - **The landing.** The chapter a checkpoint asks about is attached to the chat as
   `<story> — chapter <n>.md` ([§9.7](#97-chat-file-attachments-file-attach)),
   decided inline or by reference against the chat's budget at the landing and
@@ -2745,7 +2761,8 @@ take (below).
   message from the user, granting nothing — carries the summary, the Author's
   note on each scene kept, by the scene's number (the numbers a reply may name to
   play one again), the assumptions made where the user could have been
-  asked, the question, and what the run cost; the woken assistant puts the
+  asked, at the arc's last chapter the threads the story leaves open with the
+  Author's reasons, the question, and what the run cost; the woken assistant puts the
   question to the user in its own words. A run that stopped short says where and
   what continuing does: stopped, its time limit, its budget, a call that gave
   nothing usable. The record's transcript holds the brief and the landing; the

@@ -184,10 +184,10 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-11-03, version 0.23.1)
+## Status (2026-11-04, version 0.23.1)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **4767 unit tests
-green, 326 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **4778 unit tests
+green, 327 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump and demo-reel regenerators).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -199,7 +199,7 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
-- **Fabula, a story engine used from the chat — G0, G1, G2 GO** (2026-11-03):
+- **Fabula, a story engine used from the chat — G0, G1, G2 GO** (2026-11-04):
   the plan and ADR 0014; the story database — an append-only, branched event log behind
   one actor, one writer per store; the model port, replayed from the call log by address;
   the reply's schema enforced by the provider on every wire; scenes
@@ -207,8 +207,8 @@ being recent is dropped, not shortened.
   planned, picked, drafted, reviewed and revised, paused for the human, resumed
   wherever it was killed; a story backed up and in `stats`; a chapter run in the
   background, landed in its chat with its question; a story created and continued from the
-  chat, every answer the person's own words; a scene named at a checkpoint played again
-  ([docs/fabula.md](docs/fabula.md),
+  chat, every answer the person's own words; a scene named at a checkpoint played again;
+  a register of open threads and dated facts, checked chapter to chapter ([docs/fabula.md](docs/fabula.md),
   [docs/journal/stories.md](docs/journal/stories.md)).
 - **Image generation — track complete** (2026-10-30): `image_generate` over a
   slot of its own (OpenAI by default, Gemini, the gateway, xAI), off by default;

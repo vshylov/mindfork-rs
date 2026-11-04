@@ -13,7 +13,7 @@ what was rejected — the reasoning behind the code, not its current shape. For 
 shape read the reference documents named above; for the traps that recur across areas read
 [lessons.md](../lessons.md).
 
-## Entries (10)
+## Entries (11)
 
 - Post-M9: Fabula — PR 1, the story database (done)
 - Post-M9: Fabula — PR 2, the model port and replay; Gate G0 GO (done)
@@ -25,6 +25,7 @@ shape read the reference documents named above; for the traps that recur across 
 - Post-M9: Fabula — PR 8, the story run in the background (done)
 - Post-M9: Fabula — PR 9, the story driven from the chat; Gate G2 GO (done)
 - Post-M9: Fabula — PR 10, a scene played again at the checkpoint (done)
+- Post-M9: Fabula — PR 11, the story's register (done)
 
 ### Post-M9: Fabula — PR 1, the story database (done)
 
@@ -1066,3 +1067,152 @@ left out because the main line has to step back, and PR 9 read as a revision unt
     replaced under the next index, the scene's attempt kept. The wait is now the limit plus
     fifteen minutes.
 - **Tests:** 4767 unit tests green (+11 over 4756), 326 `#[ignore]`.
+
+### Post-M9: Fabula — PR 11, the story's register (done)
+
+The first of the two pull requests that act on what G2's readers found (docs/fabula.md §4,
+*Before M3*): the bookkeeping they found missing above a world state that held.
+
+- **Forks decided by the owner (2026-11-04, docs/fabula.md §6).** *T15:* two pull requests
+  before M3, the bookkeeping first, then the craft. *T16:* a thread still open in the arc's
+  last chapter is reported, and the Author pays it off or keeps it open with its reason, which
+  the last checkpoint shows. *T17:* the scenes' and the lines' rules in the prompts, with the
+  staging pass marking breaches (PR 12). *T18:* known-answer probes on G2's own chapters, a
+  Qwen story in each pull request, and G2 again on Claude Sonnet 5.5 once both have landed.
+  All as recommended.
+- **Two causes, in the code.** The summary was the Author's, with the whole canon in its
+  system prompt: chapter 1's put the shopkeeper's secret hiding place (the canon: she hid the
+  brother's journal in the chapel) into a chapter that shows her carrying something *out* of
+  it. And the Continuity checker read a chapter against its own scenes' record alone, so no
+  role ever held a chapter to a published one: the logbook's line "in another hand" became an
+  "empty" line a chapter later unread by anyone.
+- **The Canon keeper's first part** (`keeper.rs`, `Role::CanonKeeper`, which the enum and the
+  sampling had held since PR 8). At a checkpoint, from the version's text alone, it writes the
+  **register**: the threads the chapter opens (what the text leaves its reader to wonder), the
+  open ones it pays off, and the facts of time, age and kinship it states, each with its quote
+  and who states it — the narration or a character, who may be lying. The ids are the
+  engine's, by position (`ch1.thread2`, `ch1.fact3`), and a payoff names a thread by an enum of
+  the open ones, built per call and absent when none is open. Then the **summary**, from the
+  text alone; its check (`…/summary-check`) names each sentence the text does not bear out;
+  with one, the summary is written once more against them (`…/summary-again`). Nothing is
+  stored until it is final, so a resume asks the few calls again.
+- **Who reads it.** The register so far (`SoFar`: the accepted chapters', the threads paid off
+  closed) is in every Author prompt that reads the story so far — the outline, the plans, the
+  draft, the revisions — with a line in the arc's last chapter to pay each thread off or leave
+  it open on purpose; the Author's rules gain two, threads as promises and facts that add up.
+  A chapter is checked against it by **the keeper's own call** (`…/register-check`, on the
+  chapter's text and the register alone) beside the Continuity checker's, from chapter 2 —
+  chapter 1 has nothing published to be held to — its findings written in the checker's batch: one batch, so a resume asks both again or neither, and no schema step
+  for a third reviewer. In the arc's last chapter that check may report an `open_thread`,
+  anchored by the thread's id; a finding naming a thread the story does not have is dropped.
+  The triage's critiques are now in the human's language, and the last chapter's landing lists
+  the threads left open, each with the critique of a note the Author decided against (an
+  accepted note gives no reason to leave it).
+- **The register was first given to the Continuity checker**, beside the record. The probe
+  below found that on Qwen 3.8 27B the checker, with every event of the chapter before it,
+  held nothing of the register (0 of 3 on each known fault), where Claude Sonnet 5.5 found them;
+  the check moved to a call of its own, and the checker's prompt is main's again — the prompt
+  whose recall of planted faults PR 6 measured. Side by side (below) the call of its own found
+  no more on Qwen and about as much on Sonnet, a run fewer on the log's line and two faults of
+  high severity the checker had found low or not at all; it reads what it is for and nothing
+  else.
+- **Storage.** `chapter_register` (one JSON body per version, append-only, in `stats`' units):
+  a table of its own, so no schema step; a story begun before it is given its registers on the
+  way, from the accepted text — tested on a file whose table was dropped and opened again.
+- **The reviewers' and the keeper's reply cap** goes from 16,384 to 32,000 tokens, the Author's,
+  after PR 10 found the Continuity checker's cut on Qwen four times.
+- **Tests.** `keeper_tests.rs` (a reply made a register, the register so far, the schema's
+  enum, the prompts with nothing of the canon in them), `register_tests.rs` on the scripted
+  port (the keeper on the text alone and the next chapter reading it; a thread kept open with
+  its reason; a summary written again; a story from before the register), the landing's list
+  in `run_tests`, its rendering, the cap. The runs killed at every call, chapter and take,
+  cover the new calls unchanged. **Mutation check:** 24 mutants in three passes, one build each:
+  all killed.
+- **Live: known answers on G2's own story** (`register_live_tests`, `MINDFORK_FABULA_G2_STORY`;
+  three runs a probe, every role sampled as the app samples it; the checker given the register
+  in every column, as first built). The faults are the readers':
+  the old summary's chapel; chapter 1's "another hand" in the log, the footsteps on the path,
+  the father lost "a few years ago"; chapter 2's line gone "empty", the twenty-eight years and
+  the pre-war cross against that "few years", the footsteps never anyone's. Counted by hand
+  where a word stem misled (the stem of "step" is in "she stepped", the word for a hand on the
+  notebook's cover):
+
+  | Of 3 runs | Sonnet, first wording | Sonnet, sharper | Sonnet, both checks | Qwen, sharper | Qwen, both checks |
+  | --- | --- | --- | --- | --- | --- |
+  | The old summary's chapel named by the check | 3 | 3 | 3 | 3 | 3 |
+  | A new summary keeps out of the chapel | 3 | 3 | 3 | 3 | 3 |
+  | Ch. 1's "another hand" a thread | 0 | 3 | 3 | 1 | 0 |
+  | Ch. 1's footsteps a thread | 3 | 3 | 3 | 3 | 3 |
+  | Ch. 1's "a few years ago" a fact | 3 | 3 | 3 | 3 | 3 |
+  | Ch. 2: the line, the checker with the register | 0 | 2 | 2 | 0 | 0 |
+  | Ch. 2: the years, the checker with the register | 2 | 2 | 2 | 0 | 0 |
+  | Ch. 2: the footsteps open, the checker with the register | 3 | 3 | 3 | 0 | 0 |
+  | Ch. 2: the line, the keeper's check | — | — | 1 | — | 0 |
+  | Ch. 2: the years, the keeper's check | — | — | 2 | — | 0 |
+  | Ch. 2: the footsteps open, the keeper's check | — | — | 3 | — | 0 |
+
+  A run on Sonnet was 21–24 calls and 187,000–207,000 tokens; on Qwen 22–24 calls, 181,000–
+  221,000 tokens, $0.14–0.19, over half an hour. Things it found:
+  - *The first wording missed the log.* The keeper read Vera's "my hands would not obey" as
+    the answer to the other hand, and the checker's instruction held only statements of time,
+    age and kinship to the register, though it held the line as a fact. Two changes: an excuse
+    or a half-truth the text leaves in doubt answers nothing, and a chapter is held to every
+    listed fact and thread. They were found on this story, so the probe that measures them is
+    the one they were tuned on; both are general rules.
+  - *On Sonnet the keeper's check found what the readers found and the checker had not*: in one
+    run "Kolka Rybakov, son of Marya" against Galina's own schooling, high; in two the
+    brother's letter, which sees the tower dark and writes that the light burns steady, high.
+  - *Most findings come at low severity*, so the triage decides on them, and a low note alone
+    starts no revision.
+  - *The footsteps*: the keeper reading chapter 2 calls them paid off — by Galina's and Vera's
+    steps at the graves next morning — on Sonnet in 2 runs of 3 and on Qwen in 3; the readers
+    did not. A judgement the register makes, and the Author reads.
+  - *On Qwen 3.8 27B neither check found these faults*, at the reviewers' low effort; the
+    keeper's check used the register (the ferry's three days against "two days to the ferry",
+    the unlit night against "every evening for three years"), but not for these. The keeper's
+    reading of the text — the summary, the threads, the facts — held on both models.
+- **Live: a two-chapter story on Qwen** (`story_chat_live_story`, Qwen 3.8 27B on OpenRouter
+  pinned to DeepInfra, a Russian profile, G2's sketches, the default budget, the harness's
+  three-hour time limit — the app's is six):
+  "The Last Ferry" again, from the sketches to the last acceptance in the chat — 2,669 words,
+  both chapters accepted.
+
+  | | Calls | Prompt tokens | Reply tokens | Cost |
+  | --- | --- | --- | --- | --- |
+  | Chapter 1 (four scenes, two revisions, v3 accepted) | 602 | 4,924,110 | 434,302 | $1.50 |
+  | Chapter 2 (four scenes, v1 accepted) | 279 | 4,882,258 | 231,066 | $1.05 |
+  | The whole story, readings included | 884 | 9,810,333 | 665,748 | $2.55 |
+
+  Things it found:
+  - *The harness's time limit stopped chapter 1 in its fourth scene*, after three hours and 492
+    calls: the calls ran one at a time (their latencies sum to the wall time). The woken
+    assistant said where and why the story had stopped and asked, resuming nothing (T14, seen
+    live); asked, the run went on from the step it was at and reached the checkpoint 52 minutes
+    later. The harness counted that stop as a chapter and ended a two-chapter script at chapter
+    1: only a chapter's checkpoint counts now, and the story was taken up where it stood.
+  - *The keeper's reading held.* Chapter 1's register: seven threads (the father who vanished,
+    the cross with no name, the brother Galina tells Timur not to know, the order she calls dead
+    paper, what lies in her storeroom, the island blind for three days, whether anyone can
+    leave) and five facts. Its summary's check named "until the storm dies down" against a text
+    whose wind is "not yet a storm", and the summary was written again. Chapter 2's outline, plans
+    and draft carried the register and the last chapter's line, and the chapter paid off five of
+    the seven: the cross is the father's grave, the brother is Artyom, the storeroom held his
+    logbook, the order is answered by Timur's request to cancel it. Its summary's check found
+    nothing.
+  - *On Qwen the keeper's check reported no thread left open.* With the seven threads before it
+    and the line asking for each one unpaid, it reported none, and one finding that was wrong (a
+    feminine noun Timur writes of Vera, read as his own), which the Author rejected for the right
+    reason. The landing listed the four threads the register still held open — chapter 1's two
+    that are consequences more than clues, and two that chapter 2 opened (which year the cross
+    bears, why he came as an inspector) — without reasons, since no note was decided; the woken
+    assistant named three of them to the person. The list is the register's, so it reaches the
+    person whether or not the check reports, as T16 meant.
+  - *In chapter 1 the check had nothing to hold the chapter to*, and was asked on both reviewed
+    versions all the same; it found the order put into the pocket of a robe Timur was wearing on
+    the headland — the Continuity checker's work. It is asked from chapter 2 on.
+  - *A kinship misread, not in the text.* The Reader took Artyom, Vera's brother, drowned three
+    years ago, for Timur's father under the twenty-year cross, and the Author rejected the note
+    as a link left implicit on purpose. The text and the register keep them apart (Artyom died
+    three years ago; the father waited twenty), so nothing reached the story — but the Author's
+    own reading was wrong, the kind of referent PR 12's staging pass is for.
+- **Tests:** 4778 unit tests green (+11 over 4767), 327 `#[ignore]` (+1, the probe).

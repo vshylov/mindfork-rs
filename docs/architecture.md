@@ -671,13 +671,20 @@ src/
 │  │                        it calls a model, so a run killed anywhere resumes as a new run at the
 │  │                        first step no run finished; the outline, the rolling scene plans, the
 │  │                        pick (reruns, then the last attempt's pick), the draft, the two reviews
-│  │                        side by side, the triage, at most two revisions, the summary, the pauses
-│  │                        P1–P3 as question rows, the budget checked before every call; a take
+│  │                        side by side, the triage, at most two revisions, the register and the
+│  │                        summary (PR 11), the pauses P1–P3 as question rows, the budget checked before every call; a take
 │  │                        (PR 10) — a scene named at P2 played again with the ones after it: the
 │  │                        scenes before it carried, each scene's attempts from its floor on, the
 │  │                        take's plans at `ch1/t2/…`, its versions from its first, its own budget;
 │  │                        take_tests.rs — the take on the scripted port, killed at every call and
-│  │                        replayed by address; author.rs
+│  │                        replayed by address; register_tests.rs — the register on it, from one
+│  │                        chapter to the next and to a story begun before it; keeper.rs — the
+│  │                        Canon keeper's first part (PR 11): a version's register (threads opened
+│  │                        and paid off, facts of time, age and kinship, ids by position) and its
+│  │                        summary, both from the text alone, the summary checked and written
+│  │                        again; the register so far a chapter reads, its check of a later chapter
+│  │                        beside the Continuity checker's, and the threads left open at the last
+│  │                        checkpoint with the Author's reasons; author.rs
 │  │                        — the Author's and the reviewers' replies with their schemas, built per
 │  │                        call where its options differ; author_prompts.rs — their prompts: the
 │  │                        Author sees everything but the planted tokens, the Reader only the

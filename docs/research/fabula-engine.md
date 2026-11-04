@@ -326,7 +326,7 @@ async fn write_chapter(ctx: &Ctx, n: u32) -> anyhow::Result<ChapterId> {
 }
 ```
 
-As built (PR 6), the least bad pick costs no call: on the last attempt the pick's schema has no rerun, so the Author's own pick there is the choice. Each step reads the stores before it calls a model, the pauses are rows, and the summary is written in the human's language before the checkpoint ([docs/fabula.md](../fabula.md) §4).
+As built (PR 6), the least bad pick costs no call: on the last attempt the pick's schema has no rerun, so the Author's own pick there is the choice. Each step reads the stores before it calls a model, the pauses are rows, and the summary is written in the human's language before the checkpoint ([docs/fabula.md](../fabula.md) §4). As built (PR 11), step 9 has the Canon keeper's first part only, before the checkpoint: from the version's text alone it writes the story's register — the threads the chapter opens and pays off, the facts of time, age and kinship it states — and the summary, checked against the text and written once more against the check. The next chapter's Author reads the accepted chapters' registers, and the keeper checks the new chapter against them beside the Continuity checker; the canon and world deltas, the settle branch and P4 stay M4's ([docs/fabula.md](../fabula.md) §4, §6 T15–T16).
 
 ## 8. Agent contracts
 
@@ -457,7 +457,7 @@ Characters run with thinking off (section 8). With it on, a proposal's output gr
 
 Two pre-registered decisions settle M3: whether Fabula continues (F against B0), and whether the simulation earns its place (F against A1).
 
-**Systems compared** (the Author's model is the same everywhere; F is the MVP, without voice review or the Canon keeper)
+**Systems compared** (the Author's model is the same everywhere; F is the MVP, without voice review or the Canon keeper's deltas — since PR 11 every system's Author loop has the keeper's register and summary, [docs/fabula.md](../fabula.md) §4)
 
 | Id | System | What it isolates |
 | --- | --- | --- |

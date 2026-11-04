@@ -603,6 +603,15 @@ by the chat's own model, so a chapter takes many calls and an hour or more.
    them; the earlier scenes stay as they were. The new version lands as the chapter
    did, and you can accept it or ask again. Its budget is a chapter's own: playing
    scenes again does not spend the first version's.
+6. **The story keeps its books.** After each chapter the story notes, from the
+   chapter's text alone, the questions it leaves its reader with — a clue, footsteps
+   nobody explains — the earlier ones it answers, and what it says of ages, dates,
+   deaths and kinship. The next chapters are planned, written and checked against
+   that list, so a later chapter that tells an earlier one's fact otherwise can be
+   caught. In the last chapter the Author is asked to answer every question still
+   open or leave it open on purpose, and the last checkpoint names those left, with
+   the Author's reason where it gave one. The chapter's summary is written from its
+   text alone too, and checked against it.
 
 A chapter is bounded by **Story: run time limit** (6 hours) and **Story: chapter
 budget (tokens)** (6,000,000), with an optional **Story: chapter budget ($)** where
