@@ -9,11 +9,9 @@ use std::sync::Arc;
 
 use serde_json::json;
 
-use super::tests::{Open, Reply, Script, config, paused_at, story};
+use super::tests::{Open, Reply, Script, config, paused_at, story, two_chapters};
 use super::{Outcome, Stop};
-use crate::entities::story::{
-    ChapterArc, ChapterId, Decision, NoteKind, NoteSeverity, QuestionBody, Reviewer, fixture_canon,
-};
+use crate::entities::story::{ChapterId, Decision, NoteKind, NoteSeverity, QuestionBody, Reviewer};
 use crate::features::story::port::{PortError, Prompt};
 
 /// The pass's findings on the first draft: a kin a reader cannot place, and
@@ -133,21 +131,6 @@ async fn a_run_killed_at_the_staging_pass_asks_the_checkers_batch_again_and_noth
         first.len(),
         "the Reader's notes are written once"
     );
-}
-
-/// A story whose arc has two chapters, its canon approved.
-async fn two_chapters() -> Open {
-    let mut open = Open::open_only().await;
-    let mut canon = fixture_canon();
-    canon.arc.chapters.push(ChapterArc {
-        goal: "Ines decides whom to trust.".into(),
-    });
-    open.author.import_canon(&canon).await.unwrap();
-    let port = Script::new(Arc::new(story));
-    let outcome = open.advance(&port, &config()).await;
-    assert_eq!(paused_at(&outcome), &QuestionBody::Canon);
-    open.answer(Decision::Approve, "").await;
-    open
 }
 
 #[tokio::test]

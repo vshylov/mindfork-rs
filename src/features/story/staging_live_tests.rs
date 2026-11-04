@@ -96,7 +96,7 @@ async fn staging_live_known_answers_on_g2() {
         ch2.text.contains("Сын Марьи"),
         "G2's chapter 2 has the line"
     );
-    let before = vec![(1, db.summary(&ch1.id).await.unwrap().expect("G2's summary"))];
+    let before = [(1, db.summary(&ch1.id).await.unwrap().expect("G2's summary"))];
     let mut log = db.run_log_writer().await.unwrap();
     let run = log.start_run(&json!({"probe": "staging"})).await.unwrap();
     let sampling = role_sampling()

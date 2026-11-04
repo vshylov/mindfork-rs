@@ -1,3 +1,5 @@
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 
 use super::{CanonKeys, Property, Schema, StorySchema, Variant, describe, extract_object};
@@ -32,6 +34,28 @@ pub(crate) fn instances(schema: &Schema) -> Vec<Value> {
             .flat_map(|v| object_instances(&v.properties, Some((tag, &v.name))))
             .collect(),
     }
+}
+
+/// Every instance the schema allows reads as `T` and writes back the same,
+/// and the schema keeps the dialect: the one check every reply's schema
+/// meets, shared by the tests of each module that defines one.
+pub(crate) fn holds<T: DeserializeOwned + Serialize>(schema: &Schema) -> usize {
+    // A union is never a root (spec §8): one is checked as a property.
+    let root = match schema {
+        Schema::Object(_) => schema.clone(),
+        _ => Schema::Object(vec![Property::new("value", schema.clone())]),
+    };
+    assert_eq!(dialect::check(&root.to_value()), Vec::new());
+    let all = instances(schema);
+    for instance in &all {
+        let checked = schema
+            .validate(instance)
+            .unwrap_or_else(|v| panic!("{instance}: {}", describe(&v)));
+        let parsed: T = serde_json::from_value(checked.clone())
+            .unwrap_or_else(|e| panic!("{checked} does not read as its type: {e}"));
+        assert_eq!(serde_json::to_value(parsed).unwrap(), checked);
+    }
+    all.len()
 }
 
 fn object_instances(properties: &[Property], tag: Option<(&str, &str)>) -> Vec<Value> {

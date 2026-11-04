@@ -1,31 +1,12 @@
 //! The staging pass on its own: its schema, its prompt and its notes
 //! (docs/fabula.md §4, PR 12).
 
-use serde::Serialize;
-use serde::de::DeserializeOwned;
 use serde_json::json;
 
 use super::{StagingFinding, StagingKind, StagingReply, staging_notes, staging_prompt};
 use crate::entities::story::{NoteKind, NoteSeverity, fixture_canon};
-use crate::features::story::dialect;
-use crate::features::story::schema::tests::instances;
-use crate::features::story::schema::{CanonKeys, Schema, StorySchema, describe};
-
-/// Every instance the schema allows reads as `T` and writes back the same,
-/// and the schema keeps the dialect.
-fn holds<T: DeserializeOwned + Serialize>(schema: &Schema) -> usize {
-    assert_eq!(dialect::check(&schema.to_value()), Vec::new());
-    let all = instances(schema);
-    for instance in &all {
-        let checked = schema
-            .validate(instance)
-            .unwrap_or_else(|v| panic!("{instance}: {}", describe(&v)));
-        let parsed: T = serde_json::from_value(checked.clone())
-            .unwrap_or_else(|e| panic!("{checked} does not read as its type: {e}"));
-        assert_eq!(serde_json::to_value(parsed).unwrap(), checked);
-    }
-    all.len()
-}
+use crate::features::story::schema::tests::holds;
+use crate::features::story::schema::{CanonKeys, StorySchema};
 
 #[test]
 fn the_schema_keeps_the_dialect_names_four_kinds_and_decides_last() {

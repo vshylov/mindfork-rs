@@ -19,7 +19,7 @@ use crate::entities::story::{
     BranchId, Decision, EventId, NewNote, NoteDecision, NoteKind, NoteSeverity, QuestionBody,
     Resolution, ReviewNote, Reviewer, RunId, VersionOrigin, WorldState,
 };
-use crate::entities::story::{ChapterId, CharacterKey, SceneId, fixture_canon};
+use crate::entities::story::{ChapterArc, ChapterId, CharacterKey, SceneId, fixture_canon};
 use crate::features::story::author::{ReaderReply, SceneDraft, TriageReply};
 use crate::features::story::engine::SharedLog;
 use crate::features::story::port::{CallAddress, LlmPort, PortError, Prompt, Role};
@@ -472,6 +472,21 @@ pub(super) fn paused_at(outcome: &Outcome) -> &QuestionBody {
         Outcome::Paused(q) => &q.body,
         other => panic!("not paused: {other:?}"),
     }
+}
+
+/// A story whose arc has two chapters, its canon approved.
+pub(super) async fn two_chapters() -> Open {
+    let mut open = Open::open_only().await;
+    let mut canon = fixture_canon();
+    canon.arc.chapters.push(ChapterArc {
+        goal: "Ines decides whom to trust.".into(),
+    });
+    open.author.import_canon(&canon).await.unwrap();
+    let port = Script::new(Arc::new(story));
+    let outcome = open.advance(&port, &config()).await;
+    assert_eq!(paused_at(&outcome), &QuestionBody::Canon);
+    open.answer(Decision::Approve, "").await;
+    open
 }
 
 #[tokio::test]
