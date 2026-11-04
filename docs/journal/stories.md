@@ -13,7 +13,7 @@ what was rejected — the reasoning behind the code, not its current shape. For 
 shape read the reference documents named above; for the traps that recur across areas read
 [lessons.md](../lessons.md).
 
-## Entries (11)
+## Entries (12)
 
 - Post-M9: Fabula — PR 1, the story database (done)
 - Post-M9: Fabula — PR 2, the model port and replay; Gate G0 GO (done)
@@ -26,6 +26,7 @@ shape read the reference documents named above; for the traps that recur across 
 - Post-M9: Fabula — PR 9, the story driven from the chat; Gate G2 GO (done)
 - Post-M9: Fabula — PR 10, a scene played again at the checkpoint (done)
 - Post-M9: Fabula — PR 11, the story's register (done)
+- Post-M9: Fabula — PR 12, the craft of the scenes and the lines (done)
 
 ### Post-M9: Fabula — PR 1, the story database (done)
 
@@ -1216,3 +1217,153 @@ The first of the two pull requests that act on what G2's readers found (docs/fab
     three years ago; the father waited twenty), so nothing reached the story — but the Author's
     own reading was wrong, the kind of referent PR 12's staging pass is for.
 - **Tests:** 4778 unit tests green (+11 over 4767), 327 `#[ignore]` (+1, the probe).
+
+### Post-M9: Fabula — PR 12, the craft of the scenes and the lines (done)
+
+The second of the two pull requests that act on what G2's readers found (docs/fabula.md §4,
+*Before M3*): the faults of the story's deeper logic that the register does not reach —
+every conflict resolved at once at no cost, lines that report the scene's state or open on
+thanks, a kinship no reviewer could place.
+
+- **The fork (T17 (a), the owner's, 2026-11-04):** the rules in the Author's and the
+  characters' prompts, a scene's intent naming its collision and its price, and a staging
+  pass that marks a line announcing a plan or opening on thanks. Not fields of their own in
+  the plan, and not a fifth measure in the pick (T17 (c), which would change spec §7). The
+  agent's choices inside it, below, are open to the owner's review.
+- **The Author's rules** gain two. A scene is a collision: its intent names whose goals
+  collide in it and what it may cost someone; no conflict ends without a price — a
+  confession, a pardon or a win costs someone something they hold — the pressure set so that
+  it does, the version where it is paid the one kept. And the reveals are paced: a secret is
+  spent where it costs its keeper most, one at a time. The intent's description in the plan's
+  schema says the same, so the plan that writes it reads it twice.
+- **A line is a deed**, in the characters' rules and the prose's: a plan or a boundary acted
+  on rather than announced, no reply that opens on thanks, apology or agreement the moment
+  does not call for, a want shown in what is done. The prose may cut such a line of the record
+  or show it in a deed, as long as what happened stays — the rule that the prose never
+  contradicts the record holds. The World Master's rules are unchanged: it rules, it does not
+  speak.
+- **The staging pass** (`staging.rs`, `…/staging`, `Role::Continuity`'s sampling) reads each
+  version's text for who is where and holds what, to whom a pronoun, a "who" or a tie of kin
+  points, a line that announces and a reply that opens on thanks; a line that does what the
+  moment calls for is no fault. It runs on every chapter, the first included, beside the
+  Continuity checker and the keeper's check, in one batch: a run killed at it asks the
+  checker's batch again and nothing the run stored (`craft_tests.rs`). Its notes are four kinds
+  of their own (`staging`, `referent`, `announced`, `thanks`), triaged as the checker's; a note
+  kind is a stored name in a free-text column, so no schema step. Severity: high when a reader
+  would take a person, a place, a thing or a kin for the wrong one, or when one fault of the
+  lines runs through the chapter.
+- **Not the text alone, quite.** Built on the chapter's text alone, the first probe on Sonnet
+  gave a high note on chapter 2's "let us go to Andrey" — "Andrey is never mentioned before",
+  when chapter 1 named him. The pass now reads the published chapters' summaries first, the
+  keeper's from their text alone (PR 11): a name they carry is known to the reader. With them
+  the note was gone and the known answers held. No canon and no record reach it.
+- **Tried and not kept: the ties of kin first.** A list in the reply before the findings —
+  each tie of kin as its line states it, every pronoun put to its person — so the reply would
+  hold the lines to each other before it judged them (property order is generation order). On
+  Sonnet 5.5 it changed nothing (3 of 3 on each known answer, as without it). On Qwen 3.8 27B
+  the ties were right — "Nikolai is Marya's son; Marya left with Nikolai", "Timur's mother
+  took him to the mainland" — and the pass still did not hold them against each other: Marya's
+  line in 1 run of 3 (0 without), a reply opening on thanks in 0 (2 without), two findings in
+  all against seven. No gain for a longer reply, so the reply is the findings alone.
+- **Tests.** `staging_tests.rs` (the schema keeps the dialect and decides last, each kind its
+  own note kind, the prompt with the summaries and nothing of the canon, a reply made notes),
+  `craft_tests.rs` on the scripted port (the pass on each version's text, its notes in the
+  checker's batch and in the triage; chapter 2's pass reads chapter 1's summary; a run killed
+  at it), the rules in `author_prompts_tests`, `prompts_tests` and `author_tests`. The runs
+  killed at every call, chapter and take cover the new call unchanged. **Mutation check:** 7
+  mutants in one build (the notes not written, the summaries not passed, the address, the
+  blank note and the empty anchor kept, a kind stored as another, the summaries ignored by the
+  prompt): all killed.
+- **Live: known answers on G2's own chapters** (`staging_live_tests`, `MINDFORK_FABULA_G2_STORY`;
+  three runs, the role sampled as the app samples it; chapter 2 read after chapter 1's summary
+  as G2 stored it). The faults are the readers': "son of Marya, who left with him for the
+  mainland", where the son says his mother took *him*; replies opening on thanks; the
+  inspector's decision stated at the grave.
+
+  | Of 3 runs | Sonnet 5.5, text alone | Sonnet 5.5, with the summaries | Qwen 3.8 27B, with the summaries |
+  | --- | --- | --- | --- |
+  | Marya's line, a referent | 3 | 3 | 0 |
+  | A reply that opens on thanks | 3 | 3 | 2 |
+  | A line that announces | 3 | 3 | 0 |
+  | Findings in all, chapter 1 / chapter 2 | 34 / 36 | 34 / 32 | 3 / 4 |
+
+  A call, one chapter read, took about 6,500 tokens and 11 seconds on Sonnet; on Qwen about
+  14,000 tokens, five and a half minutes and $0.02. Things it found:
+  - *On Sonnet the pass reads as G2's readers did*: the father "son of Marya" against the son's
+    own words, high, every run; Timur and Galina told to sit while they already sit; the
+    inspector's decision stated at his father's grave.
+  - *About eleven findings a chapter on Sonnet*, most of them low: they reach the triage, and
+    a low note alone starts no revision.
+  - *On Qwen 3.8 27B the pass finds little*, as the keeper's check did (PR 11): what it names
+    is right, the kinship it misses.
+
+- **Live: a two-chapter story on Qwen** (`story_chat_live_story`, Qwen 3.8 27B on OpenRouter
+  pinned to DeepInfra, a Russian profile, G2's sketches, the harness's three-hour limit):
+  "The Last Ferry" again, from the sketches to the last acceptance in the chat — 2,365 words,
+  both chapters accepted.
+
+  | | Calls | Prompt tokens | Reply tokens | Cost |
+  | --- | --- | --- | --- | --- |
+  | Chapter 1 (two scenes, the first revision accepted) | 203 | 944,960 | 229,301 | $0.55 |
+  | Chapter 2 (four scenes, one played twice, the second revision accepted) | 569 | 6,761,797 | 457,197 | $1.72 |
+  | The whole story, readings included | 775 | 7,710,539 | 686,925 | $2.28 |
+
+  Things it found:
+  - *The intents name the collision and the price* in so many words, in Russian:
+    "Collision: his business-like distance breaks on three days' isolation… Price: he loses
+    control of his schedule and of what will be kept quiet".
+  - *The staging pass gave six notes over four versions, all accepted*: a tray in Galina's
+    hands and left on the pier in one sentence; the logbook "taken by the keeper" when Galina
+    snatched it; a cup taken from a windowsill nobody put it on; a key Vera gave away back in
+    her hand; "his brother", a person the text never has. Four calls, $0.09 — and the slowest
+    call of each review on Qwen, up to 17 minutes against the checker's 8.
+  - *Chapter 2 spent the default budget in its fourth scene*, as G2's did; the woken assistant
+    said where and started nothing, and it was finished at 14,000,000.
+  - *The keeper's check named open threads on Qwen this time*: three in the last chapter, which
+    the Author rejected with its reasons, and the last landing named two threads left open. In
+    PR 11's Qwen story it had named none.
+  - *What Qwen writes stays weaker than Sonnet's*: chapter 2's father is "Ilya", whom Galina
+    calls "Svet", and a "Nikita" shares his boat; the pass named one of its referents, not the
+    rest. A reply opened on thanks once (none in PR 11's Qwen story): on Qwen that fault was
+    rare before.
+
+- **Live: G2 again** (T18), on Claude Sonnet 5.5 from the same sketches and the same script,
+  for the owner to read against the first: "The Last Ferry", 2,716 words, both chapters
+  accepted.
+
+  | | Calls | Prompt tokens | Reply tokens | Cost (list price) |
+  | --- | --- | --- | --- | --- |
+  | Chapter 1 (three scenes, the second revision accepted) | 352 | 3,883,526 | 141,833 | $9.19 |
+  | Chapter 2 (four scenes, the second revision accepted) | 468 | 10,796,413 | 178,037 | $23.37 |
+  | The whole story, readings included | 823 | 14,686,287 | 319,954 | $32.57 |
+  | The first G2, for comparison | 875 | 14,017,889 | 314,563 | $31.18 |
+
+  Chapter 2 spent the default budget in its third scene (6,067,211 tokens), the woken
+  assistant said so and where to raise it and started nothing, and the run was finished at
+  14,000,000, the first G2's ceiling. The rules did not lengthen the scenes: chapter 2's
+  branches ran 6.0 rounds on average, the first G2's 6.1; the chapter's cost is the story's,
+  which grows with it (docs/fabula.md §5). Things it found:
+  - *The scenes are planned as collisions*: every intent names whose goals clash and the price
+    (the Russian plans write "Collision:" and "Price:"). The secrets are spent one at a time, over
+    two chapters: Timur tells Galina at his father's grave in chapter 1 and Vera only in
+    chapter 2; Galina's "my fault" and Vera's "I tore out the page myself" come before the
+    brother's notebook is read; Timur owns that he wrote the estimate the closure was signed
+    on, never having seen the island.
+  - *No reply opens on thanks.* The first G2's accepted text opened five replies on thanks,
+    three on an apology and one on agreement, and said "thank you" seven times; the second, in
+    58 replies, none of them, and the word nowhere.
+  - *The staging pass* gave 41 notes over the four versions reviewed — 21 staging, 7
+    referents, 8 lines that announce, 4 of thanks — and the Author accepted 35: a notebook in
+    Vera's hand, under her arm and on the table at once; "the two of them put on wood" when
+    Timur alone did; "dawn" at noon. Four calls, 23,000 prompt tokens, about $0.09.
+  - *The register held*: chapter 2 paid off all six of chapter 1's threads, and the two it
+    opened — the mainland's answer to the act, Timur back by five — the last landing called an
+    open ending.
+  - *The landing's assumptions disagree with each other.* The woken assistant warned that the
+    list it was sent answers "who signed the order" several ways and to trust the text: the
+    Author meets the same doubt at the outline, at each scene's plan and at each pick, sees
+    none of its earlier answers, and decides it again — nine of the chapter's 38 assumptions,
+    each different (the first G2's 37 were all different doubts; pacing the reveal kept this
+    one open longest). Not this pull request's; a step that reads the chapter's earlier
+    assumptions, or a landing that keeps the last answer to a doubt, would settle it.
+- Unit tests: 4789 green (+11), 328 `#[ignore]` (+1, the probe).

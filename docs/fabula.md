@@ -382,6 +382,31 @@ them; the harness's three-hour limit (the app's is six) stopped chapter 1 once, 
 turn asked before anything resumed. The figures are in
 [journal/stories.md](journal/stories.md).
 
+**PR 12, as built (2026-11-04).** By T17 (a) the Author's rules gain two: a scene is a
+collision, its intent naming whose goals collide in it and what it may cost someone, and no
+conflict ends without a price, the version where it is paid the one kept; and the reveals are
+paced, a secret spent where it costs its keeper most, one at a time. The intent's description
+in the plan says the same. The characters' rules and the prose's say a line is a deed: a plan
+or a boundary acted on rather than announced, no reply that opens on thanks, apology or
+agreement the moment does not call for, a want shown in what is done — and the prose may cut
+or show in a deed a line of the record that does otherwise. The **staging pass**
+(`…/staging`) runs on every chapter beside the Continuity checker, its notes in the checker's
+batch under four kinds of their own (`staging`, `referent`, `announced`, `thanks`): no new
+reviewer, no schema step. Where the table says the text alone, it reads the published
+chapters' summaries before the text: on the text alone it took a brother chapter 1 named for
+a stranger. A list of the chapter's ties of kin before the findings was tried and not kept.
+**Live:** on G2's own chapter 2, three runs, the pass found "son of Marya, who left with him",
+a reply opening on thanks and a line that announces in 3 of 3 each on Sonnet 5.5, and in 0, 2
+and 0 on Qwen 3.8 27B. A two-chapter story on Qwen finished in the chat, 775 calls and $2.28.
+**G2 again** on Sonnet 5.5 from the same sketches finished at $32.57 against the first's
+$31.18, chapter 2 at the first G2's 14,000,000-token ceiling: every scene planned with its
+collision and its price, the secrets spent one at a time across both chapters, all six of
+chapter 1's threads paid off, the staging pass's 41 notes 35 accepted, and no reply opening
+on thanks where the first opened five (and three on an apology); for the owner to read
+against the first (T18). The run found the landing's assumptions answering one doubt nine
+ways, each step deciding it again without the earlier answers. The figures are in
+[journal/stories.md](journal/stories.md).
+
 ### M3 — the evaluation
 
 Before it starts, two judges besides the owner are found, and Claude drafts the premise

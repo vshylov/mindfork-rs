@@ -2753,6 +2753,20 @@ take (below).
   Author pays it off or rejects the note with its reason (T16 (a)). The register is a table of the story's
   database (`chapter_register`), added with no schema step; a story begun before it
   is given one on the way, from the accepted text.
+- **The craft** (docs/fabula.md §4, PR 12; §6, T17 (a)). A scene's intent names
+  whose goals collide in it and what it may cost someone; the Author's rules pace
+  the reveals — a secret spent where it costs its keeper most, one at a time — and
+  let no conflict end without a price, the version where it is paid the one kept.
+  The characters' rules and the prose's say a line is a deed: a plan or a boundary
+  acted on rather than announced, no reply that opens on thanks, apology or
+  agreement the moment does not call for, a want shown in what is done. A
+  **staging pass** reads each version's text, with the published chapters'
+  summaries before it and nothing else — no canon, no record — for who is where and
+  holds what, to whom a pronoun, a "who" or a tie of kin points, a line that
+  announces and a reply that opens on thanks. It runs on every chapter beside the
+  Continuity checker, and its notes (`staging`, `referent`, `announced`, `thanks`)
+  are the checker's for the triage; the note kinds are new stored names, with no
+  schema step.
 - **The landing.** The chapter a checkpoint asks about is attached to the chat as
   `<story> — chapter <n>.md` ([§9.7](#97-chat-file-attachments-file-attach)),
   decided inline or by reference against the chat's budget at the landing and

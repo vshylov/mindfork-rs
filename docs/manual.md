@@ -612,6 +612,12 @@ by the chat's own model, so a chapter takes many calls and an hour or more.
    open or leave it open on purpose, and the last checkpoint names those left, with
    the Author's reason where it gave one. The chapter's summary is written from its
    text alone too, and checked against it.
+7. **Scenes and lines.** Each scene is planned as a collision — whose goals clash
+   in it and what it may cost someone — and the characters act on what they decide
+   rather than announce it. Each chapter is also read for its staging: who is where
+   and holds what, whose "he" and whose son, a line that only states a plan, a
+   reply that opens on thanks. What that reading finds goes to the chapter's review
+   with the other notes.
 
 A chapter is bounded by **Story: run time limit** (6 hours) and **Story: chapter
 budget (tokens)** (6,000,000), with an optional **Story: chapter budget ($)** where
