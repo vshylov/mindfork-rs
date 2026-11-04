@@ -407,6 +407,34 @@ against the first (T18). The run found the landing's assumptions answering one d
 ways, each step deciding it again without the earlier answers. The figures are in
 [journal/stories.md](journal/stories.md).
 
+**After PR 12: a chapter's choices stand (2026-11-04).** Where the Author could have asked
+the human and did not, it records the question and the answer it chose (spec §14, *Pauses*):
+at the outline, at each scene's plan and at each pick. No step sees another's answers, so the
+next one meets the same doubt and decides it again. G2 again decided who signed the closure
+order at nine of chapter 2's steps, nine ways, and whether Galina knows Timur for a local at
+six of chapter 1's; PR 12's Qwen story decided what Nikita's last logbook entry says at
+three. Both models, both chapters: the cause is the loop's. The owner asked for the fix after
+#874 merged (2026-11-04); the forks below are the agent's, open to the owner's review.
+
+- **What fixes it.** (a) The chapter's choices so far reach every Author prompt of the chapter
+  — they stand, and the plans, the picks and the prose go by them — and the landing lists each
+  question once, with its latest answer *(taken)*. (b) The landing alone keeps the last answer:
+  the scenes would still be planned on nine. (c) Every doubt asked once, at the outline: the
+  ones met later would be lost.
+- **Whose choices.** (a) The chapter's own, from every run and take of it *(taken)*: an earlier
+  chapter's were the human's to read at its checkpoint, and live on in its text, its summary
+  and its register. (b) Every chapter's.
+- **A change.** (a) A later step may answer a question again when what was played or what the
+  human asked calls for it, writing the question as it stands; the latest answer stands
+  *(taken)*. (b) Never: a choice made before a scene was played would outrank its record.
+- **The same question.** (a) By its words — letters and digits, case ignored — since the step
+  copies the question it is shown *(taken)*. (b) A model's call judging which questions are
+  one: a call per landing, with errors of its own.
+
+Proof: engine tests on the scripted port (the choices in the next steps' prompts, after a
+resume too; one line per question at the landing); live, a two-chapter story on Qwen 3.8 27B
+from G2's sketches, its questions answered again counted against PR 12's.
+
 ### M3 — the evaluation
 
 Before it starts, two judges besides the owner are found, and Claude drafts the premise

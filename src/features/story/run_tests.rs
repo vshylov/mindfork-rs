@@ -274,6 +274,61 @@ async fn an_unapproved_canon_pauses_at_once_and_spends_nothing() {
 /// with its summary, the note of each scene kept — a rerun's request is no
 /// pick — and the chapter's assumptions, all read from the stores, so a run
 /// that only found the question pending lands the same.
+/// A question the chapter answered again lands once, with its latest
+/// answer (docs/fabula.md §4, *A chapter's choices stand*).
+#[tokio::test]
+async fn a_question_answered_again_lands_once_with_its_latest_answer() {
+    let fixture = story(async |db, author| {
+        at_checkpoint(db, author).await;
+        let run = db
+            .run_log_writer()
+            .await
+            .unwrap()
+            .start_run(&json!({}))
+            .await
+            .unwrap();
+        for (step, doubt, choice) in [
+            (
+                "ch1/sc1/r1/pick",
+                "Whether Silas lies",
+                "He tells the truth.",
+            ),
+            ("ch1/sc2/plan", "Whether the ferry runs.", "It does not."),
+        ] {
+            author
+                .add_assumption(
+                    &run,
+                    step,
+                    "author",
+                    &Assumption {
+                        doubt: doubt.into(),
+                        choice: choice.into(),
+                    },
+                )
+                .await
+                .unwrap();
+        }
+    })
+    .await;
+    let board = StoryBoard::new();
+
+    let landed = run_on(&fixture.spec, Arc::default(), &board).await;
+
+    assert_eq!(
+        landed.assumptions,
+        [
+            Assumption {
+                doubt: "Whether Silas lies.".into(),
+                choice: "He tells the truth.".into(),
+            },
+            Assumption {
+                doubt: "Whether the ferry runs.".into(),
+                choice: "It does not.".into(),
+            },
+        ]
+    );
+}
+
 #[tokio::test]
 async fn a_chapter_at_its_checkpoint_lands_with_its_summary_picks_and_assumptions() {
     let fixture = story(async |db, author| at_checkpoint(db, author).await).await;

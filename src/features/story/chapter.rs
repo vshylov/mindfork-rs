@@ -45,7 +45,11 @@
 //! flight is lost, as the spec has it, and another plays in its place, so an
 //! interruption never costs the scene an attempt.
 //! A step whose result has no row of its own (the Author ending the chapter
-//! at a plan) is known by its step.
+//! at a plan) is known by its step. The chapter's assumptions, from every
+//! run and take of it, are read when the chapter opens and reach every
+//! Author prompt after them as choices that stand (docs/fabula.md §4, *A
+//! chapter's choices stand*), so a resumed run is shown what the run it
+//! replaces was.
 //!
 //! **The budget** (docs/fabula.md §6, T1) counts every call under the
 //! chapter's addresses, in every run and attempt of its latest take (T12):
@@ -231,6 +235,7 @@ pub async fn advance(engine: Engine<'_>) -> Result<Outcome, StoryError> {
         canon,
         run,
         take: None,
+        choices: Vec::new(),
     };
     match story.go().await {
         Ok(outcome) => Ok(outcome),
@@ -397,6 +402,9 @@ struct Run<'a> {
     run: RunId,
     /// The chapter's latest take, while it has more than its first.
     take: Option<Take>,
+    /// The chapter's assumptions so far, from every run and take of it:
+    /// the choices its Author prompts stand by.
+    choices: Vec<Assumption>,
 }
 
 impl Run<'_> {
@@ -596,6 +604,7 @@ impl Run<'_> {
             human_notes: ctx.human_notes.as_deref(),
             goals: &ctx.goals,
             register: &ctx.register,
+            choices: &self.choices,
             last: ctx.last,
         }
     }
@@ -610,6 +619,7 @@ impl Run<'_> {
                 self.author
                     .add_assumption(&self.run, step, Role::Author.as_str(), &a)
                     .await?;
+                self.choices.push(a);
             }
         }
         Ok(())
@@ -643,6 +653,13 @@ impl Run<'_> {
     async fn chapter(&mut self, n: u32) -> Go<()> {
         self.port.chapter = Some(n);
         self.take = self.db.take_of(n).await?;
+        self.choices = self
+            .db
+            .assumptions(&format!("ch{n}/"))
+            .await?
+            .into_iter()
+            .map(|a| a.assumption)
+            .collect();
         let goals = self.outline(n).await?;
         let ctx = self.context(n, goals).await?;
         let kept = self.scenes(n, &ctx).await?;
@@ -1607,6 +1624,9 @@ mod take_tests;
 #[path = "register_tests.rs"]
 mod register_tests;
 
+#[cfg(test)]
+#[path = "choices_tests.rs"]
+mod choices_tests;
 #[cfg(test)]
 #[path = "craft_tests.rs"]
 mod craft_tests;

@@ -476,12 +476,13 @@ async fn landing(db: &StoryDb, ending: Ending) -> Result<Landed, StoryDbError> {
             landed.picks.push((kept.scene.scene, kept.rationale));
         }
     }
-    landed.assumptions = db
+    let made: Vec<Assumption> = db
         .assumptions(&format!("ch{n}/"))
         .await?
         .into_iter()
         .map(|a| a.assumption)
         .collect();
+    landed.assumptions = Assumption::standing(&made);
     Ok(landed)
 }
 
