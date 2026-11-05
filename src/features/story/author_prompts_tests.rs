@@ -440,16 +440,24 @@ fn the_chapters_choices_reach_every_author_prompt_once_each() {
         },
     };
     let listed = "- Who signed the order? \u{2014} The mayor.\n- Is Ines new in town? \u{2014} \
-                  Yes, a month.\nThese choices stand: plan, pick and write by them. Only what was \
-                  played or what the human author asked can change one.";
-    for prompt in [
-        outline(&view),
-        plan(&view, &kept, &world, (2, 3), None),
-        pick(&view, (2, &setup, "i"), &shown, 1, None),
-        write(&view, &kept, (1, 2)),
-        revise(&view, &kept, "## One\n\nOld.", &[], (1, 2)),
+                  Yes, a month.\nThese choices stand: plan, pick and write by them";
+    let recorded = "These choices stand: plan, pick and write by them, and do not ask them \
+                    again. Only what was played or what the human author asked can change one. \
+                    A question they do not answer is a new one: record it among your \
+                    assumptions.";
+    let written = "These choices stand: plan, pick and write by them. Only what was played or \
+                   what the human author asked can change one.";
+    // The steps whose replies record assumptions are told to record every
+    // other question; the draft and the revisions record none.
+    for (prompt, close) in [
+        (outline(&view), recorded),
+        (plan(&view, &kept, &world, (2, 3), None), recorded),
+        (pick(&view, (2, &setup, "i"), &shown, 1, None), recorded),
+        (write(&view, &kept, (1, 2)), written),
+        (revise(&view, &kept, "## One\n\nOld.", &[], (1, 2)), written),
     ] {
         assert!(prompt.user.contains(listed), "{}", prompt.user);
+        assert!(prompt.user.contains(close), "{}", prompt.user);
         assert!(!prompt.user.contains("The harbour master."), "replaced");
         tokenless(&prompt);
     }

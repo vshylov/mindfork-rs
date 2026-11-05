@@ -31,10 +31,11 @@ use crate::entities::story::{
 
 /// What every assumption field tells the model.
 const ASSUMPTIONS: &str = "Questions about the story you could have put to its human author \
-    and did not, each with the answer you chose for now; empty when you had none. Never one \
-    your choices in this chapter already answer: they stand. To answer one again, when what \
-    was played or what the human author asked calls for it, write its question as it stands. \
-    Written in the human author's language.";
+    and did not, each with the answer you chose for now; empty when you had none. Write \
+    every new one you met; leave out only a question your choices in this chapter already \
+    answer, since they stand. To answer one of those again, when what was played or what the \
+    human author asked calls for it, write its question as it stands. Written in the human \
+    author's language.";
 
 impl StorySchema for Assumption {
     fn schema(keys: &CanonKeys) -> Schema {

@@ -32,6 +32,29 @@ fn every_author_and_reviewer_schema_keeps_the_dialect_and_reads_as_its_type() {
     assert!(holds::<TriageReply>(&TriageReply::schema_for(&keys, &notes)) >= 1);
 }
 
+/// Every reply that records assumptions asks for each new question and
+/// leaves out only one its chapter's choices answer: told only that the
+/// choices stand, a step recorded a seventh of the new questions it had
+/// before (docs/journal/stories.md, *a chapter's choices stand*).
+#[test]
+fn the_assumptions_ask_for_every_new_question() {
+    let keys = keys();
+    let branches = labels(&["k0", "k1"]);
+    for schema in [
+        OutlineReply::schema(&keys).to_json(),
+        PlanReply::schema_for(&keys, true).to_json(),
+        PickReply::schema_for(&keys, &branches, true).to_json(),
+    ] {
+        assert!(
+            schema.contains(
+                "Write every new one you met; leave out only a question your choices in this \
+                 chapter already answer, since they stand."
+            ),
+            "{schema}"
+        );
+    }
+}
+
 #[test]
 fn the_deciding_fields_come_last() {
     let keys = keys();

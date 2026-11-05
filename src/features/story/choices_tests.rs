@@ -48,7 +48,7 @@ async fn what_the_outline_chose_reaches_the_plans_the_picks_and_the_prose() {
         let prompt = port.prompt_at(address);
         assert!(
             prompt.user.contains(&format!(
-                "{OUTLINED}\nThese choices stand: plan, pick and write by them."
+                "{OUTLINED}\nThese choices stand: plan, pick and write by them"
             )),
             "{address}: {}",
             prompt.user
