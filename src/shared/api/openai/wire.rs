@@ -168,11 +168,17 @@ pub struct WireJsonSchema {
     pub schema: Box<serde_json::value::RawValue>,
 }
 
-/// The gateway's provider preferences: here, only that every parameter of the
-/// request be honoured.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+/// The gateway's provider preferences: that every parameter of the request be
+/// honoured, and for Fabula's evaluation runner alone the providers it is
+/// pinned to (docs/fabula.md §4, PR 13). The app never pins: its routing stays
+/// the gateway's.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct WireProvider {
     pub require_parameters: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub only: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allow_fallbacks: Option<bool>,
 }
 
 /// The thinking switch on the wire, in one of the two spellings servers read.
@@ -547,10 +553,27 @@ impl ChatCompletionRequest {
     ///
     /// A body with a schema asks for `provider.require_parameters`: without it an
     /// endpoint may take the schema as a hint (docs/research/fabula-engine.md §8).
+    /// The body pinned to `providers` alone, with no fallback: the
+    /// evaluation runner's, never the app's (docs/fabula.md §4, PR 13).
+    pub fn pinned_to(mut self, providers: &[String]) -> Self {
+        if providers.is_empty() {
+            return self;
+        }
+        let require_parameters = self.provider.as_ref().is_some_and(|p| p.require_parameters);
+        self.provider = Some(WireProvider {
+            require_parameters,
+            only: Some(providers.to_vec()),
+            allow_fallbacks: Some(false),
+        });
+        self
+    }
+
     pub fn for_gateway(mut self) -> Self {
         if self.response_format.is_some() {
             self.provider = Some(WireProvider {
                 require_parameters: true,
+                only: None,
+                allow_fallbacks: None,
             });
         }
         self.repetition_penalty = self.repeat_penalty.take();
@@ -2770,5 +2793,40 @@ mod output_schema_tests {
             assert!(json.get("response_format").is_none(), "{json}");
             assert!(json.get("provider").is_none(), "{json}");
         }
+    }
+
+    /// Fabula's evaluation runner pins the gateway to its providers, with no
+    /// fallback, the schema's ask kept (docs/fabula.md §4, PR 13); no pin is
+    /// the body as it was.
+    #[test]
+    fn a_pinned_body_names_its_providers_and_allows_no_fallback() {
+        let pin = ["deepinfra".to_owned()];
+        let body = build_chat_request(&schema_turn(), true, None, false)
+            .for_gateway()
+            .pinned_to(&pin);
+        assert_eq!(
+            serde_json::to_value(&body).unwrap()["provider"],
+            serde_json::json!({"require_parameters": true, "only": ["deepinfra"], "allow_fallbacks": false})
+        );
+        let plain = ChatRequest {
+            messages: vec![ApiMessage::user("hi")],
+            ..ChatRequest::default()
+        };
+        let body = build_chat_request(&plain, true, None, false)
+            .for_gateway()
+            .pinned_to(&pin);
+        assert_eq!(
+            serde_json::to_value(&body).unwrap()["provider"],
+            serde_json::json!({"require_parameters": false, "only": ["deepinfra"], "allow_fallbacks": false})
+        );
+        let unpinned = build_chat_request(&plain, true, None, false)
+            .for_gateway()
+            .pinned_to(&[]);
+        assert!(
+            serde_json::to_value(&unpinned)
+                .unwrap()
+                .get("provider")
+                .is_none()
+        );
     }
 }

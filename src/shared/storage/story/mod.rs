@@ -716,6 +716,13 @@ impl StoryDb {
         self.run(move |a| a.call(&run, &address, attempt)).await
     }
 
+    /// Every run of the story, the first first, whether or not it recorded a
+    /// step or a call.
+    pub async fn runs(&self) -> Result<Vec<RunId>, StoryDbError> {
+        let last = self.run(|a| a.last_run()).await?;
+        Ok((1..=last).map(RunId::nth).collect())
+    }
+
     /// Every call recorded for `run`, in the order recorded: what a fixture
     /// of the run exports (spec §9).
     pub async fn calls(&self, run: &RunId) -> Result<Vec<StoredCall>, StoryDbError> {

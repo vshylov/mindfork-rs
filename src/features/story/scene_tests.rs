@@ -668,3 +668,15 @@ fn the_fixture_recorded_live_leaks_no_secret() {
         "{found:?}"
     );
 }
+
+/// A story's seed moves every branch's draws (M3, docs/fabula.md §4, PR 13);
+/// seed 0 draws as stories did before, so they replay.
+#[test]
+fn a_story_seed_moves_the_branches_draws_and_zero_keeps_the_old_ones() {
+    use super::{seed_of, seeded};
+    let branch = crate::entities::story::BranchId::new("ch1/sc1/r0/k0");
+    assert_eq!(seeded(&branch, 0), seed_of(&branch));
+    assert_eq!(seeded(&branch, 2), seeded(&branch, 2));
+    assert_ne!(seeded(&branch, 1), seeded(&branch, 2));
+    assert_ne!(seeded(&branch, 1), seed_of(&branch));
+}

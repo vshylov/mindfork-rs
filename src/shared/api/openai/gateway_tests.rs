@@ -796,6 +796,36 @@ async fn a_schema_reaches_the_gateway_as_printed() {
     );
 }
 
+/// Fabula's evaluation runner pins the client to one provider (docs/fabula.md
+/// §4, PR 13): every chat request names it, with no fallback, beside the
+/// schema's ask.
+#[tokio::test]
+async fn a_pinned_client_sends_every_request_to_its_provider() {
+    const ROUTES: &[Route] = &[
+        ("/v1/model/qwen/qwen3.8-27b", "200 OK", JSON, QWEN),
+        ("/v1/chat/completions", "200 OK", SSE, ONE_CHUNK),
+    ];
+    let (url, server) = stub(2, ROUTES);
+    let client = gateway(url, "qwen/qwen3.8-27b").pinned_to(vec!["deepinfra".into()]);
+    let mut req = turn(SamplingConfig::default());
+    req.output_schema = Some(
+        crate::shared::api::contract::OutputSchema::new("character", SCHEMA.to_owned()).unwrap(),
+    );
+    run(&client, req).await;
+    let seen = server.join().unwrap();
+    let raw = &seen
+        .iter()
+        .find(|s| s.path() == "/v1/chat/completions")
+        .expect("the chat request")
+        .body;
+    assert!(
+        raw.contains(
+            r#""provider":{"require_parameters":true,"only":["deepinfra"],"allow_fallbacks":false}"#
+        ),
+        "{raw}"
+    );
+}
+
 /// Silence is a "no": an entry without `structured_outputs`, or no entry at
 /// all, puts the calls on the fallback; so does DeepSeek's API, which takes
 /// `json_object` only. Any other server compiles the schema.

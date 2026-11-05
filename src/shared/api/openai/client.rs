@@ -82,10 +82,14 @@ pub struct OpenAiClient {
 
 /// What a client built for the OpenRouter gateway carries besides the dialect
 /// itself.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct Gateway {
     /// Send the two attribution headers with every request.
     attribution: bool,
+    /// The providers every request is pinned to: none in the app, whose
+    /// routing stays the gateway's; Fabula's evaluation runner may pin one
+    /// (docs/fabula.md §4, PR 13).
+    pinned: Vec<String>,
 }
 
 /// What the gateway's `HTTP-Referer` names: the application's own site. With
@@ -172,7 +176,21 @@ impl OpenAiClient {
     /// - with `attribution`, every request names the application in
     ///   `HTTP-Referer` and `X-OpenRouter-Title`.
     pub fn for_openrouter(mut self, attribution: bool) -> Self {
-        self.gateway = Some(Gateway { attribution });
+        self.gateway = Some(Gateway {
+            attribution,
+            pinned: Vec::new(),
+        });
+        self
+    }
+
+    /// Pins every request to `providers`, with no fallback. Builder-style;
+    /// only on the gateway ([`Self::for_openrouter`] first). The app never
+    /// calls it: Fabula's evaluation runner does, so that every story of a
+    /// comparison is written by the same endpoint (docs/fabula.md §4, PR 13).
+    pub fn pinned_to(mut self, providers: Vec<String>) -> Self {
+        if let Some(gateway) = self.gateway.as_mut() {
+            gateway.pinned = providers;
+        }
         self
     }
 
@@ -268,8 +286,10 @@ impl OpenAiClient {
             Some(key) => rb.bearer_auth(key),
             None => rb,
         };
-        match self.gateway {
-            Some(Gateway { attribution: true }) => attributed(rb),
+        match &self.gateway {
+            Some(Gateway {
+                attribution: true, ..
+            }) => attributed(rb),
             _ => rb,
         }
     }
@@ -673,8 +693,8 @@ impl OpenAiClient {
         if self.deepseek && req.continue_final {
             body = body.with_prefix_completion();
         }
-        if self.gateway.is_some() {
-            body = body.for_gateway();
+        if let Some(gateway) = &self.gateway {
+            body = body.for_gateway().pinned_to(&gateway.pinned);
             // A muted turn on a model that must reason: the lowest effort it
             // lists, in place of a request it would refuse.
             if let Some(effort) = self.muted_effort(req).await {

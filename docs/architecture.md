@@ -710,9 +710,17 @@ src/
 │  │                        conversation.rs — what the chat tools do to a story's files: an id from
 │  │                        the title, the draft stored and P1 opened with no call, the pending
 │  │                        question answered from the person's rows and the story claimed for the
-│  │                        run that follows. What the chat does not reach yet (the replay, the
-│  │                        harnesses' scenes, the leak audit, the export) keeps the module's
-│  │                        `allow(dead_code)` until M3
+│  │                        run that follows; eval.rs — M3's hidden runner (PR 13), `mindfork
+│  │                        story-eval`: the systems of spec §11 as options of the chapter's own
+│  │                        configuration (A1 `simulate` off, each scene's opening alone and the
+│  │                        Author inventing the rest; A2 one branch; A3 `review` off; A4 every
+│  │                        event perceived), the frozen premises held to `premises/SHA256SUMS`,
+│  │                        the model named by the command's options (OpenRouter's provider pinned
+│  │                        there alone), a story written into its own directory with its markdown
+│  │                        and trace, a batch that skips what ended and runs B0 after F;
+│  │                        single.rs — its B0, one agent in one session (`LlmPort::session`), to
+│  │                        F's average cost or the model's window, rebuilt from the call log on a
+│  │                        resume
 │  ├─ profiles.rs           pure profile operations (sanitize_name, ProfileEdit)
 │  ├─ chat_search_sort.rs   chat list filter/sort
 │  ├─ companion_memory.rs   the companion's memory blocks (spec §6.6): the memory cut,
@@ -790,7 +798,8 @@ src/
 │  │                        `gap` — a duration in two number-neutral units, which
 │  │                        `get_last_user_message_time` shares
 │  ├─ rag_ingest.rs         scan, read_text, RagProgress (indexing progress types)
-│  ├─ cli.rs                our own micro CLI argument parser (all text lives in locale bundles)
+│  ├─ cli.rs                our own micro CLI argument parser (all text lives in locale bundles;
+│  │                        `story-eval`, hidden, hands its arguments to the runner unread)
 │  ├─ bridge/               the messenger bridge below the orchestrator (ADR 0013):
 │  │                        `Inbound`/`Outbound` — the plain data a channel and the
 │  │                        orchestrator exchange — the pairing code, the messenger's

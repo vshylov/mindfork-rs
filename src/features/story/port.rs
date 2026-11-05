@@ -181,6 +181,43 @@ pub trait LlmPort: Send + Sync {
         role: Role,
         prompt: &Prompt,
     ) -> Result<String, PortError>;
+
+    /// Free text in reply to a conversation, its earlier turns included:
+    /// M3's B0, one agent in one session (docs/fabula.md §6, T21). A port
+    /// that serves by address, as the replay does, reads it as one prompt;
+    /// the engine sends the turns as they are.
+    async fn session(
+        &self,
+        call: &CallAddress,
+        role: Role,
+        system: &str,
+        turns: &[Turn],
+    ) -> Result<String, PortError> {
+        self.text(call, role, &flattened(system, turns)).await
+    }
+}
+
+/// A conversation as one prompt: each turn under its speaker.
+pub fn flattened(system: &str, turns: &[Turn]) -> Prompt {
+    let user = turns
+        .iter()
+        .map(|t| {
+            format!(
+                "[{}]
+{}",
+                t.role, t.content
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(
+            "
+
+",
+        );
+    Prompt {
+        system: system.to_owned(),
+        user,
+    }
 }
 
 /// A reply read into its type. The value has met its schema already, so a
@@ -420,13 +457,24 @@ pub async fn run_text(
     address: &str,
     prompt: &Prompt,
 ) -> Result<String, PortError> {
+    let turns = [Turn {
+        role: "user",
+        content: prompt.user.clone(),
+    }];
+    run_session(attempts, address, &prompt.system, &turns).await
+}
+
+/// [`run_text`]'s policy for a conversation of `turns` after `system`.
+pub async fn run_session(
+    attempts: &mut dyn Attempts,
+    address: &str,
+    system: &str,
+    turns: &[Turn],
+) -> Result<String, PortError> {
     let mut attempt = Attempt {
         number: 1,
-        system: prompt.system.clone(),
-        turns: vec![Turn {
-            role: "user",
-            content: prompt.user.clone(),
-        }],
+        system: system.to_owned(),
+        turns: turns.to_vec(),
     };
     let mut retried = false;
     loop {

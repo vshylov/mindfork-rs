@@ -127,6 +127,7 @@ fn the_moment_holds_what_the_character_perceived_learned_and_reflected() {
         memory: &memory,
         reflections: &reflections,
         breaks_routine: true,
+        omniscient: false,
     };
     let prompt = character_propose(&view);
     let user = &prompt.user;
@@ -296,4 +297,58 @@ fn a_character_is_told_that_a_line_is_a_deed() {
         !master.contains("What you say is part of what you do."),
         "the World Master rules, it does not speak"
     );
+}
+
+/// Under M3's A4 a character's memory holds every event of the branch, and
+/// each is marked for what it was to them: overheard, done unseen, and the
+/// others' thoughts under their deeds (docs/fabula.md §4, PR 13).
+#[test]
+fn an_omniscient_memory_marks_what_the_character_was_not_party_to() {
+    let canon = fixture_canon();
+    let world = WorldState::initial(&canon);
+    let branch = BranchId::new("ch1/sc1/r0/k0");
+    let memory = [
+        event(
+            &branch,
+            1,
+            "mara",
+            Visibility::Whisper {
+                to: vec!["ines".into()],
+            },
+            "Mara whispers.",
+        ),
+        event(
+            &branch,
+            2,
+            "ines",
+            Visibility::Hidden,
+            "Ines pockets the note.",
+        ),
+    ];
+    let silas = CharacterKey::from("silas");
+    let view = CharacterView {
+        canon: &canon,
+        world: &world,
+        who: &silas,
+        round: 2,
+        memory: &memory,
+        reflections: &[],
+        breaks_routine: false,
+        omniscient: true,
+    };
+    let user = character_propose(&view).user;
+    assert!(user.contains(
+        "- (Overheard) Mara whispers.
+  (Mara thought: mara's own thought)"
+    ));
+    assert!(user.contains(
+        "- (Done unseen) Ines pockets the note.
+  (Ines thought: ines's own thought)"
+    ));
+    let blind = CharacterView {
+        omniscient: false,
+        ..view
+    };
+    let user = character_propose(&blind).user;
+    assert!(!user.contains("own thought"), "thoughts stay their own");
 }

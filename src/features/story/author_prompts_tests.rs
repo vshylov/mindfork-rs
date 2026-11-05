@@ -92,6 +92,7 @@ fn ctx<'a>(
         register: &NOTHING_NOTED,
         choices: &[],
         last: false,
+        played: true,
     }
 }
 
@@ -145,6 +146,7 @@ fn a_plan_is_shown_the_kept_scenes_and_offered_the_end_after_the_first() {
         setup: &setup,
         intent: "Squeeze Mara.",
         trace: &t,
+        played: true,
     }];
     let second = plan(&view, &kept, &world, (2, 4), None);
     assert!(second.user.contains("Or end the chapter here"));
@@ -278,6 +280,7 @@ fn the_draft_is_asked_in_the_storys_language_from_the_kept_traces() {
         setup: &setup,
         intent: "i",
         trace: &t,
+        played: true,
     }];
     let draft = write(&view, &kept, (1200, 2500));
     assert!(draft.user.contains("Write in Russian"));
@@ -314,6 +317,7 @@ fn the_checker_sees_the_record_with_its_ids_and_not_the_authors_intent() {
         setup: &setup,
         intent: "Squeeze Mara.",
         trace: &t,
+        played: true,
     }];
     let prompt = continuity(
         &canon,
@@ -373,6 +377,7 @@ fn a_triage_and_a_revision_show_the_notes_by_label() {
         setup: &setup,
         intent: "i",
         trace: &t,
+        played: true,
     }];
     let revision = revise(&view, &kept, "## One\n\nOld.", &[(&note, &decided)], (1, 2));
     assert!(revision.user.contains("(your critique: True.)"));
@@ -425,6 +430,7 @@ fn the_chapters_choices_reach_every_author_prompt_once_each() {
         setup: &setup,
         intent: "i",
         trace: &t,
+        played: true,
     }];
     let shown = vec![("k0".to_owned(), &t)];
     let note = ReviewNote {
@@ -485,6 +491,7 @@ fn the_craft_reaches_the_plans_the_draft_and_the_revisions() {
         setup: &setup,
         intent: "i",
         trace: &t,
+        played: true,
     }];
     let lines = "act on a plan or a boundary rather than announce it, open no reply on thanks, \
                  apology or agreement the moment does not call for, and show a want in a deed";

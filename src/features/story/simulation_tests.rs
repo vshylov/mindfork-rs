@@ -170,6 +170,7 @@ fn config(branches: u32, max_rounds: u32, reflect_every: u32) -> SimConfig {
         max_rounds,
         abnormal_p: 0.0,
         reflect_every,
+        ..SimConfig::default()
     }
 }
 
@@ -1050,6 +1051,7 @@ async fn a_simulated_scene_replays_identically_from_its_call_log() {
         max_rounds: 3,
         abnormal_p: 0.5,
         reflect_every: 2,
+        ..SimConfig::default()
     };
     let (mut story, log) = fresh_story().await;
     let port = EngineAdapter::new(
@@ -1104,4 +1106,44 @@ async fn a_simulated_scene_replays_identically_from_its_call_log() {
 fn the_ensemble_reads_the_deeds_listed() {
     let user = "x\n- `mara` says \"a\", openly. They perceived: e1.\n- `silas` goes to Inn.";
     assert_eq!(listed_characters(user), ["mara"]);
+}
+
+/// M3's A4 (docs/fabula.md §4, PR 13): every character perceives every event
+/// of the branch, a whisper between others and its speaker's thought
+/// included, while the sheets stay their own.
+#[tokio::test]
+async fn under_a4_every_character_perceives_every_event() {
+    let round2 = |port: &Scripted, who: &str| {
+        port.of("propose")
+            .into_iter()
+            .find(|c| round_of(&c.address) == 2 && c.address.contains(&format!("/{who}/")))
+            .unwrap()
+            .prompt
+            .user
+    };
+    let port = Scripted::new(whisper_secret(true));
+    let omniscient = SimConfig {
+        omniscient: true,
+        ..config(1, 2, 0)
+    };
+    let (_story, _) = simulate(&port, &omniscient).await;
+    let silas = round2(&port, "silas");
+    assert!(
+        silas.contains("- (Overheard) Mara whispers to Ines"),
+        "{silas}"
+    );
+    assert!(
+        silas.contains("(Mara thought: She has to know.)"),
+        "{silas}"
+    );
+    assert!(!silas.contains("Silas's secret"), "{silas}");
+    let ines = round2(&port, "ines");
+    assert!(ines.contains("- (Whispered to you) Mara whispers to Ines"));
+
+    // Without it, Silas perceives neither.
+    let port = Scripted::new(whisper_secret(true));
+    let (_story, _) = simulate(&port, &config(1, 2, 0)).await;
+    let silas = round2(&port, "silas");
+    assert!(!silas.contains("Mara whispers"), "{silas}");
+    assert!(!silas.contains("She has to know."), "{silas}");
 }

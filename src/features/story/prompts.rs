@@ -46,6 +46,9 @@ pub struct CharacterView<'a> {
     pub reflections: &'a [Reflection],
     /// Whether this round they break their routine (spec §7, step 1).
     pub breaks_routine: bool,
+    /// Whether they perceive every event, the others' thoughts included
+    /// (`SimConfig::omniscient`, M3's A4).
+    pub omniscient: bool,
 }
 
 /// The rules of playing a character, before the story's content.
@@ -183,19 +186,31 @@ fn moment(view: &CharacterView) -> String {
 fn perceived(view: &CharacterView) -> String {
     let mut lines = Vec::new();
     for event in view.memory {
+        let own = event.body.actor.as_ref() == Some(view.who);
         let mark = match &event.body.visibility {
-            Visibility::Whisper { .. } if event.body.actor.as_ref() != Some(view.who) => {
-                "(Whispered to you) "
-            }
-            Visibility::Whisper { .. } => "(You whispered) ",
-            Visibility::Hidden => "(Unseen by others) ",
+            Visibility::Whisper { .. } if own => "(You whispered) ",
+            Visibility::Whisper { to } if !to.contains(view.who) => "(Overheard) ",
+            Visibility::Whisper { .. } => "(Whispered to you) ",
+            Visibility::Hidden if own => "(Unseen by others) ",
+            Visibility::Hidden => "(Done unseen) ",
             Visibility::Public => "",
         };
         lines.push(format!("- {mark}{}", event.body.observable));
-        if event.body.actor.as_ref() == Some(view.who)
-            && let Some(thought) = &event.body.private
-        {
-            lines.push(format!("  (You thought: {thought})"));
+        let Some(thought) = &event.body.private else {
+            continue;
+        };
+        match &event.body.actor {
+            Some(actor) if actor == view.who => lines.push(format!("  (You thought: {thought})")),
+            Some(actor) if view.omniscient => {
+                let name = view
+                    .canon
+                    .characters
+                    .iter()
+                    .find(|c| &c.key == actor)
+                    .map_or(actor.as_str(), |c| c.name.as_str());
+                lines.push(format!("  ({name} thought: {thought})"));
+            }
+            _ => {}
         }
     }
     if lines.is_empty() {

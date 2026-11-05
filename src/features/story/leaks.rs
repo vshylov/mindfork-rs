@@ -203,6 +203,18 @@ pub struct AuditedCall<'a> {
     pub response: Option<&'a Value>,
 }
 
+impl<'a> AuditedCall<'a> {
+    /// A call as the call log recorded it.
+    pub fn of(call: &'a crate::shared::storage::story::NewCall) -> Self {
+        Self {
+            address: &call.address,
+            role: &call.role,
+            request: &call.request,
+            response: call.response.as_ref(),
+        }
+    }
+}
+
 /// Every token a character call was shown or wrote before its character knew
 /// the secret, given the calls and each branch's path. A call that names a
 /// branch with no path given, or that is not a character's, is not audited.
