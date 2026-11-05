@@ -1,0 +1,121 @@
+{
+  "world": {
+    "rules": [
+      "No magic.",
+      "Hanseong, a winter night in 1794, in the house of a minor yangban family; the old lady of the house fell senseless an hour after her evening tonic and cannot speak.",
+      "The curfew bell has rung: nobody may walk the city's streets until the dawn bell, and nobody comes to the house before then.",
+      "At dawn the family physician examines the old lady and the dregs in the tonic pot; if he finds poison, the one who brewed the tonic is handed to the magistrate.",
+      "A daughter-in-law who poisons her husband's mother is put to death."
+    ]
+  },
+  "locations": [
+    {
+      "key": "inner_quarters",
+      "name": "The Inner Quarters",
+      "description": "The women's hall with its heated floor, a folding screen of peonies, and the old lady breathing hard under silk quilts.",
+      "routes": [
+        { "to": "kitchen", "ticks": 1 },
+        { "to": "storeroom", "ticks": 1 },
+        { "to": "mens_quarters", "ticks": 2 }
+      ],
+      "items": []
+    },
+    {
+      "key": "kitchen",
+      "name": "The Kitchen",
+      "description": "A sunken earthen kitchen below the inner quarters, the fire-mouth that heats the floor above, and the brass tonic pot set aside with its dregs.",
+      "routes": [
+        { "to": "inner_quarters", "ticks": 1 },
+        { "to": "jar_terrace", "ticks": 1 }
+      ],
+      "items": ["tonic_pot"]
+    },
+    {
+      "key": "storeroom",
+      "name": "The Storeroom",
+      "description": "A storeroom off the inner courtyard with rice chests, strings of dried fish, and the lacquered medicine chest of a hundred small drawers.",
+      "routes": [
+        { "to": "inner_quarters", "ticks": 1 },
+        { "to": "mens_quarters", "ticks": 1 }
+      ],
+      "items": ["medicine_chest"]
+    },
+    {
+      "key": "mens_quarters",
+      "name": "The Men's Quarters",
+      "description": "The outer hall by the gate where the son of the house studies: stacked books, a brush stand, a paper window onto the dark lane.",
+      "routes": [
+        { "to": "storeroom", "ticks": 1 },
+        { "to": "inner_quarters", "ticks": 2 }
+      ],
+      "items": []
+    },
+    {
+      "key": "jar_terrace",
+      "name": "The Jar Terrace",
+      "description": "A raised stone terrace behind the kitchen crowded with crocks of soy, bean paste and pickles, where the servants talk out of sight.",
+      "routes": [{ "to": "kitchen", "ticks": 1 }],
+      "items": []
+    }
+  ],
+  "characters": [
+    {
+      "key": "seoyeon",
+      "name": "Seo-yeon",
+      "public": "The young wife of the house, twenty-four, three years married and still childless; she has brewed the old lady's evening tonic every night since her wedding.",
+      "voice": "Low, careful, very polite; her questions arrive sideways.",
+      "goals": [
+        "Learn what was in the tonic before the physician comes at dawn",
+        "Keep the jujube powder out of anyone's hands"
+      ],
+      "secrets": [
+        {
+          "key": "jujube",
+          "text": "For a month she has stirred a pinch of sour-jujube powder into the tonic so the old lady sleeps through the night and stops beating the servants; the physician may find it in the dregs. [SECRET-SEOYEON-Z4]"
+        }
+      ],
+      "start": { "location": "inner_quarters", "holds": ["jujube_powder"] }
+    },
+    {
+      "key": "jeongho",
+      "name": "Jeong-ho",
+      "public": "The son of the house, thirty, a scholar who has failed the state examination three times; courteous, restless, his mother's only son.",
+      "voice": "Polished, full of classical allusions, impatient underneath.",
+      "goals": [
+        "Keep his uncle the magistrate from learning anything about the family's ginseng",
+        "See the matter settled before the physician asks questions"
+      ],
+      "secrets": [
+        {
+          "key": "sold_ginseng",
+          "text": "Last month he sold the family's six-year red ginseng to pay a gambling debt and filled the medicine chest with cheap roots from a market peddler, not all of them ginseng. [SECRET-JEONGHO-R6]"
+        }
+      ],
+      "start": { "location": "mens_quarters", "holds": ["ginseng_receipt"] }
+    },
+    {
+      "key": "buni",
+      "name": "Bun-i",
+      "public": "The household's old servant, forty-five, born a slave of the family; she nursed the young master and runs the kitchen.",
+      "voice": "Blunt with servants, humble with masters, full of sayings from her home village.",
+      "goals": [
+        "Keep the old lady alive, for she has promised to free Bun-i's son in spring",
+        "Keep her son from being sold"
+      ],
+      "secrets": [
+        {
+          "key": "saw_the_swap",
+          "text": "She saw the young master fill the medicine chest with the peddler's roots and kept the peddler's paper wrapper with three roots still in it; he has sworn to sell her son if she speaks. [SECRET-BUNI-P8]"
+        }
+      ],
+      "start": { "location": "kitchen", "holds": ["peddler_wrapper"] }
+    }
+  ],
+  "style": { "pov": "close third, rotating", "tense": "past" },
+  "arc": {
+    "premise": "In a Hanseong household shut in by the night curfew, the old lady falls senseless after the tonic her daughter-in-law brews, and the young wife has until the physician comes at dawn to learn what was in it.",
+    "chapters": [
+      { "goal": "Before the physician comes at dawn, Seo-yeon learns how the old lady was poisoned, and someone in the house loses what they were promised." }
+    ]
+  }
+}

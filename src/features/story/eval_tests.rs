@@ -66,6 +66,42 @@ fn a_frozen_premise_is_held_to_its_recorded_hash() {
     frozen().unwrap();
 }
 
+/// The planted tokens in `text`, `[SECRET-…]` each.
+fn tokens(text: &str) -> Vec<&str> {
+    text.match_indices("[SECRET-")
+        .filter_map(|(at, _)| text[at..].find(']').map(|end| &text[at..=at + end]))
+        .collect()
+}
+
+#[test]
+fn the_twelve_frozen_premises_keep_to_the_rubric() {
+    let all = frozen().unwrap();
+    assert_eq!(all.len(), 12);
+    let mut seen = std::collections::HashSet::new();
+    for genre in ["mystery", "clash", "villain", "quiet"] {
+        let n = all.iter().filter(|p| p.id.starts_with(genre)).count();
+        assert_eq!(n, 3, "{genre}");
+    }
+    for p in &all {
+        assert!(p.frozen && seen.insert(p.id.clone()), "{}", p.id);
+        let canon = &p.canon;
+        assert_eq!(canon.characters.len(), 3, "{}", p.id);
+        assert_eq!(canon.locations.len(), 5, "{}", p.id);
+        assert_eq!(canon.arc.chapters.len(), 1, "{}", p.id);
+        // A token on every sheet, none used twice across the twelve: the
+        // leak metric's (spec §11).
+        for c in &canon.characters {
+            let planted: Vec<&str> = c.secrets.iter().flat_map(|s| tokens(&s.text)).collect();
+            assert!(!planted.is_empty(), "{} {}", p.id, c.key);
+            for t in planted {
+                assert!(seen.insert(t.to_owned()), "{t} repeats");
+            }
+        }
+        // A frozen premise is found by its id.
+        assert_eq!(premise(&p.id).unwrap(), *p);
+    }
+}
+
 #[test]
 fn a_premise_file_is_read_checked_and_hashed() {
     let p = premise(HARBOUR).unwrap();

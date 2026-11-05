@@ -124,8 +124,23 @@ pub struct Premise {
 }
 
 /// M3's premises, frozen before any run (spec §11, §15): each file as the
-/// repository holds it.
-const FROZEN: &[(&str, &str)] = &[];
+/// repository holds it. Three in each of four genres: a mystery, a clash of
+/// goals, a villain, a quiet story of a relationship; chosen by the owner
+/// from twenty candidates on 2026-11-05.
+const FROZEN: &[(&str, &str)] = &[
+    ("mystery-2", include_str!("premises/mystery-2.json")),
+    ("mystery-4", include_str!("premises/mystery-4.json")),
+    ("mystery-5", include_str!("premises/mystery-5.json")),
+    ("clash-3", include_str!("premises/clash-3.json")),
+    ("clash-4", include_str!("premises/clash-4.json")),
+    ("clash-5", include_str!("premises/clash-5.json")),
+    ("villain-1", include_str!("premises/villain-1.json")),
+    ("villain-3", include_str!("premises/villain-3.json")),
+    ("villain-4", include_str!("premises/villain-4.json")),
+    ("quiet-2", include_str!("premises/quiet-2.json")),
+    ("quiet-3", include_str!("premises/quiet-3.json")),
+    ("quiet-5", include_str!("premises/quiet-5.json")),
+];
 
 /// Their hashes, `sha256sum`'s format: what the frozen files must hash to.
 const SUMS: &str = include_str!("premises/SHA256SUMS");

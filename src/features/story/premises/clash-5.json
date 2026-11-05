@@ -1,0 +1,124 @@
+{
+  "world": {
+    "rules": [
+      "No magic. A cotton hacienda in a river valley of Peru's coastal desert, 1951; an old adobe mound, the huaca, stands in its fields.",
+      "The museum's truck leaves for Lima at dawn and will not wait; the collector's agent rides out from the hacienda at the same hour.",
+      "A find belongs to whoever owns the land it lay in, and the old boundary stone at the huaca's foot marks where the hacienda ends and the village's land begins.",
+      "The bundle's cloth is centuries old: carried roughly or unwrapped, it tears."
+    ]
+  },
+  "locations": [
+    {
+      "key": "huaca",
+      "name": "The Huaca",
+      "description": "A worn adobe mound in the cotton fields, the open grave on its flank, an old boundary stone leaning at its foot.",
+      "routes": [
+        { "to": "dig_shed", "ticks": 1 },
+        { "to": "village", "ticks": 1 }
+      ],
+      "items": []
+    },
+    {
+      "key": "dig_shed",
+      "name": "The Dig Shed",
+      "description": "A reed-roofed shed lit by a kerosene lamp; the bundle lies in a half-built crate, wrapped in feathered cloth.",
+      "routes": [
+        { "to": "huaca", "ticks": 1 },
+        { "to": "hacienda_house", "ticks": 1 },
+        { "to": "road_crossing", "ticks": 1 }
+      ],
+      "items": ["bundle"]
+    },
+    {
+      "key": "hacienda_house",
+      "name": "The Hacienda House",
+      "description": "A carved veranda, a desk heaped with unpaid bills, and the collector's agent asleep in the guest room.",
+      "routes": [
+        { "to": "dig_shed", "ticks": 1 },
+        { "to": "road_crossing", "ticks": 1 }
+      ],
+      "items": ["survey_map"]
+    },
+    {
+      "key": "road_crossing",
+      "name": "The Road Crossing",
+      "description": "Where the cane-field track meets the road to Lima; the museum's truck stands there, its driver asleep in the cab.",
+      "routes": [
+        { "to": "dig_shed", "ticks": 1 },
+        { "to": "hacienda_house", "ticks": 1 },
+        { "to": "village", "ticks": 2 }
+      ],
+      "items": []
+    },
+    {
+      "key": "village",
+      "name": "The Village",
+      "description": "Adobe houses round a whitewashed chapel, dogs in the lane, the elders on the bench by the chapel door.",
+      "routes": [
+        { "to": "huaca", "ticks": 1 },
+        { "to": "road_crossing", "ticks": 2 }
+      ],
+      "items": []
+    }
+  ],
+  "characters": [
+    {
+      "key": "elena",
+      "name": "Elena",
+      "public": "An archaeologist from the national museum in Lima, thirty-four, who has dug the huaca for two seasons; precise, tireless, an outsider here.",
+      "voice": "Exact and lecturing; softens when she reaches for the few Quechua words she knows.",
+      "goals": [
+        "Get the bundle crated and on the museum's truck before dawn"
+      ],
+      "secrets": [
+        {
+          "key": "foreign_loan",
+          "text": "This season's money came from a foreign university museum, and she has promised it the bundle on loan for ten years; it will not stay in Lima long. [SECRET-ELENA-V3]"
+        }
+      ],
+      "start": { "location": "dig_shed", "holds": ["museum_telegram"] }
+    },
+    {
+      "key": "ernesto",
+      "name": "Don Ernesto",
+      "public": "The hacienda's owner, fifty-eight, courteous and in debt, who allowed the dig on his land and pays its night watchman.",
+      "voice": "Gracious and old-fashioned; speaks of 'my land' and 'my people'.",
+      "goals": [
+        "Sell the bundle to the collector's agent before dawn, to pay his workers before the cotton harvest",
+        "Keep the hacienda out of the bank's hands"
+      ],
+      "secrets": [
+        {
+          "key": "moved_stone",
+          "text": "His father moved the boundary stone forty years ago; the grave lies on the village's land, and the old survey map in his desk shows it. [SECRET-ERNESTO-L6]"
+        }
+      ],
+      "start": { "location": "hacienda_house", "holds": [] }
+    },
+    {
+      "key": "rosa",
+      "name": "Rosa",
+      "public": "A woman of forty from the village, a digger on the excavation, who found the bundle with her own hands; quiet, respected, a widow with a sick son.",
+      "voice": "Few words, Spanish laced with Quechua; calls the dead 'the grandparents'.",
+      "goals": [
+        "Put the bundle back in its grave, whole, before dawn, as the village elders would want"
+      ],
+      "secrets": [
+        {
+          "key": "ear_spool",
+          "text": "When she found the bundle she took one gold ear spool from it and hid it in her shawl, to sell for her son's medicine. [SECRET-ROSA-N8]"
+        }
+      ],
+      "start": { "location": "huaca", "holds": ["ear_spool"] }
+    }
+  ],
+  "style": { "pov": "close third, rotating", "tense": "past" },
+  "arc": {
+    "premise": "A bundle lifted from an ancient grave is wanted by the archaeologist who dug it, the landowner whose fields hold it, and the woman who found it, and by dawn it must go one way.",
+    "chapters": [
+      {
+        "goal": "By dawn the bundle is on the truck, sold, or back in the ground, and a hidden claim to it has come to light."
+      }
+    ]
+  }
+}

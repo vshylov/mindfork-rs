@@ -1,0 +1,124 @@
+{
+  "world": {
+    "rules": [
+      "No magic.",
+      "Istanbul, an autumn morning in 1634, in the house of a silk merchant near the covered bazaar; the master lies paralysed by a stroke and can neither speak nor write.",
+      "At noon a pasha's steward comes to the selamlık to receive the archer's thumb ring called the Green Falcon, which the house has promised his master; the house's contract to supply the palace with silk rests on the pasha's favour.",
+      "At dawn the ring's velvet case was found empty in the iron chest of the counting room, whose only key the steward of the house keeps.",
+      "No man but the master's son may enter the harem.",
+      "A merchant who passes off a false jewel is nailed by the ear to his own shop door, and his house is ruined."
+    ]
+  },
+  "locations": [
+    {
+      "key": "courtyard",
+      "name": "The Courtyard",
+      "description": "A paved courtyard with a marble fountain and a plane tree, doors on every side, servants crossing with trays.",
+      "routes": [
+        { "to": "selamlik", "ticks": 1 },
+        { "to": "counting_room", "ticks": 1 },
+        { "to": "kitchen", "ticks": 1 },
+        { "to": "harem", "ticks": 1 }
+      ],
+      "items": []
+    },
+    {
+      "key": "selamlik",
+      "name": "The Selamlık",
+      "description": "The men's reception room: cushioned divans round the walls, a brazier, sherbet cups, and a tray laid with velvet for the ring.",
+      "routes": [{ "to": "courtyard", "ticks": 1 }],
+      "items": []
+    },
+    {
+      "key": "counting_room",
+      "name": "The Counting Room",
+      "description": "The master's office: bolts of silk samples, brass scales, ledgers going back forty years, and an iron chest standing open with an empty velvet case inside.",
+      "routes": [{ "to": "courtyard", "ticks": 1 }],
+      "items": ["empty_case", "old_ledger"]
+    },
+    {
+      "key": "harem",
+      "name": "The Harem",
+      "description": "The family's inner rooms behind a latticed door: the master's sickbed, rosewater and medicine, the women's rooms beyond.",
+      "routes": [
+        { "to": "courtyard", "ticks": 1 },
+        { "to": "kitchen", "ticks": 1 }
+      ],
+      "items": []
+    },
+    {
+      "key": "kitchen",
+      "name": "The Kitchen",
+      "description": "A vaulted kitchen with copper pots, a bread oven and a well, and a service door onto the lane.",
+      "routes": [
+        { "to": "courtyard", "ticks": 1 },
+        { "to": "harem", "ticks": 1 }
+      ],
+      "items": []
+    }
+  ],
+  "characters": [
+    {
+      "key": "yusuf",
+      "name": "Yusuf Efendi",
+      "public": "The master's eldest son, twenty-nine, who has run the house and its silk trade since his father's stroke; brisk, respected, newly a father.",
+      "voice": "Brisk, courteous merchant's speech that turns cold when crossed.",
+      "goals": [
+        "Find the ring and put it in the steward's hands at noon",
+        "Close the sale that will pay the house's debts"
+      ],
+      "secrets": [
+        {
+          "key": "secret_sale",
+          "text": "Without his father's knowledge he has agreed to sell the Green Falcon to the pasha outright, for enough to clear every debt of the house, and the pasha's jeweller will examine it at the handing-over. [SECRET-YUSUF-3N]"
+        }
+      ],
+      "start": { "location": "counting_room", "holds": ["pasha_letter"] }
+    },
+    {
+      "key": "gulbahar",
+      "name": "Gülbahar Hanım",
+      "public": "The master's second wife, thirty-three, from a poor family of Bursa; quiet, devout, nursing the master day and night.",
+      "voice": "Soft and formal, many blessings, never a plain no.",
+      "goals": [
+        "Put the ring back in its case before anyone searches the house",
+        "Keep her place in the house when the master dies"
+      ],
+      "secrets": [
+        {
+          "key": "took_ring",
+          "text": "Two nights ago, while the steward slept, she borrowed his key and took the ring to pawn for her brother's gambling debt; it is sewn into the hem of her sleeve. [SECRET-GULBAHAR-5H]"
+        },
+        {
+          "key": "pawnbroker_said",
+          "text": "The pawnbroker in the bazaar held it to the light and laughed: green glass and paste, worth a few silver coins. [SECRET-GULBAHAR-D7]"
+        }
+      ],
+      "start": { "location": "harem", "holds": ["thumb_ring"] }
+    },
+    {
+      "key": "rustem",
+      "name": "Rüstem Ağa",
+      "public": "The steward of the house, sixty-two, forty years in its service; loyal, slow-spoken, keeper of the iron chest's key.",
+      "voice": "Slow and deferential, proverbs about silk and patience.",
+      "goals": [
+        "See the pasha's steward leave at noon satisfied, with the ring",
+        "Keep his master's old shame buried"
+      ],
+      "secrets": [
+        {
+          "key": "the_copy",
+          "text": "The Green Falcon has been a copy since the plague year: the master sold the real ring to save the house and had a jeweller make this one, and the sale stands in the old ledger in Rüstem's hand, disguised as raw silk. [SECRET-RUSTEM-8F]"
+        }
+      ],
+      "start": { "location": "courtyard", "holds": ["chest_key"] }
+    }
+  ],
+  "style": { "pov": "close third, rotating", "tense": "past" },
+  "arc": {
+    "premise": "On the morning a pasha's steward is to receive it, the jewelled thumb ring an Istanbul merchant house has promised him vanishes from its case, and the son who runs the house has until noon to find it.",
+    "chapters": [
+      { "goal": "By noon Yusuf learns the whole truth about the ring, and someone in the house is made to pay for it." }
+    ]
+  }
+}

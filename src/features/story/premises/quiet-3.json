@@ -1,0 +1,118 @@
+{
+  "world": {
+    "rules": [
+      "No magic.",
+      "A railway halt on the pampas of Buenos Aires province, Argentina, a cold night in May 1961. The branch line is being closed.",
+      "The last train stops at the halt at ten past six in the morning, bound for Buenos Aires; it will never stop here again.",
+      "After the last train the telegraph is cut and the station is shut; the nearest town is forty kilometres away by a dirt road.",
+      "One person may stay on as caretaker of the closed station, and only with the district office's approval in writing."
+    ]
+  },
+  "locations": [
+    {
+      "key": "platform",
+      "name": "The Platform",
+      "description": "A long brick platform with the station's name on an enamel board, a signal lamp and a bench; beyond it flat grass to the horizon, and the wind in it.",
+      "routes": [
+        { "to": "ticket_office", "ticks": 1 },
+        { "to": "station_house", "ticks": 1 },
+        { "to": "almacen", "ticks": 2 }
+      ],
+      "items": []
+    },
+    {
+      "key": "ticket_office",
+      "name": "The Ticket Office",
+      "description": "Aurelio's office: the telegraph key, the ledger of trains, and the station clock he winds every night.",
+      "routes": [
+        { "to": "platform", "ticks": 1 },
+        { "to": "station_house", "ticks": 1 }
+      ],
+      "items": ["clock_key"]
+    },
+    {
+      "key": "station_house",
+      "name": "The Station House",
+      "description": "The family's rooms behind the station: a wood stove in the kitchen, Ofelia's packed trunk in the bedroom, Rosa's folding bed by the window.",
+      "routes": [
+        { "to": "platform", "ticks": 1 },
+        { "to": "ticket_office", "ticks": 1 },
+        { "to": "garden", "ticks": 1 }
+      ],
+      "items": ["packed_trunk"]
+    },
+    {
+      "key": "garden",
+      "name": "Ofelia's Garden",
+      "description": "Vegetable rows and a henhouse behind the house, sheltered by the line of eucalyptus Aurelio planted the year they came.",
+      "routes": [{ "to": "station_house", "ticks": 1 }],
+      "items": []
+    },
+    {
+      "key": "almacen",
+      "name": "The Almacén at the Crossing",
+      "description": "A general store and bar where the dirt road crosses the line, two kilometres off; its owner is closing too and sells the last of the wine cheap.",
+      "routes": [{ "to": "platform", "ticks": 2 }],
+      "items": []
+    }
+  ],
+  "characters": [
+    {
+      "key": "aurelio",
+      "name": "Aurelio",
+      "public": "The station master, sixty-three, who has run the halt for thirty-four years; neat uniform, slow, courteous, winds the station clock every night.",
+      "voice": "Slow and courteous; railway words and timetables; makes a joke when he is hurt.",
+      "goals": [
+        "Stay at the halt after the last train.",
+        "Keep Ofelia with him."
+      ],
+      "secrets": [
+        {
+          "key": "asked_to_stay",
+          "text": "He asked the district office himself to let him stay as caretaker of the closed station; their yes is in his jacket. He has told his family the railway ordered it. [SECRET-AURELIO-R5]"
+        }
+      ],
+      "start": { "location": "ticket_office", "holds": ["district_letter"] }
+    },
+    {
+      "key": "ofelia",
+      "name": "Ofelia",
+      "public": "Aurelio's wife, fifty-nine, who keeps the station house, the hens and the garden; brisk, practical, never sits down.",
+      "voice": "Quick and practical; scolds when she is tender; old sayings from her mother.",
+      "goals": [
+        "Be on the last train to Buenos Aires.",
+        "Bring Aurelio with her."
+      ],
+      "secrets": [
+        {
+          "key": "hidden_offer",
+          "text": "In 1938 the railway offered Aurelio a post in Bahía Blanca; she was pregnant and afraid of the city, and hid the letter before he saw it. He has believed for twenty-three years that the railway forgot him. She found the letter again while packing. [SECRET-OFELIA-B8]"
+        }
+      ],
+      "start": { "location": "station_house", "holds": ["bahia_letter"] }
+    },
+    {
+      "key": "rosa",
+      "name": "Rosa",
+      "public": "Their daughter, thirty-four, a seamstress in Buenos Aires with two small children, who came on yesterday's train to take her parents to the city.",
+      "voice": "Quick city talk, warm, talks over people; says Papá when she wants something.",
+      "goals": ["Get her mother onto the last train, with or without her father."],
+      "secrets": [
+        {
+          "key": "left_alone",
+          "text": "Her husband left her in March. She needs her mother to mind the children while she works, there is no room in her flat for her father, and she has bought only two tickets. [SECRET-ROSA-H3]"
+        }
+      ],
+      "start": { "location": "platform", "holds": ["two_tickets"] }
+    }
+  ],
+  "style": { "pov": "close third, rotating", "tense": "past" },
+  "arc": {
+    "premise": "On the last night of a closing railway halt on the pampas, a station master, his wife and their daughter must settle who leaves on the last train and who stays behind.",
+    "chapters": [
+      {
+        "goal": "Before the last train leaves at dawn, a lie at the heart of the marriage is told aloud, and it decides who boards."
+      }
+    ]
+  }
+}

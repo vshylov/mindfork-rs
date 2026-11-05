@@ -1,0 +1,113 @@
+{
+  "world": {
+    "rules": [
+      "No magic.",
+      "Athens, the potters' quarter by the city wall, a spring night in the years of the war with Sparta.",
+      "At dawn the deme meets at its shrine to vote on enrolling its eighteen-year-olds; any demesman may object, and a youth voted down is a foreigner.",
+      "Only the son of two citizens can be a citizen; a foreigner found to have passed as one is sold as a slave.",
+      "A man stripped of his rights by a court who speaks in an assembly may be seized on the spot and handed to the magistrates."
+    ]
+  },
+  "locations": [
+    {
+      "key": "workshop",
+      "name": "Potter's Workshop",
+      "description": "A wheel, racks of black cups drying, the kiln still warm from today's firing; old tablets and papers hang in a basket by the door.",
+      "routes": [
+        { "to": "courtyard", "ticks": 1 },
+        { "to": "wine_shop", "ticks": 1 },
+        { "to": "grave_road", "ticks": 1 }
+      ],
+      "items": ["old_lease"]
+    },
+    {
+      "key": "courtyard",
+      "name": "House Courtyard",
+      "description": "The family courtyard behind the workshop: a well, a small altar to the god of the household, the women's rooms shut for the night.",
+      "routes": [{ "to": "workshop", "ticks": 1 }],
+      "items": ["silver_jar"]
+    },
+    {
+      "key": "wine_shop",
+      "name": "Wine Shop",
+      "description": "A low wine shop at the crossroads where demesmen drink and talk late; dice on the counter, a lamp smoking.",
+      "routes": [
+        { "to": "workshop", "ticks": 1 },
+        { "to": "shrine", "ticks": 2 }
+      ],
+      "items": []
+    },
+    {
+      "key": "grave_road",
+      "name": "Road by the Graves",
+      "description": "The road out under the city wall between grave monuments and painted stones; dark, quiet, nobody passing at this hour.",
+      "routes": [
+        { "to": "workshop", "ticks": 1 },
+        { "to": "shrine", "ticks": 2 }
+      ],
+      "items": []
+    },
+    {
+      "key": "shrine",
+      "name": "Deme Shrine",
+      "description": "The hero's shrine at the edge of the deme where the demesmen will gather at dawn: stone benches, an altar, the voting urn under a cloth.",
+      "routes": [
+        { "to": "wine_shop", "ticks": 2 },
+        { "to": "grave_road", "ticks": 2 }
+      ],
+      "items": []
+    }
+  ],
+  "characters": [
+    {
+      "key": "simylos",
+      "name": "Simylos",
+      "public": "A demesman of fifty who lives by lawsuits; nobody refuses his greeting. Tonight he has let the potter know he means to speak at the dawn vote.",
+      "voice": "Genial and legal; cites laws by name and calls his threats friendly warnings.",
+      "goals": [
+        "Before dawn, have the potter's silver in his hands; if not, speak against the son at the vote",
+        "Get hold of proof of the potter's foreign father, so that his charge cannot fail"
+      ],
+      "secrets": [
+        {
+          "key": "stripped_of_rights",
+          "text": "Twenty years ago, in another deme, he was convicted of false accusation and stripped of his rights; if he speaks at the vote and it is known, he can be seized there and then. [SECRET-SIMYLOS-V2]"
+        }
+      ],
+      "start": { "location": "wine_shop", "holds": ["charge_tablet"] }
+    },
+    {
+      "key": "euthymos",
+      "name": "Euthymos",
+      "public": "A potter of the quarter, forty-four, whose black cups sell across the sea; a quiet, respected demesman and a widower.",
+      "voice": "Plain and practical; talks in clay and fire, slow to anger.",
+      "goals": ["Silence Simylos before dawn, by paying or by finding something to hold over him, and see his son enrolled"],
+      "secrets": [
+        {
+          "key": "foreign_father",
+          "text": "His father was a Corinthian resident alien; Euthymos was enrolled at eighteen on a bribed witness's oath, and an old lease in the workshop names his father as a foreigner. [SECRET-EUTHYMOS-N5]"
+        }
+      ],
+      "start": { "location": "workshop", "holds": [] }
+    },
+    {
+      "key": "phaidimos",
+      "name": "Phaidimos",
+      "public": "The potter's son, eighteen, to be enrolled as a citizen at the deme's meeting at dawn; proud, athletic, impatient with his father.",
+      "voice": "Quick and proud; quotes the poets at his father.",
+      "goals": ["Be enrolled at dawn without his father ever learning what it cost"],
+      "secrets": [
+        {
+          "key": "promised_silver",
+          "text": "Yesterday Simylos came to him alone and named his price for silence: his father's silver, brought to the road by the graves tonight. Phaidimos agreed, and has told his father nothing. [SECRET-PHAIDIMOS-Z8]"
+        }
+      ],
+      "start": { "location": "courtyard", "holds": [] }
+    }
+  ],
+  "style": { "pov": "close third, rotating", "tense": "past" },
+  "arc": {
+    "premise": "On the night before an Athenian deme votes on a potter's son, a professional accuser comes to the potters' quarter to be paid for keeping quiet.",
+    "chapters": [{ "goal": "Before the deme meets at dawn, the father's secret reaches his son." }]
+  }
+}
