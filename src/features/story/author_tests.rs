@@ -1,4 +1,4 @@
-use serde_json::{Value, json};
+use serde_json::json;
 
 use super::{
     BranchReading, ContinuityReply, FindingKind, NextScene, OutlineReply, PickChoice, PickReply,
@@ -6,7 +6,7 @@ use super::{
 };
 use crate::entities::story::NoteKind;
 use crate::entities::story::fixture_canon;
-use crate::features::story::schema::tests::holds;
+use crate::features::story::schema::tests::{asks_no_reasoning, holds};
 use crate::features::story::schema::{CanonKeys, StorySchema};
 
 fn keys() -> CanonKeys {
@@ -91,24 +91,6 @@ fn the_deciding_fields_come_last() {
     order(&triage, &["note", "critique", "decision"]);
 }
 
-fn property_names(value: &Value) -> Vec<String> {
-    let mut out = Vec::new();
-    if let Some(props) = value.get("properties").and_then(Value::as_object) {
-        out.extend(props.keys().cloned());
-        for v in props.values() {
-            out.extend(property_names(v));
-        }
-    }
-    for key in ["items", "anyOf"] {
-        match value.get(key) {
-            Some(Value::Array(list)) => list.iter().for_each(|v| out.extend(property_names(v))),
-            Some(v) => out.extend(property_names(v)),
-            None => {}
-        }
-    }
-    out
-}
-
 #[test]
 fn no_field_is_named_like_the_models_reasoning() {
     let keys = keys();
@@ -121,13 +103,7 @@ fn no_field_is_named_like_the_models_reasoning() {
         ContinuityReply::schema(&keys),
         TriageReply::schema_for(&keys, &labels(&["n1"])),
     ] {
-        let names = property_names(&schema.to_value());
-        for banned in ["reason", "thinking", "thought", "trace", "rationale"] {
-            assert!(
-                names.iter().all(|n| !n.contains(banned)),
-                "{banned} in {names:?}"
-            );
-        }
+        asks_no_reasoning(&schema);
     }
 }
 

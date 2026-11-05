@@ -58,6 +58,37 @@ pub(crate) fn holds<T: DeserializeOwned + Serialize>(schema: &Schema) -> usize {
     all.len()
 }
 
+/// No property of the schema, at any depth, is named like the model's own
+/// reasoning (spec §8): shared, as `holds` is, by the tests of each module
+/// that defines a reply.
+pub(crate) fn asks_no_reasoning(schema: &Schema) {
+    let names = property_names(&schema.to_value());
+    for banned in ["reason", "thinking", "thought", "trace", "rationale"] {
+        assert!(
+            names.iter().all(|n| !n.contains(banned)),
+            "{banned} in {names:?}"
+        );
+    }
+}
+
+fn property_names(value: &Value) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(props) = value.get("properties").and_then(Value::as_object) {
+        out.extend(props.keys().cloned());
+        for v in props.values() {
+            out.extend(property_names(v));
+        }
+    }
+    for key in ["items", "anyOf"] {
+        match value.get(key) {
+            Some(Value::Array(list)) => list.iter().for_each(|v| out.extend(property_names(v))),
+            Some(v) => out.extend(property_names(v)),
+            None => {}
+        }
+    }
+    out
+}
+
 fn object_instances(properties: &[Property], tag: Option<(&str, &str)>) -> Vec<Value> {
     let options: Vec<Vec<Value>> = properties.iter().map(|p| instances(&p.schema)).collect();
     let build = |choice: &[usize]| {
