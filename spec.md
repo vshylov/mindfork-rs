@@ -2646,7 +2646,10 @@ take (below).
 - **`story_create`** is synchronous. The canon arrives as the call's arguments —
   the world's rules, the map with its routes, the cast with goals and secrets, the
   style and the arc of chapters — and the engine's checks refuse it with every
-  problem named: keys, routes, starts, empty texts, and the reply schemas built on
+  problem named: keys, routes, a map with a place the routes do not reach from
+  another (each pair named against the first place, both ways: a scene brings
+  everyone in it to its place from wherever they are), starts, empty texts, and the
+  reply schemas built on
   the canon's keys held to the schema dialect. A canon that passes is stored as a
   draft under an id made from the story's title (its words in lower case, any
   script, safe as a file name, `-2` when taken), and P1 opens at once with no model
@@ -2738,6 +2741,15 @@ take (below).
   docs/fabula.md §6, T11 (a), T12 (a)) and
   `tools.story_budget_usd` (empty — none), counted where the provider reports a
   call's cost; it is checked before each call, and a spent one stops the run there.
+- **A scene held to the world.** Before a scene plays, its plan is held to the
+  world by its opening: everyone present alive, and each brought to its place along
+  the routes from wherever they are, the opening's events admitted as the scene
+  would commit them. A plan the world refuses is asked for once more with the
+  world's words; a rerun the Author asks for at a pick, if refused, keeps the cast
+  and the place of the scene it reruns. The world refusing an event while a scene
+  plays — which a plan held to it leaves to the engine's own faults — stops the run
+  at the scene's step in the world's words, told as such, and never as a run that
+  could not start (docs/journal/stories.md, *a map with no roads*).
 - **The register** (docs/fabula.md §4, PR 11). At each checkpoint the Canon keeper
   reads the version's text alone — no canon, no record, no plan — and writes its
   register: the threads it opens (what the text leaves its reader to wonder: a

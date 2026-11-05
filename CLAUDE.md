@@ -186,8 +186,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-11-04, version 0.23.1)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **4797 unit tests
-green, 328 `#[ignore]`** (live smokes + a real-clipboard round trip + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **4802 unit tests
+green, 329 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump and demo-reel regenerators).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -210,7 +210,7 @@ being recent is dropped, not shortened.
   chat, every answer the person's own words; a scene named at a checkpoint played again;
   a register of open threads and dated facts, checked chapter to chapter; scenes planned
   as collisions with a price, a line a deed, a staging pass; a chapter's choices standing
-  for its later steps ([docs/fabula.md](docs/fabula.md),
+  for its later steps; a map every scene can reach ([docs/fabula.md](docs/fabula.md),
   [docs/journal/stories.md](docs/journal/stories.md)).
 - **Image generation — track complete** (2026-10-30): `image_generate` over a
   slot of its own (OpenAI by default, Gemini, the gateway, xAI), off by default;

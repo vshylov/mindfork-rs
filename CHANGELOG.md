@@ -20,7 +20,8 @@ split by subsystem.
   on, attach your sketches of a story (`/file attach`) and ask the assistant to make a
   story of them: it composes the canon — the world's rules, the places, the characters
   with their goals and secrets, the style, the chapters — and stores it with
-  `story_create`, which refuses a canon with a problem and names each one. Nothing runs
+  `story_create`, which refuses a canon with a problem and names each one — a map with
+  a place no way leads to, or none back from, among them. Nothing runs
   until you approve the canon, and every answer the story waits for — the canon, each
   chapter — is your own words: when the assistant calls `story_continue`, the app reads
   the messages you wrote since the question, never the assistant's summary of them, and

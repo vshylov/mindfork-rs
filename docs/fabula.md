@@ -1,6 +1,6 @@
 # Fabula — a story engine used from the chat: track plan
 
-**Status:** in progress — M0 done (PRs 1 and 2, Gate G0 GO); M1 done (PRs 3–5, Gate G1 GO, 2026-11-01); M2 done (PR 6, the Author's loop, 2026-11-01; PR 7, stories in mindfork's data, 2026-11-02; PR 8, the story run in the background, 2026-11-02; PR 9, the story driven from the chat, 2026-11-02; Gate G2 GO, 2026-11-03; PR 10, a scene played again, 2026-11-03); before M3, the readers' findings settled (PR 11, the story's register; PR 12, the craft of the scenes and the lines; a chapter's choices standing for its later steps; 2026-11-04 to 2026-11-05). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
+**Status:** in progress — M0 done (PRs 1 and 2, Gate G0 GO); M1 done (PRs 3–5, Gate G1 GO, 2026-11-01); M2 done (PR 6, the Author's loop, 2026-11-01; PR 7, stories in mindfork's data, 2026-11-02; PR 8, the story run in the background, 2026-11-02; PR 9, the story driven from the chat, 2026-11-02; Gate G2 GO, 2026-11-03; PR 10, a scene played again, 2026-11-03); before M3, the readers' findings settled (PR 11, the story's register; PR 12, the craft of the scenes and the lines; a chapter's choices standing for its later steps; a map every scene can reach; 2026-11-04 to 2026-11-05). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
 so are the eighteen this plan adds (§6) and where development runs (§4, *The development
 stack*). The design —
 the engine, its stores, its contracts, its evaluation — is
@@ -446,6 +446,40 @@ the list without that sentence. Chapter 2 stopped at its third scene on its toke
 the run found a canon whose places no road connects let through its check: the journal has the
 counts, the wordings measured and rejected, and the defect
 ([docs/journal/stories.md](journal/stories.md), *a chapter's choices stand*).
+
+**After PR 12: a map every scene can reach (2026-11-05).** The choices' live story met a
+canon Qwen 3.8 composed from the sketches whose four places had no route at all, and the
+canon's check let it through: it asks that a route lead somewhere, not that a place be
+reached. Chapter 1's second scene, planned at the lighthouse, was refused by the world at
+its opening 51 minutes in, and the refusal ended the run as one that could not start,
+though it had kept a scene. The owner asked for the fix on 2026-11-05; the forks below are
+the agent's, open to the owner's review.
+
+- **The map.** (a) Every place reachable from every other along the routes, back or around
+  *(taken)*: a scene's opening brings everyone in it to its place from wherever they are,
+  and `story_create` already asks for the way back to be listed; of the eight canons composed
+  live since PR 11, the seven with routes all pass it. (b) Every place reachable from every character's
+  start: a place of no return would pass, and every plan bringing someone out of it would be
+  refused. (c) The starts reachable from one another: a place no one can reach would pass.
+- **A plan.** (a) Held to the world by its opening: the opening's events admitted against
+  the world before the scene plays, so a plan the world refuses is asked for once more in
+  the world's words, and a rerun the pick asks for, refused, keeps the cast and the place of
+  the scene it reruns *(taken)*. (b) A reachability check of its own beside the opening's:
+  one rule in two places, which drift.
+- **A refusal while a scene plays.** (a) A stop at the scene's step, in the world's words,
+  told as the engine's fault *(taken)*: a plan held to the world leaves no other cause. (b)
+  Every branch failed, so the scene's reruns and then the human's question (P3): reruns of a
+  scene that cannot open, and a question to the human about an engine's fault.
+
+Proof: canon tests (the roadless map's problems, a place with no way back, a one-way ring
+that passes); engine tests (the plan held to the world by its opening, the refused rerun,
+the stop at a scene); live, the slip put into Qwen's first `story_create` of a fresh chat,
+the map mended from the refusal; the stored roadless story resumed.
+
+As built (2026-11-05), as forked. Live, Qwen 3.8 27B mended all five roadless maps the smoke put
+into its first `story_create` with a map, four on the call after the refusal; the stored
+roadless story, resumed, stops at its second scene in the world's words, with no call
+([docs/journal/stories.md](journal/stories.md), *a map every scene can reach*).
 
 ### M3 — the evaluation
 
