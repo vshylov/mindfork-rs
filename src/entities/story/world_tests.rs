@@ -541,6 +541,7 @@ fn a_placement_needs_a_way_there() {
     assert_eq!(
         state.admit(&canon, &back).unwrap_err(),
         Refusal::Unreachable {
+            character: c("mara"),
             from: at("chapel"),
             to: at("harbour"),
         }
@@ -565,6 +566,11 @@ fn refusals_read_as_sentences() {
         },
         Refusal::TimeRunsBackwards { tick: 2, last: 5 },
         Refusal::UnknownEvent(EventId::from("genesis/e9")),
+        Refusal::Unreachable {
+            character: c("ines"),
+            from: at("lighthouse"),
+            to: at("inn"),
+        },
     ]
     .iter()
     .map(ToString::to_string)
@@ -577,6 +583,7 @@ fn refusals_read_as_sentences() {
             "mara is at harbour, not at inn",
             "tick 2 is before the branch's last tick, 5",
             "event genesis/e9 is not on this branch",
+            "ines cannot be brought to inn: no route leads there from lighthouse, where they are",
         ]
     );
 }

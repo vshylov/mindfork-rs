@@ -298,11 +298,19 @@ fn every_ending_says_where_the_run_stopped() {
             },
             "at step ch1/sc2: the reply was cut",
         ),
+        (
+            Ending::Stopped {
+                step: step(),
+                why: Stop::Refused("mara cannot be brought to inn".to_owned()),
+            },
+            "refused an event at step ch1/sc2: mara cannot be brought to inn. The run stopped \
+             there",
+        ),
         (Ending::TimedOut { step: step() }, "time limit"),
         (Ending::Finished, "the story is finished"),
         (
             Ending::Failed("the story is open already".to_owned()),
-            "could not run: the story is open already",
+            "The story's run failed: the story is open already",
         ),
         (
             Ending::Paused(question(QuestionBody::Scene {

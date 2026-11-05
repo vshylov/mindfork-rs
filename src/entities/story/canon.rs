@@ -275,6 +275,21 @@ pub enum CanonProblem {
         /// Their start.
         location: LocationKey,
     },
+    /// A location the routes do not reach from another: a scene brings
+    /// everyone in it to its place from wherever they are, so a map cut in
+    /// two strands whoever is on either side (found live after PR 12:
+    /// docs/journal/stories.md, *a map with no roads*).
+    #[error(
+        "no route leads from \"{from}\" to \"{to}\", directly or through other locations; \
+         every location must be reachable from every other, because a scene brings the \
+         characters in it to its place from wherever they are"
+    )]
+    Unreachable {
+        /// Where the way would start.
+        from: LocationKey,
+        /// Where it cannot get to.
+        to: LocationKey,
+    },
 }
 
 fn duplicate_text(kind: KeyKind, key: &str) -> String {
@@ -362,8 +377,9 @@ impl Canon {
     }
 
     /// Every deterministic problem of the canon (spec §8, *Rules shared by all
-    /// contracts*): keys, routes, starts, empty texts. An empty list means the
-    /// canon can be stored.
+    /// contracts*): keys, routes, a map every location of which is reachable
+    /// from every other, starts, empty texts. An empty list means the canon
+    /// can be stored.
     pub fn check(&self) -> Vec<CanonProblem> {
         let mut out = Vec::new();
         if self.locations.is_empty() {
@@ -397,6 +413,7 @@ impl Canon {
         for location in &self.locations {
             self.check_location(location, &mut out);
         }
+        self.check_reach(&mut out);
         for character in &self.characters {
             require_text(
                 &character.public,
@@ -464,6 +481,26 @@ impl Canon {
                     from: location.key.clone(),
                     to: route.to.clone(),
                 });
+            }
+        }
+    }
+
+    /// Every location reachable from every other along the routes, one way
+    /// or around: told against the first location, both ways, since every
+    /// other is reachable from each other one exactly when it reaches the
+    /// first and the first reaches it.
+    fn check_reach(&self, out: &mut Vec<CanonProblem>) {
+        let Some((first, rest)) = self.locations.split_first() else {
+            return;
+        };
+        for location in rest {
+            for (from, to) in [(&first.key, &location.key), (&location.key, &first.key)] {
+                if !self.reachable(from, to) {
+                    out.push(CanonProblem::Unreachable {
+                        from: from.clone(),
+                        to: to.clone(),
+                    });
+                }
             }
         }
     }
@@ -726,6 +763,63 @@ mod tests {
         island.locations[3].routes.clear();
         assert!(!island.reachable(&at("chapel"), &at("harbour")));
         assert!(island.reachable(&at("harbour"), &at("chapel")));
+    }
+
+    #[test]
+    fn a_map_with_no_roads_names_every_place_cut_off() {
+        let mut canon = fixture_canon();
+        for location in &mut canon.locations {
+            location.routes.clear();
+        }
+        let cut = |from: &str, to: &str| CanonProblem::Unreachable {
+            from: from.into(),
+            to: to.into(),
+        };
+        assert_eq!(
+            canon.check(),
+            [
+                cut("harbour", "inn"),
+                cut("inn", "harbour"),
+                cut("harbour", "lighthouse"),
+                cut("lighthouse", "harbour"),
+                cut("harbour", "chapel"),
+                cut("chapel", "harbour"),
+                cut("harbour", "warehouse"),
+                cut("warehouse", "harbour"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_place_with_no_way_back_is_named_and_a_one_way_ring_is_not() {
+        let at = LocationKey::from;
+        // The chapel loses its only way out: it can be reached, never left.
+        let mut island = fixture_canon();
+        island.locations[3].routes.clear();
+        let problems = island.check();
+        assert_eq!(
+            problems,
+            [CanonProblem::Unreachable {
+                from: at("chapel"),
+                to: at("harbour"),
+            }]
+        );
+        assert_eq!(
+            problems[0].to_string(),
+            "no route leads from \"chapel\" to \"harbour\", directly or through other \
+             locations; every location must be reachable from every other, because a scene \
+             brings the characters in it to its place from wherever they are"
+        );
+        // One-way routes are the map's own while there is a way around:
+        // harbour → inn → chapel → harbour, each of them one way.
+        let mut ring = fixture_canon();
+        ring.locations[1].routes.retain(|r| r.to != at("harbour"));
+        ring.locations[3].routes = vec![Route {
+            to: at("harbour"),
+            ticks: 2,
+        }];
+        assert_eq!(ring.route(&at("inn"), &at("harbour")), None);
+        assert_eq!(ring.check(), Vec::new());
     }
 
     #[test]

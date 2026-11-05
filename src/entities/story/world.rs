@@ -117,9 +117,15 @@ pub enum Refusal {
         /// Where they were to go.
         to: LocationKey,
     },
-    /// A placement nothing connects.
-    #[error("{to} cannot be reached from {from}")]
+    /// A placement nothing connects. It names whom, so the Author re-planning
+    /// a scene knows whom to leave out (docs/journal/stories.md, *a map with
+    /// no roads*).
+    #[error(
+        "{character} cannot be brought to {to}: no route leads there from {from}, where they are"
+    )]
     Unreachable {
+        /// Who.
+        character: CharacterKey,
         /// Where the character is.
         from: LocationKey,
         /// Where they were to be placed.
@@ -328,6 +334,7 @@ impl WorldState {
                 require_location(canon, to)?;
                 if !canon.reachable(&from, to) {
                     return Err(Refusal::Unreachable {
+                        character: character.clone(),
                         from,
                         to: to.clone(),
                     });
