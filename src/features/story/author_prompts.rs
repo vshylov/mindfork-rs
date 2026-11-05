@@ -27,6 +27,13 @@
 //!   naming a want a deed would show. The characters' rules say the same
 //!   ([`super::prompts`]), and the staging pass checks the lines
 //!   ([`super::staging`]).
+//! - **The chapter's choices** (docs/fabula.md §4, *A chapter's choices
+//!   stand*): what the Author chose in the chapter where it could have asked
+//!   the human reaches its later plans, picks, draft and revisions, each
+//!   question once with its latest answer, and stands; a step answers one
+//!   again only when what was played or what the human asked calls for it,
+//!   and a step that records assumptions is told to record every question the
+//!   choices do not answer. The reviewers and the triage go without.
 
 use super::keeper::SoFar;
 use super::leaks::without_tokens;
@@ -34,8 +41,8 @@ use super::port::Prompt;
 use super::prompts::{effect_text, items_of, plural, severity, visibility_text};
 use super::scene::{bullets, listed, name_of, place_of};
 use crate::entities::story::{
-    BranchId, Canon, CharacterKey, Decided, Event, EventKind, Holder, ReviewNote, SceneSetup,
-    WorldState,
+    Assumption, BranchId, Canon, CharacterKey, Decided, Event, EventKind, Holder, ReviewNote,
+    SceneSetup, WorldState,
 };
 use crate::shared::storage::story::Reflection;
 
@@ -72,6 +79,15 @@ pub struct Kept<'a> {
     pub trace: &'a Trace,
 }
 
+/// Whether a prompt's reply records the Author's assumptions: the outline,
+/// the plans and the picks do, and are told to record every question their
+/// chapter's choices do not answer; the draft and the revisions do not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Doubts {
+    Recorded,
+    None,
+}
+
 /// What every prompt of a chapter shares.
 pub struct ChapterContext<'a> {
     /// The canon.
@@ -90,6 +106,9 @@ pub struct ChapterContext<'a> {
     pub goals: &'a [String],
     /// The published chapters' register: the threads open, the facts stated.
     pub register: &'a SoFar,
+    /// What the Author chose in this chapter so far where it could have
+    /// asked the human, oldest first, a question answered again included.
+    pub choices: &'a [Assumption],
     /// Whether this is the arc's last chapter.
     pub last: bool,
 }
@@ -107,9 +126,9 @@ impl ChapterContext<'_> {
             .map_or("none set", |c| c.goal.as_str())
     }
 
-    /// The story so far, its register, the previous chapter, and the
-    /// human's notes, as far as there are any.
-    fn so_far(&self) -> String {
+    /// The story so far, its register, the previous chapter, the human's
+    /// notes, and the choices the chapter has made, as far as there are any.
+    fn so_far(&self, doubts: Doubts) -> String {
         let mut text = String::new();
         if !self.summaries.is_empty() {
             let lines: Vec<String> = self
@@ -139,7 +158,41 @@ impl ChapterContext<'_> {
                 "\n\nWhat the story's human author asked of this chapter:\n{notes}"
             ));
         }
+        text.push_str(&self.choices_text(doubts));
         text
+    }
+
+    /// The chapter's choices that stand, each question once with its latest
+    /// answer; empty while there are none (docs/fabula.md §4, *A chapter's
+    /// choices stand*).
+    fn choices_text(&self, doubts: Doubts) -> String {
+        let standing = Assumption::standing(self.choices);
+        if standing.is_empty() {
+            return String::new();
+        }
+        let lines: Vec<String> = standing
+            .iter()
+            .map(|a| format!("{} — {}", a.doubt, a.choice))
+            .collect();
+        // Told only that its choices stand, a step recorded a seventh of the
+        // new questions it had before; told to record the others, half
+        // (docs/journal/stories.md, *a chapter's choices stand*).
+        let close = match doubts {
+            Doubts::Recorded => {
+                "These choices stand: plan, pick and write by them, and do not ask them again. \
+                 Only what was played or what the human author asked can change one. A question \
+                 they do not answer is a new one: record it among your assumptions."
+            }
+            Doubts::None => {
+                "These choices stand: plan, pick and write by them. Only what was played or \
+                 what the human author asked can change one."
+            }
+        };
+        format!(
+            "\n\nWhat you chose in this chapter where you could have asked its human author, \
+             each question with its answer:\n{}\n{close}",
+            bullets(lines.iter().map(String::as_str))
+        )
     }
 
     fn goals_text(&self) -> String {
@@ -270,7 +323,7 @@ pub fn outline(ctx: &ChapterContext) -> Prompt {
             ctx.number,
             ctx.total(),
             ctx.arc_goal(),
-            ctx.so_far(),
+            ctx.so_far(Doubts::Recorded),
         ),
     }
 }
@@ -518,7 +571,7 @@ pub fn plan(
             "Chapter {}. Its goals:\n{}{}{kept_so_far}\n\nThe world now:\n{}{again}\n\n{ask}",
             ctx.number,
             ctx.goals_text(),
-            ctx.so_far(),
+            ctx.so_far(Doubts::Recorded),
             world_lines(ctx.canon, world),
         ),
     }
@@ -556,7 +609,7 @@ pub fn pick(
     Prompt {
         system: author_system(ctx.canon, ctx.human_language),
         user: format!(
-            "Chapter {}. Its goals:\n{}\n\nScene {scene}, {}\nYour intent for it: {intent}{asked}\n\n\
+            "Chapter {}. Its goals:\n{}\n\nScene {scene}, {}\nYour intent for it: {intent}{asked}{}\n\n\
              The world played it {} time{} from the same moment; each version below is what \
              happened in it.\n\n{}\n\n\
              Read each version against your intent and four measures: tension, surprise, truth \
@@ -564,6 +617,7 @@ pub fn pick(
             ctx.number,
             ctx.goals_text(),
             setup_text(ctx.canon, setup),
+            ctx.choices_text(Doubts::Recorded),
             shown.len(),
             plural(shown.len() as u32),
             versions.join("\n\n"),
@@ -604,7 +658,7 @@ pub fn write(ctx: &ChapterContext, kept: &[Kept], words: (u32, u32)) -> Prompt {
             ctx.total(),
             ctx.arc_goal(),
             ctx.goals_text(),
-            ctx.so_far(),
+            ctx.so_far(Doubts::None),
             kept_text(ctx.canon, kept, TO_AUTHOR),
             writing_rules(ctx.canon, words),
         ),
@@ -672,7 +726,7 @@ pub fn revise(
             ctx.total(),
             ctx.arc_goal(),
             ctx.goals_text(),
-            ctx.so_far(),
+            ctx.so_far(Doubts::None),
             kept_text(ctx.canon, kept, TO_AUTHOR),
             writing_rules(ctx.canon, words),
         ),

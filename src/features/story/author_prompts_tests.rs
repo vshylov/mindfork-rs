@@ -1,11 +1,11 @@
 use std::collections::BTreeSet;
 
 use super::{
-    Again, ChapterContext, Kept, Trace, author_system, continuity, pick, plan, reader, revise,
-    story_language, triage, write,
+    Again, ChapterContext, Kept, Trace, author_system, continuity, outline, pick, plan, reader,
+    revise, story_language, triage, write,
 };
 use crate::entities::story::{
-    BranchId, Canon, CharacterKey, Event, EventKind, ReviewNote, SceneSetup, WorldState,
+    Assumption, BranchId, Canon, CharacterKey, Event, EventKind, ReviewNote, SceneSetup, WorldState,
 };
 use crate::entities::story::{
     Cause, ChapterId, EventId, NewEvent, NewNote, NoteId, NoteKind, NoteSeverity, Reviewer,
@@ -90,6 +90,7 @@ fn ctx<'a>(
         human_notes: Some("More rain."),
         goals,
         register: &NOTHING_NOTED,
+        choices: &[],
         last: false,
     }
 }
@@ -383,6 +384,85 @@ fn a_triage_and_a_revision_show_the_notes_by_label() {
             .contains("as the story's human author asked above")
     );
     assert!(human.user.contains("More rain."));
+}
+
+/// The chapter's choices so far reach every Author prompt that plans,
+/// picks or writes, each question once with its latest answer
+/// (docs/fabula.md §4, *A chapter's choices stand*); the triage, which
+/// decides notes, goes without.
+#[test]
+fn the_chapters_choices_reach_every_author_prompt_once_each() {
+    let canon = fixture_canon();
+    let goals = vec!["g".to_owned()];
+    let summaries = Vec::new();
+    let mut view = ctx(&canon, &goals, &summaries);
+    let world = WorldState::initial(&canon);
+    assert!(
+        !plan(&view, &[], &world, (1, 3), None)
+            .user
+            .contains("These choices stand"),
+        "no choices, no list"
+    );
+    let choices = [
+        Assumption {
+            doubt: "Who signed the order?".into(),
+            choice: "The harbour master.".into(),
+        },
+        Assumption {
+            doubt: "Is Ines new in town?".into(),
+            choice: "Yes, a month.".into(),
+        },
+        Assumption {
+            doubt: "Who signed the order?".into(),
+            choice: "The mayor.".into(),
+        },
+    ];
+    view.choices = &choices;
+    let t = trace();
+    let setup = setup();
+    let kept = [Kept {
+        scene: 1,
+        setup: &setup,
+        intent: "i",
+        trace: &t,
+    }];
+    let shown = vec![("k0".to_owned(), &t)];
+    let note = ReviewNote {
+        id: NoteId::new("ch1/v1/continuity/n1"),
+        chapter: ChapterId::of(1, 1),
+        reviewer: Reviewer::Continuity,
+        note: NewNote {
+            kind: NoteKind::KnowledgeLeak,
+            severity: NoteSeverity::High,
+            anchor: None,
+            body: "Slow.".into(),
+            evidence: Vec::new(),
+        },
+    };
+    let listed = "- Who signed the order? \u{2014} The mayor.\n- Is Ines new in town? \u{2014} \
+                  Yes, a month.\nThese choices stand: plan, pick and write by them";
+    let recorded = "These choices stand: plan, pick and write by them, and do not ask them \
+                    again. Only what was played or what the human author asked can change one. \
+                    A question they do not answer is a new one: record it among your \
+                    assumptions.";
+    let written = "These choices stand: plan, pick and write by them. Only what was played or \
+                   what the human author asked can change one.";
+    // The steps whose replies record assumptions are told to record every
+    // other question; the draft and the revisions record none.
+    for (prompt, close) in [
+        (outline(&view), recorded),
+        (plan(&view, &kept, &world, (2, 3), None), recorded),
+        (pick(&view, (2, &setup, "i"), &shown, 1, None), recorded),
+        (write(&view, &kept, (1, 2)), written),
+        (revise(&view, &kept, "## One\n\nOld.", &[], (1, 2)), written),
+    ] {
+        assert!(prompt.user.contains(listed), "{}", prompt.user);
+        assert!(prompt.user.contains(close), "{}", prompt.user);
+        assert!(!prompt.user.contains("The harbour master."), "replaced");
+        tokenless(&prompt);
+    }
+    let triaged = triage(&view, "## One\n\nOld.", &[("n1".to_owned(), &note)]);
+    assert!(!triaged.user.contains("These choices stand"));
 }
 
 #[test]

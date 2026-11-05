@@ -1,6 +1,6 @@
 # Fabula — a story engine used from the chat: track plan
 
-**Status:** in progress — M0 done (PRs 1 and 2, Gate G0 GO); M1 done (PRs 3–5, Gate G1 GO, 2026-11-01); M2 done (PR 6, the Author's loop, 2026-11-01; PR 7, stories in mindfork's data, 2026-11-02; PR 8, the story run in the background, 2026-11-02; PR 9, the story driven from the chat, 2026-11-02; Gate G2 GO, 2026-11-03; PR 10, a scene played again, 2026-11-03); before M3, the readers' findings under way (PRs 11–12, from 2026-11-04). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
+**Status:** in progress — M0 done (PRs 1 and 2, Gate G0 GO); M1 done (PRs 3–5, Gate G1 GO, 2026-11-01); M2 done (PR 6, the Author's loop, 2026-11-01; PR 7, stories in mindfork's data, 2026-11-02; PR 8, the story run in the background, 2026-11-02; PR 9, the story driven from the chat, 2026-11-02; Gate G2 GO, 2026-11-03; PR 10, a scene played again, 2026-11-03); before M3, the readers' findings settled (PR 11, the story's register; PR 12, the craft of the scenes and the lines; a chapter's choices standing for its later steps; 2026-11-04 to 2026-11-05). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
 so are the eighteen this plan adds (§6) and where development runs (§4, *The development
 stack*). The design —
 the engine, its stores, its contracts, its evaluation — is
@@ -406,6 +406,46 @@ on thanks where the first opened five (and three on an apology); for the owner t
 against the first (T18). The run found the landing's assumptions answering one doubt nine
 ways, each step deciding it again without the earlier answers. The figures are in
 [journal/stories.md](journal/stories.md).
+
+**After PR 12: a chapter's choices stand (2026-11-04).** Where the Author could have asked
+the human and did not, it records the question and the answer it chose (spec §14, *Pauses*):
+at the outline, at each scene's plan and at each pick. No step sees another's answers, so the
+next one meets the same doubt and decides it again. G2 again decided who signed the closure
+order at nine of chapter 2's steps, nine ways, and whether Galina knows Timur for a local at
+six of chapter 1's; PR 12's Qwen story decided what Nikita's last logbook entry says at
+three. Both models, both chapters: the cause is the loop's. The owner asked for the fix after
+#874 merged (2026-11-04); the forks below are the agent's, open to the owner's review.
+
+- **What fixes it.** (a) The chapter's choices so far reach every Author prompt of the chapter
+  — they stand, and the plans, the picks and the prose go by them — and the landing lists each
+  question once, with its latest answer *(taken)*. (b) The landing alone keeps the last answer:
+  the scenes would still be planned on nine. (c) Every doubt asked once, at the outline: the
+  ones met later would be lost.
+- **Whose choices.** (a) The chapter's own, from every run and take of it *(taken)*: an earlier
+  chapter's were the human's to read at its checkpoint, and live on in its text, its summary
+  and its register. (b) Every chapter's.
+- **A change.** (a) A later step may answer a question again when what was played or what the
+  human asked calls for it, writing the question as it stands; the latest answer stands
+  *(taken)*. (b) Never: a choice made before a scene was played would outrank its record.
+- **The same question.** (a) By its words — letters and digits, case ignored — since the step
+  copies the question it is shown *(taken)*. (b) A model's call judging which questions are
+  one: a call per landing, with errors of its own.
+
+Proof: engine tests on the scripted port (the choices in the next steps' prompts, after a
+resume too; one line per question at the landing); live, a two-chapter story on Qwen 3.8 27B
+from G2's sketches, its questions answered again counted against PR 12's.
+
+As built (2026-11-05): the live story answered no question again — none of chapter 1's 2
+assumptions, none of chapter 2's 4 — but its plans and picks recorded almost no new ones. Their
+prompts, replayed with and without the list, showed why: told only that its choices stand, the
+Author recorded a seventh of its new questions. A step whose reply records assumptions (the
+outline, the plans, the picks) is now told to record every question the choices do not
+answer, and leave out only the ones they do; measured on the same prompts, the repeats stay
+gone and new questions come back to about half PR 12's rate. The draft and the revisions read
+the list without that sentence. Chapter 2 stopped at its third scene on its token budget, and
+the run found a canon whose places no road connects let through its check: the journal has the
+counts, the wordings measured and rejected, and the defect
+([docs/journal/stories.md](journal/stories.md), *a chapter's choices stand*).
 
 ### M3 — the evaluation
 

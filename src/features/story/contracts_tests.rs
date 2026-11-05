@@ -1,11 +1,9 @@
-use serde_json::Value;
-
 use super::{
     CanonKeys, InitiativeRuling, IntentVerdict, ReactionsRuling, ReflectionReply, StorySchema,
 };
 use crate::entities::story::{Canon, Effect, Severity, fixture_canon};
 use crate::features::story::dialect;
-use crate::features::story::schema::tests::holds;
+use crate::features::story::schema::tests::{asks_no_reasoning, holds};
 
 fn keys() -> CanonKeys {
     CanonKeys::of(&fixture_canon())
@@ -41,33 +39,8 @@ fn the_rulings_put_the_cause_before_the_verdict_and_the_event_after_both() {
         ReactionsRuling::schema(&keys()),
         ReflectionReply::schema(&keys()),
     ] {
-        let value = schema.to_value();
-        let names = property_names(&value);
-        for banned in ["reason", "thinking", "trace", "rationale"] {
-            assert!(
-                names.iter().all(|n| !n.contains(banned)),
-                "{banned} in {names:?}"
-            );
-        }
+        asks_no_reasoning(&schema);
     }
-}
-
-fn property_names(value: &Value) -> Vec<String> {
-    let mut out = Vec::new();
-    if let Some(props) = value.get("properties").and_then(Value::as_object) {
-        out.extend(props.keys().cloned());
-        for v in props.values() {
-            out.extend(property_names(v));
-        }
-    }
-    for key in ["items", "anyOf"] {
-        match value.get(key) {
-            Some(Value::Array(list)) => list.iter().for_each(|v| out.extend(property_names(v))),
-            Some(v) => out.extend(property_names(v)),
-            None => {}
-        }
-    }
-    out
 }
 
 #[test]

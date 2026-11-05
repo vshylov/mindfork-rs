@@ -519,6 +519,46 @@ pub struct Assumption {
     pub choice: String,
 }
 
+impl Assumption {
+    /// The question's words as they compare — letters and digits, case
+    /// ignored — or, with none, the question as it is.
+    fn key(&self) -> String {
+        let words: String = self
+            .doubt
+            .chars()
+            .filter(|c| c.is_alphanumeric())
+            .flat_map(char::to_lowercase)
+            .collect();
+        if words.is_empty() {
+            self.doubt.clone()
+        } else {
+            words
+        }
+    }
+
+    /// The choices that stand among `made`, oldest first: each question once,
+    /// where it was first asked, with its latest answer — a later step may
+    /// answer a question again, writing it as it stands (docs/fabula.md §4,
+    /// *A chapter's choices stand*).
+    pub fn standing(made: &[Assumption]) -> Vec<Assumption> {
+        let mut out: Vec<Assumption> = Vec::new();
+        let mut at = std::collections::HashMap::new();
+        for a in made {
+            match at.get(&a.key()) {
+                Some(&i) => {
+                    let kept: &mut Assumption = &mut out[i];
+                    kept.choice.clone_from(&a.choice);
+                }
+                None => {
+                    at.insert(a.key(), out.len());
+                    out.push(a.clone());
+                }
+            }
+        }
+        out
+    }
+}
+
 /// An assumption as stored, with where it was made.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredAssumption {
@@ -537,6 +577,33 @@ pub struct StoredAssumption {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A question answered again stands once, where it was first asked,
+    /// with its latest answer; one with no words is compared as written.
+    #[test]
+    fn a_question_answered_again_stands_once_with_its_latest_answer() {
+        let a = |doubt: &str, choice: &str| Assumption {
+            doubt: doubt.into(),
+            choice: choice.into(),
+        };
+        let made = [
+            a("Who signed the order?", "The district head."),
+            a("Is the lamp whole?", "Yes."),
+            a("who signed  the ORDER", "Timur's superior."),
+            a("?", "One."),
+            a("!", "Two."),
+        ];
+        assert_eq!(
+            Assumption::standing(&made),
+            [
+                a("Who signed the order?", "Timur's superior."),
+                a("Is the lamp whole?", "Yes."),
+                a("?", "One."),
+                a("!", "Two."),
+            ]
+        );
+        assert_eq!(Assumption::standing(&[]), []);
+    }
 
     #[test]
     fn ids_are_derived_from_their_position() {
