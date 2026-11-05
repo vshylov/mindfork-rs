@@ -593,8 +593,9 @@ by the chat's own model, so a chapter takes many calls and an hour or more.
 4. **A chapter in the background.** It is written as a background run (`F7` lists
    it). When it is done it lands in the chat as an attachment,
    `<story> — chapter 1.md`, with a note of what it is about, its scenes by number
-   with why each was kept, and what was chosen without asking you, and the
-   assistant asks whether you accept it. Accept it, with wishes for the next chapter
+   with why each was kept, and what was chosen without asking you — each
+   question once: a choice holds for the rest of its chapter, whose later scenes
+   are planned and written by it — and the assistant asks whether you accept it. Accept it, with wishes for the next chapter
    if you like, or ask for changes and the chapter's text is revised.
 5. **A scene played again.** When you want something to *happen* differently, not
    just be told differently, ask for that scene by its number: "play scene 2 again —

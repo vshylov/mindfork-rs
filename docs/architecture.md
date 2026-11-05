@@ -688,12 +688,15 @@ src/
 │  │                        (PR 12): a version's text, the published chapters' summaries before it,
 │  │                        read for who is where and holds what, whose pronoun and whose kin, a line
 │  │                        that announces and a reply that opens on thanks, its notes in the
-│  │                        checker's batch; craft_tests.rs — the pass in the chapter's loop; author.rs
+│  │                        checker's batch; craft_tests.rs — the pass in the chapter's loop;
+│  │                        choices_tests.rs — a chapter's choices in its later Author prompts, after a
+│  │                        resume too, and a question answered again standing once; author.rs
 │  │                        — the Author's and the reviewers' replies with their schemas, built per
 │  │                        call where its options differ; author_prompts.rs — their prompts: the
 │  │                        Author sees everything but the planted tokens, the Reader only the
 │  │                        published text, the checker the record with its ids; a scene's intent
-│  │                        names its collision and its price, a line is a deed (PR 12); steps.rs — the
+│  │                        names its collision and its price, a line is a deed (PR 12); the chapter's
+│  │                        choices so far stand in its plans, picks and prose; steps.rs — the
 │  │                        steps of every run of a story, read by a resume; export.rs — the story
 │  │                        as markdown; board.rs — the story runs out: a story claimed by one run
 │  │                        at a time, the call each is in, what `story_status` and a quit read;

@@ -13,7 +13,7 @@ what was rejected — the reasoning behind the code, not its current shape. For 
 shape read the reference documents named above; for the traps that recur across areas read
 [lessons.md](../lessons.md).
 
-## Entries (12)
+## Entries (13)
 
 - Post-M9: Fabula — PR 1, the story database (done)
 - Post-M9: Fabula — PR 2, the model port and replay; Gate G0 GO (done)
@@ -27,6 +27,7 @@ shape read the reference documents named above; for the traps that recur across 
 - Post-M9: Fabula — PR 10, a scene played again at the checkpoint (done)
 - Post-M9: Fabula — PR 11, the story's register (done)
 - Post-M9: Fabula — PR 12, the craft of the scenes and the lines (done)
+- Post-M9: Fabula — a chapter's choices stand (done)
 
 ### Post-M9: Fabula — PR 1, the story database (done)
 
@@ -1362,8 +1363,115 @@ thanks, a kinship no reviewer could place.
   - *The landing's assumptions disagree with each other.* The woken assistant warned that the
     list it was sent answers "who signed the order" several ways and to trust the text: the
     Author meets the same doubt at the outline, at each scene's plan and at each pick, sees
-    none of its earlier answers, and decides it again — nine of the chapter's 38 assumptions,
-    each different (the first G2's 37 were all different doubts; pacing the reveal kept this
-    one open longest). Not this pull request's; a step that reads the chapter's earlier
-    assumptions, or a landing that keeps the last answer to a doubt, would settle it.
+    none of its earlier answers, and decides it again — nine of chapter 2's 22 assumptions
+    (the story's 38), each different (the first G2's 37 were worded differently each time,
+    and its chapter 2 still asked what the brother's notebook says four times; pacing the
+    reveal kept this one open longest). Not this pull request's; a step that reads the
+    chapter's earlier assumptions, or a landing that keeps the last answer to a doubt, would
+    settle it — the next entry, *a chapter's choices stand*, and the counts corrected there.
 - Unit tests: 4789 green (+11), 328 `#[ignore]` (+1, the probe).
+
+### Post-M9: Fabula — a chapter's choices stand (done)
+
+G2 again found the landing's assumptions answering one doubt nine ways (PR 12). Where the Author
+could have asked the human and did not, it records the question and the answer it chose (spec
+§14, *Pauses*) — at the outline, at each scene's plan and at each pick — and no step saw another's
+answers, so the next one met the same doubt and decided it again.
+
+- **The fault, counted.** Read by meaning, not by wording: an assumption *answers again* when an
+  earlier one of its chapter asked what it asks. G2 again: 5 of chapter 1's 16 (whether Galina
+  knows Timur for a local, six times) and 12 of chapter 2's 22 (who signed the closure order,
+  nine times; whose voices the shop's telephone carries, seven; what Timur decides, three).
+  PR 12's Qwen story: 2 of chapter 1's 11 and 7 of chapter 2's 22 (what Nikita's last entry says,
+  three times; where Ilya's grave was moved, three). The first G2 too, in other words each time:
+  what the brother's notebook says, four times in its chapter 2. Both models, every chapter:
+  the cause is the loop's.
+- **A correction to PR 12's entry.** It counted the nine answers among "the chapter's 38
+  assumptions": 38 are the story's, chapter 2 has 22. And it said the first G2's 37 were all
+  different doubts: they were differently worded, and chapter 2's held the notebook's question
+  four times. The entry is corrected in place.
+- **The forks (the agent's, the owner having asked for the fix after #874; open to review).**
+  What fixes it: the chapter's choices so far reach every Author prompt of the chapter, and the
+  landing lists each question once with its latest answer — not the landing alone (the scenes
+  would still be planned on nine answers), not every doubt asked once at the outline (the ones
+  met later would be lost). Whose: the chapter's own, every run and take of it — an earlier
+  chapter's were the human's to read at its checkpoint and live on in its text, summary and
+  register. A change: a later step may answer a question again when what was played or what
+  the human asked calls for it, writing the question as it stands, and the latest answer stands
+  — never would let a choice made before a scene was played outrank its record. The same
+  question: by its words, letters and digits with case ignored, since the step copies the
+  question it is shown — not a model's call judging which questions are one.
+- **As built.** The chapter's assumptions are read when it opens and kept as the run makes them
+  (`Run::choices`); `ChapterContext::choices` lists the ones that stand
+  (`Assumption::standing`: each question once, where first asked, with its latest answer) under
+  "What you chose in this chapter where you could have asked its human author… These choices
+  stand: plan, pick and write by them. Only what was played or what the human author asked can
+  change one." The outline, the plans, the draft and the revisions read it with the story so
+  far; the pick, which reads no story so far, gets it after the scene's intent. The reviewers
+  and the triage go without: the reviewers read the text, and the triage decides notes. The
+  steps that record assumptions — the outline, the plans, the picks — close the list otherwise
+  (`Doubts::Recorded`): "…and do not ask them again. Only what was played or what the human
+  author asked can change one. A question they do not answer is a new one: record it among
+  your assumptions." The assumptions field says the same: "Write every new one you met; leave
+  out only a question your choices in this chapter already answer, since they stand", and to
+  answer one again, its question as it stands. The landing lists the standing ones. No schema
+  step: the rows are as before, every answer kept. (The wording is the second one; the live
+  run below measured the first.)
+- **Tests.** `choices_tests.rs` on the scripted port (the outline's choice in the later plans,
+  picks, draft and revision and in no reviewer's prompt; a question answered again in its own
+  words standing once with the new answer; a run killed after the outline shown its choice when
+  resumed; Russian questions compared by their letters), `author_prompts_tests` (every prompt
+  that plans, picks or writes, each with its closing, the triage without), `author_tests` (the
+  assumptions' description on every reply that records them), `run_tests` (the landing),
+  `manuscript` (case, spaces and punctuation; a question of no words compared as written).
+  **Mutation check:** 14 mutants in two builds (the choices not kept, not read when the chapter
+  opens, the first answer kept, case or punctuation compared, wordless questions made one, the
+  pick or the story so far without them, every answer listed in the prompt or at the landing;
+  then the closing that asks for new questions withheld from the plans, from the pick, or given
+  to the draft, and the description's first wording): all killed.
+
+- **Live: a two-chapter story on Qwen 3.8 27B from G2's sketches, three attempts.** The
+  third: chapter 1 accepted (four scenes, 1,258 words); chapter 2 stopped at its third scene on
+  its 14M-token budget, after a resume past the 3-hour limit — 1,232 calls, $4.27, 7 h 41 min.
+  24 of its 28 branches ran to the 8-round cap (PR 12's Qwen story: 7 of 22; G2 again: 11 of
+  22), which doubled the cost. The World Master sees none of the choices, which reach the
+  Author alone, and one story cannot tell whether its plans made the scenes run long: an
+  observation, not a finding.
+- **No question answered again — and almost none asked.** None of chapter 1's 2 assumptions
+  and none of chapter 2's 4 answers an earlier one again (PR 12's Qwen story: 2 of 11, 7 of
+  22). But the 15 plans and picks after the outlines recorded 2 between them, where PR 12's
+  recorded about two each. Their 15 prompts, replayed through the same provider twice each,
+  interleaved: as sent, 6 assumptions in 30 calls; with the list cut and the description as
+  PR 12 had it, 45 — 10 of them answering a standing question again, 35 new. Told only that
+  its choices stand, the Author recorded a seventh of its new questions: choices the human
+  would never learn were made for them. Not seen in the scripted tests, which script the
+  replies.
+- **The wording, measured on the same prompts.** (C) The description "Write every new one you
+  met; leave out only a question your choices in this chapter already answer, since they
+  stand", the list closing "…and do not ask them again… A question they do not answer is a new
+  one: record it among your assumptions"; measured twice: 18 and 18 assumptions, 1 and 2 of
+  them a standing question copied word for word (the landing lists it once), about 16 new.
+  (D) "Record every one you met at this step", the closing "Any other question you meet is
+  still yours to record": 24, of which 3 or 4 re-answer a standing question in other words —
+  the landing would list them apart again, the fault this pull request fixes — about 20 new.
+  C is built: the repeats gone, new questions at about half PR 12's rate on these prompts;
+  whether the half not recorded was worth the human's reading is not measured. The draft and
+  the revisions, whose replies record no assumptions, keep the closing without "record it".
+  Three replays of 60 calls, $1.72; with the three attempts, the pull request's live spend is
+  about $6.2.
+- **Found, not this pull request's: a map with no roads.** The second live attempt's canon,
+  composed by Qwen from the sketches, gave its four places no route at all, and the canon's
+  check let it through: it checks that a route leads somewhere, not that a place can be
+  reached. Chapter 1's first scene was played at the village and picked; the second, planned
+  at the lighthouse, was refused by the world at its opening — "lighthouse cannot be reached
+  from village" — 51 minutes and $0.23 in. The refusal ended the run as a failure to start
+  ("the story could not run", where the run had kept a scene), and an approved canon cannot
+  be mended, so the woken assistant composed a second story with the routes and asked again
+  for its approval, which the script did not give. The five other canons of the live runs
+  since PR 11 had their routes: a slip of the model's, which the check should catch — Vera
+  started at the lighthouse, Timur and Galina at the village, and no one could ever reach
+  anyone else's start — and a refusal mid-chapter should be told as one at its step. The
+  first attempt
+  had ended sooner: a call to the provider hung past the chat turn's 15 minutes, before any
+  chapter, for cents.
+- Unit tests: 4797 green (+8), 328 `#[ignore]`.

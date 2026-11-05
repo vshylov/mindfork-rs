@@ -1,6 +1,6 @@
 # Fabula — a story engine used from the chat: track plan
 
-**Status:** in progress — M0 done (PRs 1 and 2, Gate G0 GO); M1 done (PRs 3–5, Gate G1 GO, 2026-11-01); M2 done (PR 6, the Author's loop, 2026-11-01; PR 7, stories in mindfork's data, 2026-11-02; PR 8, the story run in the background, 2026-11-02; PR 9, the story driven from the chat, 2026-11-02; Gate G2 GO, 2026-11-03; PR 10, a scene played again, 2026-11-03); before M3, the readers' findings under way (PRs 11–12, from 2026-11-04). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
+**Status:** in progress — M0 done (PRs 1 and 2, Gate G0 GO); M1 done (PRs 3–5, Gate G1 GO, 2026-11-01); M2 done (PR 6, the Author's loop, 2026-11-01; PR 7, stories in mindfork's data, 2026-11-02; PR 8, the story run in the background, 2026-11-02; PR 9, the story driven from the chat, 2026-11-02; Gate G2 GO, 2026-11-03; PR 10, a scene played again, 2026-11-03); before M3, the readers' findings settled (PR 11, the story's register; PR 12, the craft of the scenes and the lines; a chapter's choices standing for its later steps; 2026-11-04 to 2026-11-05). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
 so are the eighteen this plan adds (§6) and where development runs (§4, *The development
 stack*). The design —
 the engine, its stores, its contracts, its evaluation — is
@@ -434,6 +434,18 @@ three. Both models, both chapters: the cause is the loop's. The owner asked for 
 Proof: engine tests on the scripted port (the choices in the next steps' prompts, after a
 resume too; one line per question at the landing); live, a two-chapter story on Qwen 3.8 27B
 from G2's sketches, its questions answered again counted against PR 12's.
+
+As built (2026-11-05): the live story answered no question again — none of chapter 1's 2
+assumptions, none of chapter 2's 4 — but its plans and picks recorded almost no new ones. Their
+prompts, replayed with and without the list, showed why: told only that its choices stand, the
+Author recorded a seventh of its new questions. A step whose reply records assumptions (the
+outline, the plans, the picks) is now told to record every question the choices do not
+answer, and leave out only the ones they do; measured on the same prompts, the repeats stay
+gone and new questions come back to about half PR 12's rate. The draft and the revisions read
+the list without that sentence. Chapter 2 stopped at its third scene on its token budget, and
+the run found a canon whose places no road connects let through its check: the journal has the
+counts, the wordings measured and rejected, and the defect
+([docs/journal/stories.md](journal/stories.md), *a chapter's choices stand*).
 
 ### M3 — the evaluation
 

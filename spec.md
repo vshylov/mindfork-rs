@@ -2775,7 +2775,9 @@ take (below).
   message from the user, granting nothing — carries the summary, the Author's
   note on each scene kept, by the scene's number (the numbers a reply may name to
   play one again), the assumptions made where the user could have been
-  asked, at the arc's last chapter the threads the story leaves open with the
+  asked — each question once, with the answer that stands, since inside a
+  chapter they are choices its later plans, picks and prose go by
+  ([docs/fabula.md](docs/fabula.md) §4) — at the arc's last chapter the threads the story leaves open with the
   Author's reasons, the question, and what the run cost; the woken assistant puts the
   question to the user in its own words. A run that stopped short says where and
   what continuing does: stopped, its time limit, its budget, a call that gave

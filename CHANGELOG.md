@@ -61,7 +61,10 @@ split by subsystem.
   the way a background sub-agent's do: each takes the story from where it stands to its
   next pause on the chat's own model, takes a background slot, and lands in the chat.
   The chapter arrives as an attachment, and a task notification carries its summary, why
-  each scene was kept, the choices made without asking and the question for you. A run
+  each scene was kept, the choices made without asking and the question for you. A choice
+  made without asking — who signed an order, whether someone is known for a local — holds
+  for the rest of its chapter, whose later scenes are planned and written by it, and is
+  listed once, with the answer that stands. A run
   is bounded by a time limit (6 hours) and the chapter's budget (6,000,000 tokens; a
   dollar cap where the provider reports cost), and one stopped, timed out or cut short by
   quitting says where it stopped and resumes there. `story_status` tells the assistant
