@@ -13,7 +13,7 @@ what was rejected — the reasoning behind the code, not its current shape. For 
 shape read the reference documents named above; for the traps that recur across areas read
 [lessons.md](../lessons.md).
 
-## Entries (13)
+## Entries (14)
 
 - Post-M9: Fabula — PR 1, the story database (done)
 - Post-M9: Fabula — PR 2, the model port and replay; Gate G0 GO (done)
@@ -28,6 +28,7 @@ shape read the reference documents named above; for the traps that recur across 
 - Post-M9: Fabula — PR 11, the story's register (done)
 - Post-M9: Fabula — PR 12, the craft of the scenes and the lines (done)
 - Post-M9: Fabula — a chapter's choices stand (done)
+- Post-M9: Fabula — a map every scene can reach (done)
 
 ### Post-M9: Fabula — PR 1, the story database (done)
 
@@ -1475,3 +1476,69 @@ answers, so the next one met the same doubt and decided it again.
   had ended sooner: a call to the provider hung past the chat turn's 15 minutes, before any
   chapter, for cents.
 - Unit tests: 4797 green (+8), 328 `#[ignore]`.
+
+### Post-M9: Fabula — a map every scene can reach (done)
+
+The choices' live story met a map with no roads (*a chapter's choices stand*, above): a canon
+Qwen 3.8 composed from the sketches gave its four places no route at all, and the canon's check
+let it through — it asked that a route lead somewhere, not that a place be reached. Chapter 1's
+second scene, planned at the lighthouse with Timur, who stood in the village, was refused by the
+world at its opening, and the refusal reached the run as the store's failure: "the story could
+not run", 51 minutes and a kept scene in.
+
+- **How a refusal travelled.** The opening's placement, `Effect::Place`, is admitted only when
+  the place can be reached from where the character stands (`Canon::reachable`, any number of
+  routes). The plan was held to the world before the scene (`held_to_the_world`) — but only for
+  the living and someone present; the placement was first checked by the branch's commit, whose
+  refusal (`StoryDbError::Refused`) went up as `SceneError::Store`, then `Halt::Store`, then
+  `Ending::Failed`, told as "The story could not run" — in Russian, "could not start".
+- **The forks (the agent's, the owner having asked for the fix on 2026-11-05; open to review).**
+  The map: every place reachable from every other along the routes, back or around — a scene's
+  opening brings everyone in it to its place from wherever they are, and the tool's description
+  already asks for the way back — not every place reachable from each start (a place of no
+  return would pass, and each plan bringing someone out of it would be refused), not the starts
+  reachable from one another (a place no one can reach would pass). A plan: held to the world by
+  its opening, the opening's events admitted against the world as the scene would commit them —
+  not a reachability check of its own beside the opening's, one rule in two places. A refusal
+  while a scene plays: a stop at the scene's step in the world's words — not every branch failed
+  and the human asked (P3), reruns of a scene that cannot open and then a question to the human
+  about an engine's fault.
+- **As built.** `CanonProblem::Unreachable { from, to }`: each place is checked against the
+  first, both ways — every place reaches every other exactly when each reaches the first and the
+  first reaches it — so a roadless map of four places names six missing ways, and a place with
+  no way back one. One-way routes stay the map's own while there is a way around. The world's
+  refusal of a placement now names whom ("timur cannot be brought to lighthouse: no route leads
+  there from village, where they are"), so an Author planning again knows whom to leave out.
+  `held_to_the_world` admits the plan's opening events (`scene::opening_events`) against the
+  world; a plan it refuses is asked for once more with the reason, as a plan with no one alive
+  was; a rerun the pick asks for, refused, keeps the cast and the place of the scene it reruns
+  (`rerun_held`; it kept only the cast, so a refused place still went to the opening).
+  `Stop::Refused` is the world refusing an event while a scene plays, at the scene's step, and
+  the landing says so (`tool.story.landing.refused`). A run that ends `Failed` now reads "The
+  story's run failed", no longer "could not run" — in Russian, no longer "could not start".
+- **Checked against the live canons.** Of the eight canons composed live since PR 11, the seven
+  with routes all pass the new check, and the roadless one is refused with its six ways.
+- **Tests.** The canon: a roadless map's problems, a place with no way back and its text, a
+  one-way ring that passes. The world: the refusal's sentence. The chapter: a plan held to the
+  world by its opening (whom it names, from where), the refused rerun, the stop at a scene's step
+  and the store's failure still the store's. The landing: the refusal told. Mutation check: 10
+  mutants in one build (`crate::mutant(n)` injected by the script, the recipe of PR 11), all
+  killed.
+- **Live.** `story_chat_live_map_mended` on Qwen 3.8 27B through OpenRouter pinned to DeepInfra, in
+  Russian, from G2's sketches: the test's engine drops every route of the model's first
+  `story_create` that holds a map — the slip the live story found — and the rest is the model's
+  own. Five fresh chats in two runs, all five mended. Four on the call after the refusal, which
+  named six or eight ways for maps of four and five places; each was stored with its ways back
+  (three a star around the village or the pier, one every place joined to every other). The
+  fifth first passed its canon twice as a string of JSON it could not close, which the tool
+  refused as unreadable, as before; then a map of two places, the one slipped, its refusal naming
+  two ways; then that map mended and stored, and its draft revised to four places with their
+  roads. The first run's check read the first call's result rather than the slipped one's and
+  failed there; it now finds the slipped call by its map. $0.007 in all.
+- **The stored roadless story resumed.** A copy of the story the defect left, resumed with the
+  new code on an engine that must not be called: no call, and the run stops at `ch1/sc2/r0` with
+  `Stop::Refused` — "timur cannot be brought to lighthouse: no route leads there from village,
+  where they are" — its landing saying so in English and Russian, where it had read "could not
+  start". That scene was planned before plans were held to the world; one planned now is asked
+  for again.
+- Unit tests: 4802 green (+5), 329 `#[ignore]` (+1, `story_chat_live_map_mended`).

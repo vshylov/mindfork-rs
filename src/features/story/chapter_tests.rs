@@ -12,22 +12,23 @@ use serde_json::{Value, json};
 use tokio::sync::Notify;
 
 use super::{
-    Budget, ChapterConfig, Engine, Outcome, Stop, advance, decisions_of, held_to_the_world,
-    markers_in, reader_notes, resolve,
+    Budget, ChapterConfig, Engine, Halt, Outcome, Stop, advance, decisions_of, held_to_the_world,
+    markers_in, reader_notes, rerun_held, resolve, scene_halt,
 };
 use crate::entities::story::{
-    BranchId, Decision, EventId, NewNote, NoteDecision, NoteKind, NoteSeverity, QuestionBody,
-    Resolution, ReviewNote, Reviewer, RunId, VersionOrigin, WorldState,
+    BranchId, Canon, Decision, EventId, LocationKey, NewNote, NoteDecision, NoteKind, NoteSeverity,
+    QuestionBody, Refusal, Resolution, ReviewNote, Reviewer, RunId, VersionOrigin, WorldState,
 };
 use crate::entities::story::{ChapterArc, ChapterId, CharacterKey, SceneId, fixture_canon};
 use crate::features::story::author::{ReaderReply, SceneDraft, TriageReply};
 use crate::features::story::engine::SharedLog;
 use crate::features::story::port::{CallAddress, LlmPort, PortError, Prompt, Role};
+use crate::features::story::scene::SceneError;
 use crate::features::story::schema::Schema;
 use crate::features::story::schema::describe;
 use crate::features::story::simulation::SimConfig;
 use crate::features::story::simulation::tests::{feasible, initiative, says, waits};
-use crate::shared::storage::story::{AuthorWriter, StepStatus, StoredScene, StoryDb};
+use crate::shared::storage::story::{AuthorWriter, StepStatus, StoredScene, StoryDb, StoryDbError};
 use crate::shared::storage::story::{CallStatus, CallUsage, Mechanism, NewCall};
 
 /// What the script answers.
@@ -1285,13 +1286,112 @@ fn a_planned_scene_is_held_to_the_living() {
         just_happened: "j".into(),
         pressure: "p".into(),
     };
-    let held = held_to_the_world(&world, &draft(&["ines", "mara", "ines"])).unwrap();
+    let held = held_to_the_world(&canon, &world, &draft(&["ines", "mara", "ines"])).unwrap();
     assert_eq!(
         held.present,
         [CharacterKey::from("ines"), CharacterKey::from("mara")]
     );
     assert_eq!(held.intent, "i");
-    assert!(held_to_the_world(&world, &draft(&[])).is_err());
+    assert!(held_to_the_world(&canon, &world, &draft(&[])).is_err());
+}
+
+/// The fixture with its lighthouse cut off: no road leads to it or from it,
+/// a map the canon's check refuses and a story stored before it may hold.
+fn lighthouse_cut_off() -> Canon {
+    let mut canon = fixture_canon();
+    canon.locations[0]
+        .routes
+        .retain(|r| r.to != LocationKey::from("lighthouse"));
+    canon.locations[2].routes.clear();
+    canon
+}
+
+/// A scene that could not open is planned again, not played: the world
+/// refused one at its opening an hour into the live story, on a map with
+/// no roads, and the run ended as though it had never started
+/// (docs/journal/stories.md, *a map with no roads*).
+#[test]
+fn a_planned_scene_is_held_to_the_world_by_its_opening() {
+    let canon = lighthouse_cut_off();
+    let world = WorldState::initial(&canon);
+    let draft = |location: &str, present: &[&str]| SceneDraft {
+        intent: "i".into(),
+        location: location.into(),
+        present: present.iter().map(|&c| c.into()).collect(),
+        just_happened: "j".into(),
+        pressure: "p".into(),
+    };
+    assert_eq!(
+        held_to_the_world(&canon, &world, &draft("inn", &["mara", "ines"])).unwrap_err(),
+        "ines cannot be brought to inn: no route leads there from lighthouse, where they are"
+    );
+    assert_eq!(
+        held_to_the_world(&canon, &world, &draft("lighthouse", &["ines", "silas"])).unwrap_err(),
+        "silas cannot be brought to lighthouse: no route leads there from inn, where they are"
+    );
+    // Whoever can be brought there may be, and whoever is there already stays.
+    let held = held_to_the_world(&canon, &world, &draft("inn", &["mara", "silas"])).unwrap();
+    assert_eq!(held.location, LocationKey::from("inn"));
+    assert!(held_to_the_world(&canon, &world, &draft("lighthouse", &["ines"])).is_ok());
+}
+
+/// A rerun the world refuses keeps the cast and the place of the scene it
+/// reruns, and the Author's new circumstances.
+#[test]
+fn a_rerun_the_world_refuses_keeps_the_scenes_cast_and_place() {
+    let canon = lighthouse_cut_off();
+    let world = WorldState::initial(&canon);
+    let played = SceneDraft {
+        intent: "i".into(),
+        location: "lighthouse".into(),
+        present: vec!["ines".into()],
+        just_happened: "j".into(),
+        pressure: "p".into(),
+    }
+    .setup();
+    let rerun = |location: &str, present: &[&str]| SceneDraft {
+        intent: "again".into(),
+        location: location.into(),
+        present: present.iter().map(|&c| c.into()).collect(),
+        just_happened: "j2".into(),
+        pressure: "p2".into(),
+    };
+    let kept = rerun_held(&canon, &world, rerun("inn", &["ines", "silas"]), &played);
+    assert_eq!(kept.location, LocationKey::from("lighthouse"));
+    assert_eq!(kept.present, [CharacterKey::from("ines")]);
+    assert_eq!(
+        (kept.intent.as_str(), kept.pressure.as_str()),
+        ("again", "p2")
+    );
+    let moved = rerun_held(&canon, &world, rerun("inn", &["mara", "silas"]), &played);
+    assert_eq!(moved.location, LocationKey::from("inn"));
+}
+
+/// The world refusing an event of a scene stops the run at the scene, in
+/// the world's words; the store failing is still the store's.
+#[test]
+fn a_refusal_in_a_scene_stops_the_run_at_its_step() {
+    let refusal = Refusal::Unreachable {
+        character: "ines".into(),
+        from: "lighthouse".into(),
+        to: "inn".into(),
+    };
+    let halted = scene_halt(
+        "ch1/sc2/r0",
+        SceneError::Store(StoryDbError::Refused(refusal.clone())),
+    );
+    assert!(
+        matches!(
+            &halted,
+            Halt::Stop { step, why: Stop::Refused(why) }
+                if step == "ch1/sc2/r0" && *why == refusal.to_string()
+        ),
+        "a refusal is a stop at its step"
+    );
+    assert!(matches!(
+        scene_halt("ch1/sc2/r0", SceneError::Store(StoryDbError::NoCanon)),
+        Halt::Store(StoryDbError::NoCanon)
+    ));
 }
 
 #[test]

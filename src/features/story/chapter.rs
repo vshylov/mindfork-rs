@@ -74,7 +74,7 @@ use super::engine::SharedLog;
 use super::keeper::{self, RegisterReply, SoFar, SummaryCheck, SummaryFault};
 use super::leaks;
 use super::port::{CallAddress, LlmPort, PortError, Prompt, Role, decide};
-use super::scene::SceneError;
+use super::scene::{SceneError, opening_events};
 use super::schema::{CanonKeys, Schema, StorySchema};
 use super::simulation::{SimConfig, play_scene};
 use super::staging::{self, StagingReply};
@@ -82,7 +82,7 @@ use super::steps::Steps;
 use crate::entities::story::{
     Assumption, BranchId, Canon, ChapterOutline, ChapterVersion, Decided, Decision, EventId,
     NewNote, NoteDecision, NoteKind, NoteSeverity, Question, QuestionBody, QuestionId, Register,
-    Resolution, ReviewNote, Reviewer, RunId, Take, VersionOrigin, WorldState,
+    Resolution, ReviewNote, Reviewer, RunId, SceneSetup, Take, VersionOrigin, WorldState,
 };
 use crate::shared::storage::story::{
     AuthorWriter, Spend, StepStatus, StoredScene, StoryDb, StoryDbError,
@@ -160,6 +160,11 @@ pub enum Stop {
     Budget(String),
     /// A call gave no usable answer.
     Failed(String),
+    /// The world refused an event of a scene, in its words. A plan is held
+    /// to the world by its opening before the scene plays, so this is the
+    /// engine's own fault, told at its step rather than as a run that could
+    /// not start (docs/journal/stories.md, *a map with no roads*).
+    Refused(String),
 }
 
 /// Where a run ended.
@@ -296,6 +301,10 @@ fn halt(step: &str, e: PortError) -> Halt {
 fn scene_halt(step: &str, e: SceneError) -> Halt {
     match e {
         SceneError::Port(e) => halt(step, e),
+        SceneError::Store(StoryDbError::Refused(refusal)) => Halt::Stop {
+            step: step.to_owned(),
+            why: Stop::Refused(refusal.to_string()),
+        },
         SceneError::Store(e) => Halt::Store(e),
         SceneError::NoCanon => Halt::Store(StoryDbError::NoCanon),
     }
@@ -868,7 +877,7 @@ impl Run<'_> {
                 self.assume(address, &reply.assumptions).await?;
                 return Ok(None);
             };
-            match held_to_the_world(&world, &draft) {
+            match held_to_the_world(&self.canon, &world, &draft) {
                 Ok(draft) => {
                     self.assume(address, &reply.assumptions).await?;
                     return Ok(Some(draft));
@@ -1077,11 +1086,7 @@ impl Run<'_> {
             PickChoice::Rerun { .. } => {
                 let rerun = reply.choice.rerun().expect("a rerun carries its scene");
                 let world = self.world_now().await?;
-                // A rerun with no one alive present keeps the scene's cast.
-                let draft = held_to_the_world(&world, &rerun).unwrap_or_else(|_| SceneDraft {
-                    present: current.setup.present.clone(),
-                    ..rerun
-                });
+                let draft = rerun_held(&self.canon, &world, rerun, &current.setup);
                 return Ok(Picked::Rerun(draft, note));
             }
         };
@@ -1457,8 +1462,11 @@ fn label_of(branch: &BranchId) -> String {
 }
 
 /// A planned scene held to the world: every one present alive, named once,
-/// and someone present.
+/// and someone present; and its opening one the world admits, so a scene
+/// that could not open is planned again rather than played (docs/journal/
+/// stories.md, *a map with no roads*). The reason is the world's own words.
 pub(crate) fn held_to_the_world(
+    canon: &Canon,
     world: &WorldState,
     draft: &SceneDraft,
 ) -> Result<SceneDraft, String> {
@@ -1471,12 +1479,36 @@ pub(crate) fn held_to_the_world(
     if present.is_empty() {
         return Err("no one alive is present".to_owned());
     }
-    Ok(SceneDraft {
+    let held = SceneDraft {
         present,
         intent: draft.intent.trim().to_owned(),
         just_happened: draft.just_happened.trim().to_owned(),
         pressure: draft.pressure.trim().to_owned(),
         location: draft.location.clone(),
+    };
+    let mut opened = world.clone();
+    for event in opening_events(world, &held.setup(), world.tick()) {
+        opened = opened
+            .admit(canon, &event)
+            .map_err(|refusal| refusal.to_string())?
+            .state;
+    }
+    Ok(held)
+}
+
+/// A rerun's scene held to the world. One the world refuses keeps the cast
+/// and the place of the scene it reruns, which has just played from the same
+/// world.
+pub(crate) fn rerun_held(
+    canon: &Canon,
+    world: &WorldState,
+    rerun: SceneDraft,
+    played: &SceneSetup,
+) -> SceneDraft {
+    held_to_the_world(canon, world, &rerun).unwrap_or_else(|_| SceneDraft {
+        present: played.present.clone(),
+        location: played.location.clone(),
+        ..rerun
     })
 }
 

@@ -613,7 +613,7 @@ Under option A an `endpoint` names one of mindfork's modes (`managed`, `external
 }
 ```
 
-Routes are one way and measured in scene ticks. The token in brackets is the planted secret that section 11's leak metric looks for. Routes and secrets are arrays of closed objects, so the canon fits the schema dialect of section 8 when `story_create` takes it as arguments; the full fixture is `src/entities/story/fixtures/harbour.json`.
+Routes are one way and measured in scene ticks; every place must be reachable from every other, back or around, since a scene's opening brings everyone in it to its place from wherever they are (docs/journal/stories.md, *a map with no roads*). The token in brackets is the planted secret that section 11's leak metric looks for. Routes and secrets are arrays of closed objects, so the canon fits the schema dialect of section 8 when `story_create` takes it as arguments; the full fixture is `src/entities/story/fixtures/harbour.json`.
 
 ## 14. Integration decision: mindfork-rs or a separate project
 
@@ -696,7 +696,7 @@ The owner's decisions (2026-10-31), taken after option A: Fabula is used from th
 
 *Tools.* There are three separate tools rather than one tool with a mode flag. An optional flag was ignored by Claude in all three trials, while a second tool was used 3/3 on all four clouds and 5/5 locally ([background-subagents.md](background-subagents.md) §3.1). The project's tools are separate in the same way: `run_dialogue` and `start_dialogue`, `call_subagent` and `start_subagent`.
 
-- `story_create` is synchronous. The assistant composes the canon (world rules, map, cast with goals and secrets, style, arc) from the attached sketches and the conversation, and passes it as the call's arguments. The deterministic checks (cast keys, routes, the dialect of section 8) refuse with a reason, which the assistant fixes or takes to the user. The canon is stored as a draft, and the first pause opens.
+- `story_create` is synchronous. The assistant composes the canon (world rules, map, cast with goals and secrets, style, arc) from the attached sketches and the conversation, and passes it as the call's arguments. The deterministic checks (cast keys, routes and a map every place of which is reachable from every other, the dialect of section 8) refuse with a reason, which the assistant fixes or takes to the user. The canon is stored as a draft, and the first pause opens.
 - `story_continue` resolves the pending question from the user's reply and starts the background run that follows. It returns at once with the run's address, like `start_dialogue`.
 - `story_status` is synchronous and reports the chapters written, the run in progress and the pending question, so "what is my story doing" never gets a guess.
 

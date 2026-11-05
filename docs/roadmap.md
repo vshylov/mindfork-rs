@@ -32,7 +32,8 @@ evidence. Adding or closing an item is part of every task's documentation step
 through PR 12 — a story created and driven from the chat, every chapter written in the
 background, a scene named at a checkpoint played again with the ones after it, the story's
 register of open threads and dated facts, scenes planned as collisions with a price and a
-staging pass on every chapter, and a chapter's choices standing for its later steps; Gate G2
+staging pass on every chapter, a chapter's choices standing for its later steps, and a
+map every scene can reach; Gate G2
 GO on a two-chapter story. Before the
 evaluation (M3) come G2's readers' findings: the register (PR 11), then the craft of the
 scenes and the lines and G2 again (PR 12; [fabula.md](fabula.md), *Before M3*). M3's

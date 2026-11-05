@@ -352,6 +352,13 @@ fn ending_text(loc: &Locale, ending: &Ending) -> String {
             "tool.story.landing.failed_step",
             &[("step", step), ("err", err)],
         ),
+        Ending::Stopped {
+            step,
+            why: Stop::Refused(err),
+        } => loc.tf(
+            "tool.story.landing.refused",
+            &[("step", step), ("err", err)],
+        ),
         Ending::TimedOut { step } => loc.tf("tool.story.landing.timed_out", &[("step", step)]),
         Ending::Failed(err) => loc.tf("tool.story.landing.failed", &[("err", err)]),
     }

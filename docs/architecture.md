@@ -883,7 +883,8 @@ src/
 │  ├─ story/                Fabula's domain (docs/research/fabula-engine.md §4–§6, docs/fabula.md):
 │  │                        keys the canon fixes and ids a run derives from position (`ch1/sc2/r0/k1/e3`,
 │  │                        never random, so a replay sends the same prompts); canon.rs — Canon and
-│  │                        check() (every problem at once: keys, routes, starts, empty texts);
+│  │                        check() (every problem at once: keys, routes, a map every place of which
+│  │                        reaches every other, starts, empty texts);
 │  │                        event.rs — SceneSetup, Proposal, Action, Visibility, Effect, NewEvent/Event,
 │  │                        every union tagged by `type`; manuscript.rs — the Author's stores beyond
 │  │                        them: the outline, chapter versions and their origin, review notes and
