@@ -83,6 +83,28 @@ required by crate 'alsa-sys' was not found`). CI installs the same package.
 So: **4 vCPU / 8 GB plus swap** is the floor, 16 GB is comfortable for parallel
 sessions, and disk should be counted in tens of gigabytes.
 
+**Python.** The gates and most of `tools/` are standard library only. Three
+packages are needed by the media tools — `tools/screenshots.py`,
+`tools/demo_reel.py`, `tools/hero.py`, `tools/og_card.py` and
+`assets/build-wordmarks.py` — and they are pinned with hashes in
+[`tools/media-requirements.txt`](../../tools/media-requirements.txt): **Pillow,
+fontTools, Brotli** (Brotli reads the site's woff2 faces). Pillow 13 needs
+Python 3.11 or newer; Ubuntu 24.04's 3.12 installs the file as is (checked, as
+was 3.13). `requests` is needed only by two llama-server probes
+(`tools/cache_ram_probe.py`, `tools/kv_pool_probe.py`) and is not pinned.
+Ubuntu 24.04 refuses `pip install` into the system Python (PEP 668), so the
+packages go into a virtual environment (§5.4), which also provides the
+`python` command the documentation's examples use — Ubuntu itself has only
+`python3`.
+
+**Fonts** for the screenshots and the reel: `fonts-jetbrains-mono` (the brand
+face `tools/screenshots.py` probes for under `/usr/share/fonts`) plus
+`fonts-dejavu-core` and `fonts-wqy-microhei` for the glyphs it lacks — the same
+fallbacks the release job installs. With them, `tools/screenshots.py --only
+chat-dark-en` renders on Ubuntu: the SVG came out byte-identical to the
+committed one, the PNG differed in pixels — regenerate and commit only the
+images a change is meant to touch.
+
 ## 4. The machine chosen
 
 - Droplet `s5-4vcpu-8gb-50gb`: shared CPU, 4 vCPU, 8 GB, 50 GB boot disk,
@@ -110,7 +132,7 @@ sessions, and disk should be counted in tens of gigabytes.
 # ASCII only: a single non-ASCII byte makes cloud-init skip this whole file.
 package_update: true
 package_upgrade: true
-packages: [build-essential, pkg-config, libasound2-dev, git, python3, tmux, unattended-upgrades]
+packages: [build-essential, pkg-config, libasound2-dev, git, python3, python3-venv, fonts-jetbrains-mono, fonts-dejavu-core, fonts-wqy-microhei, tmux, unattended-upgrades]
 users:
   - default
   - name: dev
@@ -169,6 +191,9 @@ cat ~/.ssh/id_ed25519.pub     # → repository Settings → Deploy keys → Add,
 git config --global user.name "..." && git config --global user.email "..."
 cd ~/work && git clone git@github.com:vshylov/mindfork-rs.git
 cd mindfork-rs && cargo test --no-run
+python3 -m venv ~/.venv
+~/.venv/bin/pip install --require-hashes -r tools/media-requirements.txt
+~/.venv/bin/pip install requests      # only for the two llama-server probes
 ```
 
 ### 5.5 Claude login and the first Remote Control run (`dev`, over `ssh -t`)
@@ -205,7 +230,7 @@ Wants=network-online.target
 User=dev
 WorkingDirectory=/home/dev/work/mindfork-rs
 EnvironmentFile=/home/dev/.config/mindfork/keys.env
-Environment=PATH=/home/dev/.cargo/bin:/home/dev/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=/home/dev/.venv/bin:/home/dev/.cargo/bin:/home/dev/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/home/dev/.local/bin/claude remote-control --name do-mindfork
 Restart=always
 RestartSec=30
@@ -220,7 +245,8 @@ journalctl -u claude-rc -f
 ```
 
 `PATH` is spelled out because a systemd service reads no `~/.profile`: without
-it the agent finds no `cargo`. `Restart=always` covers the server's own exit
+it the agent finds no `cargo`. The virtual environment comes first, so
+`python` and `python3` are the one with Pillow and fontTools. `Restart=always` covers the server's own exit
 after a network outage (§2).
 
 ### 5.8 Verify from the phone
@@ -252,6 +278,10 @@ In the `do-mindfork` session ask the agent to run:
 4. **Midnight Commander's panel footer shows free space, not used**
    (`31G / 47G (66%)` is 31 GB free). `df -h` is the reading to trust.
 5. **A service has no login `PATH`** (§5.7).
+6. **The Python packages were forgotten.** The first recipe installed none of
+   them (caught by review, before a media tool was run; without them each one
+   stops at its import, `Pillow is required`). Fix: the venv of §5.4 and its
+   place at the head of the service's `PATH`.
 
 ## 7. Keeping it up for weeks
 
