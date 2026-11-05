@@ -21,6 +21,10 @@
 //!   to be played again, and the chapter's take lands as a landing of its own
 //!   (PR 10; with `MINDFORK_FABULA_CHAPTERS=2` the script ends at the take's
 //!   checkpoint); the takes are reported with the story.
+//! - `story_chat_live_map_mended` — the model's first `story_create` with a map
+//!   has its routes dropped, the slip a live story found, and the story stored
+//!   after the refusal must have a map every place of which is reachable from
+//!   every other; `MINDFORK_FABULA_TRIALS` (3) fresh chats.
 //!
 //! Routes as the engine's own live checks take them
 //! (`features::story::chapter_live_tests::route`): Claude with
@@ -730,4 +734,209 @@ async fn story_chat_live_story() {
         started.elapsed(),
         base.display()
     );
+}
+
+/// The engine with the slip a live story found (docs/journal/stories.md, *a
+/// map with no roads*) put into the model's first `story_create` that holds
+/// a map of two places or more: every route of it dropped. Every other answer
+/// is the model's own.
+struct Roadless {
+    inner: Arc<dyn EngineBackend>,
+    slipped: std::sync::atomic::AtomicBool,
+}
+
+/// `arguments` with every route of the canon's map dropped; `None` when
+/// they hold no map of two places or more: a canon the model passed as a
+/// string, one it could not write as JSON, a single place.
+fn without_routes(arguments: &str) -> Option<String> {
+    let mut args: serde_json::Value = serde_json::from_str(arguments).ok()?;
+    let places = args
+        .pointer_mut("/canon/locations")?
+        .as_array_mut()
+        .filter(|places| places.len() > 1)?;
+    for place in places
+        .iter_mut()
+        .filter_map(serde_json::Value::as_object_mut)
+    {
+        place.insert("routes".to_owned(), serde_json::json!([]));
+    }
+    Some(args.to_string())
+}
+
+/// Whether `arguments` hold a map of two places or more with no route at
+/// all: the call [`Roadless`] slipped, as the chat stored it.
+fn has_no_roads(arguments: &serde_json::Value) -> bool {
+    arguments
+        .pointer("/canon/locations")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|places| {
+            places.len() > 1
+                && places.iter().all(|p| {
+                    p.get("routes")
+                        .and_then(serde_json::Value::as_array)
+                        .is_some_and(Vec::is_empty)
+                })
+        })
+}
+
+impl Roadless {
+    /// `chunks` with the first `story_create`'s map left without routes.
+    fn slip(&self, chunks: Vec<ChatChunk>) -> Vec<ChatChunk> {
+        use std::sync::atomic::Ordering;
+        let mut calls = crate::shared::api::ToolCallAccumulator::default();
+        let mut rest = Vec::new();
+        for chunk in chunks {
+            match chunk {
+                ChatChunk::ToolCall(delta) => calls.push(delta),
+                other => rest.push(other),
+            }
+        }
+        let mut deltas = Vec::new();
+        for (index, mut call) in calls.finish().into_iter().enumerate() {
+            if call.name == "story_create"
+                && !self.slipped.load(Ordering::SeqCst)
+                && let Some(arguments) = without_routes(&call.arguments)
+            {
+                call.arguments = arguments;
+                self.slipped.store(true, Ordering::SeqCst);
+            }
+            deltas.push(ChatChunk::ToolCall(
+                crate::shared::api::contract::ToolCallDelta {
+                    index,
+                    id: Some(call.id),
+                    name: Some(call.name),
+                    arguments: call.arguments,
+                    thought_signature: call.thought_signature,
+                },
+            ));
+        }
+        // The calls go where the stream had them: before its counter and end.
+        let at = rest
+            .iter()
+            .position(|c| matches!(c, ChatChunk::Usage(_) | ChatChunk::Finished(_)))
+            .unwrap_or(rest.len());
+        rest.splice(at..at, deltas);
+        rest
+    }
+}
+
+#[async_trait::async_trait]
+impl EngineBackend for Roadless {
+    async fn chat_stream(
+        &self,
+        req: crate::shared::api::ChatRequest,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> anyhow::Result<crate::shared::api::contract::ChatStream> {
+        use futures_util::StreamExt;
+        let stream = self.inner.chat_stream(req, cancel).await?;
+        if self.slipped.load(std::sync::atomic::Ordering::SeqCst) {
+            return Ok(stream);
+        }
+        let chunks = self.slip(stream.collect().await);
+        Ok(Box::pin(futures_util::stream::iter(chunks)))
+    }
+
+    async fn context_budget(&self) -> Option<u32> {
+        self.inner.context_budget().await
+    }
+
+    async fn model_capabilities(&self) -> Option<crate::shared::api::contract::ModelCapabilities> {
+        self.inner.model_capabilities().await
+    }
+
+    async fn vision(&self) -> crate::shared::api::VisionSupport {
+        self.inner.vision().await
+    }
+
+    async fn model_id(&self) -> Option<String> {
+        self.inner.model_id().await
+    }
+
+    async fn parallel_slots(&self) -> Option<u32> {
+        self.inner.parallel_slots().await
+    }
+
+    async fn server_kind(&self) -> crate::shared::api::ServerKind {
+        self.inner.server_kind().await
+    }
+
+    async fn enforces_output_schema(&self) -> bool {
+        self.inner.enforces_output_schema().await
+    }
+}
+
+/// A map with no roads mended from the refusal: the model's first
+/// `story_create` with a map has every route dropped, as Qwen 3.8's once came, and
+/// the story the chat stores must have a map whose every place is reachable
+/// from every other. `MINDFORK_FABULA_TRIALS` (3) fresh chats.
+#[tokio::test]
+#[ignore = "needs a live route"]
+async fn story_chat_live_map_mended() {
+    let Some((backend, model, mode)) = live() else {
+        eprintln!("story_chat_live: no route; skipped");
+        return;
+    };
+    let lang = lang();
+    let lines = if lang == Lang::Ru { &RU } else { &EN };
+    let base = out_dir("story-map");
+    let trials: usize = env_or("MINDFORK_FABULA_TRIALS", 3);
+    let mut mended = 0;
+    for trial in 1..=trials {
+        let root = base.join(format!("trial-{trial}"));
+        seed(&root, lang);
+        let roadless = Arc::new(Roadless {
+            inner: backend.clone(),
+            slipped: std::sync::atomic::AtomicBool::new(false),
+        });
+        let mut cfg = config(mode, &model);
+        cfg.tools.story_run_timeout_secs = 1;
+        let mut app = App::start(&root, roadless.clone(), cfg).await;
+        app.say(lines.open).await;
+        for _ in 0..2 {
+            if story_of(&app.root, app.chat).is_some() {
+                break;
+            }
+            app.say(lines.build).await;
+        }
+        let (root, chat_id) = app.quit().await;
+        let chat = super::subagent::load(&root, chat_id);
+        tokio::fs::write(base.join(format!("trial-{trial}.md")), transcript(&chat))
+            .await
+            .unwrap();
+        let creates: Vec<&crate::entities::message::ToolCallRecord> = chat
+            .messages
+            .iter()
+            .flat_map(|m| &m.tool_calls)
+            .filter(|c| c.name == "story_create")
+            .collect();
+        let slipped = roadless.slipped.load(std::sync::atomic::Ordering::SeqCst);
+        // The slipped call is found by its map, the one with no roads at all.
+        let at = creates.iter().position(|c| has_no_roads(&c.arguments));
+        let refusal = at
+            .and_then(|i| creates[i].result.as_deref())
+            .unwrap_or_default();
+        let named = refusal.matches("no route leads from").count();
+        let stored = story_of(&root, chat_id);
+        if slipped {
+            assert!(
+                named > 0,
+                "the roadless map is refused for its roads: {refusal}"
+            );
+        }
+        if slipped && stored.is_some() {
+            mended += 1;
+        }
+        eprintln!(
+            "=== trial {trial}: slipped {slipped} (story_create call {}); the refusal named \
+             {named} way(s) missing; {} story_create call(s); stored: {}",
+            at.map_or_else(|| "none".to_owned(), |i| (i + 1).to_string()),
+            creates.len(),
+            stored.map_or_else(|| "nothing".to_owned(), |(id, _)| format!("«{id}»"))
+        );
+    }
+    eprintln!(
+        "\n=== {model}: {mended} of {trials} roadless maps mended; data in {}",
+        base.display()
+    );
+    assert!(mended > 0, "no roadless map was mended");
 }
