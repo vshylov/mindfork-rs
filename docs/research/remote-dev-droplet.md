@@ -391,13 +391,17 @@ and is not bypassed.
   second layer that Docker cannot bypass); Remote Control needs no inbound
   port; local servers bind `127.0.0.1` (§5.9).
 
-## 8. Not verified
+## 8. Verified, and not yet
+
+Verified on the droplet (2026-11-05 and -06): the `do-mindfork` session appears in the
+Claude app and sees the providers' keys; the media tools run from the venv; the
+embedder service answers `/health` with `ok`, and its port times out from
+outside; the agent finds llama.cpp and the models from its note (§5.9).
+
+Not yet:
 
 - How long a login lasts before the warning — not documented, not yet observed.
 - Behaviour across a droplet reboot and a long network outage — expected from
   `Restart=always`, not yet exercised.
 - `cargo test` on the droplet itself — §5.8's figure is from the cloud
   container; the shared vCPUs may make it slower.
-- §5.9: the embedder service runs on the droplet and answers `/health` with
-  `ok` (2026-11-06); the outside check of its port and the agent's note are not
-  yet confirmed there.
