@@ -71,10 +71,17 @@ Measured in a Claude Code cloud container (4 cores, 15 GB, no swap), commit
 | Step | Wall time | Peak memory used | Disk |
 |---|---|---|---|
 | `cargo test --no-run` from clean | 238 s | ~5.9 GB | `target/` 3.8 GB, `~/.cargo/registry` 0.4 GB |
-| `cargo test` | 112 s | ~3.4 GB | — |
+| `cargo test` | 112 s (the harness's own figure: 84 s) | ~3.4 GB | — |
 
 `cargo test`: **4802 passed, 322 ignored**. Clippy, a release build and every
 extra worktree add their own `target/` trees on top.
+
+On the droplet (§4: shared CPU, 4 vCPU, 8 GB), with nothing left to build,
+`time cargo test` (2026-11-06): **4802 passed, 322 ignored**, the harness's
+`finished in 205.62s`, `real 3m26s`, `user 1m53s`, `sys 0m21s` — about 2.4 times
+the container's 84 s. The process used 2 min 14 s of CPU in 3 min 26 s, so the
+run spent much of its time waiting rather than computing; the shared vCPUs are
+the first suspect, and `vmstat 1` during a run shows their steal (`st`).
 
 One system package is required beyond a compiler: **`libasound2-dev`** —
 without it `alsa-sys` fails its build script (`The system library 'alsa'
@@ -408,7 +415,7 @@ request only) makes GitHub refuse it too.
    place at the head of the service's `PATH`.
 7. **A glyph with no font on Linux.** `tools/screenshots.py`'s fallbacks had
    Segoe UI Symbol for `⌕` on Windows and nothing that holds it on Linux. Found
-   by the agent on the droplet and fixed in a pull request of its own:
+   by the agent on the droplet and fixed in a pull request of its own (#878):
    `DejaVuSansMono.ttf` (package `fonts-dejavu-mono`, a dependency of
    `fonts-dejavu-core`) joined the fallbacks, and all twenty dumps render.
 8. **No `gh`, no pull request.** The agent could not open the pull request for
@@ -438,12 +445,12 @@ Verified on the droplet (2026-11-05 and -06): the `do-mindfork` session appears 
 Claude app and sees the providers' keys; the media tools run from the venv; the
 embedder service answers `/health` with `ok`, and its port times out from
 outside; the agent finds llama.cpp and the models from its note (§5.9); with
-`GH_TOKEN` set, the agent's `gh` sees the repository's pull requests (§5.10).
+`GH_TOKEN` set, the agent's `gh` sees the repository's pull requests (§5.10);
+`cargo test` passes there (§3); after a reboot of the droplet the services come
+back up by themselves.
 
 Not yet:
 
 - How long a login lasts before the warning — not documented, not yet observed.
-- Behaviour across a droplet reboot and a long network outage — expected from
-  `Restart=always`, not yet exercised.
-- `cargo test` on the droplet itself — §5.8's figure is from the cloud
-  container; the shared vCPUs may make it slower.
+- Behaviour across a long network outage — expected from `Restart=always`, not
+  yet exercised.
