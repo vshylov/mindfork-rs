@@ -93,6 +93,9 @@ FALLBACKS = [
     "C:/Windows/Fonts/segoeui.ttf",  # Segoe UI — broad text coverage (sub/superscripts)
     "C:/Windows/Fonts/YuGothM.ttc",  # Yu Gothic — fullwidth/CJK forms (e.g. U+FF0B)
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    # DejaVu Sans Mono — the search icon `⌕` (U+2315), which neither
+    # JetBrains Mono nor DejaVu Sans has; same `fonts-dejavu-core` package.
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
     # WenQuanYi Micro Hei — fullwidth forms (U+FF0B) in 5 MB, where Noto CJK
     # takes sixty: what the release job's runner installs for them
