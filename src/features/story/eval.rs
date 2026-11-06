@@ -32,7 +32,7 @@ use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 use super::chapter::{self, Budget, ChapterConfig, Engine, Outcome, Stop};
-use super::engine::{EngineAdapter, SharedLog};
+use super::engine::{EngineAdapter, ListPrice, LongPrompt, SharedLog};
 use super::export;
 use super::leaks::{self, AuditedCall};
 use super::port::LlmPort;
@@ -323,12 +323,50 @@ impl Route {
         Ok(RetryBackend::wrap(client))
     }
 
+    /// The list price its calls are counted at where the provider names
+    /// none: Anthropic reports no price, and B0's target is F's dollars
+    /// (T21), so a Claude model M3 may run on is priced here. Any other model
+    /// on that wire is matched in tokens, as before.
+    pub fn list_price(&self) -> Option<ListPrice> {
+        if self.wire != Wire::Anthropic {
+            return None;
+        }
+        match self.model.as_str() {
+            // $2 and $10 a million, the whole window alike.
+            "claude-sonnet-5-5" => Some(ListPrice {
+                input: 2.0,
+                output: 10.0,
+                long: None,
+            }),
+            // $0.10 and $0.50 to a prompt of 100,000 tokens, $0.50 and $2.50
+            // past it.
+            "claude-haiku-5-5" => Some(ListPrice {
+                input: 0.10,
+                output: 0.50,
+                long: Some(LongPrompt {
+                    above: 100_000,
+                    input: 0.50,
+                    output: 2.50,
+                }),
+            }),
+            _ => None,
+        }
+    }
+
     fn to_json(&self) -> Value {
+        let price = self.list_price().map(|p| {
+            json!({
+                "input": p.input,
+                "output": p.output,
+                "long": p.long.map(|l| json!({"above": l.above, "input": l.input, "output": l.output})),
+            })
+        });
         json!({
             "wire": format!("{:?}", self.wire).to_lowercase(),
             "model": self.model,
             "url": self.url,
             "pin": self.pin,
+            "list_price": price,
         })
     }
 }
@@ -480,6 +518,9 @@ async fn write_open(
     );
     for (role, sampling) in role_sampling() {
         adapter = adapter.with_role_sampling(role, sampling);
+    }
+    if let Some(price) = route.list_price() {
+        adapter = adapter.with_list_price(price);
     }
     let deadline = tokio::time::sleep(options.timeout);
     tokio::pin!(deadline);

@@ -64,6 +64,56 @@ pub struct EngineAdapter {
     /// calls and the chat's turns take turns request by request. `None` — no
     /// budget, as the harnesses run.
     sessions: Option<Arc<SessionBudget>>,
+    /// What a call costs where the provider names no price (Anthropic): the
+    /// runner's list price, so that B0's equal cost is money there too
+    /// (docs/fabula.md §6, T21). `None` — the provider's price or none.
+    price: Option<ListPrice>,
+}
+
+/// A model's list price, in dollars a million tokens. Above `long.above`
+/// tokens of prompt the whole call is priced at the long pair, as Haiku 5.5
+/// is. The cache is not discounted: the story's calls set no cache marks.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ListPrice {
+    /// A million prompt tokens.
+    pub input: f64,
+    /// A million reply tokens.
+    pub output: f64,
+    /// The price of a long prompt, where the model has one.
+    pub long: Option<LongPrompt>,
+}
+
+/// The price of a call whose prompt runs past `above` tokens.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LongPrompt {
+    /// The prompt's tokens at most at the ordinary price.
+    pub above: u64,
+    /// A million prompt tokens past it.
+    pub input: f64,
+    /// A million reply tokens past it.
+    pub output: f64,
+}
+
+impl ListPrice {
+    /// The dollars of a call of `input` prompt and `output` reply tokens.
+    pub fn cost(&self, input: u64, output: u64) -> f64 {
+        let (i, o) = match self.long {
+            Some(long) if input > long.above => (long.input, long.output),
+            _ => (self.input, self.output),
+        };
+        (input as f64 * i + output as f64 * o) / 1e6
+    }
+}
+
+/// `usage` with the list price's dollars where the provider gave none.
+fn priced(mut usage: CallUsage, price: Option<ListPrice>) -> CallUsage {
+    if usage.cost_usd.is_none()
+        && let (Some(price), Some(input), Some(output)) =
+            (price, usage.input_tokens, usage.output_tokens)
+    {
+        usage.cost_usd = Some(price.cost(input, output));
+    }
+    usage
 }
 
 impl EngineAdapter {
@@ -98,6 +148,7 @@ impl EngineAdapter {
             enforces: tokio::sync::OnceCell::new(),
             fallback_only: false,
             sessions: None,
+            price: None,
         }
     }
 
@@ -113,6 +164,13 @@ impl EngineAdapter {
     /// The same adapter with every call under `sessions`.
     pub fn with_sessions(mut self, sessions: Arc<SessionBudget>) -> Self {
         self.sessions = Some(sessions);
+        self
+    }
+
+    /// The same adapter pricing at `price` every call whose provider names
+    /// no price.
+    pub fn with_list_price(mut self, price: ListPrice) -> Self {
+        self.price = Some(price);
         self
     }
 
@@ -298,7 +356,7 @@ impl Attempts for Live<'_> {
             prompt_sha256: self.prompt_sha256.clone(),
             response: Some(response),
             status: answer.status,
-            usage: reply.usage(),
+            usage: priced(reply.usage(), adapter.price),
             latency_ms,
         };
         adapter.log.lock().await.record_call(record).await?;

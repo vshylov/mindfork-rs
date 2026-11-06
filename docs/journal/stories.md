@@ -13,7 +13,7 @@ what was rejected — the reasoning behind the code, not its current shape. For 
 shape read the reference documents named above; for the traps that recur across areas read
 [lessons.md](../lessons.md).
 
-## Entries (16)
+## Entries (17)
 
 - Post-M9: Fabula — PR 1, the story database (done)
 - Post-M9: Fabula — PR 2, the model port and replay; Gate G0 GO (done)
@@ -31,6 +31,7 @@ shape read the reference documents named above; for the traps that recur across 
 - Post-M9: Fabula — a map every scene can reach (done)
 - Post-M9: Fabula — PR 13, M3's hidden runner and the pilot (done)
 - Post-M9: Fabula — the record is material, not a text to retell (done)
+- Post-M9: Fabula — Claude's calls at list price, and the rules on `villain-4` (done)
 
 ### Post-M9: Fabula — PR 1, the story database (done)
 
@@ -1760,3 +1761,48 @@ the Author's role and Sonnet 5.5, from an `#[ignore]` test that was not committe
   B0's brief still names no record. Mutation check: 6 mutants, all killed.
 - **Not decided here.** One story is no verdict. M3's full run tests the rules on the premises
   they were not drawn from; the model and the reading for it stay open (T19).
+
+### Post-M9: Fabula — Claude's calls at list price, and the rules on `villain-4` (done)
+
+The owner found Sonnet's full run, some $810, too dear, and asked whether Haiku 5.5 is the
+better trade of price and quality. Before Haiku could run, B0's stop had to be fixed.
+
+- **Why a price list.** B0 spends to F's average, in dollars where both sides have them
+  (spec §11, T21). Anthropic's replies name no price, so on Claude B0 matched F in tokens.
+  Equal tokens are not equal money on Haiku 5.5: a prompt past 100,000 tokens is priced at
+  $0.50 and $2.50 a million, five times the $0.10 and $0.50 below it, and the whole call
+  pays the long pair. B0's session grows past that line and F's calls never reach it.
+- **As built.** The engine adapter takes a list price (`with_list_price`) and counts a call
+  at it where the provider names none; a price the provider names is kept. The runner holds
+  the two Claude models M3 may run on, Sonnet 5.5 at $2 and $10 and Haiku 5.5 at the two
+  pairs above, and names the price in the trace. Another model on the Anthropic wire still
+  goes unpriced, and B0 matches it in tokens as before.
+- **Tests.** The long pair taken past the line and not at it; a provider's price kept; the
+  two models priced and no other; B0 on Claude stopping at F's dollars. Mutation check: 7
+  mutants, all killed.
+- **Live, `villain-4`, seed 1, in Russian:** F and B0 on Haiku and on Sonnet, the first run
+  of the new rules of the prose on a premise they were not drawn from.
+  - Haiku's F finished in 24 minutes: 480 calls, 5.50 million tokens, $0.66, 1,347 words.
+    No call of F's came near the line; its largest prompt was 42,348 tokens.
+  - Haiku's B0 stopped at $0.66 after 47 calls and 24 versions, 1,395 words. Six of its
+    calls were past 100,000 tokens and cost $0.37 of the $0.66. Matched in tokens it would
+    have gone on to F's 5.50 million, nearly all of it at the long pair: some $2.2, over
+    three times F's money.
+  - Neither story leaked a token.
+  - Sonnet's F stopped at scene 4's plan on the chapter's budget, 6,025,794 tokens of
+    6,000,000, after $13.76. Its third scene had been played twice, and the second play
+    alone took 1.9 million tokens and $4.34. Resumed under 9 million, it finished: 581
+    calls, 7.34 million tokens, $16.80, 1,078 words, under the 1,200 asked. The reviewers
+    left 48 continuity notes and 26 of the Reader's; Haiku's F had 11 and 25. No token leaked.
+  - Sonnet's B0 was not run. The owner chose to read Sonnet's F beside Haiku's pair rather
+    than pay some $17 more for it.
+- **What it costs.** A premise and a seed of F, B0 and A1 cost some $36 on Sonnet here and
+  $1.40 on Haiku; the 36 of the full run, some $1,300 and $50. A scene played again can take
+  Sonnet past the app's chapter budget of 6 million (T11), so a run on Sonnet would need its
+  budget raised.
+- **A first reading, the agent's.** In both F stories Nina's confession is a line of direct
+  speech. Sonnet's narrator keeps her secret until she speaks; Haiku's tells it in the first
+  scene. Haiku's slips are of the language and the period: "permit" left in English, Pavel's
+  patronymic changing within the story, B0's "residence permit" in Moscow in 1951. Sonnet's
+  chapter ends at one in the night with the confrontation still ahead. The owner reads the
+  three blind; the model for the full run stays open (T19).
