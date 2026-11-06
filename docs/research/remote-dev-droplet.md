@@ -259,6 +259,91 @@ In the `do-mindfork` session ask the agent to run:
 - `env | grep -c MINDFORK_` — the number of keys it sees, values not printed;
 - `cargo test` — 4802 passed is the figure of §3.
 
+### 5.9 llama.cpp and local models (optional)
+
+The agent sometimes needs a local `llama-server`: often the **embedder**
+(`bge-m3-q8_0.gguf`, for the RAG and attachment-search smokes), rarely a **chat
+model**. On this machine a CPU build of llama.cpp lives in `~/work/llama.cpp`
+and the GGUF files in `~/work/GGUF`, both owned by `dev` and on the volume.
+Check where the build put the binary — `ls ~/work/llama.cpp/build/bin/llama-server`
+— and adjust the paths below if it differs.
+
+**The embedder runs as a service**, so the agent never has to start it.
+`/etc/systemd/system/llama-embed.service` (root), with the arguments of the
+project's CPU stack (`docker/compose.yaml`): an embedding server with the
+default `-ub` silently rejects any chunk larger than 512 tokens.
+
+```ini
+[Unit]
+Description=llama-server embeddings (bge-m3)
+After=network.target
+
+[Service]
+User=dev
+ExecStart=/home/dev/work/llama.cpp/build/bin/llama-server -m /home/dev/work/GGUF/bge-m3-q8_0.gguf --embeddings --host 127.0.0.1 --port 8001 -c 8192 -ub 8192 -b 8192
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Two lines join `keys.env` (§5.6):
+
+```
+MINDFORK_EMBED_URL=http://127.0.0.1:8001/v1
+MINDFORK_LLAMA_BIN=/home/dev/work/llama.cpp/build/bin/llama-server
+```
+
+```bash
+systemctl enable --now llama-embed && systemctl restart claude-rc
+curl -s 127.0.0.1:8001/health        # {"status":"ok"}
+```
+
+Both variables are safe in every session: `cargo test` with them set (an
+unreachable URL and a missing binary) still gave 4802 passed, 322 ignored. Do
+**not** put `MINDFORK_MODEL` there — naming a model switches the managed mode
+on, even over settings that name a cloud (install.md, "Quick start via
+environment variables").
+
+**Claude Code's own boundary.** The session's directory is
+`~/work/mindfork-rs`; reading files outside it can raise a permission prompt,
+forwarded to the phone. `~/.claude/settings.json` (`dev`; merge into an existing
+file):
+
+```json
+{ "permissions": { "additionalDirectories": ["/home/dev/work/llama.cpp", "/home/dev/work/GGUF"] } }
+```
+
+**A note for the agent about the machine** — `~/.claude/CLAUDE.md` (`dev`), read
+by every session on this machine and never committed:
+
+```markdown
+# This machine: mindfork-dev droplet
+- CPU only: 4 vCPU, 8 GB RAM + 8 GB swap.
+- llama-server: ~/work/llama.cpp/build/bin/llama-server
+- Models: ~/work/GGUF/ - bge-m3-q8_0.gguf, google_gemma-4-E2B-it-Q8_0.gguf (+ its mmproj)
+- Embedder is always on: http://127.0.0.1:8001/v1 (service llama-embed); MINDFORK_EMBED_URL is set.
+- Always start llama-server with --host 127.0.0.1.
+- A chat model only when needed: start llama-server on port 8000 with -c 8192, set
+  MINDFORK_ENGINE_URL for that command only, stop the server afterwards.
+  Never alongside a cargo build: Gemma 4 E2B Q8 + mmproj takes ~6 GB, a test build peaks at ~6 GB.
+```
+
+**Why the chat model is not a service.** Gemma 4 E2B at Q8_0 is 4.7 GB plus a
+0.96 GB projector; beside a test build's ~6 GB peak (§3) that is twice the
+machine's memory — swap at best, the OOM killer at worst.
+
+**Exposure.** `--host 127.0.0.1` keeps a server off the network altogether,
+and `ufw` drops inbound traffic to anything but SSH even when a server binds
+`0.0.0.0` — as the example in CLAUDE.md §Commands does, hence the note's line.
+Check: `ss -tlnp | grep 8001` shows `127.0.0.1:8001`, and
+`curl -m 5 http://<droplet IP>:8001/health` from outside times out. One
+exception: ports published by **Docker** bypass `ufw` — should `docker compose`
+from `docker/` ever run here, its `8000`/`8001`/`8888` are open to anyone; a
+DigitalOcean cloud firewall (inbound 22/TCP only) sits in front of the droplet
+and is not bypassed.
+
 ## 6. What the first setup hit (2026-11-05)
 
 1. **Non-ASCII in the user data skipped all of it.** A Cyrillic comment next to
@@ -302,8 +387,9 @@ In the `do-mindfork` session ask the agent to run:
   milestones; the droplet's backups do not include it.
 - **Updates.** `unattended-upgrades` with automatic reboot off; after a manual
   reboot the service starts by itself.
-- **Exposure.** Inbound SSH only (`ufw`, or a DigitalOcean cloud firewall);
-  Remote Control needs no inbound port.
+- **Exposure.** Inbound SSH only (`ufw`, and a DigitalOcean cloud firewall as a
+  second layer that Docker cannot bypass); Remote Control needs no inbound
+  port; local servers bind `127.0.0.1` (§5.9).
 
 ## 8. Not verified
 
@@ -312,3 +398,5 @@ In the `do-mindfork` session ask the agent to run:
   `Restart=always`, not yet exercised.
 - `cargo test` on the droplet itself — §5.8's figure is from the cloud
   container; the shared vCPUs may make it slower.
+- §5.9 as a whole: the embedder service and the agent's note were written for
+  this machine's layout, not yet run end to end there.
