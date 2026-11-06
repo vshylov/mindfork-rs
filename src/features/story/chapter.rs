@@ -10,7 +10,9 @@
 //!    scene again under changed circumstances, at most `max_reruns` times — on
 //!    the last attempt it may only pick. A scene whose every branch fails is
 //!    played again as it was, and after `1 + max_reruns` such attempts it asks
-//!    the human (**P3**).
+//!    the human (**P3**). Past `max_scenes`, when the Author does not end
+//!    the chapter, one closing scene, opening at the moment its goals hang
+//!    on (docs/fabula.md §4, *A chapter that reaches its goal*).
 //! 4. **The draft**, from the kept scenes' full traces.
 //! 5. **Review**: the Reader and the Continuity checker, side by side; the
 //!    engine's own check for a planted marker in the prose rides with the
@@ -106,7 +108,7 @@ pub struct Budget {
 pub struct ChapterConfig {
     /// How each scene is simulated.
     pub sim: SimConfig,
-    /// The most scenes a chapter has.
+    /// The scenes a chapter plans; one closing scene may follow them.
     pub max_scenes: u32,
     /// The most reruns a scene may have at the Author's request.
     pub max_reruns: u32,
@@ -799,7 +801,11 @@ impl Run<'_> {
             });
         }
         let from = take.as_ref().map_or(1, |t| t.from_scene);
-        for m in from..=self.config.max_scenes {
+        // Past the cap, one closing scene, when the Author does not end the
+        // chapter there (docs/fabula.md §4, *A chapter that reaches its
+        // goal*, G5): every F chapter of five played all its scenes, and four
+        // ended before their goals.
+        for m in from..=self.config.max_scenes + 1 {
             let planned = self.attempts(n, m).await?;
             if planned.is_empty() {
                 let address = self.plan_address(n, m);
@@ -1150,7 +1156,12 @@ impl Run<'_> {
         let asked = self.take.as_ref().and(ctx.human_notes.as_deref());
         let prompt = prompts::pick(
             &self.view(n, ctx),
-            (current.scene, &current.setup, &current.intent),
+            (
+                current.scene,
+                self.config.max_scenes,
+                &current.setup,
+                &current.intent,
+            ),
             &shown,
             reruns_left,
             asked,
@@ -1824,6 +1835,9 @@ mod choices_tests;
 #[cfg(test)]
 #[path = "craft_tests.rs"]
 mod craft_tests;
+#[cfg(test)]
+#[path = "goal_tests.rs"]
+mod goal_tests;
 #[cfg(test)]
 #[path = "last_version_tests.rs"]
 mod last_version_tests;

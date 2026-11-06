@@ -646,6 +646,45 @@ leads in F's revision, consistently, so F4's rule does not hold on it. In all th
 the chapter ends before its goal, which nothing in the loop checks
 ([journal/stories.md](journal/stories.md), *the last version checked*).
 
+**A chapter that reaches its goal (2026-11-06).** In five F stories, three on `villain-4` and
+the pilot's two on `mystery-2`, one chapter reached its goal: Sonnet's on `mystery-2`, its last
+scene the noon confession. B0 reached it in both of its `villain-4` stories. What the records
+show:
+
+- Every chapter played all four scenes; the Author never ended one early, and after the fourth
+  the chapter is written whatever its goals.
+- Ten of the twenty scenes kept ran to the eight-round cap, the characters playing for time.
+- On `villain-4`, a story of one chapter, Haiku's picks put the outcome off "to the next
+  chapter" four times in ten. The plan and the pick say "Chapter 1. Its goals", never that it
+  is the arc's last.
+- The world keeps no hour. Haiku's World Master struck nine in the first scene of both its
+  runs, then a quarter and half past, with no director coming; Sonnet's four scenes stayed
+  near one in the night.
+- The pick scores tension, surprise, truth to character and consequences, not the goals.
+- The Author narrows the arc's goal ("someone is betrayed before nine") into one character's
+  decision ("Nina signs"), which the simulated Nina refused in all three runs.
+
+Five changes, the owner's decision on 2026-11-06, each as recommended:
+
+- **G1, the arc's place.** The plan and the pick name the chapter as N of M, and the arc's last
+  as the one nothing waits after.
+- **G2, the pick weighs the goals.** A fifth score, how far a version moves the chapter toward
+  its goals; in the chapter's last scene the version that moves them furthest is kept unless it
+  breaks a character's truth. (b) The prompt's words alone. (c) As it was.
+- **G3, the hour.** Each scene's opening names the hour, later than the one before; where the
+  goals hang on a deadline, no scene passes it before the last, which opens as it comes. The
+  World Master's clock moves only as far as a scene's events take it, never past a deadline its
+  pressure names. (b) A clock in the engine on the world's ticks: later, if this is not enough.
+- **G4, goals by more than one road.** The chapter's goals are outcomes the world can reach
+  whatever one character decides; the characters choose.
+- **G5, a closing scene.** When the scene cap is reached and the Author does not end the
+  chapter, one more scene may be planned, the chapter's very last, opening at the moment the
+  goals hang on. (b) As it was. (c) A question to the human: none in M3.
+
+The round cap stays at eight until these are measured. Proof: tests of the prompts, the pick's
+schema and the closing scene; then F on Haiku, `villain-4` and `mystery-2`, seeds 1 to 3,
+before and after, the chapters that reach their goals counted.
+
 Then the run itself, outside any pull request: 36 pairs for each of the two decisions
 (and the ablations, after a GO: T23), the calibration by three people, and the decision rule
 of spec §11, recorded here and in the journal.

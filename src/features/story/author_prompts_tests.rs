@@ -1,8 +1,9 @@
 use std::collections::BTreeSet;
 
 use super::{
-    Again, ChapterContext, KEEP_NAMES, Kept, Record, Trace, author_system, continuity, outline,
-    pick, plan, reader, revise, story_language, triage, words_of, write, writing_rules,
+    Again, ChapterContext, GOALS_BY_MANY_ROADS, HOUR, KEEP_NAMES, Kept, Record, Trace,
+    author_system, continuity, outline, pick, plan, reader, revise, story_language, triage,
+    words_of, write, writing_rules,
 };
 use crate::entities::story::{
     Assumption, BranchId, Canon, CharacterKey, Event, EventKind, ReviewNote, SceneSetup, WorldState,
@@ -237,7 +238,7 @@ fn a_pick_reads_every_version_and_says_when_no_rerun_is_left() {
     let t = trace();
     let setup = setup();
     let shown = vec![("k0".to_owned(), &t), ("k2".to_owned(), &t)];
-    let with = pick(&view, (1, &setup, "Squeeze Mara."), &shown, 2, None);
+    let with = pick(&view, (1, 4, &setup, "Squeeze Mara."), &shown, 2, None);
     assert!(with.user.contains("Version k0:") && with.user.contains("Version k2:"));
     assert!(with.user.contains("played it 2 times"));
     assert!(with.user.contains("(2 reruns left)"));
@@ -247,13 +248,13 @@ fn a_pick_reads_every_version_and_says_when_no_rerun_is_left() {
     );
     tokenless(&with);
     assert!(!with.user.contains("asked of this chapter"));
-    let last = pick(&view, (1, &setup, "x"), &shown[..1], 0, None);
+    let last = pick(&view, (1, 4, &setup, "x"), &shown[..1], 0, None);
     assert!(last.user.contains("No reruns are left"));
     assert!(last.user.contains("played it 1 time "));
     // In a take, the pick weighs what the human asked of the chapter.
     let take = pick(
         &view,
-        (2, &setup, "x"),
+        (2, 4, &setup, "x"),
         &shown[..1],
         0,
         Some("Mara keeps quiet."),
@@ -496,7 +497,7 @@ fn the_chapters_choices_reach_every_author_prompt_once_each() {
     for (prompt, close) in [
         (outline(&view), recorded),
         (plan(&view, &kept, &world, (2, 3), None), recorded),
-        (pick(&view, (2, &setup, "i"), &shown, 1, None), recorded),
+        (pick(&view, (2, 4, &setup, "i"), &shown, 1, None), recorded),
         (write(&view, &kept, (1, 2)), written),
         (revise(&view, &kept, "## One\n\nOld.", &[], (1, 2)), written),
     ] {
@@ -599,4 +600,68 @@ fn the_craft_reaches_the_plans_the_draft_and_the_revisions() {
     let planned = plan(&view, &[], &world, (1, 3), None);
     assert!(planned.system.contains("No conflict ends without a price"));
     assert!(!planned.user.contains(lines), "the plan sets no lines");
+}
+
+/// A chapter that reaches its goal (docs/fabula.md §4): the chapter's place
+/// in the arc (G1), the pick's fifth measure and its last scene (G2), the
+/// hour (G3), the goals by more than one road (G4) and the closing scene
+/// past the cap (G5).
+#[test]
+fn the_plan_and_the_pick_know_the_place_the_hour_and_the_last_scene() {
+    let canon = fixture_canon();
+    let goals = vec!["g".to_owned()];
+    let summaries = Vec::new();
+    let mut view = ctx(&canon, &goals, &summaries);
+    let world = WorldState::initial(&canon);
+    let t = trace();
+    let setup = setup();
+    let shown = vec![("k0".to_owned(), &t)];
+    let total = canon.arc.chapters.len();
+    let first = plan(&view, &[], &world, (1, 4), None);
+    assert!(
+        first
+            .user
+            .starts_with(&format!("Chapter 1 of {total}. Its goals:"))
+    );
+    assert!(!first.user.contains("the arc's last"));
+    assert!(first.user.ends_with(HOUR), "every plan names the hour");
+    assert!(HOUR.contains("no scene passes it before the last"));
+    view.last = true;
+    let place = format!(
+        "Chapter 1 of {total}, the arc's last: whatever its goals ask happens in it, since no \
+         chapter comes after it. Its goals:"
+    );
+    assert!(
+        outline(&view)
+            .user
+            .starts_with(&place.replace(" Its goals:", " Its goal in the arc:"))
+    );
+    assert!(outline(&view).user.contains(GOALS_BY_MANY_ROADS));
+    assert!(GOALS_BY_MANY_ROADS.contains("never as one character's decision"));
+    let early = pick(&view, (2, 4, &setup, "x"), &shown, 1, None);
+    assert!(early.user.starts_with(&place));
+    assert!(early.user.contains("\n\nScene 2 of at most 4, "));
+    assert!(early.user.contains(
+        "five measures: tension, surprise, truth to character, consequences, and the goals, \
+         how far it moves the chapter toward them"
+    ));
+    assert!(!early.user.contains("This is the chapter's last scene"));
+    let last = pick(&view, (4, 4, &setup, "x"), &shown, 1, None);
+    assert!(last.user.contains(
+        "This is the chapter's last scene: keep the version that moves its goals furthest, \
+         unless it breaks a character's truth."
+    ));
+    assert!(last.user.contains("\n\nScene 4 of at most 4, "));
+    let closing = pick(&view, (5, 4, &setup, "x"), &shown, 0, None);
+    assert!(closing.user.contains("\n\nThe closing scene, "));
+    assert!(closing.user.contains("This is the chapter's last scene"));
+    // Past the cap, the plan offers the end or one closing scene.
+    let past = plan(&view, &[], &world, (5, 4), None);
+    assert!(past.user.contains(
+        "All 4 scenes are played. If the chapter's goals are met, end it here. If not, plan one \
+         closing scene, the chapter's very last: it opens at the moment its goals hang on"
+    ));
+    assert!(past.user.starts_with(&place));
+    let one = plan(&view, &[], &world, (2, 1), None);
+    assert!(one.user.contains("The chapter's one scene is played. If"));
 }
