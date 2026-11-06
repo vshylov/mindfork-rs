@@ -993,7 +993,17 @@ impl Run<'_> {
             let floor = self.take.as_ref().map_or(0, |t| t.floor(m));
             let since = asked.map_or(floor, |(rerun, _)| (rerun + 1).max(floor));
             let attempt = current.rerun + 1 - since;
-            let most = 1 + self.config.max_reruns;
+            let closing = m > self.config.max_scenes;
+            let most = if closing {
+                1
+            } else {
+                1 + self.config.max_reruns
+            };
+            let sim = if closing {
+                closing_sim(&self.config.sim)
+            } else {
+                self.config.sim
+            };
             let address = current.id.to_string();
             let tip = match self.db.main_line_tip().await? {
                 Some(tip) => tip,
@@ -1005,7 +1015,7 @@ impl Run<'_> {
                 &self.steps,
                 (&current.id, &current.setup),
                 &tip,
-                &self.config.sim,
+                &sim,
             )
             .await
             .map_err(|e| scene_halt(&address, e))?;
@@ -1738,6 +1748,19 @@ pub(crate) fn markers_in(canon: &Canon, text: &str) -> Vec<NewNote> {
             evidence: Vec::new(),
         })
         .collect()
+}
+
+/// How the closing scene past the cap is played (docs/fabula.md §4, *A
+/// chapter that reaches its goal*, G5): one branch, half the rounds, and no
+/// rerun, since it lands an outcome rather than looks for one. Played like
+/// the others, on Haiku it cost 1.5 to 3.4 million tokens and took three
+/// chapters of six past their budget of 9 million.
+pub(crate) fn closing_sim(sim: &SimConfig) -> SimConfig {
+    SimConfig {
+        branches: 1,
+        max_rounds: (sim.max_rounds / 2).max(1),
+        ..*sim
+    }
 }
 
 /// The engine's own count (docs/fabula.md §4, *The last version checked*,

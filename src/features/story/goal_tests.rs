@@ -1,12 +1,13 @@
 //! A chapter that reaches its goal (docs/fabula.md §4): past the scene cap,
-//! the Author may plan one closing scene (G5), or end the chapter there;
-//! nothing is planned after it.
+//! the Author may plan one closing scene (G5), played on one branch for half
+//! the rounds, or end the chapter there; nothing is planned after it.
 
 use std::sync::Arc;
 
-use super::ChapterConfig;
 use super::tests::{Open, Script, config, paused_at, story};
+use super::{ChapterConfig, closing_sim};
 use crate::entities::story::QuestionBody;
+use crate::features::story::simulation::SimConfig;
 
 fn checkpoint(version: u32) -> QuestionBody {
     QuestionBody::Chapter {
@@ -82,4 +83,50 @@ async fn the_author_may_end_the_chapter_at_the_closing_plan() {
     let again = Script::new(Arc::new(story));
     assert_eq!(open.advance(&again, &capped(2)).await, outcome);
     assert!(again.addresses().is_empty());
+}
+
+/// The closing scene lands an outcome rather than looks for one: one
+/// branch, half the rounds, no rerun (G5, measured on Haiku).
+#[tokio::test]
+async fn the_closing_scene_plays_one_branch_for_half_the_rounds_with_no_rerun() {
+    let mut open = Open::approved().await;
+    let port = Script::new(Arc::new(story));
+    open.advance(&port, &capped(1)).await;
+    let calls = port.addresses();
+    assert!(
+        calls.iter().any(|a| a.starts_with("ch1/sc1/r0/k1/")),
+        "the first plays two"
+    );
+    assert!(calls.iter().any(|a| a.starts_with("ch1/sc2/r0/k0/")));
+    assert!(
+        !calls.iter().any(|a| a.starts_with("ch1/sc2/r0/k1/")),
+        "{calls:?}"
+    );
+    assert!(
+        !calls.iter().any(|a| a.contains("/sc2/r0/k0/round2/")),
+        "one round of two"
+    );
+    let pick = port.prompt_at("ch1/sc2/r0/pick");
+    assert!(pick.user.contains("No reruns are left"));
+    let first = port.prompt_at("ch1/sc1/r0/pick");
+    assert!(!first.user.contains("No reruns are left"));
+}
+
+#[test]
+fn the_closing_sim_halves_the_rounds_and_keeps_the_rest() {
+    let sim = config().sim;
+    let full = SimConfig {
+        branches: 3,
+        max_rounds: 8,
+        ..sim
+    };
+    let closing = closing_sim(&full);
+    assert_eq!((closing.branches, closing.max_rounds), (1, 4));
+    assert_eq!(closing.seed, full.seed);
+    assert_eq!(closing.reflect_every, full.reflect_every);
+    let one = SimConfig {
+        max_rounds: 1,
+        ..full
+    };
+    assert_eq!(closing_sim(&one).max_rounds, 1);
 }
