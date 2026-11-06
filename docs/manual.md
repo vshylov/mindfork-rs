@@ -101,7 +101,9 @@ decoding — are in [install.md §3](install.md).
 ### Your first message
 
 `Esc` closes settings. Type into the box at the bottom and press `Enter`.
-`Shift+Enter` (or `Alt+Enter`, or `Ctrl+J`) makes a line break instead.
+`Shift+Enter` (or `Alt+Enter`, or `Ctrl+J`) makes a line break instead; the box's
+footer names the one your terminal can deliver, and *Settings → Interface → Line
+break key* picks another when that guess is wrong.
 
 While the reply streams, `Esc` stops it. What arrived stays, and `/continue`
 resumes from where it stopped.
@@ -699,8 +701,8 @@ Eight sections, and these four are the ones worth a visit early.
   without highlighting (`inverted` by default, or `normal` — just its text
   between the ```` ``` ```` lines),
   how tall the input box grows before it scrolls (6 rows by default; it never
-  takes more than half the window), mouse capture, and the OSC 52 clipboard mode
-  for sessions over SSH.
+  takes more than half the window), the **line break key** (below), mouse
+  capture, and the OSC 52 clipboard mode for sessions over SSH.
 
 Every field has a description under the list, and `/` opens a search across every
 setting in every section.
@@ -843,7 +845,7 @@ things on different screens. The highlights:
 
 | Key | Action |
 |---|---|
-| `Enter` / `Shift+Enter` | send / line break (`Alt+Enter` — the same break for terminals without the kitty protocol, KDE Konsole among them; `Ctrl+J` works in every terminal, macOS's Terminal.app included; the input box's footer names the one your terminal can deliver) |
+| `Enter` / `Shift+Enter` | send / line break (`Alt+Enter` — the same break for terminals without the kitty protocol, KDE Konsole among them; `Ctrl+J` works in every terminal, macOS's Terminal.app included; the input box's footer names the one your terminal can deliver, or the one chosen in *Settings → Interface → Line break key* — `Ctrl+Enter` among them) |
 | `Esc` | stop a running generation; otherwise back — to the chat list, or to the search results or the conversation you came from (the status bar says which) |
 | `Ctrl+Q` / `F10` | quit (or type `/exit`) |
 | `F1` | help and about |
@@ -885,6 +887,14 @@ things on different screens. The highlights:
 > deletes the last exchange: turn on *Confirm regenerate / delete* (Settings →
 > Interface), or Ghostty's keys off ([install.md](install.md#macos-apple-silicon--a-preview)).
 > The `F` keys need `fn`.
+
+> **Over SSH from Windows Terminal.** The app sees the remote side's terminal, not
+> yours: Windows Terminal before 1.25 does not answer the kitty keyboard protocol
+> there, so the footer names `Alt+Enter` — and Windows Terminal keeps `Alt+Enter`
+> for full screen. Pick another key in *Settings → Interface → Line break key* —
+> `Ctrl+J` arrives from every terminal. `Shift+Enter`, `Alt+Enter` and `Ctrl+J`
+> keep breaking the line whatever you pick; `Ctrl+Enter` breaks it only when it
+> is the pick, and sends otherwise. `mindfork keys` shows what a key arrives as.
 
 > **When a key does nothing.** `mindfork keys` shows each key you press as the app
 > receives it, and what the input box does with it; `Ctrl+Q` quits. When a terminal

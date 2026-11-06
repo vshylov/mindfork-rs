@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::shared::api::llama_args::ManagedRole;
-use crate::shared::config::{CodeBlockBackground, WebProvider};
+use crate::shared::config::{CodeBlockBackground, NewlineKey, WebProvider};
 // ---------- free functions ----------
 
 // The sampling rows the screen offers come from
@@ -1538,6 +1538,19 @@ pub(super) fn code_background_label(b: CodeBlockBackground, loc: &'static Locale
         CodeBlockBackground::Normal => "ui.settings.choice.code_background_normal",
     })
     .to_string()
+}
+
+/// The label of a line-break key (`interface.newline_key`): the chord as it is
+/// pressed, and for `auto` the chord it stands for in this terminal — so the
+/// row says what is in effect, not only who decides it (spec §11.5).
+pub(super) fn newline_key_label(k: NewlineKey, loc: &'static Locale) -> String {
+    match k.chord() {
+        Some(chord) => chord.to_string(),
+        None => loc.tf(
+            "ui.settings.choice.newline_auto",
+            &[("chord", crate::shared::keys::newline_chord(k))],
+        ),
+    }
 }
 
 /// Cyclically shifts the OSC-52 mode, direction-aware.

@@ -327,7 +327,8 @@ impl ChatScreen {
     /// *generating* and *read-only* — except the one word colour cannot
     /// replace, which becomes the box's tag.
     ///
-    /// The idle hint names the chord that this terminal can actually deliver
+    /// The idle hint names the chord the user chose (`interface.newline_key`)
+    /// or, by default, the one this terminal can actually deliver
     /// (`shared::keys::newline_chord`, spec §11.5): on a terminal without the
     /// kitty protocol `Shift+Enter` never arrives, and advertising it there is
     /// a promise the app cannot keep. Whether `Enter` will run the text as a
@@ -347,7 +348,10 @@ impl ChatScreen {
         } else {
             self.loc.tf(
                 "ui.chat.input.idle",
-                &[("newline", crate::shared::keys::newline_chord())],
+                &[(
+                    "newline",
+                    crate::shared::keys::newline_chord(self.newline_key()),
+                )],
             )
         };
         match command_word {

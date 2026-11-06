@@ -188,6 +188,7 @@ impl SettingsScreen {
     /// Draws the field editor popup, when one is open (a no-op otherwise).
     fn render_editor_popup(&mut self, frame: &mut Frame, area: Rect, palette: &Palette) {
         let loc = self.loc();
+        let newline_key = self.config.interface.newline_key;
         let Some(editor) = self.editor.as_mut() else {
             return;
         };
@@ -198,7 +199,7 @@ impl SettingsScreen {
         let base_title = if editor.multiline {
             loc.tf(
                 "ui.editor.multiline_footer",
-                &[("newline", crate::shared::keys::newline_chord())],
+                &[("newline", crate::shared::keys::newline_chord(newline_key))],
             )
         } else {
             loc.t("ui.settings.ui.editor_single").to_string()

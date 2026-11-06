@@ -243,6 +243,35 @@ fn e_edits_the_text_and_an_emptied_text_is_no_edit() {
     assert!(s.editor.is_none());
 }
 
+/// A note's text breaks the line with the chosen key (`interface.newline_key`,
+/// spec §11.5): `Ctrl+Enter` saves under `auto` and breaks the line once
+/// chosen; the screen takes the choice when it opens.
+#[test]
+fn a_notes_text_breaks_the_line_with_the_chosen_key() {
+    let ctrl_enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL);
+    let mut s = screen();
+    press(&mut s, KeyCode::Char('e'));
+    assert!(matches!(
+        s.handle_key(ctrl_enter),
+        Some(NotesIntent::Edit(NoteEdit::SetText { .. }))
+    ));
+
+    let mut s = NotesScreen::new(Palette::default(), en()).with_newline_key(NewlineKey::CtrlEnter);
+    s.set_view(view());
+    press(&mut s, KeyCode::Char('e'));
+    s.editor.as_mut().unwrap().input.set_text("A");
+    assert_eq!(s.handle_key(ctrl_enter), None);
+    typed(&mut s, "B");
+    let id = id_at(&s, 0);
+    assert_eq!(
+        press(&mut s, KeyCode::Enter),
+        Some(NotesIntent::Edit(NoteEdit::SetText {
+            id,
+            text: "A\nB".into()
+        }))
+    );
+}
+
 #[test]
 fn t_edits_the_tags_without_showing_the_reserved_one() {
     let mut s = screen();

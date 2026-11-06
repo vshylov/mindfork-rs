@@ -826,6 +826,9 @@ enum FieldId {
     ISmNoteOrder,
     ISpell,
     IDicts,
+    /// The key that breaks the line in a multi-line field, and that the footers
+    /// name: auto (the terminal's) / Shift+Enter / Alt+Enter / Ctrl+Enter / Ctrl+J.
+    INewlineKey,
     /// Confirmation before `Ctrl+R`/`Ctrl+E` (irreversible operations).
     IConfirmKeys,
     /// Copy "thoughts" (CoT) when copying the conversation (`F5`).

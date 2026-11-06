@@ -1100,6 +1100,83 @@ fn interface_has_the_code_block_background_choice() {
     );
 }
 
+/// `interface.newline_key` (spec §11.5): a row in the "Interface" section,
+/// `auto` by default and labelled with the chord it stands for, cycling
+/// through every key and back.
+#[test]
+fn interface_has_the_newline_key_choice() {
+    use crate::shared::config::NewlineKey;
+    let mut s = screen();
+    let rows = s.interface_fields();
+    let row = rows
+        .iter()
+        .find(|r| r.id == FieldId::INewlineKey)
+        .expect("the newline key row");
+    // Unset in a test binary, the terminal's chord reads as Shift+Enter.
+    match &row.kind {
+        FieldKind::Choice(label) => assert_eq!(label, "авто (Shift+Enter)"),
+        _ => panic!("the newline key is a choice"),
+    }
+    assert!(field_desc(&s, FieldId::INewlineKey).is_some());
+    assert_eq!(s.config.interface.newline_key, NewlineKey::Auto);
+    let mut seen = vec![s.config.interface.newline_key];
+    for _ in 0..NewlineKey::ALL.len() {
+        match s.cycle_field(FieldId::INewlineKey, 1) {
+            Some(SettingsIntent::SaveConfig(c)) => seen.push(c.interface.newline_key),
+            other => panic!("expected SaveConfig, got {other:?}"),
+        }
+    }
+    let mut expected = NewlineKey::ALL.to_vec();
+    expected.push(NewlineKey::Auto);
+    assert_eq!(seen, expected, "the cycle must return to where it started");
+}
+
+/// The multi-line editor follows the key chosen a row up: `Ctrl+Enter`
+/// breaks the line once chosen, its footer names it — and before the choice
+/// it commits, as a bare `Enter` does.
+#[test]
+fn the_multiline_editor_follows_the_chosen_newline_key() {
+    use crate::shared::config::NewlineKey;
+    let ctrl_enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL);
+    let mut s = screen();
+    goto_section(&mut s, Section::Profiles);
+    goto_field(&mut s, FieldId::PSystem);
+    s.handle_key(key(KeyCode::Enter)); // open the editor
+    s.handle_key(key(KeyCode::Char('A')));
+    assert!(
+        matches!(
+            s.handle_key(ctrl_enter),
+            Some(SettingsIntent::SaveProfile { .. })
+        ),
+        "Ctrl+Enter commits under auto"
+    );
+
+    s.config.interface.newline_key = NewlineKey::CtrlEnter;
+    s.handle_key(key(KeyCode::Enter)); // open the editor again
+    s.handle_key(key(KeyCode::Char('B')));
+    s.handle_key(ctrl_enter);
+    s.handle_key(key(KeyCode::Char('C')));
+    assert!(s.editor.is_some(), "Ctrl+Enter doesn't close the editor");
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 40)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+    let buf = term.backend().buffer().clone();
+    let screen_text: String = (0..buf.area.height)
+        .map(|y| {
+            (0..buf.area.width)
+                .map(|x| buf[(x, y)].symbol().to_string())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(screen_text.contains("Ctrl+Enter перенос"), "{screen_text}");
+    match s.handle_key(key(KeyCode::Enter)) {
+        Some(SettingsIntent::SaveProfile { edit, .. }) => {
+            assert!(edit.system_message.unwrap().ends_with("B\nC"));
+        }
+        other => panic!("expected SaveProfile, got {other:?}"),
+    }
+}
+
 #[test]
 fn interface_has_table_separators_toggle() {
     let mut s = screen();

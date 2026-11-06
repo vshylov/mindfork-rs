@@ -71,6 +71,16 @@ split by subsystem.
   quitting says where it stopped and resumes there. `story_status` tells the assistant
   where each story of the chat stands.
 
+### Added
+
+- **The line-break key is a setting.** *Settings → Interface → Line break key*:
+  `auto` (as before — the key your terminal can deliver), `Shift+Enter`, `Alt+Enter`,
+  `Ctrl+Enter` or `Ctrl+J`. The chosen key is the one the input box and the editors
+  name, and `Ctrl+Enter` breaks the line once chosen (otherwise it still sends). Over
+  SSH from Windows Terminal the app used to name `Alt+Enter`, which Windows Terminal
+  keeps for full screen; `Shift+Enter`, `Alt+Enter` and `Ctrl+J` keep breaking the
+  line whatever is chosen.
+
 ### Fixed
 
 - **Thinking off reaches Claude.** With thinking turned off, Claude Haiku 5.5, Sonnet
@@ -92,6 +102,12 @@ split by subsystem.
   as it is, as a damaged chat file always was, and the start migrates the rest.
 
 ### Data
+
+- `settings.json` gains `interface.newline_key` — `auto`, `shift_enter`, `alt_enter`,
+  `ctrl_enter` or `ctrl_j`. An addition: nothing is migrated, and a value a version
+  does not know reads as `auto` rather than costing the file. An older version starts
+  on the file but does not keep the field: when it next saves the settings, the choice
+  is gone and the key is `auto` again.
 
 - **Backups carry stories.** A backup now packs `stories/`, where the story tools
   (experimental) keep each chat's stories, and its `manifest.json` records

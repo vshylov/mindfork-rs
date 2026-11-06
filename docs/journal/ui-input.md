@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (36)
+## Entries (37)
 
 - Post-M9: fast multiline clipboard paste (done)
 - Post-M9: `↑/↓` navigation by visual row of a wrapped line (done)
@@ -48,6 +48,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: AltGr text on Windows is typed (done)
 - Post-M9: `mindfork keys` — each key as the app receives it (done)
 - Post-M9: the keys on a real Mac (done)
+- Post-M9: the line-break key is a setting (done)
 
 ### Post-M9: fast multiline clipboard paste (done)
 - **Symptom**: a large clipboard paste lagged in Windows Terminal, and a line break
@@ -1949,3 +1950,80 @@ Option key.
   Ctrl+V became an attachment.
 
 No code changed here; the documents changed (install.md, the manual).
+
+### Post-M9: the line-break key is a setting (done)
+
+- **Asked for**: over SSH from Windows to a Linux host, the input box's footer
+  named `Alt+Enter` — and Windows Terminal keeps `Alt+Enter` for itself, to
+  toggle full screen, so the advertised key cannot be pressed. The guess is
+  right about the terminal the app talks to: Windows Terminal before 1.25 answers
+  no kitty protocol over SSH (1.25's release notes list it, #19817 — read, not
+  run against a 1.25 here), so
+  `newline_chord()` correctly says a modified `Enter` cannot be delivered. It is
+  the person, not the remote terminal, who knows which chords their own terminal
+  keeps. Now **`interface.newline_key`** (Settings → Interface → Behavior, *Line
+  break key*): `auto` (default — the guess, unchanged), `Shift+Enter`,
+  `Alt+Enter`, `Ctrl+Enter`, `Ctrl+J`.
+- **User's decisions** (2026-11-06): (1) a chosen key **adds to the fallbacks**
+  rather than replacing them — `Shift+Enter`, `Alt+Enter` and `Ctrl+J` break the
+  line under every choice. The rejected alternative, "only the chosen key",
+  would have sent a half-written message on a hand used to the old chord: an
+  unclaimed `Enter`+modifier falls through to the send. (2) The set includes
+  **`Ctrl+Enter`**, the one chord a choice makes break the line; under any other
+  choice it still sends, as it did before (a habit from other apps, where
+  `Ctrl+Enter` sends, is left alone).
+- **What a choice changes**: the chord every footer names (`newline_chord(chosen)`
+  — the choice as it is, the guess only under `auto`), and `Ctrl+Enter`'s
+  meaning (`is_line_break(key, chosen)`). The row's `auto` reads
+  `auto (Alt+Enter)` — what it stands for in this terminal, not only who decides.
+- **Threaded, not a global**, unlike `MODIFIED_ENTER_REPORTED`: that one is an
+  immutable fact about the terminal; this is a setting that changes while the
+  app runs, and a process-wide value cannot be set from a test without
+  re-labelling every other test's UI. The chat reads it from its settings
+  snapshot (`ChatScreen::newline_key`), the settings screen from the config being
+  edited (a key chosen a row up applies to the next editor), `F3` and the notes
+  take it at open time (`with_newline_key`, beside `note_order`), and
+  `mindfork keys` reads it from the raw `settings.json`
+  (`NewlineKey::from_settings_json`, the `try_settings_language` shape: the echo
+  creates and refuses nothing), naming it "as chosen in the settings".
+- **Read leniently from its first release** (`lenient_newline_key`, lessons §8):
+  the set will grow if another terminal teaches us a chord, and an unknown value
+  reads as `auto` with a line in the log instead of failing the file. Its ledger
+  in `stored_enums_tests.rs` names schema 7 — it came with a field of its own,
+  which an older reader skips whole.
+- **Not measured here**: what Windows Terminal sends for `Ctrl+Enter` over SSH.
+  One report says a bare LF (= `Ctrl+J`, a line break under any choice); the
+  droplet has no Windows Terminal to check it with, so the docs do not promise
+  it, and `mindfork keys` is the way to see it.
+- **The help row** stays `Shift+Enter / Alt+Enter / Ctrl+J` (a static table);
+  its description now says `Ctrl+Enter` joins them when chosen.
+- **The screenshot drift gate went red, as it should**: the settings menu counts
+  a section's fields, and "Interface" went 25 → 26 in the Model/server and Tools
+  dumps (regenerated). The images could not simply be re-rendered here: the
+  committed PNGs are Windows renders, and on Linux the fallback icon `⚙` comes
+  from another face — with the site's woff2 faces as TTFs (lessons §1) the *old*
+  dumps rendered byte-identical SVGs but PNGs that differ in that icon's box
+  alone. So only the change was carried over: each new PNG is the committed one
+  with the pixels where the new Linux render differs from the old Linux render
+  (the digit's 13×15 px box) taken from the new render — checked disjoint from
+  the icon's box, the result differing from the committed image in that box
+  alone and from the new Linux render in the icon's box alone. The SVGs are the
+  new renders as they are.
+
+**Tests** (+15): `config` — the default and an old file read `auto`, a
+choice survives a save, six foreign values read as `auto` without costing the
+file, names/chords/cycle pinned, the raw-JSON reader agrees with the typed one;
+`keys` — under every choice the three fallbacks break and a bare `Enter` sends,
+`Ctrl+Enter` breaks only under its own choice, each named chord is one the
+predicate accepts; `screens/chat` — `Ctrl+Enter` sends under `auto` and breaks
+once chosen, the fallback still breaks, the footer names `Ctrl+J` when chosen;
+`settings` — the row (the `ru` `auto (Shift+Enter)` in a test binary), its full cycle, and
+the multi-line editor following a key chosen a row up (footer included);
+`self_model`, `notes` — `Ctrl+Enter` commits under `auto` and breaks once passed
+in; `key_echo` — the outcome and the header follow the choice; `main` — the raw
+reader beside a typo the typed parse rejects. **4817 unit tests green,
+329 `#[ignore]`**, clippy `-D warnings`/fmt clean.
+
+**A live model run is not required** (AGENTS.md §3) — keys and a settings row,
+no engine, memory or tool. The rendered chat, settings and `F3` frames were
+read through `TestBackend`.

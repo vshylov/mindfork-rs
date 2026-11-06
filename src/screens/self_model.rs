@@ -18,7 +18,7 @@ use uuid::Uuid;
 
 use crate::entities::profile::CharacterNames;
 use crate::entities::self_model::{GoalStatus, SelfModel, SelfModelEdit, order_narrative};
-use crate::shared::config::NoteOrder;
+use crate::shared::config::{NewlineKey, NoteOrder};
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
 use crate::shared::theme::Palette;
@@ -125,6 +125,10 @@ pub struct SelfModelScreen {
     /// screen is a full-screen overlay, so settings cannot be edited while it
     /// stands, and every `F3` builds it anew.
     note_order: NoteOrder,
+    /// The key that breaks the line in the editor and that its footer names
+    /// (`interface.newline_key`, spec §11.5). Taken at open time, like
+    /// [`Self::note_order`] and for the same reason; [`Self::with_newline_key`].
+    newline_key: NewlineKey,
     /// The history view (`H`, spec §17.9), while it stands over the fields.
     history: Option<History>,
 }
@@ -148,12 +152,20 @@ impl SelfModelScreen {
             editor: None,
             confirm_clear: false,
             note_order,
+            newline_key: NewlineKey::default(),
             history: None,
         };
         // Row 0 is the "Assistant" header — a decoration. Land the cursor on
         // the first selectable row instead of highlighting a header on open.
         screen.move_selection(0);
         screen
+    }
+
+    /// The key the editor breaks the line with (`interface.newline_key`) —
+    /// [`NewlineKey::Auto`] unless the opener passes the user's choice here.
+    pub fn with_newline_key(mut self, newline_key: NewlineKey) -> Self {
+        self.newline_key = newline_key;
+        self
     }
 
     /// Updates the model snapshot (after an edit/reflection — the `SelfModelView` event),
@@ -504,9 +516,9 @@ impl SelfModelScreen {
                 None
             }
             // Shift+Enter (or Alt+Enter — a fallback line break for terminals with no
-            // kitty protocol, see item 11; or Ctrl+J — `keys::is_line_break`) — a line
-            // break; Enter — commit.
-            _ if crate::shared::keys::is_line_break(&key) => {
+            // kitty protocol, see item 11; or Ctrl+J; or Ctrl+Enter when it is the
+            // chosen key — `keys::is_line_break`) — a line break; Enter — commit.
+            _ if crate::shared::keys::is_line_break(&key, self.newline_key) => {
                 editor.input.insert_newline();
                 None
             }
@@ -661,12 +673,10 @@ impl SelfModelScreen {
     fn render_editor_popup(&mut self, frame: &mut Frame, area: Rect) {
         let palette = self.palette;
         let loc = self.loc;
+        let newline = crate::shared::keys::newline_chord(self.newline_key);
         if let Some(editor) = self.editor.as_mut() {
             let popup = centered_rect(80, 50, area);
-            let title = loc.tf(
-                "ui.editor.multiline_footer",
-                &[("newline", crate::shared::keys::newline_chord())],
-            );
+            let title = loc.tf("ui.editor.multiline_footer", &[("newline", newline)]);
             dim_background(frame, &palette);
             frame.render_widget(Clear, popup);
             editor
@@ -1017,6 +1027,48 @@ mod tests {
         let intent = s.handle_key(key(KeyCode::Enter)).unwrap();
         match intent {
             SelfModelIntent::Edit(SelfModelEdit::SetSummary(t)) => assert!(t.contains("A\nB\nC")),
+            other => panic!("expected SetSummary, got {other:?}"),
+        }
+    }
+
+    /// The editor breaks the line with the key the opener passes
+    /// (`interface.newline_key`, spec §11.5): `Ctrl+Enter` commits under `auto`
+    /// and breaks the line once chosen, and the footer names it.
+    #[test]
+    fn the_editor_breaks_the_line_with_the_chosen_key() {
+        let ctrl_enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL);
+        let open = |newline_key| {
+            SelfModelScreen::new(
+                Some(model()),
+                CharacterNames::default(),
+                Palette::default(),
+                ru(),
+                NoteOrder::default(),
+            )
+            .with_newline_key(newline_key)
+        };
+        let mut s = open(NewlineKey::Auto);
+        s.handle_key(key(KeyCode::Enter)); // open the self-description editor
+        assert!(matches!(
+            s.handle_key(ctrl_enter),
+            Some(SelfModelIntent::Edit(SelfModelEdit::SetSummary(_)))
+        ));
+
+        let mut s = open(NewlineKey::CtrlEnter);
+        s.handle_key(key(KeyCode::Enter));
+        s.handle_key(key(KeyCode::Char('A')));
+        assert_eq!(s.handle_key(ctrl_enter), None);
+        s.handle_key(key(KeyCode::Char('B')));
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+        term.draw(|f| s.render(f)).unwrap();
+        let buf = term.backend().buffer().clone();
+        let text: String = (0..buf.area.height)
+            .flat_map(|y| (0..buf.area.width).map(move |x| (x, y)))
+            .map(|(x, y)| buf[(x, y)].symbol().to_string())
+            .collect();
+        assert!(text.contains("Ctrl+Enter перенос"), "{text}");
+        match s.handle_key(key(KeyCode::Enter)).unwrap() {
+            SelfModelIntent::Edit(SelfModelEdit::SetSummary(t)) => assert!(t.contains("A\nB")),
             other => panic!("expected SetSummary, got {other:?}"),
         }
     }
