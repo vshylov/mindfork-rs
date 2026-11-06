@@ -142,17 +142,25 @@ of time, place, age or kinship that disagree, a person named or addressed two wa
 left in another language, a thread opened and dropped, a passage that drags or tells what it \
 should show, a story shorter or longer than asked. Most important first.";
 
-/// The writer's turn after a critique; it keeps the names as F's reviser does
-/// (F4, T21).
-pub fn revise_ask(words: (u32, u32)) -> String {
+/// The writer's turn after a critique: told its last version's words and
+/// keeping the names, as F's reviser is (F2, F4, T21).
+pub fn revise_ask(words: (u32, u32), last: u32) -> String {
     format!(
         "Write the story again, whole, mending what your critique found: by the same rules, \
-         between {} and {} words, its title as a level-two markdown heading. {} Reply with \
-         the story's text and nothing else.",
+         between {} and {} words (your last version has {last}), its title as a level-two \
+         markdown heading. {} Reply with the story's text and nothing else.",
         words.0,
         words.1,
         author_prompts::KEEP_NAMES,
     )
+}
+
+/// The words of the version turn `n` revises, the writing turn before its
+/// critique, as F's reviser is told them (F2).
+fn last_words(replies: &BTreeMap<u32, (String, u64)>, n: u32) -> u32 {
+    replies
+        .get(&n.saturating_sub(2))
+        .map_or(0, |(text, _)| author_prompts::words_of(text))
 }
 
 /// Whether a version breaks off mid-sentence. A provider may end a reply it
@@ -210,7 +218,7 @@ fn session(canon: &Canon, words: (u32, u32), replies: &BTreeMap<u32, (String, u6
         let ask = match n {
             1 => draft_ask(canon, words),
             n if n % 2 == 0 => CRITIQUE_ASK.to_owned(),
-            _ => revise_ask(words),
+            n => revise_ask(words, last_words(replies, *n)),
         };
         turns.push(Turn {
             role: "user",
@@ -291,7 +299,7 @@ pub async fn write(
         }
         let ask = match next {
             1 => draft_ask(&canon, config.words),
-            n if writing(n) => revise_ask(config.words),
+            n if writing(n) => revise_ask(config.words, last_words(&done, n)),
             _ => CRITIQUE_ASK.to_owned(),
         };
         let mut turns = session(&canon, config.words, &done);

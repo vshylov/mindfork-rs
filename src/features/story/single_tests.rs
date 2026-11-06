@@ -110,11 +110,11 @@ async fn a_session_writes_reads_and_writes_again_until_it_has_spent_its_target()
             "## Version 1\n\nText 1.",
             CRITIQUE_ASK,
             "Critique 1.",
-            revise_ask(words).as_str(),
+            revise_ask(words, 4).as_str(),
             "## Version 2\n\nText 3.",
             CRITIQUE_ASK,
             "Critique 2.",
-            revise_ask(words).as_str(),
+            revise_ask(words, 4).as_str(),
         ]
     );
     assert_eq!(last.call.request["system"], system(&canon));
@@ -264,9 +264,11 @@ fn the_writer_is_given_the_canon_and_the_prose_rules_and_no_record() {
     assert!(draft.contains("Invent what happens"));
     assert!(draft.contains("The canon's keys are not the story's words"));
     assert!(!draft.contains("record"), "{draft}");
-    assert!(revise_ask((1500, 3000)).contains("between 1500 and 3000 words"));
+    assert!(revise_ask((1500, 3000), 938).contains("between 1500 and 3000 words"));
+    // F2 as B0 has it: told its last version's count, as F's reviser is.
+    assert!(revise_ask((1500, 3000), 938).contains("(your last version has 938)"));
     // F4 and F2 as B0 has them (T21): the names kept, the critique's list.
-    assert!(revise_ask((1500, 3000)).contains(author_prompts::KEEP_NAMES));
+    assert!(revise_ask((1500, 3000), 938).contains(author_prompts::KEEP_NAMES));
     assert!(CRITIQUE_ASK.contains("a person named or addressed two ways"));
     assert!(CRITIQUE_ASK.contains("a word left in another language"));
     assert!(CRITIQUE_ASK.contains("a story shorter or longer than asked"));
