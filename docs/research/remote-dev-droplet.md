@@ -103,7 +103,10 @@ face `tools/screenshots.py` probes for under `/usr/share/fonts`) plus
 fallbacks the release job installs. With them, `tools/screenshots.py --only
 chat-dark-en` renders on Ubuntu: the SVG came out byte-identical to the
 committed one, the PNG differed in pixels — regenerate and commit only the
-images a change is meant to touch.
+images a change is meant to touch. The full set did not: the two `chat-list`
+dumps hold `⌕` (U+2315, the list's search glyph), which neither JetBrains Mono
+nor `DejaVuSans.ttf` has, and the script stopped with `no font covered: ⌕`
+(§6, item 7).
 
 ## 4. The machine chosen
 
@@ -282,6 +285,11 @@ In the `do-mindfork` session ask the agent to run:
    them (caught by review, before a media tool was run; without them each one
    stops at its import, `Pillow is required`). Fix: the venv of §5.4 and its
    place at the head of the service's `PATH`.
+7. **A glyph with no font on Linux.** `tools/screenshots.py`'s fallbacks had
+   Segoe UI Symbol for `⌕` on Windows and nothing that holds it on Linux. Found
+   by the agent on the droplet and fixed in a pull request of its own:
+   `DejaVuSansMono.ttf` (package `fonts-dejavu-mono`, a dependency of
+   `fonts-dejavu-core`) joined the fallbacks, and all twenty dumps render.
 
 ## 7. Keeping it up for weeks
 
