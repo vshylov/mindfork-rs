@@ -522,7 +522,9 @@ The runner, `mindfork story-eval`, is hidden: no line in `--help`.
 - `story-eval batch --out DIR` writes every premise × system × seed asked for:
   - by default F, B0 and A1 (T23) and seeds 1–3;
   - `--parallel 8` at a time;
-  - B0 after its premise's F stories, to their average spend.
+  - B0 after its premise's F stories, to their average spend: in dollars where the calls are
+    priced, in tokens where they are not. Anthropic names no price, so a Claude call is counted
+    at the list price the runner holds for the model.
 - The model is named by `--engine openrouter|compatible|anthropic|openai|gemini --model NAME`.
   The key is read from the variable `--key-env` names (`OPENROUTER_API_KEY` by default), and
   `--provider deepinfra` pins OpenRouter's routing.
@@ -600,6 +602,15 @@ The last two are rules of the prose, and B0 has them too, as T21 gives it the sa
 first two belong to a record, so they go to F and A1–A4. The replayed draft kept the
 simulation's scenes and told its secrets on time. This is one story, not a verdict: the full
 run tests the rules on premises they were not drawn from.
+
+**Claude at list price; the rules on `villain-4` (2026-11-06).** Anthropic names no price,
+so B0 matched F in tokens on Claude. On Haiku 5.5, whose prompt past 100,000 tokens costs
+five times more, B0 would have spent three times F's money. The runner now prices Sonnet 5.5
+and Haiku 5.5 at list price, and B0 stops at F's dollars. **Live:** `villain-4`, seed 1, the
+first premise the new rules were not drawn from. Haiku's F and B0 cost $0.66 each. Sonnet's F
+replayed a scene and ran past the chapter budget of 6 million tokens; under 9 million it
+finished at $16.80. A full run comes to some $1,300 on Sonnet and $50 on Haiku. The owner
+reads the three stories blind, and the model stays open (T19).
 
 Then the run itself, outside any pull request: 36 pairs for each of the two decisions
 (and the ablations, after a GO: T23), the calibration by three people, and the decision rule
