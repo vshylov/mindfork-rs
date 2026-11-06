@@ -511,13 +511,16 @@ fn show_self_model(
         | ActiveScreen::Tasks(_)
         | ActiveScreen::Notes(_) => {}
         ActiveScreen::Chat | ActiveScreen::ChatList(_) | ActiveScreen::Settings(_) => {
-            *active = ActiveScreen::SelfModel(Box::new(SelfModelScreen::new(
-                model,
-                names,
-                screen.palette(),
-                screen.loc(),
-                screen.self_model_note_order(),
-            )))
+            *active = ActiveScreen::SelfModel(Box::new(
+                SelfModelScreen::new(
+                    model,
+                    names,
+                    screen.palette(),
+                    screen.loc(),
+                    screen.self_model_note_order(),
+                )
+                .with_newline_key(screen.newline_key()),
+            ))
         }
     }
 }
@@ -971,8 +974,10 @@ pub(super) fn dispatch(
         // this conversation's prompt carries is picked by embedding its opening,
         // which can take a moment (spec §11.11).
         ChatIntent::OpenNotes => {
-            *active =
-                ActiveScreen::Notes(Box::new(NotesScreen::new(screen.palette(), screen.loc())));
+            *active = ActiveScreen::Notes(Box::new(
+                NotesScreen::new(screen.palette(), screen.loc())
+                    .with_newline_key(screen.newline_key()),
+            ));
             let _ = cmd_tx.send(AppCommand::RequestNotes);
             return false;
         }

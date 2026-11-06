@@ -923,6 +923,18 @@ impl ChatScreen {
             .unwrap_or_default()
     }
 
+    /// The key that breaks the line in the input box and that its footer names
+    /// (`interface.newline_key`, spec §11.5). Read from the last settings
+    /// snapshot, like [`Self::self_model_note_order`] — before the first
+    /// `Settings` event the terminal's chord applies. The overlays with a
+    /// multi-line field (`F3`, the notes) take it from here when they open.
+    pub fn newline_key(&self) -> crate::shared::config::NewlineKey {
+        self.settings_snapshot
+            .as_ref()
+            .map(|(config, ..)| config.interface.newline_key)
+            .unwrap_or_default()
+    }
+
     /// The current spellcheck settings `(enabled, selected dictionaries)` from
     /// the last settings snapshot — for (re)loading dictionaries in
     /// `app/runtime.rs`. See spec §11.6.

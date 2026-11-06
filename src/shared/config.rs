@@ -2029,6 +2029,124 @@ where
         }))
 }
 
+/// The key that breaks the line in a multi-line field — the chat's input box,
+/// the settings' and the self-model's editors, a note's text
+/// (`interface.newline_key`, spec §11.5).
+///
+/// A chosen key **adds** to the fallbacks, it does not replace them:
+/// `Shift+Enter`, `Alt+Enter` and `Ctrl+J` break the line whatever is chosen
+/// (`shared::keys::is_line_break`), so a hand used to one of them never sends
+/// a half-written message. What the choice changes is the key every footer
+/// names, and — for [`NewlineKey::CtrlEnter`] alone — what one more chord does:
+/// under any other choice `Ctrl+Enter` sends, as a bare `Enter` does.
+///
+/// The setting exists because the automatic answer can name a key the user
+/// cannot press: Windows Terminal over SSH to a unix host answers no kitty
+/// protocol before 1.25, so the app names `Alt+Enter` — which Windows Terminal
+/// keeps for itself, to toggle full screen. A choice the terminal is known to
+/// send as a bare `Enter` (`Shift+Enter` there) is kept but marked in the
+/// settings row (`shared::keys::sent_as_enter`).
+///
+/// Like [`CodeBlockBackground`], deliberately **not** `Deserialize`: read
+/// through [`lenient_newline_key`], so a key a newer version adds reads here
+/// as [`NewlineKey::Auto`] instead of failing the whole `settings.json`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NewlineKey {
+    /// The chord this terminal can deliver (default): `Shift+Enter` where a
+    /// modified `Enter` is reported, `Ctrl+J` in Terminal.app, `Alt+Enter`
+    /// elsewhere (`shared::keys::newline_chord`).
+    #[default]
+    Auto,
+    ShiftEnter,
+    AltEnter,
+    /// The one choice that makes a chord break the line which otherwise sends.
+    /// Reported as such on Windows and on a terminal that took the kitty
+    /// protocol; Windows Terminal 1.24 over SSH sends it as a line feed —
+    /// `Ctrl+J`, a line break under any choice (measured). A legacy xterm-like
+    /// terminal sends a bare CR — there it sends.
+    CtrlEnter,
+    CtrlJ,
+}
+
+impl NewlineKey {
+    /// Every key, in the order the settings row cycles through them.
+    pub const ALL: [NewlineKey; 5] = [
+        NewlineKey::Auto,
+        NewlineKey::ShiftEnter,
+        NewlineKey::AltEnter,
+        NewlineKey::CtrlEnter,
+        NewlineKey::CtrlJ,
+    ];
+
+    /// The name a key has in `settings.json`.
+    pub fn name(self) -> &'static str {
+        match self {
+            NewlineKey::Auto => "auto",
+            NewlineKey::ShiftEnter => "shift_enter",
+            NewlineKey::AltEnter => "alt_enter",
+            NewlineKey::CtrlEnter => "ctrl_enter",
+            NewlineKey::CtrlJ => "ctrl_j",
+        }
+    }
+
+    /// The chord as the interface names it; `None` for [`NewlineKey::Auto`],
+    /// whose chord is the terminal's to decide (`shared::keys::newline_chord`).
+    pub fn chord(self) -> Option<&'static str> {
+        match self {
+            NewlineKey::Auto => None,
+            NewlineKey::ShiftEnter => Some("Shift+Enter"),
+            NewlineKey::AltEnter => Some("Alt+Enter"),
+            NewlineKey::CtrlEnter => Some("Ctrl+Enter"),
+            NewlineKey::CtrlJ => Some("Ctrl+J"),
+        }
+    }
+
+    /// The key by its `settings.json` name; `None` for one this binary does
+    /// not know.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|k| k.name() == name)
+    }
+
+    /// The next key in [`Self::ALL`], in direction `dir`, wrapping.
+    pub fn cycle(self, dir: i32) -> Self {
+        let n = Self::ALL.len() as i32;
+        let at = Self::ALL.iter().position(|k| *k == self).unwrap_or(0) as i32;
+        Self::ALL[(at + dir).rem_euclid(n) as usize]
+    }
+
+    /// Reads `interface.newline_key` out of an already parsed `settings.json`:
+    /// what the typed parse would make of it, for a reader that must not run
+    /// that parse (`mindfork keys` creates and refuses nothing).
+    pub fn from_settings_json(raw: &serde_json::Value) -> Self {
+        raw.get("interface")
+            .and_then(|i| i.get("newline_key"))
+            .and_then(serde_json::Value::as_str)
+            .and_then(Self::from_name)
+            .unwrap_or_default()
+    }
+}
+
+/// Reads `interface.newline_key`: a key's name. Anything else — a name from a
+/// newer version, a number, `null` — reads as [`NewlineKey::Auto`] and says so
+/// in the log, instead of failing the whole file (see [`NewlineKey`]).
+fn lenient_newline_key<'de, D>(de: D) -> Result<NewlineKey, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = serde_json::Value::deserialize(de)?;
+    Ok(raw
+        .as_str()
+        .and_then(NewlineKey::from_name)
+        .unwrap_or_else(|| {
+            tracing::warn!(
+                value = %raw,
+                "interface.newline_key is not a key this version knows — following the terminal"
+            );
+            NewlineKey::default()
+        }))
+}
+
 /// Interface settings (theme, spellcheck, dictionaries). See spec §11.6.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -2115,6 +2233,12 @@ pub struct InterfaceSettings {
     /// than half the window, so the feed stays in view. Read through
     /// [`Self::input_rows_ceiling`], which also bounds a hand-edited value.
     pub input_max_rows: u16,
+    /// The key that breaks the line in a multi-line field, and that every
+    /// footer names (spec §11.5). `Auto` by default — the terminal's chord;
+    /// the other line-break chords keep working whatever is chosen. See
+    /// [`NewlineKey`].
+    #[serde(deserialize_with = "lenient_newline_key")]
+    pub newline_key: NewlineKey,
     /// Note the reply's reasoning tokens on the token counter at the feed's
     /// bottom border — `(reasoning 120)`. On by default (spec §11.3, §11.6).
     pub show_reasoning_tokens: bool,
@@ -2184,6 +2308,7 @@ impl Default for InterfaceSettings {
             auto_title: AutoTitleMode::default(),
             self_model_note_order: NoteOrder::default(),
             input_max_rows: DEFAULT_INPUT_MAX_ROWS,
+            newline_key: NewlineKey::default(),
             show_reasoning_tokens: true,
             show_cache_share: true,
         }
@@ -4107,6 +4232,7 @@ mod tests {
                 auto_title: AutoTitleMode::AfterUserMessage,
                 self_model_note_order: NoteOrder::OldestFirst,
                 input_max_rows: 12,
+                newline_key: NewlineKey::CtrlEnter,
                 show_reasoning_tokens: false,
                 show_cache_share: false,
             },
@@ -4304,6 +4430,100 @@ mod tests {
             CodeBlockBackground::Normal
         );
         assert_eq!(CodeBlockBackground::from_name("tinted"), None);
+    }
+
+    /// An old `settings.json` has no `newline_key` and reads as the terminal's
+    /// chord (the additive-field rule); a choice is written by name and
+    /// survives a save.
+    #[test]
+    fn the_newline_key_follows_the_terminal_unless_chosen() {
+        assert_eq!(InterfaceSettings::default().newline_key, NewlineKey::Auto);
+        let old: AppConfig = serde_json::from_str(r#"{"interface":{"theme":"dark"}}"#).unwrap();
+        assert_eq!(old.interface.newline_key, NewlineKey::Auto);
+
+        let chosen = InterfaceSettings {
+            newline_key: NewlineKey::CtrlJ,
+            ..InterfaceSettings::default()
+        };
+        let written = serde_json::to_value(&chosen).unwrap();
+        assert_eq!(written["newline_key"], "ctrl_j");
+        let back: InterfaceSettings = serde_json::from_value(written).unwrap();
+        assert_eq!(back.newline_key, NewlineKey::CtrlJ);
+    }
+
+    /// The setting will grow — a terminal teaches us another chord — so a key
+    /// a newer version writes reads here as `auto`, and the rest of the file
+    /// is what it said (lessons §8).
+    #[test]
+    fn a_newline_key_from_a_newer_version_does_not_cost_the_config() {
+        for foreign in [
+            r#""ctrl_m""#,
+            r#""CTRL_J""#,
+            "3",
+            "true",
+            "null",
+            r#"{"a":1}"#,
+        ] {
+            let json = format!(
+                r#"{{"max_tool_rounds":3,"interface":{{"theme":"light","newline_key":{foreign}}}}}"#
+            );
+            let c: AppConfig = serde_json::from_str(&json)
+                .unwrap_or_else(|e| panic!("newline_key={foreign} failed the parse: {e}"));
+            assert_eq!(c.interface.newline_key, NewlineKey::Auto, "{foreign}");
+            assert_eq!(c.interface.theme, Theme::Light, "{foreign}");
+            assert_eq!(c.max_tool_rounds, 3, "{foreign}");
+        }
+    }
+
+    /// The names are the file format, the chords are what the footers say, and
+    /// the cycle is the settings row.
+    #[test]
+    fn newline_keys_have_stable_names_chords_and_a_cycle() {
+        let names: Vec<_> = NewlineKey::ALL.iter().map(|k| k.name()).collect();
+        assert_eq!(
+            names,
+            ["auto", "shift_enter", "alt_enter", "ctrl_enter", "ctrl_j"]
+        );
+        let chords: Vec<_> = NewlineKey::ALL.iter().map(|k| k.chord()).collect();
+        assert_eq!(
+            chords,
+            [
+                None,
+                Some("Shift+Enter"),
+                Some("Alt+Enter"),
+                Some("Ctrl+Enter"),
+                Some("Ctrl+J")
+            ]
+        );
+        for k in NewlineKey::ALL {
+            assert_eq!(NewlineKey::from_name(k.name()), Some(k));
+            assert_eq!(serde_json::to_value(k).unwrap(), k.name());
+            assert_eq!(k.cycle(1).cycle(-1), k);
+            assert_ne!(k.cycle(1), k);
+        }
+        assert_eq!(NewlineKey::CtrlJ.cycle(1), NewlineKey::Auto);
+        assert_eq!(NewlineKey::Auto.cycle(-1), NewlineKey::CtrlJ);
+        assert_eq!(NewlineKey::from_name("ctrl_m"), None);
+    }
+
+    /// `mindfork keys` reads the key out of the raw file: what the typed
+    /// parse would say, an unknown or missing value being `auto`.
+    #[test]
+    fn the_newline_key_reads_from_raw_settings_as_the_typed_parse_would() {
+        let read =
+            |json: &str| NewlineKey::from_settings_json(&serde_json::from_str(json).unwrap());
+        assert_eq!(
+            read(r#"{"interface":{"newline_key":"ctrl_enter"}}"#),
+            NewlineKey::CtrlEnter
+        );
+        assert_eq!(
+            read(r#"{"interface":{"newline_key":"ctrl_m"}}"#),
+            NewlineKey::Auto
+        );
+        assert_eq!(read(r#"{"interface":{"newline_key":3}}"#), NewlineKey::Auto);
+        assert_eq!(read(r#"{"interface":{}}"#), NewlineKey::Auto);
+        assert_eq!(read(r#"{}"#), NewlineKey::Auto);
+        assert_eq!(read("[]"), NewlineKey::Auto);
     }
 
     /// `NO_COLOR` (no-color.org): set to anything but an empty string it asks

@@ -51,6 +51,11 @@ in `cd docker && docker compose up --build`, or rented Hugging Face endpoints vi
 `python tools/e2e_hf.py run`. The `#[ignore]` smokes skip silently when no server
 is configured, so `cargo test` stays green either way.
 
+For an agent that should work on the code for weeks, on a machine of your own
+and driven from the Claude app — Claude Code's Remote Control on a CPU-only
+cloud server, with the cloud providers' keys for their smokes — see
+[docs/research/remote-dev-droplet.md](docs/research/remote-dev-droplet.md).
+
 `cargo run` needs a **real terminal** — in a headless shell the app says so and
 exits with code 2 rather than hanging.
 

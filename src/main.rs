@@ -124,7 +124,8 @@ fn real_main(
     // `keys` reads keys and prints them; like `stats`, it creates nothing — no
     // data root, no log (docs/research/macos.md §13.4).
     if let CliCommand::Keys { output } = &command {
-        return app::key_echo::run(output.as_deref(), loc);
+        let newline_key = try_settings_newline_key(&paths.settings_file());
+        return app::key_echo::run(output.as_deref(), loc, newline_key);
     }
     // The demo never touches the real data root — branch off before the real
     // root's directories or log file are even created. Its own root, logging
@@ -587,6 +588,19 @@ fn try_settings_language(settings_file: &Path) -> Option<Lang> {
         None => unset(),
         Some(code) => code.as_str().map(Lang::from_code),
     }
+}
+
+/// The line-break key from `settings.json` (`interface.newline_key`), for
+/// `mindfork keys` — so the echo breaks the line where the app does. Read from
+/// the raw JSON like [`try_settings_language`]: the echo creates and refuses
+/// nothing, and a file the typed parse rejects still has a key in it. A file
+/// that is missing or is not JSON reads as `auto`.
+fn try_settings_newline_key(settings_file: &Path) -> shared::config::NewlineKey {
+    std::fs::read(settings_file)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .map(|raw| shared::config::NewlineKey::from_settings_json(&raw))
+        .unwrap_or_default()
 }
 
 /// Prints an error in the given language: `{localized prefix}: {chain of causes}`
@@ -2282,6 +2296,35 @@ mod tests {
         }
         std::fs::remove_file(&file).unwrap();
         assert_eq!(try_settings_language(&file), None);
+    }
+
+    /// `mindfork keys` takes the line-break key from the file as it stands —
+    /// beside a value the typed parse rejects too — and `auto` when there is
+    /// no file, no JSON or no key in it.
+    #[test]
+    fn the_keys_echo_reads_the_newline_key_from_the_raw_settings() {
+        use crate::shared::config::NewlineKey;
+        let (_tmp, paths, _) = root_with_a_typo();
+        let file = paths.settings_file();
+        assert_eq!(try_settings_newline_key(&file), NewlineKey::Auto);
+        let cases: [(&str, NewlineKey); 4] = [
+            (
+                r#"{"interface": {"theme": "drak", "newline_key": "ctrl_j"}}"#,
+                NewlineKey::CtrlJ,
+            ),
+            (
+                r#"{"interface": {"newline_key": "ctrl_enter"}}"#,
+                NewlineKey::CtrlEnter,
+            ),
+            (r#"{"interface": {"newline_key": "f13"}}"#, NewlineKey::Auto),
+            ("{ this is not json", NewlineKey::Auto),
+        ];
+        for (text, expected) in cases {
+            std::fs::write(&file, text).unwrap();
+            assert_eq!(try_settings_newline_key(&file), expected, "{text}");
+        }
+        std::fs::remove_file(&file).unwrap();
+        assert_eq!(try_settings_newline_key(&file), NewlineKey::Auto);
     }
 
     /// `import` saves the settings it loaded, so it must not load the

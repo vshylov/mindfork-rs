@@ -24,6 +24,7 @@ use uuid::Uuid;
 use crate::entities::note::{NoteCard, NoteEdit, NotesView};
 use crate::entities::self_model::age_label;
 use crate::features::tools::notes::SELF_NOTE_TAG;
+use crate::shared::config::NewlineKey;
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
 use crate::shared::theme::Palette;
@@ -112,6 +113,11 @@ pub struct NotesScreen {
     /// A delete asked and not yet confirmed: `Del` again deletes, any other key
     /// keeps the note. A note is deleted outright, so the key asks twice.
     confirm_delete: Option<Uuid>,
+    /// The key that breaks the line in a note's text and that the editor's
+    /// footer names (`interface.newline_key`, spec §11.5). Taken at open
+    /// time: the screen is a full-screen overlay, so the settings cannot
+    /// change while it stands. See [`Self::with_newline_key`].
+    newline_key: NewlineKey,
 }
 
 impl NotesScreen {
@@ -128,7 +134,15 @@ impl NotesScreen {
             query: String::new(),
             editor: None,
             confirm_delete: None,
+            newline_key: NewlineKey::default(),
         }
+    }
+
+    /// The key a note's text breaks the line with (`interface.newline_key`) —
+    /// [`NewlineKey::Auto`] unless the opener passes the user's choice here.
+    pub fn with_newline_key(mut self, newline_key: NewlineKey) -> Self {
+        self.newline_key = newline_key;
+        self
     }
 
     /// Replaces the snapshot — the reply to the opening request or to an edit.
@@ -357,7 +371,9 @@ impl NotesScreen {
                 self.editor = None;
                 None
             }
-            _ if matches!(editor.kind, EditKind::Text(_)) && keys::is_line_break(&key) => {
+            _ if matches!(editor.kind, EditKind::Text(_))
+                && keys::is_line_break(&key, self.newline_key) =>
+            {
                 editor.input.insert_newline();
                 None
             }
@@ -733,6 +749,7 @@ impl NotesScreen {
         let palette = self.palette;
         let loc = self.loc;
         let area = frame.area();
+        let newline_key = self.newline_key;
         let Some(editor) = self.editor.as_mut() else {
             return;
         };
@@ -741,7 +758,7 @@ impl NotesScreen {
                 centered(80, 50, 5, area),
                 loc.tf(
                     "ui.editor.multiline_footer",
-                    &[("newline", keys::newline_chord())],
+                    &[("newline", keys::newline_chord(newline_key))],
                 ),
             ),
             EditKind::Tags(_) => (
