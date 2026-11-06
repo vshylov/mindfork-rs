@@ -398,5 +398,6 @@ and is not bypassed.
   `Restart=always`, not yet exercised.
 - `cargo test` on the droplet itself — §5.8's figure is from the cloud
   container; the shared vCPUs may make it slower.
-- §5.9 as a whole: the embedder service and the agent's note were written for
-  this machine's layout, not yet run end to end there.
+- §5.9: the embedder service runs on the droplet and answers `/health` with
+  `ok` (2026-11-06); the outside check of its port and the agent's note are not
+  yet confirmed there.
