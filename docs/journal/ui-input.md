@@ -1957,8 +1957,8 @@ No code changed here; the documents changed (install.md, the manual).
   named `Alt+Enter` — and Windows Terminal keeps `Alt+Enter` for itself, to
   toggle full screen, so the advertised key cannot be pressed. The guess is
   right about the terminal the app talks to: Windows Terminal before 1.25 answers
-  no kitty protocol over SSH (1.25's release notes list it, #19817 — read, not
-  run against a 1.25 here), so
+  no kitty protocol over SSH (1.25's release notes list it, #19817; the owner's
+  check on 1.25 below agrees), so
   `newline_chord()` correctly says a modified `Enter` cannot be delivered. It is
   the person, not the remote terminal, who knows which chords their own terminal
   keeps. Now **`interface.newline_key`** (Settings → Interface → Behavior, *Line
@@ -2010,6 +2010,11 @@ No code changed here; the documents changed (install.md, the manual).
   Terminal, and nothing here tells which. The hint was checked against the
   tallest one (lessons §5): at every width from 30 to 240, in both locales, it
   never sets the panel's height.
+- **Live check by the owner**, the built branch over SSH to the droplet: on
+  Windows Terminal 1.24 the row read `Shift+Enter (this terminal sends it as
+  Enter)` and the hint fit its panel; after updating to **1.25** the same row
+  read a plain `Shift+Enter` — the terminal answered the kitty query, so a
+  modified `Enter` is reported there and nothing is marked.
 - **The help row** stays `Shift+Enter / Alt+Enter / Ctrl+J` (a static table);
   its description now says `Ctrl+Enter` joins them when chosen.
 - **The screenshot drift gate went red, as it should**: the settings menu counts
