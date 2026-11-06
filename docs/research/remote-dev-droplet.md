@@ -411,9 +411,9 @@ request only) makes GitHub refuse it too.
    by the agent on the droplet and fixed in a pull request of its own:
    `DejaVuSansMono.ttf` (package `fonts-dejavu-mono`, a dependency of
    `fonts-dejavu-core`) joined the fallbacks, and all twenty dumps render.
-8. **No `gh`, no pull request.** That fix was committed and pushed through the
-   deploy key, but the agent could not open its pull request: the recipe gave
-   it git access and no API access. Fix: §5.10.
+8. **No `gh`, no pull request.** The agent could not open the pull request for
+   that fix: the recipe gave it git access through the deploy key and no API
+   access. Fix: §5.10.
 
 ## 7. Keeping it up for weeks
 
