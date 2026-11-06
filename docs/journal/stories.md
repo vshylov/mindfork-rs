@@ -13,7 +13,7 @@ what was rejected — the reasoning behind the code, not its current shape. For 
 shape read the reference documents named above; for the traps that recur across areas read
 [lessons.md](../lessons.md).
 
-## Entries (14)
+## Entries (15)
 
 - Post-M9: Fabula — PR 1, the story database (done)
 - Post-M9: Fabula — PR 2, the model port and replay; Gate G0 GO (done)
@@ -29,6 +29,7 @@ shape read the reference documents named above; for the traps that recur across 
 - Post-M9: Fabula — PR 12, the craft of the scenes and the lines (done)
 - Post-M9: Fabula — a chapter's choices stand (done)
 - Post-M9: Fabula — a map every scene can reach (done)
+- Post-M9: Fabula — PR 13, M3's hidden runner and the pilot (done)
 
 ### Post-M9: Fabula — PR 1, the story database (done)
 
@@ -1542,3 +1543,134 @@ not run", 51 minutes and a kept scene in.
   start". That scene was planned before plans were held to the world; one planned now is asked
   for again.
 - Unit tests: 4802 green (+5), 329 `#[ignore]` (+1, `story_chat_live_map_mended`).
+
+### Post-M9: Fabula — PR 13, M3's hidden runner and the pilot (done)
+
+M3 measures the simulation against simpler systems at equal cost (spec §11). PR 13 builds the
+runner those systems run in. The owner started M3 on 2026-11-05 and accepted the five forks the
+runner needed (docs/fabula.md §6, T19–T23).
+
+- **The premises.** Four agents drafted twenty candidates against the rubric of spec §15:
+  - five each in four genres: a mystery, a clash of goals, a villain, a quiet story of a
+    relationship;
+  - each one a canon the canon's check passes, with three characters, five connected places
+    and one chapter;
+  - a planted token on every sheet, no token used twice across the twenty.
+
+  The owner chose twelve on 2026-11-05, three a genre: `mystery-2`, `-4`, `-5`; `clash-3`,
+  `-4`, `-5`; `villain-1`, `-3`, `-4`; `quiet-2`, `-3`, `-5`. They are frozen in
+  `src/features/story/premises/`, their hashes in `SHA256SUMS`. The drafts were written on
+  Windows with CRLF; the repository keeps LF (`.gitattributes`), so they were frozen as LF,
+  and the hash is the same on every checkout. A test holds the twelve to their hashes and to
+  the rubric: three a genre, three characters, five places, one chapter, a token on every
+  sheet, none twice.
+- **The forks.**
+  - The model, T19: Qwen 3.8 27B was accepted, then reopened the same day. On a small model,
+    stories too weak to tell apart would be judged by chance. So PR 13's live run is a pilot on
+    Qwen and on Sonnet 5.5, and the full run's model is chosen after it.
+  - The language: Russian (T20).
+  - B0: one session to F's average cost or the window (T21).
+  - A1: F's loop without the simulation (T22).
+  - The ablations: after a GO (T23).
+  - The owner also ruled that a run of days must not depend on their computer. The batch runs
+    on a cloud machine as a service.
+- **As built.**
+  - **The systems are options of the chapter's own configuration**, so each differs from F in
+    one thing:
+    - A1 `simulate` off. Each scene's branch holds its opening alone, kept with no pick. The
+      Author's system prompt says no one plays the scenes and the rest is its to invent. The
+      checker is told so, so that what the chapter adds there departs from nothing.
+    - A2: one branch.
+    - A3: `review` off. No reviewer reads, nothing is revised, and the keeper's register and
+      summary are still written.
+    - A4: every event perceived, marked "Overheard" or "Done unseen", with the others' thoughts
+      under their deeds; the sheets stay their own.
+    - F's Author prompts were compared with main's byte for byte, twice: identical.
+  - **B0** is `single.rs`, on `LlmPort::session`. The port's default reads a conversation as one
+    prompt, for the replay; the engine sends the turns as they are.
+    - Its system prompt is the canon as the Author reads it (`canon_brief`). Its rules are the
+      prose's, with no record.
+    - Its critique asks what F's reviewers look for.
+    - It stops at the target (dollars where both sides report them, tokens otherwise), before a
+      critique and revision that would not fit the window, or at a backstop.
+    - A resume rebuilds the session from the call log.
+  - **The seed** moves the routine-break draws; seed 0 draws as before. It is not sent as the
+    requests' `seed`: sibling branches send byte-identical first prompts, and one seed for both
+    would play them alike on a provider that honours it. This was caught in review, before any
+    run.
+  - **The batch.** A story is written into `DIR/<premise>/<system>/s<seed>/` with `story.md` and
+    `trace.json`. A batch run again skips each story whose trace says it ended, tries a failed
+    call again up to three times, and runs B0 after its premise's F stories, to their average
+    spend.
+  - **The engine** is named by the command's options. OpenRouter's provider is pinned there
+    (`OpenAiClient::pinned_to`), by the runner alone: the app's routing stays the gateway's.
+  - **`StoryDb::runs`.** B0's resume and the trace read every run's calls through it. The old
+    reading stopped at the first run with no step and no call, and B0's session, started after
+    such a run, was not found.
+- **Tests.** The systems' wiring, A1 and A3 in the chapter's loop on the scripted port, B0's
+  session through the engine adapter (to its target, resumed from its call log after a failure,
+  stopped by the window), the premises held to their hashes, the command's arguments, the
+  pauses' answers, B0's target, the batch's skipping, the time limit, a story end to end with
+  its markdown and trace, A4's memory, the seed, the pin, the twelve premises held to the
+  rubric, a broken-off version kept out of B0's story. Mutation check: 26 mutants, all
+  killed.
+- **A power cut mid-run** (2026-11-05):
+  - It stopped the pilot 13 minutes in, with five stories at 5 to 26 calls each. It also left
+    the mutation check's mutants in the sources, which their saved copies restored, the diff's
+    fingerprint matching.
+  - The batch run again resumed every story from its stores. The branches in flight were marked
+    lost and replaced by the next index (`k3`), and A1's draft in flight was asked again. This is
+    what a cloud host will rely on.
+- **Live: every system on the harbour fixture, on Qwen 3.8 27B** (OpenRouter pinned to
+  DeepInfra, seed 1, Russian, the app's budget). The batch was resumed once after the power
+  cut; hours are counted from the resumption. Every story finished, and none leaked a token.
+
+  | System | Calls | Words | Cost | Hours |
+  | --- | --- | --- | --- | --- |
+  | F | 338 | 1,129 | $0.73 | 2.4 |
+  | B0, to F's $0.73 | 41 | 1,188 | $0.75 | 2.6, after F |
+  | A1 | 12 | 1,201 | $0.07 | 0.1 |
+  | A2 | 342 | 1,186 | $0.89 | 2.5 |
+  | A3 | 242 | 993 | $0.38 | 1.0 |
+  | A4 | 233 | 1,016 | $0.55 | 1.7 |
+
+- **Live: T19's pilot**, F, B0 and A1 on the frozen `mystery-2`, seed 1, on Claude Sonnet 5.5
+  and on Qwen 3.8 27B, for the owner to read. Sonnet's cost is the list price of its tokens
+  ($2 and $10 a million): Anthropic reports no price, and the story's calls read nothing from
+  its cache.
+
+  | | Sonnet: calls | words | cost | minutes | Qwen: calls | words | cost | minutes |
+  | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+  | F | 426 | 1,655 | $11.05 | 25 | 329 | 960 | $0.89 | 130 |
+  | B0 | 65 | 958 | $10.93 | 19 | 71 | 1,135 | $0.89 | 140 |
+  | A1 | 20 | 1,181 | $0.51 | 3 | 19 | 1,039 | $0.16 | 33 |
+
+  Sonnet's F spent 4,887,905 tokens of the chapter's 6,000,000. At these figures F, B0 and
+  A1 on twelve premises and three seeds (108 stories) cost about $810 on Sonnet and $60–70
+  on Qwen. PR 13's live runs spent $22.49 on Sonnet and $5.30 on Qwen.
+- **What the pilot found.**
+  - *A reply cut and reported finished.* One of Qwen's B0 revisions came back with 17,493
+    tokens, its text ending in the middle of a word, under a finish reason of `stop`: the
+    port's retry after a cut never saw a cut. It was one prose reply of 214 across the pilot,
+    B0's, and its next turn mended it. F's last version is read by its reviewers
+    before it is accepted, but B0's is read by no one before the judges. A version that breaks
+    off mid-sentence now stays in the session, for the critique to read, and is not kept as
+    the story's (`single::broken_off`; a test, four mutants killed).
+  - *The length.* The chapter asks for 1,200 to 2,500 words. Of the twelve stories two are
+    inside it, Qwen's A1 on the harbour at 1,201 and Sonnet's F at 1,655. Neither loop holds
+    the length. Sonnet's B0 drafted 1,254 words, and every revision after was shorter, 783 to
+    1,173; it ended at 958. Whether length is a confound for the judges is the owner's to
+    weigh before the full run.
+  - *Equal cost, by the cache.* On OpenRouter B0's session reads 86–93% of its prompt from
+    the provider's cache, F's calls 12–23%. For F's dollars B0 bought about a fifth more
+    tokens than F on the harbour (2,111,942 against 1,745,579) and 1.8 times as many on
+    `mystery-2` (4,669,339 against 2,533,339). That is the protocol's equal money (spec
+    §11). On Anthropic the runner has no price and matches tokens, and nothing is cached.
+  - *B0, two ways.* Qwen's B0 settled. From its seventh version on, all but two revisions
+    kept over 97% of the text before them, and by turn 40 its critique answered "No issues";
+    the session went on to F's cost, as T21 has it. Sonnet's never settled: each revision kept
+    3–44% of the one before, and its critiques kept finding what to mend, and to cut.
+  - *The speed.* Sonnet wrote F in 25 minutes, and Qwen took 130 for the same premise.
+  - *Marks for the judges.* Each writer marks its scene breaks as it pleases: `---` in eight of
+    Qwen's nine stories, `* * *` in Sonnet's F, an escaped `\*` in its B0, none in its A1.
+    PR 14 shows the judges a pair, and evening such marks out is for it to weigh.

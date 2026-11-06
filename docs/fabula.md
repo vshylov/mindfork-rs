@@ -1,6 +1,6 @@
 # Fabula — a story engine used from the chat: track plan
 
-**Status:** in progress — M0 done (PRs 1 and 2, Gate G0 GO); M1 done (PRs 3–5, Gate G1 GO, 2026-11-01); M2 done (PR 6, the Author's loop, 2026-11-01; PR 7, stories in mindfork's data, 2026-11-02; PR 8, the story run in the background, 2026-11-02; PR 9, the story driven from the chat, 2026-11-02; Gate G2 GO, 2026-11-03; PR 10, a scene played again, 2026-11-03); before M3, the readers' findings settled (PR 11, the story's register; PR 12, the craft of the scenes and the lines; a chapter's choices standing for its later steps; a map every scene can reach; 2026-11-04 to 2026-11-05). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
+**Status:** in progress — M0 done (PRs 1 and 2, Gate G0 GO); M1 done (PRs 3–5, Gate G1 GO, 2026-11-01); M2 done (PR 6, the Author's loop, 2026-11-01; PR 7, stories in mindfork's data, 2026-11-02; PR 8, the story run in the background, 2026-11-02; PR 9, the story driven from the chat, 2026-11-02; Gate G2 GO, 2026-11-03; PR 10, a scene played again, 2026-11-03); before M3, the readers' findings settled (PR 11, the story's register; PR 12, the craft of the scenes and the lines; a chapter's choices standing for its later steps; a map every scene can reach; 2026-11-04 to 2026-11-05); M3 begun (PR 13, the hidden runner and the twelve premises frozen, 2026-11-06). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
 so are the twenty-three this plan adds (§6) and where development runs (§4, *The development
 stack*). The design —
 the engine, its stores, its contracts, its evaluation — is
@@ -555,9 +555,26 @@ RestartSec=60
 WantedBy=multi-user.target
 ```
 
-To watch it, `tail -f /var/lib/fabula-m3/batch.jsonl`. When it ends, `rsync` the directory
-back. A reboot or a crash restarts the batch, which skips what ended. A story whose call
-failed is tried again three times in a batch, and `systemctl restart` tries it once more.
+The unit names Qwen, T19's first answer; its `--engine`, `--model` and key change to whatever
+model the pilot chooses. To watch it, `tail -f /var/lib/fabula-m3/batch.jsonl`. When it ends,
+`rsync` the directory back. A reboot or a crash restarts the batch, which skips what ended. A
+story whose call failed is tried again three times in a batch, and `systemctl restart` tries it
+once more.
+
+**PR 13, as built (2026-11-06).** The owner chose twelve of the twenty premises, three a genre:
+`mystery-2`, `-4`, `-5`; `clash-3`, `-4`, `-5`; `villain-1`, `-3`, `-4`; `quiet-2`, `-3`,
+`-5`. They are frozen in `src/features/story/premises/` with `SHA256SUMS`, and a test holds
+them to their hashes and to §15's rubric. Each system is an option of the chapter's own
+configuration, so each differs from F in one thing, and F's Author prompts are main's byte for
+byte. B0 is `single.rs`: one session on `LlmPort::session`, rebuilt from the call log on a
+resume. A power cut mid-pilot stopped five stories; the batch run again resumed each from its
+stores. **Live:** the harbour fixture through all six systems on Qwen 3.8 27B, every story
+finished and none leaking, $3.36 in all. T19's pilot ran F, B0 and A1 on `mystery-2`, on
+Sonnet 5.5 ($22.49 at list price, F in 25 minutes) and on Qwen ($1.94, F in 130
+minutes), for the owner to read. It found a reply cut and reported finished, so B0 no longer
+keeps a version that breaks off mid-sentence. It also found most of Qwen's stories under the
+1,200 words asked for. The full run's model is chosen from them (T19). The figures are in
+[journal/stories.md](journal/stories.md).
 
 Then the run itself, outside any pull request: 36 pairs for each of the two decisions
 (and the ablations, after a GO: T23), the calibration by three people, and the decision rule

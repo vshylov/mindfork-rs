@@ -38,9 +38,10 @@ GO on a two-chapter story. G2's readers' findings came before the evaluation: th
 (PR 11), then the craft of the scenes and the lines and G2 again (PR 12; [fabula.md](fabula.md),
 *Before M3*). M3, the evaluation, has begun: PR 13 builds its hidden runner, with the
 systems of spec §11 as its options and a batch meant to run for days on a cloud machine.
-Twelve of twenty premise candidates are the owner's to choose, and the full run's model
-follows a pilot on Qwen 3.8 and Sonnet 5.5 (T19). M3's verdict decides whether the long form
-(M4) is built; until then the story tools stay behind `tools.story`, off.
+The owner chose twelve of twenty premise candidates, frozen with their hashes, and the
+full run's model follows a pilot on Qwen 3.8 and Sonnet 5.5, run for the owner to read
+(T19). M3's verdict decides whether the long form (M4) is built; until then the story tools
+stay behind `tools.story`, off.
 
 The last two code tracks — small windows, and the reasoning effort a model
 does not have — closed on 2026-09-30 and 2026-10-01 and ship together in
