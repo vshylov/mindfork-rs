@@ -575,7 +575,9 @@ minutes), for the owner to read. It found a reply cut and reported finished, so 
 keeps a version that breaks off mid-sentence. It also found most of Qwen's stories under the
 1,200 words asked for. The owner read them blind on 2026-11-06, and F came first nowhere:
 Sonnet's B0 best, Qwen's F on `mystery-2` a failure, A1 best on the harbour. That is one
-reader and one premise a model, not M3's verdict. The full run's model is still open (T19).
+reader and one premise a model, not M3's verdict. F's story polished by B0's own loop lost
+to B0's as well, and the polish erased what the simulation had given it. The full run's
+model is still open (T19).
 The figures are in [journal/stories.md](journal/stories.md).
 
 Then the run itself, outside any pull request: 36 pairs for each of the two decisions

@@ -1662,6 +1662,19 @@ runner needed (docs/fabula.md §6, T19–T23).
   seams show ("when the bells strike noon" in the wrong tense, a sentence about "three
   generations" tied to nothing). Qwen's F failing outright confirms the owner's fear: on that
   model the systems' differences drown in the model's.
+- **After the reading: F + polish** (2026-11-06). Was F short only of polish? Sonnet's F story
+  was given to B0's loop as its draft: its critique and revision turns, its prompts, eight
+  revisions, on Sonnet 5.5, for $1.23 (F and the polish $12.28, B0 $10.93). It went from
+  1,655 words to 1,041, and the first revision kept little of F's sentences. The owner read
+  it against B0's: **not better**. It lost on the prose and on the drama's logic, and the
+  polish erased what the simulation had given F's story, the very thing no other story had.
+  A loop of critique and revision rewrites a story it did not invent into one of its own, so
+  it is no remedy for F. The run was made by a scratch build, not committed (the draft and
+  the number of revisions read from the environment). Its first try was invalid and is not
+  counted: the seeded draft was dropped from the session after the first critique, the
+  session being rebuilt from the call log, where the draft was not. No test covered the
+  scratch build at first; one on the scripted engine, written before the second try, showed
+  the draft in every turn.
 - **What the pilot found.**
   - *A reply cut and reported finished.* One of Qwen's B0 revisions came back with 17,493
     tokens, its text ending in the middle of a word, under a finish reason of `stop`: the
