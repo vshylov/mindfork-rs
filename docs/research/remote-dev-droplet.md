@@ -344,6 +344,42 @@ from `docker/` ever run here, its `8000`/`8001`/`8888` are open to anyone; a
 DigitalOcean cloud firewall (inbound 22/TCP only) sits in front of the droplet
 and is not bypassed.
 
+### 5.10 GitHub CLI for pull requests
+
+The deploy key (§5.4) pushes branches; opening a pull request, reading its
+checks and answering its review need the API — `gh` and a token.
+
+Install from GitHub's own apt repository (root), as cli.github.com describes;
+Ubuntu's `apt install gh` is the fallback (2.45, from early 2024 — old, but it
+opens pull requests):
+
+```bash
+mkdir -p -m 755 /etc/apt/keyrings
+curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg
+chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list
+apt update && apt install -y gh
+```
+
+A **fine-grained token** (GitHub → Settings → Developer settings →
+Fine-grained tokens), for this repository only:
+
+| Permission | Access | Why |
+|---|---|---|
+| Pull requests | Read and write | open and update pull requests, review replies |
+| Issues | Read and write | comments (optional) |
+| Actions, Commit statuses | Read | see CI |
+| Contents | **Read-only** | pushes go through the deploy key; without write here the token cannot merge |
+
+Give it an expiry and note the date. It goes into `keys.env` (§5.6) as
+`GH_TOKEN=github_pat_...` — `gh` reads the variable itself, no `gh auth login` —
+then `systemctl restart claude-rc`. Check from the phone: `gh auth status` and
+`gh pr list` in the session.
+
+The deploy key can write to `main` as well. AGENTS.md §5 keeps the agent off
+it; a repository rule on `main` (Settings → Rules: changes through a pull
+request only) makes GitHub refuse it too.
+
 ## 6. What the first setup hit (2026-11-05)
 
 1. **Non-ASCII in the user data skipped all of it.** A Cyrillic comment next to
@@ -375,11 +411,16 @@ and is not bypassed.
    by the agent on the droplet and fixed in a pull request of its own:
    `DejaVuSansMono.ttf` (package `fonts-dejavu-mono`, a dependency of
    `fonts-dejavu-core`) joined the fallbacks, and all twenty dumps render.
+8. **No `gh`, no pull request.** That fix was committed and pushed through the
+   deploy key, but the agent could not open its pull request: the recipe gave
+   it git access and no API access. Fix: §5.10.
 
 ## 7. Keeping it up for weeks
 
 - **The login.** When the three-day warning comes: `claude auth login` as `dev`
-  over SSH, then `systemctl restart claude-rc`. The only routine manual step.
+  over SSH, then `systemctl restart claude-rc`.
+- **The GitHub token.** Before its expiry date: a new token into `keys.env`,
+  `systemctl restart claude-rc`. With the login, the only routine manual steps.
 - **Disk.** `df -h /mnt/<volume>` weekly; `cargo clean` in a checkout frees its
   `target/`. `claude remote-control --spawn worktree` gives every session a
   worktree, and each builds a `target/` of its own (4–10 GB).
@@ -396,7 +437,8 @@ and is not bypassed.
 Verified on the droplet (2026-11-05 and -06): the `do-mindfork` session appears in the
 Claude app and sees the providers' keys; the media tools run from the venv; the
 embedder service answers `/health` with `ok`, and its port times out from
-outside; the agent finds llama.cpp and the models from its note (§5.9).
+outside; the agent finds llama.cpp and the models from its note (§5.9); with
+`GH_TOKEN` set, the agent's `gh` sees the repository's pull requests (§5.10).
 
 Not yet:
 
