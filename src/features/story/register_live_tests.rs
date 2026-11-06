@@ -195,6 +195,7 @@ async fn register_live_known_answers_on_g2() {
             setup: &s.setup,
             intent: &s.intent,
             trace: t,
+            played: true,
         })
         .collect();
     let mut log = db.run_log_writer().await.unwrap();

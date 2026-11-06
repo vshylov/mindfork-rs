@@ -1,0 +1,120 @@
+{
+  "world": {
+    "rules": [
+      "No magic. A small inland research station in Antarctica, the present day, on the last day of the summer season.",
+      "The last aircraft leaves at four in the afternoon; after it, nobody arrives or leaves for eight months.",
+      "The aircraft can take one more load of ninety kilograms: one person or the crate of ice cores, never both.",
+      "The station leader signs the manifest; headquarters may overrule her by radio until the engines start.",
+      "The core freezer's compressor is failing; nobody expects the cores left in it to last the winter."
+    ]
+  },
+  "locations": [
+    {
+      "key": "galley",
+      "name": "The Galley",
+      "description": "The warm heart of the station: a long table, a coffee urn, the season's photographs on the wall, a window onto the white.",
+      "routes": [
+        { "to": "radio_room", "ticks": 1 },
+        { "to": "clinic", "ticks": 1 },
+        { "to": "core_store", "ticks": 1 },
+        { "to": "skiway", "ticks": 2 }
+      ],
+      "items": []
+    },
+    {
+      "key": "radio_room",
+      "name": "The Radio Room",
+      "description": "A cramped desk of handsets and a flight screen; the only line to headquarters.",
+      "routes": [{ "to": "galley", "ticks": 1 }],
+      "items": []
+    },
+    {
+      "key": "clinic",
+      "name": "The Clinic",
+      "description": "One bed, a locked drug cabinet and a heart monitor; a paper trace is pinned above the desk.",
+      "routes": [{ "to": "galley", "ticks": 1 }],
+      "items": ["ecg_trace"]
+    },
+    {
+      "key": "core_store",
+      "name": "The Core Store",
+      "description": "A freezer container at minus thirty, racks of silver tubes, and a compressor that knocks, stops and starts again.",
+      "routes": [
+        { "to": "galley", "ticks": 1 },
+        { "to": "skiway", "ticks": 1 }
+      ],
+      "items": ["core_crate"]
+    },
+    {
+      "key": "skiway",
+      "name": "The Skiway",
+      "description": "A groomed strip of snow where the red aircraft waits, its pilot pacing beside the fuel drums.",
+      "routes": [
+        { "to": "galley", "ticks": 2 },
+        { "to": "core_store", "ticks": 1 }
+      ],
+      "items": []
+    }
+  ],
+  "characters": [
+    {
+      "key": "priya",
+      "name": "Priya",
+      "public": "The station leader and its only doctor, fifty, calm, in her third season here; her signature goes on the manifest.",
+      "voice": "Quiet and clinical; asks one question at a time and waits.",
+      "goals": [
+        "Put Aroha on the plane before a winter tests the heart her trace shows",
+        "Bring her whole winter crew through to spring"
+      ],
+      "secrets": [
+        {
+          "key": "funding_call",
+          "text": "At dawn headquarters radioed her that next season's funding depends on the cores flying today; she has passed it on to no one. [SECRET-PRIYA-K9]"
+        }
+      ],
+      "start": { "location": "clinic", "holds": ["manifest"] }
+    },
+    {
+      "key": "aroha",
+      "name": "Aroha",
+      "public": "A glaciologist of thirty-seven from New Zealand, in her third season; the ice cores in the store are her life's work.",
+      "voice": "Warm, quick and funny; serious only about the ice.",
+      "goals": [
+        "Get the core crate onto the plane",
+        "Stay the winter herself to drill again in spring"
+      ],
+      "secrets": [
+        {
+          "key": "fainting",
+          "text": "She has fainted twice this month alone in the drill tent and told no one; the lost hours are the gaps in her drill log. [SECRET-AROHA-F4]"
+        }
+      ],
+      "start": { "location": "core_store", "holds": ["drill_log"] }
+    },
+    {
+      "key": "tomas",
+      "name": "Tomás",
+      "public": "The station mechanic, forty-one, from Chile, who keeps the generators and the freezer alive; his wife is expecting their first child within the month.",
+      "voice": "Dry and practical; swears in Spanish and explains by fixing.",
+      "goals": [
+        "Take the last place himself and be home for his daughter's birth"
+      ],
+      "secrets": [
+        {
+          "key": "freezer_fix",
+          "text": "The freezer can last the winter after all, but only with an improvised fix he alone knows and the relay in his pocket; if he flies, the cores left behind will thaw. [SECRET-TOMAS-2C]"
+        }
+      ],
+      "start": { "location": "skiway", "holds": ["spare_relay"] }
+    }
+  ],
+  "style": { "pov": "close third, rotating", "tense": "past" },
+  "arc": {
+    "premise": "On the last day of the Antarctic summer, the one free place on the last plane out is wanted by a doctor for her patient, a scientist for her ice, and a mechanic for himself.",
+    "chapters": [
+      {
+        "goal": "When the engines start at four, the last load is aboard, and a hidden fact has changed what someone asks for."
+      }
+    ]
+  }
+}

@@ -1,0 +1,112 @@
+{
+  "world": {
+    "rules": [
+      "No magic.",
+      "Nanjing, the night before the autumn provincial examination of 1879; thousands of candidates crowd the inns around the examination compound.",
+      "At the fifth watch the examination gate opens; every candidate is searched at it, and one found with a written page is put in the cangue and barred from the examinations for life.",
+      "Once inside, candidates are locked in their cells for three days; whoever knows the theme in advance has the examination.",
+      "A clerk who leaks the theme is put to death, and the whole examination is cancelled.",
+      "Only so many candidates of the province may pass; every place taken is a place lost to someone else."
+    ]
+  },
+  "locations": [
+    {
+      "key": "courtyard",
+      "name": "Inn Courtyard",
+      "description": "The courtyard of a crowded candidates' inn: lamps in every window, a well, young men reciting the classics aloud to calm themselves.",
+      "routes": [
+        { "to": "lu_room", "ticks": 1 },
+        { "to": "zhao_room", "ticks": 1 },
+        { "to": "bookseller", "ticks": 1 },
+        { "to": "exam_gate", "ticks": 2 }
+      ],
+      "items": []
+    },
+    {
+      "key": "lu_room",
+      "name": "Lu Wen's Room",
+      "description": "A narrow back room with a cold brazier, a cracked inkstone and borrowed books stacked on the bed.",
+      "routes": [{ "to": "courtyard", "ticks": 1 }],
+      "items": []
+    },
+    {
+      "key": "zhao_room",
+      "name": "Zhao Heng's Rooms",
+      "description": "The inn's best rooms: silk cushions, a lacquered food box, a padded examination robe laid out on the bed.",
+      "routes": [{ "to": "courtyard", "ticks": 1 }],
+      "items": ["exam_robe"]
+    },
+    {
+      "key": "bookseller",
+      "name": "Bookseller's Stall",
+      "description": "A stall in the lane outside, open all night in examination week: candles, brushes, and under the counter crib books in tiny print.",
+      "routes": [
+        { "to": "courtyard", "ticks": 1 },
+        { "to": "exam_gate", "ticks": 1 }
+      ],
+      "items": []
+    },
+    {
+      "key": "exam_gate",
+      "name": "The Examination Gate",
+      "description": "The great gate of the compound under torches: soldiers, a line of search tables, and beyond them row upon row of locked cells.",
+      "routes": [
+        { "to": "bookseller", "ticks": 1 },
+        { "to": "courtyard", "ticks": 2 }
+      ],
+      "items": []
+    }
+  ],
+  "characters": [
+    {
+      "key": "feng",
+      "name": "Feng Ju",
+      "public": "A clerk of the examination office, fifty, thin and attentive; candidates bow to him for news of the halls.",
+      "voice": "Dry and courteous; quotes the regulations, and his threats sound like procedure.",
+      "goals": [
+        "Before the fifth watch, have a finished essay on the true theme sewn into Zhao Heng's robe",
+        "Make Lu Wen write it; a crib sheet found in Lu's sleeve at the search is the price of refusing"
+      ],
+      "secrets": [
+        {
+          "key": "stolen_theme",
+          "text": "He copied this year's theme from the chief examiner's envelope while sealing it, and sold it to Zhao's father for fifty taels, to be paid on delivery. [SECRET-FENG-X3]"
+        }
+      ],
+      "start": { "location": "courtyard", "holds": ["theme_slip", "crib_sheet"] }
+    },
+    {
+      "key": "lu",
+      "name": "Lu Wen",
+      "public": "A candidate from the hill country, twenty-eight, on his third attempt; the best essayist at the inn and the poorest.",
+      "voice": "Formal and bookish, with a hill accent he tries to hide.",
+      "goals": ["Pass on his own essay; his family sold their fields to send him"],
+      "secrets": [
+        {
+          "key": "borrowed_name",
+          "text": "He sits under his dead cousin's registration, his own having been struck off over unpaid tax; anyone who checks the county register will see it. [SECRET-LU-M6]"
+        }
+      ],
+      "start": { "location": "lu_room", "holds": [] }
+    },
+    {
+      "key": "zhao",
+      "name": "Zhao Heng",
+      "public": "A salt merchant's son, nineteen, sitting his first examination; generous, idle, and lodged in the inn's best rooms.",
+      "voice": "Easy and charming, the slang of the pleasure quarter; flatters when cornered.",
+      "goals": ["Come out of the examination with a pass, so that his father finally leaves him alone"],
+      "secrets": [
+        {
+          "key": "lost_at_dice",
+          "text": "His father gave him fifty taels to pay Feng on delivery; he lost half of it at dice last night. [SECRET-ZHAO-D9]"
+        }
+      ],
+      "start": { "location": "zhao_room", "holds": ["silver_pouch"] }
+    }
+  ],
+  "style": { "pov": "close third, rotating", "tense": "past" },
+  "arc": {
+    "premise": "On the night before the provincial examination, a clerk of the examination office comes to a candidates' inn with a proposal for its poorest guest and its richest.",
+    "chapters": [{ "goal": "Before the gate opens at the fifth watch, the stolen theme costs someone at the inn their place." }]
+  }
+}

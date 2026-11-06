@@ -57,6 +57,10 @@ split by subsystem.
   whose "he" and whose son, a line that only states a plan, a reply that opens on thanks —
   and what that reading finds goes to the chapter's review with the other notes. How much
   of it holds depends on the model.
+- **A chapter told from its scenes, not retold.** What the scenes played is the chapter's
+  material: a plan that came to nothing is cut or told in a phrase, a secret comes out
+  when a scene spends it rather than in the narrator's words before, and a talk keeps a
+  line or two of direct speech instead of "he asked whether…, she answered that…".
 - **A story chapter written in the background.** Under Settings → Tools → *Stories
   (experimental)* — off by default — the story engine's runs go out as background tasks
   the way a background sub-agent's do: each takes the story from where it stands to its

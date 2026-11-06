@@ -47,7 +47,7 @@ use super::prompts::{
     self, CharacterView, MasterView, Shown, character_propose, character_react, character_reflect,
     master_initiative, master_reactions,
 };
-use super::scene::{NOT_TAKEN, SceneError, WAITS, opening_events, scripted_event, seed_of};
+use super::scene::{NOT_TAKEN, SceneError, WAITS, opening_events, scripted_event, seeded};
 use super::schema::{CanonKeys, Schema, StorySchema};
 use super::steps::Steps;
 use crate::entities::chat_file::sha256_hex;
@@ -74,6 +74,14 @@ pub struct SimConfig {
     pub abnormal_p: f64,
     /// Every how many rounds the characters reflect; 0 for never.
     pub reflect_every: u32,
+    /// The story's seed (spec §11: the stories of a pair share a premise
+    /// and a seed). It moves every branch's draws; 0 draws as stories did
+    /// before M3, so a story made before replays (docs/fabula.md §4, PR 13).
+    pub seed: u64,
+    /// Every character perceives every event of its branch, the others'
+    /// thoughts included: M3's A4, which measures what the information
+    /// asymmetry is worth (spec §11). The sheets stay their own.
+    pub omniscient: bool,
 }
 
 impl Default for SimConfig {
@@ -84,6 +92,8 @@ impl Default for SimConfig {
             max_rounds: 8,
             abnormal_p: 0.3,
             reflect_every: 3,
+            seed: 0,
+            omniscient: false,
         }
     }
 }
@@ -480,7 +490,7 @@ impl Stage<'_> {
         k: u32,
     ) -> Result<BranchRun, SceneError> {
         let branch = BranchId::of_scene(scene, k);
-        let seed = seed_of(&branch);
+        let seed = seeded(&branch, self.config.seed);
         let mut writer = self.db.fork(scene, tip, k, seed).await?;
         let start = self.db.world(&branch).await?;
         let opening_tick = start.tick();
@@ -832,7 +842,7 @@ impl Playing<'_> {
         build: impl FnOnce(&CharacterView) -> Prompt,
     ) -> Result<Prompt, SceneError> {
         let stage = self.stage;
-        let memory = stage.db.witnessed(&self.branch, who).await?;
+        let memory = self.perceived(who).await?;
         let reflections = stage.db.reflections(&self.branch, who).await?;
         let view = CharacterView {
             canon: stage.canon,
@@ -842,8 +852,20 @@ impl Playing<'_> {
             memory: &memory,
             reflections: &reflections,
             breaks_routine: breaks_routine(self.seed, round, who, stage.config.abnormal_p),
+            omniscient: stage.config.omniscient,
         };
         Ok(build(&view))
+    }
+
+    /// The events `who` perceived on the branch's path: those they
+    /// witnessed, or under [`SimConfig::omniscient`] every one.
+    async fn perceived(&self, who: &CharacterKey) -> Result<Vec<Event>, SceneError> {
+        let db = self.stage.db;
+        Ok(if self.stage.config.omniscient {
+            db.path(&self.branch).await?
+        } else {
+            db.witnessed(&self.branch, who).await?
+        })
     }
 
     /// What the World Master is shown of the deeds among `proposals`: each
@@ -859,9 +881,7 @@ impl Playing<'_> {
                 continue;
             }
             let perceived = self
-                .stage
-                .db
-                .witnessed(&self.branch, who)
+                .perceived(who)
                 .await?
                 .iter()
                 .map(|e| prompts::label(e, &self.branch))

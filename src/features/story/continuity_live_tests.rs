@@ -229,6 +229,7 @@ async fn continuity_live_recall_by_mechanism_and_effort() {
             setup: &s.setup,
             intent: &s.intent,
             trace: t,
+            played: true,
         })
         .collect();
     let prompt = author_prompts::continuity(&canon, &opened, &view, &planted);

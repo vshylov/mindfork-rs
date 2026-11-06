@@ -1,0 +1,120 @@
+{
+  "world": {
+    "rules": [
+      "No magic.",
+      "A small hospital in a town in eastern Finland, a November night in the present day: one ward, one night nurse, one doctor on call.",
+      "Morphine is kept in a locked cupboard in the drug room, and every ampoule taken out is written in the controlled-drugs register with two signatures.",
+      "The night nurse carries the cupboard's only key while on duty.",
+      "At seven the day nurse counts the morphine with the night nurse and both sign; a short count goes to the hospital pharmacist, and by noon to the police.",
+      "Mrs Rautio, eighty-one and dying of cancer, died in Room Four at ten past three; the doctor on call must write her cause of death before he goes off at eight."
+    ]
+  },
+  "locations": [
+    {
+      "key": "room_four",
+      "name": "Room Four",
+      "description": "A single room at the end of the ward: Mrs Rautio under a sheet, a chair pulled close to the bed, lilies on the sill, the syringe driver switched off.",
+      "routes": [
+        { "to": "nurses_station", "ticks": 1 },
+        { "to": "relatives_room", "ticks": 1 }
+      ],
+      "items": []
+    },
+    {
+      "key": "nurses_station",
+      "name": "The Nurses' Station",
+      "description": "A desk under a lamp in the middle of the ward: patient files, the night's notes, a phone, and the controlled-drugs register in its red cover.",
+      "routes": [
+        { "to": "room_four", "ticks": 1 },
+        { "to": "drug_room", "ticks": 1 },
+        { "to": "relatives_room", "ticks": 1 },
+        { "to": "staff_room", "ticks": 1 }
+      ],
+      "items": ["drugs_register"]
+    },
+    {
+      "key": "drug_room",
+      "name": "The Drug Room",
+      "description": "A windowless room behind a coded door: a steel cupboard with a key lock, a sharps bin, a humming fridge.",
+      "routes": [{ "to": "nurses_station", "ticks": 1 }],
+      "items": ["morphine_box"]
+    },
+    {
+      "key": "relatives_room",
+      "name": "The Relatives' Room",
+      "description": "A small room with a sofa, a kettle, a box of tissues and a print of birch trees; it shares a wall with Room Four.",
+      "routes": [
+        { "to": "nurses_station", "ticks": 1 },
+        { "to": "room_four", "ticks": 1 }
+      ],
+      "items": []
+    },
+    {
+      "key": "staff_room",
+      "name": "The Staff Room",
+      "description": "Lockers, a coffee machine, coats on hooks, and a door to the back stairs where the night staff go to smoke.",
+      "routes": [{ "to": "nurses_station", "ticks": 1 }],
+      "items": []
+    }
+  ],
+  "characters": [
+    {
+      "key": "aino",
+      "name": "Aino",
+      "public": "The night nurse on the ward, forty-six, twenty years in the job; calm, kind, never seen hurrying.",
+      "voice": "Calm and practical, short sentences, dry humour.",
+      "goals": [
+        "Learn why the morphine is two ampoules short before the seven o'clock count",
+        "Keep her job and her licence"
+      ],
+      "secrets": [
+        {
+          "key": "forged_initials",
+          "text": "On short-staffed nights she gives doses alone and writes a colleague's initials as the second signature; Mrs Rautio's one o'clock dose is signed that way. [SECRET-AINO-K4]"
+        }
+      ],
+      "start": { "location": "drug_room", "holds": ["cupboard_key"] }
+    },
+    {
+      "key": "mikko",
+      "name": "Dr Mikko Harju",
+      "public": "The doctor on call, thirty-eight, who was Mrs Rautio's family doctor for years before she came to the hospital; tired, gentle, liked by the nurses.",
+      "voice": "Soft and careful; reaches for medical words when feelings come close.",
+      "goals": [
+        "Write Mrs Rautio's death as expected and go home at eight",
+        "Keep anyone from looking at the count too closely"
+      ],
+      "secrets": [
+        {
+          "key": "the_dose",
+          "text": "At two o'clock, at the daughter's plea, he took the key from Aino's coat in the staff room, drew two ampoules of morphine and gave them to Mrs Rautio himself, knowing it would end her life; he put the key back and wrote nothing down. [SECRET-MIKKO-V8]"
+        }
+      ],
+      "start": { "location": "staff_room", "holds": [] }
+    },
+    {
+      "key": "kaisa",
+      "name": "Kaisa Rautio",
+      "public": "Mrs Rautio's daughter, fifty-two, a schoolteacher from Helsinki who has sat by the bed for three nights.",
+      "voice": "Clipped, a teacher's precision that cracks when she least expects it.",
+      "goals": [
+        "Protect the doctor who helped her mother",
+        "Take her mother home to be buried without an inquiry"
+      ],
+      "secrets": [
+        {
+          "key": "asked_him",
+          "text": "Her mother begged her to make it end, and she asked the doctor; afterwards she took the two empty ampoules from the bedside, and they are in her handbag with her mother's note. [SECRET-KAISA-H7]"
+        }
+      ],
+      "start": { "location": "relatives_room", "holds": ["empty_ampoules", "mothers_note"] }
+    }
+  ],
+  "style": { "pov": "close third, rotating", "tense": "past" },
+  "arc": {
+    "premise": "On a small hospital ward in the hours after a dying woman's death, the night nurse finds the morphine two ampoules short and has until the seven o'clock count to learn where they went.",
+    "chapters": [
+      { "goal": "Before the seven o'clock count Aino learns how Mrs Rautio died, and the truth costs someone on the ward their work or their freedom." }
+    ]
+  }
+}

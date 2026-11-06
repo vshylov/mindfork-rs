@@ -1,0 +1,124 @@
+{
+  "world": {
+    "rules": [
+      "No magic.",
+      "An Igbo town in Anambra State, Nigeria, an August night in 1986: the night before the town's first son is ordained a Catholic priest.",
+      "The ordination Mass is at ten tomorrow at the cathedral in Onitsha; the hired bus carrying the family and half the town leaves the motor park at six.",
+      "A deacon may withdraw at any moment until the bishop lays his hands on him; after that he is a priest for life.",
+      "The town has given money for the feast and the cooking has begun; an ordination called off would shame the family before everyone."
+    ]
+  },
+  "locations": [
+    {
+      "key": "parlour",
+      "name": "The Parlour",
+      "description": "The front room of the Nwosu house: a Sacred Heart picture, the late father's photograph, chairs borrowed from the neighbours, and the white stole on its hanger.",
+      "routes": [
+        { "to": "back_yard", "ticks": 1 },
+        { "to": "parish_church", "ticks": 1 },
+        { "to": "motor_park", "ticks": 2 }
+      ],
+      "items": ["white_stole"]
+    },
+    {
+      "key": "back_yard",
+      "name": "The Back Yard",
+      "description": "Cooking fires under the mango tree, where the women of the street are already stirring tomorrow's pots and listening to everything.",
+      "routes": [{ "to": "parlour", "ticks": 1 }],
+      "items": []
+    },
+    {
+      "key": "parish_church",
+      "name": "St. Joseph's Parish Church",
+      "description": "The town church in the dark, the sanctuary lamp burning red and the confessional by the side door; Chidi served Mass here as a boy.",
+      "routes": [
+        { "to": "parlour", "ticks": 1 },
+        { "to": "night_market", "ticks": 1 }
+      ],
+      "items": []
+    },
+    {
+      "key": "night_market",
+      "name": "The Night Market",
+      "description": "The market square after dark, stalls shuttered, a few kerosene lamps where traders roast corn; Obiageli's cloth stall is padlocked at the end of a row.",
+      "routes": [
+        { "to": "parish_church", "ticks": 1 },
+        { "to": "motor_park", "ticks": 1 }
+      ],
+      "items": []
+    },
+    {
+      "key": "motor_park",
+      "name": "The Motor Park",
+      "description": "A dusty yard of buses and lorries by the main road; the hired bus waits for the six o'clock start, its driver asleep across the back seat.",
+      "routes": [
+        { "to": "night_market", "ticks": 1 },
+        { "to": "parlour", "ticks": 2 }
+      ],
+      "items": []
+    }
+  ],
+  "characters": [
+    {
+      "key": "obiageli",
+      "name": "Obiageli",
+      "public": "A widow of fifty-six who sells cloth in the town market and whose son is to be the town's first priest; proud, generous, the loudest voice in church.",
+      "voice": "Loud and warm, full of proverbs; calls everyone my child.",
+      "goals": ["See Chidi ordained at the cathedral tomorrow, with the whole town watching."],
+      "secrets": [
+        {
+          "key": "the_vow",
+          "text": "In 1968, in a refugee camp during the war, when Chidi was eight and dying of fever, she vowed him to God if he lived. She has never told him that his calling began as her promise. [SECRET-OBIAGELI-W2]"
+        }
+      ],
+      "start": { "location": "back_yard", "holds": ["camp_rosary"] }
+    },
+    {
+      "key": "chidi",
+      "name": "Chidi",
+      "public": "Obiageli's son, twenty-six, a deacon to be ordained priest tomorrow; quiet, courteous, the town's pride since he left for the seminary at twelve.",
+      "voice": "Soft, careful seminary English; reaches for scripture when cornered.",
+      "goals": [
+        "Withdraw from the ordination without shaming his mother before the town.",
+        "Tell her himself, before the bus leaves at six."
+      ],
+      "secrets": [
+        {
+          "key": "no_faith",
+          "text": "He has not believed in God for two years and prays out of habit. His letter withdrawing from the ordination is written and sealed inside his breviary. [SECRET-CHIDI-J5]"
+        }
+      ],
+      "start": { "location": "parish_church", "holds": ["withdrawal_letter"] }
+    },
+    {
+      "key": "ngozi",
+      "name": "Ngozi",
+      "public": "Chidi's elder sister, thirty, a nurse in Lagos who has sent money home for ten years and paid for much of his schooling; brisk, organised, running tomorrow's feast.",
+      "voice": "Brisk lists and times; teases her brother as if he were still twelve.",
+      "goals": [
+        "Get everyone onto the six o'clock bus and through the day without a scene.",
+        "Make sure someone will be at home with their mother once she herself has gone abroad."
+      ],
+      "secrets": [
+        {
+          "key": "england_post",
+          "text": "She has signed a contract with a hospital in England and flies in three weeks; she has told no one. Once she goes, nobody is left at home with their mother. [SECRET-NGOZI-X4]"
+        },
+        {
+          "key": "heard_vow",
+          "text": "She was twelve in the camp and heard her mother vow Chidi to God over his fever. She has never spoken of it. [SECRET-NGOZI-N7]"
+        }
+      ],
+      "start": { "location": "parlour", "holds": ["england_contract"] }
+    }
+  ],
+  "style": { "pov": "close third, rotating", "tense": "past" },
+  "arc": {
+    "premise": "On the night before an Igbo town's first son is ordained a priest, his mother, his sister and the deacon himself each carry a promise the morning will keep or break.",
+    "chapters": [
+      {
+        "goal": "By six o'clock the son has chosen, in front of his family, whether to be ordained, and the choice costs one of them the future they had counted on."
+      }
+    ]
+  }
+}

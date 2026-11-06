@@ -1,7 +1,7 @@
 # Fabula — a story engine used from the chat: track plan
 
-**Status:** in progress — M0 done (PRs 1 and 2, Gate G0 GO); M1 done (PRs 3–5, Gate G1 GO, 2026-11-01); M2 done (PR 6, the Author's loop, 2026-11-01; PR 7, stories in mindfork's data, 2026-11-02; PR 8, the story run in the background, 2026-11-02; PR 9, the story driven from the chat, 2026-11-02; Gate G2 GO, 2026-11-03; PR 10, a scene played again, 2026-11-03); before M3, the readers' findings settled (PR 11, the story's register; PR 12, the craft of the scenes and the lines; a chapter's choices standing for its later steps; a map every scene can reach; 2026-11-04 to 2026-11-05). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
-so are the eighteen this plan adds (§6) and where development runs (§4, *The development
+**Status:** in progress — M0 done (PRs 1 and 2, Gate G0 GO); M1 done (PRs 3–5, Gate G1 GO, 2026-11-01); M2 done (PR 6, the Author's loop, 2026-11-01; PR 7, stories in mindfork's data, 2026-11-02; PR 8, the story run in the background, 2026-11-02; PR 9, the story driven from the chat, 2026-11-02; Gate G2 GO, 2026-11-03; PR 10, a scene played again, 2026-11-03); before M3, the readers' findings settled (PR 11, the story's register; PR 12, the craft of the scenes and the lines; a chapter's choices standing for its later steps; a map every scene can reach; 2026-11-04 to 2026-11-05); M3 begun (PR 13, the hidden runner and the twelve premises frozen, 2026-11-06). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
+so are the twenty-three this plan adds (§6) and where development runs (§4, *The development
 stack*). The design —
 the engine, its stores, its contracts, its evaluation — is
 [research/fabula-engine.md](research/fabula-engine.md) (*the spec* below), and the
@@ -491,9 +491,119 @@ candidates for the owner to choose from (spec §15).
 | 13 `feat/story-eval` | The hidden runner: no line in `--help`, the single-instance lock skipped, stories written into its output directory and not into the data; the systems F, B0 and A1–A4 as run options; the export of the markdown and the JSON trace; the 12 premises frozen in the repository with their SHA-256 | Unit tests of each system's wiring; a live run of one premise through every system |
 | 14 `feat/story-judge` | `tools/fabula_judge.py`: pairs shown blind in random order, verdicts as JSON, the binomial test; the LLM panel of other model families through OpenRouter, both orders; the calibration check against the three humans' majority | `--self-test` against fixtures, run in `lint` like the other tools' |
 
+**PR 13's forks (2026-11-05).** The owner accepted every recommendation below on 2026-11-05
+(§6, T19–T23). Claude drafted twenty premise candidates against §15's rubric, five a genre,
+each a canon the canon's check passes with a planted token on every sheet, for the owner to
+choose twelve. Choices the agent made, open to the owner's review:
+
+- **A3** runs no reviewer at all: no Reader, Continuity checker, staging pass or keeper's check,
+  and so no revision. The keeper's register and summary are still written at the checkpoint.
+- **A4** gives every character every event of its branch, other people's thoughts included,
+  while the sheets stay their own.
+- **A seed** moves the routine-break draws. It is not sent as the requests' `seed`: sibling
+  branches send byte-identical first prompts, and one seed for both would play them alike on a
+  provider that honours it. Seed 0 is today's draws, so a story made before stays replayable.
+- **The runner's engine** is named by its own options, the smokes' routes as a command's,
+  rather than read from the app's settings, which would start a managed server beside the
+  app's (spec §14). OpenRouter's provider may be pinned there, the runner's option alone.
+- **B0** is given the canon as the Author is and the same rules of the prose. Only the way of
+  working differs.
+
+**Where it runs (the owner, 2026-11-05).** A run of days must not depend on the owner's
+computer, its power or its line. The batch runs on a small cloud machine with no GPU, since
+the model is reached through OpenRouter. It runs as a service that restarts itself, and no
+Claude session has to stay up for it. A story resumes from its last recorded step, and the
+batch run again skips the finished stories.
+
+The runner, `mindfork story-eval`, is hidden: no line in `--help`.
+
+- `story-eval premises` lists the frozen premises with their hashes.
+- `story-eval run --premise ID|FILE --system F|B0|A1|A2|A3|A4 --out DIR` writes one story.
+- `story-eval batch --out DIR` writes every premise × system × seed asked for:
+  - by default F, B0 and A1 (T23) and seeds 1–3;
+  - `--parallel 8` at a time;
+  - B0 after its premise's F stories, to their average spend.
+- The model is named by `--engine openrouter|compatible|anthropic|openai|gemini --model NAME`.
+  The key is read from the variable `--key-env` names (`OPENROUTER_API_KEY` by default), and
+  `--provider deepinfra` pins OpenRouter's routing.
+- Each story is written to `DIR/<premise>/<system>/s<seed>/`: `story.db`, `calls.db`,
+  `story.md` and `trace.json` (the premise's hash, the ending, the spend by role, the words,
+  the scenes and picks, the notes, the leaks).
+- `DIR/batch.jsonl` has one line per story run.
+
+The host:
+
+- A droplet with Ubuntu 24.04, 2 vCPU and 4 GB.
+- The binary of the merged commit, built there or in `rust:1.96.0-bookworm`, at
+  `/opt/mindfork/mindfork`.
+- The key in `/etc/fabula-m3.env` (`OPENROUTER_API_KEY=…`, mode 600).
+- A unit:
+
+```ini
+[Unit]
+Description=Fabula M3 batch
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+EnvironmentFile=/etc/fabula-m3.env
+ExecStart=/opt/mindfork/mindfork story-eval batch --out /var/lib/fabula-m3 --engine openrouter --model qwen/qwen3.8-27b --provider deepinfra --window 262144 --parallel 12
+Restart=on-failure
+RestartSec=60
+
+[Install]
+WantedBy=multi-user.target
+```
+
+The unit names Qwen, T19's first answer; its `--engine`, `--model` and key change to whatever
+model the pilot chooses. To watch it, `tail -f /var/lib/fabula-m3/batch.jsonl`. When it ends,
+`rsync` the directory back. A reboot or a crash restarts the batch, which skips what ended. A
+story whose call failed is tried again three times in a batch, and `systemctl restart` tries it
+once more.
+
+**PR 13, as built (2026-11-06).** The owner chose twelve of the twenty premises, three a genre:
+`mystery-2`, `-4`, `-5`; `clash-3`, `-4`, `-5`; `villain-1`, `-3`, `-4`; `quiet-2`, `-3`,
+`-5`. They are frozen in `src/features/story/premises/` with `SHA256SUMS`, and a test holds
+them to their hashes and to §15's rubric. Each system is an option of the chapter's own
+configuration, so each differs from F in one thing, and F's Author prompts are main's byte for
+byte. B0 is `single.rs`: one session on `LlmPort::session`, rebuilt from the call log on a
+resume. A power cut mid-pilot stopped five stories; the batch run again resumed each from its
+stores. **Live:** the harbour fixture through all six systems on Qwen 3.8 27B, every story
+finished and none leaking, $3.36 in all. T19's pilot ran F, B0 and A1 on `mystery-2`, on
+Sonnet 5.5 ($22.49 at list price, F in 25 minutes) and on Qwen ($1.94, F in 130
+minutes), for the owner to read. It found a reply cut and reported finished, so B0 no longer
+keeps a version that breaks off mid-sentence. It also found most of Qwen's stories under the
+1,200 words asked for. The owner read them blind on 2026-11-06, and F came first nowhere:
+Sonnet's B0 best, Qwen's F on `mystery-2` a failure, A1 best on the harbour. That is one
+reader and one premise a model, not M3's verdict. F's story polished by B0's own loop lost
+to B0's as well, and the polish erased what the simulation had given it. The full run's
+model is still open (T19).
+The figures are in [journal/stories.md](journal/stories.md).
+
+**After the pilot: the record is material (2026-11-06).** Two more diagnostics on F's Sonnet
+story found where its prose fails:
+- A line edit that kept every event mended words and left the rest.
+- The draft call, replayed on the same record, showed the cause. The Author drafts the whole
+  chapter in one pass, from a record of some 14,000 words (four scenes, English, with every
+  character's thoughts) for 1,200–2,500 words of Russian, told to "tell what the record holds".
+  It retold. Talks came out as "he asked whether…, she answered that…", the narrator gave a
+  secret away before its keeper confessed, and a plan that came to nothing kept its scene.
+
+The writing rules now say:
+- the record is material, not a text to retell;
+- what led nowhere is cut or told in a phrase, but a secret spent in such a scene is still
+  told in direct speech;
+- a secret enters the prose when a scene spends it;
+- a talk keeps a line or two of direct speech and is never retold.
+
+The last two are rules of the prose, and B0 has them too, as T21 gives it the same rules. The
+first two belong to a record, so they go to F and A1–A4. The replayed draft kept the
+simulation's scenes and told its secrets on time. This is one story, not a verdict: the full
+run tests the rules on premises they were not drawn from.
+
 Then the run itself, outside any pull request: 36 pairs for each of the two decisions
-(and the ablations), the calibration by three people, and the decision rule of spec §11,
-recorded here and in the journal.
+(and the ablations, after a GO: T23), the calibration by three people, and the decision rule
+of spec §11, recorded here and in the journal.
 
 - **GO** (F beats B0 and A1) opens M4.
 - **F loses to A1, and A1 beats B0:** a pull request switches the tools to A1's
@@ -685,6 +795,36 @@ recommendation on 2026-11-04.
   again on Claude Sonnet 5.5, for the owner to read against the first (about $35–45)
   *(recommended)*. (b) Without G2 again. (c) G2 again alone. **Owner's decision (2026-11-04):
   (a).**
+
+PR 13 added five more, M3's own. The owner accepted every recommendation on 2026-11-05.
+
+- **T19. M3's model**, one for every system. (a) Qwen 3.8 27B through OpenRouter, about $1.1 a
+  story of F (PR 12) and some $200 for all 216 *(recommended)*. (b) Claude Sonnet 5.5, some $16
+  a story of F and $2,500 for all. **Owner's decision (2026-11-05): (a)**, then reopened the same
+  day. On a small model every system may write poorly whatever the engine does, and stories
+  too weak to tell apart are judged by chance, a NO-GO from noise. The runner does not depend
+  on the model, so PR 13's live run is a pilot: F, B0 and A1 on one premise on Qwen 3.8 and on
+  Sonnet 5.5, read by the owner. The full run's model is chosen after it. The owner's reading
+  (2026-11-06) found Qwen's stories mostly weak, and its F on `mystery-2` a failure.
+  Sonnet's were all good, at some $810 for the 108 stories; the owner finds that too much, and
+  Haiku 5.5 is the cheaper candidate.
+- **T20. The stories' language.** (a) Russian, as G2: the owner reads them in their own
+  language, and the other two judges read Russian too *(recommended)*. (b) English, the
+  prompts' language. **Owner's decision (2026-11-05): (a).**
+- **T21. How B0 reaches F's cost.** (a) One session: a draft, then turns of critique and of
+  revision, each seeing the whole session, until it has spent what F spent on average on the
+  same premise, or until the next turn would not fit the model's window; the story is the last
+  revision *(recommended)*. (b) Two revisions, as spec §10's cost model had it: cheaper, but not
+  the equal cost §11 asks for. **Owner's decision (2026-11-05): (a).**
+- **T22. A1's shape.** (a) F's loop without the simulation: the same outline and scene plans,
+  each plan reading the plans before it as what happened, no branches and no pick; the draft
+  written from the plans, the Author inventing every event; the same reviewers, revisions,
+  register and summary *(recommended)*: it differs from F in one thing. (b) A draft from the
+  canon and the outline alone, without scene plans. **Owner's decision (2026-11-05): (a).**
+- **T23. When the ablations run.** (a) After a GO: F, B0 and A1 first, 108 stories, about $100
+  and a day on the cloud machine; spec §11's decisions are made on them, and A2–A4 explain a GO,
+  so they wait for one *(recommended)*. (b) All six systems at once, as this plan had it.
+  **Owner's decision (2026-11-05): (a).** PR 13 still builds all six.
 
 ## 7. Not in this track
 

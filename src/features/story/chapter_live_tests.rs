@@ -300,15 +300,7 @@ async fn report(db: &StoryDb, model: &str, out: &Path, seconds: u64, extra: Valu
             }
         }
     }
-    let audited: Vec<AuditedCall> = calls
-        .iter()
-        .map(|c| AuditedCall {
-            address: &c.call.address,
-            role: &c.call.role,
-            request: &c.call.request,
-            response: c.call.response.as_ref(),
-        })
-        .collect();
+    let audited: Vec<AuditedCall> = calls.iter().map(|c| AuditedCall::of(&c.call)).collect();
     let leaks = audit(&canon, &paths, &audited);
     let mut picks = Vec::new();
     for scene in &scenes {

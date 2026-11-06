@@ -1,0 +1,108 @@
+{
+  "world": {
+    "rules": [
+      "No magic.",
+      "Moscow, a February night in 1951, at a chemistry institute; a distillation in Laboratory No. 4 must be tended until morning.",
+      "At nine the director signs the new staff list, and he reads first whatever lies in the tray outside his door.",
+      "A denunciation signed by two members of staff is enough to remove a laboratory head and open a case against him.",
+      "Only the head of a laboratory can sign an assistant's permanent appointment.",
+      "Writing in secret to a prisoner of the camps counts as proof of disloyalty; so does hiding a priest's or a kulak's origin on official forms."
+    ]
+  },
+  "locations": [
+    {
+      "key": "laboratory",
+      "name": "Laboratory No. 4",
+      "description": "Long benches of glassware, a gas burner under a slow distillation, frost on the tall windows; the clock above the door is loud at night.",
+      "routes": [
+        { "to": "pavel_office", "ticks": 1 },
+        { "to": "stairwell", "ticks": 1 }
+      ],
+      "items": []
+    },
+    {
+      "key": "pavel_office",
+      "name": "Professor's Office",
+      "description": "A cramped office behind the laboratory: a desk with a locked drawer, the obligatory portrait, a camp bed made up for the night.",
+      "routes": [{ "to": "laboratory", "ticks": 1 }],
+      "items": ["brother_letters"]
+    },
+    {
+      "key": "stairwell",
+      "name": "Back Stairs",
+      "description": "A cold back staircase with a smoking landing by the window; voices carry up and down it.",
+      "routes": [
+        { "to": "laboratory", "ticks": 1 },
+        { "to": "anteroom", "ticks": 1 },
+        { "to": "porters_lodge", "ticks": 1 }
+      ],
+      "items": []
+    },
+    {
+      "key": "anteroom",
+      "name": "Director's Anteroom",
+      "description": "Leather chairs, the secretary's empty desk, and the tray for papers outside the director's padded door.",
+      "routes": [{ "to": "stairwell", "ticks": 1 }],
+      "items": []
+    },
+    {
+      "key": "porters_lodge",
+      "name": "Porter's Lodge",
+      "description": "By the front doors: the night porter dozing beside the telephone, and the night staff's coats on hooks.",
+      "routes": [{ "to": "stairwell", "ticks": 1 }],
+      "items": ["birth_certificate"]
+    }
+  ],
+  "characters": [
+    {
+      "key": "galina",
+      "name": "Galina Rusakova",
+      "public": "Deputy head of Laboratory No. 4, forty-four, a Party member and a tireless worker; she has waited eight years for the head's post.",
+      "voice": "Calm and correct, first name and patronymic; speaks of vigilance and duty, never of herself.",
+      "goals": [
+        "Head the laboratory by nine: by Pavel's resignation if he will sign one, by her denunciation if he will not",
+        "Get Nina's signature under the denunciation as its second witness"
+      ],
+      "secrets": [
+        {
+          "key": "priest_daughter",
+          "text": "Her father was a village priest, shot in 1930; she took her mother's name and has written 'from a worker's family' on every form since. Her real birth certificate is sewn into the lining of her coat. [SECRET-GALINA-C1]"
+        }
+      ],
+      "start": { "location": "laboratory", "holds": ["denunciation"] }
+    },
+    {
+      "key": "pavel",
+      "name": "Pavel Ignatov",
+      "public": "Head of Laboratory No. 4, sixty, a professor of the old school, absent-minded and kind; he sleeps in his office on nights like this.",
+      "voice": "Gentle and ironic; quotes old poems and apologises for it.",
+      "goals": ["Keep his laboratory, and get his brother's letters out of the building before morning"],
+      "secrets": [
+        {
+          "key": "camp_brother",
+          "text": "His brother is in a labour camp in Karaganda; Pavel writes to him and sends parcels under the night porter's name, and the brother's letters are in his desk drawer. [SECRET-PAVEL-Q4]"
+        }
+      ],
+      "start": { "location": "pavel_office", "holds": [] }
+    },
+    {
+      "key": "nina",
+      "name": "Nina Kostina",
+      "public": "A laboratory assistant, twenty-two, from a village near Ryazan; her temporary Moscow permit runs out in March unless she is taken on permanently.",
+      "voice": "Quick and eager, says 'yes, of course' too often; goes silent when frightened.",
+      "goals": ["Get her permanent appointment signed tonight, whoever signs it"],
+      "secrets": [
+        {
+          "key": "read_letters",
+          "text": "Last month, tidying Pavel's desk, she read his brother's letters and told Galina about them; the denunciation rests on what she said. [SECRET-NINA-F7]"
+        }
+      ],
+      "start": { "location": "laboratory", "holds": ["appointment_form"] }
+    }
+  ],
+  "style": { "pov": "close third, rotating", "tense": "past" },
+  "arc": {
+    "premise": "On a night shift at a Moscow institute in 1951, the deputy head of a laboratory sets out to have her chief's post by morning.",
+    "chapters": [{ "goal": "Before the director arrives at nine, someone in Laboratory No. 4 is betrayed." }]
+  }
+}

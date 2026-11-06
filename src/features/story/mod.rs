@@ -15,6 +15,9 @@
 //! - [`simulation`] — M1's: a scene as K branches of rounds, the characters
 //!   proposing and the World Master ruling ([`contracts`], [`prompts`]); the
 //!   secrets followed by their planted tokens ([`leaks`]).
+//! - [`eval`] — M3's hidden runner: the systems of spec §11 as run options,
+//!   the frozen premises, the batch; [`single`] — its B0, one agent in one
+//!   session.
 
 pub mod answer;
 pub mod author;
@@ -25,6 +28,7 @@ pub mod contracts;
 pub mod conversation;
 pub mod dialect;
 pub mod engine;
+pub mod eval;
 pub mod export;
 pub mod keeper;
 pub mod leaks;
@@ -35,6 +39,7 @@ pub mod run;
 pub mod scene;
 pub mod schema;
 pub mod simulation;
+pub mod single;
 pub mod staging;
 pub mod steps;
 

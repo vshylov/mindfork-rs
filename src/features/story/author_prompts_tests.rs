@@ -1,8 +1,8 @@
 use std::collections::BTreeSet;
 
 use super::{
-    Again, ChapterContext, Kept, Trace, author_system, continuity, outline, pick, plan, reader,
-    revise, story_language, triage, write,
+    Again, ChapterContext, Kept, Record, Trace, author_system, continuity, outline, pick, plan,
+    reader, revise, story_language, triage, write, writing_rules,
 };
 use crate::entities::story::{
     Assumption, BranchId, Canon, CharacterKey, Event, EventKind, ReviewNote, SceneSetup, WorldState,
@@ -92,6 +92,7 @@ fn ctx<'a>(
         register: &NOTHING_NOTED,
         choices: &[],
         last: false,
+        played: true,
     }
 }
 
@@ -145,6 +146,7 @@ fn a_plan_is_shown_the_kept_scenes_and_offered_the_end_after_the_first() {
         setup: &setup,
         intent: "Squeeze Mara.",
         trace: &t,
+        played: true,
     }];
     let second = plan(&view, &kept, &world, (2, 4), None);
     assert!(second.user.contains("Or end the chapter here"));
@@ -278,6 +280,7 @@ fn the_draft_is_asked_in_the_storys_language_from_the_kept_traces() {
         setup: &setup,
         intent: "i",
         trace: &t,
+        played: true,
     }];
     let draft = write(&view, &kept, (1200, 2500));
     assert!(draft.user.contains("Write in Russian"));
@@ -314,6 +317,7 @@ fn the_checker_sees_the_record_with_its_ids_and_not_the_authors_intent() {
         setup: &setup,
         intent: "Squeeze Mara.",
         trace: &t,
+        played: true,
     }];
     let prompt = continuity(
         &canon,
@@ -373,6 +377,7 @@ fn a_triage_and_a_revision_show_the_notes_by_label() {
         setup: &setup,
         intent: "i",
         trace: &t,
+        played: true,
     }];
     let revision = revise(&view, &kept, "## One\n\nOld.", &[(&note, &decided)], (1, 2));
     assert!(revision.user.contains("(your critique: True.)"));
@@ -425,6 +430,7 @@ fn the_chapters_choices_reach_every_author_prompt_once_each() {
         setup: &setup,
         intent: "i",
         trace: &t,
+        played: true,
     }];
     let shown = vec![("k0".to_owned(), &t)];
     let note = ReviewNote {
@@ -466,6 +472,61 @@ fn the_chapters_choices_reach_every_author_prompt_once_each() {
 }
 
 #[test]
+fn the_prose_rules_are_every_writers_and_the_record_rules_the_records() {
+    let canon = fixture_canon();
+    let secrets = "A secret enters the prose when a scene spends it, not before";
+    let talk = "Never retell a talk in indirect speech";
+    let dead_ends = "what in the record led nowhere";
+    let spent = "a secret spent in such a scene is still told in a line of direct speech";
+    let material = "it is your material, not a text to retell";
+    let played = writing_rules(&canon, (1, 2), Record::Played);
+    let planned = writing_rules(&canon, (1, 2), Record::Planned);
+    let alone = writing_rules(&canon, (1, 2), Record::None);
+    // F's and A2–A4's record: the material, its dead ends, the prose.
+    for rule in [material, dead_ends, spent, secrets, talk] {
+        assert!(played.contains(rule), "played lacks {rule:?}");
+    }
+    assert!(!played.contains("Tell what the record holds"));
+    // A1's record holds openings alone: not a record many times the chapter.
+    for rule in [dead_ends, spent, secrets, talk] {
+        assert!(planned.contains(rule), "planned lacks {rule:?}");
+    }
+    assert!(!planned.contains(material));
+    // B0, a writer alone: the prose's rules, nothing of a record (T21).
+    assert!(alone.contains(secrets) && alone.contains(talk));
+    assert!(!alone.contains("record"), "{alone}");
+    // The draft and every revision carry them.
+    let goals = vec!["g".to_owned()];
+    let summaries = Vec::new();
+    let view = ctx(&canon, &goals, &summaries);
+    let t = trace();
+    let setup = setup();
+    let kept = [Kept {
+        scene: 1,
+        setup: &setup,
+        intent: "i",
+        trace: &t,
+        played: true,
+    }];
+    let draft = write(&view, &kept, (1, 2));
+    let revision = revise(
+        &view,
+        &kept,
+        "## One
+
+Old.",
+        &[],
+        (1, 2),
+    );
+    for prompt in [&draft, &revision] {
+        assert!(
+            prompt.user.contains(&played),
+            "the draft and revisions take the rules whole"
+        );
+    }
+}
+
+#[test]
 fn the_craft_reaches_the_plans_the_draft_and_the_revisions() {
     let canon = fixture_canon();
     let system = author_system(&canon, "Russian");
@@ -485,6 +546,7 @@ fn the_craft_reaches_the_plans_the_draft_and_the_revisions() {
         setup: &setup,
         intent: "i",
         trace: &t,
+        played: true,
     }];
     let lines = "act on a plan or a boundary rather than announce it, open no reply on thanks, \
                  apology or agreement the moment does not call for, and show a want in a deed";

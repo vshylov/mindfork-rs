@@ -259,6 +259,17 @@ pub(super) fn seed_of(branch: &BranchId) -> u64 {
     u64::from_str_radix(&hex[..16], 16).expect("a SHA-256 is hex")
 }
 
+/// A branch's seed under the story's `seed` (`SimConfig::seed`): the story's
+/// seed and the branch's id hashed together, or for seed 0 [`seed_of`] as
+/// it was, so a story made before M3 draws what it drew.
+pub(super) fn seeded(branch: &BranchId, seed: u64) -> u64 {
+    if seed == 0 {
+        return seed_of(branch);
+    }
+    let hex = sha256_hex(format!("{seed}/{branch}").as_bytes());
+    u64::from_str_radix(&hex[..16], 16).expect("a SHA-256 is hex")
+}
+
 /// The setup as the branch's opening events: what has just happened, with
 /// everyone present put at the scene's place, then the pressure (spec §6,
 /// *Circumstances become events*).

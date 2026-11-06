@@ -27,8 +27,8 @@ use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 use super::port::{
-    Answer, Attempt, Attempts, CallAddress, LlmPort, PortError, Prompt, Role, prompt_sha256,
-    run_json, run_text,
+    Answer, Attempt, Attempts, CallAddress, LlmPort, PortError, Prompt, Role, Turn, flattened,
+    prompt_sha256, run_json, run_session, run_text,
 };
 use super::schema::Schema;
 use crate::entities::sampling::SamplingConfig;
@@ -191,6 +191,24 @@ impl LlmPort for EngineAdapter {
             prompt_sha256: prompt_sha256(prompt, None),
         };
         run_text(&mut live, &call.address, prompt).await
+    }
+
+    async fn session(
+        &self,
+        call: &CallAddress,
+        role: Role,
+        system: &str,
+        turns: &[Turn],
+    ) -> Result<String, PortError> {
+        let mut live = Live {
+            adapter: self,
+            call,
+            role,
+            mechanism: Mechanism::Text,
+            output_schema: None,
+            prompt_sha256: prompt_sha256(&flattened(system, turns), None),
+        };
+        run_session(&mut live, &call.address, system, turns).await
     }
 }
 

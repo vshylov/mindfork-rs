@@ -157,6 +157,13 @@ fn real_main(
             loc,
         );
     }
+    // Fabula's evaluation runner (docs/fabula.md §4, PR 13) writes only into
+    // its own output directory, its log beside the stories: no data root is
+    // created, and no single-instance lock is taken, so a running app is left
+    // alone.
+    if let CliCommand::StoryEval { args } = command {
+        return run_story_eval(&args);
+    }
     paths.ensure_dirs(loc).with_context(|| {
         loc.tf(
             "cli.ctx.ensure_dirs",
@@ -240,7 +247,10 @@ fn real_main(
         }
         CliCommand::ThemesCheck { target } => run_themes_check(paths, target.as_deref(), loc),
         CliCommand::Run => run_tui(paths, loc),
-        CliCommand::Demo | CliCommand::Stats { .. } | CliCommand::Keys { .. } => {
+        CliCommand::Demo
+        | CliCommand::Stats { .. }
+        | CliCommand::Keys { .. }
+        | CliCommand::StoryEval { .. } => {
             unreachable!("handled above, before the real root is touched")
         }
         CliCommand::Help { .. } | CliCommand::Version => unreachable!("handled in main"),
@@ -258,6 +268,41 @@ fn refuses_tui_launch(command: &CliCommand, stdout_is_terminal: bool) -> bool {
         command,
         CliCommand::Run | CliCommand::Demo | CliCommand::Keys { .. }
     ) && !stdout_is_terminal
+}
+
+/// `mindfork story-eval …`: Fabula's hidden evaluation runner. Its own words
+/// are English — it is a researcher's tool with no help topic — and a mistake
+/// in its arguments prints its usage with exit code 2.
+fn run_story_eval(args: &[String]) -> anyhow::Result<ExitCode> {
+    use features::story::eval;
+    let command = match eval::parse(args) {
+        Ok(command) => command,
+        Err(message) => {
+            eprintln!("{message}");
+            return Ok(ExitCode::from(2));
+        }
+    };
+    let dir = match &command {
+        eval::Command::Run { job, .. } => Some(job.dir.clone()),
+        eval::Command::Batch { batch, .. } => Some(batch.out.clone()),
+        eval::Command::Premises => None,
+    };
+    let _logging = match dir {
+        Some(dir) => {
+            std::fs::create_dir_all(&dir)
+                .with_context(|| format!("cannot create {}", dir.display()))?;
+            Some(logging::init_in(&dir))
+        }
+        None => None,
+    };
+    let runtime = tokio::runtime::Runtime::new()?;
+    match runtime.block_on(eval::execute(command)) {
+        Ok(()) => Ok(ExitCode::SUCCESS),
+        Err(message) => {
+            eprintln!("{message}");
+            Ok(ExitCode::FAILURE)
+        }
+    }
 }
 
 /// Launches the main TUI (a command with no subcommand).

@@ -115,6 +115,13 @@ pub struct ChapterConfig {
     /// The language of what the human reads: the summary, a pick's note, the
     /// assumptions.
     pub human_language: String,
+    /// Whether the world plays the scenes. Off — M3's A1 (docs/fabula.md §6,
+    /// T22) — each scene's branch holds its opening alone, kept with no
+    /// pick, and the Author invents what happens in it.
+    pub simulate: bool,
+    /// Whether the chapter is reviewed and revised. Off — M3's A3 (spec
+    /// §11) — no reviewer reads it, and its draft goes to the checkpoint.
+    pub review: bool,
 }
 
 impl Default for ChapterConfig {
@@ -129,6 +136,8 @@ impl Default for ChapterConfig {
             words: (1200, 2500),
             budget: Budget::default(),
             human_language: "English".to_owned(),
+            simulate: true,
+            review: true,
         }
     }
 }
@@ -147,6 +156,10 @@ impl ChapterConfig {
             "words": [self.words.0, self.words.1],
             "budget": {"tokens": self.budget.tokens, "usd": self.budget.usd},
             "human_language": self.human_language,
+            "seed": self.sim.seed,
+            "omniscient": self.sim.omniscient,
+            "simulate": self.simulate,
+            "review": self.review,
         })
     }
 }
@@ -615,6 +628,7 @@ impl Run<'_> {
             register: &ctx.register,
             choices: &self.choices,
             last: ctx.last,
+            played: self.config.simulate,
         }
     }
 
@@ -809,7 +823,11 @@ impl Run<'_> {
                     .await?;
                 self.steps.finish(&address, StepStatus::Done).await?;
             }
-            let (stored, branch) = self.keep_scene(n, m, ctx, &kept).await?;
+            let (stored, branch) = if self.config.simulate {
+                self.keep_scene(n, m, ctx, &kept).await?
+            } else {
+                self.open_scene(n, m).await?
+            };
             let trace = self.trace(&branch).await?;
             kept.push(KeptScene { stored, trace });
         }
@@ -837,9 +855,10 @@ impl Run<'_> {
             .find(|s| &s.id == id))
     }
 
-    fn kept_view<'k>(kept: &'k [KeptScene]) -> Vec<Kept<'k>> {
+    fn kept_view<'k>(&self, kept: &'k [KeptScene]) -> Vec<Kept<'k>> {
         kept.iter()
             .map(|k| Kept {
+                played: self.config.simulate,
                 scene: k.stored.scene,
                 setup: &k.stored.setup,
                 intent: &k.stored.intent,
@@ -865,7 +884,7 @@ impl Run<'_> {
         let schema = PlanReply::schema_for(&self.keys, may_end);
         let mut prompt = prompts::plan(
             &self.view(n, ctx),
-            &Self::kept_view(kept),
+            &self.kept_view(kept),
             &world,
             (m, self.config.max_scenes),
             again,
@@ -1032,6 +1051,63 @@ impl Run<'_> {
         }
     }
 
+    /// Scene `m` set without being played (M3's A1, `ChapterConfig::simulate`
+    /// off): one branch with its opening alone, kept as it is, since there is
+    /// nothing to pick between; what happens in it is the draft's to invent
+    /// (docs/fabula.md §6, T22). The opening is held to the world as a played
+    /// scene's is, and moves its cast for the scenes after it.
+    async fn open_scene(&mut self, n: u32, m: u32) -> Go<(StoredScene, BranchId)> {
+        let current = self
+            .attempts(n, m)
+            .await?
+            .last()
+            .cloned()
+            .expect("a scene's first attempt is stored before it is kept");
+        if let Some(pick) = self.db.pick_of(&current.id).await?
+            && let Some(branch) = pick.branch
+        {
+            return Ok((current, branch));
+        }
+        let address = current.id.to_string();
+        let tip = match self.db.main_line_tip().await? {
+            Some(tip) => tip,
+            None => BranchId::genesis(),
+        };
+        let opening = SimConfig {
+            branches: 1,
+            max_rounds: 0,
+            reflect_every: 0,
+            ..self.config.sim
+        };
+        let outcomes = play_scene(
+            self.db,
+            &self.port,
+            &self.steps,
+            (&current.id, &current.setup),
+            &tip,
+            &opening,
+        )
+        .await
+        .map_err(|e| scene_halt(&address, e))?;
+        let Some(branch) = outcomes
+            .into_iter()
+            .find(|o| o.failed.is_none())
+            .map(|o| o.branch)
+        else {
+            return Err(Halt::Stop {
+                step: address,
+                why: Stop::Failed("the scene's opening could not be set".to_owned()),
+            });
+        };
+        self.author
+            .record_pick(&current.id, Some(&branch), "")
+            .await?;
+        self.steps
+            .finish(&format!("{address}/pick"), StepStatus::Done)
+            .await?;
+        Ok((current, branch))
+    }
+
     /// Stores the scene's next attempt, then its current attempt's pick of
     /// none: in that order, so a run killed between finds the next attempt.
     async fn next_attempt(
@@ -1102,11 +1178,7 @@ impl Run<'_> {
 
     async fn draft(&mut self, n: u32, ctx: &Context, kept: &[KeptScene]) -> Go<ChapterVersion> {
         let address = format!("ch{n}/v{}/write", self.first_version());
-        let prompt = prompts::write(
-            &self.view(n, ctx),
-            &Self::kept_view(kept),
-            self.config.words,
-        );
+        let prompt = prompts::write(&self.view(n, ctx), &self.kept_view(kept), self.config.words);
         let text = self.ask_text(&address, Role::Author, &prompt).await?;
         let version = self
             .author
@@ -1134,7 +1206,7 @@ impl Run<'_> {
         }
         let prompt = prompts::revise(
             &view,
-            &Self::kept_view(kept),
+            &self.kept_view(kept),
             &current.text,
             accepted,
             self.config.words,
@@ -1162,7 +1234,10 @@ impl Run<'_> {
     ) -> Go<ChapterVersion> {
         loop {
             let in_take = version.version + 1 - self.first_version();
-            if version.origin == VersionOrigin::Human || in_take > self.config.max_revisions {
+            if !self.config.review
+                || version.origin == VersionOrigin::Human
+                || in_take > self.config.max_revisions
+            {
                 return Ok(version);
             }
             let notes = self.review(n, ctx, kept, &version).await?;
@@ -1220,7 +1295,7 @@ impl Run<'_> {
         };
         let reader_prompt = prompts::reader(&published, &version.text);
         let checker_prompt =
-            prompts::continuity(&self.canon, &opened, &Self::kept_view(kept), &version.text);
+            prompts::continuity(&self.canon, &opened, &self.kept_view(kept), &version.text);
         // The Canon keeper's check against the published chapters' register
         // rides with the checker's (PR 11): one batch of notes, so a resume
         // asks them all again or none. In the arc's last chapter it may name
@@ -1662,3 +1737,6 @@ mod choices_tests;
 #[cfg(test)]
 #[path = "craft_tests.rs"]
 mod craft_tests;
+#[cfg(test)]
+#[path = "systems_tests.rs"]
+mod systems_tests;

@@ -137,6 +137,10 @@ pub enum CliCommand {
     /// terminal's check (docs/research/macos.md §13.4). `output` — also write
     /// the lines into that file.
     Keys { output: Option<PathBuf> },
+    /// Fabula's evaluation runner (`story-eval …`, docs/fabula.md §4, PR
+    /// 13): hidden — no line in `--help`, no help topic — and parsed by the
+    /// runner itself, whose arguments these are.
+    StoryEval { args: Vec<String> },
     /// Show help (general or for a subcommand).
     Help { topic: Option<HelpTopic> },
     /// Show the version (`-V`/`--version`).
@@ -237,6 +241,9 @@ pub fn parse(args: &[String], loc: &Locale) -> Result<CliCommand, String> {
         "themes" => parse_themes(rest, loc),
         "demo" => parse_demo(rest, loc),
         "keys" => parse_keys(rest, loc),
+        "story-eval" => Ok(CliCommand::StoryEval {
+            args: rest.iter().map(|a| (*a).to_owned()).collect(),
+        }),
         other if other.starts_with('-') => Err(unknown_option(loc, other)),
         other => Err(unknown_command(loc, other)),
     }
@@ -1263,6 +1270,21 @@ mod tests {
         );
         assert!(p(&["demo", "--force"]).is_err(), "unknown option refused");
         assert!(p(&["demo", "extra"]).is_err(), "stray argument refused");
+    }
+
+    /// Fabula's evaluation runner is hidden (docs/fabula.md §4, PR 13): its
+    /// arguments go to it as they are, and no help text names it.
+    #[test]
+    fn story_eval_is_parsed_by_the_runner_and_listed_nowhere() {
+        assert_eq!(
+            p(&["story-eval", "run", "--seed", "2"]).unwrap(),
+            CliCommand::StoryEval {
+                args: vec!["run".into(), "--seed".into(), "2".into()]
+            }
+        );
+        for lang in [Lang::En, Lang::Ru] {
+            assert!(!render_help(None, locale(lang)).contains("story-eval"));
+        }
     }
 
     #[test]

@@ -1,0 +1,119 @@
+{
+  "world": {
+    "rules": [
+      "No magic. A Flemish cloth town in 1523, on the feast of Saint Luke, patron of painters.",
+      "At the noon bell the guild judges masterpieces in its hall, the Brotherhood's feast mass begins in its chapel, and the court agent's coach leaves the inn yard.",
+      "The panel can be in only one of those places at noon, and whoever carries it in carries its claim.",
+      "Aert drew the design, Jan painted the landscape and robes, Lysbet the faces and hands; the three of them know it, the town does not.",
+      "The guild takes no woman as master, and bars for life a painter whose masterpiece is proved to be another's hand."
+    ]
+  },
+  "locations": [
+    {
+      "key": "workshop",
+      "name": "Master Aert's Workshop",
+      "description": "A long room smelling of linseed and egg, easels by the north window, the altarpiece drying under a cloth.",
+      "routes": [
+        { "to": "market_square", "ticks": 1 },
+        { "to": "inn_yard", "ticks": 1 }
+      ],
+      "items": ["altarpiece"]
+    },
+    {
+      "key": "market_square",
+      "name": "The Market Square",
+      "description": "Cloth stalls, a crier on the steps, and the belfry whose bell rings noon over everything.",
+      "routes": [
+        { "to": "workshop", "ticks": 1 },
+        { "to": "guild_hall", "ticks": 1 },
+        { "to": "rosary_chapel", "ticks": 1 },
+        { "to": "inn_yard", "ticks": 1 }
+      ],
+      "items": []
+    },
+    {
+      "key": "guild_hall",
+      "name": "The Painters' Hall",
+      "description": "The guild's hall under Saint Luke's banner, where the dean and the masters sit at noon to judge.",
+      "routes": [{ "to": "market_square", "ticks": 1 }],
+      "items": []
+    },
+    {
+      "key": "rosary_chapel",
+      "name": "The Rosary Chapel",
+      "description": "A side chapel of the great church, its altar bare, waiting for the panel the Brotherhood has ordered.",
+      "routes": [{ "to": "market_square", "ticks": 1 }],
+      "items": []
+    },
+    {
+      "key": "inn_yard",
+      "name": "The Swan's Yard",
+      "description": "An inn yard where the court agent's coach stands harnessed, the driver dozing on the box.",
+      "routes": [
+        { "to": "market_square", "ticks": 1 },
+        { "to": "workshop", "ticks": 1 }
+      ],
+      "items": []
+    }
+  ],
+  "characters": [
+    {
+      "key": "aert",
+      "name": "Aert",
+      "public": "The master of the workshop, sixty-four, honoured in the guild for thirty years; he rarely stands at the easel now.",
+      "voice": "Grand and slow; talks of colours as if they were saints.",
+      "goals": [
+        "Have the panel in the Brotherhood's chapel by the noon bell as his own work, for the fee that keeps the workshop",
+        "See Jan marry Lysbet and keep the workshop after him"
+      ],
+      "secrets": [
+        {
+          "key": "failing_eyes",
+          "text": "His eyes can no longer find a brush's tip; the underdrawing was the last work of his hand, and the Brotherhood's contract asks for the master's own hand. [SECRET-AERT-E3]"
+        }
+      ],
+      "start": { "location": "workshop", "holds": ["brotherhood_contract"] }
+    },
+    {
+      "key": "jan",
+      "name": "Jan",
+      "public": "Aert's journeyman, twenty-seven, nine years in the workshop; the town expects him to marry the master's daughter.",
+      "voice": "Eager and earnest; promises quickly.",
+      "goals": [
+        "Carry the panel into the guild hall at noon as his masterpiece and be made a master"
+      ],
+      "secrets": [
+        {
+          "key": "ghent_betrothal",
+          "text": "He is promised to a dyer's daughter in Ghent, the wedding to follow his mastership; Lysbet believes he means to marry her. [SECRET-JAN-B7]"
+        }
+      ],
+      "start": { "location": "market_square", "holds": ["betrothal_ring"] }
+    },
+    {
+      "key": "lysbet",
+      "name": "Lysbet",
+      "public": "Aert's daughter, twenty-five, who grinds his colours, keeps his accounts and writes his letters.",
+      "voice": "Dry and exact; says less than she sees.",
+      "goals": [
+        "Be on the court agent's coach with the panel when it leaves at noon, so a court sees what her hand can do"
+      ],
+      "secrets": [
+        {
+          "key": "sealed_letter",
+          "text": "She wrote to the court agent in her father's name and under his seal, praising 'my daughter's hand'; the agent's reply, which she carries, is addressed to Aert. [SECRET-LYSBET-H2]"
+        }
+      ],
+      "start": { "location": "workshop", "holds": ["agent_letter"] }
+    }
+  ],
+  "style": { "pov": "close third, rotating", "tense": "past" },
+  "arc": {
+    "premise": "On Saint Luke's day an altarpiece made by three hands can go through only one of three doors at the noon bell, and each painter needs a different one.",
+    "chapters": [
+      {
+        "goal": "By the noon bell the panel has gone through one door of three, and a secret about whose hand made it is out."
+      }
+    ]
+  }
+}

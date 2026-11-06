@@ -342,6 +342,7 @@ pub(super) fn config() -> ChapterConfig {
             max_rounds: 2,
             abnormal_p: 0.0,
             reflect_every: 0,
+            ..SimConfig::default()
         },
         human_language: "Russian".to_owned(),
         ..ChapterConfig::default()

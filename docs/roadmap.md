@@ -34,11 +34,14 @@ background, a scene named at a checkpoint played again with the ones after it, t
 register of open threads and dated facts, scenes planned as collisions with a price and a
 staging pass on every chapter, a chapter's choices standing for its later steps, and a
 map every scene can reach; Gate G2
-GO on a two-chapter story. Before the
-evaluation (M3) come G2's readers' findings: the register (PR 11), then the craft of the
-scenes and the lines and G2 again (PR 12; [fabula.md](fabula.md), *Before M3*). M3's
-verdict decides whether the long form (M4) is built; until then the story tools stay
-behind `tools.story`, off.
+GO on a two-chapter story. G2's readers' findings came before the evaluation: the register
+(PR 11), then the craft of the scenes and the lines and G2 again (PR 12; [fabula.md](fabula.md),
+*Before M3*). M3, the evaluation, has begun: PR 13 builds its hidden runner, with the
+systems of spec §11 as its options and a batch meant to run for days on a cloud machine.
+The owner chose twelve of twenty premise candidates, frozen with their hashes, and the
+full run's model follows a pilot on Qwen 3.8 and Sonnet 5.5, run for the owner to read
+(T19). M3's verdict decides whether the long form (M4) is built; until then the story tools
+stay behind `tools.story`, off.
 
 The last two code tracks — small windows, and the reasoning effort a model
 does not have — closed on 2026-09-30 and 2026-10-01 and ship together in

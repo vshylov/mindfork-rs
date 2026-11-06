@@ -1,0 +1,127 @@
+{
+  "world": {
+    "rules": [
+      "No magic.",
+      "A temple town in Travancore, South India, 1934: the last night of the temple festival.",
+      "The violin concert before the temple gate begins at midnight and runs until the dawn lamps. Ramaswamy plays the main violin, as he has for thirty years, with his pupil beside him on the second.",
+      "An agent of a gramophone company from Madras will hear the concert and leave on the six o'clock train with a recording contract for one musician.",
+      "Custom forbids a widow to play in public; if Kamakshi is seen playing, the town will shun her father's house."
+    ]
+  },
+  "locations": [
+    {
+      "key": "music_room",
+      "name": "The Music Room",
+      "description": "The front room of Ramaswamy's house on the temple street: a mat for pupils, his own guru's garlanded portrait, the concert violin in its case.",
+      "routes": [
+        { "to": "kitchen", "ticks": 1 },
+        { "to": "pavilion", "ticks": 1 }
+      ],
+      "items": ["concert_violin"]
+    },
+    {
+      "key": "kitchen",
+      "name": "The Kitchen and Storeroom",
+      "description": "A smoke-blackened kitchen at the back of the house, rice bins and brass pots; behind it a storeroom nobody but Kamakshi enters.",
+      "routes": [
+        { "to": "music_room", "ticks": 1 },
+        { "to": "temple_tank", "ticks": 1 }
+      ],
+      "items": ["mother_violin"]
+    },
+    {
+      "key": "pavilion",
+      "name": "The Festival Pavilion",
+      "description": "A palm-leaf pavilion before the temple gate, hung with oil lamps; the drummers are tuning and the crowd is spreading mats for midnight.",
+      "routes": [
+        { "to": "music_room", "ticks": 1 },
+        { "to": "temple_tank", "ticks": 1 },
+        { "to": "station", "ticks": 2 }
+      ],
+      "items": []
+    },
+    {
+      "key": "temple_tank",
+      "name": "The Temple Tank",
+      "description": "Stone steps down to dark water behind the temple, where the town bathes at dawn; at night only frogs and one lamp at the corner shrine.",
+      "routes": [
+        { "to": "kitchen", "ticks": 1 },
+        { "to": "pavilion", "ticks": 1 }
+      ],
+      "items": []
+    },
+    {
+      "key": "station",
+      "name": "The Railway Station",
+      "description": "A platform under a tin roof at the edge of town; the agent's trunk and his recording machine wait there for the six o'clock train.",
+      "routes": [{ "to": "pavilion", "ticks": 2 }],
+      "items": []
+    }
+  ],
+  "characters": [
+    {
+      "key": "ramaswamy",
+      "name": "Ramaswamy",
+      "public": "The town's great violinist, sixty-eight, who has played the festival's last night for thirty years; proud, ceremonious, quick to take offence.",
+      "voice": "Formal and grand; Sanskrit tags and proverbs; speaks to his pupil as to a boy.",
+      "goals": [
+        "Play the midnight concert himself, from the first note to the dawn lamps.",
+        "Keep Krishnan from leaving for Madras before he is ready."
+      ],
+      "secrets": [
+        {
+          "key": "deafness",
+          "text": "His hearing has failed this past year: above the drums he can no longer hear his own pitch, and plays by the memory of his fingers. Only a doctor in Quilon knows. [SECRET-RAMASWAMY-D4]"
+        }
+      ],
+      "start": { "location": "music_room", "holds": ["doctor_letter"] }
+    },
+    {
+      "key": "krishnan",
+      "name": "Krishnan",
+      "public": "Ramaswamy's pupil, nineteen, who has lived in his house and served him for eight years; gifted, eager, careful to seem humble.",
+      "voice": "Respectful to stiffness; the words tumble out fast when he talks about music.",
+      "goals": [
+        "Be chosen by the gramophone agent tonight and leave with him on the six o'clock train.",
+        "Keep his guru from playing three particular compositions tonight."
+      ],
+      "secrets": [
+        {
+          "key": "sold_songs",
+          "text": "Last month he sold the agent three of his guru's unpublished compositions as his own, for the fare to Madras and a new violin. The agent believes Krishnan wrote them. [SECRET-KRISHNAN-6P]"
+        }
+      ],
+      "start": { "location": "pavilion", "holds": ["agent_receipt"] }
+    },
+    {
+      "key": "kamakshi",
+      "name": "Kamakshi",
+      "public": "Ramaswamy's daughter, twenty-six, widowed at fifteen, who keeps her father's house; silent in company, sharp-eyed, never seen near the music.",
+      "voice": "Low and exact; says little, and nothing she does not mean.",
+      "goals": [
+        "Be heard by the gramophone agent, once, before he leaves.",
+        "Keep her father from being shamed on the stage tonight."
+      ],
+      "secrets": [
+        {
+          "key": "night_violin",
+          "text": "For ten years she has taught herself the violin at night on her dead mother's instrument, from what she heard through the wall. She plays her father's compositions better than Krishnan does. [SECRET-KAMAKSHI-Q2]"
+        },
+        {
+          "key": "tuning",
+          "text": "She knows her father has gone deaf: every evening for a year she has secretly tuned his violin before he plays. [SECRET-KAMAKSHI-T9]"
+        }
+      ],
+      "start": { "location": "kitchen", "holds": [] }
+    }
+  ],
+  "style": { "pov": "close third, rotating", "tense": "past" },
+  "arc": {
+    "premise": "On the last night of a temple festival, an old violinist, his ambitious pupil and his widowed daughter each need the midnight concert for something the others must not learn.",
+    "chapters": [
+      {
+        "goal": "Before the six o'clock train, someone learns what the master has hidden, and his music leaves his house in hands he did not choose."
+      }
+    ]
+  }
+}
