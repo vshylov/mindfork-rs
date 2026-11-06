@@ -2014,7 +2014,8 @@ No code changed here; the documents changed (install.md, the manual).
   Windows Terminal 1.24 the row read `Shift+Enter (this terminal sends it as
   Enter)` and the hint fit its panel; after updating to **1.25** the same row
   read a plain `Shift+Enter` — the terminal answered the kitty query, so a
-  modified `Enter` is reported there and nothing is marked.
+  modified `Enter` is reported there and nothing is marked — and `Shift+Enter`
+  broke the line in the input box.
 - **The help row** stays `Shift+Enter / Alt+Enter / Ctrl+J` (a static table);
   its description now says `Ctrl+Enter` joins them when chosen.
 - **The screenshot drift gate went red, as it should**: the settings menu counts
