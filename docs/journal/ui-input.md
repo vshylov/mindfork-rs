@@ -1991,10 +1991,25 @@ No code changed here; the documents changed (install.md, the manual).
   reads as `auto` with a line in the log instead of failing the file. Its ledger
   in `stored_enums_tests.rs` names schema 7 — it came with a field of its own,
   which an older reader skips whole.
-- **Not measured here**: what Windows Terminal sends for `Ctrl+Enter` over SSH.
-  One report says a bare LF (= `Ctrl+J`, a line break under any choice); the
-  droplet has no Windows Terminal to check it with, so the docs do not promise
-  it, and `mindfork keys` is the way to see it.
+- **Measured by the owner** on Windows Terminal 1.24.12741.0 over SSH to the
+  droplet: under `auto` the footer named `Alt+Enter`, and `Ctrl+Enter` and
+  `Ctrl+J` broke the line — Windows Terminal sends `Ctrl+Enter` as LF, which is
+  `Ctrl+J`, so it breaks the line under any choice there. With `Shift+Enter`
+  chosen the footer named it and the key **sent the message**: without the kitty
+  protocol Windows Terminal sends it as the CR a bare `Enter` sends, and no
+  setting can tell the two apart on the app's side.
+- **So a choice the terminal sends as `Enter` is marked** — user's decision
+  (2026-11-06), over refusing it in such a session (the same settings serve a
+  terminal that delivers it, and a remapped keytab or `sendInput` binding can
+  deliver it even without the protocol). `shared::keys::sent_as_enter` holds
+  what the guess already rests on: `Shift+Enter` where no modified `Enter` is
+  reported, `Alt+Enter` in Terminal.app (Option is not Meta by default,
+  measured on the rented Mac). The row and its menu read `Shift+Enter (this
+  terminal sends it as Enter)`, the hint explains it, and the choice is kept.
+  `Ctrl+Enter` is never marked: CR from a legacy xterm, LF from Windows
+  Terminal, and nothing here tells which. The hint was checked against the
+  tallest one (lessons §5): at every width from 30 to 240, in both locales, it
+  never sets the panel's height.
 - **The help row** stays `Shift+Enter / Alt+Enter / Ctrl+J` (a static table);
   its description now says `Ctrl+Enter` joins them when chosen.
 - **The screenshot drift gate went red, as it should**: the settings menu counts
@@ -2010,18 +2025,21 @@ No code changed here; the documents changed (install.md, the manual).
   alone and from the new Linux render in the icon's box alone. The SVGs are the
   new renders as they are.
 
-**Tests** (+15): `config` — the default and an old file read `auto`, a
+**Tests** (+17): `config` — the default and an old file read `auto`, a
 choice survives a save, six foreign values read as `auto` without costing the
 file, names/chords/cycle pinned, the raw-JSON reader agrees with the typed one;
 `keys` — under every choice the three fallbacks break and a bare `Enter` sends,
 `Ctrl+Enter` breaks only under its own choice, each named chord is one the
-predicate accepts; `screens/chat` — `Ctrl+Enter` sends under `auto` and breaks
+predicate accepts, and the `sent_as_enter` table (nothing marked where a
+modified `Enter` is reported, `Shift+Enter` on a bare terminal, `Alt+Enter` too
+in Terminal.app, `auto`'s own chord never); `screens/chat` — `Ctrl+Enter` sends under `auto` and breaks
 once chosen, the fallback still breaks, the footer names `Ctrl+J` when chosen;
-`settings` — the row (the `ru` `auto (Shift+Enter)` in a test binary), its full cycle, and
+`settings` — the row (the `ru` `auto (Shift+Enter)` in a test binary), the marked
+label in both locales, its full cycle, and
 the multi-line editor following a key chosen a row up (footer included);
 `self_model`, `notes` — `Ctrl+Enter` commits under `auto` and breaks once passed
 in; `key_echo` — the outcome and the header follow the choice; `main` — the raw
-reader beside a typo the typed parse rejects. **4817 unit tests green,
+reader beside a typo the typed parse rejects. **4819 unit tests green,
 329 `#[ignore]`**, clippy `-D warnings`/fmt clean.
 
 **A live model run is not required** (AGENTS.md §3) — keys and a settings row,

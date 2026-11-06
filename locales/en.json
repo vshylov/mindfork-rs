@@ -1376,6 +1376,7 @@
   "ui.settings.choice.code_background_inverted": "inverted",
   "ui.settings.choice.code_background_normal": "normal",
   "ui.settings.choice.newline_auto": "auto ({chord})",
+  "ui.settings.choice.newline_sent_as_enter": "{chord} (this terminal sends it as Enter)",
   "ui.settings.field.auto_title": "Auto-title new chats",
   "ui.settings.desc.auto_title": ["The model names a new conversation by itself, once. After the user's message -", "the title appears while the reply streams; after the assistant's reply - the name", "reflects what the answer turned out to be about (usually more accurate). A chat", "you renamed yourself is never touched; Ctrl+R in the chat list works in any mode."],
   "ui.settings.choice.auto_title_user": "after the user's message",
@@ -2292,10 +2293,11 @@
     "The key that breaks the line in the message box and the multi-line editors, and",
     "the one their hints name. auto (the default) names what this terminal can deliver:",
     "Shift+Enter where a modified Enter is reported, Alt+Enter where it is not, Ctrl+J in",
-    "Terminal.app. Choose a key when that guess is wrong — over SSH from Windows Terminal",
-    "it names Alt+Enter, which Windows Terminal keeps for full screen. Shift+Enter,",
-    "Alt+Enter and Ctrl+J break the line whatever is chosen; Ctrl+Enter only when chosen",
-    "(otherwise it sends, as Enter does). Ctrl+J arrives from every terminal."
+    "Terminal.app. Choose a key when that guess is wrong: over SSH from Windows Terminal",
+    "1.24 it names Alt+Enter, kept there for full screen, and Shift+Enter arrives as a",
+    "plain Enter — Ctrl+Enter and Ctrl+J work. A key this terminal sends as Enter is",
+    "marked. Shift+Enter, Alt+Enter and Ctrl+J break the line whatever is chosen;",
+    "Ctrl+Enter when chosen, or where the terminal sends it as Ctrl+J."
   ],
   "ui.settings.desc.confirm_keys": "Ask for confirmation before regenerating the last reply and before deleting the last exchange — both discard what is already written and are irreversible in the UI. Off — both act immediately.",
   "ui.settings.desc.copy_thoughts": "When copying the conversation (F5) include the assistant's «thoughts» block (CoT). By default only message text is copied.",

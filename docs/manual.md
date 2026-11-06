@@ -891,10 +891,12 @@ things on different screens. The highlights:
 > **Over SSH from Windows Terminal.** The app sees the remote side's terminal, not
 > yours: Windows Terminal before 1.25 does not answer the kitty keyboard protocol
 > there, so the footer names `Alt+Enter` — and Windows Terminal keeps `Alt+Enter`
-> for full screen. Pick another key in *Settings → Interface → Line break key* —
-> `Ctrl+J` arrives from every terminal. `Shift+Enter`, `Alt+Enter` and `Ctrl+J`
-> keep breaking the line whatever you pick; `Ctrl+Enter` breaks it only when it
-> is the pick, and sends otherwise. `mindfork keys` shows what a key arrives as.
+> for full screen. `Ctrl+Enter` and `Ctrl+J` break the line there (Windows
+> Terminal sends `Ctrl+Enter` as `Ctrl+J`); pick one in *Settings → Interface →
+> Line break key* and the footer names it. `Shift+Enter` arrives there as a plain
+> `Enter` and sends — the setting marks it *(this terminal sends it as Enter)*.
+> `Shift+Enter`, `Alt+Enter` and `Ctrl+J` keep breaking the line wherever they
+> arrive, whatever you pick. `mindfork keys` shows what a key arrives as.
 
 > **When a key does nothing.** `mindfork keys` shows each key you press as the app
 > receives it, and what the input box does with it; `Ctrl+Q` quits. When a terminal

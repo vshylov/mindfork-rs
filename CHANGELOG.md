@@ -78,8 +78,9 @@ split by subsystem.
   `Ctrl+Enter` or `Ctrl+J`. The chosen key is the one the input box and the editors
   name, and `Ctrl+Enter` breaks the line once chosen (otherwise it still sends). Over
   SSH from Windows Terminal the app used to name `Alt+Enter`, which Windows Terminal
-  keeps for full screen; `Shift+Enter`, `Alt+Enter` and `Ctrl+J` keep breaking the
-  line whatever is chosen.
+  keeps for full screen: `Ctrl+Enter` or `Ctrl+J` work there, and `Shift+Enter`, which
+  arrives there as a plain `Enter`, is marked as such in the setting. `Shift+Enter`,
+  `Alt+Enter` and `Ctrl+J` keep breaking the line whatever is chosen.
 
 ### Fixed
 

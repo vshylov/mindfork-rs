@@ -2043,7 +2043,9 @@ where
 /// The setting exists because the automatic answer can name a key the user
 /// cannot press: Windows Terminal over SSH to a unix host answers no kitty
 /// protocol before 1.25, so the app names `Alt+Enter` — which Windows Terminal
-/// keeps for itself, to toggle full screen.
+/// keeps for itself, to toggle full screen. A choice the terminal is known to
+/// send as a bare `Enter` (`Shift+Enter` there) is kept but marked in the
+/// settings row (`shared::keys::sent_as_enter`).
 ///
 /// Like [`CodeBlockBackground`], deliberately **not** `Deserialize`: read
 /// through [`lenient_newline_key`], so a key a newer version adds reads here
@@ -2060,9 +2062,9 @@ pub enum NewlineKey {
     AltEnter,
     /// The one choice that makes a chord break the line which otherwise sends.
     /// Reported as such on Windows and on a terminal that took the kitty
-    /// protocol; Windows Terminal over SSH is reported (not measured here) to
-    /// send it as a line feed, which is `Ctrl+J`. A legacy xterm-like terminal
-    /// sends a bare CR — there it sends.
+    /// protocol; Windows Terminal 1.24 over SSH sends it as a line feed —
+    /// `Ctrl+J`, a line break under any choice (measured). A legacy xterm-like
+    /// terminal sends a bare CR — there it sends.
     CtrlEnter,
     CtrlJ,
 }

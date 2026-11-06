@@ -1131,6 +1131,35 @@ fn interface_has_the_newline_key_choice() {
     assert_eq!(seen, expected, "the cycle must return to where it started");
 }
 
+/// A chord the terminal sends as `Enter` is marked in the row and kept;
+/// `auto` reads as the chord it stands for (spec §11.5).
+#[test]
+fn the_newline_key_row_marks_a_chord_the_terminal_sends_as_enter() {
+    use crate::shared::config::NewlineKey;
+    let en = crate::shared::i18n::locale(crate::shared::i18n::Lang::En);
+    let ru = crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru);
+    assert_eq!(
+        newline_key_label_for(NewlineKey::ShiftEnter, en, "Alt+Enter", true),
+        "Shift+Enter (this terminal sends it as Enter)"
+    );
+    assert_eq!(
+        newline_key_label_for(NewlineKey::ShiftEnter, ru, "Alt+Enter", true),
+        "Shift+Enter (этот терминал шлёт его как Enter)"
+    );
+    assert_eq!(
+        newline_key_label_for(NewlineKey::ShiftEnter, en, "Shift+Enter", false),
+        "Shift+Enter"
+    );
+    assert_eq!(
+        newline_key_label_for(NewlineKey::Auto, en, "Alt+Enter", false),
+        "auto (Alt+Enter)"
+    );
+    assert_eq!(
+        newline_key_label_for(NewlineKey::CtrlJ, en, "Alt+Enter", false),
+        "Ctrl+J"
+    );
+}
+
 /// The multi-line editor follows the key chosen a row up: `Ctrl+Enter`
 /// breaks the line once chosen, its footer names it — and before the choice
 /// it commits, as a bare `Enter` does.
