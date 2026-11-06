@@ -1648,6 +1648,20 @@ runner needed (docs/fabula.md §6, T19–T23).
   Sonnet's F spent 4,887,905 tokens of the chapter's 6,000,000. At these figures F, B0 and
   A1 on twelve premises and three seeds (108 stories) cost about $810 on Sonnet and $60–70
   on Qwen. PR 13's live runs spent $22.49 on Sonnet and $5.30 on Qwen.
+- **The owner's reading** (2026-11-06). The page showed each model's stories in a shuffled
+  order with the key folded, and the scene breaks evened out. The owner ranked them before
+  opening the key:
+  - Sonnet: B0 best, A1 and F good too;
+  - Qwen on `mystery-2`: B0 so-so, A1 weak, F a failure;
+  - Qwen on the harbour: A1 best, F fair with flaws, A4 and B0 atmospheric with glitches,
+    A3 and A2 failures.
+
+  F came first nowhere. One reader and one premise a model is no verdict: spec §11 asks for
+  24 of 36 pairs. But it is the pilot's signal, and it is against the simulation. Sonnet's B0
+  had 32 revisions of polish; F's prose is written from the scenes' record with two, and its
+  seams show ("when the bells strike noon" in the wrong tense, a sentence about "three
+  generations" tied to nothing). Qwen's F failing outright confirms the owner's fear: on that
+  model the systems' differences drown in the model's.
 - **What the pilot found.**
   - *A reply cut and reported finished.* One of Qwen's B0 revisions came back with 17,493
     tokens, its text ending in the middle of a word, under a finish reason of `stop`: the

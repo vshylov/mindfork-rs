@@ -573,8 +573,10 @@ finished and none leaking, $3.36 in all. T19's pilot ran F, B0 and A1 on `myster
 Sonnet 5.5 ($22.49 at list price, F in 25 minutes) and on Qwen ($1.94, F in 130
 minutes), for the owner to read. It found a reply cut and reported finished, so B0 no longer
 keeps a version that breaks off mid-sentence. It also found most of Qwen's stories under the
-1,200 words asked for. The full run's model is chosen from them (T19). The figures are in
-[journal/stories.md](journal/stories.md).
+1,200 words asked for. The owner read them blind on 2026-11-06, and F came first nowhere:
+Sonnet's B0 best, Qwen's F on `mystery-2` a failure, A1 best on the harbour. That is one
+reader and one premise a model, not M3's verdict. The full run's model is still open (T19).
+The figures are in [journal/stories.md](journal/stories.md).
 
 Then the run itself, outside any pull request: 36 pairs for each of the two decisions
 (and the ablations, after a GO: T23), the calibration by three people, and the decision rule
@@ -779,7 +781,10 @@ PR 13 added five more, M3's own. The owner accepted every recommendation on 2026
   day. On a small model every system may write poorly whatever the engine does, and stories
   too weak to tell apart are judged by chance, a NO-GO from noise. The runner does not depend
   on the model, so PR 13's live run is a pilot: F, B0 and A1 on one premise on Qwen 3.8 and on
-  Sonnet 5.5, read by the owner. The full run's model is chosen after it.
+  Sonnet 5.5, read by the owner. The full run's model is chosen after it. The owner's reading
+  (2026-11-06) found Qwen's stories mostly weak, and its F on `mystery-2` a failure.
+  Sonnet's were all good, at some $810 for the 108 stories; the owner finds that too much, and
+  Haiku 5.5 is the cheaper candidate.
 - **T20. The stories' language.** (a) Russian, as G2: the owner reads them in their own
   language, and the other two judges read Russian too *(recommended)*. (b) English, the
   prompts' language. **Owner's decision (2026-11-05): (a).**
