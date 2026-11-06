@@ -580,6 +580,27 @@ to B0's as well, and the polish erased what the simulation had given it. The ful
 model is still open (T19).
 The figures are in [journal/stories.md](journal/stories.md).
 
+**After the pilot: the record is material (2026-11-06).** Two more diagnostics on F's Sonnet
+story found where its prose fails:
+- A line edit that kept every event mended words and left the rest.
+- The draft call, replayed on the same record, showed the cause. The Author drafts the whole
+  chapter in one pass, from a record of some 14,000 words (four scenes, English, with every
+  character's thoughts) for 1,200–2,500 words of Russian, told to "tell what the record holds".
+  It retold. Talks came out as "he asked whether…, she answered that…", the narrator gave a
+  secret away before its keeper confessed, and a plan that came to nothing kept its scene.
+
+The writing rules now say:
+- the record is material, not a text to retell;
+- what led nowhere is cut or told in a phrase, but a secret spent in such a scene is still
+  told in direct speech;
+- a secret enters the prose when a scene spends it;
+- a talk keeps a line or two of direct speech and is never retold.
+
+The last two are rules of the prose, and B0 has them too, as T21 gives it the same rules. The
+first two belong to a record, so they go to F and A1–A4. The replayed draft kept the
+simulation's scenes and told its secrets on time. This is one story, not a verdict: the full
+run tests the rules on premises they were not drawn from.
+
 Then the run itself, outside any pull request: 36 pairs for each of the two decisions
 (and the ablations, after a GO: T23), the calibration by three people, and the decision rule
 of spec §11, recorded here and in the journal.

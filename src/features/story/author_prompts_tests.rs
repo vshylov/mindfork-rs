@@ -1,8 +1,8 @@
 use std::collections::BTreeSet;
 
 use super::{
-    Again, ChapterContext, Kept, Trace, author_system, continuity, outline, pick, plan, reader,
-    revise, story_language, triage, write,
+    Again, ChapterContext, Kept, Record, Trace, author_system, continuity, outline, pick, plan,
+    reader, revise, story_language, triage, write, writing_rules,
 };
 use crate::entities::story::{
     Assumption, BranchId, Canon, CharacterKey, Event, EventKind, ReviewNote, SceneSetup, WorldState,
@@ -469,6 +469,61 @@ fn the_chapters_choices_reach_every_author_prompt_once_each() {
     }
     let triaged = triage(&view, "## One\n\nOld.", &[("n1".to_owned(), &note)]);
     assert!(!triaged.user.contains("These choices stand"));
+}
+
+#[test]
+fn the_prose_rules_are_every_writers_and_the_record_rules_the_records() {
+    let canon = fixture_canon();
+    let secrets = "A secret enters the prose when a scene spends it, not before";
+    let talk = "Never retell a talk in indirect speech";
+    let dead_ends = "what in the record led nowhere";
+    let spent = "a secret spent in such a scene is still told in a line of direct speech";
+    let material = "it is your material, not a text to retell";
+    let played = writing_rules(&canon, (1, 2), Record::Played);
+    let planned = writing_rules(&canon, (1, 2), Record::Planned);
+    let alone = writing_rules(&canon, (1, 2), Record::None);
+    // F's and A2–A4's record: the material, its dead ends, the prose.
+    for rule in [material, dead_ends, spent, secrets, talk] {
+        assert!(played.contains(rule), "played lacks {rule:?}");
+    }
+    assert!(!played.contains("Tell what the record holds"));
+    // A1's record holds openings alone: not a record many times the chapter.
+    for rule in [dead_ends, spent, secrets, talk] {
+        assert!(planned.contains(rule), "planned lacks {rule:?}");
+    }
+    assert!(!planned.contains(material));
+    // B0, a writer alone: the prose's rules, nothing of a record (T21).
+    assert!(alone.contains(secrets) && alone.contains(talk));
+    assert!(!alone.contains("record"), "{alone}");
+    // The draft and every revision carry them.
+    let goals = vec!["g".to_owned()];
+    let summaries = Vec::new();
+    let view = ctx(&canon, &goals, &summaries);
+    let t = trace();
+    let setup = setup();
+    let kept = [Kept {
+        scene: 1,
+        setup: &setup,
+        intent: "i",
+        trace: &t,
+        played: true,
+    }];
+    let draft = write(&view, &kept, (1, 2));
+    let revision = revise(
+        &view,
+        &kept,
+        "## One
+
+Old.",
+        &[],
+        (1, 2),
+    );
+    for prompt in [&draft, &revision] {
+        assert!(
+            prompt.user.contains(&played),
+            "the draft and revisions take the rules whole"
+        );
+    }
 }
 
 #[test]

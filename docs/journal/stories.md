@@ -13,7 +13,7 @@ what was rejected — the reasoning behind the code, not its current shape. For 
 shape read the reference documents named above; for the traps that recur across areas read
 [lessons.md](../lessons.md).
 
-## Entries (15)
+## Entries (16)
 
 - Post-M9: Fabula — PR 1, the story database (done)
 - Post-M9: Fabula — PR 2, the model port and replay; Gate G0 GO (done)
@@ -30,6 +30,7 @@ shape read the reference documents named above; for the traps that recur across 
 - Post-M9: Fabula — a chapter's choices stand (done)
 - Post-M9: Fabula — a map every scene can reach (done)
 - Post-M9: Fabula — PR 13, M3's hidden runner and the pilot (done)
+- Post-M9: Fabula — the record is material, not a text to retell (done)
 
 ### Post-M9: Fabula — PR 1, the story database (done)
 
@@ -1701,3 +1702,61 @@ runner needed (docs/fabula.md §6, T19–T23).
   - *Marks for the judges.* Each writer marks its scene breaks as it pleases: `---` in eight of
     Qwen's nine stories, `* * *` in Sonnet's F, an escaped `\*` in its B0, none in its A1.
     PR 14 shows the judges a pair, and evening such marks out is for it to weigh.
+
+### Post-M9: Fabula — the record is material, not a text to retell (done)
+
+T19's pilot found F's story first nowhere (PR 13). Two diagnostics on Sonnet's F story on
+`mystery-2` came after the polish one. Both were scratch runs: the engine's own adapter,
+the Author's role and Sonnet 5.5, from an `#[ignore]` test that was not committed.
+
+- **A line edit.** An editor was told to keep every event, every line's meaning and the order,
+  and to change only the sentences.
+  - The first pass, $0.1, changed 10 paragraphs of 53, all cosmetic. Its rules contradicted
+    each other: keep every thought, and drop the narrator's explanations.
+  - A second pass, with that settled, changed 28. It fixed the bells (a Muslim house in 1634
+    tells noon by the call to prayer), a sentence tied to nothing, a motive explained before
+    its deed, and an ambiguous "steward".
+  - Three small facts drifted: the brother's gambling debt, pawning to paying, "steward" to
+    "manager".
+  - The owner read it: not closer to B0's story.
+- **What the Author reads.** The draft is one call (`ch1/v1/write`), made after every scene
+  is played, so the ending is known.
+  - Its prompt is 94,247 characters: four scenes' record of about 22,000 each. That is some
+    14,000 words, in English, round by round, with every character's long lines and their
+    thoughts.
+  - From it the Author writes 1,200–2,500 words of Russian, told to "tell what the record holds".
+    It compresses six to ten times and translates as it goes.
+  - The symptoms an outside reading named follow from that:
+    - talks reported in indirect speech, "he asked whether…, she answered that…";
+    - the narrator giving a secret away before its keeper confesses: the thoughts are in the
+      record;
+    - a plan that led nowhere, the summons of the forger, keeping its scene.
+  - The bells came from the Author's own setup of scene 4, not from the cast.
+- **The draft replayed.** The same call on the same record, with the one sentence of "tell" replaced
+  by three rules, cost $0.11 and gave 1,249 words.
+  - The secrets came on time.
+  - The forger's line shrank to four words.
+  - Indirect speech stayed in scene 3. The dead-end rule had compressed the whole scene,
+    and the confession of the sale that sat inside it went into the summary.
+  - A second outside reading, checked against the texts, put it well above F's own first
+    draft and half a step behind B0's.
+- **As built.** `writing_rules` now gives:
+  - every writer (B0 too, as T21 gives it the same rules of the prose): a secret enters the
+    prose when a scene spends it, and a talk keeps a line or two of direct speech and is never
+    retold;
+  - every writer from a record (F, A1–A4): what led nowhere is cut or told in a phrase, but a
+    secret spent in such a scene is still told in direct speech;
+  - a played record (not A1's openings): "it is your material, not a text to retell", in place
+    of "tell what the record holds".
+
+  The draft and every revision carry them; the plan does not.
+- **Live.** The draft call replayed with the rules as the code builds them, the prompt
+  identical before them: 1,239 words, $0.11 (36,592 tokens in, 3,329 out).
+  - Scene 3's confession is now in direct speech.
+  - The keeper's secret is not told before the harem scene.
+  - Left from the record: the bells, "the brazier ticked", the ring "beside the ledger" in the
+    belt, and a hint of Rüstem's secret one paragraph before he whispers it.
+- **Tests.** Which writer gets which rule, and that the draft and the revision take them whole;
+  B0's brief still names no record. Mutation check: 6 mutants, all killed.
+- **Not decided here.** One story is no verdict. M3's full run tests the rules on the premises
+  they were not drawn from; the model and the reading for it stay open (T19).

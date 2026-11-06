@@ -719,14 +719,36 @@ impl Record {
     }
 }
 
+/// What the record left unspent is cut (T19's pilot, 2026-11-06): told every
+/// step of a record several times its length, the Author kept a plan that came
+/// to nothing and summed up the scene that held it, a confession included.
+const DEAD_ENDS: &str = " You know how the chapter ends: what in the record led nowhere (a \
+plan dropped, a summons no one answered, a question that changed nothing) is cut or told in a \
+phrase, unless its failing costs someone something; a secret spent in such a scene is still \
+told in a line of direct speech, never in a summary.";
+
+/// A secret is the scene's to spend, not the narrator's (T19's pilot): told
+/// from its keeper, the prose gave away the theft before the confession.
+const SECRETS: &str = "A secret enters the prose when a scene spends it, not before: a scene \
+told from its keeper shows their fear and what they do to hide it, never the secret itself, \
+until it comes out in a deed or a line.";
+
+/// A talk is shown, not reported (T19's pilot): rounds of questions came out
+/// as "he asked whether…, she answered that…".
+const TALK: &str = "Never retell a talk in indirect speech (he asked whether…, she answered \
+that…): keep the one or two lines that turn the scene, in direct speech, with what the speakers \
+do, and leave the rest unsaid.";
+
 /// How the prose is to be written: language, point of view, tense, length,
-/// and the record's terms kept out of it.
+/// and the record's terms kept out of it. The rules of the prose itself
+/// (secrets, talk) are every writer's, B0's included, as T21 has it; what to
+/// make of a record is the record's.
 pub fn writing_rules(canon: &Canon, words: (u32, u32), record: Record) -> String {
     let telling = match record {
         Record::Played => {
-            "Tell what the record holds: you may reorder, compress, skip and change point of \
-             view, but never contradict it, and never let a character know what they have not \
-             perceived."
+            "The record is many times longer than the chapter: it is your material, not a text \
+             to retell. You may reorder, compress, skip and change point of view, but never \
+             contradict it, and never let a character know what they have not perceived."
         }
         Record::Planned => {
             "Tell what the record holds, and where a scene was not played invent what happens \
@@ -739,19 +761,21 @@ pub fn writing_rules(canon: &Canon, words: (u32, u32), record: Record) -> String
              know what they have not perceived in your story."
         }
     };
-    let (cut, keys) = match record {
-        Record::None => ("", "The canon's"),
+    let (cut, keys, dead_ends) = match record {
+        Record::None => ("", "The canon's", ""),
         Record::Played | Record::Planned => (
             ": a line of the record that does otherwise may be cut or shown in what they do, as \
              long as what happened stays",
             "The record's",
+            DEAD_ENDS,
         ),
     };
     format!(
-        "Write in {}, in {}, in the {} tense, between {} and {} words. {telling} Keep each \
-         character's voice. In the dialogue, the characters act on a plan or a boundary rather \
-         than announce it, open no reply on thanks, apology or agreement the moment does not \
-         call for, and show a want in a deed rather than in a line that names it{cut}. {keys} \
+        "Write in {}, in {}, in the {} tense, between {} and {} words. {telling}{dead_ends} \
+         {SECRETS} {TALK} Keep each character's voice. In the dialogue, the characters act on a \
+         plan or a boundary rather than announce it, open no reply on thanks, apology or \
+         agreement the moment does not call for, and show a want in a deed rather than in a line \
+         that names it{cut}. {keys} \
          keys are not the story's words: never write a key in backticks. Begin with the \
          chapter's title as a level-two markdown heading (`## `). Reply with the chapter's text \
          and nothing else.",
