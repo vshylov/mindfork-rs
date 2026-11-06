@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (84)
+## Entries (85)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -96,6 +96,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Release 0.22.0 (prepared)
 - Release 0.23.0 (prepared)
 - Release 0.23.1 (prepared)
+- Post-M9: the screenshots' search icon on Linux — DejaVu Sans Mono as a fallback (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -5609,3 +5610,32 @@ No Rust changed and no live stack is involved; the test count is unchanged.
   because there is no key. At 01:53Z, Scoop's bucket and the tap's formula still named
   0.23.0; their schedules (`20 */4`, `23 */6`) next fire at 04:20Z and 06:23Z. Neither
   was waited for.
+
+### Post-M9: the screenshots' search icon on Linux — DejaVu Sans Mono as a fallback (done)
+
+**Why.** On an Ubuntu 24.04 machine with the fonts the release job installs
+(`fonts-jetbrains-mono`, `fonts-dejavu-core`, `fonts-wqy-microhei`),
+`tools/screenshots.py` printed `WARNING: no font covered: ⌕` and drew the chat
+list's search icon (U+2315, `theme.rs`'s `search`) as tofu in
+`chat-list-{dark,light}-en.png`. JetBrains Mono, DejaVu Sans and WenQuanYi Micro
+Hei all lack it; Segoe UI Symbol has it, so the committed images — rendered on
+Windows — were never wrong. On Linux only DejaVu Sans Mono covers it
+(`fc-list ':charset=2315'`), and it ships in the same `fonts-dejavu-core` package
+but was not in `FALLBACKS`.
+
+**What.** `/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf` joins
+`FALLBACKS`, after DejaVu Sans, so it is consulted only for what every face above
+it lacks. `tools/demo_reel.py` imports the same list.
+
+**Checked on that machine.**
+- Before: the warning, and the icon a box. After: no warning, the icon drawn.
+- Against the render before the change, only the icon's cell moved (a 12×17 px
+  box in each of the two chat-list PNGs); the other eight PNGs and all ten SVGs
+  are byte-identical, and the SVGs equal the committed ones.
+- The demo reel (`dump_demo_reel`, then `tools/demo_reel.py`, exit 0 in 20 s):
+  all six GIF/WebP files byte-identical with and without the change.
+- The committed PNGs are not regenerated: they are the Windows renders, and the
+  Linux faces differ from Segoe UI Symbol by a few hundred pixels per image on
+  the other fallback icons (`▤ ⚙ ▸ ✦`).
+
+No Rust changed and no live stack is involved; the test count is unchanged.
