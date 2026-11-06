@@ -432,3 +432,86 @@ async fn a_story_cut_by_its_time_limit_is_told_so_and_is_not_ended() {
     );
     assert!(!ended(&trace));
 }
+
+#[test]
+fn the_claude_models_m3_may_run_on_have_a_list_price() {
+    let route = |wire, model: &str| Route {
+        wire,
+        model: model.into(),
+        url: None,
+        key_env: "K".into(),
+        pin: Vec::new(),
+    };
+    let sonnet = route(Wire::Anthropic, "claude-sonnet-5-5")
+        .list_price()
+        .unwrap();
+    assert_eq!(
+        (sonnet.input, sonnet.output, sonnet.long),
+        (2.0, 10.0, None)
+    );
+    let haiku = route(Wire::Anthropic, "claude-haiku-5-5")
+        .list_price()
+        .unwrap();
+    let long = haiku.long.unwrap();
+    assert_eq!((haiku.input, haiku.output), (0.10, 0.50));
+    assert_eq!((long.above, long.input, long.output), (100_000, 0.50, 2.50));
+    // A model with no price here, and any other wire, are matched in tokens.
+    assert_eq!(route(Wire::Anthropic, "claude-opus-5-5").list_price(), None);
+    assert_eq!(
+        route(Wire::OpenRouter, "claude-haiku-5-5").list_price(),
+        None
+    );
+    let json = route(Wire::Anthropic, "claude-haiku-5-5").to_json();
+    assert_eq!(json["list_price"]["long"]["above"], 100_000);
+}
+
+/// A turn Anthropic answers with no price, its prompt past Haiku's 100,000.
+fn unpriced(text: &str) -> Vec<ChatChunk> {
+    vec![
+        ChatChunk::Text(text.to_owned()),
+        ChatChunk::Usage(TokenUsage {
+            prompt_tokens: 120_000,
+            completion_tokens: 2_000,
+            ..TokenUsage::default()
+        }),
+        ChatChunk::Finished(FinishReason::Stop),
+    ]
+}
+
+#[tokio::test]
+async fn b0_on_claude_spends_to_fs_dollars_at_the_list_price() {
+    let out = tempfile::tempdir().unwrap();
+    let job = Job {
+        premise: premise(HARBOUR).unwrap(),
+        system: System::B0,
+        seed: 1,
+        dir: story_dir(out.path(), "harbour", System::B0, 1),
+        target: Some(Target {
+            usd: Some(0.1),
+            tokens: u64::MAX,
+        }),
+    };
+    let route = Route {
+        wire: Wire::Anthropic,
+        model: "claude-haiku-5-5".into(),
+        url: None,
+        key_env: "CLAUDE_API_KEY".into(),
+        pin: Vec::new(),
+    };
+    let backend = Arc::new(MockBackend::sequence(vec![
+        unpriced("## Draft\n\nOne two three."),
+        unpriced("Too short."),
+        unpriced("## Again\n\nOne two three four."),
+        unpriced("Never asked for."),
+    ]));
+    let trace = run_story(&job, &route, backend, &Options::default())
+        .await
+        .unwrap();
+    // $0.065 a turn: the draft and one critique and revision pass $0.10,
+    // which tokens alone (a target of u64::MAX) would never reach.
+    assert_eq!(trace["ending"], json!({"kind": "finished", "how": "spent"}));
+    assert_eq!(trace["spent"]["calls"], 3);
+    let cost = trace["spent"]["cost_usd"].as_f64().unwrap();
+    assert!((cost - 0.195).abs() < 1e-9, "{cost}");
+    assert_eq!(trace["route"]["list_price"]["input"], 0.10);
+}

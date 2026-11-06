@@ -4,7 +4,7 @@ use anyhow::Result;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
-use super::EngineAdapter;
+use super::{EngineAdapter, ListPrice, LongPrompt};
 use crate::entities::sampling::SamplingConfig;
 use crate::features::story::port::tests::{prompt, schema};
 use crate::features::story::port::{CallAddress, LlmPort, PortError, Role, prompt_sha256};
@@ -527,4 +527,61 @@ async fn a_call_waits_for_the_session_budget_and_a_cancel_while_waiting_records_
             .is_none(),
         "a call that never streamed is not an attempt"
     );
+}
+
+/// Haiku 5.5's list price: a long prompt prices the whole call at its pair.
+fn haiku() -> ListPrice {
+    ListPrice {
+        input: 0.10,
+        output: 0.50,
+        long: Some(LongPrompt {
+            above: 100_000,
+            input: 0.50,
+            output: 2.50,
+        }),
+    }
+}
+
+fn near(a: f64, b: f64) -> bool {
+    (a - b).abs() < 1e-12
+}
+
+#[test]
+fn a_long_prompt_prices_the_whole_call_at_the_long_pair() {
+    assert!(near(haiku().cost(100_000, 1_000), 0.0105));
+    assert!(near(haiku().cost(100_001, 1_000), 0.0525005));
+    let flat = ListPrice {
+        input: 2.0,
+        output: 10.0,
+        long: None,
+    };
+    assert!(near(flat.cost(500_000, 1_000), 1.01));
+}
+
+#[tokio::test]
+async fn a_call_the_provider_names_no_price_for_is_counted_at_the_list_price() {
+    let (story, log) = fresh_story().await;
+    let unpriced = vec![
+        ChatChunk::Text("Prose.".to_owned()),
+        ChatChunk::Usage(TokenUsage {
+            prompt_tokens: 120_000,
+            completion_tokens: 2_000,
+            ..TokenUsage::default()
+        }),
+        ChatChunk::Finished(FinishReason::Stop),
+    ];
+    let port = adapter(MockBackend::sequence(vec![unpriced, reply("Priced.")]), log)
+        .with_list_price(haiku());
+    for address in ["ch1/v1/write", "ch1/v2/revise"] {
+        let call = CallAddress {
+            run: story.run.clone(),
+            address: address.to_owned(),
+        };
+        port.text(&call, Role::Author, &prompt()).await.unwrap();
+    }
+    let calls = story.db.calls(&story.run).await.unwrap();
+    // Past 100,000 tokens of prompt: $0.50 and $2.50 a million.
+    assert!(near(calls[0].call.usage.cost_usd.unwrap(), 0.065));
+    // A price the provider names is kept as it came.
+    assert_eq!(calls[1].call.usage.cost_usd, Some(0.0015));
 }
