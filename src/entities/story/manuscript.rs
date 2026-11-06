@@ -263,6 +263,13 @@ pub enum NoteKind {
     /// The staging pass: a reply that opens on thanks, apology or agreement
     /// the moment does not call for.
     Thanks,
+    /// The staging pass: a word or a phrase left in another language than
+    /// the chapter's, where the chapter's own has one (docs/fabula.md §4, *The
+    /// last version checked*, F4).
+    Language,
+    /// A version's words outside the range asked: the engine's own count,
+    /// not a model's (F2).
+    Length,
 }
 
 stored_names!(NoteKind {
@@ -280,6 +287,8 @@ stored_names!(NoteKind {
     Referent => "referent",
     Announced => "announced",
     Thanks => "thanks",
+    Language => "language",
+    Length => "length",
 });
 
 impl NoteKind {

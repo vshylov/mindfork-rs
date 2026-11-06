@@ -612,6 +612,31 @@ replayed a scene and ran past the chapter budget of 6 million tokens; under 9 mi
 finished at $16.80. A full run comes to some $1,300 on Sonnet and $50 on Haiku. The owner
 reads the three stories blind, and the model stays open (T19).
 
+**The last version checked (2026-11-06).** The owner read the three `villain-4` stories and
+found Haiku far ahead of Qwen; an outside reading listed their slips. Traced to the calls that
+made them, three of F's four slips and the fall under 1,200 words came from the last revision,
+which spec §7's loop never reviews: `permit` left in English and Pavel's patronymic changed
+(Haiku), a contradiction about what Galina knew and the closing scene cut (Sonnet). A theft
+with no thief came from a scene's opening, which said the letters were gone while the world
+never moved them. Four fixes, the owner's decision on 2026-11-06, each as recommended:
+
+- **F1, the last revision reviewed.** It is reviewed and triaged like every version before it,
+  and never revised. When the Author accepts more high-severity notes on it than on the version
+  before, that version's text goes on as a version of its own. (b) One more revision: the same
+  gap one step later. (c) As it was.
+- **F2, the length counted.** The engine counts each version's words. A version outside the
+  range asked gets a high-severity note of the engine's own, as a planted marker does, and the
+  reviser is told the count of the text it revises.
+- **F3, an opening holds no deed.** What has just happened is what the record holds, or what
+  no character did; a thing taken, moved, opened or broken happens only in a scene that plays it.
+- **F4, names kept.** A revision keeps every name, patronymic and form of address as the text
+  has them unless a note asks otherwise. The staging pass reports a person named two ways and a
+  word left in another language.
+
+Proof: engine tests of the loop (the last version reviewed, the earlier text going on, a
+resume that asks nothing again) and of the prompts; the opening's rule measured by replaying
+Haiku's plan of scene 2; then `villain-4` again on Haiku, F and B0, for the owner to read.
+
 Then the run itself, outside any pull request: 36 pairs for each of the two decisions
 (and the ablations, after a GO: T23), the calibration by three people, and the decision rule
 of spec §11, recorded here and in the journal.

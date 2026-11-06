@@ -388,7 +388,8 @@ async fn a_story_is_written_into_its_directory_with_its_markdown_and_trace() {
     assert_eq!(trace["leaks"], json!([]));
     let markdown = std::fs::read_to_string(job.dir.join("story.md")).unwrap();
     assert_eq!(markdown, "## Again\n\nOne two three four.\n");
-    assert_eq!(trace["words"], 6);
+    // The heading's `##` is no word (F2's count).
+    assert_eq!(trace["words"], 5);
     let written: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(job.dir.join("trace.json")).unwrap())
             .unwrap();

@@ -31,6 +31,7 @@ use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
+use super::author_prompts;
 use super::chapter::{self, Budget, ChapterConfig, Engine, Outcome, Stop};
 use super::engine::{EngineAdapter, ListPrice, LongPrompt, SharedLog};
 use super::export;
@@ -783,7 +784,7 @@ async fn trace(
         "route": route.to_json(),
         "config": config,
         "ending": ending.to_json(),
-        "words": story.split_whitespace().count(),
+        "words": author_prompts::words_of(&story),
         "versions": versions.len(),
         "spent": spend_json(&db.spend("").await?),
         "roles": roles.iter().map(|(r, s)| (r.clone(), spend_json(s))).collect::<serde_json::Map<_, _>>(),

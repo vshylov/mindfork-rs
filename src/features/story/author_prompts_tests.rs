@@ -1,8 +1,8 @@
 use std::collections::BTreeSet;
 
 use super::{
-    Again, ChapterContext, Kept, Record, Trace, author_system, continuity, outline, pick, plan,
-    reader, revise, story_language, triage, write, writing_rules,
+    Again, ChapterContext, KEEP_NAMES, Kept, Record, Trace, author_system, continuity, outline,
+    pick, plan, reader, revise, story_language, triage, words_of, write, writing_rules,
 };
 use crate::entities::story::{
     Assumption, BranchId, Canon, CharacterKey, Event, EventKind, ReviewNote, SceneSetup, WorldState,
@@ -389,6 +389,44 @@ fn a_triage_and_a_revision_show_the_notes_by_label() {
             .contains("as the story's human author asked above")
     );
     assert!(human.user.contains("More rain."));
+}
+
+/// A revision is told the count of the text it revises and keeps its names
+/// (docs/fabula.md §4, *The last version checked*, F2 and F4); the draft
+/// invents them once.
+#[test]
+fn a_revision_is_told_the_words_and_keeps_the_names() {
+    let canon = fixture_canon();
+    let goals = vec!["g".to_owned()];
+    let summaries = Vec::new();
+    let view = ctx(&canon, &goals, &summaries);
+    let t = trace();
+    let setup = setup();
+    let kept = [Kept {
+        scene: 1,
+        setup: &setup,
+        intent: "i",
+        trace: &t,
+        played: true,
+    }];
+    let text = "## Одна\n\n— Павел Игнатьевич, — сказала Нина.";
+    let revision = revise(&view, &kept, text, &[], (1200, 2500));
+    assert!(
+        revision
+            .user
+            .contains(&format!("The chapter as it stands, 5 words:\n\n{text}"))
+    );
+    assert!(revision.user.contains(KEEP_NAMES));
+    assert!(KEEP_NAMES.contains("name, patronymic and form of address"));
+    assert!(!write(&view, &kept, (1200, 2500)).user.contains(KEEP_NAMES));
+}
+
+#[test]
+fn a_word_has_a_letter_or_a_digit_in_it() {
+    assert_eq!(words_of(""), 0);
+    assert_eq!(words_of("## Title\n\n— Да, — сказала она. — 1951!"), 5);
+    assert_eq!(words_of("--- * * * — –"), 0);
+    assert_eq!(words_of("one\ttwo\nthree  four"), 4);
 }
 
 /// The chapter's choices so far reach every Author prompt that plans,

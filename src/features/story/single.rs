@@ -130,22 +130,28 @@ pub fn draft_ask(canon: &Canon, words: (u32, u32)) -> String {
 }
 
 /// The editor's turn: what a reviewer of F would look for (spec §7's Reader
-/// and Continuity checker, the craft's rules of PR 12), asked of the writer.
+/// and Continuity checker, the craft's rules of PR 12, the staging pass's
+/// names and languages and the engine's length of docs/fabula.md §4, *The last
+/// version checked*), asked of the writer.
 pub const CRITIQUE_ASK: &str = "Now read your story as its editor would, without rewriting \
 it yet. Name each thing that does not work, and where: a conflict that goes slack or ends \
 without a price, a secret spent too soon or too cheaply, a character who acts against their \
 sheet or knows what they could not have learned, a line that announces a plan or a want \
 instead of acting on it, or opens on thanks or agreement the moment does not call for, facts \
-of time, place, age or kinship that disagree, a thread opened and dropped, a passage that \
-drags or tells what it should show. Most important first.";
+of time, place, age or kinship that disagree, a person named or addressed two ways, a word \
+left in another language, a thread opened and dropped, a passage that drags or tells what it \
+should show, a story shorter or longer than asked. Most important first.";
 
-/// The writer's turn after a critique.
+/// The writer's turn after a critique; it keeps the names as F's reviser does
+/// (F4, T21).
 pub fn revise_ask(words: (u32, u32)) -> String {
     format!(
         "Write the story again, whole, mending what your critique found: by the same rules, \
-         between {} and {} words, its title as a level-two markdown heading. Reply with the \
-         story's text and nothing else.",
-        words.0, words.1
+         between {} and {} words, its title as a level-two markdown heading. {} Reply with \
+         the story's text and nothing else.",
+        words.0,
+        words.1,
+        author_prompts::KEEP_NAMES,
     )
 }
 

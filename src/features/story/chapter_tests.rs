@@ -345,6 +345,9 @@ pub(super) fn config() -> ChapterConfig {
             ..SimConfig::default()
         },
         human_language: "Russian".to_owned(),
+        // The scripted chapters are a few words long: the engine's count of
+        // them (F2) has tests of its own.
+        words: (1, 100_000),
         ..ChapterConfig::default()
     }
 }

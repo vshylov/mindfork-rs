@@ -32,6 +32,24 @@ fn every_author_and_reviewer_schema_keeps_the_dialect_and_reads_as_its_type() {
     assert!(holds::<TriageReply>(&TriageReply::schema_for(&keys, &notes)) >= 1);
 }
 
+/// A scene's opening holds no deed the world has not played (docs/fabula.md
+/// §4, *The last version checked*, F3): Haiku's plan of scene 2 on
+/// `villain-4` opened on a drawer broken and letters gone, which no event
+/// had moved, and the theft had no thief.
+#[test]
+fn an_opening_changes_nothing_the_world_holds() {
+    let keys = keys();
+    for schema in [
+        PlanReply::schema_for(&keys, true).to_json(),
+        PlanReply::schema_for(&keys, false).to_json(),
+    ] {
+        assert!(schema.contains("it never changes what the world holds"));
+        assert!(schema.contains("a thing taken, moved, opened or broken is so only when a scene"));
+        assert!(schema.contains("the record's facts stand"));
+        assert!(schema.contains("Never what a character will do."));
+    }
+}
+
 /// Every reply that records assumptions asks for each new question and
 /// leaves out only one its chapter's choices answer: told only that the
 /// choices stand, a step recorded a seventh of the new questions it had

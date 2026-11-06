@@ -11,6 +11,7 @@ use super::{
 };
 use crate::entities::sampling::SamplingConfig;
 use crate::entities::story::{VersionOrigin, fixture_canon};
+use crate::features::story::author_prompts;
 use crate::features::story::engine::{EngineAdapter, SharedLog};
 use crate::features::story::scene::tests::fresh_story;
 use crate::shared::api::contract::{ChatChunk, FinishReason, TokenUsage};
@@ -264,4 +265,9 @@ fn the_writer_is_given_the_canon_and_the_prose_rules_and_no_record() {
     assert!(draft.contains("The canon's keys are not the story's words"));
     assert!(!draft.contains("record"), "{draft}");
     assert!(revise_ask((1500, 3000)).contains("between 1500 and 3000 words"));
+    // F4 and F2 as B0 has them (T21): the names kept, the critique's list.
+    assert!(revise_ask((1500, 3000)).contains(author_prompts::KEEP_NAMES));
+    assert!(CRITIQUE_ASK.contains("a person named or addressed two ways"));
+    assert!(CRITIQUE_ASK.contains("a word left in another language"));
+    assert!(CRITIQUE_ASK.contains("a story shorter or longer than asked"));
 }

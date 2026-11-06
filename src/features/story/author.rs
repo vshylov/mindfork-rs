@@ -156,7 +156,11 @@ impl SceneDraft {
             Property::described(
                 "just_happened",
                 "What has just happened, in two or three sentences of the story's narration: \
-                 the characters perceive it as the scene opens. Never what a character will do.",
+                 the characters perceive it as the scene opens. It may bring the people present \
+                 to the place and tell a sound, the weather, a message come, but it never \
+                 changes what the world holds: a thing taken, moved, opened or broken is so only \
+                 when a scene plays it, and the record's facts stand. Never what a character \
+                 will do.",
                 String::schema(keys),
             ),
             Property::described(

@@ -12,7 +12,11 @@
 //!   "who" and a tie of kin point; and the lines — one that announces a plan,
 //!   a decision or a boundary, one that opens on thanks, apology or agreement
 //!   the moment does not call for. G2's chapter 2 had "son of Marya, who left
-//!   with him", which no reviewer named, and seven thanks.
+//!   with him", which no reviewer named, and seven thanks. Since F4
+//!   (docs/fabula.md §4, *The last version checked*) also one person named or
+//!   addressed two ways, and a word left in another language: Haiku's last
+//!   revision on `villain-4` changed Pavel's patronymic and left `permit` in
+//!   English.
 //! - **Its notes ride with the Continuity checker's** ([`super::chapter`]):
 //!   one batch, so a resume asks both again or neither, and the triage reads
 //!   them as the checker's. Every chapter is read, the first included.
@@ -36,6 +40,8 @@ pub enum StagingKind {
     Announced,
     /// A reply that opens on thanks, apology or agreement unbidden.
     Thanks,
+    /// A word or a phrase left in another language than the chapter's.
+    Language,
 }
 
 impl StagingKind {
@@ -46,6 +52,7 @@ impl StagingKind {
             StagingKind::Referent => NoteKind::Referent,
             StagingKind::Announced => NoteKind::Announced,
             StagingKind::Thanks => NoteKind::Thanks,
+            StagingKind::Language => NoteKind::Language,
         }
     }
 }
@@ -77,10 +84,12 @@ const KINDS: &str = "staging: a character where the text did not take them, in t
     once, holding what they put down or never took up, or seated, standing, come or gone \
     against what the text said just before; referent: a pronoun, a \"who\", a name or a tie of \
     kin a reader cannot place, or places on the wrong person, or a family tie the text's own \
-    statements make impossible (whose son, whose mother, who left with whom); announced: a line \
-    in which a character states a plan, a decision or a boundary aloud, as if reporting it, \
-    where acting on it would show it; thanks: a reply that opens on thanks, apology or \
-    agreement the moment does not call for.";
+    statements make impossible (whose son, whose mother, who left with whom), or one person \
+    named or addressed two ways (a first name, a surname or a patronymic that changes); \
+    announced: a line in which a character states a plan, a decision or a boundary aloud, as \
+    if reporting it, where acting on it would show it; thanks: a reply that opens on thanks, \
+    apology or agreement the moment does not call for; language: a word or a phrase left in \
+    another language than the chapter's, where the chapter's own language has one.";
 
 impl StorySchema for StagingReply {
     fn schema(keys: &CanonKeys) -> Schema {
@@ -101,7 +110,7 @@ impl StorySchema for StagingReply {
                 "kind",
                 KINDS,
                 Schema::Enum(
-                    ["staging", "referent", "announced", "thanks"]
+                    ["staging", "referent", "announced", "thanks", "language"]
                         .map(str::to_owned)
                         .to_vec(),
                 ),

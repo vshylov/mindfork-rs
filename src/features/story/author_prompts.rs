@@ -860,17 +860,35 @@ pub fn revise(
         user: format!(
             "Chapter {} of {}. Its goal in the arc: {}\nIts goals:\n{}{}\n\n\
              The scenes the story keeps, as the record holds them:\n\n{}\n\n\
-             The chapter as it stands:\n\n{text}\n\n{asked} Keep what works as it is, and \
-             rewrite the whole chapter. {}",
+             The chapter as it stands, {} words:\n\n{text}\n\n{asked} Keep what works as it \
+             is, and rewrite the whole chapter. {KEEP_NAMES} {}",
             ctx.number,
             ctx.total(),
             ctx.arc_goal(),
             ctx.goals_text(),
             ctx.so_far(Doubts::None),
             kept_text(ctx.canon, kept, TO_AUTHOR),
+            words_of(text),
             writing_rules(ctx.canon, words, Record::of(kept)),
         ),
     }
+}
+
+/// A revision's names (docs/fabula.md §4, *The last version checked*, F4):
+/// each writing call puts the canon's names into the story's language anew,
+/// and Haiku's last revision on `villain-4` gave Pavel a second patronymic.
+pub const KEEP_NAMES: &str = "Keep every name, patronymic and form of address as the chapter \
+    has them, unless a note asks to change one.";
+
+/// A text's words as the length rule counts them (F2): a run between spaces
+/// with a letter or a digit in it, so a dialogue's dash and a heading's `##`
+/// are not words.
+pub fn words_of(text: &str) -> u32 {
+    let n = text
+        .split_whitespace()
+        .filter(|w| w.chars().any(char::is_alphanumeric))
+        .count();
+    u32::try_from(n).unwrap_or(u32::MAX)
 }
 
 /// The Author's decisions on a version's notes, each shown under its label
