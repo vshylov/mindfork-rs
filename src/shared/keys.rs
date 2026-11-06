@@ -35,11 +35,14 @@
 //!
 //! The module's second half is the other direction of the same question — not
 //! "which key was that" but "which chord can this terminal even deliver":
-//! [`newline_chord`] names the one that inserts a line break here (spec §11.5).
+//! [`newline_chord`] names the one that inserts a line break here, unless the
+//! user chose one (`interface.newline_key`, spec §11.5).
 
 use std::sync::OnceLock;
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+use crate::shared::config::NewlineKey;
 
 /// Returns the "physical" Latin character (lowercase) for a hotkey event, or
 /// `None` if the event isn't a character key.
@@ -244,16 +247,25 @@ const ALT_ENTER: &str = "Alt+Enter";
 const CTRL_J: &str = "Ctrl+J";
 
 /// Whether `key` breaks the line in a multi-line field (the chat's input box,
-/// the settings' multi-line editor, the self-model editor): `Shift+Enter`;
-/// `Alt+Enter`, which arrives where a modified `Enter` does not; or `Ctrl+J`,
-/// a line feed — which every terminal delivers, since in raw mode crossterm
-/// reads LF as `Ctrl+J`, and which is the only one Terminal.app delivers by
-/// default (docs/research/macos.md §4.4).
-pub fn is_line_break(key: &KeyEvent) -> bool {
+/// the settings' multi-line editor, the self-model editor, a note's text),
+/// with `chosen` the user's `interface.newline_key`.
+///
+/// Three chords break it whatever is chosen: `Shift+Enter`; `Alt+Enter`, which
+/// arrives where a modified `Enter` does not; and `Ctrl+J`, a line feed — which
+/// every terminal delivers, since in raw mode crossterm reads LF as `Ctrl+J`,
+/// and which is the only one Terminal.app delivers by default
+/// (docs/research/macos.md §4.4). A choice adds to them and never takes one
+/// away, so a hand used to one of them does not send a half-written message
+/// (spec §11.5). The one chord a choice adds is `Ctrl+Enter`
+/// ([`NewlineKey::CtrlEnter`]); under any other choice it sends, as it always
+/// has.
+pub fn is_line_break(key: &KeyEvent, chosen: NewlineKey) -> bool {
     match key.code {
-        KeyCode::Enter => key
-            .modifiers
-            .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT),
+        KeyCode::Enter => {
+            key.modifiers
+                .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT)
+                || (chosen == NewlineKey::CtrlEnter && key.modifiers == KeyModifiers::CONTROL)
+        }
         _ => key.modifiers == KeyModifiers::CONTROL && hotkey_char(key) == Some('j'),
     }
 }
@@ -264,10 +276,16 @@ pub fn set_modified_enter_reported(reported: bool) {
     let _ = MODIFIED_ENTER_REPORTED.set(reported);
 }
 
-/// The chord that actually inserts a line break in this terminal — what the
-/// input box's footer and the multiline editors advertise.
+/// The chord the input box's footer and the multiline editors advertise: the
+/// user's choice (`interface.newline_key`), or — under [`NewlineKey::Auto`] —
+/// the one that actually inserts a line break in this terminal.
 ///
-/// Both chords always work; only one of them is always *deliverable*. The
+/// A choice is named as it is, deliverable here or not: it is the user's word
+/// about a terminal we cannot see. Windows Terminal over SSH is why it exists
+/// — it answers no kitty protocol before 1.25, so the automatic answer is
+/// `Alt+Enter`, which Windows Terminal keeps for toggling full screen.
+///
+/// Under `Auto`: the chords always work; only one of them is always *deliverable*. The
 /// terminal that forced this to be a question rather than a constant is
 /// **Konsole**: its default keytab maps `Shift+Return` to `\EOM` (SS3 `M`,
 /// the keypad Enter), crossterm's unix parser has no arm for that final byte,
@@ -281,11 +299,13 @@ pub fn set_modified_enter_reported(reported: bool) {
 /// kitty protocol, and Option is not Meta there unless the user turns it on,
 /// so `Alt+Enter` is a bare CR too. `Ctrl+J`, a line feed, arrives from it as
 /// from every terminal, and is named there (docs/research/macos.md §4.4).
-pub fn newline_chord() -> &'static str {
-    chord_for(
-        MODIFIED_ENTER_REPORTED.get().copied().unwrap_or(true),
-        in_apple_terminal(),
-    )
+pub fn newline_chord(chosen: NewlineKey) -> &'static str {
+    chosen.chord().unwrap_or_else(|| {
+        chord_for(
+            MODIFIED_ENTER_REPORTED.get().copied().unwrap_or(true),
+            in_apple_terminal(),
+        )
+    })
 }
 
 /// Whether this process runs in macOS's Terminal.app — read once: like the
@@ -304,6 +324,39 @@ const fn chord_for(modified_enter_reported: bool, apple_terminal: bool) -> &'sta
         CTRL_J
     } else {
         ALT_ENTER
+    }
+}
+
+/// Whether this terminal is known to send the `chosen` chord as a bare
+/// `Enter` — a send, not a line break. The settings row marks such a choice
+/// and keeps it: the same settings serve a terminal that delivers the chord
+/// (spec §11.5).
+///
+/// Known means what [`newline_chord`]'s guess already rests on: `Shift+Enter`
+/// where a modified `Enter` is not reported — measured on Windows Terminal
+/// 1.24 over SSH, which sends it as the CR a bare `Enter` sends — and
+/// `Alt+Enter` in Terminal.app, where Option is not Meta by default
+/// (docs/research/macos.md §14.3). `Ctrl+Enter` is never marked: a legacy
+/// xterm sends it as CR, but Windows Terminal over SSH as LF — `Ctrl+J`, a
+/// line break — and the two cannot be told apart from here.
+pub fn sent_as_enter(chosen: NewlineKey) -> bool {
+    sent_as_enter_under(
+        chosen,
+        MODIFIED_ENTER_REPORTED.get().copied().unwrap_or(true),
+        in_apple_terminal(),
+    )
+}
+
+/// The pure half of [`sent_as_enter`] — the rule, without the globals.
+const fn sent_as_enter_under(
+    chosen: NewlineKey,
+    modified_enter_reported: bool,
+    apple_terminal: bool,
+) -> bool {
+    match chosen {
+        NewlineKey::ShiftEnter => !modified_enter_reported,
+        NewlineKey::AltEnter => apple_terminal && !modified_enter_reported,
+        NewlineKey::Auto | NewlineKey::CtrlEnter | NewlineKey::CtrlJ => false,
     }
 }
 
@@ -594,7 +647,7 @@ mod tests {
             ctrl('j'),
             ctrl('о'), // the J key on the Russian layout
         ] {
-            assert!(is_line_break(&chord), "{chord:?}");
+            assert!(is_line_break(&chord, NewlineKey::Auto), "{chord:?}");
         }
         for other in [
             key(KeyCode::Enter, KeyModifiers::NONE),
@@ -607,8 +660,97 @@ mod tests {
             key(KeyCode::Char('j'), KeyModifiers::ALT),
             ctrl('k'),
         ] {
-            assert!(!is_line_break(&other), "{other:?}");
+            assert!(!is_line_break(&other, NewlineKey::Auto), "{other:?}");
         }
+    }
+
+    /// A chosen key adds to the fallbacks and never takes one away: under
+    /// every choice `Shift+Enter`, `Alt+Enter` and `Ctrl+J` still break the
+    /// line, and a bare `Enter` still sends. `Ctrl+Enter` breaks it only when
+    /// it is the choice — anywhere else it sends, as it did before the setting.
+    #[test]
+    fn a_chosen_newline_key_adds_to_the_fallbacks() {
+        let key = |code, modifiers| KeyEvent::new(code, modifiers);
+        let ctrl_enter = key(KeyCode::Enter, KeyModifiers::CONTROL);
+        for chosen in NewlineKey::ALL {
+            for fallback in [
+                key(KeyCode::Enter, KeyModifiers::SHIFT),
+                key(KeyCode::Enter, KeyModifiers::ALT),
+                ctrl('j'),
+            ] {
+                assert!(is_line_break(&fallback, chosen), "{chosen:?} {fallback:?}");
+            }
+            assert!(
+                !is_line_break(&key(KeyCode::Enter, KeyModifiers::NONE), chosen),
+                "{chosen:?}: a bare Enter sends"
+            );
+            assert_eq!(
+                is_line_break(&ctrl_enter, chosen),
+                chosen == NewlineKey::CtrlEnter,
+                "{chosen:?}"
+            );
+        }
+        // The choice adds `Ctrl+Enter` itself, not every Enter Ctrl is part of.
+        assert!(!is_line_break(
+            &key(KeyCode::Enter, KeyModifiers::CONTROL | KeyModifiers::SUPER),
+            NewlineKey::CtrlEnter
+        ));
+    }
+
+    /// A choice is named as it is; `Auto` asks the terminal.
+    #[test]
+    fn newline_chord_names_the_choice_and_asks_the_terminal_under_auto() {
+        assert_eq!(newline_chord(NewlineKey::ShiftEnter), "Shift+Enter");
+        assert_eq!(newline_chord(NewlineKey::AltEnter), "Alt+Enter");
+        assert_eq!(newline_chord(NewlineKey::CtrlEnter), "Ctrl+Enter");
+        assert_eq!(newline_chord(NewlineKey::CtrlJ), "Ctrl+J");
+        // Every named chord is one the predicate accepts under that choice.
+        let parsed = |chosen: NewlineKey| match chosen {
+            NewlineKey::ShiftEnter => KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT),
+            NewlineKey::AltEnter => KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT),
+            NewlineKey::CtrlEnter => KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
+            NewlineKey::CtrlJ | NewlineKey::Auto => ctrl('j'),
+        };
+        for chosen in NewlineKey::ALL {
+            assert!(is_line_break(&parsed(chosen), chosen), "{chosen:?}");
+        }
+    }
+
+    /// A chosen chord is marked only where the guess itself knows it arrives
+    /// as `Enter`: `Shift+Enter` with no modified `Enter` reported (Windows
+    /// Terminal 1.24 over SSH, measured), `Alt+Enter` in Terminal.app. `auto`
+    /// never is — it names a chord that arrives — and neither is `Ctrl+Enter`,
+    /// which one terminal sends as CR and another as LF.
+    #[test]
+    fn a_chosen_chord_is_marked_where_the_terminal_sends_it_as_enter() {
+        let marked = |reported, apple| -> Vec<NewlineKey> {
+            NewlineKey::ALL
+                .into_iter()
+                .filter(|k| sent_as_enter_under(*k, reported, apple))
+                .collect()
+        };
+        // Windows, or a terminal that took the kitty protocol: nothing.
+        assert_eq!(marked(true, false), []);
+        assert_eq!(marked(true, true), []);
+        // A bare unix terminal — Windows Terminal before 1.25 over SSH.
+        assert_eq!(marked(false, false), [NewlineKey::ShiftEnter]);
+        // Terminal.app: Option is not Meta by default.
+        assert_eq!(
+            marked(false, true),
+            [NewlineKey::ShiftEnter, NewlineKey::AltEnter]
+        );
+        // `auto`'s own chord is never one of them.
+        for (reported, apple) in [(true, false), (false, false), (false, true)] {
+            let auto = chord_for(reported, apple);
+            assert!(
+                !NewlineKey::ALL
+                    .into_iter()
+                    .any(|k| k.chord() == Some(auto) && sent_as_enter_under(k, reported, apple)),
+                "{auto}"
+            );
+        }
+        // Unset in a test binary: reported, so nothing is marked.
+        assert!(!sent_as_enter(NewlineKey::ShiftEnter));
     }
 
     #[test]
@@ -617,7 +759,7 @@ mod tests {
         // frame dumps among them). The default must be the historical wording,
         // and this test must not `set` the global: it is process-wide, and one
         // test flipping it would re-label every other test's UI.
-        assert_eq!(newline_chord(), "Shift+Enter");
+        assert_eq!(newline_chord(NewlineKey::Auto), "Shift+Enter");
     }
 
     #[test]

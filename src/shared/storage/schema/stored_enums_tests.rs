@@ -37,8 +37,8 @@ use crate::entities::self_model::GoalStatus;
 use crate::entities::subagent::{RunKind, RunOutcome};
 use crate::shared::config::{
     AutoTitleMode, CodeBlockBackground, FlashAttn, ImageGenProvider, ImpersonationMode,
-    MediaResolution, NoteOrder, PythonMode, ServerMode, SpecType, SttMode, Theme, ThemeMode,
-    TtsMode, VideoProvider, WebProvider,
+    MediaResolution, NewlineKey, NoteOrder, PythonMode, ServerMode, SpecType, SttMode, Theme,
+    ThemeMode, TtsMode, VideoProvider, WebProvider,
 };
 use crate::shared::embed_prefix::EmbedConvention;
 use crate::shared::notify::NotifyEscape;
@@ -197,6 +197,14 @@ pub(super) fn ledgers() -> Vec<Ledger> {
             2 => [NewestFirst = "newest_first", OldestFirst = "oldest_first"],
         }),
         ledger!(Osc52Mode in Settings { 1 => [Auto = "auto", Always = "always", Off = "off"] }),
+        // Came with a field of its own, which an older reader skips whole; read
+        // leniently from its first release, so a key added later reads as `auto`.
+        ledger!(NewlineKey in Settings {
+            7 => [
+                Auto = "auto", ShiftEnter = "shift_enter", AltEnter = "alt_enter",
+                CtrlEnter = "ctrl_enter", CtrlJ = "ctrl_j",
+            ],
+        }),
         // Came with a field of its own, which an older reader skips whole.
         ledger!(NotifyEscape in Settings { 7 => [Osc777 = "osc777", Osc9 = "osc9", Off = "off"] }),
         // Came with the `stt` section, which an older reader skips whole.

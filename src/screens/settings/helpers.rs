@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::shared::api::llama_args::ManagedRole;
-use crate::shared::config::{CodeBlockBackground, WebProvider};
+use crate::shared::config::{CodeBlockBackground, NewlineKey, WebProvider};
 // ---------- free functions ----------
 
 // The sampling rows the screen offers come from
@@ -1538,6 +1538,39 @@ pub(super) fn code_background_label(b: CodeBlockBackground, loc: &'static Locale
         CodeBlockBackground::Normal => "ui.settings.choice.code_background_normal",
     })
     .to_string()
+}
+
+/// The label of a line-break key (`interface.newline_key`): the chord as it is
+/// pressed, and for `auto` the chord it stands for in this terminal — so the
+/// row says what is in effect, not only who decides it (spec §11.5). A chord
+/// this terminal is known to send as a bare `Enter` says so: it is kept, since
+/// the same settings serve a terminal that delivers it, but it is not promised.
+pub(super) fn newline_key_label(k: NewlineKey, loc: &'static Locale) -> String {
+    use crate::shared::keys;
+    newline_key_label_for(
+        k,
+        loc,
+        keys::newline_chord(NewlineKey::Auto),
+        keys::sent_as_enter(k),
+    )
+}
+
+/// [`newline_key_label`] with the terminal's two answers given — the seam the
+/// tests take, since the real ones live in a process-wide `OnceLock`.
+pub(super) fn newline_key_label_for(
+    k: NewlineKey,
+    loc: &'static Locale,
+    auto_chord: &str,
+    sent_as_enter: bool,
+) -> String {
+    match k.chord() {
+        Some(chord) if sent_as_enter => loc.tf(
+            "ui.settings.choice.newline_sent_as_enter",
+            &[("chord", chord)],
+        ),
+        Some(chord) => chord.to_string(),
+        None => loc.tf("ui.settings.choice.newline_auto", &[("chord", auto_chord)]),
+    }
 }
 
 /// Cyclically shifts the OSC-52 mode, direction-aware.

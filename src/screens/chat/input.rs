@@ -284,8 +284,9 @@ impl ChatScreen {
             // Shift+Enter is indistinguishable from Enter (both send CR),
             // while Alt+Enter arrives as Enter+ALT (an ESC meta prefix) and
             // so is recognized. See item 11. Ctrl+J too — a line feed, the one
-            // Terminal.app delivers ([`keys::is_line_break`]).
-            _ if keys::is_line_break(&key) => {
+            // Terminal.app delivers; and Ctrl+Enter when it is the chosen key
+            // (`interface.newline_key`, [`keys::is_line_break`]).
+            _ if keys::is_line_break(&key, self.newline_key()) => {
                 self.input.insert_newline();
                 self.mark_input_changed();
                 None

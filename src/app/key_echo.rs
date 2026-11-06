@@ -8,7 +8,8 @@
 //! the very modes the app reads keys in ([`runtime::enable_key_modes`]), each
 //! event is printed as crossterm reports it, and beside it the outcome — a
 //! sketch of an input box that starts every key from the same text, run through
-//! the real [`InputBox`] and the chat's own line-break rule.
+//! the real [`InputBox`] and the chat's own line-break rule — under the key the
+//! user chose (`interface.newline_key`), read from `settings.json` by `main`.
 //!
 //! Nothing is created: no data root, no log. `--output` copies the lines into
 //! a file, for a session read from elsewhere (macos.md §13.3).
@@ -29,6 +30,7 @@ use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 
 use crate::app::runtime::{self, Chunk};
+use crate::shared::config::NewlineKey;
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
 use crate::widgets::input_box::{InputBox, KeyOutcome};
@@ -95,8 +97,9 @@ fn control_of(key: &KeyEvent) -> Control {
 }
 
 /// Runs the echo until `Ctrl+Q` or `F10`. A terminal on stdout was checked by
-/// the caller (`main`'s launch gate).
-pub fn run(output: Option<&Path>, loc: &Locale) -> Result<ExitCode> {
+/// the caller (`main`'s launch gate). `newline_key` is the user's
+/// `interface.newline_key`, so the echo breaks the line where the app does.
+pub fn run(output: Option<&Path>, loc: &Locale, newline_key: NewlineKey) -> Result<ExitCode> {
     debug_assert!(stdout().is_terminal());
     let file = output.map(|path| create_record(path, loc)).transpose()?;
     let mut echo = Echo {
@@ -105,10 +108,16 @@ pub fn run(output: Option<&Path>, loc: &Locale) -> Result<ExitCode> {
     };
     enable_raw_mode()?;
     let restore = Restore;
-    for line in header(loc, runtime::enable_key_modes(), &env_var) {
+    for line in header(loc, runtime::enable_key_modes(), newline_key, &env_var) {
         echo.line(&line)?;
     }
-    echo_loop(runtime::read_batch, set_mouse_capture, &mut echo, loc)?;
+    echo_loop(
+        runtime::read_batch,
+        set_mouse_capture,
+        &mut echo,
+        loc,
+        newline_key,
+    )?;
     drop(restore);
     if let Some(path) = output {
         println!(
@@ -149,6 +158,7 @@ fn echo_loop<W: Write>(
     mut set_mouse: impl FnMut(bool) -> Result<()>,
     echo: &mut Echo<W>,
     loc: &Locale,
+    newline_key: NewlineKey,
 ) -> Result<()> {
     let mut mouse = false;
     loop {
@@ -161,7 +171,7 @@ fn echo_loop<W: Write>(
                 mouse = !mouse;
                 set_mouse(mouse)?;
             }
-            echo.line(&describe(&chunk, &control, mouse, loc))?;
+            echo.line(&describe(&chunk, &control, mouse, loc, newline_key))?;
             if control == Control::Quit {
                 return Ok(());
             }
@@ -169,9 +179,15 @@ fn echo_loop<W: Write>(
     }
 }
 
-/// The lines printed before the first key: the terminal, what it answered, and
-/// how to read and leave the echo. `env` reads a variable of the environment.
-fn header(loc: &Locale, kitty: Option<bool>, env: &dyn Fn(&str) -> Option<String>) -> Vec<String> {
+/// The lines printed before the first key: the terminal, what it answered, the
+/// line break — the terminal's, or the one the settings chose — and how to
+/// read and leave the echo. `env` reads a variable of the environment.
+fn header(
+    loc: &Locale,
+    kitty: Option<bool>,
+    newline_key: NewlineKey,
+    env: &dyn Fn(&str) -> Option<String>,
+) -> Vec<String> {
     let kitty = match kitty {
         Some(true) => loc.t("cli.keys.kitty_on"),
         Some(false) => loc.t("cli.keys.kitty_off"),
@@ -181,7 +197,14 @@ fn header(loc: &Locale, kitty: Option<bool>, env: &dyn Fn(&str) -> Option<String
         loc.tf("cli.keys.title", &[("version", env!("CARGO_PKG_VERSION"))]),
         loc.tf("cli.keys.terminal", &[("terminal", &terminal_facts(env))]),
         kitty.to_string(),
-        loc.tf("cli.keys.newline", &[("chord", keys::newline_chord())]),
+        loc.tf(
+            if newline_key == NewlineKey::Auto {
+                "cli.keys.newline"
+            } else {
+                "cli.keys.newline_chosen"
+            },
+            &[("chord", keys::newline_chord(newline_key))],
+        ),
         loc.tf("cli.keys.sample", &[("sample", &sketch(&sample_box()))]),
         loc.t("cli.keys.controls").to_string(),
         String::new(),
@@ -211,7 +234,13 @@ fn terminal_facts(env: &dyn Fn(&str) -> Option<String>) -> String {
 
 /// One echoed line for a piece of a batch. A key's release never gets here:
 /// the batch keeps presses only, as the app's does.
-fn describe(chunk: &Chunk, control: &Control, mouse: bool, loc: &Locale) -> String {
+fn describe(
+    chunk: &Chunk,
+    control: &Control,
+    mouse: bool,
+    loc: &Locale,
+    newline_key: NewlineKey,
+) -> String {
     let (label, outcome) = match chunk {
         // A burst of text keys the app takes for one paste (Windows).
         Chunk::Paste(text) => ("Paste (keys)".to_string(), paste_outcome(text, loc)),
@@ -221,7 +250,7 @@ fn describe(chunk: &Chunk, control: &Control, mouse: bool, loc: &Locale) -> Stri
                 Control::Quit => loc.t("cli.keys.quit").to_string(),
                 Control::ToggleMouse if mouse => loc.t("cli.keys.mouse_on").to_string(),
                 Control::ToggleMouse => loc.t("cli.keys.mouse_off").to_string(),
-                Control::Go => key_outcome(key, loc),
+                Control::Go => key_outcome(key, loc, newline_key),
             };
             (key_label(key), outcome)
         }
@@ -295,9 +324,9 @@ fn modifier_names(modifiers: KeyModifiers) -> Vec<&'static str> {
 /// What the chat's input box does with a key, in the order the chat screen
 /// asks (`screens::chat::input`): the line break first, then `Enter`, a
 /// `Ctrl` shortcut by its physical letter, and the box itself.
-fn key_outcome(key: &KeyEvent, loc: &Locale) -> String {
+fn key_outcome(key: &KeyEvent, loc: &Locale, newline_key: NewlineKey) -> String {
     let mut field = sample_box();
-    if keys::is_line_break(key) {
+    if keys::is_line_break(key, newline_key) {
         field.insert_newline();
         return sketch(&field);
     }
@@ -404,7 +433,7 @@ mod tests {
     }
 
     fn outcome(code: KeyCode, modifiers: KeyModifiers) -> String {
-        key_outcome(&key(code, modifiers), en())
+        key_outcome(&key(code, modifiers), en(), NewlineKey::Auto)
     }
 
     #[test]
@@ -451,6 +480,37 @@ mod tests {
         assert_eq!(
             outcome(KeyCode::Enter, KeyModifiers::NONE),
             "sends the message"
+        );
+    }
+
+    /// The echo breaks the line where the app does: `Ctrl+Enter` sends unless
+    /// it is the chosen key, and then it breaks the line.
+    #[test]
+    fn ctrl_enter_breaks_the_line_only_when_it_is_the_chosen_key() {
+        let ctrl_enter = key(KeyCode::Enter, KeyModifiers::CONTROL);
+        assert_eq!(
+            key_outcome(&ctrl_enter, en(), NewlineKey::Auto),
+            "sends the message"
+        );
+        assert_eq!(
+            key_outcome(&ctrl_enter, en(), NewlineKey::CtrlEnter),
+            "one two ⏎|three"
+        );
+    }
+
+    /// A chosen key is named as the settings' choice, not as the terminal's.
+    #[test]
+    fn the_header_names_a_chosen_line_break_as_the_settings_choice() {
+        let auto = header(en(), Some(false), NewlineKey::Auto, &no_env).join("\n");
+        assert!(
+            auto.contains("A line break in this terminal: Alt+Enter")
+                || auto.contains("A line break in this terminal: Shift+Enter"),
+            "{auto}"
+        );
+        let chosen = header(en(), Some(false), NewlineKey::CtrlJ, &no_env).join("\n");
+        assert!(
+            chosen.contains("A line break, as chosen in the settings: Ctrl+J"),
+            "{chosen}"
         );
     }
 
@@ -523,7 +583,7 @@ mod tests {
     }
 
     fn line(event: Event, control: &Control, mouse: bool) -> String {
-        describe(&Chunk::Event(event), control, mouse, en())
+        describe(&Chunk::Event(event), control, mouse, en(), NewlineKey::Auto)
     }
 
     #[test]
@@ -567,7 +627,7 @@ mod tests {
         let chunks = runtime::chunk_batch(vec![press('h'), press('i'), enter, press('!')]);
         let lines: Vec<String> = chunks
             .iter()
-            .map(|chunk| describe(chunk, &Control::Go, false, en()))
+            .map(|chunk| describe(chunk, &Control::Go, false, en(), NewlineKey::Auto))
             .collect();
         assert_eq!(lines.len(), 1, "{lines:?}");
         assert!(lines[0].starts_with("Paste (keys)"), "{lines:?}");
@@ -577,7 +637,7 @@ mod tests {
         );
         let one = runtime::chunk_batch(vec![press('x')]);
         assert_eq!(
-            describe(&one[0], &Control::Go, false, en()),
+            describe(&one[0], &Control::Go, false, en(), NewlineKey::Auto),
             format!("{:<24} → one two x|three", "'x'")
         );
     }
@@ -614,16 +674,16 @@ mod tests {
 
     #[test]
     fn the_header_names_the_terminal_and_the_way_out() {
-        let lines = header(en(), Some(false), &no_env);
+        let lines = header(en(), Some(false), NewlineKey::Auto, &no_env);
         let text = lines.join("\n");
         assert!(text.contains(std::env::consts::OS), "{text}");
         assert!(text.contains("one two |three"), "{text}");
         assert!(text.contains("Ctrl+Q"), "{text}");
         assert!(text.contains("not answered"), "{text}");
         assert_eq!(lines.last().map(String::as_str), Some(""));
-        let answered = header(en(), Some(true), &no_env).join("\n");
+        let answered = header(en(), Some(true), NewlineKey::Auto, &no_env).join("\n");
         assert!(answered.contains("answered, and turned on"), "{answered}");
-        let windows = header(en(), None, &no_env).join("\n");
+        let windows = header(en(), None, NewlineKey::Auto, &no_env).join("\n");
         assert!(windows.contains("not asked"), "{windows}");
     }
 
@@ -678,6 +738,7 @@ mod tests {
             },
             &mut echo,
             en(),
+            NewlineKey::Auto,
         )
         .unwrap();
         assert_eq!(switched, vec![true, false]);

@@ -680,6 +680,64 @@ fn shift_alt_enter_and_ctrl_j_insert_newline_not_send() {
     );
 }
 
+/// `interface.newline_key` (spec §11.5): `Ctrl+Enter` sends until it is the
+/// chosen key, then breaks the line — and the fallbacks keep breaking it.
+#[test]
+fn ctrl_enter_breaks_the_line_once_it_is_the_chosen_key() {
+    use crate::shared::config::NewlineKey;
+    let ctrl_enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL);
+    let mut s = ChatScreen::new();
+    s.set_server_status(ready_statuses());
+    for c in "ab".chars() {
+        s.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+    }
+    // The default: `Ctrl+Enter` sends, as it always has.
+    assert_eq!(
+        s.handle_key(ctrl_enter),
+        Some(ChatIntent::Send("ab".into()))
+    );
+
+    let mut cfg = AppConfig::default();
+    cfg.interface.newline_key = NewlineKey::CtrlEnter;
+    s.set_settings(cfg, Vec::new(), Vec::new(), Default::default(), Vec::new());
+    assert_eq!(s.newline_key(), NewlineKey::CtrlEnter);
+    for c in "cd".chars() {
+        s.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+    }
+    assert_eq!(s.handle_key(ctrl_enter), None);
+    s.handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE));
+    // A fallback still breaks the line under the choice.
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)),
+        None
+    );
+    s.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
+    assert_eq!(s.input.text(), "cd\ne\nf");
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        Some(ChatIntent::Send("cd\ne\nf".into()))
+    );
+}
+
+/// The input box's footer names the chosen key — `Alt+Enter` is what the
+/// terminal guess says over SSH from Windows Terminal, which keeps that chord
+/// for itself (spec §11.5).
+#[test]
+fn the_input_footer_names_the_chosen_newline_key() {
+    use crate::shared::config::NewlineKey;
+    let mut s = ChatScreen::new();
+    s.set_server_status(ready_statuses());
+    // Unset in a test binary, the terminal's answer is the historical wording.
+    let rows = screen_rows(&mut s, 120, 20).join("\n");
+    assert!(rows.contains("Shift+Enter перенос"), "{rows}");
+    let mut cfg = AppConfig::default();
+    cfg.interface.newline_key = NewlineKey::CtrlJ;
+    s.set_settings(cfg, Vec::new(), Vec::new(), Default::default(), Vec::new());
+    let rows = screen_rows(&mut s, 120, 20).join("\n");
+    assert!(rows.contains("Ctrl+J перенос"), "{rows}");
+    assert!(!rows.contains("Shift+Enter"), "{rows}");
+}
+
 #[test]
 fn activate_chat_loads_draft_without_marking_dirty() {
     let mut s = ChatScreen::new();

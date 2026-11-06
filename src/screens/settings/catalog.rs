@@ -1951,6 +1951,12 @@ impl SettingsScreen {
             loc.t("ui.settings.group.behavior"),
             vec![
                 row(
+                    FieldId::INewlineKey,
+                    loc.t("ui.settings.field.newline_key"),
+                    FieldKind::Choice(newline_key_label(i.newline_key, loc)),
+                )
+                .describe(loc.t("ui.settings.desc.newline_key")),
+                row(
                     FieldId::IConfirmKeys,
                     loc.t("ui.settings.field.confirm_keys"),
                     FieldKind::Toggle(i.confirm_destructive_keys),

@@ -11,7 +11,7 @@
 
 use super::helpers::*;
 use super::*;
-use crate::shared::config::{CodeBlockBackground, WebProvider};
+use crate::shared::config::{CodeBlockBackground, NewlineKey, WebProvider};
 
 /// How to read/change a config field's value. `fn` pointers (not closures) — `'static`,
 /// no capturing; routing by mode (external vs cloud) lives **inside** the setter
@@ -258,6 +258,14 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
                     c.interface.code_block_background,
                     |b| code_background_label(b, loc),
                 )
+            },
+        ),
+        INewlineKey => choice(
+            |c, dir| c.interface.newline_key = c.interface.newline_key.cycle(dir),
+            |c, loc| {
+                index_menu(&NewlineKey::ALL, c.interface.newline_key, |k| {
+                    newline_key_label(k, loc)
+                })
             },
         ),
         IAutoTitle => choice(
