@@ -156,6 +156,53 @@ async fn a_session_cut_by_a_failure_goes_on_from_its_call_log() {
 }
 
 #[tokio::test]
+async fn a_version_that_breaks_off_stays_in_the_session_and_out_of_the_story() {
+    let (mut story, log) = fresh_story().await;
+    let log: SharedLog = Arc::new(tokio::sync::Mutex::new(log));
+    let cut = "## Version 2\n\nText 3, and then she did not tu";
+    let mut first = turns(2);
+    first.push(reply(cut));
+    first.push(failure());
+    let broken = port(first, &log);
+    let written = write(&story.db, &mut story.author, &log, &broken, &config(700))
+        .await
+        .unwrap();
+    assert!(
+        matches!(&written.ended, Ended::Failed(at, _) if at == "b0/t4"),
+        "{:?}",
+        written.ended
+    );
+    assert_eq!(written.versions, 1);
+    drop(broken);
+
+    // Resumed: the critique reads the broken version, the next revision is
+    // kept, and the broken one is never stored, on this run or the next.
+    let rest: Vec<Vec<ChatChunk>> = turns(9).into_iter().skip(3).collect();
+    let resumed = port(rest, &log);
+    let written = write(&story.db, &mut story.author, &log, &resumed, &config(700))
+        .await
+        .unwrap();
+    assert_eq!(written.ended, Ended::Spent);
+    assert_eq!(written.versions, 2);
+    let texts: Vec<String> = story
+        .db
+        .chapter_versions(1)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|v| v.text)
+        .collect();
+    assert_eq!(
+        texts,
+        ["## Version 1\n\nText 1.", "## Version 3\n\nText 5."]
+    );
+    let run = story.db.runs().await.unwrap().pop().unwrap();
+    let critique = story.db.call(&run, "b0/t4", 1).await.unwrap().unwrap();
+    let messages = critique.call.request["messages"].as_array().unwrap();
+    assert_eq!(messages[5]["content"], cut);
+}
+
+#[tokio::test]
 async fn the_window_stops_a_session_before_a_turn_that_would_not_fit() {
     let (mut story, log) = fresh_story().await;
     let log: SharedLog = Arc::new(tokio::sync::Mutex::new(log));

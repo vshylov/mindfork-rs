@@ -4,7 +4,7 @@
 //! and writes it again, each turn seeing the whole session, until it has
 //! spent what F spent on its premise (the equal cost of spec §11), or the
 //! next turn would not fit the model's window. The story is the last
-//! version written.
+//! version written that does not break off mid-sentence.
 //!
 //! - **The stores are the state**, as for the chapter's loop (spec §9): each
 //!   version written is a chapter version, every reply is in the call log
@@ -149,6 +149,19 @@ pub fn revise_ask(words: (u32, u32)) -> String {
     )
 }
 
+/// Whether a version breaks off mid-sentence. A provider may end a reply it
+/// cut as if it had finished: PR 13's pilot met one on Qwen 3.8 through
+/// DeepInfra, a revision of 17,493 tokens ending in the middle of a word.
+/// Such a version stays in the session, for the next critique to read, and
+/// is not kept as the story's: B0's last version is read by no one before
+/// the judges, as F's is by its reviewers.
+fn broken_off(text: &str) -> bool {
+    text.trim_end()
+        .chars()
+        .last()
+        .is_none_or(|c| c.is_alphanumeric() || matches!(c, ',' | ';' | ':' | '-'))
+}
+
 /// The address of turn `n`, from 1: odd turns write, even ones critique.
 fn address(n: u32) -> String {
     format!("b0/t{n}")
@@ -235,12 +248,13 @@ pub async fn write(
     // recorded run from 1 without a gap.
     let mut done = replies(db).await?;
     let writing = |n: u32| n % 2 == 1;
+    let kept = |n: u32, text: &str| writing(n) && !broken_off(text);
     // A version written whose row was not stored before a kill.
     let stored = db.chapter_versions(1).await?.len() as u32;
-    let written = done.keys().filter(|n| writing(**n)).count() as u32;
+    let written = done.iter().filter(|(n, (t, _))| kept(**n, t)).count() as u32;
     for (n, (text, _)) in done
         .iter()
-        .filter(|(n, _)| writing(**n))
+        .filter(|(n, (t, _))| kept(**n, t))
         .skip(stored as usize)
     {
         let origin = if *n == 1 {
@@ -288,7 +302,7 @@ pub async fn write(
             Err(PortError::Store(e)) => return Err(e),
             Err(e) => break Ended::Failed(address(next), e.to_string()),
         };
-        if writing(next) {
+        if kept(next, &reply) {
             let origin = if next == 1 {
                 VersionOrigin::Draft
             } else {
