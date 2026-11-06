@@ -57,6 +57,12 @@ split by subsystem.
   whose "he" and whose son, a line that only states a plan, a reply that opens on thanks —
   and what that reading finds goes to the chapter's review with the other notes. How much
   of it holds depends on the model.
+- **A story chapter's last revision is read too.** The reviewers read the last revision as
+  they read every version before it, and when it came out worse, the text before it goes on
+  instead. The engine counts a chapter's words against the length asked, a revision keeps
+  the characters' names, and the staging reading also flags one person named two ways and a
+  word left in another language. A scene's opening no longer says something happened that
+  the story never played.
 - **A chapter told from its scenes, not retold.** What the scenes played is the chapter's
   material: a plan that came to nothing is cut or told in a phrase, a secret comes out
   when a scene spends it rather than in the narrator's words before, and a talk keeps a

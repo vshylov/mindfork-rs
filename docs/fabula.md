@@ -637,6 +637,15 @@ Proof: engine tests of the loop (the last version reviewed, the earlier text goi
 resume that asks nothing again) and of the prompts; the opening's rule measured by replaying
 Haiku's plan of scene 2; then `villain-4` again on Haiku, F and B0, for the owner to read.
 
+As built (2026-11-06), as decided; B0's revision is also told its last version's count, as F's
+reviser is (T21). Replayed four times each way, Haiku's plan of scene 2 claimed a change no
+event made in three of four openings before and in none after. On `villain-4` again, F cost
+$0.49 for 1,288 words, its revision drew no high note, and the letters left the drawer only
+when Pavel took them. B0 kept 1,066 words at $0.51, 938 without its count. Haiku renamed both
+leads in F's revision, consistently, so F4's rule does not hold on it. In all three F stories
+the chapter ends before its goal, which nothing in the loop checks
+([journal/stories.md](journal/stories.md), *the last version checked*).
+
 Then the run itself, outside any pull request: 36 pairs for each of the two decisions
 (and the ablations, after a GO: T23), the calibration by three people, and the decision rule
 of spec §11, recorded here and in the journal.

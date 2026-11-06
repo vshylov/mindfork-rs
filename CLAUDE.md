@@ -186,7 +186,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-11-06, version 0.23.1)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **4850 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **4859 unit tests
 green, 329 `#[ignore]`** (live smokes + a real-clipboard round trip + the
 screenshot-dump and demo-reel regenerators).
 
@@ -212,7 +212,7 @@ being recent is dropped, not shortened.
   as collisions with a price, a line a deed, a staging pass; a chapter's choices standing
   for its later steps; a map every scene can reach; M3's hidden runner, its systems as
   options, twelve premises frozen, a pilot on Qwen and Sonnet; a chapter told from its record,
-  not retold ([docs/fabula.md](docs/fabula.md),
+  not retold; its last revision reviewed ([docs/fabula.md](docs/fabula.md),
   [docs/journal/stories.md](docs/journal/stories.md)).
 - **Image generation — track complete** (2026-10-30): `image_generate` over a
   slot of its own (OpenAI by default, Gemini, the gateway, xAI), off by default;
