@@ -13,7 +13,7 @@ what was rejected — the reasoning behind the code, not its current shape. For 
 shape read the reference documents named above; for the traps that recur across areas read
 [lessons.md](../lessons.md).
 
-## Entries (22)
+## Entries (23)
 
 - Post-M9: Fabula — PR 1, the story database (done)
 - Post-M9: Fabula — PR 2, the model port and replay; Gate G0 GO (done)
@@ -37,6 +37,7 @@ shape read the reference documents named above; for the traps that recur across 
 - Post-M9: Fabula — M3's full run (done)
 - Post-M9: Fabula — the five F stories completed (done)
 - Post-M9: Fabula — PR 14, the blind judging by three models (done)
+- Post-M9: Fabula — M3's judging (done)
 
 ### Post-M9: Fabula — PR 1, the story database (done)
 
@@ -2131,3 +2132,81 @@ to Google's two providers.
   control on each premise to some $20 more: about $150, some $70 of it on Anthropic's account
   and $80 on OpenRouter's. At four readings at a time per judge, Astra's five minutes a reading
   make it about three hours.
+
+### Post-M9: Fabula — M3's judging (done)
+
+The owner ran PR 14's panel on the DigitalOcean droplet, away from this computer's line
+(2026-11-07). The droplet held the batch's stories as the run had left them, five F stories
+unfinished and twelve B0 sessions not yet carried on, so the 108 finished stories went up from
+this computer as an archive with their checksums. A Claude Code session there worked from a
+brief: it built `main` at `689088c4`, checked the keys without printing them, and ran each
+phase as a detached process, each judge a process of its own at six readings at a time, under
+a limit of $170, $95 of it Fable's.
+
+- **The run.** The controls came first, as a gate: 72 readings in 8 min for $9.91, every judge
+  keeping the original in all 24 of its readings. Then the two decisions: 432 readings in
+  1 h 29 min for $154.42, Argon's last reading 23 minutes in, Fable's 52, Astra's 89. $164.34
+  in all, against some $150 estimated: Fable $85.24, Astra $72.29, Argon $6.80. Every call was
+  answered at its first attempt: none failed, none was refused, none met a rate limit.
+  - A decision reading cost Fable $0.57, Astra $0.46 and Argon $0.04.
+  - Fable reasoned longer than in the probe, 9,676 output tokens a reading on the mean against
+    6,387, and that is where the run went past the estimate.
+  - The controls, an easy choice, cost half what was estimated.
+- **The two decisions.** The last three columns are the pairs each judge's vote alone gave F,
+  of 36.
+
+  | | F won | F lost | tied | p | Fable | Astra | Argon |
+  | --- | --- | --- | --- | --- | --- | --- | --- |
+  | F against B0 | 3 | 33 | 0 | ≈ 1 | 0 | 3 | 2 |
+  | F against A1 | 3 | 30 | 3 | ≈ 1 | 1 | 5 | 1 |
+
+  Against B0, F took `clash-4`, `mystery-4` and `mystery-5`, all at seed 3. Against A1 it took
+  `clash-4` at seeds 2 and 3 and `quiet-2` at seed 1, and tied `clash-3` s3, `mystery-4` s1
+  and `quiet-5` s3. Astra voted for F in each of the six pairs F took.
+- **The panel**, over the 72 pairs of the decisions:
+  - **Consistency.** Fable and Astra kept their choice when the order turned on 65 and 67
+    pairs, Argon on 58.
+  - **Order bias.** Argon chose Story 1 in 86 of its 144 readings, Fable in 67 and Astra in 75.
+    Whatever leaning on the order Argon has, the rule of both orders takes its vote away
+    rather than counting it.
+  - **Agreement.** Where two judges both voted they almost always agreed: Fable and Astra on
+    58 of 61 pairs, Fable and Argon on 54 of 55, Astra and Argon on 58 of 58.
+- **The ratings.** The sum of the four measures, 4 to 40, on the mean, by judge (Fable, Astra,
+  Argon):
+  - against B0: F 19.1, 18.4 and 18.3; B0 29.1, 24.8 and 29.3;
+  - against A1: F 19.9, 18.5 and 18.7; A1 27.1, 22.9 and 28.9.
+
+  Measure by measure, over all three judges, F's stories averaged 4.2–5.1, surprise the
+  lowest; B0's 6.5–7.3; A1's 6.1–7.0. Astra was the sternest with every system, as in the
+  probe.
+- **Length.** Over the 432 readings of the decisions the longer story won 226, 52%. Against
+  B0, F's story was the longer in 20 pairs and was chosen in 16 of their 120 readings; against
+  A1, the longer in 12 pairs and chosen in 2 of their 72.
+- **The reasons.** The agent read a sample and counted keywords over all 432 readings.
+  - **Facts that do not hold.** The judges fault the story they turn down for facts that do not
+    hold, whichever system wrote it: a stone sold at the bazaar that lies in the hero's palm, a
+    relationship named two ways, motives that turn round. Such faults are named in 175 of the
+    382 readings F lost and in 24 of the 50 it won.
+  - **English words in Cyrillic.** One fault is F's own: English words spelt in Cyrillic in
+    the Russian prose (*ledger*, *bundle*, *trunk*, a pasha's *steward*). They are named in 74
+    of the 382 readings F lost and in 4 of the 50 it won.
+  - **The turning scene left out.** The scene a story turns on falling between its scenes is
+    named against F in 22 readings.
+  - **Latin script.** F's stories hold more words in Latin script (96, against B0's 17 and
+    A1's 7). They are Spanish and Turkish lines of the characters' speech, not English.
+- **Checked here.** The results archive was unpacked on this computer and checked three ways:
+  - every record's word counts are the final stories' own, read from the 108 traces;
+  - every record's sides and choice agree with each other;
+  - an independent recount in Python from the raw readings matches `verdict.json` pair by
+    pair and judge by judge.
+- **The rule.** By spec §11, F continues with 24 of 36 pairs against B0, and the simulation
+  stays with 24 of 36 against A1. F has 3 and 3.
+  - **What follows** turns on A1 against B0, which T23 did not judge. If A1 wins 24 of its 36
+    pairs, the tools switch to A1's pipeline and the simulation is removed; with fewer, the
+    track stops.
+  - **The ratings do not settle it.** In these decisions each of B0 and A1 was set against F,
+    and the two rated alike: B0 6.5–7.3, A1 6.1–7.0.
+  - **The cost.** Judging A1 against B0, 36 pairs read both ways by the same panel, would cost
+    some $77 at this run's rates: Fable $41, Astra $33, Argon $3.
+  - **Not run.** Whether to run it is the owner's call. The readings are in
+    `target/fabula-judge-results/` on this computer and in `~/fabula-judge/` on the droplet.
