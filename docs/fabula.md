@@ -538,7 +538,8 @@ The host:
 - A droplet with Ubuntu 24.04, 2 vCPU and 4 GB.
 - The binary of the merged commit, built there or in `rust:1.96.0-bookworm`, at
   `/opt/mindfork/mindfork`.
-- The key in `/etc/fabula-m3.env` (`OPENROUTER_API_KEY=…`, mode 600).
+- The key in `/etc/fabula-m3.env` (`MINDFORK_CLAUDE_API_KEY=…`, mode 600), written from the
+  droplet's own variable of that name; a unit does not inherit a login shell's environment.
 - A unit:
 
 ```ini
@@ -549,7 +550,7 @@ After=network-online.target
 
 [Service]
 EnvironmentFile=/etc/fabula-m3.env
-ExecStart=/opt/mindfork/mindfork story-eval batch --out /var/lib/fabula-m3 --engine openrouter --model qwen/qwen3.8-27b --provider deepinfra --window 262144 --parallel 12
+ExecStart=/opt/mindfork/mindfork story-eval batch --out /var/lib/fabula-m3 --engine anthropic --model claude-haiku-5-5 --key-env MINDFORK_CLAUDE_API_KEY --window 1000000 --budget-tokens 9000000 --parallel 8
 Restart=on-failure
 RestartSec=60
 
@@ -557,8 +558,11 @@ RestartSec=60
 WantedBy=multi-user.target
 ```
 
-The unit names Qwen, T19's first answer; its `--engine`, `--model` and key change to whatever
-model the pilot chooses. To watch it, `tail -f /var/lib/fabula-m3/batch.jsonl`. When it ends,
+The unit names Haiku 5.5, T19's answer. Its chapter budget is 9 million tokens, not the app's
+6: Haiku's tokenizer counts some 30% more than Sonnet's, and a closing scene may follow the
+fourth. A Claude Code session on the droplet itself starts and watches the run (the owner,
+2026-11-07): it builds the binary of the merged commit, writes the key file and the unit, and
+stops the unit if the stories' dollars pass the $70 the owner approved. To watch it, `tail -f /var/lib/fabula-m3/batch.jsonl`. When it ends,
 `rsync` the directory back. A reboot or a crash restarts the batch, which skips what ended. A
 story whose call failed is tried again three times in a batch, and `systemctl restart` tries it
 once more.
@@ -912,7 +916,11 @@ PR 13 added five more, M3's own. The owner accepted every recommendation on 2026
   Sonnet 5.5, read by the owner. The full run's model is chosen after it. The owner's reading
   (2026-11-06) found Qwen's stories mostly weak, and its F on `mystery-2` a failure.
   Sonnet's were all good, at some $810 for the 108 stories; the owner finds that too much, and
-  Haiku 5.5 is the cheaper candidate.
+  Haiku 5.5 is the cheaper candidate. Read on `villain-4` against Sonnet and Qwen, Haiku's
+  stories were far ahead of Qwen's, with slips of language Sonnet does not make, at $0.66 a story
+  of F against Sonnet's $16.80. **Owner's decision (2026-11-07): (c) Claude Haiku 5.5**, some
+  $1.35 a premise and seed for F, B0 and A1, about $50 for all 108, run on a DigitalOcean
+  droplet.
 - **T20. The stories' language.** (a) Russian, as G2: the owner reads them in their own
   language, and the other two judges read Russian too *(recommended)*. (b) English, the
   prompts' language. **Owner's decision (2026-11-05): (a).**
