@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use super::{
-    Again, ChapterContext, GOALS_BY_MANY_ROADS, HOUR, KEEP_NAMES, Kept, Record, Trace,
+    Again, CLOSING, ChapterContext, GOALS_BY_MANY_ROADS, HOUR, KEEP_NAMES, Kept, Record, Trace,
     author_system, continuity, outline, pick, plan, reader, revise, story_language, triage,
     words_of, write, writing_rules,
 };
@@ -657,10 +657,20 @@ fn the_plan_and_the_pick_know_the_place_the_hour_and_the_last_scene() {
     assert!(closing.user.contains("This is the chapter's last scene"));
     // Past the cap, the plan offers the end or one closing scene.
     let past = plan(&view, &[], &world, (5, 4), None);
-    assert!(past.user.contains(
-        "All 4 scenes are played. If the chapter's goals are met, end it here. If not, plan one \
-         closing scene, the chapter's very last: it opens at the moment its goals hang on"
+    assert!(past.user.contains(&format!(
+        "All 4 scenes are played. {CLOSING} First your private intent, then the circumstances."
+    )));
+    // The closing scene opens where and when its goals are decided: on
+    // `villain-4` only the one in the anteroom at nine reached its goal.
+    assert!(CLOSING.contains(
+        "at the deadline itself, neither before nor after it, in the place where it falls due, \
+         with whoever decides there; one who is not of the cast arrives in its pressure"
     ));
+    assert!(
+        !plan(&view, &[], &world, (4, 4), None)
+            .user
+            .contains(CLOSING)
+    );
     assert!(past.user.starts_with(&place));
     let one = plan(&view, &[], &world, (2, 1), None);
     assert!(one.user.contains("The chapter's one scene is played. If"));

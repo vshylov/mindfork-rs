@@ -1953,8 +1953,29 @@ why; one chapter of the five reached its goal, Sonnet's on `mystery-2`.
 - **Tests.** The prompts' place, hour, goals and last scene; the pick's fifth score, kept order
   and an old reading's default; the outline's goals; the World Master's clock; a chapter played
   to its cap having one closing scene, an Author ending it at the closing plan, and the closing
-  scene's one branch, half the rounds and no rerun. Mutation check: 16 mutants, all killed.
-  4864 tests.
-- **Spent.** $12.95 on Haiku: $3.24 before, $5.56 after with the full closing scene, $4.15 after
-  with the light one. The first two came to $8.80 against some $6 the owner had approved; the
-  owner was told and approved the third.
+  scene's one branch, half the rounds and no rerun; the closing plan's place and hour.
+  Mutation check: 18 mutants, all killed. 4864 tests.
+- **The owner's reading, and where the closing scene opens.** The owner read the six
+  `villain-4` stories blind, and two outside readings (Grok 4.7, Gemini 4 Argon) agreed with
+  them on the best: the after chapter on seed 3. Checked against the records:
+  - Its closing scene opened at nine sharp in the anteroom, the director calling for the head of
+    the laboratory. The other two after chapters opened theirs on the stairs at half past eight
+    and in the laboratory at two minutes to nine, and reached their goal in part. "The moment
+    its goals hang on" was read loosely.
+  - Gemini's reading had one after chapter open at half past eight and spend four scenes on the
+    stairs. The records say otherwise: its scenes open at two, four, half past four, seven and
+    half past eight; the chapter that opens at half past eight is a before one.
+  - Confirmed: within each of the six, every name and patronymic holds, and no word is in Latin
+    letters; no chapter laid a denunciation signed twice in the tray, and Galina's secret
+    surfaced in none, which the goal does not ask.
+  - As built, the owner's go-ahead: the closing plan asks for the deadline itself, neither
+    before nor after, in the place where it falls due, with whoever decides there, arriving in
+    its pressure if not of the cast (`CLOSING`).
+  - Replayed from the six chapters' stored closing plans, twice with the new words and once
+    with the old, interleaved, for $0.08: on `villain-4` the anteroom at nine six times of six,
+    from none of three; on `mystery-2` the selamlık at noon two of six, from one of three. Two
+    of its chapters had passed noon in their record before the closing scene, and an opening
+    cannot go back. Haiku's own plans still slip into English ("padded" door).
+- **Spent.** $13.03 on Haiku: $3.24 before, $5.56 after with the full closing scene, $4.15 after
+  with the light one, $0.08 on the closing plan's replay. The first two came to $8.80 against
+  some $6 the owner had approved; the owner was told and approved the third and the replay.

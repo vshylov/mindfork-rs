@@ -631,6 +631,17 @@ pub const HOUR: &str = "Name the hour in the scene's opening, later than the sce
     Where the chapter's goals hang on a deadline, no scene passes it before the last, and the \
     last opens as it comes.";
 
+/// What the plan past the cap asks (G5). Told only "the moment its goals hang
+/// on", Haiku opened `villain-4`'s closing scene on the stairs at half past
+/// eight, in the laboratory at two minutes to nine and in the anteroom at
+/// nine; the last, with the director there, was the one chapter of three
+/// that reached its goal.
+pub const CLOSING: &str = "If the chapter's goals are met, end it here. If not, plan one \
+    closing scene, the chapter's very last, and the chapter ends with it. It opens at the moment \
+    its goals are decided: where they hang on a deadline, at the deadline itself, neither before \
+    nor after it, in the place where it falls due, with whoever decides there; one who is not of \
+    the cast arrives in its pressure.";
+
 /// The plan of the chapter's next scene, or its end (spec §7, step 2). With
 /// `again`, the human asked for this scene to be planned again, and the
 /// chapter may not end here. Past the cap (`scene > most`), the one closing
@@ -659,11 +670,7 @@ pub fn plan(
         } else {
             format!("All {most} scenes are played")
         };
-        format!(
-            "{played}. If the chapter's goals are met, end it here. If not, plan one closing \
-             scene, the chapter's very last: it opens at the moment its goals hang on, and the \
-             chapter ends with it. First your private intent, then the circumstances."
-        )
+        format!("{played}. {CLOSING} First your private intent, then the circumstances.")
     } else if must_play {
         format!(
             "Plan scene {scene} of at most {most}: first your private intent for it, then its \

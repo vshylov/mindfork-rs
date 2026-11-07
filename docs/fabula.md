@@ -692,8 +692,19 @@ one: one branch, half the rounds, no rerun. Then it cost 0.2 to 0.6 million, and
 finished at 4.0 to 7.0 million tokens, as before at 4.6 to 6.6. Read by the agent, two chapters
 of six reached their goals before (none on `villain-4`) and three after, two before and none
 after not at all. After, 25 openings of 30 named the hour (11 of 24 before), no chapter struck
-its deadline before its last scene (two before), and none put its outcome off. Six stories a side is a direction, not a verdict
-([journal/stories.md](journal/stories.md), *a chapter that reaches its goal*).
+its deadline before its last scene (two before), and none put its outcome off. Six stories a
+side is a direction, not a verdict ([journal/stories.md](journal/stories.md), *a chapter that
+reaches its goal*).
+
+The owner read the six `villain-4` stories blind and two outside readings agreed: the best was
+the one whose closing scene opened in the anteroom at nine with the director there; the others
+opened on the stairs at half past eight and in the laboratory at two minutes to nine. Told only
+"the moment its goals hang on", the Author placed it loosely, so the closing plan now asks for
+the deadline itself, neither before nor after, in the place where it falls due, with whoever
+decides there, arriving in its pressure if not of the cast (the owner's go-ahead, 2026-11-07).
+Replayed on the six chapters' stored closing plans, the anteroom at nine came six times of six,
+from none of three; on `mystery-2` the selamlık at noon came two of six, from one of three,
+since in two chapters the record had passed noon before the closing scene.
 
 Then the run itself, outside any pull request: 36 pairs for each of the two decisions
 (and the ablations, after a GO: T23), the calibration by three people, and the decision rule

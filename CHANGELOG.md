@@ -61,7 +61,8 @@ split by subsystem.
   is writing and whether it is the last, weighs how far each version of a scene moves the
   chapter's goals, names the hour each scene opens at and keeps a deadline for the last
   scene, and writes goals the story can reach by more than one road. When the chapter's
-  scenes are spent with its goals unmet, one short closing scene may follow.
+  scenes are spent with its goals unmet, one short closing scene may follow, set at the
+  deadline itself and where it falls due.
 - **A story chapter's last revision is read too.** The reviewers read the last revision as
   they read every version before it, and when it came out worse, the text before it goes on
   instead. The engine counts a chapter's words against the length asked, a revision keeps
