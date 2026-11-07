@@ -13,7 +13,7 @@ what was rejected — the reasoning behind the code, not its current shape. For 
 shape read the reference documents named above; for the traps that recur across areas read
 [lessons.md](../lessons.md).
 
-## Entries (19)
+## Entries (20)
 
 - Post-M9: Fabula — PR 1, the story database (done)
 - Post-M9: Fabula — PR 2, the model port and replay; Gate G0 GO (done)
@@ -34,6 +34,7 @@ shape read the reference documents named above; for the traps that recur across 
 - Post-M9: Fabula — Claude's calls at list price, and the rules on `villain-4` (done)
 - Post-M9: Fabula — the last version checked (done)
 - Post-M9: Fabula — a chapter that reaches its goal (done)
+- Post-M9: Fabula — M3's full run (done)
 
 ### Post-M9: Fabula — PR 1, the story database (done)
 
@@ -1979,3 +1980,42 @@ why; one chapter of the five reached its goal, Sonnet's on `mystery-2`.
 - **Spent.** $13.03 on Haiku: $3.24 before, $5.56 after with the full closing scene, $4.15 after
   with the light one, $0.08 on the closing plan's replay. The first two came to $8.80 against
   some $6 the owner had approved; the owner was told and approved the third and the replay.
+
+### Post-M9: Fabula — M3's full run (done)
+
+The owner chose Haiku 5.5 for every system (T19) and ran the batch on a DigitalOcean droplet,
+away from this computer's power and line. A Claude Code session on the droplet did the work
+from a brief: it built `main` at `64c12819` (the code of PR #886) in 6 min 25 s, wrote the key
+from the droplet's own variable into the unit's file without printing it, and started the unit
+of docs/fabula.md §4 with `--parallel 8` and a 9-million-token chapter budget. On its own it
+added a timer that summed the call logs' dollars every five minutes and would have stopped the
+unit past $65.
+
+- **The run.** 108 stories in 3 h 34 min: the first wave, F and A1, in 2 h 24 min, then B0 in
+  1 h 10 min. $55.76 in all, against some $50 estimated and the owner's limit of $70: F $26.92,
+  B0 $27.21, A1 $1.64. No 429, no story tried twice, no leak in any of the 108.
+- **The endings.**
+
+  | | stories | finished | median words | under 1,200 | median minutes |
+  | --- | --- | --- | --- | --- | --- |
+  | F | 36 | 31 | 1,151 | 20 of 32 | 26 |
+  | B0 | 36 | 36 (spent) | 1,144 | 29 of 36 | 14 |
+  | A1 | 36 | 36 | 1,240 | 12 of 36 | 4 |
+
+- **Five F stories hold no accepted text.**
+  - Four stopped on the chapter budget, each a few thousand tokens past 9 million, at about
+    $1.05: `clash-4` s1, `mystery-2` s3 and `mystery-4` s3 in a rerun of their fourth scene,
+    with no draft, and `quiet-5` s2 at its summary's check, after a draft of 1,529 words.
+  - `clash-3` s2 failed. Haiku refused the reflection of Priya, the station's doctor, weighing
+    her patient's heart against the plane's one place: every branch of a scene failed on it,
+    twice, and the story stopped for good. All 30 refusals of the run, in 22,884 calls, were
+    that step on `clash-3`; its seed 3 met six and finished. The refused replies were benign
+    deliberation in her own voice, cut at a few hundred tokens: what docs/fabula.md §5 lists
+    as a refusal of what reads as the model's own reasoning.
+- **Equal cost.** B0 spent 5–12% above the average of its premise's finished F stories on every
+  premise, 9% on the mean: its stop is checked before a critique, so the revision that crosses
+  the target is kept and paid for.
+- **Not decided here.** How a pair with no F story is judged: as F's loss, left out, or with the
+  five completed (a larger budget for the four, and a refused reflection let pass rather than
+  failing its branch). The owner decides before PR 14 reads a pair. The stories are in
+  `target/fabula/m3-full/` on this machine and in the archive on the droplet.
