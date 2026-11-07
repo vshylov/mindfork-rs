@@ -720,6 +720,21 @@ of spec §11, recorded here and in the journal.
 - **Neither beats B0:** the track stops. Whether the tools stay, running B0, is the
   owner's call then.
 
+**The full run (2026-11-07).** On the owner's DigitalOcean droplet, a Claude Code session there
+built `main` at `64c12819`, the code of PR #886, and ran the batch as a unit: all 108 stories,
+F, B0 and A1 on the twelve premises and seeds 1 to 3, on Haiku 5.5, in 3 h 34 min for $55.76
+(F $26.92, B0 $27.21, A1 $1.64). No story leaked a token, and no call was refused for its rate.
+103 finished. Five F stories hold no accepted text:
+- four stopped on the chapter budget of 9 million tokens, three of them in a rerun of the
+  fourth scene and one at its summary's check, after a draft of 1,529 words;
+- one failed when Haiku refused a character's reflection: the doctor of `clash-3` weighing her
+  patient's heart, all 30 of the run's refusals in 22,884 calls, all that step, all `clash-3`.
+
+B0 spent 5–12% above F's average on every premise, its last revision crossing the target.
+Most stories came in under the 1,200 words asked: 20 of F's 32 texts, 29 of B0's 36, 12 of A1's
+36. How a pair without an F story is judged is the owner's to decide before PR 14 reads any
+([journal/stories.md](journal/stories.md), *M3's full run*).
+
 After M3, Russian prose under the English prompts is compared with prose under Russian
 ones (spec §15).
 
