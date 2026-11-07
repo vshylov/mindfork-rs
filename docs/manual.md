@@ -576,9 +576,9 @@ is open and idle; otherwise the chat list marks it unread.
 ### Stories (experimental)
 
 Turn on **Story tools** in `Ctrl+P → Tools → Stories (experimental)`. The story engine is an
-experiment: characters act out each scene, a world master rules on what happens,
-and an author picks how the scene went and writes the chapter — every role played
-by the chat's own model, so a chapter takes many calls and an hour or more.
+experiment: one writer, the chat's own model, drafts each chapter, reads it as its
+editor would and writes it again, up to 24 times, so a chapter takes some fifty
+calls and can take an hour or more.
 
 1. **Attach your sketches** — `/file attach notes.md` — and ask for a story of
    them: "make a short story of two chapters from my sketches".
@@ -596,46 +596,27 @@ by the chat's own model, so a chapter takes many calls and an hour or more.
    "maybe?" or a question back does not, and the assistant is told to ask you. A
    turn the app started by itself, on a notification, cannot answer for you.
 4. **A chapter in the background.** It is written as a background run (`F7` lists
-   it). When it is done it lands in the chat as an attachment,
-   `<story> — chapter 1.md`, with a note of what it is about, its scenes by number
-   with why each was kept, and what was chosen without asking you — each
-   question once: a choice holds for the rest of its chapter, whose later scenes
-   are planned and written by it — and the assistant asks whether you accept it. Accept it, with wishes for the next chapter
-   if you like, or ask for changes and the chapter's text is revised.
-5. **A scene played again.** When you want something to *happen* differently, not
-   just be told differently, ask for that scene by its number: "play scene 2 again —
-   this time she keeps her secret". That scene and every scene after it are played
-   again from where the scene before it ended, and the chapter is written anew from
-   them; the earlier scenes stay as they were. The new version lands as the chapter
-   did, and you can accept it or ask again. Its budget is a chapter's own: playing
-   scenes again does not spend the first version's.
-6. **The story keeps its books.** After each chapter the story notes, from the
-   chapter's text alone, the questions it leaves its reader with — a clue, footsteps
-   nobody explains — the earlier ones it answers, and what it says of ages, dates,
-   deaths and kinship. The next chapters are planned, written and checked against
-   that list, so a later chapter that tells an earlier one's fact otherwise can be
-   caught. In the last chapter the Author is asked to answer every question still
-   open or leave it open on purpose, and the last checkpoint names those left, with
-   the Author's reason where it gave one. The chapter's summary is written from its
-   text alone too, and checked against it.
-7. **Scenes and lines.** Each scene is planned as a collision — whose goals clash
-   in it and what it may cost someone — and the characters act on what they decide
-   rather than announce it. Each chapter is also read for its staging: who is where
-   and holds what, whose "he" and whose son, a line that only states a plan, a
-   reply that opens on thanks. What that reading finds goes to the chapter's review
-   with the other notes.
+   it). The writer drafts it, then, a round at a time, reads it as its editor
+   would — a conflict that goes slack, a secret spent too soon, a name used two
+   ways, facts that disagree with an earlier chapter — and writes it again. When
+   it is done it lands in the chat as an attachment, `<story> — chapter 1.md`, and
+   the assistant asks whether you accept it.
+5. **Accept it, or send it back.** Accept it, with wishes for the next chapter if
+   you like, or ask for changes: the chapter is written again once with your notes
+   in front of the writer, and lands again for you to accept or send back. The
+   next chapter is written with the chapters you accepted before it in front of
+   the writer, word for word, and with your wishes for it.
 
 A chapter is bounded by **Story: run time limit** (6 hours) and **Story: chapter
 budget (tokens)** (6,000,000), with an optional **Story: chapter budget ($)** where
-the provider reports cost. A run that stops — on a limit, `F6`, a call that failed, or
-quitting the app — says where it stopped, and "go on" resumes it from there; one the
-story's world stopped at a scene says what the world refused, a fault of the engine
-that going on would most likely meet again; the
-assistant never resumes it on its own, only when you ask. A chapter whose budget is
-spent starts nothing until you raise the budget. A chapter's cost depends much on the
-model and grows with the story: a two-chapter story took about 14 million tokens on
-Claude Sonnet 5.5 (some $30), the second chapter more than the first, so raise the
-budget before you start one there. "What is my story doing?"
+the provider reports cost. A spent budget ends the chapter at the last version
+written, which lands as any chapter does; the model's context window ends it the
+same way before a round that would not fit. A run that stops — on the time limit,
+`F6`, a call that failed, or quitting the app — says where it stopped, and "go on"
+resumes it from there; the assistant never resumes it on its own, only when you
+ask. A chapter whose budget is spent starts nothing, a revision included, until you
+raise the budget. On Claude Haiku 5.5 a chapter took about 3.3 million tokens.
+"What is my story doing?"
 gets an answer from `story_status`, never a guess. While a chapter runs, the
 chat's own replies wait their turn for the engine, unless it serves more than one
 session.

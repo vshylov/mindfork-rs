@@ -183,7 +183,6 @@ async fn story_create_stores_drafts_under_their_titles() {
         (Uuid::new_v4(), "x"),
         &fixture_canon(),
         false,
-        "English",
     )
     .await
     .unwrap();

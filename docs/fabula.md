@@ -800,6 +800,16 @@ put to the owner first ([journal/stories.md](journal/stories.md), *A1 against B0
 After M3, Russian prose under the English prompts was to be compared with prose under
 Russian ones (spec §15); with the track stopped, it is not.
 
+### After M3 â the story tools on B0
+
+M3's rule stopped the track, and the owner kept the story tools, behind `tools.story` and off,
+running B0 (2026-11-08). The switch is two pull requests (Â§6, T25âT28).
+
+| PR | Content | Proof |
+| --- | --- | --- |
+| 15 `feat/story-tools-b0` | `story_create` and `story_continue` on B0: a chapter is B0's session, the draft and at most 24 revisions, in the chapter's budget and the model's window; P1 and P2 as they are, without a scene played again; each chapter a session of its own over the accepted chapters' text | Unit tests of the session per chapter, the person's revision, the pauses and a resume; the chat's live story end to end, with a revision asked at the first chapter's checkpoint |
+| 16 `refactor/story-without-f` | The simulation, F's chapter loop and the systems A1âA4 removed with their tests and live smokes; the runner keeps B0 and the judging; the last commit holding F tagged | `cargo test`; the runner's B0 and a judging probe on the mock engine |
+
 ### M4 — the long form, after a GO
 
 Voice review, the Canon keeper with its pause P4, the settle branches, runs of several
@@ -1040,6 +1050,35 @@ PR 14 added one more, on the owner's word.
   call recorded, its cost counted at the list price, and a run stopped resumes. A judge is
   shown the stories as written, the scene breaks evened out to one mark; a section's heading
   stays, since one names whose eyes the section is told through.
+
+M3's rule stopped the track, and keeping the tools on B0 added four more (2026-11-08); the owner
+accepted each recommendation.
+
+- **T25. How long B0 works on a chapter.** (a) To the chapter's budget,
+  `tools.story_budget_tokens`, 6 million tokens by default: twice what the B0 the judges read
+  spent, some 3.25 million on Haiku. (b) The draft and at most 24 revisions, each after a
+  critique, as that B0 wrote 25 versions on the mean; the chapter's budget is the ceiling, and
+  the model's window ends the session before a turn that would not fit it *(recommended)*.
+  It does not depend on the model or its prices. (c) The draft and two revisions, as F's Author
+  had: cheaper, and a system the judges did not read. **Owner's decision (2026-11-08): (b).**
+- **T26. The pauses.** (a) P1, the canon's approval, as it is; P2 after each chapter: accept
+  it, revise it with notes, or accept it and leave notes for the next chapter. The scene played
+  again goes, and P3 with it, since B0 has no scenes. A revision the person asks for is one turn
+  of a session holding the chapter's ask, its last version as the writer's reply and the
+  person's notes; then P2 again *(recommended)*: the session's critiques would wear the notes
+  away, as T19's pilot saw B0's polish erase what the simulation had given F's story. (b) P1
+  only, the chapters written one after another. **Owner's decision (2026-11-08): (a).**
+- **T27. The chapters after the first.** (a) Each chapter is a session of its own, given the
+  canon, its goal in the arc, the accepted chapters' text whole, and the person's notes for it;
+  a chapter is 1,200 to 2,500 words, so the accepted ones fit the window *(recommended)*. (b) One
+  session through the whole story: a few chapters in, it outgrows the window.
+  **Owner's decision (2026-11-08): (a).**
+- **T28. F's code.** (a) In a pull request after the switch, the simulation, F's chapter loop
+  and the systems A1âA4 go, with their tests and live smokes, which take the paid live gate's
+  time; B0, the stores, the canon and its creation, the tools, the hidden runner for B0 and the
+  judging stay, for the next comparison (the prompts in Russian, say). The last commit holding
+  F is tagged *(recommended)*. (b) F kept, reachable from the hidden runner alone. (c) The
+  runner and the judging removed as well. **Owner's decision (2026-11-08): (a).**
 
 ## 7. Not in this track
 

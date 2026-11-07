@@ -106,12 +106,13 @@ async fn a_story_goes_from_its_canon_to_a_run_on_the_persons_own_words() {
     wait_for(&mut rx, |e| matches!(e, AppEvent::Finished { .. }))
         .await
         .unwrap();
-    // The run is in its first call, the Author's, when the app quits.
+    // The run is in its first call, the writer's draft (docs/fabula.md §6,
+    // T25), when the app quits.
     let author_asked = || {
         backend.requests().iter().any(|r| {
             r.system
                 .as_deref()
-                .is_some_and(|s| s.contains("You are the Author of a story"))
+                .is_some_and(|s| s.starts_with("You are a writer."))
         })
     };
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
@@ -244,7 +245,7 @@ async fn a_story_goes_from_its_canon_to_a_run_on_the_persons_own_words() {
     store.close().await.unwrap();
 
     // The run went out with its record on the call, and the quit cut it
-    // short where it was: the Author's outline.
+    // short where it was: the chapter's draft.
     let record = chat
         .messages
         .iter()
@@ -257,7 +258,7 @@ async fn a_story_goes_from_its_canon_to_a_run_on_the_persons_own_words() {
     assert_eq!(record.outcome, Some(RunOutcome::Cancelled));
     assert!(started.contains(&crate::features::chat_links::uri(record.id)));
     let closing = record.messages.last().unwrap().text.clone();
-    assert!(closing.contains("ch1/outline"), "{closing}");
+    assert!(closing.contains("ch1/b0/t1"), "{closing}");
 }
 
 /// A turn the app woke on a notification answers no message of the
@@ -278,7 +279,6 @@ async fn a_woken_turn_cannot_answer_for_the_person() {
         (chat, "the-harbour"),
         &fixture_canon(),
         false,
-        "English",
     )
     .await
     .unwrap();

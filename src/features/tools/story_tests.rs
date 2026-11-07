@@ -8,8 +8,8 @@ use serde_json::json;
 use uuid::Uuid;
 
 use super::{
-    STORY_STATUS_ID, StoryStatusTool, attachment_name, attachment_source, human_language,
-    landing_text, question_text, quit_text, report,
+    STORY_STATUS_ID, StoryStatusTool, attachment_name, attachment_source, landing_text,
+    question_text, quit_text, report,
 };
 use crate::entities::story::{
     Assumption, Decision, Question, QuestionBody, QuestionId, Resolution, RunId, fixture_canon,
@@ -349,8 +349,6 @@ fn the_small_words_are_filled_in_both_languages() {
         attachment_source("c", "s1", 3),
         attachment_source("c", "s1", 4)
     );
-    assert_eq!(human_language(en), "English");
-    assert_eq!(human_language(locale(Lang::Ru)), "Russian");
     for loc in both() {
         filled(&quit_text(loc, Some("x")));
         filled(&quit_text(loc, None));

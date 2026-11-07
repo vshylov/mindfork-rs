@@ -19,8 +19,8 @@ use uuid::Uuid;
 use super::super::story_runs::StorySpec;
 use super::{BackgroundStart, CallResult, RunSpec, SharedParts, TurnLoop, TurnProgress};
 use crate::features::story::conversation::{self, Answering, Continued, Listener};
+use crate::features::tools::story::STORY_CONTINUE_ID;
 use crate::features::tools::story::conversation as words;
-use crate::features::tools::story::{STORY_CONTINUE_ID, human_language};
 use crate::shared::api::contract::ApiToolCall;
 
 impl TurnLoop<'_> {
@@ -104,12 +104,10 @@ impl TurnLoop<'_> {
                 return words::continue_refusal_text(loc, id, &refusal, pending).into();
             }
         };
-        let story_run = self.ctx.story_params.run(
-            (self.ctx.chat_id, id, run),
-            &files,
-            &model,
-            human_language(loc),
-        );
+        let story_run = self
+            .ctx
+            .story_params
+            .run((self.ctx.chat_id, id, run), &files, &model);
         let spec = StorySpec::new(
             story_run,
             id.to_owned(),

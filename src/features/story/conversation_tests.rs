@@ -54,7 +54,6 @@ impl Fixture {
             (self.chat, "harbour"),
             canon,
             revise,
-            "English",
         )
         .await
     }

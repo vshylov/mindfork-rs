@@ -5,10 +5,10 @@
 //! budget, within its time limit and its chapter's budget, and what the
 //! landing carries back to the chat.
 //!
-//! - **One model, every role.** The chat's backend serves the characters, the
-//!   World Master, the Author and the reviewers; a role differs only by its
-//!   sampling ([`role_sampling`]), as G1 and PR 6 measured it (docs/journal/
-//!   stories.md).
+//! - **B0 writes it** (docs/fabula.md §6, T25–T27): each chapter is a session
+//!   of one writer on the chat's backend, with the Author's sampling
+//!   ([`role_sampling`]), as M3's judges preferred it to the simulation
+//!   ([`super::single_story`]).
 //! - **The time limit cancels, it does not kill.** When it ends, the calls are
 //!   cancelled and the engine stops at the step in flight, which it records,
 //!   so the next run resumes there (spec §9). The run's own token — a stop, a
@@ -27,11 +27,13 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::board::StoryBoard;
-use super::chapter::{self, Budget, ChapterConfig, Engine, Outcome, Stop};
+use super::chapter::{Budget, Outcome, Stop, StoryError};
 use super::engine::{EngineAdapter, SharedLog};
 use super::keeper::{LeftOpen, left_open};
-use super::port::{CallAddress, LlmPort, PortError, Prompt, Role};
+use super::port::{CallAddress, LlmPort, PortError, Prompt, Role, Turn};
 use super::schema::Schema;
+use super::single::SingleConfig;
+use super::single_story::{self, MOST_REVISIONS, Story};
 use crate::entities::sampling::{ReasoningEffort, SamplingConfig};
 use crate::entities::story::{Assumption, Question, QuestionBody};
 use crate::shared::api::contract::EngineBackend;
@@ -54,8 +56,11 @@ pub struct StoryRun {
     pub log: PathBuf,
     /// The model's name, as the call log records it.
     pub model: String,
-    /// How the chapter is made, the budget included.
-    pub config: ChapterConfig,
+    /// How each chapter's session runs, the budget included.
+    pub config: SingleConfig,
+    /// The model's window as the settings name it; none — asked of the
+    /// engine when the run starts, else [`SingleConfig`]'s default.
+    pub window: Option<u64>,
     /// The run's time limit (`tools.story_run_timeout_secs`).
     pub timeout: Duration,
     /// Never ask the engine to constrain the decoding (docs/fabula.md §5):
@@ -173,17 +178,21 @@ pub fn role_sampling() -> Vec<(Role, SamplingConfig)> {
     ]
 }
 
-/// How a chapter is made under these settings: the engine's own shape, the
-/// settings' budget (`0` tokens — none), and the human's language for what
-/// the human reads.
-pub fn chapter_config(tools: &ToolSettings, human_language: &str) -> ChapterConfig {
-    ChapterConfig {
-        budget: Budget {
-            tokens: (tools.story_budget_tokens > 0).then_some(tools.story_budget_tokens),
-            usd: tools.story_budget_usd.filter(|usd| *usd > 0.0),
-        },
-        human_language: human_language.to_owned(),
-        ..ChapterConfig::default()
+/// A chapter's budget under these settings: `0` tokens — none.
+pub fn budget_of(tools: &ToolSettings) -> Budget {
+    Budget {
+        tokens: (tools.story_budget_tokens > 0).then_some(tools.story_budget_tokens),
+        usd: tools.story_budget_usd.filter(|usd| *usd > 0.0),
+    }
+}
+
+/// How a chapter's session runs under these settings: the settings' budget
+/// as its ceiling and [`MOST_REVISIONS`] as its end (T25).
+pub fn single_config(tools: &ToolSettings) -> SingleConfig {
+    SingleConfig {
+        budget: budget_of(tools),
+        most_revisions: MOST_REVISIONS,
+        ..SingleConfig::default()
     }
 }
 
@@ -195,15 +204,18 @@ pub fn needs_fallback(mode: ServerMode, spec_type: SpecType) -> bool {
 }
 
 /// What a story's run takes from the settings, snapshotted with the turn
-/// that starts it: the time limit, the chapter's budget, and whether the
-/// engine may be asked to constrain the decoding.
+/// that starts it: the time limit, the chapter's budget, the model's window
+/// where the settings name it, and whether the engine may be asked to
+/// constrain the decoding.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StoryParams {
     /// `tools.story_run_timeout_secs`.
     pub timeout: Duration,
-    /// The chapter's budget and the engine's shape ([`chapter_config`]),
-    /// before the human's language is known.
+    /// The chapter's budget ([`single_config`]).
     pub tools: ToolSettings,
+    /// The window the settings name: `compaction.context_tokens`, or a
+    /// managed server's `-c`.
+    pub window: Option<u64>,
     /// [`needs_fallback`] for the chat's engine.
     pub fallback_only: bool,
 }
@@ -214,33 +226,40 @@ impl Default for StoryParams {
             &ToolSettings::default(),
             ServerMode::default(),
             SpecType::default(),
+            None,
         )
     }
 }
 
 impl StoryParams {
-    /// The parameters under `tools`, for an engine in `mode` with `spec_type`.
-    pub fn of(tools: &ToolSettings, mode: ServerMode, spec_type: SpecType) -> Self {
+    /// The parameters under `tools`, for an engine in `mode` with
+    /// `spec_type`, whose window the settings name as `window`.
+    pub fn of(
+        tools: &ToolSettings,
+        mode: ServerMode,
+        spec_type: SpecType,
+        window: Option<u64>,
+    ) -> Self {
         Self {
             timeout: Duration::from_secs(tools.story_run_timeout_secs.max(1)),
             tools: tools.clone(),
+            window: window.filter(|w| *w > 0),
             fallback_only: needs_fallback(mode, spec_type),
         }
     }
 
     /// The chapter's budget under these settings.
     pub fn budget(&self) -> Budget {
-        chapter_config(&self.tools, "").budget
+        budget_of(&self.tools)
     }
 
     /// The run of story `story` of chat `chat`, as `run`, over its `files`, on
-    /// `model`, telling the human in `human_language`.
+    /// `model`.
     pub fn run(
         &self,
         (chat, story, run): (Uuid, &str, Uuid),
         files: &super::conversation::StoryFiles,
         model: &str,
-        human_language: &str,
     ) -> StoryRun {
         StoryRun {
             chat,
@@ -249,7 +268,8 @@ impl StoryParams {
             db: files.db.clone(),
             log: files.log.clone(),
             model: model.to_owned(),
-            config: chapter_config(&self.tools, human_language),
+            config: single_config(&self.tools),
+            window: self.window,
             timeout: self.timeout,
             fallback_only: self.fallback_only,
         }
@@ -284,6 +304,17 @@ impl LlmPort for Watched<'_> {
     ) -> Result<String, PortError> {
         self.board.step(self.run, &call.address);
         self.inner.text(call, role, prompt).await
+    }
+
+    async fn session(
+        &self,
+        call: &CallAddress,
+        role: Role,
+        system: &str,
+        turns: &[Turn],
+    ) -> Result<String, PortError> {
+        self.board.step(self.run, &call.address);
+        self.inner.session(call, role, system, turns).await
     }
 }
 
@@ -342,6 +373,15 @@ async fn advance_open(
     board: &StoryBoard,
     cancel: CancellationToken,
 ) -> Result<Landed, StoryDbError> {
+    // The window, where the settings do not name it, is the engine's to say
+    // (docs/fabula.md §6, T25).
+    let mut config = spec.config.clone();
+    if let Some(window) = match spec.window {
+        Some(window) => Some(window),
+        None => backend.context_budget().await.map(u64::from),
+    } {
+        config.window = window;
+    }
     let mut author = db.author_writer().await?;
     let log: SharedLog = Arc::new(Mutex::new(db.run_log_writer().await?));
     // The calls' own token: the time limit cancels the calls, not the run.
@@ -368,12 +408,12 @@ async fn advance_open(
         run: spec.run,
     };
     let before = db.spend("").await?;
-    let mut advance = std::pin::pin!(chapter::advance(Engine {
+    let mut advance = std::pin::pin!(single_story::advance(Story {
         db,
         author: &mut author,
         log: &log,
         port: &port,
-        config: &spec.config,
+        config: &config,
     }));
     let mut deadline = std::pin::pin!(tokio::time::sleep(spec.timeout));
     let mut timed_out = false;
@@ -394,7 +434,7 @@ async fn advance_open(
             why: Stop::Cancelled,
         }) if timed_out => Ending::TimedOut { step },
         Ok(Outcome::Stopped { step, why }) => Ending::Stopped { step, why },
-        Err(chapter::StoryError::Store(e)) => return Err(e),
+        Err(StoryError::Store(e)) => return Err(e),
         Err(e) => Ending::Failed(e.to_string()),
     };
     let spent = spent_since(&before, &db.spend("").await?);

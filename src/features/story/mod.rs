@@ -18,6 +18,8 @@
 //! - [`eval`] — M3's hidden runner: the systems of spec §11 as run options,
 //!   the frozen premises, the batch; [`single`] — its B0, one agent in one
 //!   session.
+//! - [`single_story`] — the story tools' engine after M3 (docs/fabula.md §6,
+//!   T25–T27): B0's session a chapter, with the pauses between.
 
 pub mod answer;
 pub mod author;
@@ -41,6 +43,7 @@ pub mod scene;
 pub mod schema;
 pub mod simulation;
 pub mod single;
+pub mod single_story;
 pub mod staging;
 pub mod steps;
 

@@ -11,16 +11,16 @@
 //! - `story_chat_live_story` — a story end to end: the sketches, the canon,
 //!   its approval, each chapter landed and accepted, until the story is
 //!   finished or `MINDFORK_FABULA_CHAPTERS` chapters have landed. The chat's
-//!   transcript, the story's markdown and its registers (PR 11) are written to
-//!   `MINDFORK_FABULA_OUT` (`target/fabula/story-live-<time>`), whose `data/`, when
-//!   a run left one there, is taken up where it stands; `MINDFORK_FABULA_BUDGET` is
-//!   the chapter's budget in tokens (the default's). Gate G2 is
-//!   this test on Claude Sonnet 5.5, in Russian (`MINDFORK_FABULA_LANG=ru`;
-//!   docs/fabula.md §6, T9–T10). With `MINDFORK_FABULA_RERUN=<scene>` the
-//!   person answers the first chapter's checkpoint by asking for that scene
-//!   to be played again, and the chapter's take lands as a landing of its own
-//!   (PR 10; with `MINDFORK_FABULA_CHAPTERS=2` the script ends at the take's
-//!   checkpoint); the takes are reported with the story.
+//!   transcript and the story's markdown are written to `MINDFORK_FABULA_OUT`
+//!   (`target/fabula/story-live-<time>`), whose `data/`, when a run left one
+//!   there, is taken up where it stands; `MINDFORK_FABULA_BUDGET` is the
+//!   chapter's budget in tokens (the default's). Gate G2 was this test on
+//!   Claude Sonnet 5.5, in Russian (`MINDFORK_FABULA_LANG=ru`; docs/fabula.md
+//!   §6, T9–T10). Each chapter is accepted with a wish for the next. With
+//!   `MINDFORK_FABULA_REVISE=1` the person answers the first chapter's
+//!   checkpoint by asking for changes, and the revision lands as a landing of
+//!   its own (docs/fabula.md §6, T26); every chapter's versions are reported
+//!   with the story.
 //! - `story_chat_live_map_mended` — the model's first `story_create` with a map
 //!   has its routes dropped, the slip a live story found, and the story stored
 //!   after the refusal must have a map every place of which is reachable from
@@ -83,8 +83,8 @@ struct Lines {
     accept_last: &'static str,
     scene: &'static str,
     resume: &'static str,
-    /// A scene asked for again at the checkpoint: `{n}` is its number.
-    rerun: &'static str,
+    /// Changes asked for at a checkpoint.
+    revise: &'static str,
 }
 
 const EN: Lines = Lines {
@@ -92,12 +92,13 @@ const EN: Lines = Lines {
 build the canon and create the story.",
     build: "Build the canon yourself from the sketches and create the story; the details are up to you.",
     approve_canon: "Yes, I approve the canon. Start the first chapter.",
-    accept: "I accept this chapter. Go on to the next one.",
+    accept: "I accept this chapter. In the next one, let the logbook itself bring the truth \
+out.",
     accept_last: "I accept the chapter. Thank you, the story is done.",
     scene: "Try the scene again as you see fit.",
     resume: "Go on with the story.",
-    rerun: "Play scene {n} again, please: this time the secret must not come out in it; let \
-the scene end with it still kept.",
+    revise: "Please revise this chapter: Timur must not say yet why he really came, and the \
+storm should be heard in every scene.",
 };
 
 const RU: Lines = Lines {
@@ -105,12 +106,12 @@ const RU: Lines = Lines {
 собери канон и создай историю.",
     build: "Собери канон сам по наброскам и создай историю; детали на твоё усмотрение.",
     approve_canon: "Да, канон одобряю. Начинай первую главу.",
-    accept: "Главу принимаю, давай дальше.",
+    accept: "Главу принимаю. В следующей пусть правду откроет сам журнал.",
     accept_last: "Главу принимаю. Спасибо, история готова.",
     scene: "Попробуй сцену ещё раз, как считаешь нужным.",
     resume: "Продолжай историю.",
-    rerun: "Переиграй, пожалуйста, сцену {n}: на этот раз тайна в ней не должна раскрыться, \
-пусть сцена закончится, а секрет останется при герое.",
+    revise: "Перепиши, пожалуйста, эту главу: Тимур пока не должен говорить, зачем на самом \
+деле приехал, а шторм пусть будет слышен в каждой сцене.",
 };
 
 fn lang() -> Lang {
@@ -511,13 +512,13 @@ fn progress(state: Option<&(String, StoryStatus)>) -> Option<(Option<String>, us
 }
 
 /// What the person says next, from where the story stands; `None` when the
-/// script is done. `rerun` is the scene to ask for again at the next
-/// chapter's checkpoint, until it has been asked.
+/// script is done. `revise` asks for changes at the next chapter's
+/// checkpoint, until they have been asked for.
 fn next_line(
     lines: &'static Lines,
     state: Option<&(String, StoryStatus)>,
     (landed, chapters): (u32, u32),
-    rerun: &mut Option<u32>,
+    revise: &mut bool,
 ) -> Option<String> {
     Some(
         match state.map(|(_, s)| (s.pending.as_ref().map(|q| &q.body), s)) {
@@ -527,8 +528,8 @@ fn next_line(
                 if landed >= chapters {
                     return None;
                 }
-                if let Some(scene) = rerun.take() {
-                    return Some(lines.rerun.replace("{n}", &scene.to_string()));
+                if std::mem::take(revise) {
+                    return Some(lines.revise.to_owned());
                 }
                 if *chapter >= s.planned {
                     lines.accept_last
@@ -544,45 +545,9 @@ fn next_line(
     )
 }
 
-/// Chapter 1's takes as the story holds them: each take's first scene, what
-/// it carried and replaced, and the scenes the latest keeps (PR 10).
-async fn takes_report(root: &Path, chat: Uuid, id: &str) -> String {
-    let storage = Storage::open(Paths::with_root(root)).unwrap();
-    let json = storage.json();
-    let db = StoryDb::open(
-        &json.story_db(&chat.to_string(), id),
-        &json.story_log(&chat.to_string(), id),
-    )
-    .await
-    .unwrap();
-    let take = db.take_of(1).await.unwrap();
-    let kept: Vec<String> = db
-        .kept_scenes(1)
-        .await
-        .unwrap()
-        .iter()
-        .map(|k| k.scene.id.to_string())
-        .collect();
-    let versions: Vec<String> = db
-        .chapter_versions(1)
-        .await
-        .unwrap()
-        .iter()
-        .map(|v| format!("{} {}", v.id, v.origin.as_str()))
-        .collect();
-    let spend = db.chapter_spend(1).await.unwrap();
-    db.close().await.unwrap();
-    format!(
-        "take: {take:?}\nchapter 1 keeps: {kept:?}\nversions: {versions:?}\nthe latest take spent \
-         {} tokens in {} calls",
-        spend.tokens(),
-        spend.calls
-    )
-}
-
-/// Every version's register and summary, chapter by chapter (PR 11): the
-/// threads opened and paid off, the facts stated.
-async fn registers_report(root: &Path, chat: Uuid, id: &str) -> String {
+/// Every chapter's versions, with where each came from, and what the
+/// chapter's calls spent.
+async fn versions_report(root: &Path, chat: Uuid, id: &str) -> String {
     let storage = Storage::open(Paths::with_root(root)).unwrap();
     let json = storage.json();
     let db = StoryDb::open(
@@ -597,30 +562,19 @@ async fn registers_report(root: &Path, chat: Uuid, id: &str) -> String {
         if versions.is_empty() {
             break;
         }
-        for v in versions {
-            let Some(register) = db.register(&v.id).await.unwrap() else {
-                continue;
-            };
-            out.push_str(&format!("\n## {}\n", v.id));
-            for t in &register.opened {
-                out.push_str(&format!(
-                    "- opens {}: {} («{}»)\n",
-                    t.id, t.question, t.quote
-                ));
-            }
-            for p in &register.paid {
-                out.push_str(&format!("- pays {}: {}\n", p.thread, p.how));
-            }
-            for f in &register.facts {
-                out.push_str(&format!(
-                    "- fact {} ({}): {} («{}»)\n",
-                    f.id, f.stated_by, f.fact, f.quote
-                ));
-            }
-            if let Some(summary) = db.summary(&v.id).await.unwrap() {
-                out.push_str(&format!("- summary: {summary}\n"));
-            }
-        }
+        let spend = db.chapter_spend(n).await.unwrap();
+        let origins: Vec<String> = versions
+            .iter()
+            .map(|v| format!("{} {}", v.version, v.origin.as_str()))
+            .collect();
+        out.push_str(&format!(
+            "\nchapter {n}: {} versions ({}); {} tokens in {} calls, ${:?}",
+            versions.len(),
+            origins.join(", "),
+            spend.tokens(),
+            spend.calls,
+            spend.cost_usd
+        ));
     }
     db.close().await.unwrap();
     out
@@ -637,7 +591,7 @@ async fn story_chat_live_story() {
     let lang = lang();
     let lines = if lang == Lang::Ru { &RU } else { &EN };
     let chapters: u32 = env_or("MINDFORK_FABULA_CHAPTERS", 99);
-    let mut rerun = Some(env_or("MINDFORK_FABULA_RERUN", 0u32)).filter(|n| *n > 0);
+    let mut revise = env_or("MINDFORK_FABULA_REVISE", 0u32) > 0;
     let base = out_dir("story-live");
     let root = base.join("data");
     // A root a run left behind is taken up where it stands.
@@ -651,7 +605,7 @@ async fn story_chat_live_story() {
         lines,
         story_of(&app.root, app.chat).as_ref(),
         (0, chapters),
-        &mut rerun,
+        &mut revise,
     )
     .unwrap_or_else(|| lines.open.to_owned());
     // A turn that moves the story nowhere twice running ends the script: a
@@ -703,7 +657,7 @@ async fn story_chat_live_story() {
             eprintln!("--- the story did not move for two turns; the script ends");
             break;
         }
-        let Some(next) = next_line(lines, state.as_ref(), (landed, chapters), &mut rerun) else {
+        let Some(next) = next_line(lines, state.as_ref(), (landed, chapters), &mut revise) else {
             break;
         };
         line = next;
@@ -715,10 +669,10 @@ async fn story_chat_live_story() {
         Some((id, status)) => {
             let text = story_markdown(&root, chat_id, &id).await;
             std::fs::write(base.join("story.md"), &text).unwrap();
-            eprintln!("\n=== {}", takes_report(&root, chat_id, &id).await);
-            let registers = registers_report(&root, chat_id, &id).await;
-            std::fs::write(base.join("registers.md"), &registers).unwrap();
-            eprintln!("\n=== the registers:{registers}");
+            eprintln!(
+                "\n=== the versions:{}",
+                versions_report(&root, chat_id, &id).await
+            );
             format!(
                 "story «{id}»: {} of {} chapters accepted, finished: {}; {} words",
                 status.chapters.iter().filter(|c| c.accepted).count(),

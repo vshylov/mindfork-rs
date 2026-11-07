@@ -544,7 +544,7 @@ async fn write_open(
             None => {
                 let config = SingleConfig {
                     words: options.words,
-                    target: job.target.unwrap_or_default(),
+                    target: Some(job.target.unwrap_or_default()),
                     window: options.window,
                     ..SingleConfig::default()
                 };
@@ -553,6 +553,12 @@ async fn write_open(
                     Ended::Spent => Ending::Finished("spent".to_owned()),
                     Ended::Window => Ending::Finished("window".to_owned()),
                     Ended::Revisions => Ending::Finished("revisions".to_owned()),
+                    Ended::Budget => Ending::Finished("budget".to_owned()),
+                    Ended::Cancelled(step) => Ending::Stopped {
+                        step,
+                        why: "cancelled".to_owned(),
+                        transient: true,
+                    },
                     Ended::Failed(step, why) => Ending::Stopped {
                         step,
                         why,
@@ -613,7 +619,7 @@ fn config_json(config: &ChapterConfig) -> Value {
 fn single_json(config: &SingleConfig) -> Value {
     json!({
         "words": [config.words.0, config.words.1],
-        "target": {"usd": config.target.usd, "tokens": config.target.tokens},
+        "target": config.target.map(|t| json!({"usd": t.usd, "tokens": t.tokens})),
         "window": config.window,
         "most_revisions": config.most_revisions,
     })

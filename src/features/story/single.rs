@@ -6,11 +6,16 @@
 //! next turn would not fit the model's window. The story is the last
 //! version written that does not break off mid-sentence.
 //!
+//! The story tools write each chapter as such a session (docs/fabula.md §6,
+//! T25–T27; [`super::single_story`]): an [`Ask`] names the chapter, its place
+//! in the arc, the accepted chapters before it and the person's notes for it.
+//! A story of one chapter is asked what M3 asked, word for word.
+//!
 //! - **The stores are the state**, as for the chapter's loop (spec §9): each
 //!   version written is a chapter version, every reply is in the call log
-//!   under its turn's address (`b0/t1`, `b0/t2`, …), and a run killed
-//!   anywhere rebuilds the session from them and goes on at the first turn
-//!   no run finished.
+//!   under its turn's address (`b0/t1`, `b0/t2`, … for M3; `ch2/b0/t1`, … for
+//!   a chapter of the tools'), and a run killed anywhere rebuilds the session
+//!   from them and goes on at the first turn no run finished.
 //! - **One role.** Every turn is the Author's, with the Author's sampling.
 
 use std::collections::BTreeMap;
@@ -18,9 +23,10 @@ use std::collections::BTreeMap;
 use serde_json::json;
 
 use super::author_prompts::{self, Record};
+use super::chapter::Budget;
 use super::engine::SharedLog;
 use super::port::{CallAddress, LlmPort, PortError, Role, Turn};
-use crate::entities::story::{Canon, VersionOrigin};
+use crate::entities::story::{Canon, RunId, VersionOrigin};
 use crate::shared::storage::story::{AuthorWriter, CallStatus, Spend, StoryDb, StoryDbError};
 
 /// What the session spends to: F's average on the same premise. Dollars
@@ -49,12 +55,18 @@ impl Target {
 pub struct SingleConfig {
     /// The story's length, in words, as asked.
     pub words: (u32, u32),
-    /// What it spends to.
-    pub target: Target,
+    /// What it spends to: M3's equal cost. None for the story tools, whose
+    /// session ends on its revisions (T25).
+    pub target: Option<Target>,
+    /// The chapter's budget, checked before every turn against every call of
+    /// the chapter (`ch{n}/`), as `story_continue` checks it: a spent one ends
+    /// the session at the last version written. None for M3.
+    pub budget: Budget,
     /// The model's window, in tokens: the session stops before a turn that
     /// would not fit.
     pub window: u64,
-    /// A backstop on the critiques, should the spend never be measured.
+    /// The most versions after the draft: M3's backstop, should the spend
+    /// never be measured; the story tools' end (T25).
     pub most_revisions: u32,
 }
 
@@ -62,7 +74,8 @@ impl Default for SingleConfig {
     fn default() -> Self {
         Self {
             words: (1200, 2500),
-            target: Target::default(),
+            target: None,
+            budget: Budget::default(),
             window: 131_072,
             most_revisions: 40,
         }
@@ -70,11 +83,13 @@ impl Default for SingleConfig {
 }
 
 impl SingleConfig {
-    fn to_json(&self) -> serde_json::Value {
+    /// The configuration as a run records it.
+    pub fn to_json(&self) -> serde_json::Value {
         json!({
             "engine": "single",
             "words": [self.words.0, self.words.1],
-            "target": {"usd": self.target.usd, "tokens": self.target.tokens},
+            "target": self.target.map(|t| json!({"usd": t.usd, "tokens": t.tokens})),
+            "budget": {"tokens": self.budget.tokens, "usd": self.budget.usd},
             "window": self.window,
             "most_revisions": self.most_revisions,
         })
@@ -86,10 +101,14 @@ impl SingleConfig {
 pub enum Ended {
     /// It spent its target.
     Spent,
+    /// The chapter's budget was spent.
+    Budget,
     /// The next turn would not have fit the window.
     Window,
-    /// The backstop on revisions.
+    /// It wrote its most revisions.
     Revisions,
+    /// A call was cancelled, at its address: a stop, a quit, a time limit.
+    Cancelled(String),
     /// A call gave no usable answer, at its address.
     Failed(String, String),
 }
@@ -103,6 +122,139 @@ pub struct Written {
     pub versions: u32,
     /// What the whole session cost.
     pub spent: Spend,
+}
+
+/// What a session writes: M3's story of one chapter, or chapter `n` of a
+/// story the chat's tools write (docs/fabula.md §6, T27).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ask {
+    /// The chapter, from 1.
+    pub n: u32,
+    /// The chapters the arc plans.
+    pub of: u32,
+    /// The text of each accepted chapter before it, in order.
+    pub earlier: Vec<String>,
+    /// What the person asked of it at the checkpoint before.
+    pub notes: Option<String>,
+    /// What each of the session's addresses starts with.
+    pub prefix: String,
+}
+
+impl Ask {
+    /// M3's: the whole story, one chapter, at `b0/`.
+    pub fn story() -> Self {
+        Self {
+            n: 1,
+            of: 1,
+            earlier: Vec::new(),
+            notes: None,
+            prefix: "b0/".to_owned(),
+        }
+    }
+
+    /// Chapter `n` of `of`, at `ch{n}/b0/`, where its chapter's budget counts
+    /// every call.
+    pub fn chapter(n: u32, of: u32, earlier: Vec<String>, notes: Option<String>) -> Self {
+        Self {
+            n,
+            of,
+            earlier,
+            notes,
+            prefix: format!("ch{n}/b0/"),
+        }
+    }
+
+    /// Whether the arc is one chapter: asked as M3 asked.
+    fn one(&self) -> bool {
+        self.of <= 1
+    }
+
+    fn noun(&self) -> &'static str {
+        if self.one() { "story" } else { "chapter" }
+    }
+
+    /// The session's system prompt.
+    pub fn system(&self, canon: &Canon) -> String {
+        if self.one() {
+            return system(canon);
+        }
+        format!(
+            "You are a writer. You write a story of {} chapters, one chapter at a time, from the \
+             canon below: its world, its places, its cast with what each of them wants and \
+             hides, how it is told, its premise and its arc. Each chapter you plan, write, read \
+             as its editor and write again.\n\n{}",
+            self.of,
+            author_prompts::canon_brief(canon)
+        )
+    }
+
+    /// The first turn: the chapter asked for, after the accepted ones, with
+    /// what the person asked of it.
+    pub fn draft(&self, canon: &Canon, words: (u32, u32)) -> String {
+        if self.one() {
+            return draft_ask(canon, words);
+        }
+        let goal = canon
+            .arc
+            .chapters
+            .get(self.n.saturating_sub(1) as usize)
+            .map_or("none set", |c| c.goal.as_str());
+        let mut ask = format!(
+            "Write chapter {} of {}. What it must achieve: {goal}\n\n",
+            self.n, self.of
+        );
+        if !self.earlier.is_empty() {
+            ask.push_str("The chapters before it, as the reader accepted them:\n\n");
+            for text in &self.earlier {
+                ask.push_str(text.trim());
+                ask.push_str("\n\n");
+            }
+        }
+        if let Some(notes) = self
+            .notes
+            .as_deref()
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+        {
+            ask.push_str(&format!(
+                "What the reader asked of this chapter: {notes}\n\n"
+            ));
+        }
+        ask.push_str(&format!(
+            "How to write it: {}",
+            author_prompts::writing_rules(canon, words, Record::None)
+        ));
+        ask
+    }
+
+    /// The editor's turn.
+    pub fn critique(&self) -> &'static str {
+        if self.one() {
+            CRITIQUE_ASK
+        } else {
+            CHAPTER_CRITIQUE_ASK
+        }
+    }
+
+    /// The writer's turn after a critique.
+    pub fn revise(&self, words: (u32, u32), last: u32) -> String {
+        again(self.noun(), "mending what your critique found", words, last)
+    }
+
+    /// The turn that revises a version the person read, with their notes
+    /// (T26): it follows the chapter's ask and the version, not the session.
+    pub fn notes_ask(&self, words: (u32, u32), last: u32, notes: &str) -> String {
+        format!(
+            "The reader asks for these changes:\n\n{}\n\n{}",
+            notes.trim(),
+            again(self.noun(), "making them", words, last)
+        )
+    }
+
+    /// The address of turn `k`, from 1: odd turns write, even ones critique.
+    pub fn address(&self, k: u32) -> String {
+        format!("{}t{k}", self.prefix)
+    }
 }
 
 /// The session's system prompt: a writer, the canon as the Author reads it.
@@ -142,13 +294,31 @@ of time, place, age or kinship that disagree, a person named or addressed two wa
 left in another language, a thread opened and dropped, a passage that drags or tells what it \
 should show, a story shorter or longer than asked. Most important first.";
 
+/// The editor's turn on a chapter of a longer arc: M3's, read against the
+/// chapters before it and the ones the arc keeps for later.
+pub const CHAPTER_CRITIQUE_ASK: &str = "Now read your chapter as its editor would, without \
+rewriting it yet. Name each thing that does not work, and where: a conflict that goes slack or \
+ends without a price, a secret spent too soon or too cheaply, a character who acts against their \
+sheet or knows what they could not have learned, a line that announces a plan or a want instead \
+of acting on it, or opens on thanks or agreement the moment does not call for, facts of time, \
+place, age or kinship that disagree with each other or with the chapters before, a person named \
+or addressed two ways, a word left in another language, a thread opened and dropped, a passage \
+that drags or tells what it should show, a chapter shorter or longer than asked, a chapter that \
+spends what the arc keeps for a later one. Most important first.";
+
 /// The writer's turn after a critique: told its last version's words and
 /// keeping the names, as F's reviser is (F2, F4, T21).
 pub fn revise_ask(words: (u32, u32), last: u32) -> String {
+    again("story", "mending what your critique found", words, last)
+}
+
+/// A writing turn after the first: the whole text again, `mending` what was
+/// found, by the same rules.
+fn again(noun: &str, mending: &str, words: (u32, u32), last: u32) -> String {
     format!(
-        "Write the story again, whole, mending what your critique found: by the same rules, \
-         between {} and {} words (your last version has {last}), its title as a level-two \
-         markdown heading. {} Reply with the story's text and nothing else.",
+        "Write the {noun} again, whole, {mending}: by the same rules, between {} and {} words \
+         (your last version has {last}), its title as a level-two markdown heading. {} Reply \
+         with the {noun}'s text and nothing else.",
         words.0,
         words.1,
         author_prompts::KEEP_NAMES,
@@ -169,28 +339,24 @@ fn last_words(replies: &BTreeMap<u32, (String, u64)>, n: u32) -> u32 {
 /// Such a version stays in the session, for the next critique to read, and
 /// is not kept as the story's: B0's last version is read by no one before
 /// the judges, as F's is by its reviewers.
-fn broken_off(text: &str) -> bool {
+pub(super) fn broken_off(text: &str) -> bool {
     text.trim_end()
         .chars()
         .last()
         .is_none_or(|c| c.is_alphanumeric() || matches!(c, ',' | ';' | ':' | '-'))
 }
 
-/// The address of turn `n`, from 1: odd turns write, even ones critique.
-fn address(n: u32) -> String {
-    format!("b0/t{n}")
-}
-
-/// What the session holds so far: each finished turn's reply, by number,
-/// read from every run's calls.
-async fn replies(db: &StoryDb) -> Result<BTreeMap<u32, (String, u64)>, StoryDbError> {
+/// What the session at `prefix` holds so far: each finished turn's reply, by
+/// number, read from every run's calls.
+async fn replies(db: &StoryDb, prefix: &str) -> Result<BTreeMap<u32, (String, u64)>, StoryDbError> {
+    let turn = format!("{prefix}t");
     let mut out = BTreeMap::new();
     for run in db.runs().await? {
         for c in db.calls(&run).await? {
             let Some(n) = c
                 .call
                 .address
-                .strip_prefix("b0/t")
+                .strip_prefix(turn.as_str())
                 .and_then(|n| n.parse::<u32>().ok())
             else {
                 continue;
@@ -212,17 +378,22 @@ async fn replies(db: &StoryDb) -> Result<BTreeMap<u32, (String, u64)>, StoryDbEr
 }
 
 /// The session's turns up to and including turn `last`'s reply.
-fn session(canon: &Canon, words: (u32, u32), replies: &BTreeMap<u32, (String, u64)>) -> Vec<Turn> {
+fn session(
+    ask: &Ask,
+    canon: &Canon,
+    words: (u32, u32),
+    replies: &BTreeMap<u32, (String, u64)>,
+) -> Vec<Turn> {
     let mut turns = Vec::new();
     for (n, (text, _)) in replies {
-        let ask = match n {
-            1 => draft_ask(canon, words),
-            n if n % 2 == 0 => CRITIQUE_ASK.to_owned(),
-            n => revise_ask(words, last_words(replies, *n)),
+        let content = match n {
+            1 => ask.draft(canon, words),
+            n if n % 2 == 0 => ask.critique().to_owned(),
+            n => ask.revise(words, last_words(replies, *n)),
         };
         turns.push(Turn {
             role: "user",
-            content: ask,
+            content,
         });
         turns.push(Turn {
             role: "assistant",
@@ -244,7 +415,7 @@ fn would_overflow(window: u64, last_size: u64, last_reply: &str) -> bool {
     last_size + critique + 2 * reply_tokens + 1_024 > window
 }
 
-/// Runs the session from where its stores leave it to its end.
+/// Runs M3's session from where its stores leave it to its end.
 pub async fn write(
     db: &StoryDb,
     author: &mut AuthorWriter,
@@ -257,14 +428,56 @@ pub async fn write(
         .await?
         .ok_or_else(|| StoryDbError::Corrupt("the story has no canon".to_owned()))?;
     let run = log.lock().await.start_run(&config.to_json()).await?;
-    let system = system(&canon);
+    write_session(
+        Session {
+            db,
+            author,
+            run: &run,
+            port,
+            config,
+        },
+        &canon,
+        &Ask::story(),
+    )
+    .await
+}
+
+/// What a session works with: the story, the Author's capability, the run it
+/// records its calls under, the model and the configuration.
+pub struct Session<'a> {
+    /// The story.
+    pub db: &'a StoryDb,
+    /// The Author's capability.
+    pub author: &'a mut AuthorWriter,
+    /// The run.
+    pub run: &'a RunId,
+    /// The model.
+    pub port: &'a dyn LlmPort,
+    /// How it runs.
+    pub config: &'a SingleConfig,
+}
+
+/// Runs the session `ask` names from where its stores leave it to its end.
+pub async fn write_session(
+    session_of: Session<'_>,
+    canon: &Canon,
+    ask: &Ask,
+) -> Result<Written, StoryDbError> {
+    let Session {
+        db,
+        author,
+        run,
+        port,
+        config,
+    } = session_of;
+    let system = ask.system(canon);
     // A turn is asked only after the one before it answered, so the replies
     // recorded run from 1 without a gap.
-    let mut done = replies(db).await?;
+    let mut done = replies(db, &ask.prefix).await?;
     let writing = |n: u32| n % 2 == 1;
     let kept = |n: u32, text: &str| writing(n) && !broken_off(text);
     // A version written whose row was not stored before a kill.
-    let stored = db.chapter_versions(1).await?.len() as u32;
+    let stored = db.chapter_versions(ask.n).await?.len() as u32;
     let written = done.iter().filter(|(n, (t, _))| kept(**n, t)).count() as u32;
     for (n, (text, _)) in done
         .iter()
@@ -276,17 +489,24 @@ pub async fn write(
         } else {
             VersionOrigin::Revision
         };
-        author.add_chapter(1, origin, text).await?;
+        author.add_chapter(ask.n, origin, text).await?;
     }
     let mut versions = stored.max(written);
     let ended = loop {
         let next = done.keys().next_back().map_or(1, |n| n + 1);
-        let spent = db.spend("b0/").await?;
+        if config
+            .budget
+            .spent(&db.chapter_spend(ask.n).await?)
+            .is_some()
+        {
+            break Ended::Budget;
+        }
+        let spent = db.spend(&ask.prefix).await?;
         if writing(next) && next > 1 {
             // A revision follows a critique; nothing to decide before it.
         } else if next > 1 {
-            // Before a critique: the target, the backstop, the window.
-            if config.target.reached(&spent) {
+            // Before a critique: the target, the revisions, the window.
+            if config.target.is_some_and(|t| t.reached(&spent)) {
                 break Ended::Spent;
             }
             if versions > config.most_revisions {
@@ -297,24 +517,25 @@ pub async fn write(
                 break Ended::Window;
             }
         }
-        let ask = match next {
-            1 => draft_ask(&canon, config.words),
-            n if writing(n) => revise_ask(config.words, last_words(&done, n)),
-            _ => CRITIQUE_ASK.to_owned(),
+        let content = match next {
+            1 => ask.draft(canon, config.words),
+            n if writing(n) => ask.revise(config.words, last_words(&done, n)),
+            _ => ask.critique().to_owned(),
         };
-        let mut turns = session(&canon, config.words, &done);
+        let mut turns = session(ask, canon, config.words, &done);
         turns.push(Turn {
             role: "user",
-            content: ask,
+            content,
         });
         let call = CallAddress {
             run: run.clone(),
-            address: address(next),
+            address: ask.address(next),
         };
         let reply = match port.session(&call, Role::Author, &system, &turns).await {
             Ok(text) => text,
             Err(PortError::Store(e)) => return Err(e),
-            Err(e) => break Ended::Failed(address(next), e.to_string()),
+            Err(PortError::Cancelled { .. }) => break Ended::Cancelled(ask.address(next)),
+            Err(e) => break Ended::Failed(ask.address(next), e.to_string()),
         };
         if kept(next, &reply) {
             let origin = if next == 1 {
@@ -322,21 +543,21 @@ pub async fn write(
             } else {
                 VersionOrigin::Revision
             };
-            author.add_chapter(1, origin, &reply).await?;
+            author.add_chapter(ask.n, origin, &reply).await?;
             versions += 1;
         }
         // The turn's size as the call log has it, for the window's check.
-        done = replies(db).await?;
+        done = replies(db, &ask.prefix).await?;
         done.retain(|n, _| *n <= next);
         done.entry(next).or_insert((reply, 0));
     };
     Ok(Written {
         ended,
         versions,
-        spent: db.spend("b0/").await?,
+        spent: db.spend(&ask.prefix).await?,
     })
 }
 
 #[cfg(test)]
 #[path = "single_tests.rs"]
-mod tests;
+pub(crate) mod tests;

@@ -19,7 +19,7 @@ use crate::shared::api::mock::MockBackend;
 use crate::shared::storage::story::Spend;
 
 /// A reply of 120 prompt and 30 reply tokens.
-fn reply(text: &str) -> Vec<ChatChunk> {
+pub(crate) fn reply(text: &str) -> Vec<ChatChunk> {
     vec![
         ChatChunk::Text(text.to_owned()),
         ChatChunk::Usage(TokenUsage {
@@ -31,7 +31,7 @@ fn reply(text: &str) -> Vec<ChatChunk> {
     ]
 }
 
-fn failure() -> Vec<ChatChunk> {
+pub(crate) fn failure() -> Vec<ChatChunk> {
     vec![
         ChatChunk::Error {
             message: "the endpoint is gone".to_owned(),
@@ -41,7 +41,7 @@ fn failure() -> Vec<ChatChunk> {
     ]
 }
 
-fn port(scripts: Vec<Vec<ChatChunk>>, log: &SharedLog) -> EngineAdapter {
+pub(crate) fn port(scripts: Vec<Vec<ChatChunk>>, log: &SharedLog) -> EngineAdapter {
     EngineAdapter::sharing(
         Arc::new(MockBackend::sequence(scripts)),
         log.clone(),
@@ -51,7 +51,8 @@ fn port(scripts: Vec<Vec<ChatChunk>>, log: &SharedLog) -> EngineAdapter {
     )
 }
 
-fn turns(n: usize) -> Vec<Vec<ChatChunk>> {
+/// `n` turns of a session: odd ones a version, even ones a critique.
+pub(crate) fn turns(n: usize) -> Vec<Vec<ChatChunk>> {
     (1..=n)
         .map(|i| {
             if i % 2 == 1 {
@@ -65,7 +66,7 @@ fn turns(n: usize) -> Vec<Vec<ChatChunk>> {
 
 fn config(tokens: u64) -> SingleConfig {
     SingleConfig {
-        target: Target { usd: None, tokens },
+        target: Some(Target { usd: None, tokens }),
         ..SingleConfig::default()
     }
 }
