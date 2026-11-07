@@ -2104,8 +2104,10 @@ to Google's two providers.
   its mind abstaining, a pair read one way being no vote, a tie, each judge alone, the
   agreement, the controls and the length; one judge's run written end to end with the order
   of what was sent, its sampling, its cost, and resumed asking nothing; a reading the model
-  spoils left for the next run; the commands' arguments. Mutation check: 11 mutants, all
-  killed. 4876 tests.
+  spoils left for the next run; the commands' arguments. Mutation check: 12 mutants, all
+  killed. 4876 tests. SonarCloud found the count too complex for one function and a blocking
+  write in the async command: the count is split by what it counts, and the files are read and
+  written through `tokio::fs`.
 - **The probe** (the owner's go-ahead, up to $5): `villain-4` seed 1, F against B0, read both
   ways by each judge. F's story has 1,248 words, B0's 1,317.
 

@@ -1296,10 +1296,11 @@ pub async fn execute(command: Command) -> Result<(), String> {
             judge::judge(&judging, &judge, backend).await
         }
         Command::Verdict { out } => {
-            let records = judge::records(&out);
+            let records = judge::records(&out).await;
             let verdict = judge::verdict(&records);
             let text = serde_json::to_string_pretty(&verdict).unwrap_or_default();
-            std::fs::write(out.join("verdict.json"), &text)
+            tokio::fs::write(out.join("verdict.json"), &text)
+                .await
                 .map_err(|e| format!("{}: {e}", out.display()))?;
             println!("{text}");
             Ok(())

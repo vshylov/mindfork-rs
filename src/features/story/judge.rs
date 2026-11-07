@@ -252,14 +252,16 @@ pub struct Story {
 
 /// The finished story of `system` on a premise and seed under `stories`, the
 /// run's directory; none when it is missing or did not finish.
-pub fn story(stories: &Path, premise: &str, system: System, seed: u64) -> Option<Story> {
+pub async fn story(stories: &Path, premise: &str, system: System, seed: u64) -> Option<Story> {
     let dir = story_dir(stories, premise, system, seed);
-    let trace: Value =
-        serde_json::from_str(&std::fs::read_to_string(dir.join("trace.json")).ok()?).ok()?;
+    let trace = tokio::fs::read_to_string(dir.join("trace.json"))
+        .await
+        .ok()?;
+    let trace: Value = serde_json::from_str(&trace).ok()?;
     if trace["ending"]["kind"] != "finished" {
         return None;
     }
-    let text = std::fs::read_to_string(dir.join("story.md")).ok()?;
+    let text = tokio::fs::read_to_string(dir.join("story.md")).await.ok()?;
     Some(Story {
         text: shown(&text),
         words: trace["words"].as_u64().unwrap_or(0),
@@ -269,10 +271,10 @@ pub fn story(stories: &Path, premise: &str, system: System, seed: u64) -> Option
 
 /// The two stories of `ask`, the weighed system's first: none when either is
 /// missing.
-pub fn pair_of(stories: &Path, ask: &Ask) -> Option<(Story, Story)> {
-    let a = story(stories, &ask.premise, ask.matchup.system, ask.seed)?;
+pub async fn pair_of(stories: &Path, ask: &Ask) -> Option<(Story, Story)> {
+    let a = story(stories, &ask.premise, ask.matchup.system, ask.seed).await?;
     let b = match ask.matchup.rival {
-        Rival::System(rival) => story(stories, &ask.premise, rival, ask.seed)?,
+        Rival::System(rival) => story(stories, &ask.premise, rival, ask.seed).await?,
         Rival::Shuffled => Story {
             text: shuffled(&a.text, &format!("{}/s{}", ask.premise, ask.seed)),
             ..a.clone()
@@ -580,10 +582,10 @@ pub async fn judge(
     let mut todo = Vec::new();
     for ask in judging.asks() {
         let file = ask.file(&dir);
-        if file.exists() {
+        if tokio::fs::try_exists(&file).await.unwrap_or(false) {
             continue;
         }
-        match pair_of(&judging.stories, &ask) {
+        match pair_of(&judging.stories, &ask).await {
             Some(stories) => todo.push((ask, stories, file)),
             None => println!(
                 "skip {}: a story is missing or did not finish",
@@ -642,21 +644,18 @@ fn vote(records: &[&Record]) -> Option<String> {
 }
 
 /// Every record under `out`, each judge's directory read.
-pub fn records(out: &Path) -> Vec<Record> {
+pub async fn records(out: &Path) -> Vec<Record> {
     let mut found = Vec::new();
     let mut dirs = vec![out.to_path_buf()];
     while let Some(dir) = dirs.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
+        let Ok(mut entries) = tokio::fs::read_dir(&dir).await else {
             continue;
         };
-        for entry in entries.flatten() {
+        while let Ok(Some(entry)) = entries.next_entry().await {
             let path = entry.path();
-            if path.is_dir() {
+            if entry.file_type().await.is_ok_and(|t| t.is_dir()) {
                 dirs.push(path);
-            } else if path.extension().is_some_and(|e| e == "json")
-                && let Ok(text) = std::fs::read_to_string(&path)
-                && let Ok(record) = serde_json::from_str::<Record>(&text)
-            {
+            } else if let Some(record) = record_at(&path).await {
                 found.push(record);
             }
         }
@@ -668,12 +667,24 @@ pub fn records(out: &Path) -> Vec<Record> {
     found
 }
 
-/// The verdict of the records: each matchup's pairs, wins and test; each
-/// judge's consistency, its first-place choices, its own count and cost; the
-/// judges' agreement; and whether the longer story won.
-pub fn verdict(records: &[Record]) -> Value {
-    // matchup → (premise, seed) → judge → its records.
-    type Pairs<'a> = BTreeMap<(String, u64), BTreeMap<String, Vec<&'a Record>>>;
+/// The record a file holds, where it holds one: the verdict beside them is
+/// not.
+async fn record_at(path: &Path) -> Option<Record> {
+    if path.extension().is_none_or(|e| e != "json") {
+        return None;
+    }
+    let text = tokio::fs::read_to_string(path).await.ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+/// The readings of one pair, by judge.
+type ByJudge<'a> = BTreeMap<String, Vec<&'a Record>>;
+
+/// A matchup's pairs, by premise and seed.
+type Pairs<'a> = BTreeMap<(String, u64), ByJudge<'a>>;
+
+/// The records by matchup, pair and judge.
+fn grouped(records: &[Record]) -> BTreeMap<String, Pairs<'_>> {
     let mut by: BTreeMap<String, Pairs> = BTreeMap::new();
     for r in records {
         by.entry(r.matchup.clone())
@@ -684,164 +695,195 @@ pub fn verdict(records: &[Record]) -> Value {
             .or_default()
             .push(r);
     }
-    let judges: Vec<String> = {
-        let mut names: Vec<String> = records.iter().map(|r| r.judge.clone()).collect();
-        names.sort();
-        names.dedup();
-        names
-    };
-    let mut matchups = serde_json::Map::new();
-    for (name, pairs) in &by {
-        let side = |r: &Record| r.matchup.split_once('-').map(|(a, _)| a.to_owned());
-        let weighed = pairs
+    by
+}
+
+/// How a pair came out for the side weighed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Outcome {
+    /// More votes chose it.
+    Win,
+    /// Fewer did.
+    Loss,
+    /// As many, or none at all.
+    Tie,
+}
+
+impl Outcome {
+    fn of(votes: &BTreeMap<&str, Option<String>>, weighed: &str) -> Self {
+        let for_it = votes
             .values()
-            .flat_map(|j| j.values().flatten())
-            .find_map(|r| side(r))
-            .unwrap_or_default();
-        let (mut wins, mut losses, mut ties) = (0u64, 0u64, 0u64);
-        let mut each = Vec::new();
-        let mut alone: BTreeMap<&str, (u64, u64)> = BTreeMap::new();
-        for ((premise, seed), by_judge) in pairs {
-            let votes: BTreeMap<&str, Option<String>> = by_judge
-                .iter()
-                .map(|(j, rs)| (j.as_str(), vote(rs)))
-                .collect();
-            let for_it = votes
-                .values()
-                .filter(|v| v.as_deref() == Some(weighed.as_str()))
-                .count();
-            let against = votes.values().filter(|v| v.is_some()).count() - for_it;
-            for (j, v) in &votes {
-                let counted = alone.entry(j).or_default();
-                counted.1 += 1;
-                if v.as_deref() == Some(weighed.as_str()) {
-                    counted.0 += 1;
-                }
-            }
-            let outcome = match for_it.cmp(&against) {
-                std::cmp::Ordering::Greater => {
-                    wins += 1;
-                    "win"
-                }
-                std::cmp::Ordering::Less => {
-                    losses += 1;
-                    "loss"
-                }
-                std::cmp::Ordering::Equal => {
-                    ties += 1;
-                    "tie"
-                }
-            };
-            each.push(json!({
-                "premise": premise,
-                "seed": seed,
-                "votes": votes,
-                "outcome": outcome,
-            }));
+            .filter(|v| v.as_deref() == Some(weighed))
+            .count();
+        let against = votes.values().filter(|v| v.is_some()).count() - for_it;
+        match for_it.cmp(&against) {
+            std::cmp::Ordering::Greater => Outcome::Win,
+            std::cmp::Ordering::Less => Outcome::Loss,
+            std::cmp::Ordering::Equal => Outcome::Tie,
         }
-        let n = wins + losses + ties;
-        matchups.insert(
-            name.clone(),
-            json!({
-                "weighed": weighed,
-                "pairs": n,
-                "wins": wins,
-                "losses": losses,
-                "ties": ties,
-                // A tie is no win: the test counts it against the side weighed.
-                "p": tail(n, wins),
-                "judges_alone": alone.iter().map(|(j, (w, n))| (j.to_string(), json!({"wins": w, "pairs": n, "p": tail(*n, *w)}))).collect::<serde_json::Map<_, _>>(),
-                "each": each,
-            }),
-        );
     }
-    let mut panel = serde_json::Map::new();
-    for judge in &judges {
-        let mine: Vec<&Record> = records.iter().filter(|r| &r.judge == judge).collect();
-        let mut both = 0;
-        let mut agreed = 0;
-        for pairs in by.values() {
-            for by_judge in pairs.values() {
-                if let Some(rs) = by_judge.get(judge)
-                    && rs.iter().any(|r| r.order == "ab")
-                    && rs.iter().any(|r| r.order == "ba")
-                {
-                    both += 1;
-                    agreed += usize::from(vote(rs).is_some());
-                }
-            }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Outcome::Win => "win",
+            Outcome::Loss => "loss",
+            Outcome::Tie => "tie",
         }
-        let first = mine.iter().filter(|r| r.reading.better == "1").count();
-        let controls: Vec<&&Record> = mine
+    }
+}
+
+/// One matchup's count: each pair's votes and outcome, the wins, losses and
+/// ties, the test, and each judge's own count.
+fn count(pairs: &Pairs) -> Value {
+    let weighed = pairs
+        .values()
+        .flat_map(|j| j.values().flatten())
+        .find_map(|r| r.matchup.split_once('-').map(|(a, _)| a.to_owned()))
+        .unwrap_or_default();
+    let mut outcomes = Vec::new();
+    let mut each = Vec::new();
+    let mut alone: BTreeMap<&str, (u64, u64)> = BTreeMap::new();
+    for ((premise, seed), by_judge) in pairs {
+        let votes: BTreeMap<&str, Option<String>> = by_judge
             .iter()
-            .filter(|r| r.matchup.ends_with("-control"))
+            .map(|(j, rs)| (j.as_str(), vote(rs)))
             .collect();
-        let kept = controls.iter().filter(|r| r.chose != "shuffled").count();
-        let usd: f64 = mine
-            .iter()
-            .filter_map(|r| r.spent["cost_usd"].as_f64())
-            .sum();
-        let output: u64 = mine
-            .iter()
-            .filter_map(|r| r.spent["output_tokens"].as_u64())
-            .sum();
-        let input: u64 = mine
-            .iter()
-            .filter_map(|r| r.spent["input_tokens"].as_u64())
-            .sum();
-        panel.insert(
-            judge.clone(),
-            json!({
-                "model": mine.first().map(|r| r.model.clone()),
-                "readings": mine.len(),
-                "pairs_read_both_ways": both,
-                "same_choice_both_ways": agreed,
-                "chose_story_1": first,
-                "controls": controls.len(),
-                "controls_kept_the_original": kept,
-                "input_tokens": input,
-                "output_tokens": output,
-                "cost_usd": usd,
-            }),
-        );
+        for (j, v) in &votes {
+            let counted = alone.entry(*j).or_default();
+            counted.0 += u64::from(v.as_deref() == Some(weighed.as_str()));
+            counted.1 += 1;
+        }
+        let outcome = Outcome::of(&votes, &weighed);
+        outcomes.push(outcome);
+        each.push(json!({
+            "premise": premise,
+            "seed": seed,
+            "votes": votes,
+            "outcome": outcome.as_str(),
+        }));
     }
-    // The judges two by two, over the pairs both gave a vote on.
+    let of = |o: Outcome| outcomes.iter().filter(|x| **x == o).count() as u64;
+    let (n, wins) = (outcomes.len() as u64, of(Outcome::Win));
+    let alone: serde_json::Map<String, Value> = alone
+        .iter()
+        .map(|(j, (w, n))| {
+            (
+                (*j).to_owned(),
+                json!({"wins": w, "pairs": n, "p": tail(*n, *w)}),
+            )
+        })
+        .collect();
+    json!({
+        "weighed": weighed,
+        "pairs": n,
+        "wins": wins,
+        "losses": of(Outcome::Loss),
+        "ties": of(Outcome::Tie),
+        // A tie is no win: the test counts it against the side weighed.
+        "p": tail(n, wins),
+        "judges_alone": alone,
+        "each": each,
+    })
+}
+
+/// Whether a pair's readings are in both orders.
+fn both_ways(readings: &[&Record]) -> bool {
+    readings.iter().any(|r| r.order == "ab") && readings.iter().any(|r| r.order == "ba")
+}
+
+fn is_control(record: &Record) -> bool {
+    record.matchup.ends_with("-control")
+}
+
+/// The dollars of `records`.
+fn dollars<'a>(records: impl IntoIterator<Item = &'a Record>) -> f64 {
+    records
+        .into_iter()
+        .filter_map(|r| r.spent["cost_usd"].as_f64())
+        .sum()
+}
+
+/// One judge's summary: its readings, how often both orders chose alike,
+/// how often it chose Story 1, the controls it kept, and what it cost.
+fn summary(judge: &str, records: &[Record], by: &BTreeMap<String, Pairs>) -> Value {
+    let mine: Vec<&Record> = records.iter().filter(|r| r.judge == judge).collect();
+    let pairs: Vec<&Vec<&Record>> = by
+        .values()
+        .flat_map(Pairs::values)
+        .filter_map(|j| j.get(judge))
+        .collect();
+    let controls: Vec<&&Record> = mine.iter().filter(|r| is_control(r)).collect();
+    let tokens = |key: &str| -> u64 { mine.iter().filter_map(|r| r.spent[key].as_u64()).sum() };
+    json!({
+        "model": mine.first().map(|r| r.model.clone()),
+        "readings": mine.len(),
+        "pairs_read_both_ways": pairs.iter().filter(|rs| both_ways(rs)).count(),
+        "same_choice_both_ways": pairs.iter().filter(|rs| vote(rs).is_some()).count(),
+        "chose_story_1": mine.iter().filter(|r| r.reading.better == "1").count(),
+        "controls": controls.len(),
+        "controls_kept_the_original": controls.iter().filter(|r| r.chose != "shuffled").count(),
+        "input_tokens": tokens("input_tokens"),
+        "output_tokens": tokens("output_tokens"),
+        "cost_usd": dollars(mine.iter().copied()),
+    })
+}
+
+/// The judges two by two, over the pairs both gave a vote on.
+fn agreement(judges: &[String], by: &BTreeMap<String, Pairs>) -> serde_json::Map<String, Value> {
     let mut agreement = serde_json::Map::new();
     for (i, a) in judges.iter().enumerate() {
         for b in &judges[i + 1..] {
-            let (mut shared, mut same) = (0, 0);
-            for pairs in by.values() {
-                for by_judge in pairs.values() {
-                    let va = by_judge.get(a).and_then(|rs| vote(rs));
-                    let vb = by_judge.get(b).and_then(|rs| vote(rs));
-                    if let (Some(va), Some(vb)) = (va, vb) {
-                        shared += 1;
-                        same += usize::from(va == vb);
-                    }
-                }
-            }
-            agreement.insert(format!("{a}/{b}"), json!({"pairs": shared, "same": same}));
+            let both: Vec<(String, String)> = by
+                .values()
+                .flat_map(Pairs::values)
+                .filter_map(|j| Some((vote(j.get(a)?)?, vote(j.get(b)?)?)))
+                .collect();
+            let same = both.iter().filter(|(x, y)| x == y).count();
+            agreement.insert(
+                format!("{a}/{b}"),
+                json!({"pairs": both.len(), "same": same}),
+            );
         }
     }
-    // Whether the longer story is chosen more often, over the readings of
-    // stories of different lengths that are not controls.
+    agreement
+}
+
+/// Whether the longer story is chosen more often, over the readings of
+/// stories of different lengths that are not controls.
+fn longer_chosen(records: &[Record]) -> Value {
     let unequal: Vec<&Record> = records
         .iter()
-        .filter(|r| !r.matchup.ends_with("-control") && r.words[0] != r.words[1])
+        .filter(|r| !is_control(r) && r.words[0] != r.words[1])
         .collect();
     let longer = unequal
         .iter()
-        .filter(|r| {
-            let longer_is_1 = r.words[0] > r.words[1];
-            (r.reading.better == "1") == longer_is_1
-        })
+        .filter(|r| (r.reading.better == "1") == (r.words[0] > r.words[1]))
         .count();
+    json!({"readings": unequal.len(), "longer": longer})
+}
+
+/// The verdict of the records: each matchup's pairs, wins and test; each
+/// judge's consistency, its first-place choices, its own count and cost; the
+/// judges' agreement; and whether the longer story won.
+pub fn verdict(records: &[Record]) -> Value {
+    let by = grouped(records);
+    let mut judges: Vec<String> = records.iter().map(|r| r.judge.clone()).collect();
+    judges.sort();
+    judges.dedup();
+    let matchups: serde_json::Map<String, Value> = by
+        .iter()
+        .map(|(name, pairs)| (name.clone(), count(pairs)))
+        .collect();
+    let panel: serde_json::Map<String, Value> = judges
+        .iter()
+        .map(|j| (j.clone(), summary(j, records, &by)))
+        .collect();
     json!({
         "matchups": matchups,
         "judges": panel,
-        "agreement": agreement,
-        "longer_chosen": {"readings": unequal.len(), "longer": longer},
-        "cost_usd": records.iter().filter_map(|r| r.spent["cost_usd"].as_f64()).sum::<f64>(),
+        "agreement": agreement(&judges, &by),
+        "longer_chosen": longer_chosen(records),
+        "cost_usd": dollars(records),
     })
 }
 

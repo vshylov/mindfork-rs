@@ -396,7 +396,7 @@ async fn a_judge_reads_each_pair_both_ways_writes_each_reading_and_resumes() {
     judge(&judging, &astra(), idle).await.unwrap();
     assert_eq!(logged(&dir).await.len(), 2);
 
-    let found = records(&out);
+    let found = records(&out).await;
     assert_eq!(found.len(), 2);
     let v = verdict(&found);
     // One judge whose two readings disagree: no vote, a tie.
@@ -435,8 +435,8 @@ async fn a_reading_the_model_spoils_is_left_for_the_next_run() {
     assert_eq!(ba.chose, "F");
 }
 
-#[test]
-fn a_controls_pair_is_the_story_against_itself_shuffled() {
+#[tokio::test]
+async fn a_controls_pair_is_the_story_against_itself_shuffled() {
     let root = tempfile::tempdir().unwrap();
     written(root.path(), System::F, 2, "## Т\n\na\n\nb\n\nc\n\nd", 4);
     let ask = Ask {
@@ -445,7 +445,7 @@ fn a_controls_pair_is_the_story_against_itself_shuffled() {
         matchup: Matchup::parse("control").unwrap(),
         order: Order::Ab,
     };
-    let (a, b) = pair_of(root.path(), &ask).unwrap();
+    let (a, b) = pair_of(root.path(), &ask).await.unwrap();
     assert_eq!(a.text, "## Т\n\na\n\nb\n\nc\n\nd");
     assert_eq!(b.text, shuffled(&a.text, "villain-4/s2"));
     assert_eq!((a.words, b.words), (4, 4));
@@ -453,7 +453,7 @@ fn a_controls_pair_is_the_story_against_itself_shuffled() {
         matchup: Matchup::DECISIONS[0],
         ..ask
     };
-    assert_eq!(pair_of(root.path(), &missing), None);
+    assert_eq!(pair_of(root.path(), &missing).await, None);
 }
 
 #[test]
