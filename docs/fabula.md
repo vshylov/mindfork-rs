@@ -738,10 +738,11 @@ Most stories came in under the 1,200 words asked: 20 of F's 32 texts, 29 of B0's
 The owner chose to complete the five (2026-11-07). A reflection the model refuses is now left
 out and counted, and the branch plays on; the five were resumed from their stores on this
 computer with that fix and a chapter budget of 15 million tokens. All five finished, at 1,031 to
-1,529 words, for $1.41 more; `clash-3`'s doctor was refused nine times more, each left out. The
-run now holds 108 finished stories for $57.17. B0 had spent to the average of the finished F
-stories alone, so with the five counted it spends 15–36% less than F on `clash-3`, `clash-4`,
-`mystery-2` and `mystery-4`, and 2–12% more on the other eight
+1,529 words, for $1.41 more; `clash-3`'s doctor was refused nine times more, each left out. B0
+had spent to the average of the finished F stories alone, so with the five counted it spent
+15–36% less than F on `clash-3`, `clash-4`, `mystery-2` and `mystery-4`. The owner had those
+twelve B0 sessions carried on to F's new average, for $3.36; now B0 spends 2–13% more than F on
+every premise. The run holds 108 finished stories for $60.53: F $28.32, B0 $30.57, A1 $1.64
 ([journal/stories.md](journal/stories.md), *the five F stories completed*).
 
 After M3, Russian prose under the English prompts is compared with prose under Russian
