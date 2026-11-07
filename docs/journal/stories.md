@@ -13,7 +13,7 @@ what was rejected — the reasoning behind the code, not its current shape. For 
 shape read the reference documents named above; for the traps that recur across areas read
 [lessons.md](../lessons.md).
 
-## Entries (24)
+## Entries (25)
 
 - Post-M9: Fabula — PR 1, the story database (done)
 - Post-M9: Fabula — PR 2, the model port and replay; Gate G0 GO (done)
@@ -39,6 +39,7 @@ shape read the reference documents named above; for the traps that recur across 
 - Post-M9: Fabula — PR 14, the blind judging by three models (done)
 - Post-M9: Fabula — M3's judging (done)
 - Post-M9: Fabula — A1 against B0 (done)
+- Post-M9: Fabula — PR 15, the story tools on B0 (done)
 
 ### Post-M9: Fabula — PR 1, the story database (done)
 
@@ -2285,3 +2286,66 @@ $90, $50 of it Fable's, with the phase's cost read from the call logs every quar
     running B0 (2026-11-08); a pull request switches them.
   - **Where the readings are.** In `target/fabula-judge-a1b0-results/` on this computer and in
     `~/fabula-judge/` on the droplet.
+
+### Post-M9: Fabula — PR 15, the story tools on B0 (done)
+
+M3's rule stopped the track, and the owner kept the story tools, behind `tools.story` and off,
+running B0, and took every recommendation of the switch's forks (2026-11-08; docs/fabula.md
+§6, T25–T28). This pull request is the switch; the next one removes F.
+
+- **A chapter is B0's session** (`features/story/single_story.rs`). The session M3 judged is
+  `single.rs`'s, now asked through an `Ask`: the chapter, its place in the arc, the accepted
+  chapters' text, what the person asked of it, and the prefix of its addresses (`b0/` for M3,
+  `ch<n>/b0/` for the tools, where the chapter's budget counts every call).
+  - **One chapter is M3's, word for word.** A story of one chapter is asked M3's system
+    prompt, draft, critique and revision; a longer arc says which chapter of how many it is,
+    gives the accepted chapters whole and the person's notes, and its critique adds the
+    chapters before and what the arc keeps for later.
+  - **24 revisions** (T25 (b)): `most_revisions` is 24, which ends the session after the
+    25th version, the judged B0's mean. No target: the judged B0's was F's spend.
+  - **The budget is the ceiling.** It is checked before every turn against the whole
+    chapter (`ch<n>/`), as `story_continue` checks it, and a spent one ends the session at
+    its last version, which P2 asks about; with no version yet it stops the run. Found by
+    the run tests: the session first counted only its own calls, so a chapter that an
+    earlier run had spent went on.
+  - **The window** is the settings' (`compaction.context_tokens`, a managed server's `-c`),
+    else what the engine reports when the run starts, else 131,072 tokens. M3's B0 sessions
+    peaked at 112,321 to 132,250 tokens in a call, so the default lets most reach their
+    revisions.
+- **The pauses** (T26 (a)). P1 is asked as F asked it, with no call, so `story_create` opens
+  it through the new engine. P2 asks about the last version that does not break off. A
+  change is one turn at `ch<n>/b0/h<version>`: the chapter's ask, the version the person
+  read as the writer's reply, and their notes — not the session, whose critiques would wear
+  the notes away. Its version is the person's (`Human`), and P2 asks about it in turn; a
+  revision that breaks off is not kept and is asked again on the next run. Accepted, the
+  next chapter opens with the notes left on it.
+- **A bug the switch found.** The run's port, which writes the call in flight to the board,
+  forwarded `json` and `text` but not `session`, whose default flattens the conversation
+  into one prompt: through the app, B0 would have sent its session as a single user message.
+  It forwards `session` now; the live run's requests carry the turns as turns.
+- **What went.** The landing still reads its picks, assumptions and threads left open from
+  the stores, empty under B0. The engine's human language is gone with the summaries it was
+  for; the scene played again and P3 are no longer offered — the reading offers no rerun
+  when a chapter keeps no scenes, as it already did. The tools' and the settings' texts, the
+  README, the manual, spec §9.16 and the changelog's unreleased entries now say what ships.
+- **Live: GO** (2026-11-08). `story_chat_live_story` ran on Gemma 4 26B-A4B Q4_1 on a local
+  llama-server with a window of 65,536 tokens. It was in Russian, and the person asked for
+  changes at chapter 1's checkpoint (`MINDFORK_FABULA_REVISE=1`).
+  - **The story finished.** Both chapters were accepted, with 2,264 words, in 35 min 29 s.
+  - **The run's settings.** It recorded the window from the server, 24 revisions and the
+    budget of 6,000,000 tokens. Every request carried the session's turns as turns.
+  - **Chapter 1.**
+    - The window ended the session after 17 versions and 33 turns. Its largest call was 59,703
+      tokens, and the versions grew from 1,078 words to 1,254.
+    - The person's change was one turn: 3,947 tokens in, 32 s. It wrote version 18, a
+      `human` one, and P2 asked about it.
+    - In all: 1,068,543 tokens in 34 calls.
+  - **Chapter 2.**
+    - Its draft was given chapter 1's accepted text and the wish left on it, that the logbook
+      bring the truth out. In the story, the logbook does.
+    - The window ended it after 16 versions: 970,430 tokens in 31 calls.
+  - **A model's slip, not the engine's.** Gemma answered one turn of the person's acceptance
+    with "starting the second chapter" and made no call; the next turn called. It is the claim
+    without a call known from Qwen ([tools.md](tools.md), *a background run is started by its
+    call, not by the reply*).
+  - **Where it is.** The transcript and the story are in `target/fabula/b0-live-gemma-ru/`.

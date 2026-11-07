@@ -212,7 +212,7 @@ being recent is dropped, not shortened.
   as collisions with a price, a line a deed, a staging pass; a chapter's choices standing
   for its later steps; a map every scene can reach; M3's hidden runner, twelve premises
   frozen, a pilot on Qwen and Sonnet; a chapter told from its record, not retold; its last
-  revision reviewed; a chapter led toward its goal; judged blind by three models: neither F nor A1 beats B0 ([docs/fabula.md](docs/fabula.md),
+  revision reviewed; a chapter led toward its goal; judged blind by three models: neither F nor A1 beats B0; the tools on B0 ([docs/fabula.md](docs/fabula.md),
   [docs/journal/stories.md](docs/journal/stories.md)).
 - **Image generation — track complete** (2026-10-30): `image_generate` over a
   slot of its own (OpenAI by default, Gemini, the gateway, xAI), off by default;

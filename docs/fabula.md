@@ -810,6 +810,20 @@ running B0 (2026-11-08). The switch is two pull requests (Â§6, T25âT28).
 | 15 `feat/story-tools-b0` | `story_create` and `story_continue` on B0: a chapter is B0's session, the draft and at most 24 revisions, in the chapter's budget and the model's window; P1 and P2 as they are, without a scene played again; each chapter a session of its own over the accepted chapters' text | Unit tests of the session per chapter, the person's revision, the pauses and a resume; the chat's live story end to end, with a revision asked at the first chapter's checkpoint |
 | 16 `refactor/story-without-f` | The simulation, F's chapter loop and the systems A1âA4 removed with their tests and live smokes; the runner keeps B0 and the judging; the last commit holding F tagged | `cargo test`; the runner's B0 and a judging probe on the mock engine |
 
+**PR 15, as built (2026-11-08), as decided.** A chapter is the session of `single.rs`, asked
+through an `Ask` that names the chapter, its place in the arc, the accepted chapters' text, the
+person's notes and the prefix of its addresses (`ch<n>/b0/`); a story of one chapter is asked
+M3's prompts word for word. `single_story.rs` runs it between P1 and P2, and a change is one
+turn at `ch<n>/b0/h<version>`. The budget is checked before every turn against the whole
+chapter, as `story_continue` checks it, and the window is the settings', else the engine's,
+else 131,072 tokens. The run's port had not forwarded `session`, so through the app B0 would
+have sent its conversation as one message; it does now. **Live: GO** on Gemma 4 26B-A4B on a
+local llama-server, its window 65,536, in Russian: a story of two chapters finished in 35
+minutes, each chapter's session ended by the window (17 and 16 versions, about a million
+tokens each), the change asked at chapter 1's checkpoint written in one turn, and chapter 2
+given chapter 1's text and the wish left on it ([journal/stories.md](journal/stories.md),
+*PR 15*).
+
 ### M4 — the long form, after a GO
 
 Voice review, the Canon keeper with its pause P4, the settle branches, runs of several
