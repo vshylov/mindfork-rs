@@ -13,7 +13,7 @@ what was rejected — the reasoning behind the code, not its current shape. For 
 shape read the reference documents named above; for the traps that recur across areas read
 [lessons.md](../lessons.md).
 
-## Entries (20)
+## Entries (21)
 
 - Post-M9: Fabula — PR 1, the story database (done)
 - Post-M9: Fabula — PR 2, the model port and replay; Gate G0 GO (done)
@@ -35,6 +35,7 @@ shape read the reference documents named above; for the traps that recur across 
 - Post-M9: Fabula — the last version checked (done)
 - Post-M9: Fabula — a chapter that reaches its goal (done)
 - Post-M9: Fabula — M3's full run (done)
+- Post-M9: Fabula — the five F stories completed (done)
 
 ### Post-M9: Fabula — PR 1, the story database (done)
 
@@ -2019,3 +2020,50 @@ unit past $65.
   five completed (a larger budget for the four, and a refused reflection let pass rather than
   failing its branch). The owner decides before PR 14 reads a pair. The stories are in
   `target/fabula/m3-full/` on this machine and in the archive on the droplet.
+
+### Post-M9: Fabula — the five F stories completed (done)
+
+M3's full run left five F stories without an accepted text: four stopped on the chapter
+budget, and one failed when Haiku refused a character's reflection. Judged as they stood, two
+limits of the engine's plumbing would have decided five pairs. The owner chose to complete them
+(2026-11-07).
+
+- **A refused reflection.** A round asks every present character's reflection together, and one
+  error failed the branch; on `clash-3`, Haiku's refusals of the doctor's reflection failed
+  every branch of a scene, twice. A reflection is the character's own aside, which no event
+  needs: one the model refuses is now left out and counted (`reflections_refused` in the
+  branch's tally), and the branch plays on. Any other failure of it still fails the branch.
+  Tests: a refused reflection left out, the others written, the tally and the trace; a failed
+  one still failing the branch. Mutation check: 3 mutants, all killed. 4865 tests.
+- **Resumed.** The five were resumed from their stores in `target/fabula/m3-full/` on this
+  computer, with the fix and a chapter budget of 15 million tokens: four of them had spent
+  9 million and needed a scene, the closing scene and the text after it, and `clash-3` s2 had
+  spent 7.4 million and needed its third scene again.
+
+  | | words | tokens in all | dollars in all | added |
+  | --- | --- | --- | --- | --- |
+  | `clash-3` s2 | 1,031 | 11.4 M | $1.38 | $0.49 |
+  | `clash-4` s1 | 1,214 | 10.4 M | $1.25 | $0.18 |
+  | `mystery-2` s3 | 1,225 | 12.3 M | $1.43 | $0.38 |
+  | `mystery-4` s3 | 1,328 | 12.0 M | $1.41 | $0.35 |
+  | `quiet-5` s2 | 1,529 | 9.0 M | $1.06 | $0.01 |
+
+  All five finished and none leaked; `clash-3` s2 met nine more refusals of the doctor's
+  reflection and left them out. $1.41 against some $3 estimated.
+- **The run as it stood.** 108 finished stories for $57.17: F $28.32, B0 $27.21, A1 $1.64.
+- **Equal cost, broken on four premises.** B0 had spent to the average of each premise's
+  finished F stories. With the completed ones counted, F's average rises where they were, and
+  B0 then spent 15–36% less than F on `clash-3`, `clash-4`, `mystery-2` and `mystery-4`, while
+  it spent 2–12% more on the other eight; across the twelve, 4% less.
+- **B0 carried on.** The owner chose to carry those twelve sessions on (2026-11-07). Each was
+  resumed from its call log with the runner's own target over all three F stories of its
+  premise (`story-eval run --system B0 --target-usd --target-tokens`): $0.94 on `clash-3`,
+  $0.67 on `clash-4`, $0.92 on `mystery-2`, $0.80 on `mystery-4`.
+  - Each took one to three more turns of critique and revision, $3.36 in all against some $2.7
+    estimated: a turn late in a session reads the whole of it.
+  - Seven of the twelve kept a new text; five rewrote their last one word for word, Haiku's
+    session having stopped changing the story.
+  - B0 now spends 2–13% more than F on every premise, 8% on the mean, as the batch left the other
+    eight.
+- **The run as it stands now.** 108 finished stories for $60.53: F $28.32, B0 $30.57, A1 $1.64.
+  Under the 1,200 words asked: F 21 of 36, B0 29 of 36, A1 12 of 36.

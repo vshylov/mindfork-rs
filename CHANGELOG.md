@@ -100,6 +100,9 @@ split by subsystem.
 
 ### Fixed
 
+- **A story's scene no longer fails when the model refuses a character's private
+  thoughts.** Such a refusal used to fail the whole version of the scene; now that
+  character's reflection is left out and the scene plays on.
 - **Thinking off reaches Claude.** With thinking turned off, Claude Haiku 5.5, Sonnet
   5.5, Opus 5.5 and Fable 5.1 still thought before every answer: the request left the
   thinking field out, and the 5.5 generation thinks when it is absent. A turn with
