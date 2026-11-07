@@ -40,7 +40,8 @@ GO on a two-chapter story. G2's readers' findings came before the evaluation: th
 systems of spec §11 as its options and a batch meant to run for days on a cloud machine.
 The owner chose twelve of twenty premise candidates, frozen with their hashes, and after a
 pilot on Qwen 3.8 and Sonnet 5.5 and a reading of Haiku 5.5, the full run's model is Haiku 5.5,
-on a DigitalOcean droplet (T19). M3's verdict decides whether the long form (M4) is built; until then the story tools
+on a DigitalOcean droplet (T19). Its 108 stories are written; PR 14's panel of three flagship
+models judges them blind, in place of the three people the plan had (T24). M3's verdict decides whether the long form (M4) is built; until then the story tools
 stay behind `tools.story`, off.
 
 The last two code tracks — small windows, and the reasoning effort a model

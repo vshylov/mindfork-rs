@@ -30,6 +30,7 @@ pub mod dialect;
 pub mod engine;
 pub mod eval;
 pub mod export;
+pub mod judge;
 pub mod keeper;
 pub mod leaks;
 pub mod port;

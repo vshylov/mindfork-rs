@@ -285,7 +285,8 @@ fn run_story_eval(args: &[String]) -> anyhow::Result<ExitCode> {
     let dir = match &command {
         eval::Command::Run { job, .. } => Some(job.dir.clone()),
         eval::Command::Batch { batch, .. } => Some(batch.out.clone()),
-        eval::Command::Premises => None,
+        eval::Command::Judge { judging, judge } => Some(judging.out.join(&judge.name)),
+        eval::Command::Premises | eval::Command::Verdict { .. } => None,
     };
     let _logging = match dir {
         Some(dir) => {
