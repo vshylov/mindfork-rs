@@ -28,7 +28,7 @@ evidence. Adding or closing an item is part of every task's documentation step
 
 ## Most valuable next
 
-**Fabula, the story engine, is the track under way** ([fabula.md](fabula.md)): built
+**Fabula, the story engine, stopped at its evaluation** ([fabula.md](fabula.md)): built
 through PR 12 — a story created and driven from the chat, every chapter written in the
 background, a scene named at a checkpoint played again with the ones after it, the story's
 register of open threads and dated facts, scenes planned as collisions with a price and a
@@ -36,15 +36,15 @@ staging pass on every chapter, a chapter's choices standing for its later steps,
 map every scene can reach; Gate G2
 GO on a two-chapter story. G2's readers' findings came before the evaluation: the register
 (PR 11), then the craft of the scenes and the lines and G2 again (PR 12; [fabula.md](fabula.md),
-*Before M3*). M3, the evaluation, has begun: PR 13 builds its hidden runner, with the
+*Before M3*). M3, the evaluation, is done: PR 13 built its hidden runner, with the
 systems of spec §11 as its options and a batch meant to run for days on a cloud machine.
 The owner chose twelve of twenty premise candidates, frozen with their hashes, and after a
 pilot on Qwen 3.8 and Sonnet 5.5 and a reading of Haiku 5.5, the full run's model is Haiku 5.5,
 on a DigitalOcean droplet (T19). Its 108 stories are written and judged blind by PR 14's panel of three
 flagship models, in place of the three people the plan had (T24): F lost to B0 and to A1,
-3 pairs of 36 each, so the long form (M4) is not built on F. Whether A1's pipeline takes its
-place or the track stops turns on A1 against B0, which is the owner's call to judge; until
-then the story tools stay behind `tools.story`, off.
+3 pairs of 36 each, and A1 lost to B0, 5 of 36, so by the decision rule the track stops and
+the long form (M4) is not built. Whether the story tools stay, running B0, is the owner's
+call; until then they stay behind `tools.story`, off.
 
 The last two code tracks — small windows, and the reasoning effort a model
 does not have — closed on 2026-09-30 and 2026-10-01 and ship together in

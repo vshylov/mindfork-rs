@@ -13,7 +13,7 @@ what was rejected — the reasoning behind the code, not its current shape. For 
 shape read the reference documents named above; for the traps that recur across areas read
 [lessons.md](../lessons.md).
 
-## Entries (23)
+## Entries (24)
 
 - Post-M9: Fabula — PR 1, the story database (done)
 - Post-M9: Fabula — PR 2, the model port and replay; Gate G0 GO (done)
@@ -38,6 +38,7 @@ shape read the reference documents named above; for the traps that recur across 
 - Post-M9: Fabula — the five F stories completed (done)
 - Post-M9: Fabula — PR 14, the blind judging by three models (done)
 - Post-M9: Fabula — M3's judging (done)
+- Post-M9: Fabula — A1 against B0 (done)
 
 ### Post-M9: Fabula — PR 1, the story database (done)
 
@@ -2210,3 +2211,77 @@ a limit of $170, $95 of it Fable's.
     some $77 at this run's rates: Fable $41, Astra $33, Argon $3.
   - **Not run.** Whether to run it is the owner's call. The readings are in
     `target/fabula-judge-results/` on this computer and in `~/fabula-judge/` on the droplet.
+
+### Post-M9: Fabula — A1 against B0 (done)
+
+With F beaten in both decisions, the owner had A1 judged against B0, the comparison the decision
+rule needed to choose between its two branches left (2026-11-07). The Claude Code session on the
+droplet worked from a brief. It ran the binary of the decisions, built from `689088c4`, with no
+pull and no rebuild, so the judges were shown the pairs exactly as before. The three judges kept
+their settings, and the run script gained one phase, `--pairs A1-B0 --seeds 1,2,3`. The limit was
+$90, $50 of it Fable's, with the phase's cost read from the call logs every quarter of an hour.
+
+- **The run.** 216 readings in 52 min, Argon's last 13 minutes in, Fable's 34, Astra's 52, for
+  $93.62: Fable $50.87, Astra $38.89, Argon $3.86. Every call was answered at its first attempt,
+  and the 504 readings of the controls and the decisions were left as they were.
+  - **Past the estimate.** The estimate, $77, was F against B0's cost. On this pair every judge
+    reasoned longer: on the mean Fable wrote 12,456 output tokens a reading against 9,620 on F
+    against B0, Astra 9,383 against 7,975, Argon 4,145 against 3,204. A reading cost Fable $0.71,
+    Astra $0.54 and Argon $0.05.
+  - **Past the limit.** The limit was passed by $3.62, Fable's by $0.87. A limit checked from
+    outside the runner holds only to within what is in flight between two checks, and Fable's
+    six readings in flight are some $4.
+- **The decision.** The last three columns are the pairs each judge's vote alone gave A1, of 36.
+
+  | | A1 won | A1 lost | tied | p | Fable | Astra | Argon |
+  | --- | --- | --- | --- | --- | --- | --- | --- |
+  | A1 against B0 | 5 | 29 | 2 | ≈ 1 | 2 | 6 | 6 |
+
+  A1 took `clash-4`, `mystery-4` and `mystery-5` at seed 3, `quiet-5` at seed 1 and `villain-1`
+  at seed 3, and tied `mystery-5` s2 and `villain-4` s2. The first three are the three pairs F
+  took against B0: those B0 stories lost to both. Fable voted for A1 in two pairs, `mystery-4` s3
+  and `mystery-5` s3, and for B0 in 30.
+- **The panel**, over the 36 pairs:
+  - **Consistency.** Fable kept its choice when the order turned on 32 pairs, Astra on 28, Argon
+    on 16.
+  - **Order bias.** Argon chose Story 1 in 56 of its 72 readings, Astra in 44, Fable in 36. In
+    the decisions Argon had chosen it in 86 of 144; on this closer pair its leaning on the order
+    grew, and the rule of both orders took its vote away on 20 pairs.
+  - **Agreement.** Fable and Astra agreed on 22 of the 24 pairs both voted on, Fable and Argon
+    on 11 of 14, Astra and Argon on 13 of 14.
+- **The ratings.** The sum of the four measures, 4 to 40, on the mean, by judge (Fable, Astra,
+  Argon): A1 22.5, 20.8 and 24.3; B0 28.3, 23.9 and 26.1.
+  - **A closer pair.** B0 led A1 by 5.8, 3.1 and 1.8, where it had led F by 10.0, 6.4 and 11.0.
+  - **By measure.** Over the three judges A1's stories averaged 5.1–6.0, surprise the lowest,
+    and B0's 6.2–7.0.
+  - **Read beside a rival.** Set against B0, both rated lower than when each was set against F
+    (A1 6.1–7.0, B0 6.5–7.3): the ratings move with the story they are read beside.
+- **Length.** A1's stories average 1,253 words, B0's 1,119. A1's was the longer in 26 of the 36
+  pairs and was chosen in 52 of their 156 readings; over the 216 readings the longer story won
+  104, 48%.
+- **The reasons.** The agent read a sample and counted keywords over the 216 readings.
+  - **Facts that do not hold.** As in the decisions, the reasons turn on them: broken logic or a
+    contradiction is named in 88 of the 156 readings B0 won and in 38 of the 60 A1 won.
+  - **A1's faults in the sample:** a theft of ampoules confessed in front of a colleague and then
+    booked as a shortage nobody can explain; a choice the plot makes for a character, a relay
+    falling out of a pocket; English calques, a temple pond called a *tank*, a *compound*.
+  - **B0's, where it lost:** a patient dead at three in the morning breathing in the next scene,
+    a panel on the easel and on a shoulder at once.
+- **Checked here.** The archive was unpacked on this computer, in a folder of its own, and
+  checked:
+  - the 504 earlier readings are byte for byte those of the decisions' archive, and the 216
+    added are all A1 against B0, each pair read both ways by each judge;
+  - every record's word counts are the final stories' own, read from the 108 traces, whose
+    checksums match;
+  - an independent recount in Python from the raw readings matches `verdict.json` pair by pair
+    and judge by judge, in all four matchups;
+  - the run script is the brief's, and each judge's log holds 72 readings asked, 72 chosen and
+    none failed.
+- **The rule.** By spec §11, A1's pipeline would take the tools with 24 of 36 pairs against B0.
+  - **A1 has 5.** With F at 3 against B0, neither beats B0, and the track stops.
+  - **What stops.** M4 is not built, and neither the simulation nor A1's pipeline is taken
+    further.
+  - **What is left.** Whether the story tools stay, running B0, behind `tools.story` and off, is
+    the owner's call.
+  - **Where the readings are.** In `target/fabula-judge-a1b0-results/` on this computer and in
+    `~/fabula-judge/` on the droplet.
