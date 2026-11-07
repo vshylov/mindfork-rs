@@ -14,7 +14,8 @@
 //!    the World Master rules on them in the order they happen, and each one is
 //!    checked against the world the one before it left.
 //! 4. **Reflection.** Every `reflect_every` rounds, each character present
-//!    writes a private reflection and its goal changes.
+//!    writes a private reflection and its goal changes. One the model refuses
+//!    is left out and counted; the branch goes on.
 //!
 //! A scene ends at `max_rounds`, after two rounds running in which no
 //! character's deed was committed, when no one is left at its place, or when
@@ -161,6 +162,8 @@ pub struct Tally {
     pub slips: Vec<String>,
     /// Reflections written.
     pub reflections: u32,
+    /// Reflections the model refused, left out.
+    pub reflections_refused: u32,
 }
 
 /// A branch played to its end.
@@ -269,6 +272,7 @@ fn branch_json(result: &BranchResult) -> Value {
             "refused_by_engine": t.refused_by_engine,
             "slips": t.slips,
             "reflections": t.reflections,
+            "reflections_refused": t.reflections_refused,
         },
     })
 }
@@ -1174,7 +1178,7 @@ impl Playing<'_> {
         let asks = present.iter().zip(&prompts).map(|(who, prompt)| {
             let call = CallAddress::character(stage.run, &self.branch, round, who, "reflect");
             async move {
-                decide::<ReflectionReply>(
+                match decide::<ReflectionReply>(
                     stage.port,
                     &call,
                     Role::Character,
@@ -1182,10 +1186,22 @@ impl Playing<'_> {
                     prompt,
                 )
                 .await
+                {
+                    Ok(reply) => Ok(Some(reply)),
+                    // A reflection is the character's own aside, which no
+                    // event needs: one the model refuses is left out, and the
+                    // branch goes on (docs/fabula.md §4, *M3's full run*).
+                    Err(PortError::Refused { .. }) => Ok(None),
+                    Err(e) => Err(e),
+                }
             }
         });
         let replies = try_join_all(asks).await?;
         for (who, reply) in present.iter().zip(replies) {
+            let Some(reply) = reply else {
+                self.tally.reflections_refused += 1;
+                continue;
+            };
             if !self.reflectors.contains_key(who) {
                 let writer = stage.db.reflection_writer(&self.branch, who).await?;
                 self.reflectors.insert(who.clone(), writer);

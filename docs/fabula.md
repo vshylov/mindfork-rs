@@ -39,8 +39,8 @@ All of them the owner's, on 2026-10-31; the reasoning is in the spec.
 | Role prompts in English (an exception to axis A); the story's language per story | spec §8, §15 |
 | A story's database in mindfork's data and backups; its call log beside it, outside backups | spec §6, §15 |
 | Off by default until M3: `tools.story` | spec §15 |
-| M3's systems as run options of a hidden runner; judging by a script under `tools/` | spec §15 |
-| About 20 premise candidates drafted by Claude, 12 chosen by the owner; three human judges on the calibration set | spec §11, §15 |
+| M3's systems as run options of a hidden runner; judging by a script under `tools/`, then by the runner itself (T24) | spec §15 |
+| About 20 premise candidates drafted by Claude, 12 chosen by the owner; three human judges on the calibration set, then three flagship models in their place (T24) | spec §11, §15 |
 | Development and calibration on Claude (`CLAUDE_API_KEY`) and OpenRouter (`OPENROUTER_API_KEY`); the local RTX 4090 for what only llama.cpp shows | §4 |
 | T1 (a), T2 (a), T3 (a) | §6 |
 
@@ -59,7 +59,7 @@ The layer rule holds (`tools/layer_check.py`): a layer names only the layers bel
 | `entities/subagent.rs` | `RunKind::Story` |
 | `shared/config.rs` | `tools.story` (off), the chapter's timeout and budget (§6) |
 | `main.rs`, `features/cli.rs` | The hidden runner for M3 |
-| `tools/fabula_judge.py` | The blind judging of M3 |
+| `features/story/judge.rs` | The blind judging of M3, `story-eval judge` and `verdict` (T24) |
 
 The engine never reaches up for an engine of its own: the orchestrator hands it the
 chat's `EngineBackend`, wrapped in the `LlmPort` adapter, and every call takes the
@@ -484,12 +484,12 @@ roadless story, resumed, stops at its second scene in the world's words, with no
 ### M3 — the evaluation
 
 Before it starts, two judges besides the owner are found, and Claude drafts the premise
-candidates for the owner to choose from (spec §15).
+candidates for the owner to choose from (spec §15). The judges became three models (T24).
 
 | PR | Content | Proof |
 | --- | --- | --- |
 | 13 `feat/story-eval` | The hidden runner: no line in `--help`, the single-instance lock skipped, stories written into its output directory and not into the data; the systems F, B0 and A1–A4 as run options; the export of the markdown and the JSON trace; the 12 premises frozen in the repository with their SHA-256 | Unit tests of each system's wiring; a live run of one premise through every system |
-| 14 `feat/story-judge` | `tools/fabula_judge.py`: pairs shown blind in random order, verdicts as JSON, the binomial test; the LLM panel of other model families through OpenRouter, both orders; the calibration check against the three humans' majority | `--self-test` against fixtures, run in `lint` like the other tools' |
+| 14 `feat/story-judge` | `story-eval judge` and `verdict` (T24, in place of `tools/fabula_judge.py`): pairs shown blind as Story 1 and 2, both orders, one judge of the panel a run on its own wire and call log; controls, a story against itself shuffled; verdicts as JSON, a vote where both orders agree, the binomial test | Unit tests of the pairs, the showing, the controls, the count and one judge's run; a live probe of one pair by the three judges |
 
 **PR 13's forks (2026-11-05).** The owner accepted every recommendation below on 2026-11-05
 (§6, T19–T23). Claude drafted twenty premise candidates against §15's rubric, five a genre,
@@ -711,7 +711,7 @@ from none of three; on `mystery-2` the selamlık at noon came two of six, from o
 since in two chapters the record had passed noon before the closing scene.
 
 Then the run itself, outside any pull request: 36 pairs for each of the two decisions
-(and the ablations, after a GO: T23), the calibration by three people, and the decision rule
+(and the ablations, after a GO: T23), read by the panel of three models (T24), and the decision rule
 of spec §11, recorded here and in the journal.
 
 - **GO** (F beats B0 and A1) opens M4.
@@ -719,6 +719,37 @@ of spec §11, recorded here and in the journal.
   pipeline and removes the simulation; the long form continues on A1.
 - **Neither beats B0:** the track stops. Whether the tools stay, running B0, is the
   owner's call then.
+
+**The full run (2026-11-07).** On the owner's DigitalOcean droplet, a Claude Code session there
+built `main` at `64c12819`, the code of PR #886, and ran the batch as a unit: all 108 stories,
+F, B0 and A1 on the twelve premises and seeds 1 to 3, on Haiku 5.5, in 3 h 34 min for $55.76
+(F $26.92, B0 $27.21, A1 $1.64). No story leaked a token, and no call was refused for its rate.
+103 finished. Five F stories hold no accepted text:
+- four stopped on the chapter budget of 9 million tokens, three of them in a rerun of the
+  fourth scene and one at its summary's check, after a draft of 1,529 words;
+- one failed when Haiku refused a character's reflection: the doctor of `clash-3` weighing her
+  patient's heart, all 30 of the run's refusals in 22,884 calls, all that step, all `clash-3`.
+
+B0 spent 5–12% above F's average on every premise, its last revision crossing the target.
+Most stories came in under the 1,200 words asked: 20 of F's 32 texts, 29 of B0's 36, 12 of A1's
+36. How a pair without an F story is judged is the owner's to decide before PR 14 reads any
+([journal/stories.md](journal/stories.md), *M3's full run*).
+
+The owner chose to complete the five (2026-11-07). A reflection the model refuses is now left
+out and counted, and the branch plays on; the five were resumed from their stores on this
+computer with that fix and a chapter budget of 15 million tokens. All five finished, at 1,031 to
+1,529 words, for $1.41 more; `clash-3`'s doctor was refused nine times more, each left out. B0
+had spent to the average of the finished F stories alone, so with the five counted it spent
+15–36% less than F on `clash-3`, `clash-4`, `mystery-2` and `mystery-4`. The owner had those
+twelve B0 sessions carried on to F's new average, for $3.36; now B0 spends 2–13% more than F on
+every premise. The run holds 108 finished stories for $60.53: F $28.32, B0 $30.57, A1 $1.64
+([journal/stories.md](journal/stories.md), *the five F stories completed*).
+
+**The judging's probe (2026-11-07).** PR 14's panel read one pair, `villain-4` seed 1, F against
+B0, both ways: all three judges chose B0 in both orders, rating F's story 3–5 on the four
+measures and B0's 5–9, for $1.78 (Fable $0.82, Astra $0.85, Argon $0.11). The 72 pairs of the
+two decisions and a control on each premise come to some $150 by it, about $70 on Anthropic's
+account and $80 on OpenRouter's ([journal/stories.md](journal/stories.md), *PR 14*).
 
 After M3, Russian prose under the English prompts is compared with prose under Russian
 ones (spec §15).
@@ -938,6 +969,31 @@ PR 13 added five more, M3's own. The owner accepted every recommendation on 2026
   and a day on the cloud machine; spec §11's decisions are made on them, and A2–A4 explain a GO,
   so they wait for one *(recommended)*. (b) All six systems at once, as this plan had it.
   **Owner's decision (2026-11-05): (a).** PR 13 still builds all six.
+
+PR 14 added one more, on the owner's word.
+
+- **T24. Who judges.** Spec §11 had three people judge a calibration set of 12 pairs, and a
+  panel of models from other families take over the rest only after matching their majority on
+  9 of the 12. The owner (2026-11-07): neither they nor the friends who would read are literary
+  professionals, and three flagship models, told what to weigh and reasoning at their most, may
+  read better than they would. **Owner's decision (2026-11-07):** the three judges are Claude
+  Fable 5.1 on Anthropic's API, and GPT-6 Astra and Gemini 4 Argon through OpenRouter, pinned
+  to their makers' own providers, each at the highest effort it takes (`max`, `max`, `high`);
+  no person judges. Fable is of the Author's family, but every system's story is Haiku's, so it
+  favours none of them. What the calibration was for is done otherwise:
+  - each pair is read in both orders, and a judge's vote counts only where both readings choose
+    the same story; a pair goes to the side with more votes, and a tie is no win of F;
+  - controls, a story against its own paragraphs shuffled, which every judge must refuse;
+  - the verdict reports each judge's consistency across the orders, how often it chose Story 1,
+    the judges' agreement two by two, and how often the longer story won, since models are
+    known to favour length: F's story is the longer in 20 of the 36 pairs against B0, and A1's
+    the longer in 24 of the 36 against F.
+
+  The judging is the runner's own (`story-eval judge`, `verdict`) rather than a script under
+  `tools/`: it reuses the app's clients, so a reading's schema is enforced on every wire, its
+  call recorded, its cost counted at the list price, and a run stopped resumes. A judge is
+  shown the stories as written, the scene breaks evened out to one mark; a section's heading
+  stays, since one names whose eyes the section is told through.
 
 ## 7. Not in this track
 

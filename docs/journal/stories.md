@@ -13,7 +13,7 @@ what was rejected — the reasoning behind the code, not its current shape. For 
 shape read the reference documents named above; for the traps that recur across areas read
 [lessons.md](../lessons.md).
 
-## Entries (19)
+## Entries (22)
 
 - Post-M9: Fabula — PR 1, the story database (done)
 - Post-M9: Fabula — PR 2, the model port and replay; Gate G0 GO (done)
@@ -34,6 +34,9 @@ shape read the reference documents named above; for the traps that recur across 
 - Post-M9: Fabula — Claude's calls at list price, and the rules on `villain-4` (done)
 - Post-M9: Fabula — the last version checked (done)
 - Post-M9: Fabula — a chapter that reaches its goal (done)
+- Post-M9: Fabula — M3's full run (done)
+- Post-M9: Fabula — the five F stories completed (done)
+- Post-M9: Fabula — PR 14, the blind judging by three models (done)
 
 ### Post-M9: Fabula — PR 1, the story database (done)
 
@@ -1979,3 +1982,152 @@ why; one chapter of the five reached its goal, Sonnet's on `mystery-2`.
 - **Spent.** $13.03 on Haiku: $3.24 before, $5.56 after with the full closing scene, $4.15 after
   with the light one, $0.08 on the closing plan's replay. The first two came to $8.80 against
   some $6 the owner had approved; the owner was told and approved the third and the replay.
+
+### Post-M9: Fabula — M3's full run (done)
+
+The owner chose Haiku 5.5 for every system (T19) and ran the batch on a DigitalOcean droplet,
+away from this computer's power and line. A Claude Code session on the droplet did the work
+from a brief: it built `main` at `64c12819` (the code of PR #886) in 6 min 25 s, wrote the key
+from the droplet's own variable into the unit's file without printing it, and started the unit
+of docs/fabula.md §4 with `--parallel 8` and a 9-million-token chapter budget. On its own it
+added a timer that summed the call logs' dollars every five minutes and would have stopped the
+unit past $65.
+
+- **The run.** 108 stories in 3 h 34 min: the first wave, F and A1, in 2 h 24 min, then B0 in
+  1 h 10 min. $55.76 in all, against some $50 estimated and the owner's limit of $70: F $26.92,
+  B0 $27.21, A1 $1.64. No 429, no story tried twice, no leak in any of the 108.
+- **The endings.**
+
+  | | stories | finished | median words | under 1,200 | median minutes |
+  | --- | --- | --- | --- | --- | --- |
+  | F | 36 | 31 | 1,151 | 20 of 32 | 26 |
+  | B0 | 36 | 36 (spent) | 1,144 | 29 of 36 | 14 |
+  | A1 | 36 | 36 | 1,240 | 12 of 36 | 4 |
+
+- **Five F stories hold no accepted text.**
+  - Four stopped on the chapter budget, each a few thousand tokens past 9 million, at about
+    $1.05: `clash-4` s1, `mystery-2` s3 and `mystery-4` s3 in a rerun of their fourth scene,
+    with no draft, and `quiet-5` s2 at its summary's check, after a draft of 1,529 words.
+  - `clash-3` s2 failed. Haiku refused the reflection of Priya, the station's doctor, weighing
+    her patient's heart against the plane's one place: every branch of a scene failed on it,
+    twice, and the story stopped for good. All 30 refusals of the run, in 22,884 calls, were
+    that step on `clash-3`; its seed 3 met six and finished. The refused replies were benign
+    deliberation in her own voice, cut at a few hundred tokens: what docs/fabula.md §5 lists
+    as a refusal of what reads as the model's own reasoning.
+- **Equal cost.** B0 spent 5–12% above the average of its premise's finished F stories on every
+  premise, 9% on the mean: its stop is checked before a critique, so the revision that crosses
+  the target is kept and paid for.
+- **Not decided here.** How a pair with no F story is judged: as F's loss, left out, or with the
+  five completed (a larger budget for the four, and a refused reflection let pass rather than
+  failing its branch). The owner decides before PR 14 reads a pair. The stories are in
+  `target/fabula/m3-full/` on this machine and in the archive on the droplet.
+
+### Post-M9: Fabula — the five F stories completed (done)
+
+M3's full run left five F stories without an accepted text: four stopped on the chapter
+budget, and one failed when Haiku refused a character's reflection. Judged as they stood, two
+limits of the engine's plumbing would have decided five pairs. The owner chose to complete them
+(2026-11-07).
+
+- **A refused reflection.** A round asks every present character's reflection together, and one
+  error failed the branch; on `clash-3`, Haiku's refusals of the doctor's reflection failed
+  every branch of a scene, twice. A reflection is the character's own aside, which no event
+  needs: one the model refuses is now left out and counted (`reflections_refused` in the
+  branch's tally), and the branch plays on. Any other failure of it still fails the branch.
+  Tests: a refused reflection left out, the others written, the tally and the trace; a failed
+  one still failing the branch. Mutation check: 3 mutants, all killed. 4865 tests.
+- **Resumed.** The five were resumed from their stores in `target/fabula/m3-full/` on this
+  computer, with the fix and a chapter budget of 15 million tokens: four of them had spent
+  9 million and needed a scene, the closing scene and the text after it, and `clash-3` s2 had
+  spent 7.4 million and needed its third scene again.
+
+  | | words | tokens in all | dollars in all | added |
+  | --- | --- | --- | --- | --- |
+  | `clash-3` s2 | 1,031 | 11.4 M | $1.38 | $0.49 |
+  | `clash-4` s1 | 1,214 | 10.4 M | $1.25 | $0.18 |
+  | `mystery-2` s3 | 1,225 | 12.3 M | $1.43 | $0.38 |
+  | `mystery-4` s3 | 1,328 | 12.0 M | $1.41 | $0.35 |
+  | `quiet-5` s2 | 1,529 | 9.0 M | $1.06 | $0.01 |
+
+  All five finished and none leaked; `clash-3` s2 met nine more refusals of the doctor's
+  reflection and left them out. $1.41 against some $3 estimated.
+- **The run as it stood.** 108 finished stories for $57.17: F $28.32, B0 $27.21, A1 $1.64.
+- **Equal cost, broken on four premises.** B0 had spent to the average of each premise's
+  finished F stories. With the completed ones counted, F's average rises where they were, and
+  B0 then spent 15–36% less than F on `clash-3`, `clash-4`, `mystery-2` and `mystery-4`, while
+  it spent 2–12% more on the other eight; across the twelve, 4% less.
+- **B0 carried on.** The owner chose to carry those twelve sessions on (2026-11-07). Each was
+  resumed from its call log with the runner's own target over all three F stories of its
+  premise (`story-eval run --system B0 --target-usd --target-tokens`): $0.94 on `clash-3`,
+  $0.67 on `clash-4`, $0.92 on `mystery-2`, $0.80 on `mystery-4`.
+  - Each took one to three more turns of critique and revision, $3.36 in all against some $2.7
+    estimated: a turn late in a session reads the whole of it.
+  - Seven of the twelve kept a new text; five rewrote their last one word for word, Haiku's
+    session having stopped changing the story.
+  - B0 now spends 2–13% more than F on every premise, 8% on the mean, as the batch left the other
+    eight.
+- **The run as it stands now.** 108 finished stories for $60.53: F $28.32, B0 $30.57, A1 $1.64.
+  Under the 1,200 words asked: F 21 of 36, B0 29 of 36, A1 12 of 36.
+
+### Post-M9: Fabula — PR 14, the blind judging by three models (done)
+
+Spec §11 had three people judge a calibration set of 12 pairs before a panel of models took
+the rest. The owner set that aside (2026-11-07, docs/fabula.md §6, T24): neither they nor the
+friends who would read are literary professionals, and three flagship models, told what to
+weigh and reasoning at their most, may read better. The judges are Claude Fable 5.1 on
+Anthropic's API, and GPT-6 Astra and Gemini 4 Argon through OpenRouter, pinned to `openai` and
+to Google's two providers.
+
+- **The runner judges.** `story-eval judge` reads a run's pairs as one judge, each judge on its
+  own wire with its own call log under the output directory; `story-eval verdict` counts them
+  all. Written in the runner rather than as `tools/fabula_judge.py`, as the plan had it: the
+  app's clients enforce the reading's schema on every wire, the call log records each reading,
+  Fable's dollars are counted at its list price ($10 and $50 a million), and a stopped run
+  resumes, a reading already written never asked again.
+- **What a judge is shown.** Both stories as Story 1 and Story 2, the order said to be drawn by
+  chance, nothing of the systems or the engine. The scene breaks, which the systems write as
+  `---`, `***`, `* * *` or a lone `*`, are evened out to `* * *`; headings stay, since in
+  `mystery-5` one names whose eyes the section is told through. Asked to weigh plot, character,
+  surprise and prose, to hold length no merit, to rate each story 1–10 on the four, to say why
+  in two or three sentences of Russian, and to choose: no tie.
+- **Both orders, controls, and the count.** Each pair is read twice, its stories swapped; a
+  judge's vote counts only where both readings choose the same story, a pair goes to the side
+  with more votes, and a tie is no win of F, so the binomial test of spec §11 (24 of 36,
+  p ≈ 0.03) counts it against F. A control sets a story against its own paragraphs shuffled
+  (a draw of its own, never the order it had), which every judge must refuse. The verdict also
+  reports each judge's consistency across the orders, how often it chose Story 1, the judges'
+  agreement two by two, and how often the longer story won: models are known to favour length,
+  and F's story is the longer in 20 of the 36 pairs against B0, A1's in 24 of the 36 against F.
+- Tests: the pairs' names; the breaks evened out and the headings kept; the control's shuffle,
+  its paragraphs the same and their order not; every pair asked both ways, each at its own
+  address; a prompt naming no system; the binomial tail; the count, with a judge that changes
+  its mind abstaining, a pair read one way being no vote, a tie, each judge alone, the
+  agreement, the controls and the length; one judge's run written end to end with the order
+  of what was sent, its sampling, its cost, and resumed asking nothing; a reading the model
+  spoils left for the next run; the commands' arguments. Mutation check: 12 mutants, all
+  killed. 4876 tests. SonarCloud found the count too complex for one function and a blocking
+  write in the async command: the count is split by what it counts, and the files are read and
+  written through `tokio::fs`.
+- **The probe** (the owner's go-ahead, up to $5): `villain-4` seed 1, F against B0, read both
+  ways by each judge. F's story has 1,248 words, B0's 1,317.
+
+  | | effort | chose | dollars | tokens in | tokens out | minutes a reading |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | Fable 5.1 | `max` | B0, B0 | $0.82 | 9,122 | 6,834 and 5,940 | 1.5 |
+  | GPT-6 Astra | `max` | B0, B0 | $0.85 | 6,270 | 7,218 and 6,625 | 4.5 |
+  | Gemini 4 Argon | `high` | B0, B0 | $0.11 | 6,556 | 3,693 and 4,413 | 1 |
+
+  All three voted for B0 in both orders: the pair is B0's. Their reasons name what the owner's
+  own readings had found in F's stories: Fable the letters "now from the camp, now to it" and
+  an ending on an open door that resolves nothing; Argon a drawer opened with a hairpin only to
+  hand the letters back at the director's door; Astra the unclear logic of the second
+  signature and of the letters taken. Each judge rated the two alike in both orders, F's
+  story 3–5 on the four measures and B0's 5–9; Astra was the sternest with B0's, 5–7 where the
+  others gave 7–9, and named a flaw in it, the director's check on Galina's origins barely
+  laid. The probe cost $1.78. One pair is no verdict; it shows the judges read closely, keep
+  to their choice when the order turns, and agree.
+- **The full run's estimate.** A pair read both ways costs the panel about $1.8: Fable $0.82,
+  Astra $0.85, Argon $0.11. The 72 pairs of the two decisions come to some $130, and a
+  control on each premise to some $20 more: about $150, some $70 of it on Anthropic's account
+  and $80 on OpenRouter's. At four readings at a time per judge, Astra's five minutes a reading
+  make it about three hours.

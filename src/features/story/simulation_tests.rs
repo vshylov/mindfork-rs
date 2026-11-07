@@ -323,6 +323,7 @@ async fn a_round_runs_its_four_steps_in_order() {
             refused_by_engine: Vec::new(),
             slips: Vec::new(),
             reflections: 3,
+            reflections_refused: 0,
         }
     );
     // The trace carries all of it.
@@ -1146,4 +1147,45 @@ async fn under_a4_every_character_perceives_every_event() {
     let silas = round2(&port, "silas");
     assert!(!silas.contains("Mara whispers"), "{silas}");
     assert!(!silas.contains("She has to know."), "{silas}");
+}
+
+/// A reflection the model refuses is left out and counted, and the branch
+/// plays on; any other failure of it still fails the branch. On M3's full run
+/// Haiku refused the reflections of `clash-3`'s doctor 30 times, and one story
+/// lost every branch of a scene to them (docs/fabula.md §4, *M3's full run*).
+#[tokio::test]
+async fn a_refused_reflection_is_left_out_and_the_branch_plays_on() {
+    let port = Scripted::new(|address, prompt| {
+        if address.ends_with("/mara/reflect") {
+            return Err(PortError::Refused {
+                address: address.to_owned(),
+            });
+        }
+        one_round(address, prompt)
+    });
+    let (_story, scene) = simulate(&port, &config(1, 1, 1)).await;
+    let run = played(&scene.branches[0]);
+    assert_eq!(run.rounds, 1);
+    let who: Vec<&str> = run.reflections.iter().map(|(w, _)| w.as_str()).collect();
+    assert_eq!(who, ["silas", "ines"]);
+    assert_eq!(
+        (run.tally.reflections, run.tally.reflections_refused),
+        (2, 1)
+    );
+    let trace = scene.to_json();
+    assert_eq!(trace["branches"][0]["tally"]["reflections_refused"], 1);
+
+    let down = Scripted::new(|address, prompt| {
+        if address.ends_with("/mara/reflect") {
+            return Err(PortError::Failed {
+                address: address.to_owned(),
+                message: "the provider is down".to_owned(),
+            });
+        }
+        one_round(address, prompt)
+    });
+    let (_story, scene) = simulate(&down, &config(1, 1, 1)).await;
+    assert!(
+        matches!(&scene.branches[0], BranchResult::Failed { error, .. } if error.contains("down"))
+    );
 }
