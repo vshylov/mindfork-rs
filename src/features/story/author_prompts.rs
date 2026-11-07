@@ -130,6 +130,23 @@ impl ChapterContext<'_> {
         self.canon.arc.chapters.len()
     }
 
+    /// The chapter's place in the arc, as the plan and the pick name it
+    /// (docs/fabula.md §4, *A chapter that reaches its goal*, G1): told only
+    /// "Chapter 1", Haiku's picks on a story of one chapter put its outcome
+    /// off "to the next chapter" four times in ten.
+    fn place(&self) -> String {
+        if self.last {
+            format!(
+                "Chapter {} of {}, the arc's last: whatever its goals ask happens in it, since no \
+                 chapter comes after it",
+                self.number,
+                self.total()
+            )
+        } else {
+            format!("Chapter {} of {}", self.number, self.total())
+        }
+    }
+
     fn arc_goal(&self) -> &str {
         self.canon
             .arc
@@ -368,6 +385,14 @@ fn or_unset(value: &str) -> &str {
 }
 
 /// The chapter's outline (spec §7, step 1).
+/// How a chapter's goals are written (docs/fabula.md §4, *A chapter that
+/// reaches its goal*, G4): an outcome the world can reach whatever one
+/// character decides. Narrowed to "Nina signs", `villain-4`'s goal failed in
+/// all three runs where the simulated Nina would not.
+pub const GOALS_BY_MANY_ROADS: &str = "Write each goal as an outcome the story can reach by \
+    more than one road, never as one character's decision: the characters choose what they do, \
+    and you set only their circumstances.";
+
 pub fn outline(ctx: &ChapterContext) -> Prompt {
     let after = if ctx.played {
         "each after the one before it has been played"
@@ -377,11 +402,11 @@ pub fn outline(ctx: &ChapterContext) -> Prompt {
     Prompt {
         system: ctx.system(),
         user: format!(
-            "Chapter {} of {}. Its goal in the arc: {}{}\n\n\
-             Set this chapter's goals: what must have changed by its end, two to four goals. Do \
-             not plan its scenes yet; they are planned one at a time, {after}.",
-            ctx.number,
-            ctx.total(),
+            "{}. Its goal in the arc: {}{}\n\n\
+             Set this chapter's goals: what must have changed by its end, two to four goals. \
+             {GOALS_BY_MANY_ROADS} Do not plan its scenes yet; they are planned one at a time, \
+             {after}.",
+            ctx.place(),
             ctx.arc_goal(),
             ctx.so_far(Doubts::Recorded),
         ),
@@ -599,9 +624,28 @@ impl Again<'_> {
     }
 }
 
+/// The hour each scene's opening names (docs/fabula.md §4, *A chapter that
+/// reaches its goal*, G3): the world keeps no clock, and Haiku's World Master
+/// struck the deadline in the first scene, with no one coming.
+pub const HOUR: &str = "Name the hour in the scene's opening, later than the scene before. \
+    Where the chapter's goals hang on a deadline, no scene passes it before the last, and the \
+    last opens as it comes.";
+
+/// What the plan past the cap asks (G5). Told only "the moment its goals hang
+/// on", Haiku opened `villain-4`'s closing scene on the stairs at half past
+/// eight, in the laboratory at two minutes to nine and in the anteroom at
+/// nine; the last, with the director there, was the one chapter of three
+/// that reached its goal.
+pub const CLOSING: &str = "If the chapter's goals are met, end it here. If not, plan one \
+    closing scene, the chapter's very last, and the chapter ends with it. It opens at the moment \
+    its goals are decided: where they hang on a deadline, at the deadline itself, neither before \
+    nor after it, in the place where it falls due, with whoever decides there; one who is not of \
+    the cast arrives in its pressure.";
+
 /// The plan of the chapter's next scene, or its end (spec §7, step 2). With
 /// `again`, the human asked for this scene to be planned again, and the
-/// chapter may not end here.
+/// chapter may not end here. Past the cap (`scene > most`), the one closing
+/// scene the chapter may still have (G5).
 pub fn plan(
     ctx: &ChapterContext,
     kept: &[Kept],
@@ -620,7 +664,14 @@ pub fn plan(
     // A scene asked for again is played: the chapter does not end at it.
     let must_play = scene == 1 || again.is_some();
     let again = again.map_or(String::new(), |a| a.text(ctx.canon));
-    let ask = if must_play {
+    let ask = if scene > most {
+        let played = if most == 1 {
+            "The chapter's one scene is played".to_owned()
+        } else {
+            format!("All {most} scenes are played")
+        };
+        format!("{played}. {CLOSING} First your private intent, then the circumstances.")
+    } else if must_play {
         format!(
             "Plan scene {scene} of at most {most}: first your private intent for it, then its \
              circumstances."
@@ -639,8 +690,8 @@ pub fn plan(
     Prompt {
         system: ctx.system(),
         user: format!(
-            "Chapter {}. Its goals:\n{}{}{kept_so_far}\n\nThe world now:\n{}{again}\n\n{ask}",
-            ctx.number,
+            "{}. Its goals:\n{}{}{kept_so_far}\n\nThe world now:\n{}{again}\n\n{ask} {HOUR}",
+            ctx.place(),
             ctx.goals_text(),
             ctx.so_far(Doubts::Recorded),
             world_lines(ctx.canon, world),
@@ -653,7 +704,7 @@ pub fn plan(
 /// chapter, which the pick weighs too.
 pub fn pick(
     ctx: &ChapterContext,
-    (scene, setup, intent): (u32, &SceneSetup, &str),
+    (scene, most, setup, intent): (u32, u32, &SceneSetup, &str),
     shown: &[(String, &Trace)],
     reruns_left: u32,
     asked: Option<&str>,
@@ -677,15 +728,29 @@ pub fn pick(
             plural(reruns_left)
         )
     };
+    // G2: the chapter's last scene, the cap's or the closing one past it,
+    // keeps the version that moves its goals furthest.
+    let last = if scene >= most {
+        " This is the chapter's last scene: keep the version that moves its goals furthest, \
+         unless it breaks a character's truth."
+    } else {
+        ""
+    };
+    let which = if scene > most {
+        "The closing scene".to_owned()
+    } else {
+        format!("Scene {scene} of at most {most}")
+    };
     Prompt {
         system: ctx.system(),
         user: format!(
-            "Chapter {}. Its goals:\n{}\n\nScene {scene}, {}\nYour intent for it: {intent}{asked}{}\n\n\
+            "{}. Its goals:\n{}\n\n{which}, {}\nYour intent for it: {intent}{asked}{}\n\n\
              The world played it {} time{} from the same moment; each version below is what \
              happened in it.\n\n{}\n\n\
-             Read each version against your intent and four measures: tension, surprise, truth \
-             to character and consequences, each scored from 1 to 5. {choose}",
-            ctx.number,
+             Read each version against your intent and five measures: tension, surprise, truth \
+             to character, consequences, and the goals, how far it moves the chapter toward \
+             them; each scored from 1 to 5.{last} {choose}",
+            ctx.place(),
             ctx.goals_text(),
             setup_text(ctx.canon, setup),
             ctx.choices_text(Doubts::Recorded),
@@ -860,17 +925,35 @@ pub fn revise(
         user: format!(
             "Chapter {} of {}. Its goal in the arc: {}\nIts goals:\n{}{}\n\n\
              The scenes the story keeps, as the record holds them:\n\n{}\n\n\
-             The chapter as it stands:\n\n{text}\n\n{asked} Keep what works as it is, and \
-             rewrite the whole chapter. {}",
+             The chapter as it stands, {} words:\n\n{text}\n\n{asked} Keep what works as it \
+             is, and rewrite the whole chapter. {KEEP_NAMES} {}",
             ctx.number,
             ctx.total(),
             ctx.arc_goal(),
             ctx.goals_text(),
             ctx.so_far(Doubts::None),
             kept_text(ctx.canon, kept, TO_AUTHOR),
+            words_of(text),
             writing_rules(ctx.canon, words, Record::of(kept)),
         ),
     }
+}
+
+/// A revision's names (docs/fabula.md §4, *The last version checked*, F4):
+/// each writing call puts the canon's names into the story's language anew,
+/// and Haiku's last revision on `villain-4` gave Pavel a second patronymic.
+pub const KEEP_NAMES: &str = "Keep every name, patronymic and form of address as the chapter \
+    has them, unless a note asks to change one.";
+
+/// A text's words as the length rule counts them (F2): a run between spaces
+/// with a letter or a digit in it, so a dialogue's dash and a heading's `##`
+/// are not words.
+pub fn words_of(text: &str) -> u32 {
+    let n = text
+        .split_whitespace()
+        .filter(|w| w.chars().any(char::is_alphanumeric))
+        .count();
+    u32::try_from(n).unwrap_or(u32::MAX)
 }
 
 /// The Author's decisions on a version's notes, each shown under its label

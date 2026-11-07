@@ -10,7 +10,9 @@
 //!    scene again under changed circumstances, at most `max_reruns` times — on
 //!    the last attempt it may only pick. A scene whose every branch fails is
 //!    played again as it was, and after `1 + max_reruns` such attempts it asks
-//!    the human (**P3**).
+//!    the human (**P3**). Past `max_scenes`, when the Author does not end
+//!    the chapter, one closing scene, opening at the moment its goals hang
+//!    on (docs/fabula.md §4, *A chapter that reaches its goal*).
 //! 4. **The draft**, from the kept scenes' full traces.
 //! 5. **Review**: the Reader and the Continuity checker, side by side; the
 //!    engine's own check for a planted marker in the prose rides with the
@@ -19,9 +21,13 @@
 //!    its times added up, and in the arc's last chapter each thread still
 //!    open; so does the staging pass on the text alone (PR 12): who is where
 //!    and holds what, whose pronoun and whose kin, a line that announces a
-//!    plan or opens on thanks. The Author decides each note, and revises while an accepted
-//!    high-severity note stands, at most `max_revisions` times; the last
-//!    revision is not reviewed again (spec §7's loop).
+//!    plan or opens on thanks; and the engine's own count of the words. The
+//!    Author decides each note, and revises while an accepted high-severity
+//!    note stands, at most `max_revisions` times. The last revision is
+//!    reviewed and triaged too, and never revised: when the Author accepts
+//!    more high-severity notes on it than on the version before, that
+//!    version's text goes on as a version of its own (docs/fabula.md §4, *The
+//!    last version checked*).
 //! 6. **The register and the summary** of the final version, both the
 //!    Canon keeper's from its text alone (docs/fabula.md §4, PR 11): the
 //!    threads it opens and pays off, the facts of time, age and kinship it
@@ -102,7 +108,7 @@ pub struct Budget {
 pub struct ChapterConfig {
     /// How each scene is simulated.
     pub sim: SimConfig,
-    /// The most scenes a chapter has.
+    /// The scenes a chapter plans; one closing scene may follow them.
     pub max_scenes: u32,
     /// The most reruns a scene may have at the Author's request.
     pub max_reruns: u32,
@@ -795,7 +801,11 @@ impl Run<'_> {
             });
         }
         let from = take.as_ref().map_or(1, |t| t.from_scene);
-        for m in from..=self.config.max_scenes {
+        // Past the cap, one closing scene, when the Author does not end the
+        // chapter there (docs/fabula.md §4, *A chapter that reaches its
+        // goal*, G5): every F chapter of five played all its scenes, and four
+        // ended before their goals.
+        for m in from..=self.config.max_scenes + 1 {
             let planned = self.attempts(n, m).await?;
             if planned.is_empty() {
                 let address = self.plan_address(n, m);
@@ -983,7 +993,17 @@ impl Run<'_> {
             let floor = self.take.as_ref().map_or(0, |t| t.floor(m));
             let since = asked.map_or(floor, |(rerun, _)| (rerun + 1).max(floor));
             let attempt = current.rerun + 1 - since;
-            let most = 1 + self.config.max_reruns;
+            let closing = m > self.config.max_scenes;
+            let most = if closing {
+                1
+            } else {
+                1 + self.config.max_reruns
+            };
+            let sim = if closing {
+                closing_sim(&self.config.sim)
+            } else {
+                self.config.sim
+            };
             let address = current.id.to_string();
             let tip = match self.db.main_line_tip().await? {
                 Some(tip) => tip,
@@ -995,7 +1015,7 @@ impl Run<'_> {
                 &self.steps,
                 (&current.id, &current.setup),
                 &tip,
-                &self.config.sim,
+                &sim,
             )
             .await
             .map_err(|e| scene_halt(&address, e))?;
@@ -1146,7 +1166,12 @@ impl Run<'_> {
         let asked = self.take.as_ref().and(ctx.human_notes.as_deref());
         let prompt = prompts::pick(
             &self.view(n, ctx),
-            (current.scene, &current.setup, &current.intent),
+            (
+                current.scene,
+                self.config.max_scenes,
+                &current.setup,
+                &current.intent,
+            ),
             &shown,
             reruns_left,
             asked,
@@ -1224,7 +1249,9 @@ impl Run<'_> {
 
     /// Reviews and revisions until no accepted high-severity note stands, at
     /// most `max_revisions` times in the take: the version that ends the
-    /// loop.
+    /// loop. The last revision is reviewed and triaged too, and never revised
+    /// (docs/fabula.md §4, *The last version checked*, F1): see
+    /// [`Self::standing`].
     async fn review_loop(
         &mut self,
         n: u32,
@@ -1234,36 +1261,64 @@ impl Run<'_> {
     ) -> Go<ChapterVersion> {
         loop {
             let in_take = version.version + 1 - self.first_version();
+            let last = in_take > self.config.max_revisions;
+            // Past the last revision stands only the earlier text F1 put
+            // back; a first version that may not be revised has nothing to
+            // fall back to, and is not reviewed.
             if !self.config.review
                 || version.origin == VersionOrigin::Human
-                || in_take > self.config.max_revisions
+                || in_take > self.config.max_revisions + 1
+                || (last && in_take == 1)
             {
                 return Ok(version);
             }
             let notes = self.review(n, ctx, kept, &version).await?;
             let triaged: Vec<&ReviewNote> =
                 notes.iter().filter(|n| n.note.kind.is_triaged()).collect();
-            if triaged.is_empty() {
-                return Ok(version);
+            let decisions = if triaged.is_empty() {
+                Vec::new()
+            } else {
+                self.triage(n, ctx, &version, &triaged).await?
+            };
+            let accepted = accepted_notes(&triaged, &decisions);
+            if last {
+                return self.standing(n, version, high_count(&accepted)).await;
             }
-            let decisions = self.triage(n, ctx, &version, &triaged).await?;
-            let accepted: Vec<(&ReviewNote, &Decided)> = triaged
-                .iter()
-                .filter_map(|note| {
-                    decisions
-                        .iter()
-                        .find(|d| d.note == note.id && d.decision == NoteDecision::Accepted)
-                        .map(|d| (*note, d))
-                })
-                .collect();
-            if !accepted
-                .iter()
-                .any(|(n, _)| n.note.severity == NoteSeverity::High)
-            {
+            if high_count(&accepted) == 0 {
                 return Ok(version);
             }
             version = self.revise(n, ctx, kept, &version, &accepted, None).await?;
         }
+    }
+
+    /// The version that goes on after the last revision, which the Author
+    /// accepted `high` high-severity notes on (F1): it, unless the version
+    /// before it had fewer, whose text then goes on as a version of its own.
+    /// A copy rather than a step back, so the latest version is still the one
+    /// the checkpoint, a human's revision and a resume take up.
+    async fn standing(&mut self, n: u32, last: ChapterVersion, high: usize) -> Go<ChapterVersion> {
+        let before = self
+            .db
+            .chapter_versions(n)
+            .await?
+            .into_iter()
+            .find(|v| v.version + 1 == last.version);
+        let Some(before) = before else {
+            return Ok(last);
+        };
+        let notes = self.db.notes(&before.id).await?;
+        let triaged: Vec<&ReviewNote> = notes.iter().filter(|n| n.note.kind.is_triaged()).collect();
+        let decisions = self.db.decisions(&before.id).await?;
+        if high <= high_count(&accepted_notes(&triaged, &decisions)) {
+            return Ok(last);
+        }
+        let address = format!("ch{n}/v{}/restore", last.version + 1);
+        let version = self
+            .author
+            .add_chapter(n, VersionOrigin::Revision, &before.text)
+            .await?;
+        self.steps.finish(&address, StepStatus::Done).await?;
+        Ok(version)
     }
 
     /// The version's notes: both reviews, each written once (spec §7, step
@@ -1385,6 +1440,7 @@ impl Run<'_> {
                 .flat_map(|k| k.trace.events.iter().map(|e| &e.id))
                 .collect();
             let mut written = markers_in(&self.canon, &version.text);
+            written.extend(length_note(&version.text, self.config.words));
             written.extend(checker_notes(checked?, &known, &[]));
             if let Some(held) = held {
                 written.extend(checker_notes(held?, &[], &open));
@@ -1694,6 +1750,71 @@ pub(crate) fn markers_in(canon: &Canon, text: &str) -> Vec<NewNote> {
         .collect()
 }
 
+/// How the closing scene past the cap is played (docs/fabula.md §4, *A
+/// chapter that reaches its goal*, G5): one branch, half the rounds, and no
+/// rerun, since it lands an outcome rather than looks for one. Played like
+/// the others, on Haiku it cost 1.5 to 3.4 million tokens and took three
+/// chapters of six past their budget of 9 million.
+pub(crate) fn closing_sim(sim: &SimConfig) -> SimConfig {
+    SimConfig {
+        branches: 1,
+        max_rounds: (sim.max_rounds / 2).max(1),
+        ..*sim
+    }
+}
+
+/// The engine's own count (docs/fabula.md §4, *The last version checked*,
+/// F2): a version outside the words asked is a high-severity note, whatever
+/// the reviewers say. Sonnet's last revision on `villain-4` cut a scene and
+/// left 1,078 words of the 1,200 to 2,500 asked, and nothing counted them.
+pub(crate) fn length_note(text: &str, (least, most): (u32, u32)) -> Option<NewNote> {
+    let words = prompts::words_of(text);
+    let body = if words < least {
+        format!(
+            "The chapter has {words} words, under the {least} to {most} asked: give the \
+             scenes it keeps the room they need, from the record, rather than cutting another."
+        )
+    } else if words > most {
+        format!(
+            "The chapter has {words} words, over the {least} to {most} asked: compress what \
+             the record makes long, and keep each scene's turn."
+        )
+    } else {
+        return None;
+    };
+    Some(NewNote {
+        kind: NoteKind::Length,
+        severity: NoteSeverity::High,
+        anchor: None,
+        body,
+        evidence: Vec::new(),
+    })
+}
+
+/// The triaged notes the Author accepted, each with its decision.
+pub(crate) fn accepted_notes<'a>(
+    triaged: &[&'a ReviewNote],
+    decisions: &'a [Decided],
+) -> Vec<(&'a ReviewNote, &'a Decided)> {
+    triaged
+        .iter()
+        .filter_map(|note| {
+            decisions
+                .iter()
+                .find(|d| d.note == note.id && d.decision == NoteDecision::Accepted)
+                .map(|d| (*note, d))
+        })
+        .collect()
+}
+
+/// How many of the accepted notes weigh high: one asks for a revision.
+pub(crate) fn high_count(accepted: &[(&ReviewNote, &Decided)]) -> usize {
+    accepted
+        .iter()
+        .filter(|(n, _)| n.note.severity == NoteSeverity::High)
+        .count()
+}
+
 /// The triage reply as decisions on the notes shown: a note left out is
 /// deferred, a second decision on one is ignored.
 pub(crate) fn decisions_of(shown: &[(String, &ReviewNote)], reply: &TriageReply) -> Vec<Decided> {
@@ -1737,6 +1858,12 @@ mod choices_tests;
 #[cfg(test)]
 #[path = "craft_tests.rs"]
 mod craft_tests;
+#[cfg(test)]
+#[path = "goal_tests.rs"]
+mod goal_tests;
+#[cfg(test)]
+#[path = "last_version_tests.rs"]
+mod last_version_tests;
 #[cfg(test)]
 #[path = "systems_tests.rs"]
 mod systems_tests;

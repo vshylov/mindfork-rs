@@ -31,6 +31,12 @@ fn the_rulings_put_the_cause_before_the_verdict_and_the_event_after_both() {
     assert!(at("\"observable\"") < at("\"effects\""));
     assert!(at("\"effects\"") < at("\"world_event\""));
     assert!(at("\"world_event\"") < at("\"scene_over\""));
+    // G3 (docs/fabula.md §4, *A chapter that reaches its goal*): Haiku's
+    // World Master struck the deadline in the first scene.
+    assert!(text.contains(
+        "The clock moves only as far as the scene's events take it, never past a deadline its \
+         pressure names."
+    ));
     let text = ReactionsRuling::schema(&keys()).to_json();
     assert!(text.contains(r#""required":["character","cause","verdict","observable","effects"]"#));
     // No field asks for the model's own reasoning (spec §8).

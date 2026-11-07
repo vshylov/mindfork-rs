@@ -155,7 +155,8 @@ impl StorySchema for InitiativeRuling {
                 "world_event",
                 "Something the world does this round of its own accord, perceived by everyone \
                  here: weather, a bell, a ship, a sound. Use one when the scene stalls or its \
-                 pressure should rise; otherwise null.",
+                 pressure should rise; otherwise null. The clock moves only as far as the \
+                 scene's events take it, never past a deadline its pressure names.",
                 Option::<String>::schema(keys),
             ),
             Property::described(

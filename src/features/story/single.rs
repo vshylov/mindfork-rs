@@ -130,23 +130,37 @@ pub fn draft_ask(canon: &Canon, words: (u32, u32)) -> String {
 }
 
 /// The editor's turn: what a reviewer of F would look for (spec §7's Reader
-/// and Continuity checker, the craft's rules of PR 12), asked of the writer.
+/// and Continuity checker, the craft's rules of PR 12, the staging pass's
+/// names and languages and the engine's length of docs/fabula.md §4, *The last
+/// version checked*), asked of the writer.
 pub const CRITIQUE_ASK: &str = "Now read your story as its editor would, without rewriting \
 it yet. Name each thing that does not work, and where: a conflict that goes slack or ends \
 without a price, a secret spent too soon or too cheaply, a character who acts against their \
 sheet or knows what they could not have learned, a line that announces a plan or a want \
 instead of acting on it, or opens on thanks or agreement the moment does not call for, facts \
-of time, place, age or kinship that disagree, a thread opened and dropped, a passage that \
-drags or tells what it should show. Most important first.";
+of time, place, age or kinship that disagree, a person named or addressed two ways, a word \
+left in another language, a thread opened and dropped, a passage that drags or tells what it \
+should show, a story shorter or longer than asked. Most important first.";
 
-/// The writer's turn after a critique.
-pub fn revise_ask(words: (u32, u32)) -> String {
+/// The writer's turn after a critique: told its last version's words and
+/// keeping the names, as F's reviser is (F2, F4, T21).
+pub fn revise_ask(words: (u32, u32), last: u32) -> String {
     format!(
         "Write the story again, whole, mending what your critique found: by the same rules, \
-         between {} and {} words, its title as a level-two markdown heading. Reply with the \
-         story's text and nothing else.",
-        words.0, words.1
+         between {} and {} words (your last version has {last}), its title as a level-two \
+         markdown heading. {} Reply with the story's text and nothing else.",
+        words.0,
+        words.1,
+        author_prompts::KEEP_NAMES,
     )
+}
+
+/// The words of the version turn `n` revises, the writing turn before its
+/// critique, as F's reviser is told them (F2).
+fn last_words(replies: &BTreeMap<u32, (String, u64)>, n: u32) -> u32 {
+    replies
+        .get(&n.saturating_sub(2))
+        .map_or(0, |(text, _)| author_prompts::words_of(text))
 }
 
 /// Whether a version breaks off mid-sentence. A provider may end a reply it
@@ -204,7 +218,7 @@ fn session(canon: &Canon, words: (u32, u32), replies: &BTreeMap<u32, (String, u6
         let ask = match n {
             1 => draft_ask(canon, words),
             n if n % 2 == 0 => CRITIQUE_ASK.to_owned(),
-            _ => revise_ask(words),
+            n => revise_ask(words, last_words(replies, *n)),
         };
         turns.push(Turn {
             role: "user",
@@ -285,7 +299,7 @@ pub async fn write(
         }
         let ask = match next {
             1 => draft_ask(&canon, config.words),
-            n if writing(n) => revise_ask(config.words),
+            n if writing(n) => revise_ask(config.words, last_words(&done, n)),
             _ => CRITIQUE_ASK.to_owned(),
         };
         let mut turns = session(&canon, config.words, &done);

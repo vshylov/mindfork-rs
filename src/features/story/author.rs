@@ -96,7 +96,9 @@ impl StorySchema for OutlineReply {
             Property::described(
                 "goals",
                 "What this chapter has to achieve for the story, two to four goals of one \
-                 sentence each. Goals, not scenes: what must have changed by the chapter's end.",
+                 sentence each. Goals, not scenes: what must have changed by the chapter's end, \
+                 each an outcome the story can reach by more than one road, never one \
+                 character's decision.",
                 Vec::<String>::schema(keys),
             ),
             assumptions(keys),
@@ -155,8 +157,13 @@ impl SceneDraft {
             ),
             Property::described(
                 "just_happened",
-                "What has just happened, in two or three sentences of the story's narration: \
-                 the characters perceive it as the scene opens. Never what a character will do.",
+                "What has just happened, in two or three sentences of the story's narration \
+                 opening on the hour: the characters perceive it as the scene opens. It may \
+                 bring the people present \
+                 to the place and tell a sound, the weather, a message come, but it never \
+                 changes what the world holds: a thing taken, moved, opened or broken is so only \
+                 when a scene plays it, and the record's facts stand. Never what a character \
+                 will do.",
                 String::schema(keys),
             ),
             Property::described(
@@ -261,16 +268,27 @@ pub struct BranchReading {
     pub truth: i64,
     /// Consequences for what follows, from 1 to 5.
     pub consequences: i64,
+    /// How far it moves the chapter toward its goals, from 1 to 5
+    /// (docs/fabula.md §4, *A chapter that reaches its goal*, G2); a pick
+    /// recorded before it has none.
+    #[serde(default)]
+    pub goals: i64,
 }
 
 impl BranchReading {
-    /// The four scores, each held to 1–5, added up: the dialect has no
+    /// The five scores, each held to 1–5, added up: the dialect has no
     /// numeric bounds, so a score outside them is clamped.
     pub fn total(&self) -> i64 {
-        [self.tension, self.surprise, self.truth, self.consequences]
-            .into_iter()
-            .map(|s| s.clamp(1, 5))
-            .sum()
+        [
+            self.tension,
+            self.surprise,
+            self.truth,
+            self.consequences,
+            self.goals,
+        ]
+        .into_iter()
+        .map(|s| s.clamp(1, 5))
+        .sum()
     }
 }
 
@@ -354,6 +372,7 @@ impl PickReply {
             score("surprise", "How little a reader would see it coming"),
             score("truth", "How true each character stays to who they are"),
             score("consequences", "How much it changes what can follow"),
+            score("goals", "How far it moves the chapter toward its goals"),
         ]);
         let mut variants = vec![Variant::new(
             "branch",

@@ -13,7 +13,7 @@ what was rejected — the reasoning behind the code, not its current shape. For 
 shape read the reference documents named above; for the traps that recur across areas read
 [lessons.md](../lessons.md).
 
-## Entries (17)
+## Entries (19)
 
 - Post-M9: Fabula — PR 1, the story database (done)
 - Post-M9: Fabula — PR 2, the model port and replay; Gate G0 GO (done)
@@ -32,6 +32,8 @@ shape read the reference documents named above; for the traps that recur across 
 - Post-M9: Fabula — PR 13, M3's hidden runner and the pilot (done)
 - Post-M9: Fabula — the record is material, not a text to retell (done)
 - Post-M9: Fabula — Claude's calls at list price, and the rules on `villain-4` (done)
+- Post-M9: Fabula — the last version checked (done)
+- Post-M9: Fabula — a chapter that reaches its goal (done)
 
 ### Post-M9: Fabula — PR 1, the story database (done)
 
@@ -1806,3 +1808,174 @@ better trade of price and quality. Before Haiku could run, B0's stop had to be f
   patronymic changing within the story, B0's "residence permit" in Moscow in 1951. Sonnet's
   chapter ends at one in the night with the confrontation still ahead. The owner reads the
   three blind; the model for the full run stays open (T19).
+
+### Post-M9: Fabula — the last version checked (done)
+
+The owner read the three `villain-4` stories: Haiku far ahead of Qwen, with slips. An outside
+reading by another model listed them. It put them down to error piling up over F's 480 calls.
+But those calls are the simulation; the chapter is one draft and two revisions written from
+the record. Each slip was traced to the call that made it, from the stored replies of
+`ch1/v1/write`, `ch1/v2/revise` and `ch1/v3/revise`.
+
+- **The last revision.** Spec §7's loop reviews a version, triages its notes and revises; the
+  last revision goes into the story unread.
+  - Haiku's draft called Pavel "Pavel Ignatyevich" twelve times. Its last revision added
+    "Pavel Andreyevich" twice and left `permit` in English.
+  - Sonnet's draft had 1,315 words and its first revision 1,227, ending as Galina lays the
+    denunciation in the tray. The triage then accepted a note that the scene contradicted the
+    record. The last revision cut it, fell to 1,078 words and ended at one in the night with
+    the confrontation ahead. It also wrote both that Galina had long known Nina's secret and
+    "if Nina's words were true".
+- **The opening of a scene.** Haiku's plan of scene 2 opened on "the drawer broken, the
+  letters gone". No event moved `brother_letters`, so the story had a theft with no thief and
+  never came back to it. The chapter's goals the Author set had asked for the letters "seized
+  or in the hands of those bound to report them".
+- **The models' own.** Haiku's draft had a secretary handed the denunciation by the man it
+  denounces, "I will not sign it", and the reviewers passed it. B0's Pavel guesses Galina's
+  secret, which nothing in the story told him: one writer holds every sheet. That is the leak
+  F's simulation is built to prevent, and PR 14's rubric should count it. B0's sheet also ends
+  on a tray no one carried it to.
+- **As built** (docs/fabula.md §4, *The last version checked*; the owner chose every
+  recommendation on 2026-11-06):
+  - F1. The last revision is reviewed and triaged, and never revised. When the Author accepts
+    more high-severity notes on it than on the version before, that version's text goes on as
+    a version of its own (`ch1/v3/restore`, no model call). A copy, not a step back: the
+    checkpoint, a human's revision and a resume all take up the latest version. A first version
+    that may not be revised (`max_revisions = 0`) is not reviewed, as before.
+  - F2. `NoteKind::Length`: the engine counts each version's words, and outside the range asked
+    is a high note of its own, as a planted marker is. The reviser is told the count of the
+    text it revises. A word is a run between spaces with a letter or a digit in it, so a
+    dialogue's dash is no word; the trace's `words` now counts the same way.
+  - F3. The opening's `just_happened` may bring the people to the place and tell a sound, the
+    weather, a message, but never changes what the world holds.
+  - F4. A revision keeps every name, patronymic and form of address. The staging pass reports
+    one person named or addressed two ways (a `referent`) and a word left in another language
+    (`NoteKind::Language`). B0's critique lists both and the length, and its revision keeps the
+    names and is told its last version's count: the same checks, as T21 has it.
+
+  The story file was in no release and `review_note.kind` has no `CHECK`, so the two kinds
+  need no schema step.
+- **Tests.** The last revision worse than the draft gives way to the draft's text; no worse,
+  it goes on reviewed; a draft that may not be revised is not reviewed; a run killed at any
+  call of the text resumes to the draft's text, put back once; the length note at its bounds
+  and its count; the reviser's count and the kept names; the opening's rule in the plan's
+  schema; the staging pass's fifth kind; B0's asks and its count. Mutation check: 14 mutants,
+  all killed.
+  4859 tests.
+- **The opening, measured.** Haiku's plan of scene 2 was replayed from its stored prompt, four
+  times under the old description and four under the new, interleaved, for $0.017. Old: three
+  of four said a thing had changed that no event changed: the letters gone, the locked drawer
+  unlocked, and the drawer open (that one in the plan's pressure). New: none; one said the
+  letters were locked in the drawer, as the world has them. Two plans of the eight named
+  Pavel "Pyotr" in their private intent, a slip of the plan's own that F4 does not reach.
+- **Live, `villain-4` again on Haiku 5.5**, seed 1, in Russian, $1.51 with the replay.
+  - F finished in 21 minutes: 379 calls, $0.49, 1,288 words. Its draft (1,309 words) had ten
+    high notes the Author accepted, two of them Pavel knowing a signature he never saw. The
+    staging pass caught, as `language`, a Russian word spelled half in Latin letters; the
+    Author's own opening of scene 4 had written it, and the draft took it up. The revision drew
+    no high note, so the loop ended there, and F1 and F2 had nothing to do.
+  - The revision renamed both leads, consistently: Galina Sergeyevna became Arkadyevna, and
+    Pavel Arkadyevich became Ilyich. F4's rule did not hold on Haiku. A reader sees one name
+    each, so the story is whole, and the staging pass, reading one text, cannot see it.
+  - The letters stay in the locked drawer until Pavel takes them out in scene 3, as the record
+    has him do. No opening of the four claimed a deed.
+  - B0 first ran without its count and kept 938 words; its versions after the first sat at
+    785–1,075. Its revision was then told its last version's count, as F's reviser is (T21), and
+    it ran again: versions at 871–1,279, the last kept at 1,066 words, $0.51 in 43 calls. The
+    first run is kept beside it, `villain-4-B0-uncounted`, and is not shown.
+  - In both B0 sessions the story stops changing long before the dollars run out: the
+    uncounted session wrote one text, word for word, as its versions 12 to 25, and the counted
+    one as its versions 16 to 21. Each moved again only at its last version.
+  - Neither story leaked a token.
+- **Not decided here.** In all three F stories on `villain-4` the chapter ends before its goal:
+  Nina will not sign, and four scenes are all a chapter has. The characters choose, and the
+  Author's goals ("the denunciation, signed by both, lies in the tray by nine") are not theirs.
+  B0, whose people do what its writer decides, closes the goal. Nothing in the loop asks
+  whether a chapter reached its goal; the owner reads the two stories blind first.
+
+### Post-M9: Fabula — a chapter that reaches its goal (done)
+
+In all three F stories on `villain-4` the chapter ended before its goal, and B0 closed it in
+both of its own. Five F records, those three and the pilot's two on `mystery-2`, were read for
+why; one chapter of the five reached its goal, Sonnet's on `mystery-2`.
+
+- **What the records showed.**
+  - Every chapter played all four scenes. The Author never ended one at a plan, and after the
+    fourth the chapter is written whatever its goals.
+  - Ten of the twenty scenes kept ran to the eight-round cap, the characters playing for time.
+  - Haiku's picks on `villain-4` put the outcome off "to the next chapter" four times in ten,
+    on a story of one chapter. The plan and the pick said "Chapter 1. Its goals", never that it
+    was the arc's last.
+  - The world keeps no hour. Haiku's World Master struck nine in the first scene of both runs,
+    a quarter past and half past after, and no director came; Sonnet's four scenes stayed near
+    one in the night.
+  - The pick scored tension, surprise, truth to character and consequences, never the goals.
+  - The Author narrowed "someone is betrayed before nine" into "Nina signs", one character's
+    decision, which the simulated Nina refused in all three runs.
+- **As built** (docs/fabula.md §4, *A chapter that reaches its goal*; the owner chose every
+  recommendation on 2026-11-06):
+  - G1. The outline, the plan and the pick name the chapter as N of M, and the arc's last as
+    the one no chapter comes after.
+  - G2. The pick's fifth score, `goals`; in the chapter's last scene the version that moves them
+    furthest is kept unless it breaks a character's truth. A reading recorded before it has no
+    score and reads as 0 (`serde(default)`).
+  - G3. Every plan asks for the hour in the opening, later than the scene before, and no scene
+    past a deadline before the last; `just_happened` opens on it. The World Master's world event
+    moves the clock only as far as the scene's events take it, never past a deadline its
+    pressure names. The engine still keeps no clock of its own.
+  - G4. The outline's goals are outcomes the story can reach by more than one road, never one
+    character's decision.
+  - G5. Past the cap, when the Author does not end the chapter, one closing scene: it opens at
+    the moment the goals hang on, and nothing is planned after it.
+- **The closing scene, measured twice.** F on Haiku 5.5, `villain-4` and `mystery-2`, seeds 1
+  to 3, in Russian, before (the code of the last version checked) and after.
+  - Played like the others, the closing scene cost 1.5 to 3.4 million tokens, a late scene's
+    record being long, and three chapters of six stopped on their budget of 9 million: two
+    inside it, one at a triage after it. The owner chose a light closing scene: one branch,
+    half the rounds, no rerun.
+  - Light, it cost 0.2 to 0.6 million. All six chapters finished, at 4.0 to 7.0 million tokens
+    and $0.51 to $0.83, as the before chapters did at 4.6 to 6.6 million and $0.49 to $0.78.
+  - The Author took the closing scene in all twelve after chapters and ended none at its plan.
+- **Did the chapters reach their goals?** Read by the agent, from each chapter's ending, against
+  the arc's goal:
+
+  | | `villain-4` | `mystery-2` |
+  | --- | --- | --- |
+  | Before | no, no, partly | yes, yes, partly |
+  | After (light closing scene) | partly, partly, yes | yes, yes, partly |
+
+  - The `villain-4` chapter that reached it ends in the director's office at nine: Galina lays
+    the denunciation out, names Nina as its source, and Nina says "Yes, I read them".
+  - After: 25 openings of 30 named the hour (11 of 24 before); no chapter struck its deadline
+    before its last scene (two before); no pick put the outcome off (two before, in one chapter).
+  - Six chapters a side is a direction, not a verdict; Haiku's slips of language go on, a
+    porter's "lodge" become a "boat" and Latin letters inside a Russian word.
+- **Tests.** The prompts' place, hour, goals and last scene; the pick's fifth score, kept order
+  and an old reading's default; the outline's goals; the World Master's clock; a chapter played
+  to its cap having one closing scene, an Author ending it at the closing plan, and the closing
+  scene's one branch, half the rounds and no rerun; the closing plan's place and hour.
+  Mutation check: 18 mutants, all killed. 4864 tests.
+- **The owner's reading, and where the closing scene opens.** The owner read the six
+  `villain-4` stories blind, and two outside readings (Grok 4.7, Gemini 4 Argon) agreed with
+  them on the best: the after chapter on seed 3. Checked against the records:
+  - Its closing scene opened at nine sharp in the anteroom, the director calling for the head of
+    the laboratory. The other two after chapters opened theirs on the stairs at half past eight
+    and in the laboratory at two minutes to nine, and reached their goal in part. "The moment
+    its goals hang on" was read loosely.
+  - Gemini's reading had one after chapter open at half past eight and spend four scenes on the
+    stairs. The records say otherwise: its scenes open at two, four, half past four, seven and
+    half past eight; the chapter that opens at half past eight is a before one.
+  - Confirmed: within each of the six, every name and patronymic holds, and no word is in Latin
+    letters; no chapter laid a denunciation signed twice in the tray, and Galina's secret
+    surfaced in none, which the goal does not ask.
+  - As built, the owner's go-ahead: the closing plan asks for the deadline itself, neither
+    before nor after, in the place where it falls due, with whoever decides there, arriving in
+    its pressure if not of the cast (`CLOSING`).
+  - Replayed from the six chapters' stored closing plans, twice with the new words and once
+    with the old, interleaved, for $0.08: on `villain-4` the anteroom at nine six times of six,
+    from none of three; on `mystery-2` the selamlık at noon two of six, from one of three. Two
+    of its chapters had passed noon in their record before the closing scene, and an opening
+    cannot go back. Haiku's own plans still slip into English ("padded" door).
+- **Spent.** $13.03 on Haiku: $3.24 before, $5.56 after with the full closing scene, $4.15 after
+  with the light one, $0.08 on the closing plan's replay. The first two came to $8.80 against
+  some $6 the owner had approved; the owner was told and approved the third and the replay.

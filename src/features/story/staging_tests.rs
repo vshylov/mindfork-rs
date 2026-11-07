@@ -9,12 +9,12 @@ use crate::features::story::schema::tests::holds;
 use crate::features::story::schema::{CanonKeys, StorySchema};
 
 #[test]
-fn the_schema_keeps_the_dialect_names_four_kinds_and_decides_last() {
+fn the_schema_keeps_the_dialect_names_five_kinds_and_decides_last() {
     let keys = CanonKeys::of(&fixture_canon());
     let schema = StagingReply::schema(&keys);
     assert!(holds::<StagingReply>(&schema) >= 1);
     let text = schema.to_json();
-    assert!(text.contains(r#""enum":["staging","referent","announced","thanks"]"#));
+    assert!(text.contains(r#""enum":["staging","referent","announced","thanks","language"]"#));
     let at = |name: &str| text.find(&format!("\"{name}\"")).unwrap();
     assert!(at("anchor") < at("note") && at("note") < at("kind") && at("kind") < at("severity"));
     for banned in ["reason", "thinking", "thought", "rationale"] {
@@ -29,6 +29,7 @@ fn each_kind_is_stored_as_a_note_kind_of_its_own() {
         StagingKind::Referent,
         StagingKind::Announced,
         StagingKind::Thanks,
+        StagingKind::Language,
     ]
     .map(StagingKind::note_kind)
     .to_vec();
@@ -38,11 +39,15 @@ fn each_kind_is_stored_as_a_note_kind_of_its_own() {
             NoteKind::Staging,
             NoteKind::Referent,
             NoteKind::Announced,
-            NoteKind::Thanks
+            NoteKind::Thanks,
+            NoteKind::Language
         ]
     );
     let names: Vec<&str> = stored.iter().map(|k| k.as_str()).collect();
-    assert_eq!(names, ["staging", "referent", "announced", "thanks"]);
+    assert_eq!(
+        names,
+        ["staging", "referent", "announced", "thanks", "language"]
+    );
     assert!(
         stored
             .iter()
@@ -78,10 +83,29 @@ fn the_prompt_holds_the_text_and_nothing_of_the_canon() {
             .system
             .contains("the summaries name is known to the reader")
     );
-    for kind in ["staging:", "referent:", "announced:", "thanks:"] {
+    for kind in [
+        "staging:",
+        "referent:",
+        "announced:",
+        "thanks:",
+        "language:",
+    ] {
         assert!(prompt.system.contains(kind), "{kind}");
     }
     assert!(prompt.system.contains("who left with whom"));
+    // F4: Haiku's last revision on `villain-4` gave Pavel a second
+    // patronymic and left `permit` in English.
+    assert!(
+        prompt
+            .system
+            .contains("one person named or addressed two ways")
+    );
+    assert!(prompt.system.contains("a patronymic that changes"));
+    assert!(
+        prompt
+            .system
+            .contains("left in another language than the chapter's")
+    );
     assert!(prompt.system.contains("the moment calls for is no fault"));
     let canon = fixture_canon();
     let secret = &canon.characters[0].secrets[0].text;

@@ -612,6 +612,100 @@ replayed a scene and ran past the chapter budget of 6 million tokens; under 9 mi
 finished at $16.80. A full run comes to some $1,300 on Sonnet and $50 on Haiku. The owner
 reads the three stories blind, and the model stays open (T19).
 
+**The last version checked (2026-11-06).** The owner read the three `villain-4` stories and
+found Haiku far ahead of Qwen; an outside reading listed their slips. Traced to the calls that
+made them, three of F's four slips and the fall under 1,200 words came from the last revision,
+which spec §7's loop never reviews: `permit` left in English and Pavel's patronymic changed
+(Haiku), a contradiction about what Galina knew and the closing scene cut (Sonnet). A theft
+with no thief came from a scene's opening, which said the letters were gone while the world
+never moved them. Four fixes, the owner's decision on 2026-11-06, each as recommended:
+
+- **F1, the last revision reviewed.** It is reviewed and triaged like every version before it,
+  and never revised. When the Author accepts more high-severity notes on it than on the version
+  before, that version's text goes on as a version of its own. (b) One more revision: the same
+  gap one step later. (c) As it was.
+- **F2, the length counted.** The engine counts each version's words. A version outside the
+  range asked gets a high-severity note of the engine's own, as a planted marker does, and the
+  reviser is told the count of the text it revises.
+- **F3, an opening holds no deed.** What has just happened is what the record holds, or what
+  no character did; a thing taken, moved, opened or broken happens only in a scene that plays it.
+- **F4, names kept.** A revision keeps every name, patronymic and form of address as the text
+  has them unless a note asks otherwise. The staging pass reports a person named two ways and a
+  word left in another language.
+
+Proof: engine tests of the loop (the last version reviewed, the earlier text going on, a
+resume that asks nothing again) and of the prompts; the opening's rule measured by replaying
+Haiku's plan of scene 2; then `villain-4` again on Haiku, F and B0, for the owner to read.
+
+As built (2026-11-06), as decided; B0's revision is also told its last version's count, as F's
+reviser is (T21). Replayed four times each way, Haiku's plan of scene 2 claimed a change no
+event made in three of four openings before and in none after. On `villain-4` again, F cost
+$0.49 for 1,288 words, its revision drew no high note, and the letters left the drawer only
+when Pavel took them. B0 kept 1,066 words at $0.51, 938 without its count. Haiku renamed both
+leads in F's revision, consistently, so F4's rule does not hold on it. In all three F stories
+the chapter ends before its goal, which nothing in the loop checks
+([journal/stories.md](journal/stories.md), *the last version checked*).
+
+**A chapter that reaches its goal (2026-11-06).** In five F stories, three on `villain-4` and
+the pilot's two on `mystery-2`, one chapter reached its goal: Sonnet's on `mystery-2`, its last
+scene the noon confession. B0 reached it in both of its `villain-4` stories. What the records
+show:
+
+- Every chapter played all four scenes; the Author never ended one early, and after the fourth
+  the chapter is written whatever its goals.
+- Ten of the twenty scenes kept ran to the eight-round cap, the characters playing for time.
+- On `villain-4`, a story of one chapter, Haiku's picks put the outcome off "to the next
+  chapter" four times in ten. The plan and the pick say "Chapter 1. Its goals", never that it
+  is the arc's last.
+- The world keeps no hour. Haiku's World Master struck nine in the first scene of both its
+  runs, then a quarter and half past, with no director coming; Sonnet's four scenes stayed
+  near one in the night.
+- The pick scores tension, surprise, truth to character and consequences, not the goals.
+- The Author narrows the arc's goal ("someone is betrayed before nine") into one character's
+  decision ("Nina signs"), which the simulated Nina refused in all three runs.
+
+Five changes, the owner's decision on 2026-11-06, each as recommended:
+
+- **G1, the arc's place.** The plan and the pick name the chapter as N of M, and the arc's last
+  as the one nothing waits after.
+- **G2, the pick weighs the goals.** A fifth score, how far a version moves the chapter toward
+  its goals; in the chapter's last scene the version that moves them furthest is kept unless it
+  breaks a character's truth. (b) The prompt's words alone. (c) As it was.
+- **G3, the hour.** Each scene's opening names the hour, later than the one before; where the
+  goals hang on a deadline, no scene passes it before the last, which opens as it comes. The
+  World Master's clock moves only as far as a scene's events take it, never past a deadline its
+  pressure names. (b) A clock in the engine on the world's ticks: later, if this is not enough.
+- **G4, goals by more than one road.** The chapter's goals are outcomes the world can reach
+  whatever one character decides; the characters choose.
+- **G5, a closing scene.** When the scene cap is reached and the Author does not end the
+  chapter, one more scene may be planned, the chapter's very last, opening at the moment the
+  goals hang on. (b) As it was. (c) A question to the human: none in M3.
+
+The round cap stays at eight until these are measured. Proof: tests of the prompts, the pick's
+schema and the closing scene; then F on Haiku, `villain-4` and `mystery-2`, seeds 1 to 3,
+before and after, the chapters that reach their goals counted.
+
+As built (2026-11-07), as decided, with one change the measurement asked for. Played like the
+others, the closing scene cost Haiku 1.5 to 3.4 million tokens, a late scene's record being
+long, and took three chapters of six past their budget of 9 million. The owner chose a light
+one: one branch, half the rounds, no rerun. Then it cost 0.2 to 0.6 million, and every chapter
+finished at 4.0 to 7.0 million tokens, as before at 4.6 to 6.6. Read by the agent, two chapters
+of six reached their goals before (none on `villain-4`) and three after, two before and none
+after not at all. After, 25 openings of 30 named the hour (11 of 24 before), no chapter struck
+its deadline before its last scene (two before), and none put its outcome off. Six stories a
+side is a direction, not a verdict ([journal/stories.md](journal/stories.md), *a chapter that
+reaches its goal*).
+
+The owner read the six `villain-4` stories blind and two outside readings agreed: the best was
+the one whose closing scene opened in the anteroom at nine with the director there; the others
+opened on the stairs at half past eight and in the laboratory at two minutes to nine. Told only
+"the moment its goals hang on", the Author placed it loosely, so the closing plan now asks for
+the deadline itself, neither before nor after, in the place where it falls due, with whoever
+decides there, arriving in its pressure if not of the cast (the owner's go-ahead, 2026-11-07).
+Replayed on the six chapters' stored closing plans, the anteroom at nine came six times of six,
+from none of three; on `mystery-2` the selamlık at noon came two of six, from one of three,
+since in two chapters the record had passed noon before the closing scene.
+
 Then the run itself, outside any pull request: 36 pairs for each of the two decisions
 (and the ablations, after a GO: T23), the calibration by three people, and the decision rule
 of spec §11, recorded here and in the journal.

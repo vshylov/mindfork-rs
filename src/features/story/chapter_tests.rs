@@ -240,7 +240,7 @@ fn pick_first(prompt: &Prompt) -> Value {
     json!({
         "readings": shown.iter().map(|k| json!({
             "branch": k, "note": "It holds.", "tension": 3, "surprise": 3, "truth": 4,
-            "consequences": 3,
+            "consequences": 3, "goals": 3,
         })).collect::<Vec<_>>(),
         "human_note": "The first version keeps the pressure on.",
         "choice": {"type": "branch", "branch": shown[0]},
@@ -345,6 +345,9 @@ pub(super) fn config() -> ChapterConfig {
             ..SimConfig::default()
         },
         human_language: "Russian".to_owned(),
+        // The scripted chapters are a few words long: the engine's count of
+        // them (F2) has tests of its own.
+        words: (1, 100_000),
         ..ChapterConfig::default()
     }
 }
@@ -685,11 +688,10 @@ async fn the_next_chapter_reads_the_last_ones_summary_text_and_notes() {
         }
     );
     let outline = port.prompt_at("ch2/outline");
-    assert!(
-        outline
-            .user
-            .contains("Chapter 2 of 2. Its goal in the arc: Ines decides whom to trust.")
-    );
+    assert!(outline.user.contains(
+        "Chapter 2 of 2, the arc's last: whatever its goals ask happens in it, since no \
+                 chapter comes after it. Its goal in the arc: Ines decides whom to trust."
+    ));
     assert!(
         outline
             .user
