@@ -1,6 +1,6 @@
 # Fabula — a story engine used from the chat: track plan
 
-**Status:** in progress — M0 done (PRs 1 and 2, Gate G0 GO); M1 done (PRs 3–5, Gate G1 GO, 2026-11-01); M2 done (PR 6, the Author's loop, 2026-11-01; PR 7, stories in mindfork's data, 2026-11-02; PR 8, the story run in the background, 2026-11-02; PR 9, the story driven from the chat, 2026-11-02; Gate G2 GO, 2026-11-03; PR 10, a scene played again, 2026-11-03); before M3, the readers' findings settled (PR 11, the story's register; PR 12, the craft of the scenes and the lines; a chapter's choices standing for its later steps; a map every scene can reach; 2026-11-04 to 2026-11-05); M3 begun (PR 13, the hidden runner and the twelve premises frozen, 2026-11-06). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
+**Status:** in progress — M0 done (PRs 1 and 2, Gate G0 GO); M1 done (PRs 3–5, Gate G1 GO, 2026-11-01); M2 done (PR 6, the Author's loop, 2026-11-01; PR 7, stories in mindfork's data, 2026-11-02; PR 8, the story run in the background, 2026-11-02; PR 9, the story driven from the chat, 2026-11-02; Gate G2 GO, 2026-11-03; PR 10, a scene played again, 2026-11-03); before M3, the readers' findings settled (PR 11, the story's register; PR 12, the craft of the scenes and the lines; a chapter's choices standing for its later steps; a map every scene can reach; 2026-11-04 to 2026-11-05); M3 begun (PR 13, the hidden runner and the twelve premises frozen, 2026-11-06; PR 14, the blind judging by three models, and the judging itself, 2026-11-07: F lost both decisions, 3 pairs of 36 each, and A1 against B0, which picks what follows, is the owner's call). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
 so are the twenty-three this plan adds (§6) and where development runs (§4, *The development
 stack*). The design —
 the engine, its stores, its contracts, its evaluation — is
@@ -750,6 +750,30 @@ B0, both ways: all three judges chose B0 in both orders, rating F's story 3–5 
 measures and B0's 5–9, for $1.78 (Fable $0.82, Astra $0.85, Argon $0.11). The 72 pairs of the
 two decisions and a control on each premise come to some $150 by it, about $70 on Anthropic's
 account and $80 on OpenRouter's ([journal/stories.md](journal/stories.md), *PR 14*).
+
+**The judging (2026-11-07).** On the droplet, a Claude Code session built `main` at `689088c4`
+and ran the panel over the 108 finished stories, uploaded with their checksums: the controls
+first, then the two decisions, 504 readings in 1 h 37 min for $164.34 (Fable $85.24, Astra
+$72.29, Argon $6.80), every one answered at its first attempt. Each judge kept the original
+against its shuffled paragraphs in all 24 control readings.
+
+| | F won | F lost | tied | p | F's pairs, judge alone (Fable, Astra, Argon) |
+| --- | --- | --- | --- | --- | --- |
+| F against B0 | 3 | 33 | 0 | ≈ 1 | 0, 3, 2 |
+| F against A1 | 3 | 30 | 3 | ≈ 1 | 1, 5, 1 |
+
+Over the 72 pairs of the decisions, the judges (Fable, Astra, Argon) chose alike in both orders
+on 65, 67 and 58, and chose Story 1 in 67, 75 and 86 readings of 144; two by two they agreed on
+58 of the 61 pairs both voted on (Fable and Astra), 54 of 55 (Fable and Argon) and 58 of 58
+(Astra and Argon). Length did not decide it: against B0, F's story was the longer in 20 pairs
+and was chosen in 16 of their 120 readings. On the four measures F's stories averaged 4.2–5.1,
+B0's 6.5–7.3 and A1's 6.1–7.0.
+
+By the decision rule, F does not continue, and the simulation does not stay. Which of the two
+branches left follows turns on A1 against B0, which T23 did not judge: if A1 wins 24 of its 36
+pairs, a pull request switches the tools to A1's pipeline; if not, the track stops. Judging it
+would cost some $77 at this run's rates (Fable $41, Astra $33, Argon $3), and the decision to run
+it is the owner's ([journal/stories.md](journal/stories.md), *M3's judging*).
 
 After M3, Russian prose under the English prompts is compared with prose under Russian
 ones (spec §15).

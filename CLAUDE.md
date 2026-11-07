@@ -199,7 +199,7 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
-- **Fabula, a story engine used from the chat — G0, G1, G2 GO; M3 begun** (2026-11-06):
+- **Fabula, a story engine used from the chat — G0, G1, G2 GO; M3 judged** (2026-11-07):
   the plan and ADR 0014; the story database — an append-only, branched event log behind
   one actor, one writer per store; the model port, replayed from the call log by address;
   the reply's schema enforced by the provider on every wire; scenes
@@ -212,7 +212,7 @@ being recent is dropped, not shortened.
   as collisions with a price, a line a deed, a staging pass; a chapter's choices standing
   for its later steps; a map every scene can reach; M3's hidden runner, twelve premises
   frozen, a pilot on Qwen and Sonnet; a chapter told from its record, not retold; its last
-  revision reviewed; a chapter led toward its goal; judged blind by three models ([docs/fabula.md](docs/fabula.md),
+  revision reviewed; a chapter led toward its goal; judged blind by three models, F losing both decisions ([docs/fabula.md](docs/fabula.md),
   [docs/journal/stories.md](docs/journal/stories.md)).
 - **Image generation — track complete** (2026-10-30): `image_generate` over a
   slot of its own (OpenAI by default, Gemini, the gateway, xAI), off by default;
