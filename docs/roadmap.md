@@ -43,8 +43,8 @@ pilot on Qwen 3.8 and Sonnet 5.5 and a reading of Haiku 5.5, the full run's mode
 on a DigitalOcean droplet (T19). Its 108 stories are written and judged blind by PR 14's panel of three
 flagship models, in place of the three people the plan had (T24): F lost to B0 and to A1,
 3 pairs of 36 each, and A1 lost to B0, 5 of 36, so by the decision rule the track stops and
-the long form (M4) is not built. Whether the story tools stay, running B0, is the owner's
-call; until then they stay behind `tools.story`, off.
+the long form (M4) is not built. The owner chose to keep the story tools, behind
+`tools.story` and off, running B0 (2026-11-08); a pull request switches them.
 
 The last two code tracks — small windows, and the reasoning effort a model
 does not have — closed on 2026-09-30 and 2026-10-01 and ship together in

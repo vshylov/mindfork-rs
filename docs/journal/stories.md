@@ -2281,7 +2281,7 @@ $90, $50 of it Fable's, with the phase's cost read from the call logs every quar
   - **A1 has 5.** With F at 3 against B0, neither beats B0, and the track stops.
   - **What stops.** M4 is not built, and neither the simulation nor A1's pipeline is taken
     further.
-  - **What is left.** Whether the story tools stay, running B0, behind `tools.story` and off, is
-    the owner's call.
+  - **What is left.** The owner chose to keep the story tools, behind `tools.story` and off,
+    running B0 (2026-11-08); a pull request switches them.
   - **Where the readings are.** In `target/fabula-judge-a1b0-results/` on this computer and in
     `~/fabula-judge/` on the droplet.

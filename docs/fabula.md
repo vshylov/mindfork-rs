@@ -1,6 +1,6 @@
 # Fabula — a story engine used from the chat: track plan
 
-**Status:** stopped by M3's decision rule (2026-11-07) — M0 done (PRs 1 and 2, Gate G0 GO); M1 done (PRs 3–5, Gate G1 GO, 2026-11-01); M2 done (PR 6, the Author's loop, 2026-11-01; PR 7, stories in mindfork's data, 2026-11-02; PR 8, the story run in the background, 2026-11-02; PR 9, the story driven from the chat, 2026-11-02; Gate G2 GO, 2026-11-03; PR 10, a scene played again, 2026-11-03); before M3, the readers' findings settled (PR 11, the story's register; PR 12, the craft of the scenes and the lines; a chapter's choices standing for its later steps; a map every scene can reach; 2026-11-04 to 2026-11-05); M3 done (PR 13, the hidden runner and the twelve premises frozen, 2026-11-06; PR 14, the blind judging by three models, and the judging itself, 2026-11-07: F lost both decisions, 3 pairs of 36 each, and A1 lost to B0, 5 of 36, so neither beats B0 and the track stops; whether the tools stay, running B0, is the owner's call). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
+**Status:** stopped by M3's decision rule (2026-11-07) — M0 done (PRs 1 and 2, Gate G0 GO); M1 done (PRs 3–5, Gate G1 GO, 2026-11-01); M2 done (PR 6, the Author's loop, 2026-11-01; PR 7, stories in mindfork's data, 2026-11-02; PR 8, the story run in the background, 2026-11-02; PR 9, the story driven from the chat, 2026-11-02; Gate G2 GO, 2026-11-03; PR 10, a scene played again, 2026-11-03); before M3, the readers' findings settled (PR 11, the story's register; PR 12, the craft of the scenes and the lines; a chapter's choices standing for its later steps; a map every scene can reach; 2026-11-04 to 2026-11-05); M3 done (PR 13, the hidden runner and the twelve premises frozen, 2026-11-06; PR 14, the blind judging by three models, and the judging itself, 2026-11-07: F lost both decisions, 3 pairs of 36 each, and A1 lost to B0, 5 of 36, so neither beats B0 and the track stops; the owner kept the story tools, off, running B0, 2026-11-08). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
 so are the twenty-three this plan adds (§6) and where development runs (§4, *The development
 stack*). The design —
 the engine, its stores, its contracts, its evaluation — is
@@ -793,8 +793,9 @@ B0's 6.2–7.0. Length did not decide it: A1's story was the longer in 26 pairs 
 52 of their 156 readings.
 
 Neither F nor A1 beats B0, so by the decision rule the track stops: M4 is not built, and the
-simulation is not taken further, nor is A1's pipeline. Whether the story tools stay, running B0,
-is the owner's call ([journal/stories.md](journal/stories.md), *A1 against B0*).
+simulation is not taken further, nor is A1's pipeline. The owner chose to keep the story tools,
+behind `tools.story` and off, running B0 (2026-11-08): a pull request switches them, its forks
+put to the owner first ([journal/stories.md](journal/stories.md), *A1 against B0*).
 
 After M3, Russian prose under the English prompts was to be compared with prose under
 Russian ones (spec §15); with the track stopped, it is not.
