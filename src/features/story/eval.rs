@@ -35,10 +35,12 @@ use super::author_prompts;
 use super::chapter::{self, Budget, ChapterConfig, Engine, Outcome, Stop};
 use super::engine::{EngineAdapter, ListPrice, LongPrompt, SharedLog};
 use super::export;
+use super::judge::{self, Judge, Judging, Matchup};
 use super::leaks::{self, AuditedCall};
 use super::port::LlmPort;
 use super::run::{character_sampling, role_sampling};
 use super::single::{self, Ended, SingleConfig, Target};
+use crate::entities::sampling::ReasoningEffort;
 use crate::entities::story::{BranchId, Canon, Decision, QuestionBody, Resolution, Reviewer};
 use crate::shared::api::contract::EngineBackend;
 use crate::shared::api::retry::RetryBackend;
@@ -333,6 +335,13 @@ impl Route {
             return None;
         }
         match self.model.as_str() {
+            // $10 and $50 a million, the whole window alike: a judge of
+            // M3's panel (PR 14).
+            "claude-fable-5-1" => Some(ListPrice {
+                input: 10.0,
+                output: 50.0,
+                long: None,
+            }),
             // $2 and $10 a million, the whole window alike.
             "claude-sonnet-5-5" => Some(ListPrice {
                 input: 2.0,
@@ -1012,6 +1021,18 @@ pub enum Command {
         /// The run's options.
         options: Options,
     },
+    /// Read a run's pairs as one judge of the panel.
+    Judge {
+        /// What is read.
+        judging: Judging,
+        /// The judge.
+        judge: Judge,
+    },
+    /// Count the panel's readings.
+    Verdict {
+        /// The judges' output directory.
+        out: PathBuf,
+    },
 }
 
 /// The command's usage, printed on a mistake: it has no `--help` line.
@@ -1021,6 +1042,9 @@ usage: mindfork story-eval premises
 [--seed N] [--target-usd X] [--target-tokens N] ENGINE [OPTIONS]
        mindfork story-eval batch --out DIR [--premises ID,..] [--systems F,B0,A1] \
 [--seeds 1,2,3] [--parallel N] ENGINE [OPTIONS]
+       mindfork story-eval judge --stories DIR --out DIR --name NAME [--pairs F-B0,F-A1,control] \
+[--premises ID,..] [--seeds 1,2,3] [--parallel N] [--effort max] [--max-tokens N] ENGINE
+       mindfork story-eval verdict --out DIR
 ENGINE:  --engine openrouter|compatible|anthropic|openai|gemini --model NAME \
 [--url URL] [--key-env VAR] [--provider NAME,..]
 OPTIONS: [--language NAME] [--budget-tokens N] [--budget-usd X] [--timeout-hours H] \
@@ -1098,13 +1122,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
                 // The two decisions first (docs/fabula.md §6, T23).
                 None => vec![System::F, System::B0, System::A1],
             };
-            let seeds = match take("seeds") {
-                Some(list) => list
-                    .split(',')
-                    .map(|s| number(s.trim(), "--seeds"))
-                    .collect::<Result<Vec<_>, _>>()?,
-                None => vec![1, 2, 3],
-            };
+            let seeds = seeds(take("seeds"))?;
             let parallel = number(take("parallel").as_deref().unwrap_or("8"), "--parallel")?;
             let route = route(&mut take)?;
             let options = options(&mut take)?;
@@ -1120,6 +1138,51 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
                 options,
             }
         }
+        "judge" => {
+            let stories = PathBuf::from(take("stories").ok_or("--stories is required")?);
+            let out = PathBuf::from(take("out").ok_or("--out is required")?);
+            let name = take("name").ok_or("--name is required: the judge's directory")?;
+            let matchups = match take("pairs") {
+                Some(list) => list
+                    .split(',')
+                    .map(|m| Matchup::parse(m).ok_or_else(|| format!("no pair is called {m}")))
+                    .collect::<Result<Vec<_>, _>>()?,
+                None => Matchup::DECISIONS.to_vec(),
+            };
+            let premises = match take("premises") {
+                Some(list) => list.split(',').map(|p| p.trim().to_owned()).collect(),
+                None => frozen()?.into_iter().map(|p| p.id).collect(),
+            };
+            let seeds = seeds(take("seeds"))?;
+            let parallel = number(take("parallel").as_deref().unwrap_or("4"), "--parallel")?;
+            let effort = take("effort").unwrap_or_else(|| "max".to_owned());
+            let effort: ReasoningEffort = serde_json::from_value(json!(effort.trim()))
+                .map_err(|_| format!("--effort takes low|medium|high|xhigh|max, not {effort}"))?;
+            let max_tokens = number(
+                take("max-tokens").as_deref().unwrap_or("64000"),
+                "--max-tokens",
+            )?;
+            let route = route(&mut take)?;
+            Command::Judge {
+                judging: Judging {
+                    stories,
+                    out,
+                    premises,
+                    seeds,
+                    matchups,
+                    parallel: parallel as usize,
+                },
+                judge: Judge {
+                    name,
+                    route,
+                    effort,
+                    max_tokens: max_tokens as usize,
+                },
+            }
+        }
+        "verdict" => Command::Verdict {
+            out: PathBuf::from(take("out").ok_or("--out is required")?),
+        },
         other => return Err(format!("no story-eval command is called {other}\n{USAGE}")),
     };
     if let Some(name) = flags.keys().next() {
@@ -1128,6 +1191,17 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         ));
     }
     Ok(command)
+}
+
+/// The seeds a list names; 1 to 3 by default.
+fn seeds(list: Option<String>) -> Result<Vec<u64>, String> {
+    match list {
+        Some(list) => list
+            .split(',')
+            .map(|s| number(s.trim(), "--seeds"))
+            .collect(),
+        None => Ok(vec![1, 2, 3]),
+    }
 }
 
 fn number(value: &str, flag: &str) -> Result<u64, String> {
@@ -1217,6 +1291,20 @@ pub async fn execute(command: Command) -> Result<(), String> {
             route,
             options,
         } => batch(&plan, &route, &options).await,
+        Command::Judge { judging, judge } => {
+            let backend = judge.route.backend()?;
+            judge::judge(&judging, &judge, backend).await
+        }
+        Command::Verdict { out } => {
+            let records = judge::records(&out).await;
+            let verdict = judge::verdict(&records);
+            let text = serde_json::to_string_pretty(&verdict).unwrap_or_default();
+            tokio::fs::write(out.join("verdict.json"), &text)
+                .await
+                .map_err(|e| format!("{}: {e}", out.display()))?;
+            println!("{text}");
+            Ok(())
+        }
     }
 }
 

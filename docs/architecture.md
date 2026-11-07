@@ -718,6 +718,11 @@ src/
 │  │                        the model named by the command's options (OpenRouter's provider pinned
 │  │                        there alone), a story written into its own directory with its markdown
 │  │                        and trace, a batch that skips what ended and runs B0 after F;
+│  │                        judge.rs — its blind judging (PR 14), `story-eval judge|verdict`:
+│  │                        a judge of the panel on its own wire and call log (`Role::Judge`), each
+│  │                        pair read both ways as Story 1 and 2, its scene breaks evened out, a
+│  │                        control's rival its paragraphs shuffled, one record a reading; the count
+│  │                        of the votes (both orders agreeing), ties no win, the binomial tail;
 │  │                        single.rs — its B0, one agent in one session (`LlmPort::session`), to
 │  │                        F's average cost or the model's window, rebuilt from the call log on a
 │  │                        resume

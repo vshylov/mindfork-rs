@@ -36,6 +36,9 @@ pub enum Role {
     /// Reads the human's reply to a pause (spec §14, *The answer is the
     /// user's own words*).
     Listener,
+    /// Reads two finished stories blind and chooses the better: M3's judging
+    /// (docs/fabula.md §4, PR 14).
+    Judge,
 }
 
 impl Role {
@@ -49,6 +52,7 @@ impl Role {
             Role::Continuity => "continuity",
             Role::CanonKeeper => "canon_keeper",
             Role::Listener => "listener",
+            Role::Judge => "judge",
         }
     }
 }

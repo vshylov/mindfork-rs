@@ -13,7 +13,7 @@ what was rejected — the reasoning behind the code, not its current shape. For 
 shape read the reference documents named above; for the traps that recur across areas read
 [lessons.md](../lessons.md).
 
-## Entries (21)
+## Entries (22)
 
 - Post-M9: Fabula — PR 1, the story database (done)
 - Post-M9: Fabula — PR 2, the model port and replay; Gate G0 GO (done)
@@ -36,6 +36,7 @@ shape read the reference documents named above; for the traps that recur across 
 - Post-M9: Fabula — a chapter that reaches its goal (done)
 - Post-M9: Fabula — M3's full run (done)
 - Post-M9: Fabula — the five F stories completed (done)
+- Post-M9: Fabula — PR 14, the blind judging by three models (done)
 
 ### Post-M9: Fabula — PR 1, the story database (done)
 
@@ -2067,3 +2068,66 @@ limits of the engine's plumbing would have decided five pairs. The owner chose t
     eight.
 - **The run as it stands now.** 108 finished stories for $60.53: F $28.32, B0 $30.57, A1 $1.64.
   Under the 1,200 words asked: F 21 of 36, B0 29 of 36, A1 12 of 36.
+
+### Post-M9: Fabula — PR 14, the blind judging by three models (done)
+
+Spec §11 had three people judge a calibration set of 12 pairs before a panel of models took
+the rest. The owner set that aside (2026-11-07, docs/fabula.md §6, T24): neither they nor the
+friends who would read are literary professionals, and three flagship models, told what to
+weigh and reasoning at their most, may read better. The judges are Claude Fable 5.1 on
+Anthropic's API, and GPT-6 Astra and Gemini 4 Argon through OpenRouter, pinned to `openai` and
+to Google's two providers.
+
+- **The runner judges.** `story-eval judge` reads a run's pairs as one judge, each judge on its
+  own wire with its own call log under the output directory; `story-eval verdict` counts them
+  all. Written in the runner rather than as `tools/fabula_judge.py`, as the plan had it: the
+  app's clients enforce the reading's schema on every wire, the call log records each reading,
+  Fable's dollars are counted at its list price ($10 and $50 a million), and a stopped run
+  resumes, a reading already written never asked again.
+- **What a judge is shown.** Both stories as Story 1 and Story 2, the order said to be drawn by
+  chance, nothing of the systems or the engine. The scene breaks, which the systems write as
+  `---`, `***`, `* * *` or a lone `*`, are evened out to `* * *`; headings stay, since in
+  `mystery-5` one names whose eyes the section is told through. Asked to weigh plot, character,
+  surprise and prose, to hold length no merit, to rate each story 1–10 on the four, to say why
+  in two or three sentences of Russian, and to choose: no tie.
+- **Both orders, controls, and the count.** Each pair is read twice, its stories swapped; a
+  judge's vote counts only where both readings choose the same story, a pair goes to the side
+  with more votes, and a tie is no win of F, so the binomial test of spec §11 (24 of 36,
+  p ≈ 0.03) counts it against F. A control sets a story against its own paragraphs shuffled
+  (a draw of its own, never the order it had), which every judge must refuse. The verdict also
+  reports each judge's consistency across the orders, how often it chose Story 1, the judges'
+  agreement two by two, and how often the longer story won: models are known to favour length,
+  and F's story is the longer in 20 of the 36 pairs against B0, A1's in 24 of the 36 against F.
+- Tests: the pairs' names; the breaks evened out and the headings kept; the control's shuffle,
+  its paragraphs the same and their order not; every pair asked both ways, each at its own
+  address; a prompt naming no system; the binomial tail; the count, with a judge that changes
+  its mind abstaining, a pair read one way being no vote, a tie, each judge alone, the
+  agreement, the controls and the length; one judge's run written end to end with the order
+  of what was sent, its sampling, its cost, and resumed asking nothing; a reading the model
+  spoils left for the next run; the commands' arguments. Mutation check: 12 mutants, all
+  killed. 4876 tests. SonarCloud found the count too complex for one function and a blocking
+  write in the async command: the count is split by what it counts, and the files are read and
+  written through `tokio::fs`.
+- **The probe** (the owner's go-ahead, up to $5): `villain-4` seed 1, F against B0, read both
+  ways by each judge. F's story has 1,248 words, B0's 1,317.
+
+  | | effort | chose | dollars | tokens in | tokens out | minutes a reading |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | Fable 5.1 | `max` | B0, B0 | $0.82 | 9,122 | 6,834 and 5,940 | 1.5 |
+  | GPT-6 Astra | `max` | B0, B0 | $0.85 | 6,270 | 7,218 and 6,625 | 4.5 |
+  | Gemini 4 Argon | `high` | B0, B0 | $0.11 | 6,556 | 3,693 and 4,413 | 1 |
+
+  All three voted for B0 in both orders: the pair is B0's. Their reasons name what the owner's
+  own readings had found in F's stories: Fable the letters "now from the camp, now to it" and
+  an ending on an open door that resolves nothing; Argon a drawer opened with a hairpin only to
+  hand the letters back at the director's door; Astra the unclear logic of the second
+  signature and of the letters taken. Each judge rated the two alike in both orders, F's
+  story 3–5 on the four measures and B0's 5–9; Astra was the sternest with B0's, 5–7 where the
+  others gave 7–9, and named a flaw in it, the director's check on Galina's origins barely
+  laid. The probe cost $1.78. One pair is no verdict; it shows the judges read closely, keep
+  to their choice when the order turns, and agree.
+- **The full run's estimate.** A pair read both ways costs the panel about $1.8: Fable $0.82,
+  Astra $0.85, Argon $0.11. The 72 pairs of the two decisions come to some $130, and a
+  control on each premise to some $20 more: about $150, some $70 of it on Anthropic's account
+  and $80 on OpenRouter's. At four readings at a time per judge, Astra's five minutes a reading
+  make it about three hours.
