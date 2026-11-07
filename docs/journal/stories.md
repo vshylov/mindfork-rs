@@ -13,7 +13,7 @@ what was rejected — the reasoning behind the code, not its current shape. For 
 shape read the reference documents named above; for the traps that recur across areas read
 [lessons.md](../lessons.md).
 
-## Entries (18)
+## Entries (19)
 
 - Post-M9: Fabula — PR 1, the story database (done)
 - Post-M9: Fabula — PR 2, the model port and replay; Gate G0 GO (done)
@@ -33,6 +33,7 @@ shape read the reference documents named above; for the traps that recur across 
 - Post-M9: Fabula — the record is material, not a text to retell (done)
 - Post-M9: Fabula — Claude's calls at list price, and the rules on `villain-4` (done)
 - Post-M9: Fabula — the last version checked (done)
+- Post-M9: Fabula — a chapter that reaches its goal (done)
 
 ### Post-M9: Fabula — PR 1, the story database (done)
 
@@ -1891,3 +1892,69 @@ the record. Each slip was traced to the call that made it, from the stored repli
   Author's goals ("the denunciation, signed by both, lies in the tray by nine") are not theirs.
   B0, whose people do what its writer decides, closes the goal. Nothing in the loop asks
   whether a chapter reached its goal; the owner reads the two stories blind first.
+
+### Post-M9: Fabula — a chapter that reaches its goal (done)
+
+In all three F stories on `villain-4` the chapter ended before its goal, and B0 closed it in
+both of its own. Five F records, those three and the pilot's two on `mystery-2`, were read for
+why; one chapter of the five reached its goal, Sonnet's on `mystery-2`.
+
+- **What the records showed.**
+  - Every chapter played all four scenes. The Author never ended one at a plan, and after the
+    fourth the chapter is written whatever its goals.
+  - Ten of the twenty scenes kept ran to the eight-round cap, the characters playing for time.
+  - Haiku's picks on `villain-4` put the outcome off "to the next chapter" four times in ten,
+    on a story of one chapter. The plan and the pick said "Chapter 1. Its goals", never that it
+    was the arc's last.
+  - The world keeps no hour. Haiku's World Master struck nine in the first scene of both runs,
+    a quarter past and half past after, and no director came; Sonnet's four scenes stayed near
+    one in the night.
+  - The pick scored tension, surprise, truth to character and consequences, never the goals.
+  - The Author narrowed "someone is betrayed before nine" into "Nina signs", one character's
+    decision, which the simulated Nina refused in all three runs.
+- **As built** (docs/fabula.md §4, *A chapter that reaches its goal*; the owner chose every
+  recommendation on 2026-11-06):
+  - G1. The outline, the plan and the pick name the chapter as N of M, and the arc's last as
+    the one no chapter comes after.
+  - G2. The pick's fifth score, `goals`; in the chapter's last scene the version that moves them
+    furthest is kept unless it breaks a character's truth. A reading recorded before it has no
+    score and reads as 0 (`serde(default)`).
+  - G3. Every plan asks for the hour in the opening, later than the scene before, and no scene
+    past a deadline before the last; `just_happened` opens on it. The World Master's world event
+    moves the clock only as far as the scene's events take it, never past a deadline its
+    pressure names. The engine still keeps no clock of its own.
+  - G4. The outline's goals are outcomes the story can reach by more than one road, never one
+    character's decision.
+  - G5. Past the cap, when the Author does not end the chapter, one closing scene: it opens at
+    the moment the goals hang on, and nothing is planned after it.
+- **The closing scene, measured twice.** F on Haiku 5.5, `villain-4` and `mystery-2`, seeds 1
+  to 3, in Russian, before (the code of the last version checked) and after.
+  - Played like the others, the closing scene cost 1.5 to 3.4 million tokens, a late scene's
+    record being long, and three chapters of six stopped on their budget of 9 million: two
+    inside it, one at a triage after it. The owner chose a light closing scene: one branch,
+    half the rounds, no rerun.
+  - Light, it cost 0.2 to 0.6 million. All six chapters finished, at 4.0 to 7.0 million tokens
+    and $0.51 to $0.83, as the before chapters did at 4.6 to 6.6 million and $0.49 to $0.78.
+  - The Author took the closing scene in all twelve after chapters and ended none at its plan.
+- **Did the chapters reach their goals?** Read by the agent, from each chapter's ending, against
+  the arc's goal:
+
+  | | `villain-4` | `mystery-2` |
+  | --- | --- | --- |
+  | Before | no, no, partly | yes, yes, partly |
+  | After (light closing scene) | partly, partly, yes | yes, yes, partly |
+
+  - The `villain-4` chapter that reached it ends in the director's office at nine: Galina lays
+    the denunciation out, names Nina as its source, and Nina says "Yes, I read them".
+  - After: 25 openings of 30 named the hour (11 of 24 before); no chapter struck its deadline
+    before its last scene (two before); no pick put the outcome off (two before, in one chapter).
+  - Six chapters a side is a direction, not a verdict; Haiku's slips of language go on, a
+    porter's "lodge" become a "boat" and Latin letters inside a Russian word.
+- **Tests.** The prompts' place, hour, goals and last scene; the pick's fifth score, kept order
+  and an old reading's default; the outline's goals; the World Master's clock; a chapter played
+  to its cap having one closing scene, an Author ending it at the closing plan, and the closing
+  scene's one branch, half the rounds and no rerun. Mutation check: 16 mutants, all killed.
+  4864 tests.
+- **Spent.** $12.95 on Haiku: $3.24 before, $5.56 after with the full closing scene, $4.15 after
+  with the light one. The first two came to $8.80 against some $6 the owner had approved; the
+  owner was told and approved the third.

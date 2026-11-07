@@ -57,6 +57,11 @@ split by subsystem.
   whose "he" and whose son, a line that only states a plan, a reply that opens on thanks —
   and what that reading finds goes to the chapter's review with the other notes. How much
   of it holds depends on the model.
+- **A story chapter is led toward its goal.** The author knows which chapter of the arc it
+  is writing and whether it is the last, weighs how far each version of a scene moves the
+  chapter's goals, names the hour each scene opens at and keeps a deadline for the last
+  scene, and writes goals the story can reach by more than one road. When the chapter's
+  scenes are spent with its goals unmet, one short closing scene may follow.
 - **A story chapter's last revision is read too.** The reviewers read the last revision as
   they read every version before it, and when it came out worse, the text before it goes on
   instead. The engine counts a chapter's words against the length asked, a revision keeps

@@ -685,6 +685,16 @@ The round cap stays at eight until these are measured. Proof: tests of the promp
 schema and the closing scene; then F on Haiku, `villain-4` and `mystery-2`, seeds 1 to 3,
 before and after, the chapters that reach their goals counted.
 
+As built (2026-11-07), as decided, with one change the measurement asked for. Played like the
+others, the closing scene cost Haiku 1.5 to 3.4 million tokens, a late scene's record being
+long, and took three chapters of six past their budget of 9 million. The owner chose a light
+one: one branch, half the rounds, no rerun. Then it cost 0.2 to 0.6 million, and every chapter
+finished at 4.0 to 7.0 million tokens, as before at 4.6 to 6.6. Read by the agent, two chapters
+of six reached their goals before (none on `villain-4`) and three after, two before and none
+after not at all. After, 25 openings of 30 named the hour (11 of 24 before), no chapter struck
+its deadline before its last scene (two before), and none put its outcome off. Six stories a side is a direction, not a verdict
+([journal/stories.md](journal/stories.md), *a chapter that reaches its goal*).
+
 Then the run itself, outside any pull request: 36 pairs for each of the two decisions
 (and the ablations, after a GO: T23), the calibration by three people, and the decision rule
 of spec §11, recorded here and in the journal.
