@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (28)
+## Entries (29)
 
 - Post-M9: cutting GitHub Actions minutes (done)
 - Post-M9: skipping the test job for docs-only pull requests (done)
@@ -41,6 +41,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the gate's sampling in its log, and a graph probe that keeps two notes (done)
 - Post-M9: the gate's Qwen is 3.8 (done)
 - Post-M9: the steady-monitor test on a paused clock, closed for good (done)
+- Post-M9: the Windows-only code is linted (done)
 
 ### Post-M9: cutting GitHub Actions minutes (done)
 - **Trigger**: the `v0.9.4` release run was refused by GitHub with *"The job was
@@ -1876,3 +1877,52 @@ were the same race, left open.
   mechanism test above, not the old test).
 
 **Gates**: 4098 unit tests green, 279 `#[ignore]`; clippy `-D warnings`, fmt clean.
+
+### Post-M9: the Windows-only code is linted (done)
+
+It started as a question from the owner: is Wine worth installing on the development
+droplet to check the Windows build? No. The unit suite already runs on `windows-latest`
+on every pull request. What Wine would run is not what ships: the release is MSVC with
+`+crt-static` (`.cargo/config.toml`). A Linux build of that needs cargo-xwin and
+clang-cl for five C dependencies; a `windows-gnu` build is a different linker and CRT.
+Wine also brings its own `vcruntime140`, so it could not have shown the missing-DLL
+defect that `+crt-static` fixed. The Windows defects in [../lessons.md](../lessons.md)
+§6 (AltGr as Ctrl+Alt, no bracketed paste, lost supplementary-plane characters) are
+properties of the real console host and Windows Terminal, which Wine does not reproduce.
+The owner uses the app on Windows and checks live behaviour there. The look did find a
+real gap, though.
+
+- **The gap**: CI linted none of the `#[cfg(windows)]` code (62 sites in `src`: the
+  DPAPI secrets, the Job Object around a spawned tree, the console, the AltGr layout
+  check). `lint` runs clippy on Linux and the macOS entry of `test` runs it on macOS.
+  The Windows entry runs `cargo test`, which compiles this code but does not fail on a
+  warning. So the code was linted only by the developer's own clippy on Windows, and
+  development now happens on a Linux droplet.
+- **A job of its own, not a step after the Windows tests** (where macOS has one):
+  `Clippy (the Windows-only code)`, part of `CI gate`, on non-docs pull requests only.
+  The Windows tests took p50 27 min, p90 30, max 34 over 35 pull-request runs
+  (2026-11-01 to 11-08), against a 35-minute ceiling. The four runs on 11-08, after the
+  Fabula simulation was removed, took 14-17 min. A check-mode build shares only the
+  build scripts with the test build, so a step would add its whole duration to the
+  pull request's longest job.
+- **No cache, measured**: the job is always cold. It took 4.2 min on its first run
+  (clippy itself 3m47s) and 5.3 min on its second, well inside the tests beside it. A
+  cache would buy no wall clock. It would save runner minutes, which are free on a
+  public repository, and it would cost about 0.5 GB in a cache store that held 10.97 GB
+  against its 10 GB limit on 2026-11-08. So there is no cache and no `main` run to fill
+  one. Ceiling 15 min.
+- **Findings: none.** The Windows-only code was clean under clippy 1.96.0 with
+  `-D warnings`.
+- **Control arm**: a temporary commit added a `len_zero` violation inside
+  `#[cfg(windows)]` in `shared/console.rs`. The Linux lint stayed green; the new job
+  went red on it (`src\shared\console.rs:97`, run 42487357774). The commit was then
+  dropped from the branch. That run's `CI gate` was not waited for, because the next
+  push cancelled the run; the gate treats this job's result exactly as it treats the
+  others'.
+- **Noticed, not changed**: the matrix comment's Windows figures (p50 6.1, max 27.6)
+  are stale against the measurement above. The 35-minute ceiling had one minute to
+  spare on 2026-11-07 (34 min). Left for a pass of its own.
+
+**Gates**: no Rust changed. `actionlint` reports one SC2086 info on the `changes` job,
+which is on `main` too; `actions_pin_check.py`, `doc_index_check.py`,
+`link_check.py` and `cyrillic_scan.py` are clean.
