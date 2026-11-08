@@ -1,20 +1,13 @@
-//! The Author's stores beyond the canon and the fabula: the chapter's outline,
-//! its versions and their summaries, the reviewers' notes and the Author's
-//! decisions on them, and the pauses — the questions a run stops at, the
-//! human's answers, and the assumptions a role records instead of stopping
-//! (docs/research/fabula-engine.md §5–§7, §14 *Pauses*; docs/fabula.md §4,
-//! PR 6).
+//! The story's stores beyond the canon: a chapter's versions, and the pauses —
+//! the questions a run stops at and the human's answers (docs/research/
+//! fabula-engine.md §14 *Pauses*; docs/fabula.md §4, PR 6; §6, T26).
 //!
 //! Every row is written once and never changed: a revision is a new version
 //! of its chapter, an answer a row beside its question.
-//!
-//! A version's **register** (docs/fabula.md §4, PR 11) is what the Canon
-//! keeper read in its text alone: the threads it opens, the earlier ones it
-//! pays off, and the facts of time, age and kinship it states.
 
 use serde::{Deserialize, Serialize};
 
-use super::{EventId, RunId};
+use super::RunId;
 
 /// A string newtype for the ids below; the same shape as the module's
 /// siblings' (`super::text_newtype`), kept local so this file stands alone.
@@ -50,11 +43,6 @@ id_newtype!(
     ChapterId
 );
 id_newtype!(
-    /// A review note's id: its chapter version, its reviewer and its ordinal,
-    /// `ch1/v1/reader/n2`.
-    NoteId
-);
-id_newtype!(
     /// A question's id, `q1`, `q2`: one per pause, in the story's order.
     QuestionId
 );
@@ -63,13 +51,6 @@ impl ChapterId {
     /// Version `version` of chapter `number`.
     pub fn of(number: u32, version: u32) -> Self {
         Self(format!("ch{number}/v{version}"))
-    }
-}
-
-impl NoteId {
-    /// The `n`-th note (from 1) `reviewer` wrote on `chapter`.
-    pub fn nth(chapter: &ChapterId, reviewer: Reviewer, n: u64) -> Self {
-        Self(format!("{chapter}/{}/n{n}", reviewer.as_str()))
     }
 }
 
@@ -103,84 +84,13 @@ macro_rules! stored_names {
     };
 }
 
-/// A chapter's goals, set once before its scenes are planned (spec §7, step
-/// 1): what the chapter has to achieve, not which scenes it has.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ChapterOutline {
-    /// The goals, one sentence each.
-    pub goals: Vec<String>,
-}
-
-/// A thread a chapter opens: a clue, a sound with no source, a promise, an
-/// act left unexplained — what the text leaves its reader to wonder.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Thread {
-    /// Its id, `ch1.thread2`: the chapter that opened it and its ordinal.
-    pub id: String,
-    /// What the reader is left to wonder, in a sentence.
-    pub question: String,
-    /// A short quote of where the text plants it.
-    pub quote: String,
-}
-
-/// An earlier thread a chapter pays off.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Payoff {
-    /// The thread's id.
-    pub thread: String,
-    /// How the chapter pays it off, in a sentence.
-    pub how: String,
-}
-
-/// A fact of time, age or kinship a chapter's text states.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Fact {
-    /// Its id, `ch1.fact3`.
-    pub id: String,
-    /// The fact, plainly, with its numbers.
-    pub fact: String,
-    /// Who states it: the narration, or the character who says it, who may
-    /// be wrong or lying.
-    pub stated_by: String,
-    /// A short quote of where the text states it.
-    pub quote: String,
-}
-
-/// A chapter version's register, written once at its checkpoint.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Register {
-    /// The threads it opens, in the text's order.
-    pub opened: Vec<Thread>,
-    /// The earlier threads it pays off.
-    pub paid: Vec<Payoff>,
-    /// The facts it states.
-    pub facts: Vec<Fact>,
-}
-
-impl Register {
-    /// The id of chapter `chapter`'s `n`-th thread, from 1.
-    pub fn thread_id(chapter: u32, n: usize) -> String {
-        format!("ch{chapter}.thread{n}")
-    }
-
-    /// The id of chapter `chapter`'s `n`-th fact, from 1.
-    pub fn fact_id(chapter: u32, n: usize) -> String {
-        format!("ch{chapter}.fact{n}")
-    }
-}
-
 /// Where a chapter's version came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VersionOrigin {
-    /// The first draft (spec §7, step 6).
+    /// The first draft.
     Draft,
-    /// A revision after the reviewers' notes (step 8).
+    /// A revision after the writer's own critique.
     Revision,
     /// A revision the human asked for at the chapter's checkpoint (P2).
     Human,
@@ -207,174 +117,7 @@ pub struct ChapterVersion {
     pub text: String,
 }
 
-/// Who wrote a review note (spec §5, *Review*). Character voice waits for M4.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Reviewer {
-    /// A clean context that reads only the published text.
-    Reader,
-    /// The text held to the log and the canon.
-    Continuity,
-}
-
-stored_names!(Reviewer {
-    Reader => "reader",
-    Continuity => "continuity",
-});
-
-/// What a review note is about (spec §8, *Agent contracts*).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum NoteKind {
-    /// The Reader could not follow a passage.
-    Confusion,
-    /// The Reader found a passage slow.
-    SlowPassage,
-    /// What the Reader expects to happen next: a twist it predicted is no
-    /// twist (spec §8). Not triaged.
-    Prediction,
-    /// What the Reader liked best. Not triaged.
-    BestMoment,
-    /// The text says what the log or the canon contradicts.
-    Contradiction,
-    /// A character acts on, or the text tells through them, what they cannot
-    /// know yet.
-    KnowledgeLeak,
-    /// A character in the wrong place, or one the scene does not have.
-    CastError,
-    /// Events told in an order the log does not allow.
-    Timeline,
-    /// A planted secret's marker copied into the prose: the engine's own
-    /// deterministic check, not a model's.
-    Token,
-    /// In the arc's last chapter, a thread the story left open that the
-    /// chapter does not pay off; its anchor is the thread's id (docs/fabula.md
-    /// §6, T16).
-    OpenThread,
-    /// The staging pass (docs/fabula.md §4, PR 12): a character where the text
-    /// did not take them, or holding what they put down or never took up.
-    Staging,
-    /// The staging pass: a pronoun, a "who" or a tie of kin a reader cannot
-    /// place, or places on the wrong person.
-    Referent,
-    /// The staging pass: a line that states a plan, a decision or a boundary
-    /// aloud where a deed would show it.
-    Announced,
-    /// The staging pass: a reply that opens on thanks, apology or agreement
-    /// the moment does not call for.
-    Thanks,
-    /// The staging pass: a word or a phrase left in another language than
-    /// the chapter's, where the chapter's own has one (docs/fabula.md §4, *The
-    /// last version checked*, F4).
-    Language,
-    /// A version's words outside the range asked: the engine's own count,
-    /// not a model's (F2).
-    Length,
-}
-
-stored_names!(NoteKind {
-    Confusion => "confusion",
-    SlowPassage => "slow_passage",
-    Prediction => "prediction",
-    BestMoment => "best_moment",
-    Contradiction => "contradiction",
-    KnowledgeLeak => "knowledge_leak",
-    CastError => "cast_error",
-    Timeline => "timeline",
-    Token => "token",
-    OpenThread => "open_thread",
-    Staging => "staging",
-    Referent => "referent",
-    Announced => "announced",
-    Thanks => "thanks",
-    Language => "language",
-    Length => "length",
-});
-
-impl NoteKind {
-    /// Whether the Author decides on notes of this kind: the Reader's
-    /// predictions and best moment are observations, kept for the evaluation.
-    pub fn is_triaged(self) -> bool {
-        !matches!(self, NoteKind::Prediction | NoteKind::BestMoment)
-    }
-}
-
-/// How much a note weighs: an accepted high-severity note asks for a revision
-/// (spec §7, step 8).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum NoteSeverity {
-    /// Worth fixing if the chapter is revised anyway.
-    Low,
-    /// The chapter is not done while it stands.
-    High,
-}
-
-stored_names!(NoteSeverity {
-    Low => "low",
-    High => "high",
-});
-
-/// A review note as its reviewer writes it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NewNote {
-    /// What it is about.
-    pub kind: NoteKind,
-    /// How much it weighs.
-    pub severity: NoteSeverity,
-    /// A short quote of the text it is about; none when it is about the
-    /// whole.
-    pub anchor: Option<String>,
-    /// The note.
-    pub body: String,
-    /// The events it cites, by id.
-    pub evidence: Vec<EventId>,
-}
-
-/// A review note as stored.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReviewNote {
-    /// Its id.
-    pub id: NoteId,
-    /// The version it is about.
-    pub chapter: ChapterId,
-    /// Who wrote it.
-    pub reviewer: Reviewer,
-    /// The note.
-    pub note: NewNote,
-}
-
-/// The Author's decision on a note (spec §7, step 8).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum NoteDecision {
-    /// The revision acts on it.
-    Accepted,
-    /// It is wrong, or not worth acting on.
-    Rejected,
-    /// For a later chapter.
-    Deferred,
-}
-
-stored_names!(NoteDecision {
-    Accepted => "accepted",
-    Rejected => "rejected",
-    Deferred => "deferred",
-});
-
-/// A decision as stored.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Decided {
-    /// The note.
-    pub note: NoteId,
-    /// The decision.
-    pub decision: NoteDecision,
-    /// Why, in a sentence.
-    pub reason: String,
-}
-
-/// Where a run stops for the human (spec §14, *Pauses*). P4, the canon's
-/// deltas, waits for M4.
+/// Where a run stops for the human (spec §14, *Pauses*).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum QuestionBody {
@@ -387,21 +130,10 @@ pub enum QuestionBody {
         /// The version asked about.
         version: u32,
     },
-    /// P3: every branch of a scene failed on every attempt (spec §7, step 4).
-    Scene {
-        /// The chapter.
-        chapter: u32,
-        /// The scene.
-        scene: u32,
-        /// The last attempt's rerun.
-        rerun: u32,
-        /// What failed, one line a branch of the last attempt.
-        errors: Vec<String>,
-    },
 }
 
 /// The question kinds' stored names, the `kind` tag of [`QuestionBody`].
-pub const QUESTION_KINDS: &[&str] = &["canon", "chapter", "scene"];
+pub const QUESTION_KINDS: &[&str] = &["canon", "chapter"];
 
 impl QuestionBody {
     /// The stored name of the kind.
@@ -409,7 +141,6 @@ impl QuestionBody {
         match self {
             QuestionBody::Canon => QUESTION_KINDS[0],
             QuestionBody::Chapter { .. } => QUESTION_KINDS[1],
-            QuestionBody::Scene { .. } => QUESTION_KINDS[2],
         }
     }
 }
@@ -434,194 +165,38 @@ pub struct Question {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Decision {
-    /// Yes: the canon approved, the chapter accepted, the scene tried again.
+    /// Yes: the canon approved, the chapter accepted.
     Approve,
     /// Not like this: the canon to be changed, the chapter revised with the
-    /// notes, the scene planned again with them.
+    /// notes.
     Change,
-    /// A question answered: the scene tried again with the notes.
-    Answer,
 }
 
 stored_names!(Decision {
     Approve => "approve",
     Change => "change",
-    Answer => "answer",
 });
 
-/// A question's answer: the decision, the human's notes for the engine, and
+/// A question's answer: the decision, the human's notes for the writer, and
 /// the evidence the decision rests on — the messages' ids and quotes, which
 /// the chat tools fill (docs/fabula.md §4, PR 9).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Resolution {
     /// The decision.
     pub decision: Decision,
-    /// What the human asked for, for the Author; empty when nothing.
+    /// What the human asked for, for the writer; empty when nothing.
     pub notes: String,
     /// What it rests on.
     pub evidence: serde_json::Value,
-    /// At P2, with `change`: the scene the human asked to be played again,
-    /// by its number, with every scene after it — the chapter's next
-    /// [`Take`] (docs/fabula.md §4, PR 10). `None` revises the text.
-    pub rerun: Option<u32>,
-}
-
-/// A chapter made again from one of its scenes (docs/fabula.md §4, PR 10;
-/// §6, T8): the human asked at P2 for scene `from_scene` to be played again.
-/// The scenes before it are carried over as the last take kept them; that
-/// scene and every one after it are planned and played again, and the
-/// chapter's text is drafted, reviewed and summarized again from them.
-///
-/// Every store is append-only, so nothing of the last take is changed: the
-/// take's rows are new rows under addresses of their own. A scene's attempts
-/// in this take are those from its floor on, a rerun number past every
-/// attempt the scene had when the take began; the take's versions are those
-/// from `first_version` on. Take 1 is the chapter's first making and has no
-/// row.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Take {
-    /// The chapter.
-    pub chapter: u32,
-    /// The take, from 2.
-    pub number: u32,
-    /// The scene played again first.
-    pub from_scene: u32,
-    /// The P2 question whose answer asked for it.
-    pub question: QuestionId,
-    /// What the human asked for with it: the answer's notes.
-    pub notes: String,
-    /// The scenes kept before `from_scene`, carried over, in order.
-    pub carried: Vec<super::SceneId>,
-    /// The scenes the last take kept from `from_scene` on, which this one
-    /// plays again, in order.
-    pub replaced: Vec<super::SceneId>,
-    /// Each scene's first rerun number in this take; a scene not named had
-    /// no attempt yet, and starts at 0.
-    pub floors: std::collections::BTreeMap<u32, u32>,
-    /// The take's first version of the chapter's text: its draft.
-    pub first_version: u32,
-    /// The last run before the take: its budget counts the chapter's calls
-    /// in the runs after it (docs/fabula.md §6, T12).
-    pub after_run: u64,
-}
-
-impl Take {
-    /// The take's id, `ch1/t2`.
-    pub fn id(&self) -> String {
-        format!("ch{}/t{}", self.chapter, self.number)
-    }
-
-    /// Scene `scene`'s first rerun number in this take.
-    pub fn floor(&self, scene: u32) -> u32 {
-        self.floors.get(&scene).copied().unwrap_or(0)
-    }
-}
-
-/// A doubt a role met inside a chapter and the choice it made instead of
-/// stopping (spec §14, *Pauses*); the chapter's checkpoint lists them.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Assumption {
-    /// What the human could have been asked.
-    pub doubt: String,
-    /// What was chosen.
-    pub choice: String,
-}
-
-impl Assumption {
-    /// The question's words as they compare — letters and digits, case
-    /// ignored — or, with none, the question as it is.
-    fn key(&self) -> String {
-        let words: String = self
-            .doubt
-            .chars()
-            .filter(|c| c.is_alphanumeric())
-            .flat_map(char::to_lowercase)
-            .collect();
-        if words.is_empty() {
-            self.doubt.clone()
-        } else {
-            words
-        }
-    }
-
-    /// The choices that stand among `made`, oldest first: each question once,
-    /// where it was first asked, with its latest answer — a later step may
-    /// answer a question again, writing it as it stands (docs/fabula.md §4,
-    /// *A chapter's choices stand*).
-    pub fn standing(made: &[Assumption]) -> Vec<Assumption> {
-        let mut out: Vec<Assumption> = Vec::new();
-        let mut at = std::collections::HashMap::new();
-        for a in made {
-            match at.get(&a.key()) {
-                Some(&i) => {
-                    let kept: &mut Assumption = &mut out[i];
-                    kept.choice.clone_from(&a.choice);
-                }
-                None => {
-                    at.insert(a.key(), out.len());
-                    out.push(a.clone());
-                }
-            }
-        }
-        out
-    }
-}
-
-/// An assumption as stored, with where it was made.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StoredAssumption {
-    /// Its id.
-    pub id: String,
-    /// The run.
-    pub run: RunId,
-    /// The step, `ch1/sc2/plan`.
-    pub step: String,
-    /// The role that made it.
-    pub role: String,
-    /// The assumption.
-    pub assumption: Assumption,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// A question answered again stands once, where it was first asked,
-    /// with its latest answer; one with no words is compared as written.
-    #[test]
-    fn a_question_answered_again_stands_once_with_its_latest_answer() {
-        let a = |doubt: &str, choice: &str| Assumption {
-            doubt: doubt.into(),
-            choice: choice.into(),
-        };
-        let made = [
-            a("Who signed the order?", "The district head."),
-            a("Is the lamp whole?", "Yes."),
-            a("who signed  the ORDER", "Timur's superior."),
-            a("?", "One."),
-            a("!", "Two."),
-        ];
-        assert_eq!(
-            Assumption::standing(&made),
-            [
-                a("Who signed the order?", "Timur's superior."),
-                a("Is the lamp whole?", "Yes."),
-                a("?", "One."),
-                a("!", "Two."),
-            ]
-        );
-        assert_eq!(Assumption::standing(&[]), []);
-    }
-
     #[test]
     fn ids_are_derived_from_their_position() {
-        let chapter = ChapterId::of(1, 2);
-        assert_eq!(chapter.as_str(), "ch1/v2");
-        assert_eq!(
-            NoteId::nth(&chapter, Reviewer::Continuity, 3).as_str(),
-            "ch1/v2/continuity/n3"
-        );
+        assert_eq!(ChapterId::of(1, 2).as_str(), "ch1/v2");
         assert_eq!(QuestionId::nth(4).to_string(), "q4");
     }
 
@@ -630,34 +205,10 @@ mod tests {
         for v in VersionOrigin::ALL {
             assert_eq!(VersionOrigin::parse(v.as_str()), Some(*v));
         }
-        for v in Reviewer::ALL {
-            assert_eq!(Reviewer::parse(v.as_str()), Some(*v));
-        }
-        for v in NoteKind::ALL {
-            assert_eq!(NoteKind::parse(v.as_str()), Some(*v));
-            let json = serde_json::to_value(v).unwrap();
-            assert_eq!(
-                json,
-                serde_json::json!(v.as_str()),
-                "serde spells it the same"
-            );
-        }
-        for v in NoteSeverity::ALL {
-            assert_eq!(NoteSeverity::parse(v.as_str()), Some(*v));
-        }
-        for v in NoteDecision::ALL {
-            assert_eq!(NoteDecision::parse(v.as_str()), Some(*v));
-        }
         for v in Decision::ALL {
             assert_eq!(Decision::parse(v.as_str()), Some(*v));
         }
         assert_eq!(VersionOrigin::parse("final"), None);
-    }
-
-    #[test]
-    fn only_the_readers_observations_escape_the_triage() {
-        let untriaged: Vec<_> = NoteKind::ALL.iter().filter(|k| !k.is_triaged()).collect();
-        assert_eq!(untriaged, [&NoteKind::Prediction, &NoteKind::BestMoment]);
     }
 
     #[test]
@@ -667,12 +218,6 @@ mod tests {
             QuestionBody::Chapter {
                 chapter: 1,
                 version: 2,
-            },
-            QuestionBody::Scene {
-                chapter: 1,
-                scene: 2,
-                rerun: 2,
-                errors: vec!["k0: cut".to_owned()],
             },
         ];
         for body in bodies {

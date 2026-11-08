@@ -645,92 +645,45 @@ src/
 │  │  │                     refusals and started lines, and the reminder line (PR 9)
 │  │  └─ subagent.rs        call_subagent — schema + args; the loop runs it (ADR 0010)
 │  ├─ spellcheck/           check, segment, dict, mod — Hunspell + segmenter + personal dictionary
-│  ├─ story/                Fabula's engine (docs/fabula.md §3, docs/research/fabula-engine.md §7–§9):
-│  │                        port.rs — LlmPort and the one policy every answer walks, live or replayed
-│  │                        (a cut or a transient failure tried once more, an invalid reply repaired
-│  │                        once quoting the validator, a refusal final); engine.rs — the port over
-│  │                        the chat's EngineBackend, every attempt into the call log, the schema
-│  │                        sent to the provider where it enforces one, else the fallback (the
-│  │                        schema in the prompt either way), a role's own sampling (thinking off
-│  │                        for the characters); replay.rs — the port
-│  │                        over the call log, by address, drift reported; schema.rs — Schema, the
-│  │                        dialect by construction, printed in the order declared (a Value sorts its
-│  │                        keys), derived from the reply types, and the validator that runs before
-│  │                        serde; dialect.rs — the dialect's own check of the printed JSON;
-│  │                        scene.rs — one scene played by script, M0's simulation (Gate G0's
-│  │                        fixture); simulation.rs — a scene as K branches of rounds (intent,
-│  │                        initiative, reaction, reflection), every event the World Master writes
-│  │                        held to the folded world and to what its witnesses know before it is
-│  │                        committed; contracts.rs — the reflection and the World Master's two
-│  │                        rulings, with their schemas; prompts.rs — the role prompts, in English:
-│  │                        a character sees what it saw, the World Master the world and the deeds,
-│  │                        never a thought; leaks.rs — the planted secret tokens, the engine's check
-│  │                        and the audit of every character call, and the secrets' texts shown
-│  │                        without them; chapter.rs — the chapter's loop (PR 6): a run from where
-│  │                        the story stands to its next pause, every step reading the stores before
-│  │                        it calls a model, so a run killed anywhere resumes as a new run at the
-│  │                        first step no run finished; the outline, the rolling scene plans, the
-│  │                        pick (reruns, then the last attempt's pick), the draft, the two reviews
-│  │                        side by side, the triage, at most two revisions, the register and the
-│  │                        summary (PR 11), the pauses P1–P3 as question rows, the budget checked before every call; a take
-│  │                        (PR 10) — a scene named at P2 played again with the ones after it: the
-│  │                        scenes before it carried, each scene's attempts from its floor on, the
-│  │                        take's plans at `ch1/t2/…`, its versions from its first, its own budget;
-│  │                        take_tests.rs — the take on the scripted port, killed at every call and
-│  │                        replayed by address; register_tests.rs — the register on it, from one
-│  │                        chapter to the next and to a story begun before it; keeper.rs — the
-│  │                        Canon keeper's first part (PR 11): a version's register (threads opened
-│  │                        and paid off, facts of time, age and kinship, ids by position) and its
-│  │                        summary, both from the text alone, the summary checked and written
-│  │                        again; the register so far a chapter reads, its check of a later chapter
-│  │                        beside the Continuity checker's, and the threads left open at the last
-│  │                        checkpoint with the Author's reasons; staging.rs — the staging pass
-│  │                        (PR 12): a version's text, the published chapters' summaries before it,
-│  │                        read for who is where and holds what, whose pronoun and whose kin, a line
-│  │                        that announces and a reply that opens on thanks, its notes in the
-│  │                        checker's batch; craft_tests.rs — the pass in the chapter's loop;
-│  │                        choices_tests.rs — a chapter's choices in its later Author prompts, after a
-│  │                        resume too, and a question answered again standing once; author.rs
-│  │                        — the Author's and the reviewers' replies with their schemas, built per
-│  │                        call where its options differ; author_prompts.rs — their prompts: the
-│  │                        Author sees everything but the planted tokens, the Reader only the
-│  │                        published text, the checker the record with its ids; a scene's intent
-│  │                        names its collision and its price, a line is a deed (PR 12); the chapter's
-│  │                        choices so far stand in its plans, picks and prose; steps.rs — the
-│  │                        steps of every run of a story, read by a resume; export.rs — the story
-│  │                        as markdown; board.rs — the story runs out: a story claimed by one run
-│  │                        at a time, the call each is in, what `story_status` and a quit read;
-│  │                        run.rs — a run as the app starts it (PR 8): the story opened from its
-│  │                        chat's directory, B0's writer on the chat's model since PR 15, the
-│  │                        window the settings or the engine name, the time limit cancelling the
-│  │                        calls so the engine stops at a turn, the landing's data read from the
-│  │                        stores; answer.rs — the
-│  │                        person's reply to a pause read by one schema-constrained call (the
-│  │                        Listener), conservatively, and the resolution with its evidence (PR 9),
-│  │                        at P2 a scene to play again named by its number (PR 10);
-│  │                        conversation.rs — what the chat tools do to a story's files: an id from
-│  │                        the title, the draft stored and P1 opened with no call, the pending
-│  │                        question answered from the person's rows and the story claimed for the
-│  │                        run that follows; eval.rs — M3's hidden runner (PR 13), `mindfork
-│  │                        story-eval`: the systems of spec §11 as options of the chapter's own
-│  │                        configuration (A1 `simulate` off, each scene's opening alone and the
-│  │                        Author inventing the rest; A2 one branch; A3 `review` off; A4 every
-│  │                        event perceived), the frozen premises held to `premises/SHA256SUMS`,
-│  │                        the model named by the command's options (OpenRouter's provider pinned
-│  │                        there alone), a story written into its own directory with its markdown
-│  │                        and trace, a batch that skips what ended and runs B0 after F;
-│  │                        judge.rs — its blind judging (PR 14), `story-eval judge|verdict`:
-│  │                        a judge of the panel on its own wire and call log (`Role::Judge`), each
-│  │                        pair read both ways as Story 1 and 2, its scene breaks evened out, a
+│  ├─ story/                Fabula's engine (docs/fabula.md §3; the simulation removed after M3, §6
+│  │                        T28): port.rs — LlmPort and the one policy every answer walks (a cut
+│  │                        or a transient failure tried once more, an invalid reply repaired once
+│  │                        quoting the validator, a refusal final); engine.rs — the port over the
+│  │                        chat's EngineBackend, every attempt into the call log, the schema sent
+│  │                        to the provider where it enforces one, else the fallback, a role's own
+│  │                        sampling; schema.rs — Schema, the dialect by construction, printed in
+│  │                        the order declared, and the validator that runs before serde;
+│  │                        dialect.rs — the dialect's own check of the printed JSON; single.rs —
+│  │                        B0, one writer in one session (`LlmPort::session`), rebuilt from the
+│  │                        call log on a resume; an `Ask` names the chapter it writes (M3's story
+│  │                        at `b0/`, chapter n at `ch<n>/b0/`), a story of one chapter asked M3's
+│  │                        prompts word for word; single_story.rs — the story tools' engine (PR
+│  │                        15, T25–T27): P1, a chapter as a session of its own to 24 revisions
+│  │                        under the chapter's budget, P2, a person's change as one turn over the
+│  │                        version and their notes; author_prompts.rs — the canon as the writer
+│  │                        reads it, never a planted token, and the rules of the prose; export.rs
+│  │                        — the story as markdown; board.rs — the story runs out: a story claimed
+│  │                        by one run at a time, the call each is in, what `story_status` and a
+│  │                        quit read; run.rs — a run as the app starts it (PR 8): the story opened
+│  │                        from its chat's directory, the writer on the chat's model, the window
+│  │                        the settings or the engine name, the time limit cancelling the calls so
+│  │                        the engine stops at a turn, the landing's data read from the stores;
+│  │                        answer.rs — the person's reply to a pause read by one
+│  │                        schema-constrained call (the Listener), conservatively, and the
+│  │                        resolution with its evidence (PR 9); conversation.rs — what the chat
+│  │                        tools do to a story's files: an id from the title, the draft stored
+│  │                        and P1 opened with no call, the pending question answered from the
+│  │                        person's rows and the story claimed for the run that follows; eval.rs
+│  │                        — M3's hidden runner (PR 13), `mindfork story-eval`: B0 alone now,
+│  │                        the systems' names kept for M3's stories on disk, the frozen premises
+│  │                        held to `premises/SHA256SUMS`, the model named by the command's options,
+│  │                        a story written into its own directory with its markdown and trace, a
+│  │                        batch that skips what ended; judge.rs — its blind judging (PR 14),
+│  │                        `story-eval judge|verdict`: a judge of the panel on its own wire and
+│  │                        call log (`Role::Judge`), each pair read both ways as Story 1 and 2, a
 │  │                        control's rival its paragraphs shuffled, one record a reading; the count
 │  │                        of the votes (both orders agreeing), ties no win, the binomial tail;
-│  │                        single.rs — its B0, one agent in one session (`LlmPort::session`), to
-│  │                        F's average cost or the model's window, rebuilt from the call log on a
-│  │                        resume; an `Ask` names the chapter a session writes (M3's story at
-│  │                        `b0/`, chapter n at `ch<n>/b0/`); single_story.rs — the story tools'
-│  │                        engine since PR 15 (docs/fabula.md §6, T25–T27): P1, a chapter as a
-│  │                        session of its own to 24 revisions under the chapter's budget, P2, a
-│  │                        person's change as one turn over the version and their notes
+│  │                        live_route.rs — the route the live smokes run on
 │  ├─ profiles.rs           pure profile operations (sanitize_name, ProfileEdit)
 │  ├─ chat_search_sort.rs   chat list filter/sort
 │  ├─ companion_memory.rs   the companion's memory blocks (spec §6.6): the memory cut,
@@ -899,22 +852,12 @@ src/
 │  ├─ rag.rs                RagDocument / RagHit
 │  ├─ sampling.rs           SamplingConfig, ReasoningEffort, resolve (three-tier priority)
 │  ├─ self_model.rs         SelfModel — the per-profile self-model (§9)
-│  ├─ story/                Fabula's domain (docs/research/fabula-engine.md §4–§6, docs/fabula.md):
-│  │                        keys the canon fixes and ids a run derives from position (`ch1/sc2/r0/k1/e3`,
-│  │                        never random, so a replay sends the same prompts); canon.rs — Canon and
-│  │                        check() (every problem at once: keys, routes, a map every place of which
-│  │                        reaches every other, starts, empty texts);
-│  │                        event.rs — SceneSetup, Proposal, Action, Visibility, Effect, NewEvent/Event,
-│  │                        every union tagged by `type`; manuscript.rs — the Author's stores beyond
-│  │                        them: the outline, chapter versions and their origin, review notes and
-│  │                        decisions, the pauses' questions and answers, the assumptions, and a
-│  │                        chapter's take (PR 10: carried, replaced, the floors, its first version);
-│  │                        world.rs — WorldState::admit, the one gate an
-│  │                        event passes (checked against the state it applies to, applied, its
-│  │                        witnesses computed from presence and visibility), and fold over a path.
-│  │                        Here rather than in features because the story database runs it inside its
-│  │                        actor. Reached from production through the story tools and runs (PRs
-│  │                        8–9); what M3 alone reaches keeps the module's `allow(dead_code)`
+│  ├─ story/                Fabula's domain (docs/research/fabula-engine.md §4–§5, docs/fabula.md):
+│  │                        keys the canon fixes and ids derived from position (`run2`, `ch1/v2`,
+│  │                        `q3`); canon.rs — Canon and check() (every problem at once: keys,
+│  │                        routes, a map every place of which reaches every other, starts, empty
+│  │                        texts) and where each item starts; manuscript.rs — a chapter's versions
+│  │                        and their origin, the pauses' questions (P1, P2) and answers
 │  ├─ subagent.rs           SubagentRun/RunKind/RunOutcome — a run's record on its parent chat
 │  │                        (RunKind::Story since CHAT_SCHEMA 8);
 │  │                        RunProgressKind/SubagentProgress (its position — the status-bar
@@ -993,21 +936,17 @@ src/
    │  ├─ story/             a story's database (docs/research/fabula-engine.md §6, §9): StoryDb,
    │  │                     a handle on an actor — a thread of its own owning the only connections
    │  │                     to the story file and its call-log sibling (outside backups); every read
-   │  │                     and write is a job on it, so a commit's check and its append see one
-   │  │                     state. schema.rs — the tables, append-only triggers on all but run/step,
-   │  │                     the version read before any DDL, the default rollback journal;
-   │  │                     writers.rs — BranchWriter/ReflectionWriter/ReviewWriter/AuthorWriter/
-   │  │                     RunLogWriter, not Clone (a compile-time assertion), one per store at a
-   │  │                     time, given back on drop; actor.rs — the queries: a branch's path is its
-   │  │                     ancestry up to each fork, the canon is versioned per document, the call
-   │  │                     log is read by address or a run's whole in order; actor_manuscript.rs —
-   │  │                     the manuscript's and the pauses' (a review written whole and once, an
-   │  │                     answer with its approval or its take in one transaction, every run's
-   │  │                     steps, a chapter's spend over the runs the story knows, its latest
-   │  │                     take's alone); the main line runs through each chapter's latest take
-   │  │                     (`kept_scenes`, `main_line_tip`). A run is numbered past
-   │  │                     the last of either file, since a restore can put a story back behind
-   │  │                     its log. stats.rs — the read-only summary `mindfork stats` takes of a
+   │  │                     and write is a job on it. schema.rs — the tables (the simulation's gone
+   │  │                     in place, T28), append-only triggers on all but run, the version read
+   │  │                     before any DDL, the default rollback journal; writers.rs —
+   │  │                     AuthorWriter/RunLogWriter, not Clone (a compile-time assertion), one per
+   │  │                     store at a time, given back on drop; actor.rs — the queries: the canon
+   │  │                     versioned per document and frozen once approved, the call log read by
+   │  │                     address or a run's whole in order; actor_manuscript.rs — the chapters'
+   │  │                     versions in their order, the pauses (an answer with its approval in one
+   │  │                     transaction), a chapter's spend over the runs the story knows. A run is
+   │  │                     numbered past the last of either file, since a restore can put a story
+   │  │                     back behind its log. stats.rs — the read-only summary `mindfork stats` takes of a
    │  │                     file or a backup's image, never through the actor: counts and a unit
    │  │                     per row (`<table>/<key>:<digest>`). status.rs — where a story stands
    │  │                     for `story_status`, read through an actor over read-only connections

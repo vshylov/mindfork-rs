@@ -1,50 +1,11 @@
-//! The Author's and the reviewers' prompts, in English by the owner's decision
-//! (docs/research/fabula-engine.md §7, §8, §15; docs/fabula.md §4, PR 6).
-//!
-//! - **The Author sees everything.** The whole canon, the arc included, every
-//!   secret, and the full trace of every branch it reads: each event's
-//!   observable part, its actor's private thought, its effects and its
-//!   witnesses, and the characters' reflections (spec §4, rule 5). Never the
-//!   planted tokens: a secret's text is shown without its marker
-//!   ([`leaks::without_tokens`]), so the prose cannot copy one.
-//! - **The Reader sees only the published text** and the new chapter, nothing
-//!   of the plan or the record (spec §8).
-//! - **The Continuity checker sees the record** of the kept scenes with every
-//!   event's id, the canon, and what each character knew when the chapter
-//!   opened, so a finding can cite its evidence.
-//! - **The human's language** is the language of what the human reads: a
-//!   pick's note, an assumption, a critique of a note (spec §8, §15). The
-//!   prose is in the story's own language, `Style::language`.
-//! - **The story's register** (docs/fabula.md §4, PR 11): the threads the
-//!   published chapters left open and the facts of time, age and kinship
-//!   they state reach every prompt that reads the story so far. The register,
-//!   its check of a chapter and the summary are the Canon keeper's
-//!   ([`super::keeper`]), from the text alone.
-//! - **The craft** (docs/fabula.md §4, PR 12; §6, T17): a scene's intent
-//!   names whose goals collide in it and what it may cost; the rules pace
-//!   the reveals and let no conflict end without a price; the prose's rules
-//!   keep a line from announcing a plan, opening on thanks unbidden, or
-//!   naming a want a deed would show. The characters' rules say the same
-//!   ([`super::prompts`]), and the staging pass checks the lines
-//!   ([`super::staging`]).
-//! - **The chapter's choices** (docs/fabula.md §4, *A chapter's choices
-//!   stand*): what the Author chose in the chapter where it could have asked
-//!   the human reaches its later plans, picks, draft and revisions, each
-//!   question once with its latest answer, and stands; a step answers one
-//!   again only when what was played or what the human asked calls for it,
-//!   and a step that records assumptions is told to record every question the
-//!   choices do not answer. The reviewers and the triage go without.
+//! The writer's prompts' shared parts (docs/research/fabula-engine.md §15;
+//! docs/fabula.md §6, T21): the canon as the writer reads it and the rules of
+//! the prose, in English by the owner's decision. The writer sees the whole
+//! canon, the arc and every secret included, but never a planted token: a
+//! secret's text is shown without its `[SECRET-…]` marker, so the prose
+//! cannot copy one. The frozen premises carry them.
 
-use super::keeper::SoFar;
-use super::leaks::without_tokens;
-use super::port::Prompt;
-use super::prompts::{effect_text, items_of, plural, severity, visibility_text};
-use super::scene::{bullets, listed, name_of, place_of};
-use crate::entities::story::{
-    Assumption, BranchId, Canon, CharacterKey, Decided, Event, EventKind, Holder, ReviewNote,
-    SceneSetup, WorldState,
-};
-use crate::shared::storage::story::Reflection;
+use crate::entities::story::{Canon, CharacterKey};
 
 /// The language the prose is written in.
 pub fn story_language(canon: &Canon) -> &str {
@@ -52,252 +13,6 @@ pub fn story_language(canon: &Canon) -> &str {
         "" => "English",
         language => language,
     }
-}
-
-/// A branch as the Author reads it: its own events, and the reflections
-/// written on it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Trace {
-    /// The branch.
-    pub branch: BranchId,
-    /// Its own events, in narrative order: the opening first.
-    pub events: Vec<Event>,
-    /// The reflections written on it, by character in the canon's order.
-    pub reflections: Vec<(CharacterKey, Reflection)>,
-}
-
-/// A scene the chapter kept: its circumstances, the Author's intent, and the
-/// branch the story keeps.
-pub struct Kept<'a> {
-    /// Whether the world played it; unplayed (M3's A1), its branch holds
-    /// its opening alone.
-    pub played: bool,
-    /// The scene's number in the chapter.
-    pub scene: u32,
-    /// Its circumstances.
-    pub setup: &'a SceneSetup,
-    /// The Author's intent for it.
-    pub intent: &'a str,
-    /// The branch picked.
-    pub trace: &'a Trace,
-}
-
-/// Whether a prompt's reply records the Author's assumptions: the outline,
-/// the plans and the picks do, and are told to record every question their
-/// chapter's choices do not answer; the draft and the revisions do not.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Doubts {
-    Recorded,
-    None,
-}
-
-/// What every prompt of a chapter shares.
-pub struct ChapterContext<'a> {
-    /// The canon.
-    pub canon: &'a Canon,
-    /// The chapter, from 1.
-    pub number: u32,
-    /// The language of what the human reads.
-    pub human_language: &'a str,
-    /// The earlier chapters' summaries, by number.
-    pub summaries: &'a [(u32, String)],
-    /// The previous chapter as it was accepted.
-    pub previous: Option<&'a str>,
-    /// What the human asked of this chapter at the last checkpoint.
-    pub human_notes: Option<&'a str>,
-    /// The chapter's goals; empty before its outline.
-    pub goals: &'a [String],
-    /// The published chapters' register: the threads open, the facts stated.
-    pub register: &'a SoFar,
-    /// What the Author chose in this chapter so far where it could have
-    /// asked the human, oldest first, a question answered again included.
-    pub choices: &'a [Assumption],
-    /// Whether this is the arc's last chapter.
-    pub last: bool,
-    /// Whether the world plays the scenes: off for M3's A1, where the record
-    /// holds each scene's opening alone and the Author invents the rest
-    /// (docs/fabula.md §6, T22).
-    pub played: bool,
-}
-
-impl ChapterContext<'_> {
-    /// The stable part of this chapter's Author prompts.
-    fn system(&self) -> String {
-        author_system_as(self.canon, self.human_language, self.played)
-    }
-
-    fn total(&self) -> usize {
-        self.canon.arc.chapters.len()
-    }
-
-    /// The chapter's place in the arc, as the plan and the pick name it
-    /// (docs/fabula.md §4, *A chapter that reaches its goal*, G1): told only
-    /// "Chapter 1", Haiku's picks on a story of one chapter put its outcome
-    /// off "to the next chapter" four times in ten.
-    fn place(&self) -> String {
-        if self.last {
-            format!(
-                "Chapter {} of {}, the arc's last: whatever its goals ask happens in it, since no \
-                 chapter comes after it",
-                self.number,
-                self.total()
-            )
-        } else {
-            format!("Chapter {} of {}", self.number, self.total())
-        }
-    }
-
-    fn arc_goal(&self) -> &str {
-        self.canon
-            .arc
-            .chapters
-            .get(self.number as usize - 1)
-            .map_or("none set", |c| c.goal.as_str())
-    }
-
-    /// The story so far, its register, the previous chapter, the human's
-    /// notes, and the choices the chapter has made, as far as there are any.
-    fn so_far(&self, doubts: Doubts) -> String {
-        let mut text = String::new();
-        if !self.summaries.is_empty() {
-            let lines: Vec<String> = self
-                .summaries
-                .iter()
-                .map(|(n, s)| format!("Chapter {n}: {s}"))
-                .collect();
-            text.push_str(&format!(
-                "\n\nThe story so far, a summary per chapter:\n{}",
-                bullets(lines.iter().map(String::as_str))
-            ));
-        }
-        text.push_str(&self.register.text());
-        if self.last && !self.register.open.is_empty() {
-            text.push_str(
-                "\nThis is the arc's last chapter: pay off each open thread, or leave one open \
-                 only on purpose.",
-            );
-        }
-        if let Some(previous) = self.previous {
-            text.push_str(&format!(
-                "\n\nThe previous chapter as published:\n\n{previous}"
-            ));
-        }
-        if let Some(notes) = self.human_notes.filter(|n| !n.trim().is_empty()) {
-            text.push_str(&format!(
-                "\n\nWhat the story's human author asked of this chapter:\n{notes}"
-            ));
-        }
-        text.push_str(&self.choices_text(doubts));
-        text
-    }
-
-    /// The chapter's choices that stand, each question once with its latest
-    /// answer; empty while there are none (docs/fabula.md §4, *A chapter's
-    /// choices stand*).
-    fn choices_text(&self, doubts: Doubts) -> String {
-        let standing = Assumption::standing(self.choices);
-        if standing.is_empty() {
-            return String::new();
-        }
-        let lines: Vec<String> = standing
-            .iter()
-            .map(|a| format!("{} — {}", a.doubt, a.choice))
-            .collect();
-        // Told only that its choices stand, a step recorded a seventh of the
-        // new questions it had before; told to record the others, half
-        // (docs/journal/stories.md, *a chapter's choices stand*).
-        let close = match doubts {
-            Doubts::Recorded => {
-                "These choices stand: plan, pick and write by them, and do not ask them again. \
-                 Only what was played or what the human author asked can change one. A question \
-                 they do not answer is a new one: record it among your assumptions."
-            }
-            Doubts::None => {
-                "These choices stand: plan, pick and write by them. Only what was played or \
-                 what the human author asked can change one."
-            }
-        };
-        format!(
-            "\n\nWhat you chose in this chapter where you could have asked its human author, \
-             each question with its answer:\n{}\n{close}",
-            bullets(lines.iter().map(String::as_str))
-        )
-    }
-
-    fn goals_text(&self) -> String {
-        bullets(self.goals.iter().map(String::as_str))
-    }
-}
-
-/// The rules of authoring, before the story's content: those the world's
-/// play adds, or with no play those of a scene left to the Author.
-fn authoring(played: bool) -> String {
-    let (control, record) = if played {
-        (PLAYED_CONTROL, PLAYED_RECORD)
-    } else {
-        (PLANNED_CONTROL, PLANNED_RECORD)
-    };
-    format!("How to author:\n{control}{AUTHORING_CRAFT}{record}{AUTHORING_FACTS}")
-}
-
-const PLAYED_CONTROL: &str = "- You control circumstances; the characters control their \
-choices. A scene's setup says who is where, what has just happened and what pressure the world \
-applies, never what a character will do or feel.\n";
-
-const PLANNED_CONTROL: &str = "- A scene's setup says who is where, what has just happened and \
-what pressure the world applies, never what a character will do or feel: that is the prose's \
-to tell.\n";
-
-const PLAYED_RECORD: &str = "- Every scene is played several times from the same moment, and \
-the versions differ. You read them all and keep the one that serves the chapter best.\n\
-- What happened is what the record says. In the prose you may reorder, compress, skip and \
-change point of view, but never contradict the record, and a character knows only what they \
-have perceived.\n";
-
-const PLANNED_RECORD: &str = "- No one plays the scenes: the record holds each one's opening \
-alone, and what happens after it is yours to invent in the prose, true to the cast, each \
-character acting on what they want and know. In the prose you may reorder, compress, skip and \
-change point of view, but never contradict the record, and a character knows only what they \
-have perceived.\n";
-
-/// The rules of the scenes' craft (PR 12), whoever plays them.
-const AUTHORING_CRAFT: &str = "- A scene is a collision. In your intent for it, name whose goals collide in it and what it may \
-cost someone. No conflict ends without a price: a confession, a pardon or a win costs someone \
-something they hold (a standing, a hope, a bond, a secret's safety); set the pressure so that it \
-does, and keep the version where it is paid.\n\
-- Pace the reveals: a secret is spent where it costs its keeper most, one at a time. A chapter \
-that opens every secret in one evening leaves the story nothing to tell.\n";
-
-/// The rules of the story's bookkeeping (PR 11).
-const AUTHORING_FACTS: &str = "- A thread the story opens (a clue, a sound with no source, an act left unexplained) is a \
-promise to the reader: pay it off in time, or let it go on purpose.\n\
-- The story's facts of time, age and kinship add up: an age, a year, a death and a \
-\"how long ago\" agree with each other, by arithmetic.\n\
-- Refer to characters and places by their keys in setups.";
-
-/// The stable part of every Author prompt: how to author, the world, the
-/// whole cast with their secrets, the style and the arc.
-pub fn author_system(canon: &Canon, human_language: &str) -> String {
-    author_system_as(canon, human_language, true)
-}
-
-/// [`author_system`], for scenes the world plays or, unplayed, for M3's A1.
-fn author_system_as(canon: &Canon, human_language: &str, played: bool) -> String {
-    let who = if played {
-        "Other players play its characters and choose what they do; a World Master rules on \
-         what happens and writes it into the story's record. You set the circumstances of each \
-         scene, keep one of the versions the world played of it, and write the chapters."
-    } else {
-        "You set the circumstances of each scene, invent what happens in it, and write the \
-         chapters."
-    };
-    format!(
-        "You are the Author of a story told in chapters. {who}\n\n{}\n\
-         - What the story's human author reads from you (a note on a pick, a doubt you met, a \
-         chapter's summary) is written in {human_language}.\n\n{}",
-        authoring(played).trim_end(),
-        canon_brief(canon),
-    )
 }
 
 /// The canon as the Author reads it: the world's rules, the places and their
@@ -384,414 +99,6 @@ fn or_unset(value: &str) -> &str {
     }
 }
 
-/// The chapter's outline (spec §7, step 1).
-/// How a chapter's goals are written (docs/fabula.md §4, *A chapter that
-/// reaches its goal*, G4): an outcome the world can reach whatever one
-/// character decides. Narrowed to "Nina signs", `villain-4`'s goal failed in
-/// all three runs where the simulated Nina would not.
-pub const GOALS_BY_MANY_ROADS: &str = "Write each goal as an outcome the story can reach by \
-    more than one road, never as one character's decision: the characters choose what they do, \
-    and you set only their circumstances.";
-
-pub fn outline(ctx: &ChapterContext) -> Prompt {
-    let after = if ctx.played {
-        "each after the one before it has been played"
-    } else {
-        "each after the one before it"
-    };
-    Prompt {
-        system: ctx.system(),
-        user: format!(
-            "{}. Its goal in the arc: {}{}\n\n\
-             Set this chapter's goals: what must have changed by its end, two to four goals. \
-             {GOALS_BY_MANY_ROADS} Do not plan its scenes yet; they are planned one at a time, \
-             {after}.",
-            ctx.place(),
-            ctx.arc_goal(),
-            ctx.so_far(Doubts::Recorded),
-        ),
-    }
-}
-
-/// Each character's place, belongings, knowledge and health, as the Author
-/// and the Continuity checker read the world.
-fn world_lines(canon: &Canon, world: &WorldState) -> String {
-    let lines: Vec<String> = canon
-        .characters
-        .iter()
-        .map(|c| {
-            let at = world
-                .position(&c.key)
-                .map_or("nowhere", |at| place_of(canon, at));
-            let holds = items_of(canon, world, &Holder::Character(c.key.clone()));
-            let knows: Vec<&str> = canon
-                .characters
-                .iter()
-                .flat_map(|o| &o.secrets)
-                .filter(|s| world.knows(&c.key, &s.key))
-                .map(|s| s.key.as_str())
-                .collect();
-            let mut line = format!(
-                "{} (`{}`) is at {at}; holds {}; knows {}",
-                name_of(canon, &c.key),
-                c.key,
-                listed(&holds, "nothing"),
-                listed(&knows, "no secret"),
-            );
-            if !world.is_alive(&c.key) {
-                line.push_str("; dead");
-            } else if !world.injuries(&c.key).is_empty() {
-                let hurt: Vec<&str> = world
-                    .injuries(&c.key)
-                    .iter()
-                    .map(|s| severity(*s))
-                    .collect();
-                line.push_str(&format!("; hurt: {}", hurt.join(", ")));
-            }
-            line
-        })
-        .collect();
-    bullets(lines.iter().map(String::as_str))
-}
-
-/// One event of a trace: what was perceived, by whom, with its effects and
-/// the actor's private thought; with `id`, its id first.
-fn event_line(canon: &Canon, event: &Event, id: bool) -> String {
-    let who = event
-        .body
-        .actor
-        .as_ref()
-        .map_or("The world", |a| name_of(canon, a));
-    let mut line = if event.body.kind == EventKind::Opening {
-        format!("Opening: {}", without_tokens(&event.body.observable))
-    } else {
-        format!(
-            "Round {} · {who}, {}: {}",
-            event.body.round,
-            visibility_text(canon, &event.body.visibility),
-            without_tokens(&event.body.observable),
-        )
-    };
-    if id {
-        line = format!("`{}` {line}", event.id);
-    }
-    let effects: Vec<String> = event
-        .body
-        .effects
-        .iter()
-        .map(|f| effect_text(canon, f))
-        .collect();
-    if !effects.is_empty() {
-        line.push_str(&format!(" [{}]", effects.join("; ")));
-    }
-    let witnesses: Vec<&str> = event.witnesses.iter().map(|w| name_of(canon, w)).collect();
-    line.push_str(&format!(" Perceived by: {}.", listed(&witnesses, "no one")));
-    if let Some(thought) = &event.body.private {
-        line.push_str(&format!(" ({who} thought: {})", without_tokens(thought)));
-    }
-    line
-}
-
-/// A branch's trace: its events, then its reflections.
-fn trace_text(canon: &Canon, trace: &Trace, ids: bool) -> String {
-    let mut lines: Vec<String> = trace
-        .events
-        .iter()
-        .map(|e| event_line(canon, e, ids))
-        .collect();
-    for (who, r) in &trace.reflections {
-        let mut line = format!(
-            "{} reflected, privately: {}",
-            name_of(canon, who),
-            without_tokens(&r.body)
-        );
-        if !r.goal_changes.is_empty() {
-            line.push_str(&format!(" (Goals now: {})", r.goal_changes.join("; ")));
-        }
-        lines.push(line);
-    }
-    bullets(lines.iter().map(String::as_str))
-}
-
-fn setup_text(canon: &Canon, setup: &SceneSetup) -> String {
-    let present: Vec<&str> = setup.present.iter().map(|w| name_of(canon, w)).collect();
-    format!(
-        "at {} (`{}`), with {}. What had just happened: {} The pressure: {}",
-        place_of(canon, &setup.location),
-        setup.location,
-        listed(&present, "no one"),
-        setup.just_happened,
-        setup.pressure,
-    )
-}
-
-/// How the kept scenes are shown: with the events' ids for the Continuity
-/// checker, with the Author's intents for the Author alone.
-#[derive(Clone, Copy)]
-struct Showing {
-    ids: bool,
-    intents: bool,
-}
-
-const TO_AUTHOR: Showing = Showing {
-    ids: false,
-    intents: true,
-};
-
-const TO_CHECKER: Showing = Showing {
-    ids: true,
-    intents: false,
-};
-
-/// The kept scenes: each one's setup, the intent where the reader may see
-/// it, and the trace.
-fn kept_text(canon: &Canon, kept: &[Kept], showing: Showing) -> String {
-    kept.iter()
-        .map(|k| {
-            let intent = if showing.intents {
-                format!("\nYour intent for it: {}", k.intent)
-            } else {
-                String::new()
-            };
-            let happened = match (k.played, showing.intents) {
-                (true, _) => "What happened:",
-                (false, true) => {
-                    "Not played: only its opening is set, and what happens after it is yours \
-                     to invent:"
-                }
-                (false, false) => {
-                    "Not played: the record holds its opening alone, and what follows in the \
-                     chapter is the chapter's own:"
-                }
-            };
-            format!(
-                "Scene {}, {}{intent}\n{happened}\n{}",
-                k.scene,
-                setup_text(canon, k.setup),
-                trace_text(canon, k.trace, showing.ids),
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n")
-}
-
-/// Why a scene is planned again: the human's word on it.
-#[derive(Debug, Clone, Copy)]
-pub enum Again<'a> {
-    /// Every attempt failed, and the human answered P3 with these notes.
-    Failed(&'a str),
-    /// The human read the chapter and asked at P2 for this scene to be
-    /// played again with the ones after it (docs/fabula.md §4, PR 10): what
-    /// they asked, and the scene as it was set before, with its intent.
-    Asked {
-        /// Their notes; empty when they only asked for it to be played again.
-        notes: &'a str,
-        /// The scene's setup and intent in the take before.
-        before: Option<(&'a SceneSetup, &'a str)>,
-    },
-}
-
-impl Again<'_> {
-    fn text(&self, canon: &Canon) -> String {
-        match self {
-            Again::Failed(notes) if notes.trim().is_empty() => String::new(),
-            Again::Failed(notes) => format!(
-                "\n\nThis scene failed on every attempt, and the story's human author asked for it \
-                 to be planned again: {notes}"
-            ),
-            Again::Asked { notes, before } => {
-                let mut text = "\n\nThe story's human author read this chapter and asked for this \
-                                scene to be played again, and the scenes after it with it."
-                    .to_owned();
-                if let Some((setup, intent)) = before {
-                    text.push_str(&format!(
-                        "\nThe scene as it was set before: {}\nYour intent for it then: {intent}",
-                        setup_text(canon, setup)
-                    ));
-                }
-                if notes.trim().is_empty() {
-                    text.push_str("\nThey asked for no change in particular.");
-                } else {
-                    text.push_str(&format!("\nWhat they asked:\n{}", notes.trim()));
-                }
-                text.push_str(
-                    "\nPlan it again: keep what served the chapter, and change what they asked \
-                     to change.",
-                );
-                text
-            }
-        }
-    }
-}
-
-/// The hour each scene's opening names (docs/fabula.md §4, *A chapter that
-/// reaches its goal*, G3): the world keeps no clock, and Haiku's World Master
-/// struck the deadline in the first scene, with no one coming.
-pub const HOUR: &str = "Name the hour in the scene's opening, later than the scene before. \
-    Where the chapter's goals hang on a deadline, no scene passes it before the last, and the \
-    last opens as it comes.";
-
-/// What the plan past the cap asks (G5). Told only "the moment its goals hang
-/// on", Haiku opened `villain-4`'s closing scene on the stairs at half past
-/// eight, in the laboratory at two minutes to nine and in the anteroom at
-/// nine; the last, with the director there, was the one chapter of three
-/// that reached its goal.
-pub const CLOSING: &str = "If the chapter's goals are met, end it here. If not, plan one \
-    closing scene, the chapter's very last, and the chapter ends with it. It opens at the moment \
-    its goals are decided: where they hang on a deadline, at the deadline itself, neither before \
-    nor after it, in the place where it falls due, with whoever decides there; one who is not of \
-    the cast arrives in its pressure.";
-
-/// The plan of the chapter's next scene, or its end (spec §7, step 2). With
-/// `again`, the human asked for this scene to be planned again, and the
-/// chapter may not end here. Past the cap (`scene > most`), the one closing
-/// scene the chapter may still have (G5).
-pub fn plan(
-    ctx: &ChapterContext,
-    kept: &[Kept],
-    world: &WorldState,
-    (scene, most): (u32, u32),
-    again: Option<Again>,
-) -> Prompt {
-    let kept_so_far = if kept.is_empty() {
-        String::new()
-    } else {
-        format!(
-            "\n\nThe scenes this chapter has kept so far:\n\n{}",
-            kept_text(ctx.canon, kept, TO_AUTHOR)
-        )
-    };
-    // A scene asked for again is played: the chapter does not end at it.
-    let must_play = scene == 1 || again.is_some();
-    let again = again.map_or(String::new(), |a| a.text(ctx.canon));
-    let ask = if scene > most {
-        let played = if most == 1 {
-            "The chapter's one scene is played".to_owned()
-        } else {
-            format!("All {most} scenes are played")
-        };
-        format!("{played}. {CLOSING} First your private intent, then the circumstances.")
-    } else if must_play {
-        format!(
-            "Plan scene {scene} of at most {most}: first your private intent for it, then its \
-             circumstances."
-        )
-    } else if scene == most {
-        format!(
-            "Plan scene {scene}, the chapter's last, or end the chapter here if its goals are \
-             met: first your private intent, then the circumstances."
-        )
-    } else {
-        format!(
-            "Plan scene {scene} of at most {most}: first your private intent for it, then its \
-             circumstances. Or end the chapter here if its goals are met."
-        )
-    };
-    Prompt {
-        system: ctx.system(),
-        user: format!(
-            "{}. Its goals:\n{}{}{kept_so_far}\n\nThe world now:\n{}{again}\n\n{ask} {HOUR}",
-            ctx.place(),
-            ctx.goals_text(),
-            ctx.so_far(Doubts::Recorded),
-            world_lines(ctx.canon, world),
-        ),
-    }
-}
-
-/// The pick among a scene's branches (spec §7, step 4), each shown under its
-/// label (`k0`). In a take (PR 10), `asked` is what the human asked of the
-/// chapter, which the pick weighs too.
-pub fn pick(
-    ctx: &ChapterContext,
-    (scene, most, setup, intent): (u32, u32, &SceneSetup, &str),
-    shown: &[(String, &Trace)],
-    reruns_left: u32,
-    asked: Option<&str>,
-) -> Prompt {
-    let asked = asked
-        .map(str::trim)
-        .filter(|a| !a.is_empty())
-        .map_or(String::new(), |a| {
-            format!("\nWhat the story's human author asked of this chapter:\n{a}")
-        });
-    let versions: Vec<String> = shown
-        .iter()
-        .map(|(label, trace)| format!("Version {label}:\n{}", trace_text(ctx.canon, trace, false)))
-        .collect();
-    let choose = if reruns_left == 0 {
-        "No reruns are left: keep the best of these.".to_owned()
-    } else {
-        format!(
-            "Then keep one version for the story, or ask for the scene again under changed \
-             circumstances ({reruns_left} rerun{} left).",
-            plural(reruns_left)
-        )
-    };
-    // G2: the chapter's last scene, the cap's or the closing one past it,
-    // keeps the version that moves its goals furthest.
-    let last = if scene >= most {
-        " This is the chapter's last scene: keep the version that moves its goals furthest, \
-         unless it breaks a character's truth."
-    } else {
-        ""
-    };
-    let which = if scene > most {
-        "The closing scene".to_owned()
-    } else {
-        format!("Scene {scene} of at most {most}")
-    };
-    Prompt {
-        system: ctx.system(),
-        user: format!(
-            "{}. Its goals:\n{}\n\n{which}, {}\nYour intent for it: {intent}{asked}{}\n\n\
-             The world played it {} time{} from the same moment; each version below is what \
-             happened in it.\n\n{}\n\n\
-             Read each version against your intent and five measures: tension, surprise, truth \
-             to character, consequences, and the goals, how far it moves the chapter toward \
-             them; each scored from 1 to 5.{last} {choose}",
-            ctx.place(),
-            ctx.goals_text(),
-            setup_text(ctx.canon, setup),
-            ctx.choices_text(Doubts::Recorded),
-            shown.len(),
-            plural(shown.len() as u32),
-            versions.join("\n\n"),
-        ),
-    }
-}
-
-/// What the prose has of the scenes: a record the world played, a record
-/// of openings alone (M3's A1), or none (M3's B0, a writer alone).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Record {
-    /// Every scene was played.
-    Played,
-    /// The scenes were planned, not played.
-    Planned,
-    /// No record at all.
-    None,
-}
-
-impl Record {
-    /// The record of `kept`: planned if any of them was not played.
-    fn of(kept: &[Kept]) -> Self {
-        if kept.iter().any(|k| !k.played) {
-            Record::Planned
-        } else {
-            Record::Played
-        }
-    }
-}
-
-/// What the record left unspent is cut (T19's pilot, 2026-11-06): told every
-/// step of a record several times its length, the Author kept a plan that came
-/// to nothing and summed up the scene that held it, a confession included.
-const DEAD_ENDS: &str = " You know how the chapter ends: what in the record led nowhere (a \
-plan dropped, a summons no one answered, a question that changed nothing) is cut or told in a \
-phrase, unless its failing costs someone something; a secret spent in such a scene is still \
-told in a line of direct speech, never in a summary.";
-
 /// A secret is the scene's to spend, not the narrator's (T19's pilot): told
 /// from its keeper, the prose gave away the theft before the confession.
 const SECRETS: &str = "A secret enters the prose when a scene spends it, not before: a scene \
@@ -805,42 +112,17 @@ that…): keep the one or two lines that turn the scene, in direct speech, with 
 do, and leave the rest unsaid.";
 
 /// How the prose is to be written: language, point of view, tense, length,
-/// and the record's terms kept out of it. The rules of the prose itself
-/// (secrets, talk) are every writer's, B0's included, as T21 has it; what to
-/// make of a record is the record's.
-pub fn writing_rules(canon: &Canon, words: (u32, u32), record: Record) -> String {
-    let telling = match record {
-        Record::Played => {
-            "The record is many times longer than the chapter: it is your material, not a text \
-             to retell. You may reorder, compress, skip and change point of view, but never \
-             contradict it, and never let a character know what they have not perceived."
-        }
-        Record::Planned => {
-            "Tell what the record holds, and where a scene was not played invent what happens \
-             in it, true to your intent for it, the canon and the cast: you may reorder, \
-             compress, skip and change point of view, but never contradict the record, and \
-             never let a character know what they have not perceived in it or in your text."
-        }
-        Record::None => {
-            "Invent what happens, true to the canon and the cast, and never let a character \
-             know what they have not perceived in your story."
-        }
-    };
-    let (cut, keys, dead_ends) = match record {
-        Record::None => ("", "The canon's", ""),
-        Record::Played | Record::Planned => (
-            ": a line of the record that does otherwise may be cut or shown in what they do, as \
-             long as what happened stays",
-            "The record's",
-            DEAD_ENDS,
-        ),
-    };
+/// and the rules of the prose itself (secrets, talk), every writer's, as T21
+/// has it; the writer has no record, so it invents what happens.
+pub fn writing_rules(canon: &Canon, words: (u32, u32)) -> String {
+    let telling = "Invent what happens, true to the canon and the cast, and never let a \
+                   character know what they have not perceived in your story.";
     format!(
-        "Write in {}, in {}, in the {} tense, between {} and {} words. {telling}{dead_ends} \
+        "Write in {}, in {}, in the {} tense, between {} and {} words. {telling} \
          {SECRETS} {TALK} Keep each character's voice. In the dialogue, the characters act on a \
          plan or a boundary rather than announce it, open no reply on thanks, apology or \
          agreement the moment does not call for, and show a want in a deed rather than in a line \
-         that names it{cut}. {keys} \
+         that names it. The canon's \
          keys are not the story's words: never write a key in backticks. Begin with the \
          chapter's title as a level-two markdown heading (`## `). Reply with the chapter's text \
          and nothing else.",
@@ -850,93 +132,6 @@ pub fn writing_rules(canon: &Canon, words: (u32, u32), record: Record) -> String
         words.0,
         words.1,
     )
-}
-
-/// The chapter's first draft (spec §7, step 6).
-pub fn write(ctx: &ChapterContext, kept: &[Kept], words: (u32, u32)) -> Prompt {
-    Prompt {
-        system: ctx.system(),
-        user: format!(
-            "Write chapter {} of {}. Its goal in the arc: {}\nIts goals:\n{}{}\n\n\
-             The scenes the story keeps, in order, as the record holds them:\n\n{}\n\n{}",
-            ctx.number,
-            ctx.total(),
-            ctx.arc_goal(),
-            ctx.goals_text(),
-            ctx.so_far(Doubts::None),
-            kept_text(ctx.canon, kept, TO_AUTHOR),
-            writing_rules(ctx.canon, words, Record::of(kept)),
-        ),
-    }
-}
-
-/// A note as the Author and the reviser read it.
-fn note_line(label: &str, note: &ReviewNote) -> String {
-    let n = &note.note;
-    let anchor = n
-        .anchor
-        .as_deref()
-        .map_or(String::new(), |a| format!(" \"{a}\":"));
-    let evidence = if n.evidence.is_empty() {
-        String::new()
-    } else {
-        let ids: Vec<&str> = n.evidence.iter().map(|e| e.as_str()).collect();
-        format!(" (events: {})", ids.join(", "))
-    };
-    format!(
-        "{label} · {} · {}, {}:{anchor} {}{evidence}",
-        note.reviewer.as_str(),
-        n.kind.as_str(),
-        n.severity.as_str(),
-        n.body,
-    )
-}
-
-/// A revision of the chapter (spec §7, step 8): the notes the Author
-/// accepted, or the human's at the checkpoint.
-pub fn revise(
-    ctx: &ChapterContext,
-    kept: &[Kept],
-    text: &str,
-    accepted: &[(&ReviewNote, &Decided)],
-    words: (u32, u32),
-) -> Prompt {
-    let notes: Vec<String> = accepted
-        .iter()
-        .enumerate()
-        .map(|(i, (note, decided))| {
-            format!(
-                "{} (your critique: {})",
-                note_line(&format!("n{}", i + 1), note),
-                decided.reason
-            )
-        })
-        .collect();
-    let asked = if notes.is_empty() {
-        "Revise it as the story's human author asked above.".to_owned()
-    } else {
-        format!(
-            "The notes on it you accepted:\n{}\n\nRevise it, acting on every one of them.",
-            bullets(notes.iter().map(String::as_str))
-        )
-    };
-    Prompt {
-        system: ctx.system(),
-        user: format!(
-            "Chapter {} of {}. Its goal in the arc: {}\nIts goals:\n{}{}\n\n\
-             The scenes the story keeps, as the record holds them:\n\n{}\n\n\
-             The chapter as it stands, {} words:\n\n{text}\n\n{asked} Keep what works as it \
-             is, and rewrite the whole chapter. {KEEP_NAMES} {}",
-            ctx.number,
-            ctx.total(),
-            ctx.arc_goal(),
-            ctx.goals_text(),
-            ctx.so_far(Doubts::None),
-            kept_text(ctx.canon, kept, TO_AUTHOR),
-            words_of(text),
-            writing_rules(ctx.canon, words, Record::of(kept)),
-        ),
-    }
 }
 
 /// A revision's names (docs/fabula.md §4, *The last version checked*, F4):
@@ -956,119 +151,51 @@ pub fn words_of(text: &str) -> u32 {
     u32::try_from(n).unwrap_or(u32::MAX)
 }
 
-/// The Author's decisions on a version's notes, each shown under its label
-/// (`n1`).
-pub fn triage(ctx: &ChapterContext, text: &str, shown: &[(String, &ReviewNote)]) -> Prompt {
-    let notes: Vec<String> = shown.iter().map(|(l, n)| note_line(l, n)).collect();
-    Prompt {
-        system: ctx.system(),
-        user: format!(
-            "Chapter {} as it stands:\n\n{text}\n\nThe reviewers' notes on it:\n{}\n\n\
-             Decide each note: accepted when your revision will act on it, rejected when it is \
-             wrong or not worth acting on, deferred when it belongs to a later chapter. A note \
-             the record shows to be wrong is rejected, and a thread you leave open on purpose \
-             is rejected with why. Write each critique in {}: the story's human author may \
-             read it.",
-            ctx.number,
-            bullets(notes.iter().map(String::as_str)),
-            ctx.human_language,
-        ),
-    }
+/// A character's name in the story's text; the key when the sheet gives none.
+fn name_of<'a>(canon: &'a Canon, who: &'a CharacterKey) -> &'a str {
+    canon
+        .character(who)
+        .map(|c| c.name.as_str())
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or(who.as_str())
 }
 
-/// The Reader's prompt (spec §8): the published chapters and the new one,
-/// nothing else.
-pub fn reader(published: &[(u32, String)], text: &str) -> Prompt {
-    let before = if published.is_empty() {
-        "This is the story's first chapter.".to_owned()
+fn bullets<'a>(lines: impl IntoIterator<Item = &'a str>) -> String {
+    lines
+        .into_iter()
+        .map(|l| format!("- {l}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn listed(names: &[&str], none: &str) -> String {
+    if names.is_empty() {
+        none.to_owned()
     } else {
-        let chapters: Vec<String> = published
-            .iter()
-            .map(|(n, t)| format!("Chapter {n}:\n\n{t}"))
-            .collect();
-        format!(
-            "The chapters published so far:\n\n{}",
-            chapters.join("\n\n")
-        )
-    };
-    Prompt {
-        system: "You are a reader of a story published a chapter at a time. You know only what \
-                 is published: no plan, no notes, nothing of how it was made. Read as a reader \
-                 reads, and say plainly where you were lost and where you were bored, what you \
-                 expect to happen next, and what you liked best. Quote the passages you mean."
-            .to_owned(),
-        user: format!(
-            "{before}\n\nThe new chapter:\n\n{text}\n\nWrite your notes on the new chapter."
-        ),
+        names.join(", ")
     }
 }
 
-/// The Continuity checker's prompt (spec §8): the canon, what the cast knew
-/// when the chapter opened, the kept scenes' record with every event's id,
-/// and the chapter.
-pub fn continuity(canon: &Canon, opened: &WorldState, kept: &[Kept], text: &str) -> Prompt {
-    let cast: Vec<String> = canon
-        .characters
-        .iter()
-        .map(|c| {
-            let secrets: Vec<String> = c
-                .secrets
-                .iter()
-                .map(|s| format!("`{}`: {}", s.key, without_tokens(&s.text)))
-                .collect();
-            format!(
-                "{} (`{}`): {} Secrets: {}.",
-                name_of(canon, &c.key),
-                c.key,
-                c.public,
-                listed(
-                    &secrets.iter().map(String::as_str).collect::<Vec<_>>(),
-                    "none"
-                ),
-            )
-        })
-        .collect();
-    let places: Vec<String> = canon
-        .locations
-        .iter()
-        .map(|l| format!("{} (`{}`): {}", l.name, l.key, l.description))
-        .collect();
-    Prompt {
-        system: format!(
-            "You check a chapter of a story against the record of what happened in its world, \
-             and against its canon. The record is the truth. The chapter may reorder, compress, \
-             skip and change point of view, but it may not contradict the record, and a \
-             character in it knows only what they have perceived: a secret only once it was \
-             revealed to them. Report each place where the chapter departs from the record or \
-             the canon, with the ids of the events that show it. Style and pace are not yours \
-             to judge.\n\nThe world's rules:\n{}\n\nThe places:\n{}\n\nThe cast:\n{}",
-            bullets(canon.world.rules.iter().map(String::as_str)),
-            bullets(places.iter().map(String::as_str)),
-            bullets(cast.iter().map(String::as_str)),
-        ),
-        user: format!(
-            "When the chapter opened:\n{}\n\nThe record of its scenes, in order:\n\n{}\n\n\
-             The chapter:\n\n{text}\n\nReport every departure.{}",
-            world_lines(canon, opened),
-            kept_text(canon, kept, TO_CHECKER),
-            unplayed(kept),
-        ),
-    }
+fn plural(n: u32) -> &'static str {
+    if n == 1 { "" } else { "s" }
 }
 
-/// What the Continuity checker is told of scenes that were not played (M3's
-/// A1): the record holds their openings alone, so what the chapter adds there
-/// departs from nothing; a secret is known there once the chapter reveals it.
-fn unplayed(kept: &[Kept]) -> &'static str {
-    if Record::of(kept) == Record::Planned {
-        " Where a scene was not played, hold the chapter to the record it has, to the canon \
-         and to itself: there a character knows a secret once the chapter has shown it \
-         revealed to them."
-    } else {
-        ""
-    }
-}
+/// The prefix of a planted token.
+const TOKEN_PREFIX: &str = "SECRET-";
 
-#[cfg(test)]
-#[path = "author_prompts_tests.rs"]
-mod tests;
+/// `text` without its planted tokens: each bracketed `[SECRET-…]` run is
+/// cut, with the space before it. What the Author and the reviewers are shown
+/// of a secret, so the prose never learns the evaluation's markers.
+fn without_tokens(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(&format!("[{TOKEN_PREFIX}")) {
+        let Some(len) = rest[at..].find(']') else {
+            break;
+        };
+        out.push_str(rest[..at].trim_end_matches(' '));
+        rest = &rest[at + len + 1..];
+    }
+    out.push_str(rest);
+    out
+}

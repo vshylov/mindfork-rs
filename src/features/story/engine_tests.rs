@@ -8,7 +8,7 @@ use super::{EngineAdapter, ListPrice, LongPrompt};
 use crate::entities::sampling::SamplingConfig;
 use crate::features::story::port::tests::{prompt, schema};
 use crate::features::story::port::{CallAddress, LlmPort, PortError, Role, prompt_sha256};
-use crate::features::story::scene::tests::fresh_story;
+use crate::features::story::single::tests::fresh_story;
 use crate::shared::api::contract::{
     ChatChunk, ChatRequest, ChatStream, EngineBackend, FinishReason, Served, TokenUsage,
 };
@@ -67,7 +67,7 @@ async fn a_json_call_is_recorded_with_its_request_reply_and_cost() {
         address: "ch1/sc1/r0/k0/round1/mara/propose".to_owned(),
     };
     let value = port
-        .json(&call, Role::Character, &schema(), &prompt())
+        .json(&call, Role::Author, &schema(), &prompt())
         .await
         .unwrap();
     assert_eq!(value, json!({"mood": "grim"}));
@@ -79,7 +79,7 @@ async fn a_json_call_is_recorded_with_its_request_reply_and_cost() {
         .unwrap()
         .unwrap();
     let recorded = &stored.call;
-    assert_eq!(recorded.role, "character");
+    assert_eq!(recorded.role, "author");
     assert_eq!(recorded.model, "mock-model");
     assert_eq!(recorded.mechanism, Mechanism::Fallback);
     assert_eq!(recorded.status, CallStatus::Ok);
@@ -112,9 +112,7 @@ async fn a_json_call_is_recorded_with_its_request_reply_and_cost() {
     assert!(recorded.latency_ms.is_some());
 
     // One live call per address: a second is refused by the call log.
-    let again = port
-        .json(&call, Role::Character, &schema(), &prompt())
-        .await;
+    let again = port.json(&call, Role::Author, &schema(), &prompt()).await;
     assert!(
         matches!(
             again,
@@ -144,7 +142,7 @@ async fn every_attempt_is_recorded_in_order() {
         address: "a".to_owned(),
     };
     assert!(
-        port.json(&call, Role::Character, &schema(), &prompt())
+        port.json(&call, Role::Author, &schema(), &prompt())
             .await
             .is_ok()
     );
@@ -200,9 +198,7 @@ async fn how_a_stream_ends_decides_the_status() {
             run: story.run.clone(),
             address: "a".to_owned(),
         };
-        let result = port
-            .json(&call, Role::Character, &schema(), &prompt())
-            .await;
+        let result = port.json(&call, Role::Author, &schema(), &prompt()).await;
         assert!(result.is_err(), "{chunks:?}");
         let first = story.db.call(&story.run, "a", 1).await.unwrap().unwrap();
         assert_eq!(first.call.status, status, "{chunks:?}");
@@ -257,9 +253,7 @@ async fn a_cancelled_run_stops_at_its_call() {
         run: story.run.clone(),
         address: "a".to_owned(),
     };
-    let result = port
-        .json(&call, Role::Character, &schema(), &prompt())
-        .await;
+    let result = port.json(&call, Role::Author, &schema(), &prompt()).await;
     assert!(
         matches!(result, Err(PortError::Cancelled { .. })),
         "{result:?}"
@@ -289,13 +283,7 @@ async fn a_text_call_sends_the_prompt_as_it_is_and_gives_the_log_back() {
     assert_eq!(first.call.prompt_sha256, prompt_sha256(&prompt(), None));
     // The capability comes back whole: the run log can be written again.
     let mut log = port.into_log().expect("the log is the adapter's alone");
-    log.finish_step(
-        &story.run,
-        "ch1/draft",
-        crate::shared::storage::story::StepStatus::Done,
-    )
-    .await
-    .unwrap();
+    log.start_run(&json!({})).await.unwrap();
 }
 
 /// A backend that constrains its replies, answers from a script, and keeps
@@ -343,7 +331,7 @@ impl EngineBackend for Enforcing {
     }
 }
 
-fn call_at(story: &crate::features::story::scene::tests::Story, address: &str) -> CallAddress {
+fn call_at(story: &crate::features::story::single::tests::Story, address: &str) -> CallAddress {
     CallAddress {
         run: story.run.clone(),
         address: address.to_owned(),
@@ -372,13 +360,13 @@ async fn a_backend_that_constrains_gets_the_schema_with_every_json_attempt() {
     );
     let first = call_at(&story, "a");
     assert!(
-        port.json(&first, Role::Character, &schema(), &prompt())
+        port.json(&first, Role::Author, &schema(), &prompt())
             .await
             .is_ok()
     );
     let second = call_at(&story, "b");
     assert!(
-        port.json(&second, Role::Character, &schema(), &prompt())
+        port.json(&second, Role::Author, &schema(), &prompt())
             .await
             .is_ok()
     );
@@ -398,7 +386,7 @@ async fn a_backend_that_constrains_gets_the_schema_with_every_json_attempt() {
         .iter()
         .filter_map(|r| r.output_schema.as_ref().map(|s| s.name.clone()))
         .collect();
-    assert_eq!(names, ["character"; 3]);
+    assert_eq!(names, ["author"; 3]);
     let system = backend.seen.lock().unwrap()[0].system.clone().unwrap();
     assert!(system.ends_with(&schema().to_json()), "{system}");
     assert_eq!(backend.asked(), 1);
@@ -431,7 +419,7 @@ async fn the_fallback_alone_never_sends_the_schema() {
     )
     .fallback_only();
     assert!(
-        port.json(&call_at(&story, "a"), Role::Character, &schema(), &prompt())
+        port.json(&call_at(&story, "a"), Role::Author, &schema(), &prompt())
             .await
             .is_ok()
     );
@@ -460,9 +448,9 @@ async fn a_role_gets_its_own_sampling_and_the_others_keep_the_adapters() {
         sampling(),
         CancellationToken::new(),
     )
-    .with_role_sampling(Role::WorldMaster, SamplingConfig::default())
-    .with_role_sampling(Role::WorldMaster, thinking.clone());
-    for (address, role) in [("a", Role::Character), ("b", Role::WorldMaster)] {
+    .with_role_sampling(Role::Judge, SamplingConfig::default())
+    .with_role_sampling(Role::Judge, thinking.clone());
+    for (address, role) in [("a", Role::Author), ("b", Role::Judge)] {
         assert!(
             port.json(&call_at(&story, address), role, &schema(), &prompt())
                 .await
@@ -477,9 +465,9 @@ async fn a_role_gets_its_own_sampling_and_the_others_keep_the_adapters() {
         .map(|r| r.sampling.clone())
         .collect();
     assert_eq!(sent, [sampling(), thinking.clone()]);
-    let master = story.db.call(&story.run, "b", 1).await.unwrap().unwrap();
-    assert_eq!(master.call.params, serde_json::to_value(&thinking).unwrap());
-    assert_eq!(master.call.role, "world_master");
+    let judge = story.db.call(&story.run, "b", 1).await.unwrap().unwrap();
+    assert_eq!(judge.call.params, serde_json::to_value(&thinking).unwrap());
+    assert_eq!(judge.call.role, "judge");
 }
 
 /// Every call takes the app's session budget (docs/fabula.md §3): with its one
@@ -507,7 +495,7 @@ async fn a_call_waits_for_the_session_budget_and_a_cancel_while_waiting_records_
 
     let turn = budget.acquire(0, &CancellationToken::new()).await.unwrap();
     let first = call("ch1/sc1/a");
-    let mut pending = std::pin::pin!(port.json(&first, Role::Character, &schema, &prompt));
+    let mut pending = std::pin::pin!(port.json(&first, Role::Author, &schema, &prompt));
     let waited = tokio::time::timeout(std::time::Duration::from_millis(100), &mut pending).await;
     assert!(waited.is_err(), "the call waits for the turn's permit");
     drop(turn);
@@ -515,7 +503,7 @@ async fn a_call_waits_for_the_session_budget_and_a_cancel_while_waiting_records_
 
     let _turn = budget.acquire(0, &CancellationToken::new()).await.unwrap();
     let second = call("ch1/sc1/b");
-    let waiting = port.json(&second, Role::Character, &schema, &prompt);
+    let waiting = port.json(&second, Role::Author, &schema, &prompt);
     cancel.cancel();
     assert!(matches!(waiting.await, Err(PortError::Cancelled { .. })));
     assert!(

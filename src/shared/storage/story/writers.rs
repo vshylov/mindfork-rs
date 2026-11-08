@@ -10,15 +10,10 @@
 
 use serde_json::Value;
 
-use super::{NewCall, StepStatus, StoryDb, StoryDbError};
+use super::{NewCall, StoryDb, StoryDbError};
 use crate::entities::story::{
-    Assumption, BranchId, Canon, ChapterId, ChapterOutline, ChapterVersion, CharacterKey, Decided,
-    NewEvent, NewNote, NoteId, Proposal, ProposalId, ProposalVerdict, Question, QuestionBody,
-    QuestionId, Register, Resolution, Reviewer, RunId, SceneId, SceneSetup, VersionOrigin,
+    Canon, ChapterVersion, Question, QuestionBody, QuestionId, Resolution, RunId, VersionOrigin,
 };
-
-use super::CommittedEvent;
-use super::actor::NewProposal;
 
 /// Fails to compile when one of the types implements `Clone`: with an impl
 /// for every type and another for every `Clone` type, the inferred parameter
@@ -38,123 +33,20 @@ macro_rules! assert_not_clone {
     )+};
 }
 
-assert_not_clone!(
-    BranchWriter,
-    ReflectionWriter,
-    ReviewWriter,
-    AuthorWriter,
-    RunLogWriter
-);
+assert_not_clone!(AuthorWriter, RunLogWriter);
 
 /// The capabilities move into the tasks that use them, and the handle is
 /// shared between those tasks.
 const _: fn() = || {
     fn send<T: Send>() {}
     fn shared<T: Send + Sync>() {}
-    send::<BranchWriter>();
-    send::<ReflectionWriter>();
-    send::<ReviewWriter>();
     send::<AuthorWriter>();
     send::<RunLogWriter>();
     shared::<StoryDb>();
 };
 
-/// The World Master's capability over one branch: it records the branch's
-/// proposals and commits its events (spec §5).
-pub struct BranchWriter {
-    db: StoryDb,
-    branch: BranchId,
-    token: u64,
-}
-
-impl BranchWriter {
-    pub(super) fn new(db: StoryDb, branch: BranchId, token: u64) -> Self {
-        Self { db, branch, token }
-    }
-
-    /// The branch this writer writes.
-    pub fn branch(&self) -> &BranchId {
-        &self.branch
-    }
-
-    /// Records a proposal with the World Master's ruling on it.
-    pub async fn record_proposal(
-        &mut self,
-        round: u32,
-        character: &CharacterKey,
-        proposal: &Proposal,
-        verdict: ProposalVerdict,
-        reason: Option<String>,
-    ) -> Result<ProposalId, StoryDbError> {
-        let (branch, token) = (self.branch.clone(), self.token);
-        let row = NewProposal {
-            round,
-            character: character.clone(),
-            proposal: proposal.clone(),
-            verdict,
-            reason,
-        };
-        self.db
-            .run(move |a| a.record_proposal(&branch, token, &row))
-            .await
-    }
-
-    /// Checks the event against the world at the branch's tip, computes its
-    /// witnesses and appends it, all on the actor's thread (spec §6).
-    pub async fn commit(&mut self, event: NewEvent) -> Result<CommittedEvent, StoryDbError> {
-        let (branch, token) = (self.branch.clone(), self.token);
-        self.db.run(move |a| a.commit(&branch, token, &event)).await
-    }
-}
-
-impl Drop for BranchWriter {
-    fn drop(&mut self) {
-        let (branch, token) = (self.branch.clone(), self.token);
-        self.db.post(move |a| a.release_branch(&branch, token));
-    }
-}
-
-/// A character's capability over their own reflections on one branch.
-pub struct ReflectionWriter {
-    db: StoryDb,
-    branch: BranchId,
-    character: CharacterKey,
-    token: u64,
-}
-
-impl ReflectionWriter {
-    pub(super) fn new(db: StoryDb, branch: BranchId, character: CharacterKey, token: u64) -> Self {
-        Self {
-            db,
-            branch,
-            character,
-            token,
-        }
-    }
-
-    /// Records a reflection after the branch path's latest event; its id.
-    pub async fn write(
-        &mut self,
-        body: &str,
-        goal_changes: &[String],
-    ) -> Result<String, StoryDbError> {
-        let (branch, character, token) = (self.branch.clone(), self.character.clone(), self.token);
-        let (body, goal_changes) = (body.to_owned(), goal_changes.to_vec());
-        self.db
-            .run(move |a| a.write_reflection(&branch, &character, token, &body, &goal_changes))
-            .await
-    }
-}
-
-impl Drop for ReflectionWriter {
-    fn drop(&mut self) {
-        let (branch, character, token) = (self.branch.clone(), self.character.clone(), self.token);
-        self.db
-            .post(move |a| a.release_reflection(&branch, &character, token));
-    }
-}
-
-/// The Author's capability: the canon, the scenes, the picks (spec §5).
+/// The Author's capability: the canon, the chapters' versions, the pauses
+/// (spec §5).
 pub struct AuthorWriter {
     db: StoryDb,
     token: u64,
@@ -168,59 +60,14 @@ impl AuthorWriter {
     /// Stores the canon after its deterministic checks: a new version of
     /// every document that changed, a removal for every one that went. The
     /// number of document versions written; 0 when nothing changed. Refused
-    /// once the story has events.
+    /// once the canon is approved.
     pub async fn import_canon(&mut self, canon: &Canon) -> Result<usize, StoryDbError> {
         let (canon, token) = (canon.clone(), self.token);
         self.db.run(move |a| a.import_canon(token, &canon)).await
     }
-
-    /// Stores the setup of scene `scene` of chapter `chapter` at rerun
-    /// `rerun`, with the Author's private intent for it; the scene's id.
-    pub async fn add_scene(
-        &mut self,
-        (chapter, scene, rerun): (u32, u32, u32),
-        setup: &SceneSetup,
-        intent: &str,
-    ) -> Result<SceneId, StoryDbError> {
-        let (setup, intent, token) = (setup.clone(), intent.to_owned(), self.token);
-        self.db
-            .run(move |a| a.add_scene(token, (chapter, scene, rerun), &setup, &intent))
-            .await
-    }
-
-    /// Records the pick for a scene: one of its branches, which extends the
-    /// main line, or none when a rerun is wanted.
-    pub async fn record_pick(
-        &mut self,
-        scene: &SceneId,
-        branch: Option<&BranchId>,
-        rationale: &str,
-    ) -> Result<(), StoryDbError> {
-        let (scene, branch, rationale, token) = (
-            scene.clone(),
-            branch.cloned(),
-            rationale.to_owned(),
-            self.token,
-        );
-        self.db
-            .run(move |a| a.record_pick(token, &scene, branch.as_ref(), &rationale))
-            .await
-    }
 }
 
 impl AuthorWriter {
-    /// Stores chapter `chapter`'s outline; refused once it has one.
-    pub async fn add_outline(
-        &mut self,
-        chapter: u32,
-        outline: &ChapterOutline,
-    ) -> Result<(), StoryDbError> {
-        let (outline, token) = (outline.clone(), self.token);
-        self.db
-            .run(move |a| a.add_outline(token, chapter, &outline))
-            .await
-    }
-
     /// Stores the next version of chapter `number`: a draft as its first, a
     /// revision or the human's revision after one.
     pub async fn add_chapter(
@@ -232,42 +79,6 @@ impl AuthorWriter {
         let (text, token) = (text.to_owned(), self.token);
         self.db
             .run(move |a| a.add_chapter(token, number, origin, &text))
-            .await
-    }
-
-    /// Stores a final version's summary.
-    pub async fn add_summary(
-        &mut self,
-        chapter: &ChapterId,
-        summary: &str,
-    ) -> Result<(), StoryDbError> {
-        let (chapter, summary, token) = (chapter.clone(), summary.to_owned(), self.token);
-        self.db
-            .run(move |a| a.add_summary(token, &chapter, &summary))
-            .await
-    }
-
-    /// Stores a final version's register (docs/fabula.md §4, PR 11).
-    pub async fn add_register(
-        &mut self,
-        chapter: &ChapterId,
-        register: &Register,
-    ) -> Result<(), StoryDbError> {
-        let (chapter, register, token) = (chapter.clone(), register.clone(), self.token);
-        self.db
-            .run(move |a| a.add_register(token, &chapter, &register))
-            .await
-    }
-
-    /// Records the decisions on a version's notes, all in one go.
-    pub async fn record_decisions(
-        &mut self,
-        chapter: &ChapterId,
-        decisions: &[Decided],
-    ) -> Result<(), StoryDbError> {
-        let (chapter, decisions, token) = (chapter.clone(), decisions.to_vec(), self.token);
-        self.db
-            .run(move |a| a.record_decisions(token, &chapter, &decisions))
             .await
     }
 
@@ -297,74 +108,12 @@ impl AuthorWriter {
             .run(move |a| a.resolve(token, &question, &resolution))
             .await
     }
-
-    /// Records an assumption `role` made at `step` of `run`; its id.
-    pub async fn add_assumption(
-        &mut self,
-        run: &RunId,
-        step: &str,
-        role: &str,
-        assumption: &Assumption,
-    ) -> Result<String, StoryDbError> {
-        let (run, step, role, assumption, token) = (
-            run.clone(),
-            step.to_owned(),
-            role.to_owned(),
-            assumption.clone(),
-            self.token,
-        );
-        self.db
-            .run(move |a| a.add_assumption(token, &run, &step, &role, &assumption))
-            .await
-    }
 }
 
 impl Drop for AuthorWriter {
     fn drop(&mut self) {
         let token = self.token;
         self.db.post(move |a| a.release_author(token));
-    }
-}
-
-/// A reviewer's capability over its notes on one chapter version (spec §5,
-/// *Store ownership*: each reviewer writes its own notes).
-pub struct ReviewWriter {
-    db: StoryDb,
-    chapter: ChapterId,
-    reviewer: Reviewer,
-    token: u64,
-}
-
-impl ReviewWriter {
-    pub(super) fn new(db: StoryDb, chapter: ChapterId, reviewer: Reviewer, token: u64) -> Self {
-        Self {
-            db,
-            chapter,
-            reviewer,
-            token,
-        }
-    }
-
-    /// Writes the review's notes, all in one transaction; their ids. A
-    /// version is reviewed once by each reviewer.
-    pub async fn write(&mut self, notes: &[NewNote]) -> Result<Vec<NoteId>, StoryDbError> {
-        let (chapter, reviewer, token, notes) = (
-            self.chapter.clone(),
-            self.reviewer,
-            self.token,
-            notes.to_vec(),
-        );
-        self.db
-            .run(move |a| a.write_notes(&chapter, reviewer, token, &notes))
-            .await
-    }
-}
-
-impl Drop for ReviewWriter {
-    fn drop(&mut self) {
-        let (chapter, reviewer, token) = (self.chapter.clone(), self.reviewer, self.token);
-        self.db
-            .post(move |a| a.release_review(&chapter, reviewer, token));
     }
 }
 
@@ -384,20 +133,6 @@ impl RunLogWriter {
     pub async fn start_run(&mut self, config: &Value) -> Result<RunId, StoryDbError> {
         let (config, token) = (config.clone(), self.token);
         self.db.run(move |a| a.start_run(token, &config)).await
-    }
-
-    /// Records how a step ended. A step recorded again — a failed one that a
-    /// resume finished — keeps its place and takes the new status.
-    pub async fn finish_step(
-        &mut self,
-        run: &RunId,
-        address: &str,
-        status: StepStatus,
-    ) -> Result<(), StoryDbError> {
-        let (run, address, token) = (run.clone(), address.to_owned(), self.token);
-        self.db
-            .run(move |a| a.finish_step(token, &run, &address, status))
-            .await
     }
 
     /// Records a model call in the call log; its id.

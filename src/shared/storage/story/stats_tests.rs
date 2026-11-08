@@ -11,11 +11,10 @@ use crate::entities::story::{
     Decision, QuestionBody, QuestionId, Resolution, VersionOrigin, fixture_canon,
 };
 use crate::shared::storage::schema::STORY_SCHEMA;
-use crate::shared::storage::story::{StepStatus, StoryDb};
+use crate::shared::storage::story::StoryDb;
 
 /// A story with two chapters: the first in two versions and accepted, the
-/// second drafted and waiting at its checkpoint. One run; one step failed and
-/// one done.
+/// second drafted and waiting at its checkpoint. One run.
 async fn written(dir: &Path) -> PathBuf {
     let story = dir.join("story.db");
     let db = StoryDb::open(&story, &dir.join("calls.db")).await.unwrap();
@@ -23,12 +22,6 @@ async fn written(dir: &Path) -> PathBuf {
     author.import_canon(&fixture_canon()).await.unwrap();
     let mut log = db.run_log_writer().await.unwrap();
     let run = log.start_run(&json!({})).await.unwrap();
-    log.finish_step(&run, "ch1/outline", StepStatus::Failed)
-        .await
-        .unwrap();
-    log.finish_step(&run, "ch1/v1/write", StepStatus::Done)
-        .await
-        .unwrap();
     author
         .add_chapter(1, VersionOrigin::Draft, "## One\n\nFirst.")
         .await
@@ -74,7 +67,6 @@ fn approve() -> Resolution {
         decision: Decision::Approve,
         notes: String::new(),
         evidence: json!(null),
-        rerun: None,
     }
 }
 
@@ -125,10 +117,7 @@ async fn a_story_is_counted_as_its_store_wrote_it_and_left_as_it_was() {
         (2, 1, 3)
     );
     assert_eq!((stats.questions, stats.pending_questions), (2, 1));
-    assert_eq!((stats.runs, stats.scenes), (1, 0));
-    // Only the step done counts, and by its key alone.
-    assert_eq!(units_of(&stats, "step/").len(), 1);
-    assert!(units_of(&stats, "step/")[0].starts_with("step/run1/ch1/v1/write:"));
+    assert_eq!(stats.runs, 1);
     assert_eq!(units_of(&stats, "chapter/").len(), 3);
     assert!(
         stats.units.windows(2).all(|w| w[0] < w[1]),
@@ -143,7 +132,7 @@ async fn a_story_is_counted_as_its_store_wrote_it_and_left_as_it_was() {
 
 /// A copy continued holds every unit of the one it was copied from; two
 /// copies continued apart hold one id with two contents, and the digests tell
-/// them apart. A step recorded done again is the same unit.
+/// them apart.
 #[tokio::test]
 async fn units_tell_a_story_continued_from_one_continued_apart() {
     let dir = tempfile::tempdir().unwrap();
@@ -154,15 +143,7 @@ async fn units_tell_a_story_continued_from_one_continued_apart() {
     let (ahead, db) = copy_of(&story, "ahead").await;
     let mut author = db.author_writer().await.unwrap();
     author.resolve(&waiting, &approve()).await.unwrap();
-    let mut log = db.run_log_writer().await.unwrap();
-    log.finish_step(
-        &crate::entities::story::RunId::nth(1),
-        "ch1/v1/write",
-        StepStatus::Done,
-    )
-    .await
-    .unwrap();
-    drop((author, log));
+    drop(author);
     db.close().await.unwrap();
     let ahead = story_stats_of_file(&ahead).unwrap();
     assert!(base.units.iter().all(|u| ahead.units.contains(u)));
@@ -179,7 +160,6 @@ async fn units_tell_a_story_continued_from_one_continued_apart() {
         decision: Decision::Change,
         notes: "Slower.".to_owned(),
         evidence: json!(null),
-        rerun: None,
     };
     author.resolve(&waiting, &change).await.unwrap();
     drop(author);
@@ -221,54 +201,11 @@ fn a_file_that_is_not_a_database_is_an_error() {
     assert!(story_stats_of_file(&path).is_err());
 }
 
-/// A witness belongs to its event's unit: a copy whose event was seen by one
-/// more character holds the same event id with another content.
-#[tokio::test]
-async fn an_events_witnesses_are_part_of_its_unit() {
-    let dir = tempfile::tempdir().unwrap();
-    let story = written(dir.path()).await;
-    let conn = rusqlite::Connection::open(&story).unwrap();
-    conn.execute_batch(
-        "INSERT OR IGNORE INTO branch (id, parent_id, fork_seq, scene_id, k, seed)
-             VALUES ('genesis', NULL, NULL, NULL, 0, 0);
-         INSERT INTO event (id, branch_id, round, tick, location_key, kind, actor_key,
-                            visibility_json, observable, private, effects_json, proposal_id,
-                            cause_json)
-             VALUES ('genesis/e1', 'genesis', 0, 0, 'quay', 'opening', NULL, '{}', 'Dawn.',
-                     NULL, '[]', NULL, '{}');
-         INSERT INTO event_witness (event_id, character_key) VALUES ('genesis/e1', 'mara');",
-    )
-    .unwrap();
-    drop(conn);
-    let (event, character) = ("genesis/e1".to_owned(), "mara".to_owned());
-    let base = story_stats_of_file(&story).unwrap();
-
-    let copy = dir.path().join("seen.db");
-    tokio::fs::copy(&story, &copy).await.unwrap();
-    let conn = rusqlite::Connection::open(&copy).unwrap();
-    conn.execute(
-        "INSERT INTO event_witness (event_id, character_key) VALUES (?1, ?2)",
-        [&event, &format!("{character}-twin")],
-    )
-    .unwrap();
-    drop(conn);
-    let seen = story_stats_of_file(&copy).unwrap();
-
-    let unit = |stats: &StoryStats| units_of(stats, &format!("event/{event}:"));
-    assert_eq!((unit(&base).len(), unit(&seen).len()), (1, 1));
-    assert_ne!(unit(&base), unit(&seen));
-    assert_eq!(seen.units.len(), base.units.len(), "no unit of its own");
-}
-
-/// Every table a story appends to is compared row by row, a new one too (the
-/// take, PR 10): a witness rides with its event's unit.
+/// Every table a story appends to is compared row by row.
 #[test]
 fn every_append_only_table_has_units() {
-    let compared: Vec<&str> = UNIT_TABLES.iter().map(|(table, _, _)| *table).collect();
+    let compared: Vec<&str> = UNIT_TABLES.iter().map(|(table, _)| *table).collect();
     for table in super::super::schema::STORY_APPEND_ONLY {
-        assert!(
-            *table == "event_witness" || compared.contains(table),
-            "{table} is not compared"
-        );
+        assert!(compared.contains(table), "{table} is not compared");
     }
 }

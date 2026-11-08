@@ -1,22 +1,70 @@
-use serde::Serialize;
-use serde::de::DeserializeOwned;
+//! The schema dialect and its validator, held to a reply type of the tests'
+//! own: an object with a tagged union, a list of enum values and a value that
+//! may be absent — every shape a reply's schema takes.
+
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
-use super::{CanonKeys, Property, Schema, StorySchema, Variant, describe, extract_object};
-use crate::entities::story::{Action, CharacterKey, Proposal, Visibility, fixture_canon};
+use super::{Property, Schema, Variant, describe, extract_object};
 use crate::features::story::dialect;
 
-fn keys() -> CanonKeys {
-    CanonKeys::of(&fixture_canon())
+/// A reply as a model would write one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Sample {
+    thought: String,
+    #[serde(rename = "move")]
+    act: Act,
+    targets: Vec<String>,
+    note: Option<String>,
 }
 
-fn proposal_schema() -> Schema {
-    Proposal::schema(&keys())
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+enum Act {
+    Speak { line: String },
+    Go { to: String },
+    Wait,
+}
+
+fn sample_schema() -> Schema {
+    Schema::Object(vec![
+        Property::new("thought", Schema::String),
+        Property::new(
+            "move",
+            Schema::Tagged {
+                tag: "type".to_owned(),
+                variants: vec![
+                    Variant::new(
+                        "speak",
+                        "A line said aloud.",
+                        vec![Property::new("line", Schema::String)],
+                    ),
+                    Variant::new(
+                        "go",
+                        "A walk to a place.",
+                        vec![Property::new(
+                            "to",
+                            Schema::Enum(vec!["harbour".to_owned(), "inn".to_owned()]),
+                        )],
+                    ),
+                    Variant::new("wait", "Nothing done.", Vec::new()),
+                ],
+            },
+        ),
+        Property::new(
+            "targets",
+            Schema::Array(Box::new(Schema::Enum(
+                ["mara", "silas", "ines"].map(str::to_owned).to_vec(),
+            ))),
+        ),
+        Property::new("note", Schema::Nullable(Box::new(Schema::String))),
+    ])
 }
 
 /// One instance per value of every enum and per branch of every union, the
 /// other properties at their first choice: every shape the schema allows.
-pub(crate) fn instances(schema: &Schema) -> Vec<Value> {
+fn instances(schema: &Schema) -> Vec<Value> {
     match schema {
         Schema::String => vec![json!("x")],
         Schema::Enum(values) => values.iter().map(|v| json!(v)).collect(),
@@ -34,59 +82,6 @@ pub(crate) fn instances(schema: &Schema) -> Vec<Value> {
             .flat_map(|v| object_instances(&v.properties, Some((tag, &v.name))))
             .collect(),
     }
-}
-
-/// Every instance the schema allows reads as `T` and writes back the same,
-/// and the schema keeps the dialect: the one check every reply's schema
-/// meets, shared by the tests of each module that defines one.
-pub(crate) fn holds<T: DeserializeOwned + Serialize>(schema: &Schema) -> usize {
-    // A union is never a root (spec §8): one is checked as a property.
-    let root = match schema {
-        Schema::Object(_) => schema.clone(),
-        _ => Schema::Object(vec![Property::new("value", schema.clone())]),
-    };
-    assert_eq!(dialect::check(&root.to_value()), Vec::new());
-    let all = instances(schema);
-    for instance in &all {
-        let checked = schema
-            .validate(instance)
-            .unwrap_or_else(|v| panic!("{instance}: {}", describe(&v)));
-        let parsed: T = serde_json::from_value(checked.clone())
-            .unwrap_or_else(|e| panic!("{checked} does not read as its type: {e}"));
-        assert_eq!(serde_json::to_value(parsed).unwrap(), checked);
-    }
-    all.len()
-}
-
-/// No property of the schema, at any depth, is named like the model's own
-/// reasoning (spec §8): shared, as `holds` is, by the tests of each module
-/// that defines a reply.
-pub(crate) fn asks_no_reasoning(schema: &Schema) {
-    let names = property_names(&schema.to_value());
-    for banned in ["reason", "thinking", "thought", "trace", "rationale"] {
-        assert!(
-            names.iter().all(|n| !n.contains(banned)),
-            "{banned} in {names:?}"
-        );
-    }
-}
-
-fn property_names(value: &Value) -> Vec<String> {
-    let mut out = Vec::new();
-    if let Some(props) = value.get("properties").and_then(Value::as_object) {
-        out.extend(props.keys().cloned());
-        for v in props.values() {
-            out.extend(property_names(v));
-        }
-    }
-    for key in ["items", "anyOf"] {
-        match value.get(key) {
-            Some(Value::Array(list)) => list.iter().for_each(|v| out.extend(property_names(v))),
-            Some(v) => out.extend(property_names(v)),
-            None => {}
-        }
-    }
-    out
 }
 
 fn object_instances(properties: &[Property], tag: Option<(&str, &str)>) -> Vec<Value> {
@@ -112,49 +107,9 @@ fn object_instances(properties: &[Property], tag: Option<(&str, &str)>) -> Vec<V
     list
 }
 
-fn proposal(action: Action, visibility: Visibility) -> Proposal {
-    Proposal {
-        private_thought: "The gate shuts soon.".to_owned(),
-        action,
-        targets: vec!["ines".into()],
-        visibility,
-    }
-}
-
-fn samples() -> Vec<Proposal> {
-    let actions = [
-        Action::Speak {
-            line: "Not tonight.".to_owned(),
-        },
-        Action::Move { to: "inn".into() },
-        Action::Act {
-            verb: "slams".to_owned(),
-            object: Some("the ledger".to_owned()),
-            line: None,
-        },
-        Action::Act {
-            verb: "shrugs".to_owned(),
-            object: None,
-            line: Some("Storm's early.".to_owned()),
-        },
-        Action::Wait,
-    ];
-    let visibilities = [
-        Visibility::Public,
-        Visibility::Whisper {
-            to: vec!["silas".into()],
-        },
-        Visibility::Hidden,
-    ];
-    actions
-        .iter()
-        .flat_map(|a| visibilities.iter().map(|v| proposal(a.clone(), v.clone())))
-        .collect()
-}
-
 #[test]
-fn the_proposal_schema_keeps_the_dialect() {
-    let schema = proposal_schema();
+fn the_sample_schema_keeps_the_dialect() {
+    let schema = sample_schema();
     assert_eq!(dialect::check(&schema.to_value()), Vec::new());
     // The printed text reads back as the same value: nothing is lost in the
     // hand-written serialization.
@@ -163,108 +118,87 @@ fn the_proposal_schema_keeps_the_dialect() {
 }
 
 /// The order of the properties is the order a model writes them in (spec
-/// §8): the thought before the action, and a variant's tag before its
-/// fields. A `Value` would have sorted them.
+/// §8), and a variant's tag comes before its fields. A `Value` would have
+/// sorted them.
 #[test]
 fn the_printed_schema_keeps_the_declared_order() {
-    let text = proposal_schema().to_json();
+    let text = sample_schema().to_json();
     let at = |needle: &str| {
         text.find(needle)
             .unwrap_or_else(|| panic!("{needle} in {text}"))
     };
-    assert!(at("\"private_thought\"") < at("\"action\""));
-    assert!(at("\"action\"") < at("\"targets\""));
-    assert!(at("\"targets\"") < at("\"visibility\""));
+    assert!(at("\"thought\"") < at("\"move\""));
+    assert!(at("\"move\"") < at("\"targets\""));
+    assert!(at("\"targets\"") < at("\"note\""));
     assert!(text.contains(
         r#""properties":{"type":{"type":"string","enum":["speak"]},"line":{"type":"string""#
     ));
-    assert!(text.contains(r#""required":["private_thought","action","targets","visibility"]"#));
-    assert!(text.contains(r#""required":["type","verb","object","line"]"#));
-    // The cast and the map are enums, in the canon's order.
+    assert!(text.contains(r#""required":["thought","move","targets","note"]"#));
     assert!(text.contains(r#""enum":["mara","silas","ines"]"#));
-    assert!(text.contains(r#""enum":["harbour","inn","lighthouse","chapel","warehouse"]"#));
-}
-
-#[test]
-fn every_value_of_the_reply_type_meets_its_schema() {
-    let schema = proposal_schema();
-    for sample in samples() {
-        let value = serde_json::to_value(&sample).unwrap();
-        assert_eq!(
-            schema.validate(&value),
-            Ok(value.clone()),
-            "{value} should meet the schema"
-        );
-        assert_eq!(serde_json::from_value::<Proposal>(value).unwrap(), sample);
-    }
 }
 
 #[test]
 fn every_instance_of_the_schema_reads_as_its_type() {
-    let schema = proposal_schema();
+    let schema = sample_schema();
     let all = instances(&schema);
-    // 4 actions, 3 visibilities, 3 + 1 targets lists, the act's nullables.
-    assert!(all.len() >= 10, "{}", all.len());
+    // 3 moves, 3 + 1 targets lists, a note or none.
+    assert!(all.len() >= 6, "{}", all.len());
     for instance in all {
         let checked = schema
             .validate(&instance)
             .unwrap_or_else(|v| panic!("{instance}: {}", describe(&v)));
-        let parsed: Proposal = serde_json::from_value(checked.clone())
-            .unwrap_or_else(|e| panic!("{checked} does not read as a Proposal: {e}"));
+        let parsed: Sample = serde_json::from_value(checked.clone())
+            .unwrap_or_else(|e| panic!("{checked} does not read as a Sample: {e}"));
         assert_eq!(serde_json::to_value(parsed).unwrap(), checked);
     }
 }
 
+/// A stray field on a variant without fields is what serde reads in silence,
+/// even under `deny_unknown_fields` (docs/lessons.md §8); the validator
+/// refuses it.
 #[test]
 fn the_validator_refuses_what_serde_reads_in_silence() {
-    let schema = proposal_schema();
-    // A stray field on a variant without fields: serde reads it as `Public`
-    // under `deny_unknown_fields` (entities::story::event's tests).
     let stray = json!({
-        "private_thought": "",
-        "action": {"type": "wait"},
+        "thought": "",
+        "move": {"type": "wait", "to": "inn"},
         "targets": [],
-        "visibility": {"type": "public", "to": ["ines"]}
+        "note": null
     });
-    let found = schema.validate(&stray).unwrap_err();
-    assert_eq!(describe(&found), "- $.visibility.to: is not in the schema");
+    let found = sample_schema().validate(&stray).unwrap_err();
+    assert_eq!(describe(&found), "- $.move.to: is not in the schema");
 }
 
 #[test]
 fn the_validator_reports_every_violation_at_once() {
-    let schema = proposal_schema();
+    let schema = sample_schema();
     let reply = json!({
-        "action": {"type": "speak", "line": 3},
+        "move": {"type": "speak", "line": 3},
         "targets": "ines",
-        "visibility": {"type": "shout"},
+        "note": null,
         "mood": "grim"
     });
     let found = describe(&schema.validate(&reply).unwrap_err());
     assert_eq!(
         found,
-        "- $.private_thought: missing\n\
-         - $.action.line: expected text, found a number\n\
+        "- $.thought: missing\n\
+         - $.move.line: expected text, found a number\n\
          - $.targets: expected a list, found text\n\
-         - $.visibility.type: \"shout\" is not one of \"public\", \"whisper\", \"hidden\"\n\
          - $.mood: is not in the schema"
     );
     let cases = [
         (
-            json!({"type": "move", "to": "the moon"}),
+            json!({"type": "go", "to": "the moon"}),
             "is not one of \"harbour\"",
         ),
         (
             json!({"line": "hi"}),
-            "$.action.type: missing; one of \"speak\"",
+            "$.move.type: missing; one of \"speak\"",
         ),
-        (json!("speak"), "$.action: expected an object, found text"),
-        (json!({"type": 7}), "$.action.type: missing"),
+        (json!("speak"), "$.move: expected an object, found text"),
+        (json!({"type": 7}), "$.move.type: missing"),
     ];
-    for (action, expected) in cases {
-        let reply = json!({
-            "private_thought": "", "action": action, "targets": [],
-            "visibility": {"type": "hidden"}
-        });
+    for (act, expected) in cases {
+        let reply = json!({"thought": "", "move": act, "targets": [], "note": null});
         let found = describe(&schema.validate(&reply).unwrap_err());
         assert!(found.contains(expected), "{found}");
     }
@@ -275,21 +209,15 @@ fn the_validator_reports_every_violation_at_once() {
 #[test]
 fn enum_values_match_without_regard_to_case_and_come_back_spelled() {
     let reply = json!({
-        "private_thought": "",
-        "action": {"type": "Move", "to": "INN"},
+        "thought": "",
+        "move": {"type": "GO", "to": "INN"},
         "targets": ["Ines"],
-        "visibility": {"type": "WHISPER", "to": ["Silas"]}
+        "note": null
     });
-    let checked = proposal_schema().validate(&reply).unwrap();
-    let parsed: Proposal = serde_json::from_value(checked).unwrap();
-    assert_eq!(parsed.action, Action::Move { to: "inn".into() });
-    assert_eq!(parsed.targets, [CharacterKey::from("ines")]);
-    assert_eq!(
-        parsed.visibility,
-        Visibility::Whisper {
-            to: vec!["silas".into()]
-        }
-    );
+    let checked = sample_schema().validate(&reply).unwrap();
+    let parsed: Sample = serde_json::from_value(checked).unwrap();
+    assert_eq!(parsed.act, Act::Go { to: "inn".into() });
+    assert_eq!(parsed.targets, ["ines"]);
 }
 
 #[test]

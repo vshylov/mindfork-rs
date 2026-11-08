@@ -12,12 +12,11 @@ use super::{
     question_text, quit_text, report,
 };
 use crate::entities::story::{
-    Assumption, Decision, Question, QuestionBody, QuestionId, Resolution, RunId, fixture_canon,
+    Decision, Question, QuestionBody, QuestionId, Resolution, RunId, fixture_canon,
 };
 use crate::features::story::board::RunView;
-use crate::features::story::chapter::Stop;
-use crate::features::story::keeper::LeftOpen;
 use crate::features::story::run::{Ending, Landed, LandedChapter};
+use crate::features::story::single_story::Stop;
 use crate::features::tools::Tool;
 use crate::features::tools::testkit::ctx_with_storage_lang;
 use crate::shared::i18n::{Lang, Locale, locale};
@@ -177,16 +176,13 @@ fn landed(ending: Ending) -> Landed {
     Landed {
         ending,
         chapter: None,
-        picks: Vec::new(),
-        assumptions: Vec::new(),
-        left_open: Vec::new(),
         spent: Spend::default(),
     }
 }
 
-/// A chapter at its checkpoint lands with the attachment's name, its summary,
-/// the picks, the assumptions, the question and what the run cost — and the
-/// question asks the assistant to put it to the user and wait.
+/// A chapter at its checkpoint lands with the attachment's name, the question
+/// and what the run cost — and the question asks the assistant to put it to
+/// the user and wait.
 #[test]
 fn a_checkpoint_lands_with_everything_the_user_decides_on() {
     let en = locale(Lang::En);
@@ -195,23 +191,7 @@ fn a_checkpoint_lands_with_everything_the_user_decides_on() {
             number: 1,
             version: 2,
             text: "## One".to_owned(),
-            summary: Some("  Mara learns of the debt. ".to_owned()),
         }),
-        picks: vec![(2, "The quarrel shows the debt.".to_owned())],
-        assumptions: vec![Assumption {
-            doubt: "Whether Silas lies.".to_owned(),
-            choice: "He lies.".to_owned(),
-        }],
-        left_open: vec![
-            LeftOpen {
-                question: " Whose steps were on the path? ".to_owned(),
-                reason: Some("Left for the reader.".to_owned()),
-            },
-            LeftOpen {
-                question: "Who wrote the log's last line?".to_owned(),
-                reason: None,
-            },
-        ],
         spent: Spend {
             calls: 12,
             input_tokens: 9000,
@@ -227,12 +207,6 @@ fn a_checkpoint_lands_with_everything_the_user_decides_on() {
     filled(&text);
     for want in [
         "Chapter 1 is written (version 2) and attached to this chat as «s1 — chapter 1.md».",
-        "Summary: Mara learns of the debt.\n",
-        "The chapter's scenes by number, and why each was kept:\n- Scene 2: The quarrel shows \
-         the debt.",
-        "could have been asked:\n- Whether Silas lies. — chosen: He lies.",
-        "Threads the story leaves open at its end:\n- Whose steps were on the path? — the \
-         Author: Left for the reader.\n- Who wrote the log's last line?\n",
         "chapter 1 (version 2): accept it",
         "Ask them in your own words",
         "This run made 12 model call(s), 10000 tokens.",
@@ -298,28 +272,11 @@ fn every_ending_says_where_the_run_stopped() {
             },
             "at step ch1/sc2: the reply was cut",
         ),
-        (
-            Ending::Stopped {
-                step: step(),
-                why: Stop::Refused("mara cannot be brought to inn".to_owned()),
-            },
-            "refused an event at step ch1/sc2: mara cannot be brought to inn. The run stopped \
-             there",
-        ),
         (Ending::TimedOut { step: step() }, "time limit"),
         (Ending::Finished, "the story is finished"),
         (
             Ending::Failed("the story is open already".to_owned()),
             "The story's run failed: the story is open already",
-        ),
-        (
-            Ending::Paused(question(QuestionBody::Scene {
-                chapter: 1,
-                scene: 2,
-                rerun: 2,
-                errors: vec!["a".to_owned(), "b".to_owned()],
-            })),
-            "scene 2 of chapter 1 failed on every attempt (a; b)",
         ),
     ];
     for (ending, want) in cases {
@@ -402,7 +359,6 @@ async fn the_tool_reads_the_chats_stories_and_the_run_out() {
                     decision: Decision::Approve,
                     notes: String::new(),
                     evidence: json!(null),
-                    rerun: None,
                 },
             )
             .await

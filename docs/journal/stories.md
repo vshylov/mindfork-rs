@@ -13,7 +13,7 @@ what was rejected — the reasoning behind the code, not its current shape. For 
 shape read the reference documents named above; for the traps that recur across areas read
 [lessons.md](../lessons.md).
 
-## Entries (25)
+## Entries (26)
 
 - Post-M9: Fabula — PR 1, the story database (done)
 - Post-M9: Fabula — PR 2, the model port and replay; Gate G0 GO (done)
@@ -40,6 +40,7 @@ shape read the reference documents named above; for the traps that recur across 
 - Post-M9: Fabula — M3's judging (done)
 - Post-M9: Fabula — A1 against B0 (done)
 - Post-M9: Fabula — PR 15, the story tools on B0 (done)
+- Post-M9: Fabula — PR 16, F removed (done)
 
 ### Post-M9: Fabula — PR 1, the story database (done)
 
@@ -2349,3 +2350,42 @@ running B0, and took every recommendation of the switch's forks (2026-11-08; doc
     without a call known from Qwen ([tools.md](tools.md), *a background run is started by its
     call, not by the reply*).
   - **Where it is.** The transcript and the story are in `target/fabula/b0-live-gemma-ru/`.
+
+### Post-M9: Fabula — PR 16, F removed (done)
+
+T28 (a), on PR 15: the simulation, F's chapter loop and the systems A1–A4 go, with their tests
+and live smokes (2026-11-08). The commit before it, PR 15's head, is tagged `fabula/f-final`.
+
+- **What went.** Some 25,000 lines, 83 files.
+  - `features/story/`: the scene runner, the simulation, the World Master's and the characters'
+    contracts and prompts, the leaks' audit, the chapter loop, the Author's replies and
+    prompts, the Canon keeper, the staging pass, the steps, the replay, and the harbour
+    scene's fixture.
+  - `entities/story/`: the events, the world's fold and the witnesses; the outline, the
+    register, the review notes and decisions, the assumptions, the take; P3 and the `answer`
+    decision.
+  - The story database's actor, writers and tables for all of them. The live smokes of the
+    scene, the simulation (Gate G1), the chapter, the register, the continuity, the staging and
+    the schema probe; 171 unit tests and 15 `#[ignore]` ones. The landing's summary, picks,
+    assumptions and threads left open, which nothing wrote under B0 any more.
+- **The schema changed in place.** The story database was in no release, so `STORY_SCHEMA`
+  stays 1. The simulation's tables leave the DDL, `question.kind` loses `scene` and
+  `answer.decision` loses `answer`. A file an earlier build wrote still opens: the DDL is
+  `CREATE … IF NOT EXISTS`, and the old tables are left as they were. `mindfork stats`
+  reads the kept tables alone.
+- **An approved canon is frozen.** The canon froze once the story had events, and under B0
+  it never would. It now freezes once approved, which `story_create` already enforced.
+- **The runner keeps B0 and the judging.**
+  - **The target.** B0's equal cost had been F's average spend on the premise. Without F, it
+    is the spend `--target-usd` or `--target-tokens` names, in `run` and in `batch`. Without
+    either, the session ends on its 24 revisions, as the story tools' does.
+  - **The names.** `--system` defaults to B0 and refuses any other. The names F and A1–A4
+    stay, so that `verdict` and `judge` still read M3's stories on disk.
+- **The dead-code allow went with it.** `shared::storage` had carried `#[allow(dead_code)]`
+  on the story module "until the last consumer"; removing it found five items only F had
+  used, now gone or `#[cfg(test)]`.
+- **Checked here.**
+  - B0's system prompt, draft, critique and revision, on the fixture and all twelve frozen
+    premises, and a chapter's prompts for a longer arc, were dumped before and after the
+    removal: byte for byte the same (158 KB).
+  - `cargo test`: 4713 passed, 314 ignored. Clippy and every repository gate are clean.

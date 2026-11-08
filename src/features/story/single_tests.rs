@@ -4,19 +4,57 @@
 
 use std::sync::Arc;
 
+use serde_json::json;
+use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 
 use super::{
     CRITIQUE_ASK, Ended, SingleConfig, Target, draft_ask, revise_ask, system, would_overflow, write,
 };
 use crate::entities::sampling::SamplingConfig;
-use crate::entities::story::{VersionOrigin, fixture_canon};
+use crate::entities::story::{RunId, VersionOrigin, fixture_canon};
 use crate::features::story::author_prompts;
 use crate::features::story::engine::{EngineAdapter, SharedLog};
-use crate::features::story::scene::tests::fresh_story;
 use crate::shared::api::contract::{ChatChunk, FinishReason, TokenUsage};
 use crate::shared::api::mock::MockBackend;
-use crate::shared::storage::story::Spend;
+use crate::shared::storage::story::{AuthorWriter, RunLogWriter, Spend, StoryDb};
+
+/// An open story with the harbour canon and a started run.
+pub(crate) struct Story {
+    /// Keeps the files alive.
+    pub dir: TempDir,
+    /// The story.
+    pub db: StoryDb,
+    /// The Author's capability.
+    pub author: AuthorWriter,
+    /// The run started.
+    pub run: RunId,
+}
+
+/// A story in a directory of its own, with the harbour canon imported and a
+/// run started; the run log's capability beside it.
+pub(crate) async fn fresh_story() -> (Story, RunLogWriter) {
+    let dir = tempfile::tempdir().unwrap();
+    let db = StoryDb::open(
+        &dir.path().join("story.db"),
+        &dir.path().join("story.calls.db"),
+    )
+    .await
+    .unwrap();
+    let mut author = db.author_writer().await.unwrap();
+    author.import_canon(&fixture_canon()).await.unwrap();
+    let mut log = db.run_log_writer().await.unwrap();
+    let run = log.start_run(&json!({"scene": "harbour"})).await.unwrap();
+    (
+        Story {
+            dir,
+            db,
+            author,
+            run,
+        },
+        log,
+    )
+}
 
 /// A reply of 120 prompt and 30 reply tokens.
 pub(crate) fn reply(text: &str) -> Vec<ChatChunk> {

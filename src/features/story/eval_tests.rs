@@ -1,19 +1,16 @@
-//! Tests of the evaluation runner (docs/fabula.md §4, PR 13): each system's
-//! wiring, the premises held to their hashes, the command's arguments, B0's
-//! target, the batch's skipping, and one story written end to end with its
-//! markdown and trace. The chapter systems' loops are tested beside the
-//! chapter's (`chapter::systems_tests`).
+//! Tests of the evaluation runner (docs/fabula.md §4, PR 13; §6, T28): the
+//! systems' names, the premises held to their hashes, the command's
+//! arguments, the batch's skipping, and one story written end to end with its
+//! markdown and trace.
 
 use std::sync::Arc;
 
 use serde_json::json;
 
 use super::{
-    Batch, Command, Ending, Job, Options, Route, System, Wire, answer_to, ended, frozen, frozen_of,
-    parse, premise, recorded, run_story, sha256_hex, story_dir, target_of, wave,
+    Batch, Command, Ending, Job, Options, Route, System, Wire, ended, frozen, frozen_of, jobs,
+    parse, premise, recorded, run_story, sha256_hex, story_dir,
 };
-use crate::entities::story::{Decision, QuestionBody};
-use crate::features::story::chapter::ChapterConfig;
 use crate::features::story::single::Target;
 use crate::shared::api::contract::{ChatChunk, FinishReason, Served, TokenUsage};
 use crate::shared::api::mock::MockBackend;
@@ -24,20 +21,10 @@ fn args(line: &str) -> Vec<String> {
     line.split_whitespace().map(str::to_owned).collect()
 }
 
+/// Every system keeps its name, under which M3's stories are filed, though
+/// only B0 is written now (T28).
 #[test]
-fn each_system_changes_one_thing_of_fs_chapter() {
-    let base = ChapterConfig::default();
-    assert_eq!(System::F.chapter(&base), Some(base.clone()));
-    assert_eq!(System::B0.chapter(&base), None);
-    let a1 = System::A1.chapter(&base).unwrap();
-    assert!(!a1.simulate && a1.review && a1.sim == base.sim);
-    let a2 = System::A2.chapter(&base).unwrap();
-    assert_eq!(a2.sim.branches, 1);
-    assert!(a2.simulate && a2.review);
-    let a3 = System::A3.chapter(&base).unwrap();
-    assert!(!a3.review && a3.simulate && a3.sim == base.sim);
-    let a4 = System::A4.chapter(&base).unwrap();
-    assert!(a4.sim.omniscient && a4.sim.branches == base.sim.branches);
+fn every_system_keeps_its_name() {
     for system in System::ALL {
         assert_eq!(System::parse(&system.as_str().to_lowercase()), Some(system));
     }
@@ -125,7 +112,7 @@ fn a_premise_file_is_read_checked_and_hashed() {
 #[test]
 fn the_command_reads_its_arguments() {
     let run = parse(&args(&format!(
-        "run --premise {HARBOUR} --system a1 --seed 2 --out out/x \
+        "run --premise {HARBOUR} --seed 2 --out out/x \
          --engine openrouter --model qwen/qwen3.8-27b --provider deepinfra --language English \
          --budget-tokens 0 --timeout-hours 0.5"
     )))
@@ -138,8 +125,11 @@ fn the_command_reads_its_arguments() {
     else {
         panic!("not a run");
     };
-    assert_eq!((job.system, job.seed), (System::A1, 2));
-    assert_eq!(job.target, None);
+    assert_eq!((job.system, job.seed), (System::B0, 2));
+    assert_eq!(
+        job.target, None,
+        "no target: the session ends on its revisions"
+    );
     assert_eq!(route.wire, Wire::OpenRouter);
     assert_eq!(route.key_env, "OPENROUTER_API_KEY");
     assert_eq!(route.pin, ["deepinfra"]);
@@ -148,15 +138,22 @@ fn the_command_reads_its_arguments() {
     assert_eq!(options.timeout.as_secs(), 1800);
 
     let batch = parse(&args(&format!(
-        "batch --out out --premises {HARBOUR} --engine anthropic --model claude-sonnet-5-5"
+        "batch --out out --premises {HARBOUR} --target-tokens 5000 --engine anthropic \
+         --model claude-sonnet-5-5"
     )))
     .unwrap();
     let Command::Batch { batch, options, .. } = batch else {
         panic!("not a batch");
     };
-    // The two decisions first (T23), three seeds, in Russian (T20).
-    assert_eq!(batch.systems, [System::F, System::B0, System::A1]);
+    // Three seeds, in Russian (T20), to the spend named.
     assert_eq!(batch.seeds, [1, 2, 3]);
+    assert_eq!(
+        batch.target,
+        Some(Target {
+            usd: None,
+            tokens: 5000
+        })
+    );
     assert_eq!(options.language, "Russian");
     assert_eq!(options, Options::default());
 
@@ -168,25 +165,29 @@ fn the_command_reads_its_arguments() {
             "x is neither a frozen premise nor a readable file",
         ),
         (
-            &format!("run --premise {HARBOUR} --system B0 --out o --engine openrouter --model m")
+            &format!("run --premise {HARBOUR} --system F --out o --engine openrouter --model m")
                 as &str,
-            "B0 needs --target-usd or --target-tokens",
+            "only B0 is written",
         ),
         (
             &format!(
-                "run --premise {HARBOUR} --system F --out o --engine anthropic --model m \
+                "batch --out o --premises {HARBOUR} --systems F,B0 --engine openrouter --model m"
+            ),
+            "only B0 is written",
+        ),
+        (
+            &format!(
+                "run --premise {HARBOUR} --out o --engine anthropic --model m \
                  --provider deepinfra"
             ),
             "--provider pins OpenRouter's routing",
         ),
         (
-            &format!(
-                "run --premise {HARBOUR} --system F --out o --engine openrouter --model m --k 3"
-            ),
+            &format!("run --premise {HARBOUR} --out o --engine openrouter --model m --k 3"),
             "--k is not an option",
         ),
         (
-            &format!("run --premise {HARBOUR} --system F --out o --model m"),
+            &format!("run --premise {HARBOUR} --out o --model m"),
             "--engine is required",
         ),
         ("walk", "no story-eval command is called walk"),
@@ -223,30 +224,6 @@ fn an_unset_key_is_named_by_its_variable_and_never_read_out() {
     );
 }
 
-#[test]
-fn the_pauses_are_answered_as_the_plan_has_it() {
-    let scene = QuestionBody::Scene {
-        chapter: 1,
-        scene: 2,
-        rerun: 2,
-        errors: Vec::new(),
-    };
-    assert_eq!(
-        answer_to(&QuestionBody::Canon, 0),
-        Some((Decision::Approve, ""))
-    );
-    assert_eq!(
-        answer_to(&scene, 0),
-        Some((Decision::Answer, "Try the scene again."))
-    );
-    assert_eq!(answer_to(&scene, 1), None, "once");
-    let chapter = QuestionBody::Chapter {
-        chapter: 1,
-        version: 2,
-    };
-    assert_eq!(answer_to(&chapter, 1), Some((Decision::Approve, "")));
-}
-
 fn trace(kind: &str, tokens: u64, usd: Option<f64>) -> serde_json::Value {
     json!({
         "ending": {"kind": kind, "transient": kind == "stopped"},
@@ -255,23 +232,7 @@ fn trace(kind: &str, tokens: u64, usd: Option<f64>) -> serde_json::Value {
 }
 
 #[test]
-fn b0s_target_is_the_finished_f_stories_average() {
-    assert_eq!(target_of(&[]), None);
-    assert_eq!(target_of(&[trace("timed_out", 9, None)]), None);
-    let both = target_of(&[
-        trace("finished", 1_000, Some(1.0)),
-        trace("finished", 3_000, Some(2.0)),
-        trace("stopped", 99_000, Some(50.0)),
-    ])
-    .unwrap();
-    assert_eq!(both.tokens, 2_000);
-    assert_eq!(both.usd, Some(1.5));
-    let mixed = target_of(&[
-        trace("finished", 1_000, Some(1.0)),
-        trace("finished", 3_000, None),
-    ])
-    .unwrap();
-    assert_eq!(mixed.usd, None, "dollars only where every story has them");
+fn a_story_ended_for_good_is_one_finished_or_stopped_for_good() {
     assert!(ended(&trace("finished", 0, None)));
     assert!(
         !ended(&trace("stopped", 0, None)),
@@ -284,48 +245,37 @@ fn b0s_target_is_the_finished_f_stories_average() {
 }
 
 #[tokio::test]
-async fn a_batch_leaves_out_what_ended_and_waits_for_f_before_b0() {
+async fn a_batch_leaves_out_what_ended() {
     let out = tempfile::tempdir().unwrap();
     let harbour = premise(HARBOUR).unwrap();
+    let target = Some(Target {
+        usd: None,
+        tokens: 1_000,
+    });
     let batch = Batch {
         premises: vec![harbour],
-        systems: vec![System::F, System::B0, System::A1],
         seeds: vec![1, 2],
         out: out.path().to_owned(),
         parallel: 2,
+        target,
     };
     let names = |jobs: &[Job]| -> Vec<String> {
         jobs.iter()
             .map(|j| format!("{}/s{}", j.system.as_str(), j.seed))
             .collect()
     };
-    assert_eq!(
-        names(&wave(&batch, false).await),
-        ["F/s1", "F/s2", "A1/s1", "A1/s2"]
-    );
-    assert!(
-        wave(&batch, true).await.is_empty(),
-        "no F story has finished"
-    );
-    let write = |system: System, seed: u64, trace: serde_json::Value| {
-        let dir = story_dir(out.path(), "harbour", system, seed);
+    assert_eq!(names(&jobs(&batch).await), ["B0/s1", "B0/s2"]);
+    let write = |seed: u64, trace: serde_json::Value| {
+        let dir = story_dir(out.path(), "harbour", System::B0, seed);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("trace.json"), trace.to_string()).unwrap();
     };
-    write(System::F, 1, trace("finished", 1_000, None));
-    write(System::F, 2, trace("stopped", 5, None));
-    write(System::A1, 1, trace("finished", 10, None));
-    assert_eq!(names(&wave(&batch, false).await), ["F/s2", "A1/s2"]);
-    let b0 = wave(&batch, true).await;
-    assert_eq!(names(&b0), ["B0/s1", "B0/s2"]);
-    assert_eq!(
-        b0[0].target,
-        Some(Target {
-            usd: None,
-            tokens: 1_000
-        })
-    );
-    assert!(b0[0].dir.ends_with("harbour/B0/s1"));
+    write(1, trace("finished", 1_000, None));
+    write(2, trace("stopped", 5, None));
+    let left = jobs(&batch).await;
+    assert_eq!(names(&left), ["B0/s2"], "a failed call is tried again");
+    assert_eq!(left[0].target, target);
+    assert!(left[0].dir.ends_with("harbour/B0/s2"));
 }
 
 fn turn(text: &str) -> Vec<ChatChunk> {
@@ -385,7 +335,6 @@ async fn a_story_is_written_into_its_directory_with_its_markdown_and_trace() {
     assert_eq!(trace["spent"]["calls"], 3);
     assert_eq!(trace["roles"]["author"]["calls"], 3);
     assert_eq!(trace["route"]["pin"], json!(["deepinfra"]));
-    assert_eq!(trace["leaks"], json!([]));
     let markdown = std::fs::read_to_string(job.dir.join("story.md")).unwrap();
     assert_eq!(markdown, "## Again\n\nOne two three four.\n");
     // The heading's `##` is no word (F2's count).

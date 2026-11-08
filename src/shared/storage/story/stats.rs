@@ -14,12 +14,9 @@
 //! copy whose units include all of another's holds everything that one does.
 //! Ids alone would not do, since two machines continuing one story write the
 //! same ids with different content, and that is what the digest tells apart.
-//! Two tables are read differently: a witness belongs to its event's unit, as
-//! the two are written together, and only a step that is done counts, without
-//! its time, since a failed step is retried and a done one may be recorded
-//! again.
+//! The simulation's tables, which a story written before it was removed may
+//! hold (docs/fabula.md §6, T28), are not read.
 
-use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::Path;
 
@@ -36,29 +33,15 @@ use crate::shared::storage::db::{has_table, open_file, open_image};
 const UNIT_DIGEST_HEX: usize = 12;
 
 /// The tables a story's identity is drawn from, with what keys a row
-/// (`CAST … AS TEXT`, so a number keys as text) and which rows count.
-const UNIT_TABLES: &[(&str, &str, &str)] = &[
-    ("run", "id", ""),
-    ("step", "run_id || '/' || address", " WHERE status = 'done'"),
-    ("canon_doc", "id", ""),
-    ("canon_approval", "canon_doc_id", ""),
-    ("scene", "id", ""),
-    ("branch", "id", ""),
-    ("proposal", "id", ""),
-    ("event", "id", ""),
-    ("reflection", "id", ""),
-    ("outline", "chapter_no", ""),
-    ("chapter", "id", ""),
-    ("chapter_summary", "chapter_id", ""),
-    ("chapter_register", "chapter_id", ""),
-    ("review_note", "id", ""),
-    ("pick", "scene_id", ""),
-    ("chapter_acceptance", "chapter_id", ""),
-    ("note_decision", "note_id", ""),
-    ("question", "id", ""),
-    ("answer", "question_id", ""),
-    ("assumption", "id", ""),
-    ("take", "id", ""),
+/// (`CAST … AS TEXT`, so a number keys as text).
+const UNIT_TABLES: &[(&str, &str)] = &[
+    ("run", "id"),
+    ("canon_doc", "id"),
+    ("canon_approval", "canon_doc_id"),
+    ("chapter", "id"),
+    ("chapter_acceptance", "chapter_id"),
+    ("question", "id"),
+    ("answer", "question_id"),
 ];
 
 /// What `mindfork stats` reports of one story.
@@ -71,9 +54,6 @@ pub struct StoryStats {
     pub accepted_chapters: u64,
     /// Every version of every chapter: drafts, revisions, the human's.
     pub chapter_versions: u64,
-    pub scenes: u64,
-    pub branches: u64,
-    pub events: u64,
     /// The engine's runs, a resume being a run of its own (spec §9).
     pub runs: u64,
     /// The questions asked, and of them those not answered yet.
@@ -114,9 +94,6 @@ fn collect(conn: &Connection) -> Result<StoryStats> {
             0
         },
         chapter_versions: count(conn, "chapter", "SELECT COUNT(*) FROM chapter")?,
-        scenes: count(conn, "scene", "SELECT COUNT(*) FROM scene")?,
-        branches: count(conn, "branch", "SELECT COUNT(*) FROM branch")?,
-        events: count(conn, "event", "SELECT COUNT(*) FROM event")?,
         runs: count(conn, "run", "SELECT COUNT(*) FROM run")?,
         questions: count(conn, "question", "SELECT COUNT(*) FROM question")?,
         pending_questions: if has_table(conn, "answer")? {
@@ -146,15 +123,12 @@ fn count(conn: &Connection, table: &str, sql: &str) -> Result<u64> {
 
 /// Every unit of the story, sorted ([`StoryStats::units`]).
 fn units(conn: &Connection) -> Result<Vec<String>> {
-    let witnesses = witnesses(conn)?;
     let mut out = Vec::new();
-    for (table, key, filter) in UNIT_TABLES {
+    for (table, key) in UNIT_TABLES {
         if !has_table(conn, table)? {
             continue;
         }
-        // A step's unit is its key alone: done is all it says.
-        let columns = if *table == "step" { "status" } else { "*" };
-        let sql = format!("SELECT CAST({key} AS TEXT), {columns} FROM {table}{filter}");
+        let sql = format!("SELECT CAST({key} AS TEXT), * FROM {table}");
         let mut stmt = conn
             .prepare(&sql)
             .with_context(|| format!("reading {table}"))?;
@@ -162,35 +136,13 @@ fn units(conn: &Connection) -> Result<Vec<String>> {
         let mut rows = stmt.query([])?;
         while let Some(row) = rows.next()? {
             let key: String = row.get(0)?;
-            let mut values = (1..width)
+            let values = (1..width)
                 .map(|i| row.get_ref(i).map(value))
                 .collect::<rusqlite::Result<Vec<_>>>()?;
-            if *table == "event"
-                && let Some(seen) = witnesses.get(&key)
-            {
-                values.push(Value::from(seen.clone()));
-            }
             out.push(unit(table, &key, &values));
         }
     }
     out.sort();
-    Ok(out)
-}
-
-/// Each event's witnesses, in key order.
-fn witnesses(conn: &Connection) -> Result<BTreeMap<String, Vec<String>>> {
-    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    if !has_table(conn, "event_witness")? {
-        return Ok(out);
-    }
-    let mut stmt = conn.prepare(
-        "SELECT event_id, character_key FROM event_witness ORDER BY event_id, character_key",
-    )?;
-    let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
-    for row in rows {
-        let (event, witness) = row?;
-        out.entry(event).or_default().push(witness);
-    }
     Ok(out)
 }
 

@@ -20,8 +20,8 @@ use super::{Tool, ToolContext, ToolOutcome};
 use crate::entities::profile::ToolId;
 use crate::entities::story::{Question, QuestionBody};
 use crate::features::story::board::RunView;
-use crate::features::story::chapter::Stop;
 use crate::features::story::run::{Ending, Landed};
+use crate::features::story::single_story::Stop;
 use crate::shared::i18n::Locale;
 use crate::shared::storage::story::{Spend, StoryStatus, story_status_of};
 
@@ -221,19 +221,6 @@ pub fn question_text(loc: &Locale, body: &QuestionBody) -> String {
                 ("version", &version.to_string()),
             ],
         ),
-        QuestionBody::Scene {
-            chapter,
-            scene,
-            errors,
-            ..
-        } => loc.tf(
-            "tool.story.question.scene",
-            &[
-                ("chapter", &chapter.to_string()),
-                ("scene", &scene.to_string()),
-                ("errors", &errors.join("; ")),
-            ],
-        ),
     }
 }
 
@@ -265,43 +252,6 @@ pub fn landing_text(loc: &Locale, landed: &Landed, attached: Option<&str>) -> St
                 ("file", file),
             ],
         ));
-        if let Some(summary) = chapter.summary.as_deref().filter(|s| !s.trim().is_empty()) {
-            parts.push(loc.tf("tool.story.landing.summary", &[("summary", summary.trim())]));
-        }
-    }
-    if !landed.picks.is_empty() {
-        parts.push(listed(
-            loc.t("tool.story.landing.picks"),
-            landed.picks.iter().map(|(scene, note)| {
-                loc.tf(
-                    "tool.story.landing.pick",
-                    &[("n", &scene.to_string()), ("note", note.trim())],
-                )
-            }),
-        ));
-    }
-    if !landed.assumptions.is_empty() {
-        parts.push(listed(
-            loc.t("tool.story.landing.assumptions"),
-            landed.assumptions.iter().map(|a| {
-                loc.tf(
-                    "tool.story.landing.assumption",
-                    &[("doubt", a.doubt.trim()), ("choice", a.choice.trim())],
-                )
-            }),
-        ));
-    }
-    if !landed.left_open.is_empty() {
-        parts.push(listed(
-            loc.t("tool.story.landing.left_open"),
-            landed.left_open.iter().map(|t| match t.reason.as_deref() {
-                Some(reason) => loc.tf(
-                    "tool.story.landing.left_open_reason",
-                    &[("question", t.question.trim()), ("reason", reason)],
-                ),
-                None => t.question.trim().to_owned(),
-            }),
-        ));
     }
     parts.push(ending_text(loc, &landed.ending));
     if landed.spent.calls > 0 {
@@ -315,15 +265,6 @@ pub fn landing_text(loc: &Locale, landed: &Landed, attached: Option<&str>) -> St
         ));
     }
     parts.join("\n\n")
-}
-
-fn listed(head: &str, items: impl Iterator<Item = String>) -> String {
-    let mut out = head.to_owned();
-    for item in items {
-        out.push_str("\n- ");
-        out.push_str(&item);
-    }
-    out
 }
 
 /// How the run ended, and what the user is asked.
@@ -350,13 +291,6 @@ fn ending_text(loc: &Locale, ending: &Ending) -> String {
             why: Stop::Failed(err),
         } => loc.tf(
             "tool.story.landing.failed_step",
-            &[("step", step), ("err", err)],
-        ),
-        Ending::Stopped {
-            step,
-            why: Stop::Refused(err),
-        } => loc.tf(
-            "tool.story.landing.refused",
             &[("step", step), ("err", err)],
         ),
         Ending::TimedOut { step } => loc.tf("tool.story.landing.timed_out", &[("step", step)]),

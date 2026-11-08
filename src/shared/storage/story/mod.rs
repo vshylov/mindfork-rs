@@ -7,18 +7,13 @@
 //!   job sent to that thread and awaited through a oneshot, so jobs run one at
 //!   a time and a commit's check and its append see the same state.
 //! - **One logical writer per store.** The actor hands out capabilities that
-//!   are not `Clone` ([`BranchWriter`] per branch, [`ReflectionWriter`] per
-//!   character and branch, one [`AuthorWriter`], one [`RunLogWriter`]), refuses
-//!   a second while the first lives, and checks every write against the one it
-//!   issued. Dropping a capability frees its store for the next one, which is
-//!   how a resumed run takes its branch back.
+//!   are not `Clone` (one [`AuthorWriter`], one [`RunLogWriter`]), refuses a
+//!   second while the first lives, and checks every write against the one it
+//!   issued. Dropping a capability frees its store for the next one.
 //! - **One open per file.** A second [`StoryDb::open`] of a file already open
 //!   in this process is refused; across processes the application's
 //!   single-instance lock holds, and the evaluation's runner writes into a
 //!   directory of its own (spec §15).
-//! - **A branch is a path.** Every view of the world is computed over one
-//!   branch's ancestry: its parent's events up to the fork, recursively, then
-//!   its own, so a branch never sees a sibling's events (spec §6).
 
 mod actor;
 mod schema;
@@ -26,7 +21,7 @@ mod stats;
 mod status;
 mod writers;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError, mpsc};
 
@@ -34,10 +29,7 @@ use serde_json::Value;
 use tokio::sync::oneshot;
 
 use crate::entities::story::{
-    BranchId, Canon, CanonProblem, ChapterId, ChapterOutline, ChapterVersion, CharacterKey,
-    Decided, Event, EventId, Proposal, ProposalId, ProposalVerdict, Question, QuestionId, Refusal,
-    Register, Resolution, ReviewNote, Reviewer, RunId, SceneId, SceneSetup, StoredAssumption, Take,
-    WorldState,
+    Canon, CanonProblem, ChapterId, ChapterVersion, Question, QuestionId, Resolution, RunId,
 };
 use actor::{Actor, Job};
 
@@ -45,7 +37,7 @@ pub use stats::{StoryStats, story_stats_of_file, story_stats_of_image};
 #[cfg(test)]
 pub use status::ChapterState;
 pub use status::{StoryStatus, story_status_of};
-pub use writers::{AuthorWriter, BranchWriter, ReflectionWriter, ReviewWriter, RunLogWriter};
+pub use writers::{AuthorWriter, RunLogWriter};
 
 /// Why the story database refused or failed. The texts are for logs and for
 /// the engine; a person sees what the story tools make of them.
@@ -101,49 +93,9 @@ pub enum StoryDbError {
     /// The canon has problems; all of them.
     #[error("the canon was refused: {}", join(.0))]
     Canon(Vec<CanonProblem>),
-    /// The canon cannot change once events exist.
-    #[error("the canon cannot change once the story has events")]
+    /// The canon cannot change once it is approved.
+    #[error("the canon cannot change once it is approved")]
     CanonFrozen,
-    /// No canon was imported yet.
-    #[error("the story has no canon yet")]
-    NoCanon,
-    /// The world's rules refuse an event, a scene or a proposal.
-    #[error("refused: {0}")]
-    Refused(#[from] Refusal),
-    /// A branch the story does not have.
-    #[error("there is no branch {0}")]
-    UnknownBranch(BranchId),
-    /// A branch created twice.
-    #[error("branch {0} exists already")]
-    BranchExists(BranchId),
-    /// A scene the story does not have.
-    #[error("there is no scene {0}")]
-    UnknownScene(SceneId),
-    /// A scene created twice.
-    #[error("scene {0} exists already")]
-    SceneExists(SceneId),
-    /// A scene picked twice.
-    #[error("scene {0} is picked already")]
-    PickExists(SceneId),
-    /// A pick of a branch that belongs to another scene.
-    #[error("branch {branch} is not a branch of scene {scene}")]
-    PickElsewhere {
-        /// The scene being picked for.
-        scene: SceneId,
-        /// The branch named.
-        branch: BranchId,
-    },
-    /// A proposal the story does not have.
-    #[error("there is no proposal {0}")]
-    UnknownProposal(ProposalId),
-    /// An event committed from another branch's proposal.
-    #[error("proposal {proposal} belongs to branch {branch}")]
-    ProposalElsewhere {
-        /// The proposal named.
-        proposal: ProposalId,
-        /// The branch it was recorded on.
-        branch: BranchId,
-    },
     /// A run the story does not have.
     #[error("there is no run {0}")]
     UnknownRun(RunId),
@@ -160,8 +112,7 @@ pub enum StoryDbError {
     /// Stored data that does not read back, or no longer folds.
     #[error("the story database is inconsistent: {0}")]
     Corrupt(String),
-    /// A row of the manuscript written twice: an outline, a summary, a
-    /// review, a decision, an answer.
+    /// A row of the manuscript written twice: an answer.
     #[error("{0} exists already")]
     Exists(String),
     /// A row of the manuscript the story does not have.
@@ -174,14 +125,6 @@ pub enum StoryDbError {
     /// A question asked while another waits for its answer.
     #[error("question {0} waits for its answer")]
     QuestionPending(QuestionId),
-    /// A rerun the answer cannot ask for (docs/fabula.md §4, PR 10).
-    #[error("scene {scene} cannot be played again: {why}")]
-    BadRerun {
-        /// The scene named.
-        scene: u32,
-        /// Why not.
-        why: String,
-    },
 }
 
 fn join(problems: &[CanonProblem]) -> String {
@@ -190,107 +133,6 @@ fn join(problems: &[CanonProblem]) -> String {
         .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join("; ")
-}
-
-/// An event as committed: its id, its place in the commit order, and who
-/// perceived it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommittedEvent {
-    /// The event's id.
-    pub id: EventId,
-    /// Its place in the story's commit order.
-    pub seq: u64,
-    /// Who perceived it.
-    pub witnesses: BTreeSet<CharacterKey>,
-}
-
-/// A branch as stored.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BranchInfo {
-    /// Its id.
-    pub id: BranchId,
-    /// The branch it forked from; none for genesis.
-    pub parent: Option<BranchId>,
-    /// The last of the parent path's events it inherits; none for genesis.
-    pub fork_seq: Option<u64>,
-    /// Its scene; none for genesis.
-    pub scene: Option<SceneId>,
-    /// Its index among the scene's branches.
-    pub k: u32,
-    /// The seed its calls derive from.
-    pub seed: u64,
-}
-
-/// A proposal as the World Master ruled on it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StoredProposal {
-    /// Its id.
-    pub id: ProposalId,
-    /// The round it was made in.
-    pub round: u32,
-    /// Who proposed it.
-    pub character: CharacterKey,
-    /// What was proposed.
-    pub proposal: Proposal,
-    /// The ruling.
-    pub verdict: ProposalVerdict,
-    /// The ruling's reason.
-    pub reason: Option<String>,
-}
-
-/// A character's private reflection on a branch (spec §7).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Reflection {
-    /// Its id.
-    pub id: String,
-    /// The branch it was written on.
-    pub branch: BranchId,
-    /// The path's last event when it was written.
-    pub after_seq: u64,
-    /// The reflection.
-    pub body: String,
-    /// The goals it changed.
-    pub goal_changes: Vec<String>,
-}
-
-/// A scene as the Author stored it: where it sits, its circumstances and the
-/// Author's private intent.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StoredScene {
-    /// Its id.
-    pub id: SceneId,
-    /// The chapter.
-    pub chapter: u32,
-    /// The scene within it.
-    pub scene: u32,
-    /// The rerun.
-    pub rerun: u32,
-    /// The given circumstances.
-    pub setup: SceneSetup,
-    /// The Author's intent.
-    pub intent: String,
-}
-
-/// A scene's pick: the branch that extends the main line, or none when a
-/// rerun was wanted, and why.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StoredPick {
-    /// The branch picked; none for a rerun.
-    pub branch: Option<BranchId>,
-    /// The note for the human.
-    pub rationale: String,
-}
-
-/// A scene the main line keeps: the attempt, the branch picked for it, and
-/// the pick's note for the human (docs/fabula.md §4, PR 10).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct KeptPick {
-    /// The attempt.
-    pub scene: StoredScene,
-    /// The branch that extends the main line.
-    pub branch: BranchId,
-    /// The note for the human.
-    pub rationale: String,
 }
 
 /// What a set of calls cost, as the call log recorded it (docs/fabula.md §6,
@@ -311,30 +153,6 @@ impl Spend {
     /// Prompt and reply tokens together: what the budget counts.
     pub fn tokens(&self) -> u64 {
         self.input_tokens + self.output_tokens
-    }
-}
-
-/// How a resumable step ended (spec §9).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StepStatus {
-    /// Finished; a resume skips it.
-    Done,
-    /// Failed; a resume runs it again.
-    Failed,
-}
-
-impl StepStatus {
-    fn as_str(self) -> &'static str {
-        match self {
-            StepStatus::Done => "done",
-            StepStatus::Failed => "failed",
-        }
-    }
-
-    fn parse(s: &str) -> Option<Self> {
-        [StepStatus::Done, StepStatus::Failed]
-            .into_iter()
-            .find(|v| v.as_str() == s)
     }
 }
 
@@ -422,7 +240,7 @@ pub struct CallUsage {
 pub struct NewCall {
     /// The run it belongs to.
     pub run: RunId,
-    /// Its logical address, `ch1/sc2/r0/k1/round3/mara`.
+    /// Its logical address, `ch1/b0/t3`.
     pub address: String,
     /// Its attempt at that address, from 1.
     pub attempt: u32,
@@ -436,7 +254,7 @@ pub struct NewCall {
     pub mechanism: Mechanism,
     /// The request as sent.
     pub request: Value,
-    /// The prompt's hash: a replay that sends another prompt has drifted.
+    /// The prompt's hash.
     pub prompt_sha256: String,
     /// The reply; none when there was none.
     pub response: Option<Value>,
@@ -560,63 +378,16 @@ impl StoryDb {
         let _ = self.tx.send(Box::new(f));
     }
 
-    /// The Author's capability: canon, scenes, picks (spec §5).
+    /// The Author's capability: the canon, the chapters, the pauses (spec §5).
     pub async fn author_writer(&self) -> Result<AuthorWriter, StoryDbError> {
         let token = self.run(|a| a.issue_author()).await?;
         Ok(AuthorWriter::new(self.clone(), token))
     }
 
-    /// The engine's capability over the run log: runs, steps, calls.
+    /// The engine's capability over the run log: runs and calls.
     pub async fn run_log_writer(&self) -> Result<RunLogWriter, StoryDbError> {
         let token = self.run(|a| a.issue_run_log()).await?;
         Ok(RunLogWriter::new(self.clone(), token))
-    }
-
-    /// Creates the genesis branch, the root seeded from the canon, and
-    /// returns its writer.
-    pub async fn genesis(&self) -> Result<BranchWriter, StoryDbError> {
-        let token = self.run(|a| a.create_genesis()).await?;
-        Ok(BranchWriter::new(self.clone(), BranchId::genesis(), token))
-    }
-
-    /// Forks branch `k` of `scene` from `parent`'s tip and returns its writer.
-    pub async fn fork(
-        &self,
-        scene: &SceneId,
-        parent: &BranchId,
-        k: u32,
-        seed: u64,
-    ) -> Result<BranchWriter, StoryDbError> {
-        let (scene, parent) = (scene.clone(), parent.clone());
-        let id = BranchId::of_scene(&scene, k);
-        let branch = id.clone();
-        let token = self
-            .run(move |a| a.create_fork(&branch, &scene, &parent, k, seed))
-            .await?;
-        Ok(BranchWriter::new(self.clone(), id, token))
-    }
-
-    /// The writer of an existing branch, while no other holds it.
-    pub async fn branch_writer(&self, branch: &BranchId) -> Result<BranchWriter, StoryDbError> {
-        let id = branch.clone();
-        let token = self.run(move |a| a.issue_branch(&id)).await?;
-        Ok(BranchWriter::new(self.clone(), branch.clone(), token))
-    }
-
-    /// The writer of `character`'s reflections on `branch`.
-    pub async fn reflection_writer(
-        &self,
-        branch: &BranchId,
-        character: &CharacterKey,
-    ) -> Result<ReflectionWriter, StoryDbError> {
-        let (b, c) = (branch.clone(), character.clone());
-        let token = self.run(move |a| a.issue_reflection(&b, &c)).await?;
-        Ok(ReflectionWriter::new(
-            self.clone(),
-            branch.clone(),
-            character.clone(),
-            token,
-        ))
     }
 
     /// The canon as its latest documents assemble it; none before an import.
@@ -624,88 +395,14 @@ impl StoryDb {
         self.run(|a| Ok(a.canon()?.map(|c| (*c).clone()))).await
     }
 
-    /// The branch with this id.
-    pub async fn branch(&self, id: &BranchId) -> Result<Option<BranchInfo>, StoryDbError> {
-        let id = id.clone();
-        self.run(move |a| a.branch_info(&id)).await
-    }
-
-    /// Every event on `branch`'s path, in narrative order.
-    pub async fn path(&self, branch: &BranchId) -> Result<Vec<Event>, StoryDbError> {
-        let branch = branch.clone();
-        self.run(move |a| a.path_events(&branch)).await
-    }
-
-    /// The world at the tip of `branch`.
-    pub async fn world(&self, branch: &BranchId) -> Result<WorldState, StoryDbError> {
-        let branch = branch.clone();
-        self.run(move |a| a.world(&branch)).await
-    }
-
-    /// The events on `branch`'s path that `character` perceived: what its
-    /// memory is filled from (spec §5, *Store ownership*).
-    pub async fn witnessed(
-        &self,
-        branch: &BranchId,
-        character: &CharacterKey,
-    ) -> Result<Vec<Event>, StoryDbError> {
-        let (branch, character) = (branch.clone(), character.clone());
-        self.run(move |a| {
-            let mut events = a.path_events(&branch)?;
-            events.retain(|e| e.witnesses.contains(&character));
-            Ok(events)
-        })
-        .await
-    }
-
-    /// The proposals recorded on `branch` itself, in the order recorded.
-    pub async fn proposals(&self, branch: &BranchId) -> Result<Vec<StoredProposal>, StoryDbError> {
-        let branch = branch.clone();
-        self.run(move |a| a.proposals(&branch)).await
-    }
-
-    /// `character`'s reflections on `branch`'s path, oldest first.
-    pub async fn reflections(
-        &self,
-        branch: &BranchId,
-        character: &CharacterKey,
-    ) -> Result<Vec<Reflection>, StoryDbError> {
-        let (branch, character) = (branch.clone(), character.clone());
-        self.run(move |a| a.reflections(&branch, &character)).await
-    }
-
-    /// The main line's tip: the branch kept for the last scene of the latest
-    /// chapter that keeps one, in that chapter's latest take, else genesis;
-    /// none before genesis (spec §6; docs/fabula.md §4, PR 10).
-    pub async fn main_line_tip(&self) -> Result<Option<BranchId>, StoryDbError> {
-        self.run(|a| a.main_line_tip()).await
-    }
-
-    /// Chapter `chapter`'s latest take; `None` while it has only its first
-    /// (docs/fabula.md §4, PR 10).
-    pub async fn take_of(&self, chapter: u32) -> Result<Option<Take>, StoryDbError> {
-        self.run(move |a| a.take_of(chapter)).await
-    }
-
-    /// The scenes chapter `chapter` keeps in its latest take, in order: the
-    /// main line through the chapter.
-    pub async fn kept_scenes(&self, chapter: u32) -> Result<Vec<KeptPick>, StoryDbError> {
-        self.run(move |a| a.kept_scenes(chapter)).await
-    }
-
-    /// What chapter `chapter`'s latest take has cost, against its budget
-    /// (docs/fabula.md §6, T12).
+    /// What chapter `chapter` has cost, against its budget (docs/fabula.md
+    /// §6, T1).
     pub async fn chapter_spend(&self, chapter: u32) -> Result<Spend, StoryDbError> {
         self.run(move |a| a.chapter_spend(chapter)).await
     }
 
-    /// The steps of `run` and how each ended, in the order first recorded.
-    pub async fn steps(&self, run: &RunId) -> Result<Vec<(String, StepStatus)>, StoryDbError> {
-        let run = run.clone();
-        self.run(move |a| a.steps(&run)).await
-    }
-
     /// The call recorded at `address` and `attempt` of `run`.
+    #[cfg(test)]
     pub async fn call(
         &self,
         run: &RunId,
@@ -717,7 +414,7 @@ impl StoryDb {
     }
 
     /// Every run of the story, the first first, whether or not it recorded a
-    /// step or a call.
+    /// call.
     pub async fn runs(&self) -> Result<Vec<RunId>, StoryDbError> {
         let last = self.run(|a| a.last_run()).await?;
         Ok((1..=last).map(RunId::nth).collect())
@@ -730,41 +427,9 @@ impl StoryDb {
         self.run(move |a| a.calls(&run)).await
     }
 
-    /// The writer of `reviewer`'s notes on one chapter version.
-    pub async fn review_writer(
-        &self,
-        chapter: &ChapterId,
-        reviewer: Reviewer,
-    ) -> Result<ReviewWriter, StoryDbError> {
-        let id = chapter.clone();
-        let token = self.run(move |a| a.issue_review(&id, reviewer)).await?;
-        Ok(ReviewWriter::new(
-            self.clone(),
-            chapter.clone(),
-            reviewer,
-            token,
-        ))
-    }
-
     /// Whether every document of the canon as it stands is approved (P1).
     pub async fn canon_approved(&self) -> Result<bool, StoryDbError> {
         self.run(|a| a.canon_approved()).await
-    }
-
-    /// Chapter `chapter`'s outline.
-    pub async fn outline(&self, chapter: u32) -> Result<Option<ChapterOutline>, StoryDbError> {
-        self.run(move |a| a.outline(chapter)).await
-    }
-
-    /// Chapter `chapter`'s scenes, every rerun, by scene and rerun.
-    pub async fn scenes_of(&self, chapter: u32) -> Result<Vec<StoredScene>, StoryDbError> {
-        self.run(move |a| a.scenes_of(chapter)).await
-    }
-
-    /// A scene's pick.
-    pub async fn pick_of(&self, scene: &SceneId) -> Result<Option<StoredPick>, StoryDbError> {
-        let scene = scene.clone();
-        self.run(move |a| a.pick_of(&scene)).await
     }
 
     /// Chapter `number`'s versions, oldest first.
@@ -772,34 +437,10 @@ impl StoryDb {
         self.run(move |a| a.chapter_versions(number)).await
     }
 
-    /// A chapter version's summary.
-    pub async fn summary(&self, chapter: &ChapterId) -> Result<Option<String>, StoryDbError> {
-        let chapter = chapter.clone();
-        self.run(move |a| a.summary(&chapter)).await
-    }
-
-    /// A chapter version's register (docs/fabula.md §4, PR 11).
-    pub async fn register(&self, chapter: &ChapterId) -> Result<Option<Register>, StoryDbError> {
-        let chapter = chapter.clone();
-        self.run(move |a| a.register(&chapter)).await
-    }
-
     /// Whether a chapter version is accepted (P2).
     pub async fn accepted(&self, chapter: &ChapterId) -> Result<bool, StoryDbError> {
         let chapter = chapter.clone();
         self.run(move |a| a.accepted(&chapter)).await
-    }
-
-    /// A chapter version's review notes, in the order written.
-    pub async fn notes(&self, chapter: &ChapterId) -> Result<Vec<ReviewNote>, StoryDbError> {
-        let chapter = chapter.clone();
-        self.run(move |a| a.notes(&chapter)).await
-    }
-
-    /// The Author's decisions on a chapter version's notes.
-    pub async fn decisions(&self, chapter: &ChapterId) -> Result<Vec<Decided>, StoryDbError> {
-        let chapter = chapter.clone();
-        self.run(move |a| a.decisions(&chapter)).await
     }
 
     /// Every question with its answer, in the order asked.
@@ -815,17 +456,6 @@ impl StoryDb {
             .into_iter()
             .find(|(_, a)| a.is_none())
             .map(|(q, _)| q))
-    }
-
-    /// The assumptions made at steps under `prefix` (`ch1/`), oldest first.
-    pub async fn assumptions(&self, prefix: &str) -> Result<Vec<StoredAssumption>, StoryDbError> {
-        let prefix = prefix.to_owned();
-        self.run(move |a| a.assumptions(&prefix)).await
-    }
-
-    /// How each step address ended across all of the story's runs.
-    pub async fn all_steps(&self) -> Result<BTreeMap<String, StepStatus>, StoryDbError> {
-        self.run(|a| a.all_steps()).await
     }
 
     /// What the calls at addresses under `prefix` cost, across every run.

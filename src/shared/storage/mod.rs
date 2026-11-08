@@ -7,12 +7,6 @@ mod chat_steps;
 pub mod db;
 pub mod json;
 pub mod schema;
-// Fabula's database is reached from production through the chat's story tools and
-// the background story run (docs/fabula.md §4, PRs 8–9); what they do not
-// reach yet — the replay, the harnesses' scenes, the leak audit and the
-// export (M3) — is built and tested ahead of those consumers. The allow goes
-// with the last of them.
-#[allow(dead_code)]
 pub mod story;
 
 use anyhow::Result;

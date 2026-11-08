@@ -77,6 +77,10 @@ after M3 (D, recommended). The owner chose A.
    panel. If the simulation loses to A1, the tools keep A1's pipeline (Author and
    reviewers) and the simulation is removed.
 
+   **After M3 (2026-11-08).** Neither the simulation nor A1 beat B0, one writer in one
+   session, in a blind judging by three models. The owner kept the tools on B0, and the
+   simulation is removed (docs/fabula.md §6, T25–T28).
+
 ## Consequences
 
 - **The experiment ships inside the product.** Its code meets mindfork's bar from the

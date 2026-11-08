@@ -7,11 +7,10 @@ use std::sync::Arc;
 use serde_json::json;
 use tokio::sync::Mutex;
 
-use super::{MOST_REVISIONS, Story, advance};
+use super::{Budget, MOST_REVISIONS, Outcome, Stop, Story, advance};
 use crate::entities::story::{
     Canon, ChapterArc, Decision, QuestionBody, Resolution, VersionOrigin, fixture_canon,
 };
-use crate::features::story::chapter::{Budget, Outcome, Stop};
 use crate::features::story::engine::{EngineAdapter, SharedLog};
 use crate::features::story::run::tests::approved;
 use crate::features::story::single::tests::{failure, port, reply, turns};
@@ -89,7 +88,6 @@ impl Fixture {
             decision,
             notes: notes.to_owned(),
             evidence: json!(null),
-            rerun: None,
         };
         self.author
             .resolve(&question.id, &resolution)

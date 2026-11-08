@@ -6,16 +6,16 @@
 //! landing carries back to the chat.
 //!
 //! - **B0 writes it** (docs/fabula.md §6, T25–T27): each chapter is a session
-//!   of one writer on the chat's backend, with the Author's sampling
-//!   ([`role_sampling`]), as M3's judges preferred it to the simulation
+//!   of one writer on the chat's backend, thinking at a medium effort
+//!   ([`writer_sampling`]), as M3's judges preferred it to the simulation
 //!   ([`super::single_story`]).
 //! - **The time limit cancels, it does not kill.** When it ends, the calls are
 //!   cancelled and the engine stops at the step in flight, which it records,
 //!   so the next run resumes there (spec §9). The run's own token — a stop, a
 //!   quit — reaches the calls the same way.
-//! - **The landing is data.** What the chapter is, what the Author picked and
-//!   assumed, what the pause asks; the orchestrator words it in the profile's
-//!   language and puts the chapter into the chat (docs/fabula.md §6, T3).
+//! - **The landing is data.** What the chapter is and what the pause asks;
+//!   the orchestrator words it in the profile's language and puts the chapter
+//!   into the chat (docs/fabula.md §6, T3).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -27,15 +27,13 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::board::StoryBoard;
-use super::chapter::{Budget, Outcome, Stop, StoryError};
 use super::engine::{EngineAdapter, SharedLog};
-use super::keeper::{LeftOpen, left_open};
 use super::port::{CallAddress, LlmPort, PortError, Prompt, Role, Turn};
 use super::schema::Schema;
 use super::single::SingleConfig;
-use super::single_story::{self, MOST_REVISIONS, Story};
+use super::single_story::{self, Budget, MOST_REVISIONS, Outcome, Stop, Story, StoryError};
 use crate::entities::sampling::{ReasoningEffort, SamplingConfig};
-use crate::entities::story::{Assumption, Question, QuestionBody};
+use crate::entities::story::{Question, QuestionBody};
 use crate::shared::api::contract::EngineBackend;
 use crate::shared::config::{ServerMode, SpecType, ToolSettings};
 use crate::shared::session_budget::SessionBudget;
@@ -100,8 +98,6 @@ pub struct LandedChapter {
     pub version: u32,
     /// The version's text, markdown.
     pub text: String,
-    /// The Author's summary of it, in the human's language.
-    pub summary: Option<String>,
 }
 
 /// What a run brings back to the chat.
@@ -111,16 +107,6 @@ pub struct Landed {
     pub ending: Ending,
     /// The chapter the pause asks about, at P2.
     pub chapter: Option<LandedChapter>,
-    /// At a pause about a chapter, the Author's note on each scene it keeps
-    /// in its latest take, by the scene's number, in order: the numbers a
-    /// reply may name to play a scene again (PR 10).
-    pub picks: Vec<(u32, String)>,
-    /// And that chapter's assumptions: what a role chose where it could have
-    /// asked (spec §14, *Pauses*). Neither rides on a run that stopped short.
-    pub assumptions: Vec<Assumption>,
-    /// At the arc's last chapter, the threads the story leaves open, with the
-    /// Author's reasons (docs/fabula.md §6, T16).
-    pub left_open: Vec<LeftOpen>,
     /// What this run's calls cost.
     pub spent: Spend,
 }
@@ -130,52 +116,23 @@ impl Landed {
         Self {
             ending: Ending::Failed(why.into()),
             chapter: None,
-            picks: Vec::new(),
-            assumptions: Vec::new(),
-            left_open: Vec::new(),
             spent: Spend::default(),
         }
     }
 }
 
-/// The characters' sampling: thinking off, as the application mutes a turn
-/// (spec §8, *Thinking is a role's setting*; G1).
-pub fn character_sampling() -> SamplingConfig {
+/// The writer's sampling: thinking at a medium effort, with room for a
+/// chapter — the Author's as G1 and PR 6 ran it, which M3's B0 had too. PR 6
+/// measured on `gemini-3.8-flash` that the effort, not a schema, decides how
+/// much a model thinks (docs/fabula.md §4).
+pub fn writer_sampling() -> SamplingConfig {
     SamplingConfig {
         temperature: Some(0.8),
-        thinking: Some(false),
-        reasoning_effort: Some(ReasoningEffort::None),
-        reasoning_budget: Some(0),
-        max_tokens: Some(4096),
+        thinking: Some(true),
+        reasoning_effort: Some(ReasoningEffort::Medium),
+        max_tokens: Some(32_000),
         ..SamplingConfig::default()
     }
-}
-
-/// Every other role's sampling, as G1 and PR 6 ran them: the World Master
-/// and the reviewers think at a low effort, the Author at a medium one with
-/// room for a chapter. PR 6 measured on `gemini-3.8-flash` that a role's
-/// effort, not its schema, decides how much it thinks (docs/fabula.md §4).
-pub fn role_sampling() -> Vec<(Role, SamplingConfig)> {
-    let thinking = |temperature: f32, effort: ReasoningEffort, max_tokens: usize| SamplingConfig {
-        temperature: Some(temperature),
-        thinking: Some(true),
-        reasoning_effort: Some(effort),
-        max_tokens: Some(max_tokens),
-        ..SamplingConfig::default()
-    };
-    // The reviewers' cap was 16,384 until PR 10 found the Continuity
-    // checker's reply cut there four times on Qwen 3.8 27B (PR 11).
-    let reviewer = thinking(0.4, ReasoningEffort::Low, 32_000);
-    vec![
-        (
-            Role::WorldMaster,
-            thinking(0.6, ReasoningEffort::Low, 16_384),
-        ),
-        (Role::Author, thinking(0.8, ReasoningEffort::Medium, 32_000)),
-        (Role::Reader, reviewer.clone()),
-        (Role::Continuity, reviewer.clone()),
-        (Role::CanonKeeper, reviewer),
-    ]
 }
 
 /// A chapter's budget under these settings: `0` tokens — none.
@@ -390,12 +347,9 @@ async fn advance_open(
         backend,
         log.clone(),
         spec.model.clone(),
-        character_sampling(),
+        writer_sampling(),
         calls.clone(),
     );
-    for (role, sampling) in role_sampling() {
-        adapter = adapter.with_role_sampling(role, sampling);
-    }
     if let Some(sessions) = sessions {
         adapter = adapter.with_sessions(sessions);
     }
@@ -458,71 +412,31 @@ fn spent_since(before: &Spend, after: &Spend) -> Spend {
     }
 }
 
-/// The chapter a pause asks about; none for the canon's.
-fn asked_about(question: &Question) -> Option<u32> {
-    match question.body {
-        QuestionBody::Canon => None,
-        QuestionBody::Chapter { chapter, .. } | QuestionBody::Scene { chapter, .. } => {
-            Some(chapter)
-        }
-    }
-}
-
-/// The landing's contents for `ending`, read from the stores.
+/// The landing's contents for `ending`, read from the stores: at P2, the
+/// chapter's version asked about (spec §14, *Pauses*); nothing else rides on
+/// a run that stopped short.
 async fn landing(db: &StoryDb, ending: Ending) -> Result<Landed, StoryDbError> {
     let mut landed = Landed {
         chapter: None,
-        picks: Vec::new(),
-        assumptions: Vec::new(),
-        left_open: Vec::new(),
         spent: Spend::default(),
         ending,
     };
-    // What the user decides on rides with the question (spec §14, *Pauses*):
-    // a run that stopped short asks nothing, and its chapter's picks and
-    // assumptions wait for the checkpoint, rather than repeating at every stop.
-    if !matches!(landed.ending, Ending::Paused(_)) {
-        return Ok(landed);
-    }
-    let Ending::Paused(question) = &landed.ending else {
-        return Ok(landed);
-    };
-    let Some(n) = asked_about(question) else {
-        return Ok(landed);
-    };
     if let Ending::Paused(Question {
-        body: QuestionBody::Chapter { version, .. },
+        body: QuestionBody::Chapter { chapter, version },
         ..
     }) = &landed.ending
         && let Some(asked) = db
-            .chapter_versions(n)
+            .chapter_versions(*chapter)
             .await?
             .into_iter()
             .find(|v| v.version == *version)
     {
-        let chapters = db.canon().await?.map_or(0, |c| c.arc.chapters.len());
-        if n as usize == chapters {
-            landed.left_open = left_open(db, n, &asked).await?;
-        }
         landed.chapter = Some(LandedChapter {
-            number: n,
+            number: *chapter,
             version: *version,
-            summary: db.summary(&asked.id).await?,
             text: asked.text,
         });
     }
-    for kept in db.kept_scenes(n).await? {
-        if !kept.rationale.trim().is_empty() {
-            landed.picks.push((kept.scene.scene, kept.rationale));
-        }
-    }
-    let made: Vec<Assumption> = db
-        .assumptions(&format!("ch{n}/"))
-        .await?
-        .into_iter()
-        .map(|a| a.assumption)
-        .collect();
-    landed.assumptions = Assumption::standing(&made);
     Ok(landed)
 }
 

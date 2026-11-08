@@ -1,48 +1,26 @@
-//! Fabula's domain: a story's canon, the events its World Master commits, and
-//! the world state folded from them (docs/research/fabula-engine.md §4–§6,
-//! docs/fabula.md §3).
+//! Fabula's domain: a story's canon, its chapters' versions and its pauses
+//! (docs/research/fabula-engine.md §4–§5, §14; docs/fabula.md §3).
 //!
-//! Pure data and pure functions. The story database
-//! (`shared::storage::story`) stores these types, and it runs the fold
-//! ([`WorldState::admit`]) inside its actor, so an event is checked against
-//! the state of its branch and appended by the same writer, with nothing in
-//! between. The fold and the witnesses live here rather than in
-//! `features::story` for that reason: the layer gate lets `shared` name
-//! `entities`, never `features`.
-//!
-//! Keys name what the canon fixes (characters, locations, items, secrets) and
-//! are compared exactly here; a model's reply is matched to them without
-//! regard to case before it reaches this module (spec §8). Ids name what grows
-//! during a run (scenes, branches, events, proposals, runs) and are derived
-//! from their position, never drawn at random, so a replayed run produces the
-//! same ids and the same prompts (spec §9).
+//! Pure data and pure functions; the story database
+//! (`shared::storage::story`) stores these types. Keys name what the canon
+//! fixes (characters, locations, items, secrets) and are compared exactly;
+//! ids name what grows during a story (runs, chapter versions, questions)
+//! and are derived from their position, never drawn at random.
 
 mod canon;
-mod event;
 mod manuscript;
-mod world;
 
-// The domain's whole surface; the engine that names the rest arrives from
-// docs/fabula.md §4 PR 2 on.
+// The domain's whole surface.
 #[allow(unused_imports)]
 pub use canon::{
-    Canon, CanonField, CanonProblem, ChapterArc, Character, CharacterStart, KeyKind, Location,
-    Route, Secret, StoryArc, Style, World,
-};
-#[allow(unused_imports)]
-pub use event::{
-    Action, Cause, Effect, Event, EventKind, NewEvent, Proposal, ProposalVerdict, SceneSetup,
-    Severity, Visibility,
+    Canon, CanonField, CanonProblem, ChapterArc, Character, CharacterStart, Holder, KeyKind,
+    Location, Route, Secret, StoryArc, Style, World,
 };
 #[allow(unused_imports)]
 pub use manuscript::{
-    Assumption, ChapterId, ChapterOutline, ChapterVersion, Decided, Decision, Fact, NewNote,
-    NoteDecision, NoteId, NoteKind, NoteSeverity, Payoff, QUESTION_KINDS, Question, QuestionBody,
-    QuestionId, Register, Resolution, ReviewNote, Reviewer, StoredAssumption, Take, Thread,
-    VersionOrigin,
+    ChapterId, ChapterVersion, Decision, QUESTION_KINDS, Question, QuestionBody, QuestionId,
+    Resolution, VersionOrigin,
 };
-#[allow(unused_imports)]
-pub use world::{Admitted, FoldError, Holder, Refusal, WorldState};
 
 use serde::{Deserialize, Serialize};
 
@@ -99,62 +77,9 @@ text_newtype!(
     SecretKey
 );
 text_newtype!(
-    /// A scene's id: its chapter, its number in the chapter and its rerun,
-    /// `ch1/sc2/r0`. A rerun is a new scene (spec §6).
-    SceneId
-);
-text_newtype!(
-    /// A branch's id: `genesis` for the root seeded from the canon, or its
-    /// scene and its index among the scene's K branches, `ch1/sc2/r0/k1`.
-    BranchId
-);
-text_newtype!(
-    /// An event's id: its branch and its ordinal among the branch's own
-    /// events, `ch1/sc2/r0/k1/e3`.
-    EventId
-);
-text_newtype!(
-    /// A proposal's id: its branch and its ordinal among the branch's
-    /// proposals, `ch1/sc2/r0/k1/p4`.
-    ProposalId
-);
-text_newtype!(
     /// A run's id, `run1`, `run2`: one per background run of the engine.
     RunId
 );
-
-impl SceneId {
-    /// The scene numbered `scene` in chapter `chapter`, at rerun `rerun`.
-    pub fn of(chapter: u32, scene: u32, rerun: u32) -> Self {
-        Self(format!("ch{chapter}/sc{scene}/r{rerun}"))
-    }
-}
-
-impl BranchId {
-    /// The root of every story's tree, seeded from the canon (spec §6).
-    pub fn genesis() -> Self {
-        Self("genesis".to_owned())
-    }
-
-    /// Branch `k` of a scene's K branches.
-    pub fn of_scene(scene: &SceneId, k: u32) -> Self {
-        Self(format!("{scene}/k{k}"))
-    }
-}
-
-impl EventId {
-    /// The `n`-th event (from 1) of `branch`'s own events.
-    pub fn nth(branch: &BranchId, n: u64) -> Self {
-        Self(format!("{branch}/e{n}"))
-    }
-}
-
-impl ProposalId {
-    /// The `n`-th proposal (from 1) recorded on `branch`.
-    pub fn nth(branch: &BranchId, n: u64) -> Self {
-        Self(format!("{branch}/p{n}"))
-    }
-}
 
 impl RunId {
     /// The `n`-th run (from 1) of a story.
@@ -176,13 +101,6 @@ mod tests {
 
     #[test]
     fn ids_are_derived_from_their_position() {
-        let scene = SceneId::of(1, 2, 0);
-        assert_eq!(scene.as_str(), "ch1/sc2/r0");
-        let branch = BranchId::of_scene(&scene, 1);
-        assert_eq!(branch.as_str(), "ch1/sc2/r0/k1");
-        assert_eq!(EventId::nth(&branch, 3).as_str(), "ch1/sc2/r0/k1/e3");
-        assert_eq!(ProposalId::nth(&branch, 4).as_str(), "ch1/sc2/r0/k1/p4");
-        assert_eq!(EventId::nth(&BranchId::genesis(), 1).as_str(), "genesis/e1");
         assert_eq!(RunId::nth(2).to_string(), "run2");
     }
 

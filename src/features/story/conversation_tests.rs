@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use super::{
     Answering, ContinueRefusal, Continued, CreateRefusal, Listener, PendingAnswer, Resolved,
-    StoryFiles, create, dialect_problems, prepare, story_id,
+    StoryFiles, create, prepare, story_id,
 };
 use crate::entities::story::{
     Canon, ChapterArc, Decision, Question, QuestionBody, VersionOrigin, fixture_canon,
@@ -28,7 +28,7 @@ struct Fixture {
     files: StoryFiles,
     board: StoryBoard,
     chat: Uuid,
-    budget: crate::features::story::chapter::Budget,
+    budget: crate::features::story::single_story::Budget,
 }
 
 fn fixture() -> Fixture {
@@ -152,13 +152,6 @@ fn a_story_id_is_its_titles_words_as_a_safe_file_name() {
     for id in ["the-harbour-at-night", "маяк-и-шторм", "harbour-3"] {
         assert!(!id.contains(['/', '\\', ':', '.', ' ']), "{id}");
     }
-}
-
-/// The fixture canon breaks no rule of the dialect, and a canon with a
-/// problem names it.
-#[test]
-fn the_canons_schemas_keep_the_dialect() {
-    assert_eq!(dialect_problems(&fixture_canon()), Vec::new());
 }
 
 /// Creating stores the canon as a draft and opens P1 at once, with no model
@@ -319,7 +312,6 @@ async fn an_approval_is_recorded_and_the_story_kept_for_its_run() {
         Ok(Continued::Start(Some(Resolved {
             body: QuestionBody::Canon,
             decision: Decision::Approve,
-            rerun: None,
         })))
     );
     let held = f.board.of_chat(f.chat);
@@ -348,68 +340,6 @@ async fn an_approval_is_recorded_and_the_story_kept_for_its_run() {
         1,
         "the reading's one call"
     );
-    db.close().await.unwrap();
-}
-
-/// At a chapter's checkpoint the reading is shown the chapter's scenes by
-/// number, and a reply that names one opens the chapter's next take; the run
-/// goes on with the rerun (docs/fabula.md §4, PR 10).
-#[tokio::test]
-async fn a_reply_naming_a_scene_plays_it_again() {
-    let f = fixture();
-    for dir in [f.files.db.parent(), f.files.log.parent()]
-        .into_iter()
-        .flatten()
-    {
-        std::fs::create_dir_all(dir).unwrap();
-    }
-    let question = {
-        let db = f.db().await;
-        let mut author = db.author_writer().await.unwrap();
-        author.import_canon(&fixture_canon()).await.unwrap();
-        crate::features::story::run::tests::at_checkpoint(&db, &mut author).await;
-        let question = db.pending_question().await.unwrap().unwrap();
-        drop(author);
-        db.close().await.unwrap();
-        question
-    };
-    let p = pending(
-        &question,
-        &["Переиграй первую сцену: пусть Мара промолчит."],
-    );
-    let (run, prepared) = f
-        .prepare(
-            answering(&p),
-            reading(
-                json!({"answers": [], "changes": ["Мара промолчит."], "scene": "1",
-                           "decision": "rerun"}),
-            ),
-        )
-        .await;
-    assert_eq!(
-        prepared,
-        Ok(Continued::Start(Some(Resolved {
-            body: question.body.clone(),
-            decision: Decision::Change,
-            rerun: Some(1),
-        })))
-    );
-    f.board.release(run);
-    let db = f.db().await;
-    let take = db.take_of(1).await.unwrap().expect("the take is stored");
-    assert_eq!(take.from_scene, 1);
-    assert!(take.notes.contains("Мара промолчит."), "{}", take.notes);
-    // The reading was shown the scenes by number, and offered the rerun.
-    let reading_run = crate::entities::story::RunId::nth(3);
-    let calls = db.calls(&reading_run).await.unwrap();
-    assert_eq!(calls.len(), 1);
-    let request = calls[0].call.request.to_string();
-    assert!(
-        request.contains("The chapter's scenes, by number:")
-            && request.contains("1. At Harbour, with Mara, Silas. The quarrel shows the debt."),
-        "{request}"
-    );
-    assert!(request.contains("rerun"), "{request}");
     db.close().await.unwrap();
 }
 
@@ -482,7 +412,6 @@ async fn nothing_pending_resumes_and_finished_or_held_stories_are_refused() {
                     decision: Decision::Approve,
                     notes: String::new(),
                     evidence: json!(null),
-                    rerun: None,
                 },
             )
             .await
@@ -539,7 +468,6 @@ async fn nothing_pending_resumes_and_finished_or_held_stories_are_refused() {
                     decision: Decision::Approve,
                     notes: String::new(),
                     evidence: json!(null),
-                    rerun: None,
                 },
             )
             .await
@@ -609,7 +537,7 @@ async fn a_spent_chapter_starts_no_run_and_keeps_the_answer() {
         drop(log);
         db.close().await.unwrap();
     }
-    f.budget = crate::features::story::chapter::Budget {
+    f.budget = crate::features::story::single_story::Budget {
         tokens: Some(1_000),
         usd: None,
     };
@@ -633,7 +561,7 @@ async fn a_spent_chapter_starts_no_run_and_keeps_the_answer() {
     );
     assert!(f.status().canon_approved, "the answer is kept");
     // With room, the same story resumes.
-    f.budget = crate::features::story::chapter::Budget {
+    f.budget = crate::features::story::single_story::Budget {
         tokens: Some(5_000),
         usd: None,
     };
@@ -667,7 +595,6 @@ async fn accepting_the_last_chapter_finishes_the_story() {
                     decision: Decision::Approve,
                     notes: String::new(),
                     evidence: json!(null),
-                    rerun: None,
                 },
             )
             .await

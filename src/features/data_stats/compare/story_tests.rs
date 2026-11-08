@@ -103,7 +103,6 @@ fn resolution(decision: Decision) -> Resolution {
         },
         decision,
         evidence: serde_json::Value::Null,
-        rerun: None,
     }
 }
 

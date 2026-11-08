@@ -387,26 +387,15 @@ fn resolved_text(loc: &Locale, resolved: Option<&Resolved>) -> String {
     let Some(resolved) = resolved else {
         return loc.t("tool.story_continue.resolved.resume").to_owned();
     };
-    match (&resolved.body, resolved.decision, resolved.rerun) {
-        (QuestionBody::Canon, _, _) => loc.t("tool.story_continue.resolved.canon").to_owned(),
-        (QuestionBody::Chapter { chapter, .. }, Decision::Approve, _) => loc.tf(
+    match (&resolved.body, resolved.decision) {
+        (QuestionBody::Canon, _) => loc.t("tool.story_continue.resolved.canon").to_owned(),
+        (QuestionBody::Chapter { chapter, .. }, Decision::Approve) => loc.tf(
             "tool.story_continue.resolved.accepted",
             &[("n", &chapter.to_string())],
         ),
-        (QuestionBody::Chapter { chapter, .. }, _, Some(scene)) => loc.tf(
-            "tool.story_continue.resolved.rerun",
-            &[("n", &chapter.to_string()), ("scene", &scene.to_string())],
-        ),
-        (QuestionBody::Chapter { chapter, .. }, _, None) => loc.tf(
+        (QuestionBody::Chapter { chapter, .. }, Decision::Change) => loc.tf(
             "tool.story_continue.resolved.revise",
             &[("n", &chapter.to_string())],
-        ),
-        (QuestionBody::Scene { chapter, scene, .. }, _, _) => loc.tf(
-            "tool.story_continue.resolved.scene",
-            &[
-                ("chapter", &chapter.to_string()),
-                ("scene", &scene.to_string()),
-            ],
         ),
     }
 }

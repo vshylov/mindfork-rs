@@ -1,65 +1,41 @@
 //! Fabula, the story engine (docs/fabula.md; docs/research/fabula-engine.md;
-//! ADR 0014). Built a pull request at a time:
+//! ADR 0014). M3's judges preferred one writer in one session to the
+//! simulation the engine was first built around, which is gone (docs/fabula.md
+//! §6, T28):
 //!
 //! - [`port`] — the model port, [`LlmPort`](port::LlmPort), and the one
 //!   policy every answer goes through: a cut retried once, an invalid reply
 //!   repaired once, a refusal final (spec §8).
 //! - [`engine`] — the port over the chat's own `EngineBackend`, recording
 //!   every attempt in the story's call log.
-//! - [`replay`] — the port over that call log, keyed by address, with drift
-//!   reported (spec §9).
-//! - [`schema`] — the replies' schemas, derived from their types, and the
-//!   validator that is the contract; [`dialect`] — the dialect's own check.
-//! - [`scene`] — one scene played by script: M0's simulation, kept for Gate
-//!   G0's fixture.
-//! - [`simulation`] — M1's: a scene as K branches of rounds, the characters
-//!   proposing and the World Master ruling ([`contracts`], [`prompts`]); the
-//!   secrets followed by their planted tokens ([`leaks`]).
-//! - [`eval`] — M3's hidden runner: the systems of spec §11 as run options,
-//!   the frozen premises, the batch; [`single`] — its B0, one agent in one
-//!   session.
-//! - [`single_story`] — the story tools' engine after M3 (docs/fabula.md §6,
-//!   T25–T27): B0's session a chapter, with the pauses between.
+//! - [`schema`] — the replies' schemas and the validator that is the
+//!   contract; [`dialect`] — the dialect's own check.
+//! - [`single`] — B0, one writer in one session; [`single_story`] — the
+//!   story tools' engine (docs/fabula.md §6, T25–T27): a session a chapter,
+//!   with the pauses between; [`author_prompts`] — the canon and the rules of
+//!   the prose as the writer reads them.
+//! - [`run`] — a story's run as the app starts it; [`board`] — the runs out;
+//!   [`conversation`] — what the chat tools do to a story's files;
+//!   [`answer`] — the person's reply read.
+//! - [`eval`] — M3's hidden runner, B0 alone now: the frozen premises, the
+//!   batch; [`judge`] — its blind judging.
 
 pub mod answer;
-pub mod author;
 pub mod author_prompts;
 pub mod board;
-pub mod chapter;
-pub mod contracts;
 pub mod conversation;
 pub mod dialect;
 pub mod engine;
 pub mod eval;
 pub mod export;
 pub mod judge;
-pub mod keeper;
-pub mod leaks;
 pub mod port;
-pub mod prompts;
-pub mod replay;
 pub mod run;
-pub mod scene;
 pub mod schema;
-pub mod simulation;
 pub mod single;
 pub mod single_story;
-pub mod staging;
-pub mod steps;
 
 #[cfg(test)]
-pub(crate) mod chapter_live_tests;
-#[cfg(test)]
-mod continuity_live_tests;
-#[cfg(test)]
-mod register_live_tests;
+pub(crate) mod live_route;
 #[cfg(test)]
 mod run_live_tests;
-#[cfg(test)]
-mod scene_live_tests;
-#[cfg(test)]
-mod schema_live_tests;
-#[cfg(test)]
-mod simulation_live_tests;
-#[cfg(test)]
-mod staging_live_tests;

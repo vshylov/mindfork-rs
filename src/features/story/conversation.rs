@@ -12,8 +12,6 @@
 //!   pending it resumes a run that stopped short — on a turn that answers the
 //!   person, never on one the app woke (T14). A turn that answers no
 //!   message of the person's, or rows that read as unclear, resolve nothing.
-//!   At a chapter's checkpoint the reading is shown the chapter's scenes by
-//!   number, so a reply may ask for one to be played again (PR 10).
 //!
 //! Both claim the story on the board first, as a run does, so a chat tool
 //! and a run never hold one story's files at once.
@@ -27,23 +25,17 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::answer::{ReadingReply, UserRow, read_reply, resolution};
-use super::author::{
-    ContinuityReply, OutlineReply, PickReply, PlanReply, ReaderReply, TriageReply,
-};
 use super::board::{RunView, StoryBoard};
-use super::chapter::{self, Budget, Outcome};
-use super::contracts::{InitiativeRuling, ReactionsRuling, ReflectionReply};
-use super::dialect::{self, DialectProblem};
 use super::engine::{EngineAdapter, SharedLog};
 use super::port::{CallAddress, LlmPort, PortError, Prompt, Role};
-use super::schema::{CanonKeys, Property, Schema, StorySchema};
+use super::schema::Schema;
 use super::single::SingleConfig;
-use super::single_story::{self, Story};
+use super::single_story::{self, Budget, Outcome, Story};
 use crate::entities::sampling::{ReasoningEffort, SamplingConfig};
-use crate::entities::story::{Canon, Decision, Proposal, Question, QuestionBody};
+use crate::entities::story::{Canon, Decision, Question, QuestionBody};
 use crate::shared::api::contract::EngineBackend;
 use crate::shared::session_budget::SessionBudget;
-use crate::shared::storage::story::{KeptPick, StoryDb, StoryDbError};
+use crate::shared::storage::story::{StoryDb, StoryDbError};
 
 /// A story's two files: its database and its call log.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,44 +85,6 @@ pub fn story_id(title: &str, taken: impl Fn(&str) -> bool) -> String {
         .map(|n| format!("{base}-{n}"))
         .find(|id| !taken(id))
         .expect("some suffix is free")
-}
-
-/// Every rule of the schema dialect the replies' schemas break under
-/// `canon`'s keys (spec §8, *One schema dialect*): the canon a model composes
-/// is held to the same rules as the engine's own schemas, so a key no provider
-/// would compile is refused before a run meets it.
-pub fn dialect_problems(canon: &Canon) -> Vec<DialectProblem> {
-    let keys = CanonKeys::of(canon);
-    let branches: Vec<String> = (0..3).map(|k| format!("k{k}")).collect();
-    let notes: Vec<String> = (1..=3).map(|n| format!("n{n}")).collect();
-    let schemas = [
-        Proposal::schema(&keys),
-        ReflectionReply::schema(&keys),
-        InitiativeRuling::schema(&keys),
-        ReactionsRuling::schema(&keys),
-        OutlineReply::schema(&keys),
-        PlanReply::schema_for(&keys, true),
-        PlanReply::schema_for(&keys, false),
-        PickReply::schema_for(&keys, &branches, true),
-        PickReply::schema_for(&keys, &branches, false),
-        ReaderReply::schema(&keys),
-        ContinuityReply::schema(&keys),
-        TriageReply::schema_for(&keys, &notes),
-    ];
-    let mut found = Vec::new();
-    for schema in schemas {
-        // A union is never a root (spec §8): one is checked as a property.
-        let root = match schema {
-            Schema::Object(_) => schema,
-            other => Schema::Object(vec![Property::new("value", other)]),
-        };
-        for problem in dialect::check(&root.to_value()) {
-            if !found.contains(&problem) {
-                found.push(problem);
-            }
-        }
-    }
-    found
 }
 
 /// Why `story_create` stored nothing.
@@ -201,13 +155,7 @@ pub async fn create(
     canon: &Canon,
     revise: bool,
 ) -> Result<Question, CreateRefusal> {
-    // The dialect is checked only for a canon that passes its own checks: a
-    // repeated key breaks the schemas built on it too, and the model needs
-    // the cause, not each schema's echo of it.
-    let mut problems: Vec<String> = canon.check().iter().map(ToString::to_string).collect();
-    if problems.is_empty() {
-        problems.extend(dialect_problems(canon).iter().map(ToString::to_string));
-    }
+    let problems: Vec<String> = canon.check().iter().map(ToString::to_string).collect();
     if !problems.is_empty() {
         return Err(CreateRefusal::Problems(problems));
     }
@@ -329,8 +277,6 @@ pub struct Resolved {
     pub body: QuestionBody,
     /// The decision.
     pub decision: Decision,
-    /// At P2, the scene asked to be played again with the ones after it.
-    pub rerun: Option<u32>,
 }
 
 /// What `story_continue` settled.
@@ -470,12 +416,7 @@ async fn settle(
         }
         _ => return Err(ContinueRefusal::NotAnswered),
     };
-    let kept = match question.body {
-        QuestionBody::Chapter { chapter, .. } => db.kept_scenes(chapter).await?,
-        _ => Vec::new(),
-    };
-    let scenes = u32::try_from(kept.len()).unwrap_or(u32::MAX);
-    let shown = shown(db, &canon, &question.body, &kept).await?;
+    let shown = shown(&canon, &question.body);
     let log: SharedLog = Arc::new(Mutex::new(db.run_log_writer().await?));
     let reading_run = log
         .lock()
@@ -499,14 +440,14 @@ async fn settle(
         run: reading_run,
         address: format!("{}/read", question.id),
     };
-    let reply = read_reply(&adapter, &call, (&question.body, scenes), &shown, rows)
+    let reply = read_reply(&adapter, &call, &question.body, &shown, rows)
         .await
         .map_err(|e| ContinueRefusal::Failed(e.to_string()))?;
-    let Some(resolved) = resolution((&question.body, scenes), &reply, rows, answering.notes) else {
+    let Some(resolved) = resolution(&reply, rows, answering.notes) else {
         return Err(ContinueRefusal::Unclear(reply));
     };
     let mut author = db.author_writer().await?;
-    chapter::resolve(&mut author, &question.id, &resolved).await?;
+    author.resolve(&question.id, &resolved).await?;
     if question.body == QuestionBody::Canon && resolved.decision == Decision::Change {
         return Ok(Continued::CanonChange(resolved.notes));
     }
@@ -519,7 +460,6 @@ async fn settle(
     Ok(Continued::Start(Some(Resolved {
         body: question.body,
         decision: resolved.decision,
-        rerun: resolved.rerun,
     })))
 }
 
@@ -539,83 +479,14 @@ async fn open_chapter(db: &StoryDb, canon: &Canon) -> Result<Option<u32>, StoryD
 }
 
 /// What the person was shown with the question, as the reading quotes it:
-/// the canon in brief at P1, the chapter's summary and its `kept` scenes by
-/// number at P2; P3's question carries its own.
-async fn shown(
-    db: &StoryDb,
-    canon: &Canon,
-    body: &QuestionBody,
-    kept: &[KeptPick],
-) -> Result<String, StoryDbError> {
-    let mut text = shown_head(db, canon, body).await?;
-    if !kept.is_empty() {
-        text.push_str("\n\n");
-        text.push_str(&scenes_brief(canon, kept));
-    }
-    Ok(text)
-}
-
-/// The chapter's scenes as the person was shown them with its question: by
-/// number, where and with whom, and the Author's note on keeping each, in
-/// the person's language. A chapter keeps its scenes numbered from 1 with no
-/// gap, so the numbers are the labels the reading may name.
-pub fn scenes_brief(canon: &Canon, kept: &[KeptPick]) -> String {
-    let mut out = "The chapter's scenes, by number:".to_owned();
-    for k in kept {
-        let place = canon
-            .location(&k.scene.setup.location)
-            .map_or(k.scene.setup.location.as_str(), |l| l.name.trim());
-        let names: Vec<&str> = k
-            .scene
-            .setup
-            .present
-            .iter()
-            .map(|key| match canon.character(key) {
-                Some(c) if !c.name.trim().is_empty() => c.name.trim(),
-                _ => key.as_str(),
-            })
-            .collect();
-        out.push_str(&format!(
-            "\n{}. At {place}, with {}.",
-            k.scene.scene,
-            names.join(", ")
-        ));
-        let note = k.rationale.trim();
-        if !note.is_empty() {
-            out.push(' ');
-            out.push_str(note);
-        }
-    }
-    out
-}
-
-async fn shown_head(
-    db: &StoryDb,
-    canon: &Canon,
-    body: &QuestionBody,
-) -> Result<String, StoryDbError> {
-    Ok(match body {
+/// the canon in brief at P1, the chapter attached at P2.
+fn shown(canon: &Canon, body: &QuestionBody) -> String {
+    match body {
         QuestionBody::Canon => canon_brief(canon),
         QuestionBody::Chapter { chapter, version } => {
-            let summary = match db
-                .chapter_versions(*chapter)
-                .await?
-                .into_iter()
-                .find(|v| v.version == *version)
-            {
-                Some(v) => db.summary(&v.id).await?,
-                None => None,
-            };
-            match summary {
-                Some(summary) => format!(
-                    "Chapter {chapter}, version {version}, attached to the chat. Its summary: \
-                     {summary}"
-                ),
-                None => format!("Chapter {chapter}, version {version}, attached to the chat."),
-            }
+            format!("Chapter {chapter}, version {version}, attached to the chat.")
         }
-        QuestionBody::Scene { .. } => "The failures named in the question.".to_owned(),
-    })
+    }
 }
 
 /// The canon as the reading is told it: enough to know what "the second
