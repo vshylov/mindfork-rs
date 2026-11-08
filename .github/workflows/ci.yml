@@ -1,5 +1,6 @@
 # CI: lints (source language + doc links + fmt + clippy) on Linux + tests on
-# Linux, Windows and macOS + SonarQube Cloud analysis (advisory) on Linux.
+# Linux, Windows and macOS + clippy over the code only Windows and macOS compile
+# + SonarQube Cloud analysis (advisory) on Linux.
 # The toolchain comes from rust-toolchain.toml (a pin, release-engineering.md F4).
 # #[ignore] smokes (engine/network/live model) without env variables are silently skipped —
 # CI needs no network or a live server. See docs/release-engineering.md §3.3.
@@ -366,10 +367,44 @@ jobs:
           ${{ (github.event_name == 'push' && runner.os != 'Linux')
               && 'cargo test --no-run' || 'cargo test' }}
       # The code under `#[cfg(target_os = "macos")]` is compiled nowhere else: the
-      # `lint` job's clippy runs on Linux, and the owner develops on Windows. A
-      # pull request lints it here, on the OS it is for.
+      # `lint` job's clippy runs on Linux. A pull request lints it here, on the
+      # OS it is for. The Windows half is the `clippy-windows` job below.
       - name: Clippy (the macOS-only code)
         if: runner.os == 'macOS' && github.event_name == 'pull_request'
+        run: cargo clippy --all-targets -- -D warnings
+
+  # Clippy over the code only Windows compiles — `#[cfg(windows)]`: the DPAPI
+  # secrets, the Job Object around a spawned tree, the console, the keyboard
+  # layout behind AltGr. `lint` runs clippy on Linux and the macOS entry above
+  # runs it on macOS, so this code was linted only where someone ran clippy on
+  # a Windows machine — the developer's own, while development happened there.
+  # The Windows entry of `test` compiles it, but `cargo test` does not fail on
+  # a warning.
+  #
+  # A job of its own, not a step after the Windows tests the way macOS has one:
+  # those tests took p50 27 min, max 34 over 35 pull-request runs (2026-11-01 to
+  # 11-08) under that job's 35-minute ceiling, and clippy is a build of its own
+  # (check mode shares nothing with the test build but the build scripts), so
+  # as a step it would add its whole duration to the pull request's longest
+  # job. Here it runs beside the tests.
+  #
+  # Pull requests only — `main` takes code that already passed here — and no
+  # cache, see docs/journal/ci.md, "the Windows-only code is linted".
+  clippy-windows:
+    name: Clippy (the Windows-only code)
+    needs: changes
+    # The `test` job's two guards (see the comment there), plus the event.
+    if: >-
+      ${{ !cancelled()
+          && needs.changes.outputs.docs_only != 'true'
+          && github.event_name == 'pull_request' }}
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Install the toolchain (from rust-toolchain.toml)
+        run: rustup show
+      - name: Clippy (all targets, warnings = errors)
         run: cargo clippy --all-targets -- -D warnings
 
   # SonarQube Cloud analysis (project `vshylov_mindfork-rs`, configuration in
@@ -465,7 +500,7 @@ jobs:
   # dependent job, and the failure itself is right here in the list.
   gate:
     name: CI gate
-    needs: [changes, lint, test, sonar]
+    needs: [changes, lint, test, clippy-windows, sonar]
     # `always()` and not `!cancelled()`: a cancelled run must not report a green
     # gate on the commit it was cancelled for.
     if: always()
@@ -479,10 +514,12 @@ jobs:
           echo "changes=${{ needs.changes.result }}"
           echo "lint=${{ needs.lint.result }}"
           echo "test=${{ needs.test.result }}"
+          echo "clippy-windows=${{ needs.clippy-windows.result }}"
           echo "sonar=${{ needs.sonar.result }}"
           bad=0
           for r in "${{ needs.changes.result }}" "${{ needs.lint.result }}" \
-                   "${{ needs.test.result }}" "${{ needs.sonar.result }}"; do
+                   "${{ needs.test.result }}" "${{ needs.clippy-windows.result }}" \
+                   "${{ needs.sonar.result }}"; do
             case "$r" in
               success|skipped) ;;
               *) echo "::error::a job this gate covers ended as '$r'"; bad=1 ;;
