@@ -307,7 +307,7 @@ lessons §4; this is the audience's usual setup.)*
 the image anyway, with its projector loaded. *(recommended)*
 (b) A slot of its own (shared / managed / external / a cloud, like impersonation),
 so a cloud chat can name locally or a local chat name on a cheap cloud. E2B shows
-that a 5 GB model with a 1 GB projector would do (§3.2). Recorded for later (§7).
+that a 5 GB model with a 1 GB projector would do (§3.2). Not wanted (§7).
 
 **F2 — when the image goes out to be named.**
 (a) **At paste.** The name is usually ready before the person finishes typing.
@@ -391,12 +391,13 @@ Documentation per AGENTS.md §4: spec §9.10 and §12.1, README, the help overla
 
 ## 7. Not in this track
 
-- **A naming slot of its own** (F1 b): a small local model naming for a cloud
-  chat, or a cheap cloud naming for a local one. Not beside a big local model on
-  one 24 GB card: by file sizes alone, Gemma 4 E2B with its projector (6.0 GB)
-  next to Gemma 4 31B Q4_0 with its own (18.9 GB) or Qwen 3.6 27B Q4_K_M with
-  its own (19.7 GB) is 23–24 GiB of weights before any context — the case it
-  serves is a cloud chat.
+- **A naming slot of its own** (F1 b) — **not wanted** (the owner, 2026-11-08).
+  Gemma 4 E2B was in the ask to see whether a very small model copes with the
+  task, not as a namer beside the chat model; it copes (§3.2). It would not fit
+  beside a big local model on one 24 GB card anyway: by file sizes alone, E2B with
+  its projector (6.0 GB) next to Gemma 4 31B Q4_0 with its own (18.9 GB) or Qwen
+  3.6 27B Q4_K_M with its own (19.7 GB) is 23–24 GiB of weights before any
+  context.
 - **Wayland without XWayland**: arboard's `wayland-data-control` feature
   (`wl-clipboard-rs`), measured on the Linux terminal stand before it is turned on.
 - **A paste across SSH**: no protocol brings an image from the person's
