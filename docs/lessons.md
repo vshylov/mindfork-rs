@@ -1795,6 +1795,16 @@ tick (`SPINNER_STEP`, asserted at compile time against `TICK`).
 
 ## 6. Windows and cross-platform
 
+**On wlroots, X11 sees the Wayland clipboard only through a focused X window.** sway
+and Hyprland sync a Wayland app's selection into XWayland towards an X client that
+has focus — and a program inside a terminal has no window at all, so an X11
+clipboard read finds nothing even though XWayland runs and `wl-paste` shows the
+picture. A Wayland session's clipboard has to be read through Wayland (arboard's
+`wayland-data-control`), not assumed reachable through XWayland. And a clipboard
+smoke that skips when the clipboard cannot open passes in a session where nothing
+works: read its output for the skip before calling it green.
+— *the clipboard on Wayland, read directly*.
+
 **A port that will not bind with `WinError 10013` is reserved, not taken.** Windows
 (Hyper-V, WinNAT) excludes whole port ranges, and a socket in one fails with "access
 forbidden" while `netstat` shows nothing listening — a hand-started `llama-server` on

@@ -1825,6 +1825,13 @@ append-only shape keeps the prefix cache intact across an image turn
   than a request to go and look. arboard normalizes each platform's storage
   (`CF_DIB`, `image/png`, `NSImage`) to raw RGBA, so there is no container to
   sniff; the encode happens on the blocking pool with everything else.
+  On **Wayland** arboard talks to the compositor's data-control protocol
+  (`wayland-data-control`, pure Rust, no `libwayland`), and falls back to X11
+  where the compositor offers none: without it a session with no XWayland had no
+  clipboard at all, and on wlroots (sway, Hyprland) with XWayland a picture a
+  Wayland app copied never reached X11, which syncs the selection only towards a
+  focused X window — never an app inside a terminal. Measured:
+  [docs/research/pasted-image-names.md](docs/research/pasted-image-names.md) §3.3.
   A pasted image has no file, so it gets the first `clipboard*.png` name **nothing
   in the chat** holds — staged images, sent ones, stored files, attachments — and
   a source that cannot collide: pasting twice stages two images rather than the

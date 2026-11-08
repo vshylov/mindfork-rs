@@ -137,10 +137,9 @@ same feature set (the owner's clipboard saved first and put back after):
   one", which sends the person to do again what they already did. A message
   has to close the door (lessons §4): the session is remote, and the routes that
   work are `/image attach` after copying the file over, or a URL.
-- **Not measured: Wayland without XWayland.** The build leaves arboard's
-  `wayland-data-control` feature off, so on a compositor with no XWayland the
-  clipboard cannot be opened. GNOME and KDE run XWayland by default; a bare
-  wlroots session does not. Recorded in §7.
+- **Wayland**, measured after the track (§3.3): the build left arboard's
+  `wayland-data-control` feature off, which cost more than the session without
+  XWayland it was recorded for.
 
 ### 3.2 Naming, live
 
@@ -228,6 +227,48 @@ What this settles:
   from the 31B), but E2B's grammar slips (`zimnee-zakat-ozero-gory`, an adjective
   agreeing with nothing) and Qwen transliterated the brand
   (`interfeys-programmy-maynfork`). English names were clean on every model.
+
+### 3.3 The Wayland clipboard (2026-11-09, after the track)
+
+Asked by the owner once the track had closed: the roadmap's last item, the clipboard
+on a Wayland session with no XWayland. Measured in Docker on the Linux terminal stand
+(`mf-notify-lx3` + `wl-clipboard`, XWayland and `xclip`): Arch Linux, headless sway
+1.12 (wlroots, pixman), a picture put on the clipboard by `wl-copy` — what a Wayland
+app does — or by `xclip` for an X app. Two builds of a checker on arboard 3.7.0 making
+the paste's own calls (`get_image`, `get().file_list()`, `get_text`): the app as
+shipped (X11 only), and with `wayland-data-control`.
+
+| Session | As shipped | With `wayland-data-control` |
+|---|---|---|
+| Wayland, no XWayland: a picture | the clipboard does not open (no X server) | 760×380 RGBA |
+| Wayland, no XWayland: a copied file (`text/uri-list`) | does not open | the path |
+| Wayland, no XWayland: the app copying text | does not open — OSC 52 was the only copy | copied; readable while the app runs |
+| sway **with** XWayland: a picture a Wayland app copied | **nothing** — the X selection stays empty | 760×380 RGBA |
+| sway with XWayland: a picture an X app copied | 760×380 RGBA | 760×380 RGBA |
+
+- **The gap was wider than the session it was recorded for.** wlroots syncs the
+  Wayland selection into X only towards a focused X window; an app inside a terminal
+  has none, so on sway or Hyprland a picture a browser or a screenshot tool copied
+  never reached the shipped build even with XWayland running.
+- **No new system library.** `wl-clipboard-rs` and `wayland-client` are pure Rust: the
+  checker links the same `libc`/`libgcc_s` as before and runs in a bare `ubuntu:24.04`
+  with no `libwayland`; opening fails at once (0.00 s) there and falls back to X11,
+  as arboard does whenever the compositor offers no data-control protocol — the path
+  every session took before. About 0.7 MB of binary in the checker.
+- **Copying changes in one way.** Text the app copies is served by the app, so after
+  it quits a session with no clipboard manager loses it — arboard's X11 behaviour
+  already. Before, a session with no XWayland could not copy locally at all, and the
+  OSC 52 fallback put the text in the terminal, which kept it.
+- **Not measured**: GNOME (Mutter offers no data-control protocol as far as is known
+  here, so it falls back to X11 — today's path) and KDE Plasma (which offers it).
+
+**Turned on** (the owner's decision, 2026-11-09). One supply-chain catch on the way:
+the lock first resolved `wayland-scanner` 0.31.10, whose `quick-xml` 0.39.4 carries
+RUSTSEC-2026-0194 and -0195; `wayland-scanner` 0.31.11 takes `quick-xml` 0.41, and
+`cargo deny check` is clean. The live check is the app's own tests: both
+real-clipboard round trips and the clipboard tests, built for Linux, pass in a
+Wayland session with no XWayland, in sway with XWayland, and in plain X11 (Xvfb) —
+and with output on, the round trips ran rather than skipped.
 
 ## 4. Design
 
@@ -400,8 +441,8 @@ Documentation per AGENTS.md §4: spec §9.10 and §12.1, README, the help overla
   its projector (6.0 GB) next to Gemma 4 31B Q4_0 with its own (18.9 GB) or Qwen
   3.6 27B Q4_K_M with its own (19.7 GB) is 23–24 GiB of weights before any
   context.
-- **Wayland without XWayland**: arboard's `wayland-data-control` feature
-  (`wl-clipboard-rs`), measured on the Linux terminal stand before it is turned on.
+- **Wayland without XWayland** — done after the track: `wayland-data-control` is on
+  (§3.3).
 - **A paste across SSH**: no protocol brings an image from the person's
   clipboard to a remote app; the routes stay a copied file, a URL, and a picture
   sent to the Telegram bridge (ADR 0013).

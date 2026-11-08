@@ -58,8 +58,15 @@ anyhow = "1.0.103"
 # Clipboard (Windows + Linux). `image-data` is on for pasting an image into a message
 # (spec §9.10): it pulls the `image` crate, which this project already depends on for
 # preparing attached images, so the feature costs a couple of extra decoders rather than a
-# new dependency tree. No other default feature is wanted.
-arboard = { version = "3.4.1", default-features = false, features = ["image-data"] }
+# new dependency tree. `wayland-data-control` reads and writes a Wayland session's
+# clipboard directly (Linux only; pure Rust, no `libwayland` needed): without it a
+# session with no XWayland had no clipboard at all, and on wlroots with XWayland a
+# picture a Wayland app copied never reached X11. With no data-control protocol arboard
+# falls back to X11, as before (docs/research/pasted-image-names.md §3.3).
+arboard = { version = "3.4.1", default-features = false, features = [
+    "image-data",
+    "wayland-data-control",
+] }
 async-stream = "0.3.6"
 async-trait = "0.1.89"
 # Decoding audio from TTS-provider responses (Gemini returns PCM as base64

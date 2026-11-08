@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (39)
+## Entries (40)
 
 - Post-M9: fast multiline clipboard paste (done)
 - Post-M9: `↑/↓` navigation by visual row of a wrapped line (done)
@@ -51,6 +51,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the line-break key is a setting (done)
 - Post-M9: pasting a copied picture file, and the paste over SSH (done)
 - Post-M9: a name for a pasted image (done)
+- Post-M9: the clipboard on Wayland, read directly (done)
 
 ### Post-M9: fast multiline clipboard paste (done)
 - **Symptom**: a large clipboard paste lagged in Windows Terminal, and a line break
@@ -2199,3 +2200,45 @@ pasted, a message sent at once):
 | Claude Haiku 5.5 through OpenRouter | `clipboard/llama-server-settings-panel.png` | 1.53 s | 4.64 s |
 
 Each turn streamed only after its image was named.
+
+### Post-M9: the clipboard on Wayland, read directly (done)
+
+**What.** arboard's `wayland-data-control` feature is on: on Linux the app reads and
+writes a Wayland session's clipboard through the compositor's data-control protocol,
+and falls back to X11 where the compositor offers none. The roadmap item the
+pasted-image track left (the clipboard with no XWayland), measured at the owner's ask
+and turned on at the owner's decision (2026-11-09); the numbers are in
+[pasted-image-names.md](../research/pasted-image-names.md) §3.3.
+
+**Why — measured first** (Docker, Arch, headless sway 1.12; a checker making the
+paste's arboard calls, built both ways): with no XWayland the shipped build could not
+open the clipboard at all — no pasted picture, no copied file, no local copy, only OSC
+52; **and with XWayland** a picture a Wayland app copied (`wl-copy`) never reached it,
+since wlroots syncs the selection into X only towards a focused X window and an app in
+a terminal has none. With the feature every case read the picture and the file list.
+
+**Key decisions.**
+
+- **No new system library**: `wl-clipboard-rs` and `wayland-client` are pure Rust —
+  the same `libc`/`libgcc_s` under `ldd`, a run in a bare `ubuntu:24.04` with no
+  `libwayland`, an instant fall-back when no compositor answers. So nothing changes
+  for a pod, an installer or a package's dependencies.
+- **One supply-chain catch**: the lock first took `wayland-scanner` 0.31.10, whose
+  `quick-xml` 0.39.4 carries RUSTSEC-2026-0194/-0195 — a build-time parser, but the
+  audit job would have failed on it. `cargo update -p wayland-scanner …` took 0.31.11
+  with `quick-xml` 0.41; `cargo deny check` — advisories, bans, licences, sources — is
+  clean. Thirteen crates arrive, all MIT or MIT/Apache-2.0; `tree_magic_mini`'s
+  `with-gpl-data` stays off.
+- **Copying, said rather than worked around**: text the app copies is served by the
+  app, so a session with no clipboard manager loses it once the app quits — arboard's
+  X11 behaviour already. Before, such a session could not copy locally, and the OSC 52
+  fallback left the text with the terminal.
+
+**Tests.** No unit test can see a compositor; the count is unchanged (**4752 green,
+316 `#[ignore]`**). **Live — GO**: the app's own test binary, built for Linux in
+`rust:1.96.0-bookworm`, run in a Wayland session with no XWayland, in sway with
+XWayland and in plain X11 (Xvfb): both real-clipboard round trips
+(`clipboard_image_round_trip`, `clipboard_file_list_round_trip`) and the clipboard unit
+tests pass in all three — and with `--nocapture` the round trips printed their results
+rather than a skip, which a session with no clipboard would have shown
+(docs/lessons.md §6). Windows' gates are untouched by a Linux-only feature and green.
