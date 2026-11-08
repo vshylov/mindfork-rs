@@ -456,12 +456,6 @@ effort tiers and Fabula — have all closed
   ([osc52-clipboard.md](history/osc52-clipboard.md)); nothing the app can send
   fixes that. `/export` is the route that works there, and the copy's message
   points at it.
-- **The clipboard on a Wayland session without XWayland** — **idea**. The build
-  leaves arboard's `wayland-data-control` feature (`wl-clipboard-rs`) off, so on a
-  compositor with no XWayland — a bare wlroots session — `/image paste` cannot open
-  the clipboard; GNOME and KDE run XWayland by default. Measure on the Linux
-  terminal stand before turning it on
-  ([pasted-image-names.md](research/pasted-image-names.md) §3.1, §7).
 - **`terminal_compat` on legacy conhost** — **deferred**. Whether the switch
   could be detected rather than set is a question with no measurement yet
   ([robustness-and-defaults.md §1](research/robustness-and-defaults.md)).
@@ -749,8 +743,9 @@ its area.
   by default), the chat's own engine names a pasted picture `clipboard/<slug>.png`,
   a send waits for the name up to 10 s, `/image paste <name>` names it by hand, and
   every pasted name is unique in its chat. Live GO on Gemma 4 E2B and 31B and on
-  Claude Haiku 5.5 through OpenRouter
-  ([pasted-image-names.md](research/pasted-image-names.md),
+  Claude Haiku 5.5 through OpenRouter. What it left — the clipboard on Wayland — was
+  measured and turned on the next day: arboard's `wayland-data-control`
+  ([pasted-image-names.md](research/pasted-image-names.md) §3.3,
   [ui-input.md](journal/ui-input.md)).
 - **Fabula, a story engine used from the chat** — unreleased (2026-11-08), sixteen
   pull requests: a story composed with the person and written chapter by chapter in the
