@@ -1,7 +1,14 @@
 # Research: a name for a pasted image, and what the paste still misses
 
-**Status:** research and a live probe done (2026-11-08); **the forks in §5 wait
-for the owner's decision**. Nothing is built yet.
+**Status:** research and a live probe done (2026-11-08). **User's decision,
+2026-11-08: every fork in §5 goes with its recommendation** — A1 (a) a copied
+file staged as an attach, A2 (a) the refusal over SSH names the distance,
+F1 (a) the chat's own engine, F2 (a) named at paste, F3 (a) English names,
+F4 (a) a send waits for a pending name up to 10 s, F5 (a)
+`clipboard/<slug>.png`, F6 (a) unique across the chat with the switch on or
+off, F7 (a) `/image paste <name>`, F8 (a) pasted images only, F9 (a) a failure
+is quiet. Implementation follows in the two pull requests of §6; nothing is
+built yet.
 
 The ask (the owner, 2026-11-08): look into pasting images into the chat from the
 clipboard; where possible, give a pasted image a name that says what it shows —
@@ -272,7 +279,9 @@ the prompt's prefix under the cache.
   reads a file that has it. `MessageImage::name` is a string already.
 - **Wire formats, the vision probe, the encode, the limits** — untouched.
 
-## 5. Forks (the owner's decision before implementation)
+## 5. Forks — decided
+
+**User's decision (2026-11-08): (a), the recommendation, in every fork below.**
 
 ### Part A — the paste
 
@@ -383,7 +392,11 @@ Documentation per AGENTS.md §4: spec §9.10 and §12.1, README, the help overla
 ## 7. Not in this track
 
 - **A naming slot of its own** (F1 b): a small local model naming for a cloud
-  chat, or a cheap cloud naming for a local one.
+  chat, or a cheap cloud naming for a local one. Not beside a big local model on
+  one 24 GB card: by file sizes alone, Gemma 4 E2B with its projector (6.0 GB)
+  next to Gemma 4 31B Q4_0 with its own (18.9 GB) or Qwen 3.6 27B Q4_K_M with
+  its own (19.7 GB) is 23–24 GiB of weights before any context — the case it
+  serves is a cloud chat.
 - **Wayland without XWayland**: arboard's `wayland-data-control` feature
   (`wl-clipboard-rs`), measured on the Linux terminal stand before it is turned on.
 - **A paste across SSH**: no protocol brings an image from the person's

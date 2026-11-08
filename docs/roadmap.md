@@ -457,8 +457,9 @@ effort tiers and Fabula — have all closed
   fixes that. `/export` is the route that works there, and the copy's message
   points at it.
 - **A name for a pasted image, and the paste's two gaps** — **idea**, researched
-  and probed 2026-11-08, forks waiting for the owner
-  ([pasted-image-names.md](research/pasted-image-names.md) §5). Every pasted
+  and probed 2026-11-08, every fork decided by the owner the same day as
+  recommended ([pasted-image-names.md](research/pasted-image-names.md) §5); next
+  is stage 1, the paste's gaps, then stage 2, the names (§6). Every pasted
   image is `clipboard.png`, and in a chat with several of them none is reachable
   by name. One muted request to the chat's own engine names it — well formed in
   240 of 240 answers on Gemma 4 E2B/31B, Qwen 3.6 and three cheap clouds; about a
