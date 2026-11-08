@@ -31,12 +31,14 @@ use super::author::{
     ContinuityReply, OutlineReply, PickReply, PlanReply, ReaderReply, TriageReply,
 };
 use super::board::{RunView, StoryBoard};
-use super::chapter::{self, Budget, ChapterConfig, Engine, Outcome};
+use super::chapter::{self, Budget, Outcome};
 use super::contracts::{InitiativeRuling, ReactionsRuling, ReflectionReply};
 use super::dialect::{self, DialectProblem};
 use super::engine::{EngineAdapter, SharedLog};
 use super::port::{CallAddress, LlmPort, PortError, Prompt, Role};
 use super::schema::{CanonKeys, Property, Schema, StorySchema};
+use super::single::SingleConfig;
+use super::single_story::{self, Story};
 use crate::entities::sampling::{ReasoningEffort, SamplingConfig};
 use crate::entities::story::{Canon, Decision, Proposal, Question, QuestionBody};
 use crate::shared::api::contract::EngineBackend;
@@ -198,7 +200,6 @@ pub async fn create(
     (chat, story): (Uuid, &str),
     canon: &Canon,
     revise: bool,
-    human_language: &str,
 ) -> Result<Question, CreateRefusal> {
     // The dialect is checked only for a canon that passes its own checks: a
     // repeated key breaks the schemas built on it too, and the model needs
@@ -221,7 +222,7 @@ pub async fn create(
     board
         .claim(chat, story, claim)
         .map_err(CreateRefusal::Busy)?;
-    let created = create_claimed(files, canon, revise, human_language).await;
+    let created = create_claimed(files, canon, revise).await;
     board.release(claim);
     created
 }
@@ -230,7 +231,6 @@ async fn create_claimed(
     files: &StoryFiles,
     canon: &Canon,
     revise: bool,
-    human_language: &str,
 ) -> Result<Question, CreateRefusal> {
     for dir in [files.db.parent(), files.log.parent()]
         .into_iter()
@@ -241,33 +241,24 @@ async fn create_claimed(
             .map_err(|e| CreateRefusal::Failed(e.to_string()))?;
     }
     let db = StoryDb::open(&files.db, &files.log).await?;
-    let opened = open_p1(&db, canon, revise, human_language).await;
+    let opened = open_p1(&db, canon, revise).await;
     db.close().await?;
     opened
 }
 
-async fn open_p1(
-    db: &StoryDb,
-    canon: &Canon,
-    revise: bool,
-    human_language: &str,
-) -> Result<Question, CreateRefusal> {
+async fn open_p1(db: &StoryDb, canon: &Canon, revise: bool) -> Result<Question, CreateRefusal> {
     if revise && db.canon_approved().await? {
         return Err(CreateRefusal::Approved);
     }
     let mut author = db.author_writer().await?;
     author.import_canon(canon).await?;
     let log: SharedLog = Arc::new(Mutex::new(db.run_log_writer().await?));
-    let config = ChapterConfig {
-        human_language: human_language.to_owned(),
-        ..ChapterConfig::default()
-    };
-    let outcome = chapter::advance(Engine {
+    let outcome = single_story::advance(Story {
         db,
         author: &mut author,
         log: &log,
         port: &NoCalls,
-        config: &config,
+        config: &SingleConfig::default(),
     })
     .await
     .map_err(|e| CreateRefusal::Failed(e.to_string()))?;

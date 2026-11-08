@@ -28,64 +28,26 @@ split by subsystem.
   a hedge or a question back approves nothing. The chapter is then written in the
   background and lands in the chat with its question. While a question waits, the
   assistant is reminded of it on every turn.
-- **A scene played again at a chapter's checkpoint.** A chapter lands with its scenes
-  numbered; ask for one of them by its number — "play scene 2 again, this time she keeps
-  her secret" — and that scene and every one after it are played again from where the
-  scene before it ended, and the chapter is written anew from them, while the earlier
-  scenes stay as they were. The new version lands with its own question. Nothing of the
-  first version is changed or lost, and the new one has a chapter's budget of its own. A
-  request to change how the chapter is told, not what happens in it, still revises the
-  text. A run that stops short — stopped by you, at its time limit, at a failed call — is
-  resumed only when you ask: the assistant, woken by its notification, says where it
-  stopped and asks you, and never goes on by itself.
-- **A story keeps its own books.** After each chapter the story notes, from the chapter's
-  text alone, the questions it leaves its reader with — a clue, footsteps nobody explains
-  — the earlier ones it answers, and what it says of ages, dates, deaths and who is whose
-  kin. The next chapters are planned and written with that list before them, and checked
-  against it: a chapter that says a written line was blank when an earlier one showed it
-  in another hand, or puts "a few years ago" against twenty-eight, can be caught in the
-  chapter's review (how often depends on the model). In the last chapter the Author is
-  asked to answer every question still open or leave it open on purpose, and the last
-  checkpoint names the ones left, with the Author's reason where it gave one. A chapter's
-  summary is now written from its text alone and checked against it, so a secret the text
-  does not tell cannot slip into it.
-- **Scenes that cost something, lines that do something.** A story's scenes are planned as
-  collisions — whose goals clash in each and what it may cost someone — its secrets spent
-  one at a time where they cost most, and no conflict settled for free. Its characters act
-  on what they decide rather than announce it, and do not open reply after reply on thanks
-  or agreement. Each chapter is also read for its staging — who is where and holds what,
-  whose "he" and whose son, a line that only states a plan, a reply that opens on thanks —
-  and what that reading finds goes to the chapter's review with the other notes. How much
-  of it holds depends on the model.
-- **A story chapter is led toward its goal.** The author knows which chapter of the arc it
-  is writing and whether it is the last, weighs how far each version of a scene moves the
-  chapter's goals, names the hour each scene opens at and keeps a deadline for the last
-  scene, and writes goals the story can reach by more than one road. When the chapter's
-  scenes are spent with its goals unmet, one short closing scene may follow, set at the
-  deadline itself and where it falls due.
-- **A story chapter's last revision is read too.** The reviewers read the last revision as
-  they read every version before it, and when it came out worse, the text before it goes on
-  instead. The engine counts a chapter's words against the length asked, a revision keeps
-  the characters' names, and the staging reading also flags one person named two ways and a
-  word left in another language. A scene's opening no longer says something happened that
-  the story never played.
-- **A chapter told from its scenes, not retold.** What the scenes played is the chapter's
-  material: a plan that came to nothing is cut or told in a phrase, a secret comes out
-  when a scene spends it rather than in the narrator's words before, and a talk keeps a
-  line or two of direct speech instead of "he asked whether…, she answered that…".
+- **A chapter written, read and written again.** One writer — the chat's own model —
+  drafts each chapter, reads it as its editor would (a conflict that goes slack, a secret
+  spent too soon, a name used two ways, facts that disagree with an earlier chapter) and
+  writes it again, up to 24 times, with the chapters you accepted before it in front of
+  it. At its checkpoint you accept it, with wishes for the next chapter if you like, or
+  ask for changes, and it is written once more with your notes. In a blind judging by
+  three models this writer's stories were preferred to those of the engine the story
+  tools were first built on, characters acting each scene out under a world that ruled on
+  it, so that engine is not in the tools.
 - **A story chapter written in the background.** Under Settings → Tools → *Stories
   (experimental)* — off by default — the story engine's runs go out as background tasks
   the way a background sub-agent's do: each takes the story from where it stands to its
   next pause on the chat's own model, takes a background slot, and lands in the chat.
-  The chapter arrives as an attachment, and a task notification carries its summary, why
-  each scene was kept, the choices made without asking and the question for you. A choice
-  made without asking — who signed an order, whether someone is known for a local — holds
-  for the rest of its chapter, whose later scenes are planned and written by it, and is
-  listed once, with the answer that stands. A run
-  is bounded by a time limit (6 hours) and the chapter's budget (6,000,000 tokens; a
-  dollar cap where the provider reports cost), and one stopped, timed out or cut short by
-  quitting says where it stopped and resumes there. `story_status` tells the assistant
-  where each story of the chat stands.
+  The chapter arrives as an attachment, and a task notification carries the question for
+  you. A run is bounded by a time limit (6 hours) and the chapter's budget (6,000,000
+  tokens; a dollar cap where the provider reports cost): a spent budget, or the model's
+  context window, ends the chapter at its last version written. A run stopped, timed out
+  or cut short by quitting says where it stopped and resumes there, but only when you
+  ask: the assistant, woken by its notification, says where it stopped and asks you.
+  `story_status` tells the assistant where each story of the chat stands.
 
 ### Added
 
@@ -100,9 +62,6 @@ split by subsystem.
 
 ### Fixed
 
-- **A story's scene no longer fails when the model refuses a character's private
-  thoughts.** Such a refusal used to fail the whole version of the scene; now that
-  character's reflection is left out and the scene plays on.
 - **Thinking off reaches Claude.** With thinking turned off, Claude Haiku 5.5, Sonnet
   5.5, Opus 5.5 and Fable 5.1 still thought before every answer: the request left the
   thinking field out, and the 5.5 generation thinks when it is absent. A turn with

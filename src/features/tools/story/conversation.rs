@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 
 use super::super::meta::{ToolGate, ToolGroup};
 use super::super::{Tool, ToolContext, ToolOutcome};
-use super::{human_language, question_text, story_ids};
+use super::{question_text, story_ids};
 use crate::entities::profile::ToolId;
 use crate::entities::story::{Canon, Decision, QuestionBody};
 use crate::features::story::conversation::{
@@ -181,7 +181,6 @@ impl Tool for StoryCreateTool {
             (ctx.chat_id, &id),
             &parsed.canon,
             revise,
-            human_language(loc),
         )
         .await;
         Ok(ToolOutcome::text(match created {

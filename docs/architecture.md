@@ -701,9 +701,10 @@ src/
 │  │                        as markdown; board.rs — the story runs out: a story claimed by one run
 │  │                        at a time, the call each is in, what `story_status` and a quit read;
 │  │                        run.rs — a run as the app starts it (PR 8): the story opened from its
-│  │                        chat's directory, every role on the chat's one model with its own
-│  │                        sampling, the time limit cancelling the calls so the engine stops at a
-│  │                        step, the landing's data read from the stores; answer.rs — the
+│  │                        chat's directory, B0's writer on the chat's model since PR 15, the
+│  │                        window the settings or the engine name, the time limit cancelling the
+│  │                        calls so the engine stops at a turn, the landing's data read from the
+│  │                        stores; answer.rs — the
 │  │                        person's reply to a pause read by one schema-constrained call (the
 │  │                        Listener), conservatively, and the resolution with its evidence (PR 9),
 │  │                        at P2 a scene to play again named by its number (PR 10);
@@ -725,7 +726,11 @@ src/
 │  │                        of the votes (both orders agreeing), ties no win, the binomial tail;
 │  │                        single.rs — its B0, one agent in one session (`LlmPort::session`), to
 │  │                        F's average cost or the model's window, rebuilt from the call log on a
-│  │                        resume
+│  │                        resume; an `Ask` names the chapter a session writes (M3's story at
+│  │                        `b0/`, chapter n at `ch<n>/b0/`); single_story.rs — the story tools'
+│  │                        engine since PR 15 (docs/fabula.md §6, T25–T27): P1, a chapter as a
+│  │                        session of its own to 24 revisions under the chapter's budget, P2, a
+│  │                        person's change as one turn over the version and their notes
 │  ├─ profiles.rs           pure profile operations (sanitize_name, ProfileEdit)
 │  ├─ chat_search_sort.rs   chat list filter/sort
 │  ├─ companion_memory.rs   the companion's memory blocks (spec §6.6): the memory cut,

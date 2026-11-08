@@ -15,9 +15,9 @@ use std::time::Duration;
 use super::*;
 use crate::entities::attachment::{AttachMode, Attachment};
 use crate::entities::subagent::{RunKind, RunOutcome};
-use crate::features::story::chapter::ChapterConfig;
 use crate::features::story::run::StoryRun;
 use crate::features::story::run::tests::{Hanging, approved, at_checkpoint, write_story};
+use crate::features::story::single::SingleConfig;
 use crate::shared::i18n::{Lang, locale};
 use crate::shared::storage::story::{AuthorWriter, StoryDb};
 
@@ -51,7 +51,8 @@ where
         db: json.story_db(&chat.to_string(), "s1"),
         log: json.story_log(&chat.to_string(), "s1"),
         model: "mock-model".to_owned(),
-        config: ChapterConfig::default(),
+        config: SingleConfig::default(),
+        window: None,
         timeout: Duration::from_secs(60),
         fallback_only: false,
     };
@@ -275,7 +276,8 @@ fn a_story_records_end_reads_as_the_run_ended() {
             db: dir.path().join("s1.db"),
             log: dir.path().join("s1.calls.db"),
             model: "m".to_owned(),
-            config: ChapterConfig::default(),
+            config: SingleConfig::default(),
+            window: None,
             timeout: Duration::from_secs(1),
             fallback_only: false,
         },

@@ -12,8 +12,8 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::{
-    Ending, LandedChapter, StoryRun, chapter_config, character_sampling, needs_fallback,
-    role_sampling, run,
+    Ending, LandedChapter, StoryRun, budget_of, character_sampling, needs_fallback, role_sampling,
+    run, single_config,
 };
 use crate::entities::sampling::ReasoningEffort;
 use crate::entities::story::{
@@ -25,9 +25,11 @@ use crate::entities::story::{
     Register, Reviewer, Thread,
 };
 use crate::features::story::board::StoryBoard;
-use crate::features::story::chapter::{ChapterConfig, Stop};
+use crate::features::story::chapter::Stop;
 use crate::features::story::keeper::LeftOpen;
 use crate::features::story::port::Role;
+use crate::features::story::single::SingleConfig;
+use crate::features::story::single_story::MOST_REVISIONS;
 use crate::shared::api::contract::{
     ChatChunk, ChatRequest, ChatStream, EngineBackend, FinishReason,
 };
@@ -73,7 +75,8 @@ fn spec_in(dir: &std::path::Path) -> StoryRun {
         db: dir.join("stories").join("c").join("s1.db"),
         log: dir.join("story-logs").join("c").join("s1.db"),
         model: "mock-model".to_owned(),
-        config: ChapterConfig::default(),
+        config: SingleConfig::default(),
+        window: None,
         timeout: Duration::from_secs(60),
         fallback_only: false,
     }
@@ -516,7 +519,7 @@ async fn a_spent_budget_stops_the_run_before_its_next_call() {
         approved(db, author).await;
         let mut log = db.run_log_writer().await.unwrap();
         let run = log.start_run(&json!({})).await.unwrap();
-        log.record_call(earlier_call(run, "ch1/outline", (900, 100), None))
+        log.record_call(earlier_call(run, "ch1/b0/t1", (900, 100), None))
             .await
             .unwrap();
     })
@@ -609,24 +612,26 @@ fn the_roles_sample_as_measured() {
     assert!(!roles.iter().any(|(r, _)| *r == Role::Character));
 }
 
-/// The settings' budget reaches the chapter, `0` tokens and no dollars
-/// reading as no limit; a managed server with a draft model takes the
-/// fallback, and nothing else does.
+/// The settings' budget reaches the chapter's session as its ceiling, `0`
+/// tokens and no dollars reading as no limit, and the session ends on its
+/// revisions, with no target (T25); a managed server with a draft model takes
+/// the fallback, and nothing else does.
 #[test]
 fn the_settings_shape_the_chapter_and_the_mechanism() {
     let mut tools = ToolSettings::default();
-    let config = chapter_config(&tools, "Russian");
+    let config = single_config(&tools);
     assert_eq!(config.budget.tokens, Some(6_000_000));
     assert_eq!(config.budget.usd, None);
-    assert_eq!(config.human_language, "Russian");
-    assert_eq!(config.max_scenes, ChapterConfig::default().max_scenes);
+    assert_eq!(config.most_revisions, MOST_REVISIONS);
+    assert_eq!(config.target, None);
+    assert_eq!(config.words, SingleConfig::default().words);
     tools.story_budget_tokens = 0;
     tools.story_budget_usd = Some(1.5);
-    let config = chapter_config(&tools, "English");
-    assert_eq!(config.budget.tokens, None);
-    assert_eq!(config.budget.usd, Some(1.5));
+    let budget = budget_of(&tools);
+    assert_eq!(budget.tokens, None);
+    assert_eq!(budget.usd, Some(1.5));
     tools.story_budget_usd = Some(0.0);
-    assert_eq!(chapter_config(&tools, "English").budget.usd, None);
+    assert_eq!(budget_of(&tools).usd, None);
 
     assert!(needs_fallback(ServerMode::Managed, SpecType::DraftMtp));
     assert!(needs_fallback(ServerMode::Managed, SpecType::DraftSimple));
@@ -636,29 +641,24 @@ fn the_settings_shape_the_chapter_and_the_mechanism() {
 }
 
 /// What a run spent is what its own calls added, cost included, and not what
-/// the story spent before it; a call that fails after the outline stops the
-/// run at its step, where the next run tries it again; and the outline's
-/// assumption waits for the checkpoint rather than riding on the stop.
+/// the story spent before it; a turn that fails stops the run at its address,
+/// where the next run asks it again; and a stop asks the person nothing.
 #[tokio::test]
 async fn a_run_lands_what_its_calls_spent_and_the_step_that_failed() {
     use crate::shared::api::contract::{Served, TokenUsage};
     use crate::shared::api::mock::MockBackend;
     let fixture = story(async |db, author| {
         approved(db, author).await;
-        // A run before this one, which spent tokens of its own.
+        // A run before this one, whose draft failed after spending tokens.
         let mut log = db.run_log_writer().await.unwrap();
         let earlier = log.start_run(&json!({})).await.unwrap();
-        log.record_call(earlier_call(earlier, "ch1/outline", (5000, 0), Some(1.0)))
+        log.record_call(earlier_call(earlier, "ch1/b0/t1", (5000, 0), Some(1.0)))
             .await
             .unwrap();
     })
     .await;
-    let outline = json!({
-        "goals": ["The secret surfaces."],
-        "assumptions": [{"doubt": "Whether the ferry runs.", "choice": "It does not."}],
-    });
-    let backend = MockBackend::sequence(vec![vec![
-        ChatChunk::Text(outline.to_string()),
+    let draft = vec![
+        ChatChunk::Text("## The harbour\n\nThe gate was shut.".to_owned()),
         ChatChunk::Usage(TokenUsage {
             prompt_tokens: 120,
             completion_tokens: 30,
@@ -669,7 +669,15 @@ async fn a_run_lands_what_its_calls_spent_and_the_step_that_failed() {
             cost_nanos: Some(20_000_000),
         }),
         ChatChunk::Finished(FinishReason::Stop),
-    ]]);
+    ];
+    let failed = vec![
+        ChatChunk::Error {
+            message: "the endpoint is gone".to_owned(),
+            transient: false,
+        },
+        ChatChunk::Finished(FinishReason::Error),
+    ];
+    let backend = MockBackend::sequence(vec![draft, failed]);
 
     let landed = run(
         &fixture.spec,
@@ -687,17 +695,14 @@ async fn a_run_lands_what_its_calls_spent_and_the_step_that_failed() {
     else {
         panic!("{:?}", landed.ending);
     };
-    assert!(step.starts_with("ch1/") && step != "ch1/outline", "{step}");
-    // The mock answers every later call with the same reply, which the next
-    // step's schema refuses: the outline, then the call and its one repair.
-    let calls = landed.spent.calls;
-    assert_eq!(calls, 3, "the outline, the next call and its repair");
-    assert_eq!(landed.spent.input_tokens, 120 * calls);
-    assert_eq!(landed.spent.output_tokens, 30 * calls);
+    assert_eq!(step, "ch1/b0/t2", "the critique after the draft");
+    assert_eq!(
+        landed.spent.input_tokens, 120,
+        "the draft, not the run before"
+    );
+    assert_eq!(landed.spent.output_tokens, 30);
     let cost = landed.spent.cost_usd.expect("the provider reported it");
-    assert!((cost - 0.02 * calls as f64).abs() < 1e-9, "{cost}");
-    // The outline's assumption waits for the checkpoint: a stop asks nothing.
-    assert!(landed.assumptions.is_empty(), "{:?}", landed.assumptions);
-    assert!(landed.picks.is_empty());
+    assert!((cost - 0.02).abs() < 1e-9, "{cost}");
+    assert!(landed.assumptions.is_empty() && landed.picks.is_empty());
     assert_eq!(landed.chapter, None, "no chapter is asked about");
 }

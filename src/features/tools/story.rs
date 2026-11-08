@@ -364,13 +364,6 @@ fn ending_text(loc: &Locale, ending: &Ending) -> String {
     }
 }
 
-/// The name of the human's language as the engine's English prompts put it
-/// (`ChapterConfig::human_language`): what a story's summaries, picks and
-/// questions are written in — the profile's (spec §15).
-pub fn human_language(loc: &Locale) -> &str {
-    loc.t("tool.story.language")
-}
-
 /// The line a run cut short by a quit leaves on its record: where it was.
 pub fn quit_text(loc: &Locale, step: Option<&str>) -> String {
     match step {

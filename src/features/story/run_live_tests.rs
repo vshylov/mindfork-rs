@@ -23,11 +23,13 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::board::StoryBoard;
-use super::chapter::{Budget, ChapterConfig, Stop};
+use super::chapter::{Budget, Stop};
 use super::chapter_live_tests::route;
 use super::run::tests::{approved, write_story};
 use super::run::{Ending, Landed, StoryRun, run};
 use super::simulation_live_tests::fallback_asked;
+use super::single::SingleConfig;
+use super::single_story::MOST_REVISIONS;
 use crate::features::tools::story::landing_text;
 use crate::shared::i18n::{Lang, locale};
 use crate::shared::session_budget::SessionBudget;
@@ -61,14 +63,15 @@ async fn story_run_live_stops_at_its_budget_a_stop_and_its_time_limit() {
         db: dir.path().join("stories").join("c").join("s1.db"),
         log: dir.path().join("story-logs").join("c").join("s1.db"),
         model: model.clone(),
-        config: ChapterConfig {
+        config: SingleConfig {
             budget: Budget {
                 tokens: Some(budget),
                 usd: None,
             },
-            human_language: "English".to_owned(),
-            ..ChapterConfig::default()
+            most_revisions: MOST_REVISIONS,
+            ..SingleConfig::default()
         },
+        window: None,
         timeout: Duration::from_secs(30 * 60),
         fallback_only: fallback_asked(),
     };

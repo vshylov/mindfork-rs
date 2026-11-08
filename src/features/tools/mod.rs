@@ -327,6 +327,18 @@ pub struct ToolParams {
     pub named_secrets: std::sync::Arc<[String]>,
 }
 
+/// The model's window as the settings name it, for a story's chapter
+/// (docs/fabula.md §6, T25): a typed `compaction.context_tokens` first, then
+/// a managed server's `-c`; `None` — the run asks the engine.
+fn story_window(cfg: &AppConfig) -> Option<u64> {
+    if let Some(typed) = cfg.compaction.context_tokens.filter(|&n| n > 0) {
+        return Some(typed as u64);
+    }
+    (cfg.engine.mode == crate::shared::config::ServerMode::Managed
+        && cfg.engine.managed.context_size > 0)
+        .then_some(u64::from(cfg.engine.managed.context_size))
+}
+
 impl ToolParams {
     /// Snapshots tool parameters from the application configuration.
     pub fn from_config(cfg: &AppConfig) -> Self {
@@ -352,6 +364,7 @@ impl ToolParams {
                 &cfg.tools,
                 cfg.engine.mode,
                 cfg.engine.managed.spec_type,
+                story_window(cfg),
             ),
         }
     }

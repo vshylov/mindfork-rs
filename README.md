@@ -148,9 +148,9 @@ a checkout with a recent stable Rust. On a rented GPU box or in a container, the
   — `F7` lists every run across every chat, with what it is doing now or how it
   ended.
 - **Stories, chapter by chapter (experimental).** Attach your sketches and the
-  assistant composes a canon with you; a story engine then acts out each scene with
-  the characters, picks how it went and writes the chapter in the background; ask
-  for a scene by its number and it is played again, with the ones after it. Every
+  assistant composes a canon with you; a writer then drafts each chapter in the
+  background, reads it as its editor would and writes it again, and the chapter
+  lands in the chat for you to accept or send back with your notes. Every
   approval is your own words, read from your messages — never the assistant's
   summary of them. Off by default.
 - **Your code project, contained.** Attach a directory and the assistant can
