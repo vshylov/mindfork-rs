@@ -97,7 +97,7 @@ pub(super) fn chat_to_v7(mut v: Value) -> Result<Value> {
 
 /// `chats/<id>.json` 7 → 8: no shape change, like [`chat_to_v7`]. 8 is the
 /// first schema in which a run's `kind` may read `"story"` — a chapter of a
-/// Fabula story written in the background (docs/fabula.md §4, PR 8; spec §14
+/// Fabula story written in the background (docs/history/fabula.md §4, PR 8; spec §14
 /// of docs/research/fabula-engine.md) — and the kind is a strict enum, as the
 /// dialogue's step to 3 found ([`chat_to_v3`]): one such run is enough for
 /// 0.23.1 to skip the whole chat in silence. The settings hold the story's

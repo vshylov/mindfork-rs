@@ -198,7 +198,7 @@ async fn a_thinking_turn_survives_a_model_without_adaptive_thinking() {
     );
 }
 
-/// Thinking off reaches each Claude model in the shape it takes (docs/
+/// Thinking off reaches each Claude model in the shape it takes (docs/history/
 /// fabula.md §4, *Thinking on Claude*): a muted turn with a reply schema,
 /// asked twice, and how it went out the second time. Haiku 5.5 thinks not
 /// at all; Sonnet 5.5 not before its answer; Opus 5.5 and Fable 5.1 at

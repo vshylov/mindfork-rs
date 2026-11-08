@@ -369,7 +369,7 @@ impl Paths {
         self.root.join("files")
     }
 
-    /// The chats' stories (`stories/<chat-id>/<story-id>.db`, docs/fabula.md §6
+    /// The chats' stories (`stories/<chat-id>/<story-id>.db`, docs/history/fabula.md §6
     /// T5): each a Fabula database under its chat's id, as `files/<chat-id>/`
     /// is. User data, so `features::backup` packs it; a story counts as deleted
     /// while its chat is hidden (T4).
@@ -577,7 +577,7 @@ mod tests {
 
     /// A story and its call log sit under their chat's id, in two directories
     /// of their own: the first goes into backups and the second does not
-    /// (docs/fabula.md §6, T5).
+    /// (docs/history/fabula.md §6, T5).
     #[test]
     fn a_story_and_its_call_log_are_named_by_their_chat_and_their_id() {
         let p = Paths::with_root("data-root");

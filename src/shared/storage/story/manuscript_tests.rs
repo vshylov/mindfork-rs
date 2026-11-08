@@ -1,4 +1,4 @@
-//! The manuscript's stores and the pauses (docs/fabula.md §4, PR 6): the
+//! The manuscript's stores and the pauses (docs/history/fabula.md §4, PR 6): the
 //! chapter's versions in their order, one question at a time, an answer that
 //! carries its approval, and a chapter's spend.
 
@@ -254,7 +254,7 @@ fn priced(run: &RunId, address: &str, tokens: u64) -> NewCall {
 /// §15), so a restore can put back a story behind its log. The run the log
 /// knows and the story does not is another timeline: the next run is numbered
 /// past it, since run ids are positional and a reused one collides with its
-/// calls, and the chapter's spend leaves it out (docs/fabula.md §4, PR 7).
+/// calls, and the chapter's spend leaves it out (docs/history/fabula.md §4, PR 7).
 #[tokio::test]
 async fn a_story_restored_behind_its_call_log_runs_on_and_counts_its_own_calls() {
     let dir = tempfile::tempdir().unwrap();

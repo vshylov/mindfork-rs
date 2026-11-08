@@ -1,4 +1,4 @@
-//! The route a story's live smokes run on (docs/fabula.md §4): a cloud on its
+//! The route a story's live smokes run on (docs/history/fabula.md §4): a cloud on its
 //! own wire, as the application's cloud modes reach it, or an OpenAI-compatible
 //! engine. Skipped — every smoke returns at once — without its variables:
 //!

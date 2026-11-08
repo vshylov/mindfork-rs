@@ -306,7 +306,7 @@ mod tests {
     use super::*;
     use crate::shared::api::sse_stub::{self, collect, serve};
 
-    /// The story engine sends its schemas to Gemini (docs/fabula.md §4, PR 5).
+    /// The story engine sends its schemas to Gemini (docs/history/fabula.md §4, PR 5).
     #[tokio::test]
     async fn the_gemini_client_enforces_a_schema() {
         let client = GeminiClient::new("http://127.0.0.1:9", "k", "gemini-x");

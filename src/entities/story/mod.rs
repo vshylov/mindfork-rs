@@ -1,5 +1,5 @@
 //! Fabula's domain: a story's canon, its chapters' versions and its pauses
-//! (docs/research/fabula-engine.md §4–§5, §14; docs/fabula.md §3).
+//! (docs/research/fabula-engine.md §4–§5, §14; docs/history/fabula.md §3).
 //!
 //! Pure data and pure functions; the story database
 //! (`shared::storage::story`) stores these types. Keys name what the canon

@@ -1,4 +1,4 @@
-//! A story run as the app starts it (docs/fabula.md §4, PR 8), on a backend
+//! A story run as the app starts it (docs/history/fabula.md §4, PR 8), on a backend
 //! that never answers until it is cancelled: the pauses that need no call,
 //! the landing's contents read from the stores, the stop, the time limit, the
 //! budget, a story that cannot open, and one run per story.

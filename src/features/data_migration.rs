@@ -629,7 +629,7 @@ mod tests {
     /// A root as 0.23.1 left it — settings at 7, a chat at 7 holding a dialogue
     /// run out in the background and a generated picture — through the real
     /// registry: the chat alone is backed up and stamped 8, the first schema in
-    /// which a run may be a story's (docs/fabula.md §4, PR 8); the settings
+    /// which a run may be a story's (docs/history/fabula.md §4, PR 8); the settings
     /// need no step, since the story's switch, timeout and budget are fields an
     /// older reader ignores; nothing moves, and the next start finds nothing to
     /// do. The backup records the chat at 7, what 0.23.1 restores without the

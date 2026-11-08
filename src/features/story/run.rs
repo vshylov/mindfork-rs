@@ -1,11 +1,11 @@
-//! A story run as the app starts it (docs/fabula.md §4, PR 8;
+//! A story run as the app starts it (docs/history/fabula.md §4, PR 8;
 //! docs/research/fabula-engine.md §14, *The chat tools and the human in the
 //! loop*): the story opened from its chat's directory and run from where it
 //! stands to its next pause, on the chat's own engine under the app's session
 //! budget, within its time limit and its chapter's budget, and what the
 //! landing carries back to the chat.
 //!
-//! - **B0 writes it** (docs/fabula.md §6, T25–T27): each chapter is a session
+//! - **B0 writes it** (docs/history/fabula.md §6, T25–T27): each chapter is a session
 //!   of one writer on the chat's backend, thinking at a medium effort
 //!   ([`writer_sampling`]), as M3's judges preferred it to the simulation
 //!   ([`super::single_story`]).
@@ -15,7 +15,7 @@
 //!   quit — reaches the calls the same way.
 //! - **The landing is data.** What the chapter is and what the pause asks;
 //!   the orchestrator words it in the profile's language and puts the chapter
-//!   into the chat (docs/fabula.md §6, T3).
+//!   into the chat (docs/history/fabula.md §6, T3).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -61,7 +61,7 @@ pub struct StoryRun {
     pub window: Option<u64>,
     /// The run's time limit (`tools.story_run_timeout_secs`).
     pub timeout: Duration,
-    /// Never ask the engine to constrain the decoding (docs/fabula.md §5):
+    /// Never ask the engine to constrain the decoding (docs/history/fabula.md §5):
     /// a managed server with a draft model, whose grammar crashes under it.
     pub fallback_only: bool,
 }
@@ -124,7 +124,7 @@ impl Landed {
 /// The writer's sampling: thinking at a medium effort, with room for a
 /// chapter — the Author's as G1 and PR 6 ran it, which M3's B0 had too. PR 6
 /// measured on `gemini-3.8-flash` that the effort, not a schema, decides how
-/// much a model thinks (docs/fabula.md §4).
+/// much a model thinks (docs/history/fabula.md §4).
 pub fn writer_sampling() -> SamplingConfig {
     SamplingConfig {
         temperature: Some(0.8),
@@ -154,7 +154,7 @@ pub fn single_config(tools: &ToolSettings) -> SingleConfig {
 }
 
 /// Whether the chat's engine must not be asked to constrain the decoding: a
-/// managed `llama-server` with a draft model (docs/fabula.md §5,
+/// managed `llama-server` with a draft model (docs/history/fabula.md §5,
 /// llama.cpp#30419).
 pub fn needs_fallback(mode: ServerMode, spec_type: SpecType) -> bool {
     mode == ServerMode::Managed && spec_type.needs_draft_model()
@@ -331,7 +331,7 @@ async fn advance_open(
     cancel: CancellationToken,
 ) -> Result<Landed, StoryDbError> {
     // The window, where the settings do not name it, is the engine's to say
-    // (docs/fabula.md §6, T25).
+    // (docs/history/fabula.md §6, T25).
     let mut config = spec.config.clone();
     if let Some(window) = match spec.window {
         Some(window) => Some(window),

@@ -1,4 +1,4 @@
-//! Tests of a story's summary (docs/fabula.md §4, PR 7). The story under test
+//! Tests of a story's summary (docs/history/fabula.md §4, PR 7). The story under test
 //! is written by the store's own writers, so the reader meets the rows the
 //! engine leaves on disk.
 

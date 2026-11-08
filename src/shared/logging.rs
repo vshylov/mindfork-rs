@@ -35,7 +35,7 @@ pub fn init(paths: &Paths, loc: &Locale) -> Result<LogGuard> {
 
 /// Logging into `dir`, which exists: the data root's `logs/`, or the output
 /// directory of a command that never touches the data (Fabula's evaluation
-/// runner, docs/fabula.md §4, PR 13).
+/// runner, docs/history/fabula.md §4, PR 13).
 pub fn init_in(dir: &std::path::Path) -> LogGuard {
     let file_appender = tracing_appender::rolling::daily(dir, "mindfork.log");
     let (non_blocking, worker) = tracing_appender::non_blocking(file_appender);

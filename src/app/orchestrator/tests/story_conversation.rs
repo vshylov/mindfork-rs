@@ -1,4 +1,4 @@
-//! Orchestrator tests — a story driven from the chat (docs/fabula.md §4, PR 9;
+//! Orchestrator tests — a story driven from the chat (docs/history/fabula.md §4, PR 9;
 //! docs/research/fabula-engine.md §14, *The chat tools and the human in the
 //! loop*). The model's turns are scripted; the story is real, on disk.
 //!
@@ -106,7 +106,7 @@ async fn a_story_goes_from_its_canon_to_a_run_on_the_persons_own_words() {
     wait_for(&mut rx, |e| matches!(e, AppEvent::Finished { .. }))
         .await
         .unwrap();
-    // The run is in its first call, the writer's draft (docs/fabula.md §6,
+    // The run is in its first call, the writer's draft (docs/history/fabula.md §6,
     // T25), when the app quits.
     let author_asked = || {
         backend.requests().iter().any(|r| {

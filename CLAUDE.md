@@ -59,7 +59,7 @@ Two rules that follow from that:
 | adopting an **architectural decision** | [docs/decisions/](docs/decisions/) — write a new ADR (list below) |
 | **planning a track** | AGENTS.md §1 · prior art in [docs/research/](docs/research/) (pre-decision) and [docs/history/](docs/history/) (finished plans) |
 | working on the **code workspace** — the project attached to a chat | architecture §8, §10 · spec §9.12 · [docs/journal/tools.md](docs/journal/tools.md) · the finished plan [docs/history/code-workspace.md](docs/history/code-workspace.md) |
-| working on **Fabula**, the story engine — its database, the simulation, the story tools | [docs/fabula.md](docs/fabula.md) (the plan) · [docs/research/fabula-engine.md](docs/research/fabula-engine.md) (the design) · ADR 0014 · [docs/journal/stories.md](docs/journal/stories.md) |
+| working on **Fabula**, the story engine — its database, the writer, the story tools | [docs/history/fabula.md](docs/history/fabula.md) (the plan) · [docs/research/fabula-engine.md](docs/research/fabula-engine.md) (the design) · ADR 0014 · [docs/journal/stories.md](docs/journal/stories.md) |
 | installing, running, configuring the engine | [docs/install.md](docs/install.md) |
 | what is left to do | [docs/roadmap.md](docs/roadmap.md) |
 | what the user sees as changed | [CHANGELOG.md](CHANGELOG.md) |
@@ -199,20 +199,12 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
-- **Fabula, a story engine used from the chat — G0, G1, G2 GO; stopped by M3** (2026-11-07):
-  the plan and ADR 0014; the story database — an append-only, branched event log behind
-  one actor, one writer per store; the model port, replayed from the call log by address;
-  the reply's schema enforced by the provider on every wire; scenes
-  simulated as K branches, a World Master ruling, no secret leaked; a chapter
-  planned, picked, drafted, reviewed and revised, paused for the human, resumed
-  wherever it was killed; a story backed up and in `stats`; a chapter run in the
-  background, landed in its chat with its question; a story created and continued from the
-  chat, every answer the person's own words; a scene named at a checkpoint played again;
-  a register of open threads and dated facts, checked chapter to chapter; scenes planned
-  as collisions with a price, a line a deed, a staging pass; a chapter's choices standing
-  for its later steps; a map every scene can reach; M3's hidden runner, twelve premises
-  frozen, a pilot on Qwen and Sonnet; a chapter told from its record, not retold; its last
-  revision reviewed; a chapter led toward its goal; judged blind by three models: neither F nor A1 beats B0; the tools on B0 ([docs/fabula.md](docs/fabula.md),
+- **Fabula, a story engine used from the chat — track closed** (2026-11-08): G0, G1, G2
+  GO; a story composed with the person and written chapter by chapter in the background,
+  every answer the person's own words. Its simulation — characters, a World Master, an
+  Author picking among K branches, reviewers — lost to one writer in one session in M3's
+  blind judging by three models, so the tools run that writer and the simulation is
+  removed, tag `fabula/f-final` ([docs/history/fabula.md](docs/history/fabula.md),
   [docs/journal/stories.md](docs/journal/stories.md)).
 - **Image generation — track complete** (2026-10-30): `image_generate` over a
   slot of its own (OpenAI by default, Gemini, the gateway, xAI), off by default;

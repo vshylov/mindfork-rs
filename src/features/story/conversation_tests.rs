@@ -1,4 +1,4 @@
-//! A story as the chat drives it (docs/fabula.md §4, PR 9): its id, its
+//! A story as the chat drives it (docs/history/fabula.md §4, PR 9): its id, its
 //! creation with P1 open and no call, the draft's revision, and the answer
 //! read from the person's rows — or refused — on a mock engine.
 

@@ -805,7 +805,7 @@ struct Orchestrator {
     /// attachments here, the landing starts only what nobody has, and a held
     /// end-of-index note waits here for its attachment to land.
     index_board: Arc<crate::features::attachment_index::IndexBoard>,
-    /// The story runs out in the background (docs/fabula.md §4, PR 8): which
+    /// The story runs out in the background (docs/history/fabula.md §4, PR 8): which
     /// story each one holds and the call it is in. Shared with the runs, which
     /// claim and release it, and with the tools, which read it.
     story_board: Arc<crate::features::story::board::StoryBoard>,

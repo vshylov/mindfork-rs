@@ -137,7 +137,7 @@ pub enum CliCommand {
     /// terminal's check (docs/research/macos.md §13.4). `output` — also write
     /// the lines into that file.
     Keys { output: Option<PathBuf> },
-    /// Fabula's evaluation runner (`story-eval …`, docs/fabula.md §4, PR
+    /// Fabula's evaluation runner (`story-eval …`, docs/history/fabula.md §4, PR
     /// 13): hidden — no line in `--help`, no help topic — and parsed by the
     /// runner itself, whose arguments these are.
     StoryEval { args: Vec<String> },
@@ -1272,7 +1272,7 @@ mod tests {
         assert!(p(&["demo", "extra"]).is_err(), "stray argument refused");
     }
 
-    /// Fabula's evaluation runner is hidden (docs/fabula.md §4, PR 13): its
+    /// Fabula's evaluation runner is hidden (docs/history/fabula.md §4, PR 13): its
     /// arguments go to it as they are, and no help text names it.
     #[test]
     fn story_eval_is_parsed_by_the_runner_and_listed_nowhere() {

@@ -24,7 +24,7 @@ pub enum Role {
     /// user's own words*).
     Listener,
     /// Reads two finished stories blind and chooses the better: M3's judging
-    /// (docs/fabula.md §4, PR 14).
+    /// (docs/history/fabula.md §4, PR 14).
     Judge,
 }
 
@@ -96,7 +96,7 @@ pub enum PortError {
         /// The address.
         address: String,
     },
-    /// The chapter's budget is spent: the call was not made (docs/fabula.md
+    /// The chapter's budget is spent: the call was not made (docs/history/fabula.md
     /// §6, T1).
     #[error("the chapter's budget is spent before {address}: {spent}")]
     Budget {
@@ -132,7 +132,7 @@ pub trait LlmPort: Send + Sync {
     ) -> Result<String, PortError>;
 
     /// Free text in reply to a conversation, its earlier turns included:
-    /// B0, one writer in one session (docs/fabula.md §6, T21). By default a
+    /// B0, one writer in one session (docs/history/fabula.md §6, T21). By default a
     /// port reads it as one prompt; the engine sends the turns as they are.
     async fn session(
         &self,

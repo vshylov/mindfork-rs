@@ -1,4 +1,4 @@
-//! B0 as the story tools run it (docs/fabula.md §4, *After M3*; §6,
+//! B0 as the story tools run it (docs/history/fabula.md §4, *After M3*; §6,
 //! T25–T27): a story from where it stands to its next pause.
 //!
 //! 1. **P1**: an unapproved canon asks for its approval and stops the run.
@@ -26,7 +26,7 @@ use crate::entities::story::{
 };
 use crate::shared::storage::story::{AuthorWriter, Spend, StoryDb, StoryDbError};
 
-/// A chapter's spending limits (docs/fabula.md §6, T1 (a)); none is no limit.
+/// A chapter's spending limits (docs/history/fabula.md §6, T1 (a)); none is no limit.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Budget {
     /// Prompt and reply tokens, every provider.
@@ -38,7 +38,7 @@ pub struct Budget {
 impl Budget {
     /// What `spend` has spent of this budget, in words, once it is spent;
     /// `None` while there is room — the check before every turn, and
-    /// `story_continue`'s before a run (docs/fabula.md §4, PR 9).
+    /// `story_continue`'s before a run (docs/history/fabula.md §4, PR 9).
     pub fn spent(&self, spend: &Spend) -> Option<String> {
         if let Some(limit) = self.tokens
             && spend.tokens() >= limit
@@ -106,7 +106,7 @@ pub async fn accepted_version(
 }
 
 /// The most revisions a chapter's session writes after its draft: the B0 the
-/// judges read wrote 25 versions on the mean (docs/fabula.md §6, T25).
+/// judges read wrote 25 versions on the mean (docs/history/fabula.md §6, T25).
 pub const MOST_REVISIONS: u32 = 24;
 
 /// What a run works with: the story, the Author's capability, the run log

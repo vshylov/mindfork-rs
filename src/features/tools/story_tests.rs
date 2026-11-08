@@ -1,4 +1,4 @@
-//! The story tools' texts and `story_status` (docs/fabula.md §4, PR 8): what
+//! The story tools' texts and `story_status` (docs/history/fabula.md §4, PR 8): what
 //! the assistant reads of a story, in both languages the app ships, with no
 //! placeholder left unfilled.
 

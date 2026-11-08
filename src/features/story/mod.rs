@@ -1,6 +1,6 @@
-//! Fabula, the story engine (docs/fabula.md; docs/research/fabula-engine.md;
+//! Fabula, the story engine (docs/history/fabula.md; docs/research/fabula-engine.md;
 //! ADR 0014). M3's judges preferred one writer in one session to the
-//! simulation the engine was first built around, which is gone (docs/fabula.md
+//! simulation the engine was first built around, which is gone (docs/history/fabula.md
 //! §6, T28):
 //!
 //! - [`port`] — the model port, [`LlmPort`](port::LlmPort), and the one
@@ -11,7 +11,7 @@
 //! - [`schema`] — the replies' schemas and the validator that is the
 //!   contract; [`dialect`] — the dialect's own check.
 //! - [`single`] — B0, one writer in one session; [`single_story`] — the
-//!   story tools' engine (docs/fabula.md §6, T25–T27): a session a chapter,
+//!   story tools' engine (docs/history/fabula.md §6, T25–T27): a session a chapter,
 //!   with the pauses between; [`author_prompts`] — the canon and the rules of
 //!   the prose as the writer reads them.
 //! - [`run`] — a story's run as the app starts it; [`board`] — the runs out;

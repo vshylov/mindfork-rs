@@ -31,7 +31,7 @@
 //! [`read_snapshot`] reads it back; [`DataStats::fingerprint`] is a digest of
 //! exactly that identity, so equal fingerprints mean an identical comparison.
 //!
-//! **Stories** (docs/fabula.md §4, PR 7): each `stories/<chat-id>/<story-id>.db`
+//! **Stories** (docs/history/fabula.md §4, PR 7): each `stories/<chat-id>/<story-id>.db`
 //! is read the way `data.db` is — read-only, or from the archive's entry in
 //! memory — and counted as deleted while its chat is hidden (§6 T4). A story
 //! is lined up by its ids and compared by its rows ([`StoryStats::units`]).
@@ -201,7 +201,7 @@ pub struct Sizes {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoryTotals {
     pub total: usize,
-    /// In a soft-deleted chat (docs/fabula.md §6, T4).
+    /// In a soft-deleted chat (docs/history/fabula.md §6, T4).
     pub deleted: usize,
     /// Under a chat id no readable chat file of this copy has, as
     /// `<chat-id>/<story-id>`.
@@ -668,7 +668,7 @@ impl StoryTally {
     }
 
     /// The stories joined with the chats: a story is deleted while its chat
-    /// is (docs/fabula.md §6, T4).
+    /// is (docs/history/fabula.md §6, T4).
     fn finish(self, chats: &[ChatRow]) -> (StoryTotals, Vec<StoryRow>, u64, u64) {
         let by_id: BTreeMap<Uuid, &ChatRow> = chats.iter().map(|row| (row.id, row)).collect();
         let mut totals = StoryTotals {

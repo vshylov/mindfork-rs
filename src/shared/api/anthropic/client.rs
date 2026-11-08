@@ -145,7 +145,7 @@ impl AnthropicClient {
         second
     }
 
-    /// Sends a muted turn, and answers the refusal of its shape (docs/fabula.md
+    /// Sends a muted turn, and answers the refusal of its shape (docs/history/fabula.md
     /// §4, *Thinking on Claude*): `disabled` first, then the shape the refusal
     /// names, at most twice — Sonnet 5.5 names `between_tools`, Opus 5.5 and
     /// Fable 5.1 take neither and are asked at their lowest effort. The shape
@@ -694,7 +694,7 @@ mod tests {
     }
 
     /// Every Claude model of the two current generations takes
-    /// `output_config.format`, so the answer is static (docs/fabula.md §4, PR 3).
+    /// `output_config.format`, so the answer is static (docs/history/fabula.md §4, PR 3).
     #[tokio::test]
     async fn claude_constrains_a_reply_to_its_schema() {
         let client = AnthropicClient::new("http://127.0.0.1:9", "k", "claude-x");

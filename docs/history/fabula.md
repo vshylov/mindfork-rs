@@ -1,11 +1,11 @@
 # Fabula — a story engine used from the chat: track plan
 
-**Status:** stopped by M3's decision rule (2026-11-07) — M0 done (PRs 1 and 2, Gate G0 GO); M1 done (PRs 3–5, Gate G1 GO, 2026-11-01); M2 done (PR 6, the Author's loop, 2026-11-01; PR 7, stories in mindfork's data, 2026-11-02; PR 8, the story run in the background, 2026-11-02; PR 9, the story driven from the chat, 2026-11-02; Gate G2 GO, 2026-11-03; PR 10, a scene played again, 2026-11-03); before M3, the readers' findings settled (PR 11, the story's register; PR 12, the craft of the scenes and the lines; a chapter's choices standing for its later steps; a map every scene can reach; 2026-11-04 to 2026-11-05); M3 done (PR 13, the hidden runner and the twelve premises frozen, 2026-11-06; PR 14, the blind judging by three models, and the judging itself, 2026-11-07: F lost both decisions, 3 pairs of 36 each, and A1 lost to B0, 5 of 36, so neither beats B0 and the track stops; the owner kept the story tools, off, running B0, 2026-11-08: PR 15 switched them, PR 16 removed F). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
-so are the twenty-three this plan adds (§6) and where development runs (§4, *The development
+**Status:** closed (2026-11-08) — stopped by M3's decision rule (2026-11-07), the story tools kept on B0 and F removed (PRs 15–16), the plan moved to `docs/history/` — M0 done (PRs 1 and 2, Gate G0 GO); M1 done (PRs 3–5, Gate G1 GO, 2026-11-01); M2 done (PR 6, the Author's loop, 2026-11-01; PR 7, stories in mindfork's data, 2026-11-02; PR 8, the story run in the background, 2026-11-02; PR 9, the story driven from the chat, 2026-11-02; Gate G2 GO, 2026-11-03; PR 10, a scene played again, 2026-11-03); before M3, the readers' findings settled (PR 11, the story's register; PR 12, the craft of the scenes and the lines; a chapter's choices standing for its later steps; a map every scene can reach; 2026-11-04 to 2026-11-05); M3 done (PR 13, the hidden runner and the twelve premises frozen, 2026-11-06; PR 14, the blind judging by three models, and the judging itself, 2026-11-07: F lost both decisions, 3 pairs of 36 each, and A1 lost to B0, 5 of 36, so neither beats B0 and the track stops; the owner kept the story tools, off, running B0, 2026-11-08: PR 15 switched them, PR 16 removed F). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
+so are the twenty-eight this plan adds (§6) and where development runs (§4, *The development
 stack*). The design —
 the engine, its stores, its contracts, its evaluation — is
-[research/fabula-engine.md](research/fabula-engine.md) (*the spec* below), and the
-decision to build it here is [ADR 0014](decisions/0014-fabula-story-engine.md). This
+[research/fabula-engine.md](../research/fabula-engine.md) (*the spec* below), and the
+decision to build it here is [ADR 0014](../decisions/0014-fabula-story-engine.md). This
 plan says only how the work is cut into pull requests, what each one proves, and what
 it touches.
 
@@ -97,7 +97,7 @@ slow; a turn takes seconds on a cloud route, and arms run side by side.
   PR 4, the Anthropic wire sends every muted turn as `disabled`, and the client asks again
   in the shape the model's refusal names: `between_tools` on Sonnet 5.5, no `thinking`
   at effort `low` on Opus 5.5 and Fable 5.1. The fix reaches the chat's own muted turns
-  too ([journal/engine.md](journal/engine.md), *Thinking off reaches Claude*).
+  too ([journal/engine.md](../journal/engine.md), *Thinking off reaches Claude*).
 - **Which model where.** M1 iterates on Haiku 5.5 and the two open models, since they
   are cheap and M1 judges the shape of decisions. M2's quality runs and the G2 story use
   Sonnet 5.5 or Opus 5.5 as the one model. M3's model is chosen when M3 starts; one
@@ -125,7 +125,7 @@ slow; a turn takes seconds on a cloud route, and arms run side by side.
 | 2 `feat/story-ports` | `LlmPort`; the replay adapter keyed by call address (UUIDv5 ids, the prompt hash flagging drift); the adapter over `EngineBackend` with the fallback mechanism (the schema in the prompt, a lenient parse, one repair); the schemas derived from the types and the dialect's check; one scripted scene | **Gate G0:** the fixture replays identically; a second writer is refused; the assertion holds. One `#[ignore]` smoke records the fixture against a gate model |
 
 **PR 1, as built (2026-11-01).** Where the code differs from the spec's sketch of §6 and
-§9, and why, is in [journal/stories.md](journal/stories.md): the fold and the witnesses
+§9, and why, is in [journal/stories.md](../journal/stories.md): the fold and the witnesses
 sit in `entities` (§3); reads go through the actor as writes do, so the files keep the
 default rollback journal rather than WAL; every table but `run` and `step` is append-only;
 ids are derived from position, never drawn at random; routes and secrets are arrays of
@@ -142,7 +142,7 @@ policy, so a replay repeats the live call's retries and repairs. M0's scene is r
 rule where M1's World Master will rule. **Gate G0: GO.** The fixture recorded against Qwen 3.8
 27B (OpenRouter, pinned to DeepInfra) replays identically and with no drift; a second writer
 is refused and the not-`Clone` assertion holds (PR 1's tests). The figures are in
-[journal/stories.md](journal/stories.md).
+[journal/stories.md](../journal/stories.md).
 
 **PR 3, as built (2026-11-01).** `ChatRequest.output_schema` carries the schema as the text
 it was printed as (a `RawValue`; `serde_json` gains its `raw_value` feature), and
@@ -173,7 +173,7 @@ Gemma 4 (the open models through OpenRouter, pinned to DeepInfra), then 5 × 3 o
 gate weights through the local llama.cpp. On every route: no leak, while 10–38 secrets were
 revealed and shown afterwards; at least 99.89% of first attempts schema-valid (the misses
 were three cuts and errors of 6,418, each taken by the retry); the World Master's refusals
-reported per scene. The figures are in [journal/stories.md](journal/stories.md).
+reported per scene. The figures are in [journal/stories.md](../journal/stories.md).
 
 **PR 5, as built (2026-11-01).** Responses sends the schema as `text.format`, strict, beside
 `text.verbosity`; a refusal there comes as a part of its own and ends the turn as filtered, so
@@ -186,7 +186,7 @@ attempt met the schema, and the bare greeting came back as the schema's object. 
 run on `gpt-5.4-mini` and `gemini-3.8-flash` sent every simulation schema through each
 provider: all first attempts valid, no leak. One finding passes to M2: under a schema,
 Gemini 3.x thinks about a tenth as much and returns no thought summary, so a World Master
-there rules on little thought. The figures are in [journal/stories.md](journal/stories.md).
+there rules on little thought. The figures are in [journal/stories.md](../journal/stories.md).
 
 ### M1 — the simulation, live
 
@@ -223,7 +223,7 @@ the chapter resumed each time to its checkpoint. **PR 5's finding, measured:** o
 low level the World Master thought a median of 0 tokens under the schema and 0 without it,
 at the high level 1,811 and 1,496, with no slip in any arm. The Continuity checker found
 three planted faults in every call of every arm. No mechanism changes; a role's effort is
-PR 8's to set. The figures are in [journal/stories.md](journal/stories.md).
+PR 8's to set. The figures are in [journal/stories.md](../journal/stories.md).
 
 **PR 7, as built (2026-11-02).** The owner decided two forks the plan had left open (§6, T4
 and T5): a story is deleted softly, while its chat is hidden, and it lives at
@@ -238,7 +238,7 @@ only the story's own runs. The round trip found an older defect: restoring the p
 copy within the second it was made wrote the new copy over it, so an archive the app
 names itself never takes an existing name now. **The previous release** reads a backup
 with stories, unpacks them as unknown files, and leaves them out of its own backups; PR 8's
-release notes say so. The figures are in [journal/stories.md](journal/stories.md).
+release notes say so. The figures are in [journal/stories.md](../journal/stories.md).
 
 **PR 8, as built (2026-11-02).** The owner decided two forks the plan had left open (§6, T6
 and T7): a chapter's budget is 2,000,000 tokens with no dollar cap unless one is set, and a
@@ -257,7 +257,7 @@ data as a newer version's and restores its pre-migration backup with no warning,
 fingerprint. **Live** on Claude Haiku 5.5 and Qwen 3.8 27B, a story run stopped at its budget,
 at a stop and at its time limit, each resuming where the last stopped, every permit of the
 session budget given back. The figures are in
-[journal/stories.md](journal/stories.md).
+[journal/stories.md](../journal/stories.md).
 
 **PR 9, as built (2026-11-02).** The owner decided four forks (§6, T8–T11): the named scene
 rerun is PR 10, G2 runs on Claude Sonnet 5.5 in Russian, and the chapter's default budget is
@@ -277,7 +277,7 @@ in Russian on Sonnet 5.5, finished in the chat from the sketches to the last acc
 calls, 14.0 million prompt tokens, about $31 at list price, none of it from Anthropic's cache.
 The run found the spent budget restarted in vain, the empty run after the last chapter, and the
 cost's growth with the story (§5); the first two are fixed. **Gate G2 GO**: the owner's reading, 2026-11-03.
-The figures are in [journal/stories.md](journal/stories.md).
+The figures are in [journal/stories.md](../journal/stories.md).
 
 **What G2's readers found (2026-11-03).** The owner read the story and passed the gate: a very
 good result for Claude Sonnet 5.5. The owner also gave it to two other models for review, Gemini 4 Argon
@@ -336,7 +336,7 @@ played scenes 2–3 again and a fourth the first take had not had, and reached i
 checkpoint at version 6 — 1,227 calls, $3.00 in all, the take twice the first making's 3.8
 million tokens. The run found the Continuity checker cut at its cap on Qwen, a woken turn
 resuming a stopped run unasked (now refused, T14), and a harness that gave up as the run's
-time limit fell (fixed). The figures are in [journal/stories.md](journal/stories.md). M2 is
+time limit fell (fixed). The figures are in [journal/stories.md](../journal/stories.md). M2 is
 done.
 
 A release can follow G2: the tools are reachable only with `tools.story` on, and the
@@ -380,7 +380,7 @@ the chat at the default budget, 884 calls and $2.55: chapter 2 paid off five of 
 seven threads, the landing listed the four still open, and the keeper's check reported none of
 them; the harness's three-hour limit (the app's is six) stopped chapter 1 once, and the woken
 turn asked before anything resumed. The figures are in
-[journal/stories.md](journal/stories.md).
+[journal/stories.md](../journal/stories.md).
 
 **PR 12, as built (2026-11-04).** By T17 (a) the Author's rules gain two: a scene is a
 collision, its intent naming whose goals collide in it and what it may cost someone, and no
@@ -405,7 +405,7 @@ chapter 1's threads paid off, the staging pass's 41 notes 35 accepted, and no re
 on thanks where the first opened five (and three on an apology); for the owner to read
 against the first (T18). The run found the landing's assumptions answering one doubt nine
 ways, each step deciding it again without the earlier answers. The figures are in
-[journal/stories.md](journal/stories.md).
+[journal/stories.md](../journal/stories.md).
 
 **After PR 12: a chapter's choices stand (2026-11-04).** Where the Author could have asked
 the human and did not, it records the question and the answer it chose (spec §14, *Pauses*):
@@ -445,7 +445,7 @@ gone and new questions come back to about half PR 12's rate. The draft and the r
 the list without that sentence. Chapter 2 stopped at its third scene on its token budget, and
 the run found a canon whose places no road connects let through its check: the journal has the
 counts, the wordings measured and rejected, and the defect
-([docs/journal/stories.md](journal/stories.md), *a chapter's choices stand*).
+([docs/journal/stories.md](../journal/stories.md), *a chapter's choices stand*).
 
 **After PR 12: a map every scene can reach (2026-11-05).** The choices' live story met a
 canon Qwen 3.8 composed from the sketches whose four places had no route at all, and the
@@ -479,7 +479,7 @@ the map mended from the refusal; the stored roadless story resumed.
 As built (2026-11-05), as forked. Live, Qwen 3.8 27B mended all five roadless maps the smoke put
 into its first `story_create` with a map, four on the call after the refusal; the stored
 roadless story, resumed, stops at its second scene in the world's words, with no call
-([docs/journal/stories.md](journal/stories.md), *a map every scene can reach*).
+([docs/journal/stories.md](../journal/stories.md), *a map every scene can reach*).
 
 ### M3 — the evaluation
 
@@ -584,7 +584,7 @@ Sonnet's B0 best, Qwen's F on `mystery-2` a failure, A1 best on the harbour. Tha
 reader and one premise a model, not M3's verdict. F's story polished by B0's own loop lost
 to B0's as well, and the polish erased what the simulation had given it. The full run's
 model is still open (T19).
-The figures are in [journal/stories.md](journal/stories.md).
+The figures are in [journal/stories.md](../journal/stories.md).
 
 **After the pilot: the record is material (2026-11-06).** Two more diagnostics on F's Sonnet
 story found where its prose fails:
@@ -648,7 +648,7 @@ $0.49 for 1,288 words, its revision drew no high note, and the letters left the 
 when Pavel took them. B0 kept 1,066 words at $0.51, 938 without its count. Haiku renamed both
 leads in F's revision, consistently, so F4's rule does not hold on it. In all three F stories
 the chapter ends before its goal, which nothing in the loop checks
-([journal/stories.md](journal/stories.md), *the last version checked*).
+([journal/stories.md](../journal/stories.md), *the last version checked*).
 
 **A chapter that reaches its goal (2026-11-06).** In five F stories, three on `villain-4` and
 the pilot's two on `mystery-2`, one chapter reached its goal: Sonnet's on `mystery-2`, its last
@@ -697,7 +697,7 @@ finished at 4.0 to 7.0 million tokens, as before at 4.6 to 6.6. Read by the agen
 of six reached their goals before (none on `villain-4`) and three after, two before and none
 after not at all. After, 25 openings of 30 named the hour (11 of 24 before), no chapter struck
 its deadline before its last scene (two before), and none put its outcome off. Six stories a
-side is a direction, not a verdict ([journal/stories.md](journal/stories.md), *a chapter that
+side is a direction, not a verdict ([journal/stories.md](../journal/stories.md), *a chapter that
 reaches its goal*).
 
 The owner read the six `villain-4` stories blind and two outside readings agreed: the best was
@@ -733,7 +733,7 @@ F, B0 and A1 on the twelve premises and seeds 1 to 3, on Haiku 5.5, in 3 h 34 mi
 B0 spent 5–12% above F's average on every premise, its last revision crossing the target.
 Most stories came in under the 1,200 words asked: 20 of F's 32 texts, 29 of B0's 36, 12 of A1's
 36. How a pair without an F story is judged is the owner's to decide before PR 14 reads any
-([journal/stories.md](journal/stories.md), *M3's full run*).
+([journal/stories.md](../journal/stories.md), *M3's full run*).
 
 The owner chose to complete the five (2026-11-07). A reflection the model refuses is now left
 out and counted, and the branch plays on; the five were resumed from their stores on this
@@ -743,13 +743,13 @@ had spent to the average of the finished F stories alone, so with the five count
 15–36% less than F on `clash-3`, `clash-4`, `mystery-2` and `mystery-4`. The owner had those
 twelve B0 sessions carried on to F's new average, for $3.36; now B0 spends 2–13% more than F on
 every premise. The run holds 108 finished stories for $60.53: F $28.32, B0 $30.57, A1 $1.64
-([journal/stories.md](journal/stories.md), *the five F stories completed*).
+([journal/stories.md](../journal/stories.md), *the five F stories completed*).
 
 **The judging's probe (2026-11-07).** PR 14's panel read one pair, `villain-4` seed 1, F against
 B0, both ways: all three judges chose B0 in both orders, rating F's story 3–5 on the four
 measures and B0's 5–9, for $1.78 (Fable $0.82, Astra $0.85, Argon $0.11). The 72 pairs of the
 two decisions and a control on each premise come to some $150 by it, about $70 on Anthropic's
-account and $80 on OpenRouter's ([journal/stories.md](journal/stories.md), *PR 14*).
+account and $80 on OpenRouter's ([journal/stories.md](../journal/stories.md), *PR 14*).
 
 **The judging (2026-11-07).** On the droplet, a Claude Code session built `main` at `689088c4`
 and ran the panel over the 108 finished stories, uploaded with their checksums: the controls
@@ -772,7 +772,7 @@ B0's 6.5–7.3 and A1's 6.1–7.0.
 By the decision rule, F does not continue, and the simulation does not stay. Which of the two
 branches left follows turned on A1 against B0, which T23 did not judge: with 24 of its 36 pairs
 A1's pipeline would take the tools, with fewer the track stops. Judging it was put at some $77 at
-this run's rates, and the owner had it run ([journal/stories.md](journal/stories.md), *M3's
+this run's rates, and the owner had it run ([journal/stories.md](../journal/stories.md), *M3's
 judging*).
 
 **A1 against B0 (2026-11-07).** The same session ran the same binary, with the same panel, over
@@ -795,7 +795,7 @@ B0's 6.2–7.0. Length did not decide it: A1's story was the longer in 26 pairs 
 Neither F nor A1 beats B0, so by the decision rule the track stops: M4 is not built, and the
 simulation is not taken further, nor is A1's pipeline. The owner chose to keep the story tools,
 behind `tools.story` and off, running B0 (2026-11-08): a pull request switches them, its forks
-put to the owner first ([journal/stories.md](journal/stories.md), *A1 against B0*).
+put to the owner first ([journal/stories.md](../journal/stories.md), *A1 against B0*).
 
 After M3, Russian prose under the English prompts was to be compared with prose under
 Russian ones (spec §15); with the track stopped, it is not.
@@ -821,7 +821,7 @@ have sent its conversation as one message; it does now. **Live: GO** on Gemma 4 
 local llama-server, its window 65,536, in Russian: a story of two chapters finished in 35
 minutes, each chapter's session ended by the window (17 and 16 versions, about a million
 tokens each), the change asked at chapter 1's checkpoint written in one turn, and chapter 2
-given chapter 1's text and the wish left on it ([journal/stories.md](journal/stories.md),
+given chapter 1's text and the wish left on it ([journal/stories.md](../journal/stories.md),
 *PR 15*).
 
 **PR 16, as built (2026-11-08), as decided.** The simulation, F's chapter loop and the systems
@@ -833,7 +833,7 @@ and they are left as they were. An approved canon is now frozen, where events us
 it. The runner writes B0 alone, to a spend `--target-usd` or `--target-tokens` names, else to its
 24 revisions; the other systems' names stay, so that M3's stories on disk can still be judged.
 B0's prompts are byte for byte what they were, on the fixture and on all twelve frozen premises
-([journal/stories.md](journal/stories.md), *PR 16*).
+([journal/stories.md](../journal/stories.md), *PR 16*).
 
 ### M4 — the long form, after a GO
 
@@ -861,7 +861,7 @@ Its pull requests are cut when M4 starts.
   the end of the sequence until the grammar completes. A role's cap leaves room for
   thinking, and the cuts are counted (spec §8).
 - **A model that says it continued without calling.** Qwen still does it about once in
-  20 under the best wording measured ([journal/tools.md](journal/tools.md)). The
+  20 under the best wording measured ([journal/tools.md](../journal/tools.md)). The
   reminder line and `story_status` make a missed call visible, and PR 9's smoke counts
   them.
 - **Refusals on Claude 5.x.** A field that reads as the model's own reasoning is
@@ -1115,11 +1115,11 @@ elicitation, screenplays and poetry.
 
 | What | When |
 | --- | --- |
-| [docs/journal/](journal/) — a new `stories.md`, its row in CLAUDE.md's document map | PR 1, then every PR |
-| [spec.md](../spec.md) — §9.16, the story tools | PR 8 and PR 9 |
-| [architecture.md](architecture.md) — the module map for each new module | Every code PR |
-| [CHANGELOG.md](../CHANGELOG.md) — Added (experimental), and Data for the chat schema and the story database | PR 7, PR 8, PR 9 |
-| [README.md](../README.md), [manual.md](manual.md), the help overlay | PR 9 |
-| [roadmap.md](roadmap.md) — models per role as groundwork | PR 9 |
-| [lessons.md](lessons.md) — a trap that will bite elsewhere | When one appears |
+| [docs/journal/](../journal) — a new `stories.md`, its row in CLAUDE.md's document map | PR 1, then every PR |
+| [spec.md](../../spec.md) — §9.16, the story tools | PR 8 and PR 9 |
+| [architecture.md](../architecture.md) — the module map for each new module | Every code PR |
+| [CHANGELOG.md](../../CHANGELOG.md) — Added (experimental), and Data for the chat schema and the story database | PR 7, PR 8, PR 9 |
+| [README.md](../../README.md), [manual.md](../manual.md), the help overlay | PR 9 |
+| [roadmap.md](../roadmap.md) — models per role as groundwork | PR 9 |
+| [lessons.md](../lessons.md) — a trap that will bite elsewhere | When one appears |
 | This plan — each gate's outcome; moved to `docs/history/` when the track ends | Each gate |

@@ -1191,7 +1191,7 @@ mod cache_figure_tests {
     }
 }
 
-/// The reply's schema on the wire (docs/fabula.md §4, PR 5).
+/// The reply's schema on the wire (docs/history/fabula.md §4, PR 5).
 #[cfg(test)]
 mod output_schema_tests {
     use super::build_request;

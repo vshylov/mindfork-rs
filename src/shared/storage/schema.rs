@@ -37,7 +37,7 @@ pub const DB_SCHEMA: u32 = 1;
 /// Schema version of a story's database (`PRAGMA user_version`): Fabula's canon,
 /// event log, manuscript and run steps (docs/research/fabula-engine.md §6). Its
 /// runner is in [`crate::shared::storage::story`]; no released build writes one
-/// before the story tools ship (docs/fabula.md §4).
+/// before the story tools ship (docs/history/fabula.md §4).
 pub const STORY_SCHEMA: u32 = 1;
 /// Schema version of a story's call log, the sibling file that records every
 /// model call for replay and stays outside backups (spec §6, §15).
@@ -520,7 +520,7 @@ mod tests {
         // transcripts, the dialogue-run stamp, spec §9.13, the cut run titles,
         // spec §11.2, the same `max` stamp, the same `deepseek` stamp, the one
         // that lets a stored file be a generated picture, spec §9.15, then the
-        // one that lets a run be a story's, docs/fabula.md §4); profiles are
+        // one that lets a run be a story's, docs/history/fabula.md §4); profiles are
         // still dormant.
         let settings = settings_artifact();
         assert_eq!(settings.current, 7);

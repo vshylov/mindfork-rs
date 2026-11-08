@@ -1,4 +1,4 @@
-//! The story runs out in the background (docs/fabula.md §4, PR 8), as the
+//! The story runs out in the background (docs/history/fabula.md §4, PR 8), as the
 //! app, its tools and the runs themselves share them.
 //!
 //! A story has one writer at a time (spec §9), so a run **claims** its story

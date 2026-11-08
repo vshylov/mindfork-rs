@@ -400,7 +400,7 @@ impl Orchestrator {
             run.background = true;
             run.outcome = Some(RunOutcome::Cancelled);
             run.finished_at = Some(chrono::Utc::now());
-            // A story's run names the step it was at (docs/fabula.md §4, PR 8):
+            // A story's run names the step it was at (docs/history/fabula.md §4, PR 8):
             // the stores keep everything finished, and the next run resumes
             // from the first step no run finished (spec §9).
             if run.kind == RunKind::Story {

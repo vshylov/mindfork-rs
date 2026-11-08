@@ -1,4 +1,4 @@
-//! `story_create` and `story_continue` as the model meets them (docs/fabula.md
+//! `story_create` and `story_continue` as the model meets them (docs/history/fabula.md
 //! §4, PR 9): their arguments, their schema against the canon's own shape,
 //! the tool end to end on a chat's storage, and every text in both languages
 //! with no placeholder left unfilled.

@@ -1,4 +1,4 @@
-//! M3's hidden runner (docs/fabula.md §4, PR 13; docs/research/fabula-engine.md
+//! M3's hidden runner (docs/history/fabula.md §4, PR 13; docs/research/fabula-engine.md
 //! §11, §13, §15): one command, `mindfork story-eval`, which `--help` does not
 //! list.
 //!
@@ -6,7 +6,7 @@
 //!   directory — its database, its call log, the markdown and the trace —
 //!   and never into the data, so the single-instance lock is not taken and a
 //!   running app is not disturbed.
-//! - **B0 alone** (docs/fabula.md §6, T28): one writer in one session
+//! - **B0 alone** (docs/history/fabula.md §6, T28): one writer in one session
 //!   ([`super::single`]), on a model the command's own options name, to the
 //!   spend `--target-usd` or `--target-tokens` names, else to its revisions as
 //!   the story tools' (T25). F and the ablations A1–A4 were removed after M3;
@@ -15,7 +15,7 @@
 //!   (`premises/SHA256SUMS`), and every trace names its premise's hash.
 //! - **Resumable.** A story resumes from its stores (spec §9), and a batch
 //!   run again skips each story whose trace says it ended, so the batch can
-//!   run for days as a service that is restarted (docs/fabula.md §4, *Where
+//!   run for days as a service that is restarted (docs/history/fabula.md §4, *Where
 //!   it runs*).
 
 use std::collections::BTreeMap;
@@ -45,7 +45,7 @@ use crate::shared::config::ToolSettings;
 use crate::shared::storage::story::{Spend, StoryDb, StoryDbError};
 
 /// A system of spec §11's evaluation: the names M3's stories are filed
-/// under. Only B0 is written now (docs/fabula.md §6, T28).
+/// under. Only B0 is written now (docs/history/fabula.md §6, T28).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum System {
     /// Fabula's simulation, removed after M3.
@@ -382,7 +382,7 @@ pub struct Options {
 
 impl Default for Options {
     /// The app's own: the chapter's length and budget, its six hours (T2,
-    /// T11), and the stories in Russian (docs/fabula.md §6, T20).
+    /// T11), and the stories in Russian (docs/history/fabula.md §6, T20).
     fn default() -> Self {
         let tools = ToolSettings::default();
         Self {
@@ -952,7 +952,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
 
 /// Why a system other than B0 is not run.
 const REMOVED: &str = "only B0 is written: F and its ablations A1-A4 were removed after M3 \
-(docs/fabula.md §6, T28)";
+(docs/history/fabula.md §6, T28)";
 
 /// The spend `--target-usd` and `--target-tokens` name; none without them.
 fn target(take: &mut impl FnMut(&str) -> Option<String>) -> Result<Option<Target>, String> {

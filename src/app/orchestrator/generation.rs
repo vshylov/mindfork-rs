@@ -885,7 +885,7 @@ impl Orchestrator {
             Vec::new()
         };
         // The questions the chat's stories wait on, with the person's rows since
-        // each was put to them (docs/fabula.md §4, PR 9): what `story_continue`
+        // each was put to them (docs/history/fabula.md §4, PR 9): what `story_continue`
         // reads as an answer, and what the request's reminder line names. Read
         // only when the turn offers the tool.
         let story_pending = if allowed
@@ -3967,7 +3967,7 @@ pub(super) struct BackgroundStart {
 
 /// What a background run *is* (docs/research/background-dialogues.md F5): a
 /// sub-agent over its `ChildSpec`, a directed scene over its own, or a story's
-/// run (docs/fabula.md §4, PR 8; [`super::story_runs`]). They share every later
+/// run (docs/history/fabula.md §4, PR 8; [`super::story_runs`]). They share every later
 /// step — the seat, the landing by id, the notification, the stop — so only
 /// the start and the spawn branch.
 pub(super) enum RunSpec {
@@ -4029,7 +4029,7 @@ impl BackgroundStart {
     }
 }
 
-/// A story run's start as `story_continue`'s call hands one over (docs/
+/// A story run's start as `story_continue`'s call hands one over (docs/history/
 /// fabula.md §4, PR 9): the slot taken, and the parts of a turn a story run
 /// reads — the backend and the slots — over defaults for the rest.
 #[cfg(test)]
@@ -4356,7 +4356,7 @@ pub(super) fn spawn_background_run(
                 (result, Vec::new())
             }
             // The story engine on the turn's backend, its every call under the
-            // app's budget (docs/fabula.md §3); it reports no rounds, so the
+            // app's budget (docs/history/fabula.md §3); it reports no rounds, so the
             // run's mirror stays its placeholder until it lands.
             RunSpec::Story(spec) => {
                 let (run, text, effects) = spec
