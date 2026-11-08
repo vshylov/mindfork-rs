@@ -5741,6 +5741,68 @@ No Rust changed and no live stack is involved; the test count is unchanged.
   and `site/`, and `packaging.yml` compiles the installer with the new RTFs.
 - **Tests:** 4714 unit tests green, 307 `#[ignore]` — unchanged; the release adds no
   code.
+- **The draft — not checked before the publication.** The owner merged 899
+  (`a73569d2`, 12:40:35Z) and set `v0.24.0` on `a73569d2`, which was `origin/main`.
+  - `release.yml` (run 42481575090) was green in all eight jobs in **15 min 32 s**
+    (0.23.1: 12 min 20 s). Windows took the longest at 14 min 04 s, then macOS
+    11 min 04 s, Linux 10 min 45 s, and the demo 4 min 25 s.
+  - The draft's assets were up at 12:58:57Z, and it was published 8 min 01 s later,
+    before the agent had looked at it: §6 step 5's checks below were run on the
+    **published** release, a few minutes after it went out. Nothing in them would have
+    held it back; had something, the release is immutable, and the way out would have
+    been a 0.24.1.
+- **The published release, checked as the draft would have been.**
+  - Not a prerelease, immutable, fifteen assets — the same set as 0.23.1's. Every
+    downloaded file matched `sha256sums.txt`, fourteen of fourteen. Its notes are the
+    `[0.24.0]` section line for line (103 lines), with the workflow's footer below.
+  - **`install.sh` and the six animation files are 0.23.1's byte for byte** — nothing
+    the reel shows moved.
+  - **The released archives.** Linux: 49 entries, the same list as 0.23.1's; its
+    `mindfork` says `mindfork 0.24.0`, and its `PRIVACY.md` and `PRIVACY.ru.md` are
+    effective 2026-11-08 and name `story-logs/`. The Windows zip: 48 entries, the same
+    list as 0.23.1's, its `PRIVACY.md` effective 2026-11-08. macOS: 49 entries, the same
+    list; its `mindfork` is a 64-bit Mach-O for arm64 (`cf fa ed fe`, CPU type
+    `0x0100000c`), mode 0755. Not run: there is no Mac here.
+  - **Attestations** verify for the three archives, the installer and `install.sh`; a
+    scratch file exits 1.
+- **The schema step, both ways, on the released binary** (§6 step 5's rule for a release
+  that moves a schema constant). The Linux archive's `mindfork` in place of the debug
+  build, beside the published 0.23.1, on 0.23.1's own root of the rubric:
+  - *Forward*: exit 0, all eleven chat files stamped 8, a `pre-migrate-*.zip` whose
+    manifest says `settings 7, profiles 1, chat 7, db 1, story 0`, `newline_key` written
+    as `auto`; `stats`: five chats, fingerprint `a605ef150b3b70fe`, as before the step.
+  - *0.23.1 on what it wrote*: refuses at start, *"…created by a newer version of
+    mindfork (schema 8, supported 7)…"*, exit 1; all 26 stored files byte for byte as
+    they were.
+  - *The way back*: 0.23.1 restores that `pre-migrate-*.zip` into an empty root with no
+    warning, exit 0, fingerprint `a605ef150b3b70fe`.
+  - *870's fix*: the same root with a `{}` dropped into `chats/` — 0.23.1 stops with
+    *"Migrating …/notes.json produced an unparseable result … This is a migration bug"*,
+    exit 1; the released binary starts (exit 0) and leaves the file as it was.
+- **Not run this time**: the interface on the released binary (`console_probe` drives a
+  Windows console, and this check ran on the droplet), a live turn, a story run by it;
+  the installer and the packages beyond what their jobs install.
+- **Published, and the numbers of it.**
+  - **Published at 13:06:58Z by the owner** (immutable).
+  - `crates-io.yml` (run 42483398710) ran 13:07:01Z → 13:09:40Z. `mindfork 0.24.0` was
+    on the registry at 13:09:30Z (5 167 391 bytes), **2 min 32 s** after the
+    publication (0.23.1: 3 min 03 s).
+  - `Site` (run 42483616901) started 2 s after `crates.io` completed and deployed at
+    13:10:27Z — **3 min 29 s after the publication** (0.23.1: 3 min 43 s). The hold on
+    the merge had shown as before (run 42481363650): "Is this version out?" green, the
+    build and the deploy skipped.
+  - From outside:
+    - the post answers 200 at `/blog/mindfork-0-24-0/`;
+    - the home page's and the install page's structured data say
+      `"softwareVersion": "0.24.0"`;
+    - the blog's index, `/llms.txt`, the Atom feed and the sitemap list the post;
+    - the privacy page is effective 2026-11-08 and names `story-logs/`;
+    - `releases/latest` resolves to `v0.24.0`;
+    - `mindfork.io/demo/mindfork-demo-dark-en.gif` is the release's, byte for byte.
+- **The package managers.** `aur.yml` (run 42483398610) built and installed
+  `mindfork-rs-bin` 0.24.0 (`installed: mindfork 0.24.0`) and stopped at its notice,
+  because there is no key. At 13:10Z, Scoop's bucket and the tap's formula still named
+  0.23.1. Neither was waited for.
 
 **Gates**: unit tests green; clippy `-D warnings`, fmt, `cyrillic_scan`, `link_check`,
 `doc_index_check`, `layer_check`, `list_scroll_check`, `claude_md_chart --check`,
