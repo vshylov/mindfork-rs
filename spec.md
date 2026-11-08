@@ -4170,7 +4170,7 @@ section and subsection), `Esc` — cancel.
   `subagent_background_wake`, `subagent_background_max`), *Web search*,
   *Python* (a switch + the path), *Video (YouTube)* (who watches, and with
   what — below), *Image generation* (below), *Files* (access + a sandbox
-  directory), and last *Stories (experimental)* — `story`, off, then
+  directory), and last *Story writing (experimental)* — `story`, off, then
   `story_run_timeout_secs`, `story_budget_tokens` and `story_budget_usd`
   ([9.16](#916-the-story-tools-fabula-experimental)).
 

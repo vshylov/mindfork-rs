@@ -13,7 +13,7 @@ what was rejected — the reasoning behind the code, not its current shape. For 
 shape read the reference documents named above; for the traps that recur across areas read
 [lessons.md](../lessons.md).
 
-## Entries (26)
+## Entries (27)
 
 - Post-M9: Fabula — PR 1, the story database (done)
 - Post-M9: Fabula — PR 2, the model port and replay; Gate G0 GO (done)
@@ -41,6 +41,7 @@ shape read the reference documents named above; for the traps that recur across 
 - Post-M9: Fabula — A1 against B0 (done)
 - Post-M9: Fabula — PR 15, the story tools on B0 (done)
 - Post-M9: Fabula — PR 16, F removed (done)
+- Post-M9: Fabula — the story settings in the user's words (done)
 
 ### Post-M9: Fabula — PR 1, the story database (done)
 
@@ -2389,3 +2390,36 @@ and live smokes (2026-11-08). The commit before it, PR 15's head, is tagged `fab
     premises, and a chapter's prompts for a longer arc, were dumped before and after the
     removal: byte for byte the same (158 KB).
   - `cargo test`: 4713 passed, 314 ignored. Clippy and every repository gate are clean.
+
+### Post-M9: Fabula — the story settings in the user's words (done)
+
+- **What.** The Russian names of the story engine's settings, its three tool labels in
+  the feed, two help lines and the `mindfork stats` labels said *istoriya*: the word the
+  same interface already uses for a conversation's history — "history compaction", the
+  self-model's history, the LLM history, "read the summarized history". In the Tools tab
+  *Istoriya: run time limit (s)* read as a setting of the chat's history, not of a text
+  being written. They now say *rasskaz*, the everyday Russian for a written story: the
+  group *Generatsiya rasskazov (experimental)* — story generation, the analogy with the
+  *Image generation* group being the user's choice on the first screenshot of the change
+  (2026-11-08) — the toggle *Instrumenty dlya rasskazov* (the tools for
+  stories), the rows *Rasskaz: …*; the four descriptions, the help's "a subagent, a
+  dialogue or a story", the gate's line and the stats' labels follow. The two tool results
+  that send the user to the settings name the new group, in both locales. In English the
+  group header is *Story writing (experimental)*, beside *Image generation* and *Web
+  search*; the *Story tools* toggle and the *Story: …* rows keep their names, which the
+  manual uses.
+- **Why this noun.** *Rasskaz* is what a Russian speaker says for "write a story", it
+  cannot be read as a history, and "a rasskaz in two or three chapters" is what the manual
+  promises ("a short story of two chapters"). *Povest'* is the accurate genre for prose
+  with chapters but bookish; *kniga* (a book) overstates two chapters; *syuzhet* is the
+  plot. The new prefix is as wide as the old one, so the value column does not move; the
+  widest new label is 30 cells under `LABEL_CAP` (35).
+- **What stays.** The model-facing strings — the `tool.story_*` descriptions and results,
+  some seventy — keep *istoriya*: the model reads them, nothing collides there, and the
+  chapters and questions the user reads are the model's own words. The released CHANGELOG
+  entries and the 0.24.0 post keep the name the release shipped under. The manual's
+  section stays *Stories (experimental)*, its anchor with it; only the settings path in it
+  changed.
+- **Checked here.** No test or fixture pins these strings; the locale files are loaded by
+  `include_str!`, so `cargo test` is the gate: 4717 passed, 307 ignored, as before this change. A wording change with no code
+  behind it: no live run.
