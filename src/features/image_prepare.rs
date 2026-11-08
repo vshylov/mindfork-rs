@@ -64,7 +64,7 @@ const DECODED_EXTENSIONS: [&str; 6] = ["png", "jpg", "jpeg", "webp", "gif", "bmp
 /// wrong "yes" is refused by [`prepare`], which judges the bytes, never the name.
 pub fn has_image_extension(path: &std::path::Path) -> bool {
     path.extension()
-        .and_then(|e| e.to_str())
+        .and_then(std::ffi::OsStr::to_str)
         .is_some_and(|e| DECODED_EXTENSIONS.iter().any(|d| e.eq_ignore_ascii_case(d)))
 }
 
