@@ -2399,7 +2399,9 @@ and live smokes (2026-11-08). The commit before it, PR 15's head, is tagged `fab
   self-model's history, the LLM history, "read the summarized history". In the Tools tab
   *Istoriya: run time limit (s)* read as a setting of the chat's history, not of a text
   being written. They now say *rasskaz*, the everyday Russian for a written story: the
-  group *Rasskazy (experimental)*, the toggle *Instrumenty dlya rasskazov* (the tools for
+  group *Generatsiya rasskazov (experimental)* — story generation, the analogy with the
+  *Image generation* group being the user's choice on the first screenshot of the change
+  (2026-11-08) — the toggle *Instrumenty dlya rasskazov* (the tools for
   stories), the rows *Rasskaz: …*; the four descriptions, the help's "a subagent, a
   dialogue or a story", the gate's line and the stats' labels follow. The two tool results
   that send the user to the settings name the new group, in both locales. In English the
