@@ -1,24 +1,22 @@
 //! M3's hidden runner (docs/fabula.md §4, PR 13; docs/research/fabula-engine.md
-//! §11, §13, §15): the systems of the evaluation as run options of one
-//! command, `mindfork story-eval`, which `--help` does not list.
+//! §11, §13, §15): one command, `mindfork story-eval`, which `--help` does not
+//! list.
 //!
 //! - **Its own directory.** A story is written under the run's output
 //!   directory — its database, its call log, the markdown and the trace —
 //!   and never into the data, so the single-instance lock is not taken and a
 //!   running app is not disturbed.
-//! - **The systems** (spec §11): F, the engine as the chat runs it; B0, one
-//!   agent in one session ([`super::single`]); A1, no simulation; A2, one
-//!   branch a scene; A3, no reviewers; A4, every character sees every event.
-//!   One model serves them all, named by the command's own options.
+//! - **B0 alone** (docs/fabula.md §6, T28): one writer in one session
+//!   ([`super::single`]), on a model the command's own options name, to the
+//!   spend `--target-usd` or `--target-tokens` names, else to its revisions as
+//!   the story tools' (T25). F and the ablations A1–A4 were removed after M3;
+//!   their names stay, so that M3's stories on disk can still be judged.
 //! - **The premises** are frozen in the repository with their SHA-256
 //!   (`premises/SHA256SUMS`), and every trace names its premise's hash.
 //! - **Resumable.** A story resumes from its stores (spec §9), and a batch
 //!   run again skips each story whose trace says it ended, so the batch can
 //!   run for days as a service that is restarted (docs/fabula.md §4, *Where
 //!   it runs*).
-//! - **The pauses are answered as the plan has it:** the canon approved, a
-//!   scene that failed on every attempt tried again once, the chapter
-//!   accepted as it stands.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -32,36 +30,35 @@ use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 use super::author_prompts;
-use super::chapter::{self, Budget, ChapterConfig, Engine, Outcome, Stop};
 use super::engine::{EngineAdapter, ListPrice, LongPrompt, SharedLog};
 use super::export;
 use super::judge::{self, Judge, Judging, Matchup};
-use super::leaks::{self, AuditedCall};
-use super::port::LlmPort;
-use super::run::{character_sampling, role_sampling};
+use super::run::writer_sampling;
 use super::single::{self, Ended, SingleConfig, Target};
+use super::single_story::{Budget, MOST_REVISIONS};
 use crate::entities::sampling::ReasoningEffort;
-use crate::entities::story::{BranchId, Canon, Decision, QuestionBody, Resolution, Reviewer};
+use crate::entities::story::Canon;
 use crate::shared::api::contract::EngineBackend;
 use crate::shared::api::retry::RetryBackend;
 use crate::shared::api::{AnthropicClient, GeminiClient, OpenAiClient, ResponsesClient};
 use crate::shared::config::ToolSettings;
 use crate::shared::storage::story::{Spend, StoryDb, StoryDbError};
 
-/// A system of spec §11's evaluation.
+/// A system of spec §11's evaluation: the names M3's stories are filed
+/// under. Only B0 is written now (docs/fabula.md §6, T28).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum System {
-    /// Fabula, as the chat runs it.
+    /// Fabula's simulation, removed after M3.
     F,
-    /// One agent, one session, to F's cost.
+    /// One writer, one session.
     B0,
-    /// The Author and the reviewers, no simulation.
+    /// The Author and the reviewers, no simulation; removed after M3.
     A1,
-    /// One branch a scene.
+    /// One branch a scene; removed.
     A2,
-    /// No reviewers.
+    /// No reviewers; removed.
     A3,
-    /// Every character sees every event.
+    /// Every character sees every event; removed.
     A4,
 }
 
@@ -93,21 +90,6 @@ impl System {
         Self::ALL
             .into_iter()
             .find(|s| s.as_str().eq_ignore_ascii_case(name.trim()))
-    }
-
-    /// How this system makes the chapter, from F's `base`; none for B0,
-    /// which makes no chapter loop at all.
-    pub fn chapter(self, base: &ChapterConfig) -> Option<ChapterConfig> {
-        let mut config = base.clone();
-        match self {
-            System::F => {}
-            System::B0 => return None,
-            System::A1 => config.simulate = false,
-            System::A2 => config.sim.branches = 1,
-            System::A3 => config.review = false,
-            System::A4 => config.sim.omniscient = true,
-        }
-        Some(config)
     }
 }
 
@@ -386,15 +368,15 @@ impl Route {
 /// What every story of a run shares.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Options {
-    /// The language the stories are written in, and the summaries.
+    /// The language the stories are written in.
     pub language: String,
-    /// The chapter's length, in words, as asked.
+    /// The story's length, in words, as asked.
     pub words: (u32, u32),
-    /// A chapter system's budget.
+    /// The story's budget: its ceiling, as the story tools' chapter's.
     pub budget: Budget,
     /// A story's time limit; a story cut by it resumes on the next run.
     pub timeout: Duration,
-    /// The model's window, for B0.
+    /// The model's window.
     pub window: u64,
 }
 
@@ -405,7 +387,7 @@ impl Default for Options {
         let tools = ToolSettings::default();
         Self {
             language: "Russian".to_owned(),
-            words: ChapterConfig::default().words,
+            words: SingleConfig::default().words,
             budget: Budget {
                 tokens: Some(tools.story_budget_tokens),
                 usd: None,
@@ -427,16 +409,17 @@ pub struct Job {
     pub seed: u64,
     /// Where it is written.
     pub dir: PathBuf,
-    /// B0's spend to reach: F's average on the premise.
+    /// The spend to reach, when the command names one; none ends the
+    /// session on its revisions.
     pub target: Option<Target>,
 }
 
 /// How a story ended, as its trace records it.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Ending {
-    /// Its chapter accepted, or B0's session spent to its end.
+    /// B0's session written to its end.
     Finished(String),
-    /// Stopped at a step: the budget, a call that gave nothing, a refusal.
+    /// Stopped at a step: a call cancelled or that gave nothing.
     Stopped {
         /// The step.
         step: String,
@@ -516,58 +499,48 @@ async fn write_open(
     }
     let log: SharedLog = Arc::new(Mutex::new(db.run_log_writer().await?));
     let calls = CancellationToken::new();
-    // The requests carry no seed: sibling branches send byte-identical first
-    // prompts, and one seed for both would play them alike on a provider that
-    // honours it. The story's seed moves the routine-break draws alone.
     let mut adapter = EngineAdapter::sharing(
         backend,
         log.clone(),
         route.model.clone(),
-        character_sampling(),
+        writer_sampling(),
         calls.clone(),
     );
-    for (role, sampling) in role_sampling() {
-        adapter = adapter.with_role_sampling(role, sampling);
-    }
     if let Some(price) = route.list_price() {
         adapter = adapter.with_list_price(price);
     }
     let deadline = tokio::time::sleep(options.timeout);
     tokio::pin!(deadline);
     let mut cut = false;
+    let config = SingleConfig {
+        words: options.words,
+        target: job.target,
+        budget: options.budget,
+        window: options.window,
+        // M3's backstop under a target; the story tools' end without one.
+        most_revisions: job
+            .target
+            .map_or(MOST_REVISIONS, |_| SingleConfig::default().most_revisions),
+    };
     let work = async {
-        match job.system.chapter(&chapter_config(job, options)) {
-            Some(config) => {
-                let ending = chapter_story(db, &mut author, &log, &adapter, &config).await?;
-                Ok::<_, StoryDbError>((ending, json!(config_json(&config))))
-            }
-            None => {
-                let config = SingleConfig {
-                    words: options.words,
-                    target: Some(job.target.unwrap_or_default()),
-                    window: options.window,
-                    ..SingleConfig::default()
-                };
-                let written = single::write(db, &mut author, &log, &adapter, &config).await?;
-                let ending = match written.ended {
-                    Ended::Spent => Ending::Finished("spent".to_owned()),
-                    Ended::Window => Ending::Finished("window".to_owned()),
-                    Ended::Revisions => Ending::Finished("revisions".to_owned()),
-                    Ended::Budget => Ending::Finished("budget".to_owned()),
-                    Ended::Cancelled(step) => Ending::Stopped {
-                        step,
-                        why: "cancelled".to_owned(),
-                        transient: true,
-                    },
-                    Ended::Failed(step, why) => Ending::Stopped {
-                        step,
-                        why,
-                        transient: true,
-                    },
-                };
-                Ok((ending, single_json(&config)))
-            }
-        }
+        let written = single::write(db, &mut author, &log, &adapter, &config).await?;
+        let ending = match written.ended {
+            Ended::Spent => Ending::Finished("spent".to_owned()),
+            Ended::Window => Ending::Finished("window".to_owned()),
+            Ended::Revisions => Ending::Finished("revisions".to_owned()),
+            Ended::Budget => Ending::Finished("budget".to_owned()),
+            Ended::Cancelled(step) => Ending::Stopped {
+                step,
+                why: "cancelled".to_owned(),
+                transient: true,
+            },
+            Ended::Failed(step, why) => Ending::Stopped {
+                step,
+                why,
+                transient: true,
+            },
+        };
+        Ok::<_, StoryDbError>((ending, single_json(&config)))
     };
     tokio::pin!(work);
     let (ending, config) = loop {
@@ -586,131 +559,14 @@ async fn write_open(
     Ok((ending, config))
 }
 
-/// A chapter system's configuration under `options`, its seed `job`'s.
-fn chapter_config(job: &Job, options: &Options) -> ChapterConfig {
-    let mut config = ChapterConfig {
-        words: options.words,
-        budget: options.budget,
-        human_language: options.language.clone(),
-        ..ChapterConfig::default()
-    };
-    config.sim.seed = job.seed;
-    config
-}
-
-fn config_json(config: &ChapterConfig) -> Value {
-    json!({
-        "branches": config.sim.branches,
-        "max_rounds": config.sim.max_rounds,
-        "abnormal_p": config.sim.abnormal_p,
-        "reflect_every": config.sim.reflect_every,
-        "seed": config.sim.seed,
-        "omniscient": config.sim.omniscient,
-        "simulate": config.simulate,
-        "review": config.review,
-        "max_scenes": config.max_scenes,
-        "max_reruns": config.max_reruns,
-        "max_revisions": config.max_revisions,
-        "words": [config.words.0, config.words.1],
-        "budget": {"tokens": config.budget.tokens, "usd": config.budget.usd},
-    })
-}
-
 fn single_json(config: &SingleConfig) -> Value {
     json!({
         "words": [config.words.0, config.words.1],
         "target": config.target.map(|t| json!({"usd": t.usd, "tokens": t.tokens})),
+        "budget": {"tokens": config.budget.tokens, "usd": config.budget.usd},
         "window": config.window,
         "most_revisions": config.most_revisions,
     })
-}
-
-/// The answer a pause gets in an evaluation run (docs/fabula.md §4): the
-/// canon approved; a scene that failed on every attempt tried again, once;
-/// the chapter accepted as it stands.
-fn answer_to(body: &QuestionBody, scenes_retried: u32) -> Option<(Decision, &'static str)> {
-    match body {
-        QuestionBody::Canon => Some((Decision::Approve, "")),
-        QuestionBody::Scene { .. } if scenes_retried == 0 => {
-            Some((Decision::Answer, "Try the scene again."))
-        }
-        QuestionBody::Scene { .. } => None,
-        QuestionBody::Chapter { .. } => Some((Decision::Approve, "")),
-    }
-}
-
-/// A chapter system's story, its pauses answered, to its end or a stop.
-pub(crate) async fn chapter_story(
-    db: &StoryDb,
-    author: &mut crate::shared::storage::story::AuthorWriter,
-    log: &SharedLog,
-    port: &dyn LlmPort,
-    config: &ChapterConfig,
-) -> Result<Ending, StoryDbError> {
-    let mut retried = 0;
-    loop {
-        let outcome = chapter::advance(Engine {
-            db,
-            author,
-            log,
-            port,
-            config,
-        })
-        .await;
-        let outcome = match outcome {
-            Ok(outcome) => outcome,
-            Err(chapter::StoryError::Store(e)) => return Err(e),
-            Err(e) => {
-                return Ok(Ending::Stopped {
-                    step: String::new(),
-                    why: e.to_string(),
-                    transient: false,
-                });
-            }
-        };
-        let question = match outcome {
-            Outcome::Finished => return Ok(Ending::Finished("accepted".to_owned())),
-            Outcome::Stopped { step, why } => {
-                let transient = matches!(why, Stop::Failed(_) | Stop::Cancelled);
-                return Ok(Ending::Stopped {
-                    step,
-                    why: stop_words(&why),
-                    transient,
-                });
-            }
-            Outcome::Paused(question) => question,
-        };
-        let Some((decision, notes)) = answer_to(&question.body, retried) else {
-            return Ok(Ending::Stopped {
-                step: question.step.clone(),
-                why: "the scene failed on every attempt, twice".to_owned(),
-                transient: false,
-            });
-        };
-        if matches!(question.body, QuestionBody::Scene { .. }) {
-            retried += 1;
-        }
-        chapter::resolve(
-            author,
-            &question.id,
-            &Resolution {
-                decision,
-                notes: notes.to_owned(),
-                evidence: json!({"runner": "story-eval"}),
-                rerun: None,
-            },
-        )
-        .await?;
-    }
-}
-
-fn stop_words(why: &Stop) -> String {
-    match why {
-        Stop::Cancelled => "cancelled".to_owned(),
-        Stop::Budget(spent) => format!("the budget is spent: {spent}"),
-        Stop::Failed(why) => why.clone(),
-        Stop::Refused(why) => format!("the world refused: {why}"),
-    }
 }
 
 // ---------- the trace ----------
@@ -725,8 +581,8 @@ fn spend_json(spent: &Spend) -> Value {
 }
 
 /// What a story's stores hold once it ended: the trace the judging reads
-/// beside the markdown (spec §11's metrics): its spend by role, its length,
-/// its scenes and picks, its notes, the leaks the audit finds.
+/// beside the markdown (spec §11's metrics): its spend, its length, its
+/// versions.
 async fn trace(
     job: &Job,
     route: &Route,
@@ -749,45 +605,11 @@ async fn trace(
             spent.cost_usd = Some(spent.cost_usd.unwrap_or(0.0) + cost);
         }
     }
-    let mut scenes = Vec::new();
-    let mut paths = BTreeMap::new();
-    for scene in db.scenes_of(1).await? {
-        let pick = db.pick_of(&scene.id).await?;
-        let mut k = 0;
-        loop {
-            let branch = BranchId::of_scene(&scene.id, k);
-            if db.branch(&branch).await?.is_none() {
-                break;
-            }
-            paths.insert(branch.clone(), db.path(&branch).await?);
-            k += 1;
-        }
-        scenes.push(json!({
-            "scene": scene.id.as_str(),
-            "location": scene.setup.location.as_str(),
-            "present": scene.setup.present,
-            "intent": scene.intent,
-            "branches": k,
-            "pick": pick.as_ref().and_then(|p| p.branch.as_ref().map(|b| b.as_str().to_owned())),
-            "note": pick.map(|p| p.rationale),
-        }));
-    }
-    let audited: Vec<AuditedCall> = calls.iter().map(|c| AuditedCall::of(&c.call)).collect();
     let canon = db
         .canon()
         .await?
         .unwrap_or_else(|| job.premise.canon.clone());
-    let found: Vec<String> = leaks::audit(&canon, &paths, &audited)
-        .iter()
-        .map(ToString::to_string)
-        .collect();
     let versions = db.chapter_versions(1).await?;
-    let mut notes: BTreeMap<&'static str, usize> = BTreeMap::new();
-    for v in &versions {
-        for n in db.notes(&v.id).await? {
-            *notes.entry(reviewer_name(n.reviewer)).or_default() += 1;
-        }
-    }
     let story = export::markdown(db).await?;
     Ok(json!({
         "premise": job.premise.id,
@@ -803,34 +625,27 @@ async fn trace(
         "versions": versions.len(),
         "spent": spend_json(&db.spend("").await?),
         "roles": roles.iter().map(|(r, s)| (r.clone(), spend_json(s))).collect::<serde_json::Map<_, _>>(),
-        "scenes": scenes,
-        "notes": notes,
-        "leaks": found,
         "seconds": took.as_secs(),
         "runner": env!("CARGO_PKG_VERSION"),
     }))
 }
 
-fn reviewer_name(reviewer: Reviewer) -> &'static str {
-    reviewer.as_str()
-}
-
 // ---------- the batch ----------
 
-/// A batch: every premise × system × seed asked for, in one output
+/// A batch: B0's story of every premise × seed asked for, in one output
 /// directory, `parallel` stories at a time.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Batch {
     /// The premises.
     pub premises: Vec<Premise>,
-    /// The systems.
-    pub systems: Vec<System>,
     /// The seeds.
     pub seeds: Vec<u64>,
     /// The output directory.
     pub out: PathBuf,
     /// How many stories run at once.
     pub parallel: usize,
+    /// The spend each story reaches, when the command names one.
+    pub target: Option<Target>,
 }
 
 /// Where a story of a batch is written.
@@ -857,73 +672,23 @@ fn ended(trace: &Value) -> bool {
     }
 }
 
-/// B0's target on a premise: the average spend of its F stories that
-/// finished, in dollars where every one reports them (spec §11, equal cost).
-pub fn target_of(traces: &[Value]) -> Option<Target> {
-    let finished: Vec<&Value> = traces
-        .iter()
-        .filter(|t| t["ending"]["kind"] == "finished")
-        .collect();
-    if finished.is_empty() {
-        return None;
-    }
-    let n = finished.len() as f64;
-    let tokens: u64 = finished
-        .iter()
-        .map(|t| {
-            t["spent"]["input_tokens"].as_u64().unwrap_or(0)
-                + t["spent"]["output_tokens"].as_u64().unwrap_or(0)
-        })
-        .sum();
-    let usd: Option<Vec<f64>> = finished
-        .iter()
-        .map(|t| t["spent"]["cost_usd"].as_f64())
-        .collect();
-    Some(Target {
-        usd: usd.map(|all| all.iter().sum::<f64>() / n),
-        tokens: (tokens as f64 / n).round() as u64,
-    })
-}
-
-/// The jobs of `batch`, in two waves: every story but B0's, then B0's, whose
-/// target is the F stories of its premise. A job already ended is left out.
-async fn wave(batch: &Batch, b0: bool) -> Vec<Job> {
+/// The jobs of `batch`: B0's story of each premise and seed, but the ones
+/// already ended.
+async fn jobs(batch: &Batch) -> Vec<Job> {
     let mut jobs = Vec::new();
     for premise in &batch.premises {
-        let mut target = None;
-        if b0 {
-            let mut traces = Vec::new();
-            for seed in &batch.seeds {
-                if let Some(t) =
-                    written_trace(&story_dir(&batch.out, &premise.id, System::F, *seed)).await
-                {
-                    traces.push(t);
-                }
+        for seed in &batch.seeds {
+            let dir = story_dir(&batch.out, &premise.id, System::B0, *seed);
+            if written_trace(&dir).await.is_some_and(|t| ended(&t)) {
+                continue;
             }
-            target = target_of(&traces);
-        }
-        for system in batch.systems.iter().filter(|s| (**s == System::B0) == b0) {
-            for seed in &batch.seeds {
-                let dir = story_dir(&batch.out, &premise.id, *system, *seed);
-                if written_trace(&dir).await.is_some_and(|t| ended(&t)) {
-                    continue;
-                }
-                if *system == System::B0 && target.is_none() {
-                    println!(
-                        "skip {}/{}/s{seed}: no F story of the premise has finished to match",
-                        premise.id,
-                        system.as_str()
-                    );
-                    continue;
-                }
-                jobs.push(Job {
-                    premise: premise.clone(),
-                    system: *system,
-                    seed: *seed,
-                    dir,
-                    target,
-                });
-            }
+            jobs.push(Job {
+                premise: premise.clone(),
+                system: System::B0,
+                seed: *seed,
+                dir,
+                target: batch.target,
+            });
         }
     }
     jobs
@@ -932,7 +697,7 @@ async fn wave(batch: &Batch, b0: bool) -> Vec<Job> {
 /// How many times a story whose call failed is run again within a batch.
 const TRIES: usize = 3;
 
-/// Runs `batch` to its end on the model `route` names: each wave's stories
+/// Runs `batch` to its end on the model `route` names: its stories
 /// `parallel` at a time, each one resumed where it stands, a story whose call
 /// failed tried again. One line a story on stdout and in `batch.jsonl`.
 pub async fn batch(batch: &Batch, route: &Route, options: &Options) -> Result<(), String> {
@@ -940,13 +705,9 @@ pub async fn batch(batch: &Batch, route: &Route, options: &Options) -> Result<()
         .await
         .map_err(|e| format!("{}: {e}", batch.out.display()))?;
     let backend = route.backend()?;
-    for b0 in [false, true] {
-        let jobs = wave(batch, b0).await;
-        println!(
-            "wave {}: {} stories",
-            if b0 { "B0" } else { "1" },
-            jobs.len()
-        );
+    {
+        let jobs = jobs(batch).await;
+        println!("{} stories", jobs.len());
         futures_util::stream::iter(jobs)
             .for_each_concurrent(batch.parallel.max(1), |job| {
                 let backend = backend.clone();
@@ -1044,10 +805,10 @@ pub enum Command {
 /// The command's usage, printed on a mistake: it has no `--help` line.
 pub const USAGE: &str = "\
 usage: mindfork story-eval premises
-       mindfork story-eval run --premise ID|FILE --system F|B0|A1|A2|A3|A4 --out DIR \
-[--seed N] [--target-usd X] [--target-tokens N] ENGINE [OPTIONS]
-       mindfork story-eval batch --out DIR [--premises ID,..] [--systems F,B0,A1] \
-[--seeds 1,2,3] [--parallel N] ENGINE [OPTIONS]
+       mindfork story-eval run --premise ID|FILE --out DIR [--system B0] [--seed N] \
+[--target-usd X] [--target-tokens N] ENGINE [OPTIONS]
+       mindfork story-eval batch --out DIR [--premises ID,..] [--seeds 1,2,3] [--parallel N] \
+[--target-usd X] [--target-tokens N] ENGINE [OPTIONS]
        mindfork story-eval judge --stories DIR --out DIR --name NAME [--pairs F-B0,F-A1,control] \
 [--premises ID,..] [--seeds 1,2,3] [--parallel N] [--effort max] [--max-tokens N] ENGINE
        mindfork story-eval verdict --out DIR
@@ -1077,21 +838,15 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "premises" => Command::Premises,
         "run" => {
             let premise = premise(&take("premise").ok_or("--premise is required")?)?;
-            let system = take("system").ok_or("--system is required")?;
+            let system = take("system").unwrap_or_else(|| "B0".to_owned());
             let system =
                 System::parse(&system).ok_or_else(|| format!("no system is called {system}"))?;
+            if system != System::B0 {
+                return Err(REMOVED.into());
+            }
             let seed = number(take("seed").as_deref().unwrap_or("1"), "--seed")?;
             let dir = PathBuf::from(take("out").ok_or("--out is required")?);
-            let target = match (take("target-usd"), take("target-tokens")) {
-                (None, None) => None,
-                (usd, tokens) => Some(Target {
-                    usd: usd.map(|u| real(&u, "--target-usd")).transpose()?,
-                    tokens: tokens.map_or(Ok(u64::MAX), |t| number(&t, "--target-tokens"))?,
-                }),
-            };
-            if system == System::B0 && target.is_none() {
-                return Err("B0 needs --target-usd or --target-tokens: F's average spend".into());
-            }
+            let target = target(&mut take)?;
             let route = route(&mut take)?;
             let options = options(&mut take)?;
             Command::Run {
@@ -1120,25 +875,21 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
                     "no premise to run: none is frozen yet, and --premises names none".into(),
                 );
             }
-            let systems = match take("systems") {
-                Some(list) => list
-                    .split(',')
-                    .map(|s| System::parse(s).ok_or_else(|| format!("no system is called {s}")))
-                    .collect::<Result<Vec<_>, _>>()?,
-                // The two decisions first (docs/fabula.md §6, T23).
-                None => vec![System::F, System::B0, System::A1],
-            };
+            if take("systems").is_some() {
+                return Err(REMOVED.into());
+            }
             let seeds = seeds(take("seeds"))?;
             let parallel = number(take("parallel").as_deref().unwrap_or("8"), "--parallel")?;
+            let target = target(&mut take)?;
             let route = route(&mut take)?;
             let options = options(&mut take)?;
             Command::Batch {
                 batch: Batch {
                     premises,
-                    systems,
                     seeds,
                     out,
                     parallel: parallel as usize,
+                    target,
                 },
                 route,
                 options,
@@ -1197,6 +948,21 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         ));
     }
     Ok(command)
+}
+
+/// Why a system other than B0 is not run.
+const REMOVED: &str = "only B0 is written: F and its ablations A1-A4 were removed after M3 \
+(docs/fabula.md §6, T28)";
+
+/// The spend `--target-usd` and `--target-tokens` name; none without them.
+fn target(take: &mut impl FnMut(&str) -> Option<String>) -> Result<Option<Target>, String> {
+    Ok(match (take("target-usd"), take("target-tokens")) {
+        (None, None) => None,
+        (usd, tokens) => Some(Target {
+            usd: usd.map(|u| real(&u, "--target-usd")).transpose()?,
+            tokens: tokens.map_or(Ok(u64::MAX), |t| number(&t, "--target-tokens"))?,
+        }),
+    })
 }
 
 /// The seeds a list names; 1 to 3 by default.

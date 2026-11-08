@@ -27,7 +27,7 @@
 //!   every other; `MINDFORK_FABULA_TRIALS` (3) fresh chats.
 //!
 //! Routes as the engine's own live checks take them
-//! (`features::story::chapter_live_tests::route`): Claude with
+//! (`features::story::live_route::route`): Claude with
 //! `MINDFORK_ANTHROPIC_KEY` and `MINDFORK_FABULA_CLAUDE_MODEL`, or an
 //! OpenAI-compatible engine, OpenRouter's with `MINDFORK_ENGINE_DIALECT=openrouter`.
 //!
@@ -39,7 +39,7 @@ use std::time::{Duration, Instant};
 use super::*;
 use crate::entities::attachment::{AttachMode, Attachment};
 use crate::entities::story::QuestionBody;
-use crate::features::story::chapter_live_tests::route;
+use crate::features::story::live_route::route;
 use crate::shared::config::ServerMode;
 use crate::shared::i18n::Lang;
 use crate::shared::storage::story::{StoryDb, StoryStatus, story_status_of};
@@ -81,7 +81,6 @@ struct Lines {
     approve_canon: &'static str,
     accept: &'static str,
     accept_last: &'static str,
-    scene: &'static str,
     resume: &'static str,
     /// Changes asked for at a checkpoint.
     revise: &'static str,
@@ -95,7 +94,6 @@ build the canon and create the story.",
     accept: "I accept this chapter. In the next one, let the logbook itself bring the truth \
 out.",
     accept_last: "I accept the chapter. Thank you, the story is done.",
-    scene: "Try the scene again as you see fit.",
     resume: "Go on with the story.",
     revise: "Please revise this chapter: Timur must not say yet why he really came, and the \
 storm should be heard in every scene.",
@@ -108,7 +106,6 @@ const RU: Lines = Lines {
     approve_canon: "Да, канон одобряю. Начинай первую главу.",
     accept: "Главу принимаю. В следующей пусть правду откроет сам журнал.",
     accept_last: "Главу принимаю. Спасибо, история готова.",
-    scene: "Попробуй сцену ещё раз, как считаешь нужным.",
     resume: "Продолжай историю.",
     revise: "Перепиши, пожалуйста, эту главу: Тимур пока не должен говорить, зачем на самом \
 деле приехал, а шторм пусть будет слышен в каждой сцене.",
@@ -537,7 +534,6 @@ fn next_line(
                     lines.accept
                 }
             }
-            Some((Some(QuestionBody::Scene { .. }), _)) => lines.scene,
             Some((None, s)) if s.open_chapter.is_none() && s.planned > 0 => return None,
             Some((None, _)) => lines.resume,
         }

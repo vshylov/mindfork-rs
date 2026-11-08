@@ -22,10 +22,10 @@ use std::collections::BTreeMap;
 
 use serde_json::json;
 
-use super::author_prompts::{self, Record};
-use super::chapter::Budget;
+use super::author_prompts;
 use super::engine::SharedLog;
 use super::port::{CallAddress, LlmPort, PortError, Role, Turn};
+use super::single_story::Budget;
 use crate::entities::story::{Canon, RunId, VersionOrigin};
 use crate::shared::storage::story::{AuthorWriter, CallStatus, Spend, StoryDb, StoryDbError};
 
@@ -222,7 +222,7 @@ impl Ask {
         }
         ask.push_str(&format!(
             "How to write it: {}",
-            author_prompts::writing_rules(canon, words, Record::None)
+            author_prompts::writing_rules(canon, words)
         ));
         ask
     }
@@ -277,7 +277,7 @@ pub fn draft_ask(canon: &Canon, words: (u32, u32)) -> String {
         .map_or("none set", |c| c.goal.as_str());
     format!(
         "Write the story. What it must achieve: {goal}\n\nHow to write it: {}",
-        author_prompts::writing_rules(canon, words, Record::None)
+        author_prompts::writing_rules(canon, words)
     )
 }
 

@@ -18,15 +18,92 @@
 //! run killed anywhere resumes at the first turn no run finished.
 
 use super::author_prompts::words_of;
-use super::chapter::{Outcome, Stop, StoryError};
 use super::engine::SharedLog;
-use super::keeper::accepted_version;
 use super::port::{CallAddress, LlmPort, PortError, Role, Turn};
 use super::single::{self, Ask, Ended, Session, SingleConfig};
 use crate::entities::story::{
     Canon, ChapterVersion, Decision, Question, QuestionBody, Resolution, RunId, VersionOrigin,
 };
-use crate::shared::storage::story::{AuthorWriter, StoryDb, StoryDbError};
+use crate::shared::storage::story::{AuthorWriter, Spend, StoryDb, StoryDbError};
+
+/// A chapter's spending limits (docs/fabula.md §6, T1 (a)); none is no limit.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Budget {
+    /// Prompt and reply tokens, every provider.
+    pub tokens: Option<u64>,
+    /// Dollars, where the provider reports them.
+    pub usd: Option<f64>,
+}
+
+impl Budget {
+    /// What `spend` has spent of this budget, in words, once it is spent;
+    /// `None` while there is room — the check before every turn, and
+    /// `story_continue`'s before a run (docs/fabula.md §4, PR 9).
+    pub fn spent(&self, spend: &Spend) -> Option<String> {
+        if let Some(limit) = self.tokens
+            && spend.tokens() >= limit
+        {
+            return Some(format!("{} tokens of {limit}", spend.tokens()));
+        }
+        if let (Some(limit), Some(cost)) = (self.usd, spend.cost_usd)
+            && cost >= limit
+        {
+            return Some(format!("${cost:.4} of ${limit:.2}"));
+        }
+        None
+    }
+}
+
+/// Why a run stopped short of a pause.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Stop {
+    /// It was cancelled.
+    Cancelled,
+    /// The chapter's budget was spent: what was spent, in words.
+    Budget(String),
+    /// A call gave no usable answer.
+    Failed(String),
+}
+
+/// Where a run ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Outcome {
+    /// At a pause: the question waits for its answer.
+    Paused(Question),
+    /// Every chapter of the arc is accepted.
+    Finished,
+    /// Short of a pause, at a step a resume starts from.
+    Stopped {
+        /// The step.
+        step: String,
+        /// Why.
+        why: Stop,
+    },
+}
+
+/// Why a run could not go at all.
+#[derive(Debug, thiserror::Error)]
+pub enum StoryError {
+    /// No canon was imported yet.
+    #[error("the story has no canon yet")]
+    NoCanon,
+    /// The story database refused or failed.
+    #[error(transparent)]
+    Store(#[from] StoryDbError),
+}
+
+/// The latest accepted version of chapter `n`, if one is.
+pub async fn accepted_version(
+    db: &StoryDb,
+    n: u32,
+) -> Result<Option<ChapterVersion>, StoryDbError> {
+    for version in db.chapter_versions(n).await?.into_iter().rev() {
+        if db.accepted(&version.id).await? {
+            return Ok(Some(version));
+        }
+    }
+    Ok(None)
+}
 
 /// The most revisions a chapter's session writes after its draft: the B0 the
 /// judges read wrote 25 versions on the mean (docs/fabula.md §6, T25).

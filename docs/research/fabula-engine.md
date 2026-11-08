@@ -2,6 +2,11 @@
 
 Oct 31, 2026 · @Vladimir Shylov
 
+> **After M3 (2026-11-08).** The simulation this specification designs lost to one writer in
+> one session in M3's blind judging, and was removed from the code; the story tools run that
+> writer ([docs/fabula.md](../fabula.md) §6, T25–T28). The design stays here as the record of
+> what was built and measured.
+
 ## 1. Summary
 
 Fabula is a multi-agent story engine in which simulated characters produce what happens (the fabula) and one Author agent alone writes the text (the syuzhet). It combines the character and world simulation of BookWorld and StoryBox with Cognition's rule that many agents may contribute intelligence while writes stay single-threaded.

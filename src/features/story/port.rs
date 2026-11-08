@@ -1,38 +1,25 @@
 //! The model port (docs/research/fabula-engine.md §8, *The model port*): what
-//! the engine asks of a model, and the one policy every answer goes through,
-//! live or replayed.
+//! the engine asks of a model, and the one policy every answer goes through.
 //!
-//! Two adapters implement it: [`super::engine::EngineAdapter`] over the chat's
-//! `EngineBackend`, which records every attempt in the call log, and
-//! [`super::replay::ReplayAdapter`], which serves those attempts back by
-//! address (spec §9). Both feed their attempts through [`run_json`] and
-//! [`run_text`], so a replay walks the policy exactly as the live call did:
-//! the same retry after a cut, the same repair after an invalid reply, the
-//! same validated value at the end.
+//! [`super::engine::EngineAdapter`] implements it over the chat's
+//! `EngineBackend`, recording every attempt in the call log (spec §9), and
+//! feeds its attempts through [`run_json`] and [`run_text`]: a retry after a
+//! cut, a repair after an invalid reply, a validated value at the end.
 
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use super::schema::{Schema, Violation, describe, extract_object};
 use crate::entities::chat_file::sha256_hex;
-use crate::entities::story::{BranchId, CharacterKey, RunId};
+use crate::entities::story::RunId;
 use crate::shared::storage::story::{CallStatus, StoryDbError};
 
 /// The role that makes a call (spec §8). Recorded with every call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
-    /// A cast member: proposes, reacts, reflects.
-    Character,
-    /// Rules on the proposals and commits the events.
-    WorldMaster,
-    /// Plans, picks and writes.
+    /// Writes the story: B0's writer, recorded as the Author the engine
+    /// first had, so M3's call logs read the same.
     Author,
-    /// Reads the published text with a clean context.
-    Reader,
-    /// Checks the text against the log and the canon.
-    Continuity,
-    /// Proposes the deltas a chapter makes to the canon.
-    CanonKeeper,
     /// Reads the human's reply to a pause (spec §14, *The answer is the
     /// user's own words*).
     Listener,
@@ -45,53 +32,21 @@ impl Role {
     /// The name the call log records.
     pub fn as_str(self) -> &'static str {
         match self {
-            Role::Character => "character",
-            Role::WorldMaster => "world_master",
             Role::Author => "author",
-            Role::Reader => "reader",
-            Role::Continuity => "continuity",
-            Role::CanonKeeper => "canon_keeper",
             Role::Listener => "listener",
             Role::Judge => "judge",
         }
     }
 }
 
-/// A call's logical address (spec §9): replay serves a reply by it, never by
-/// its prompt, since sibling branches send identical first prompts and get
-/// different replies.
+/// A call's logical address (spec §9): a session is rebuilt from the call
+/// log by it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CallAddress {
     /// The run the call belongs to.
     pub run: RunId,
-    /// Where in the run: `ch1/sc1/r0/k0/round2/mara/propose`.
+    /// Where in the run: `ch1/b0/t3`.
     pub address: String,
-}
-
-impl CallAddress {
-    /// A character's call in a round of a branch; `act` says which of its
-    /// calls (`propose`, `react`, `reflect`).
-    pub fn character(
-        run: &RunId,
-        branch: &BranchId,
-        round: u32,
-        who: &CharacterKey,
-        act: &str,
-    ) -> Self {
-        Self {
-            run: run.clone(),
-            address: format!("{branch}/round{round}/{who}/{act}"),
-        }
-    }
-
-    /// The World Master's call in a round of a branch; `act` says which
-    /// (`initiative`, `reactions`).
-    pub fn world_master(run: &RunId, branch: &BranchId, round: u32, act: &str) -> Self {
-        Self {
-            run: run.clone(),
-            address: format!("{branch}/round{round}/world_master/{act}"),
-        }
-    }
 }
 
 /// What a call sends: the stable part first, which providers with prefix
@@ -107,16 +62,6 @@ pub struct Prompt {
 /// Why a call gave no usable answer.
 #[derive(Debug, thiserror::Error)]
 pub enum PortError {
-    /// Replay found no recorded attempt where the policy needs one.
-    #[error("no reply is recorded for {address} attempt {attempt} of {run}")]
-    NotRecorded {
-        /// The run.
-        run: RunId,
-        /// The address.
-        address: String,
-        /// The attempt the policy asked for.
-        attempt: u32,
-    },
     /// The reply broke its schema, after the one repair.
     #[error("the reply for {address} does not match its schema:\n{violations}")]
     Invalid {
@@ -187,9 +132,8 @@ pub trait LlmPort: Send + Sync {
     ) -> Result<String, PortError>;
 
     /// Free text in reply to a conversation, its earlier turns included:
-    /// M3's B0, one agent in one session (docs/fabula.md §6, T21). A port
-    /// that serves by address, as the replay does, reads it as one prompt;
-    /// the engine sends the turns as they are.
+    /// B0, one writer in one session (docs/fabula.md §6, T21). By default a
+    /// port reads it as one prompt; the engine sends the turns as they are.
     async fn session(
         &self,
         call: &CallAddress,
@@ -241,9 +185,8 @@ pub async fn decide<T: DeserializeOwned>(
     })
 }
 
-/// The hash a call's prompt is recorded under: replay compares it with the
-/// prompt it would send now, and a difference is drift (spec §9). The schema
-/// is part of the prompt.
+/// The hash a call's prompt is recorded under (spec §9). The schema is part
+/// of the prompt.
 pub fn prompt_sha256(prompt: &Prompt, schema: Option<&Schema>) -> String {
     let canonical = json!({
         "system": prompt.system,

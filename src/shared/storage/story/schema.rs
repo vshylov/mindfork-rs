@@ -11,34 +11,21 @@
 //!
 //! What differs from the spec's sketch, and why:
 //!
-//! - **Append-only beyond `event`.** "Nothing is updated in place" (spec §6)
-//!   is enforced by triggers on every table but `run` and `step`: a step may
-//!   move from `failed` to `done` when a run resumes (spec §9).
-//! - **`event` stores text, not JSON, where the content is text**:
-//!   `observable` and `private` (null when the actor had no thought), and its
-//!   visibility and cause as JSON of their own (`visibility_json`,
-//!   `cause_json`).
+//! - **The simulation's tables are gone** (docs/fabula.md §6, T28): the
+//!   branches, the events and their witnesses, the scenes and their picks,
+//!   the reviews, the outlines, the summaries, the registers, the assumptions,
+//!   the takes and the steps. The file was in no release, so the schema
+//!   changed in place; a file that holds them still opens, and they are left
+//!   as they were.
+//! - **Append-only.** "Nothing is updated in place" (spec §6) is enforced by
+//!   triggers on every table but `run`.
 //! - **`canon_doc` keeps the author's order** (`position`) and marks a removed
 //!   document by a version whose `body_json` is null.
 //! - **`llm_call.cost_usd`**: the dollar cap applies where a provider reports
 //!   cost (docs/fabula.md §6, T1).
-//! - **The manuscript's own tables** (docs/fabula.md §4, PR 6): `outline`
-//!   holds a chapter's goals; `chapter` records each version's `origin`
-//!   (draft, revision, the human's revision), and a version's summary is a
-//!   row of `chapter_summary`, since it is written only once the version is
-//!   final; `question`, `answer` and `assumption` are the pauses (spec §14).
-//!   The file was in no release when they came, so the sketch's `chapter`
-//!   changed in place.
-//! - **`take`** (docs/fabula.md §4, PR 10): a chapter made again from a
-//!   scene the human named at P2. It is a table of its own, so a file an
-//!   earlier build wrote gains it on open with no step, and an answer's
-//!   `decision` stays `change`: the take's row, keyed by the question, is
-//!   what says the change is a rerun.
-//! - **`chapter_register`** (docs/fabula.md §4, PR 11): a version's register,
-//!   the Canon keeper's reading of its text (threads opened and paid off,
-//!   facts of time, age and kinship) as one JSON body, written once beside
-//!   its summary. A table of its own too: no step, and a story begun before
-//!   it is given its registers on the way.
+//! - **The manuscript's own tables** (docs/fabula.md §4, PR 6): `chapter`
+//!   records each version's `origin` (draft, revision, the human's revision);
+//!   `question` and `answer` are the pauses (spec §14).
 //! - **The default rollback journal, not WAL.** Every read and write goes
 //!   through the database actor, so WAL's concurrent readers buy nothing, and
 //!   a backup can take the file as `data.db`'s is taken (`VACUUM INTO` from a
@@ -60,13 +47,6 @@ CREATE TABLE IF NOT EXISTS run (
     config_json TEXT NOT NULL,
     started_at  TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS step (
-    run_id      TEXT NOT NULL REFERENCES run(id),
-    address     TEXT NOT NULL,
-    status      TEXT NOT NULL CHECK (status IN ('done', 'failed')),
-    finished_at TEXT NOT NULL,
-    PRIMARY KEY (run_id, address)
-);
 CREATE TABLE IF NOT EXISTS canon_doc (
     id         TEXT PRIMARY KEY,
     kind       TEXT NOT NULL CHECK (kind IN ('world', 'location', 'character', 'style', 'arc')),
@@ -81,69 +61,6 @@ CREATE TABLE IF NOT EXISTS canon_approval (
     canon_doc_id TEXT PRIMARY KEY REFERENCES canon_doc(id),
     approved_at  TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS scene (
-    id            TEXT PRIMARY KEY,
-    chapter_no    INTEGER NOT NULL,
-    scene_no      INTEGER NOT NULL,
-    rerun         INTEGER NOT NULL,
-    setup_json    TEXT NOT NULL,
-    author_intent TEXT NOT NULL,
-    UNIQUE (chapter_no, scene_no, rerun)
-);
-CREATE TABLE IF NOT EXISTS branch (
-    id        TEXT PRIMARY KEY,
-    parent_id TEXT REFERENCES branch(id),
-    fork_seq  INTEGER,
-    scene_id  TEXT REFERENCES scene(id),
-    k         INTEGER NOT NULL,
-    seed      INTEGER NOT NULL,
-    CHECK ((parent_id IS NULL) = (fork_seq IS NULL))
-);
-CREATE TABLE IF NOT EXISTS proposal (
-    id            TEXT PRIMARY KEY,
-    branch_id     TEXT NOT NULL REFERENCES branch(id),
-    round         INTEGER NOT NULL,
-    character_key TEXT NOT NULL,
-    body_json     TEXT NOT NULL,
-    verdict       TEXT NOT NULL CHECK (verdict IN ('committed', 'refused', 'lapsed')),
-    reason        TEXT
-);
-CREATE INDEX IF NOT EXISTS proposal_by_branch ON proposal(branch_id);
-CREATE TABLE IF NOT EXISTS event (
-    seq             INTEGER PRIMARY KEY AUTOINCREMENT,
-    id              TEXT NOT NULL UNIQUE,
-    branch_id       TEXT NOT NULL REFERENCES branch(id),
-    round           INTEGER NOT NULL,
-    tick            INTEGER NOT NULL,
-    location_key    TEXT NOT NULL,
-    kind            TEXT NOT NULL CHECK (kind IN
-                        ('opening', 'speech', 'action', 'movement', 'world_event', 'settle')),
-    actor_key       TEXT,
-    visibility_json TEXT NOT NULL,
-    observable      TEXT NOT NULL,
-    private         TEXT,
-    effects_json    TEXT NOT NULL,
-    proposal_id     TEXT REFERENCES proposal(id),
-    cause_json      TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS event_by_branch ON event(branch_id, seq);
-CREATE TABLE IF NOT EXISTS event_witness (
-    event_id      TEXT NOT NULL REFERENCES event(id),
-    character_key TEXT NOT NULL,
-    PRIMARY KEY (event_id, character_key)
-);
-CREATE TABLE IF NOT EXISTS reflection (
-    id                TEXT PRIMARY KEY,
-    branch_id         TEXT NOT NULL REFERENCES branch(id),
-    character_key     TEXT NOT NULL,
-    after_seq         INTEGER NOT NULL,
-    body              TEXT NOT NULL,
-    goal_changes_json TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS outline (
-    chapter_no INTEGER PRIMARY KEY,
-    body_json  TEXT NOT NULL
-);
 CREATE TABLE IF NOT EXISTS chapter (
     id      TEXT PRIMARY KEY,
     number  INTEGER NOT NULL,
@@ -152,75 +69,24 @@ CREATE TABLE IF NOT EXISTS chapter (
     text_md TEXT NOT NULL,
     UNIQUE (number, version)
 );
-CREATE TABLE IF NOT EXISTS chapter_summary (
-    chapter_id TEXT PRIMARY KEY REFERENCES chapter(id),
-    summary    TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS chapter_register (
-    chapter_id TEXT PRIMARY KEY REFERENCES chapter(id),
-    body_json  TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS review_note (
-    id            TEXT PRIMARY KEY,
-    chapter_id    TEXT NOT NULL REFERENCES chapter(id),
-    reviewer      TEXT NOT NULL CHECK (reviewer IN ('reader', 'continuity')),
-    anchor        TEXT,
-    kind          TEXT NOT NULL,
-    severity      TEXT NOT NULL CHECK (severity IN ('low', 'high')),
-    body          TEXT NOT NULL,
-    evidence_json TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS review_note_by_chapter ON review_note(chapter_id);
-CREATE TABLE IF NOT EXISTS pick (
-    scene_id  TEXT PRIMARY KEY REFERENCES scene(id),
-    branch_id TEXT REFERENCES branch(id),
-    rationale TEXT NOT NULL
-);
 CREATE TABLE IF NOT EXISTS chapter_acceptance (
     chapter_id  TEXT PRIMARY KEY REFERENCES chapter(id),
     accepted_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS note_decision (
-    note_id  TEXT PRIMARY KEY REFERENCES review_note(id),
-    decision TEXT NOT NULL CHECK (decision IN ('accepted', 'rejected', 'deferred')),
-    reason   TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS question (
     id         TEXT PRIMARY KEY,
     run_id     TEXT NOT NULL REFERENCES run(id),
     step       TEXT NOT NULL,
-    kind       TEXT NOT NULL CHECK (kind IN ('canon', 'chapter', 'scene')),
+    kind       TEXT NOT NULL CHECK (kind IN ('canon', 'chapter')),
     body_json  TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS answer (
     question_id   TEXT PRIMARY KEY REFERENCES question(id),
-    decision      TEXT NOT NULL CHECK (decision IN ('approve', 'change', 'answer')),
+    decision      TEXT NOT NULL CHECK (decision IN ('approve', 'change')),
     notes         TEXT NOT NULL,
     evidence_json TEXT NOT NULL,
     created_at    TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS assumption (
-    id     TEXT PRIMARY KEY,
-    run_id TEXT NOT NULL REFERENCES run(id),
-    step   TEXT NOT NULL,
-    role   TEXT NOT NULL,
-    doubt  TEXT NOT NULL,
-    choice TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS take (
-    id            TEXT PRIMARY KEY,
-    chapter_no    INTEGER NOT NULL,
-    take_no       INTEGER NOT NULL CHECK (take_no >= 2),
-    from_scene    INTEGER NOT NULL CHECK (from_scene >= 1),
-    question_id   TEXT NOT NULL UNIQUE REFERENCES question(id),
-    carried_json  TEXT NOT NULL,
-    replaced_json TEXT NOT NULL,
-    floors_json   TEXT NOT NULL,
-    first_version INTEGER NOT NULL,
-    after_run     INTEGER NOT NULL,
-    created_at    TEXT NOT NULL,
-    UNIQUE (chapter_no, take_no)
 );
 ";
 
@@ -228,28 +94,14 @@ CREATE TABLE IF NOT EXISTS take (
 pub(super) const STORY_APPEND_ONLY: &[&str] = &[
     "canon_doc",
     "canon_approval",
-    "scene",
-    "branch",
-    "proposal",
-    "event",
-    "event_witness",
-    "reflection",
-    "outline",
     "chapter",
-    "chapter_summary",
-    "chapter_register",
-    "review_note",
-    "pick",
     "chapter_acceptance",
-    "note_decision",
     "question",
     "answer",
-    "assumption",
-    "take",
 ];
 
-/// The call log: every model call, keyed by its logical address so a replay
-/// is exact (spec §6, §9).
+/// The call log: every model call, keyed by its logical address, so a
+/// session is rebuilt from it (spec §6, §9).
 const CALLS_DDL: &str = "
 CREATE TABLE IF NOT EXISTS llm_call (
     id            TEXT PRIMARY KEY,

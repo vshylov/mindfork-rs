@@ -15,8 +15,8 @@
 //! - **The chapter lands as an attachment** (T3 (a)), one per chapter, so a
 //!   revised version replaces the one before it; the assistant reads it in full
 //!   or by reference, and the person opens it as any attachment.
-//! - **The notification carries the pause** — the summary, the picks, the
-//!   assumptions and the question — in the profile's language, under the prefix
+//! - **The notification carries the pause** — the chapter's attachment and the
+//!   question — in the profile's language, under the prefix
 //!   every task notification has: it is not a message from the user and grants
 //!   nothing (spec §14, *The question*).
 //! - **The record says only that the run happened and how it ended.** The
@@ -33,9 +33,9 @@ use crate::entities::message::Message;
 use crate::entities::subagent::{RunKind, RunOutcome, SubagentRun};
 use crate::features::story::answer::UserRow;
 use crate::features::story::board::StoryBoard;
-use crate::features::story::chapter::Stop;
 use crate::features::story::conversation::PendingAnswer;
 use crate::features::story::run::{Ending, Landed, StoryRun};
+use crate::features::story::single_story::Stop;
 use crate::features::tools::ChatEffect;
 use crate::features::tools::story as words;
 use crate::shared::api::contract::EngineBackend;

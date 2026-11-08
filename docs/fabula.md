@@ -1,6 +1,6 @@
 # Fabula — a story engine used from the chat: track plan
 
-**Status:** stopped by M3's decision rule (2026-11-07) — M0 done (PRs 1 and 2, Gate G0 GO); M1 done (PRs 3–5, Gate G1 GO, 2026-11-01); M2 done (PR 6, the Author's loop, 2026-11-01; PR 7, stories in mindfork's data, 2026-11-02; PR 8, the story run in the background, 2026-11-02; PR 9, the story driven from the chat, 2026-11-02; Gate G2 GO, 2026-11-03; PR 10, a scene played again, 2026-11-03); before M3, the readers' findings settled (PR 11, the story's register; PR 12, the craft of the scenes and the lines; a chapter's choices standing for its later steps; a map every scene can reach; 2026-11-04 to 2026-11-05); M3 done (PR 13, the hidden runner and the twelve premises frozen, 2026-11-06; PR 14, the blind judging by three models, and the judging itself, 2026-11-07: F lost both decisions, 3 pairs of 36 each, and A1 lost to B0, 5 of 36, so neither beats B0 and the track stops; the owner kept the story tools, off, running B0, 2026-11-08). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
+**Status:** stopped by M3's decision rule (2026-11-07) — M0 done (PRs 1 and 2, Gate G0 GO); M1 done (PRs 3–5, Gate G1 GO, 2026-11-01); M2 done (PR 6, the Author's loop, 2026-11-01; PR 7, stories in mindfork's data, 2026-11-02; PR 8, the story run in the background, 2026-11-02; PR 9, the story driven from the chat, 2026-11-02; Gate G2 GO, 2026-11-03; PR 10, a scene played again, 2026-11-03); before M3, the readers' findings settled (PR 11, the story's register; PR 12, the craft of the scenes and the lines; a chapter's choices standing for its later steps; a map every scene can reach; 2026-11-04 to 2026-11-05); M3 done (PR 13, the hidden runner and the twelve premises frozen, 2026-11-06; PR 14, the blind judging by three models, and the judging itself, 2026-11-07: F lost both decisions, 3 pairs of 36 each, and A1 lost to B0, 5 of 36, so neither beats B0 and the track stops; the owner kept the story tools, off, running B0, 2026-11-08: PR 15 switched them, PR 16 removed F). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
 so are the twenty-three this plan adds (§6) and where development runs (§4, *The development
 stack*). The design —
 the engine, its stores, its contracts, its evaluation — is
@@ -50,10 +50,10 @@ The layer rule holds (`tools/layer_check.py`): a layer names only the layers bel
 
 | Layer | What lives there |
 | --- | --- |
-| `entities/story/` | The domain types: canon, cast sheets, locations, setups, proposals, actions, visibility, events and effects, questions and assumptions; the canon's deterministic checks; the fold of world state over a branch path and the witnesses. The fold lives here, not in `features`, because the database actor runs it for every commit, and `shared` may name `entities` but never `features` |
+| `entities/story/` | The domain types: the canon and its deterministic checks, the chapters' versions, the pauses' questions and answers. The simulation's — setups, proposals, actions, events, the fold of world state and the witnesses — went after M3 (§6, T28) |
 | `shared/storage/story/` | The story database and its call-log sibling: the schema with append-only triggers, the database actor on a thread of its own with the only connections, the write capabilities, the read views (served by the actor too). `STORY_SCHEMA` and `STORY_CALLS_SCHEMA` join `shared/storage/schema.rs` |
 | `shared/api` | The output-schema field on `ChatRequest` and its mapping in each wire (spec §8, §14) |
-| `features/story/` | The engine: the deterministic validators of proposals, the scene runner, the chapter loop, the reviewers, the pauses; `LlmPort` with the replay adapter and the adapter over `EngineBackend`; the schemas and the dialect's check; the role prompts as English templates beside the code |
+| `features/story/` | The engine: B0's session a chapter and its pauses (§6, T25–T27); `LlmPort` with the adapter over `EngineBackend`; the schemas and the dialect's check; the prompts as English templates beside the code. The scene runner, the chapter loop, the reviewers and the replay went after M3 (T28) |
 | `features/tools/story.rs` | The three tools' schemas and descriptions, en and ru like every tool's |
 | `app/orchestrator/` | The third background payload beside the sub-agent's and the dialogue's; the landing (the chapter into the chat, the notification); the user's rows after a question, read verbatim for `story_continue`; the pending question's reminder line at the request's tail |
 | `entities/subagent.rs` | `RunKind::Story` |
@@ -823,6 +823,17 @@ minutes, each chapter's session ended by the window (17 and 16 versions, about a
 tokens each), the change asked at chapter 1's checkpoint written in one turn, and chapter 2
 given chapter 1's text and the wish left on it ([journal/stories.md](journal/stories.md),
 *PR 15*).
+
+**PR 16, as built (2026-11-08), as decided.** The simulation, F's chapter loop and the systems
+A1–A4 are gone, with their tests and the live smokes of the scene, the simulation, the chapter,
+the register, the continuity, the staging and the schema probe: some 25,000 lines. The last
+commit that holds them is tagged `fabula/f-final`. The story database lost the simulation's
+tables in place at version 1, since it was in no release; a file that holds them still opens,
+and they are left as they were. An approved canon is now frozen, where events used to freeze
+it. The runner writes B0 alone, to a spend `--target-usd` or `--target-tokens` names, else to its
+24 revisions; the other systems' names stay, so that M3's stories on disk can still be judged.
+B0's prompts are byte for byte what they were, on the fixture and on all twelve frozen premises
+([journal/stories.md](journal/stories.md), *PR 16*).
 
 ### M4 — the long form, after a GO
 

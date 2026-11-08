@@ -12,24 +12,13 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::{
-    Ending, LandedChapter, StoryRun, budget_of, character_sampling, needs_fallback, role_sampling,
-    run, single_config,
+    Ending, LandedChapter, StoryRun, budget_of, needs_fallback, run, single_config, writer_sampling,
 };
 use crate::entities::sampling::ReasoningEffort;
-use crate::entities::story::{
-    Assumption, BranchId, Decision, QuestionBody, Resolution, SceneSetup, VersionOrigin,
-    fixture_canon,
-};
-use crate::entities::story::{
-    ChapterArc, ChapterId, Decided, NewNote, NoteDecision, NoteId, NoteKind, NoteSeverity,
-    Register, Reviewer, Thread,
-};
+use crate::entities::story::{Decision, QuestionBody, Resolution, VersionOrigin, fixture_canon};
 use crate::features::story::board::StoryBoard;
-use crate::features::story::chapter::Stop;
-use crate::features::story::keeper::LeftOpen;
-use crate::features::story::port::Role;
 use crate::features::story::single::SingleConfig;
-use crate::features::story::single_story::MOST_REVISIONS;
+use crate::features::story::single_story::{MOST_REVISIONS, Stop};
 use crate::shared::api::contract::{
     ChatChunk, ChatRequest, ChatStream, EngineBackend, FinishReason,
 };
@@ -146,7 +135,6 @@ fn approve() -> Resolution {
         decision: Decision::Approve,
         notes: String::new(),
         evidence: json!(null),
-        rerun: None,
     }
 }
 
@@ -165,9 +153,8 @@ pub(crate) async fn approved(db: &StoryDb, author: &mut AuthorWriter) {
     author.resolve(&question.id, &approve()).await.unwrap();
 }
 
-/// A story at chapter 1's checkpoint: a scene asked for again and then kept
-/// with the Author's note, one assumption, a draft and its revision with their
-/// summaries, and the question asked about the revision.
+/// A story at chapter 1's checkpoint: a draft and its revision, and the
+/// question asked about the revision.
 pub(crate) async fn at_checkpoint(db: &StoryDb, author: &mut AuthorWriter) {
     approved(db, author).await;
     let run = db
@@ -177,64 +164,16 @@ pub(crate) async fn at_checkpoint(db: &StoryDb, author: &mut AuthorWriter) {
         .start_run(&json!({}))
         .await
         .unwrap();
-    let setup = SceneSetup {
-        location: "harbour".into(),
-        present: vec!["mara".into(), "silas".into()],
-        just_happened: "The ferry was cancelled.".into(),
-        pressure: "The gate closes at sunset.".into(),
-    };
-    // The scene's first attempt was asked for again; its second was kept.
-    let again = author
-        .add_scene((1, 1, 0), &setup, "Mara learns of the debt.")
-        .await
-        .unwrap();
     author
-        .record_pick(&again, None, "Play it again in the rain.")
-        .await
-        .unwrap();
-    let kept = author
-        .add_scene((1, 1, 1), &setup, "Mara learns of the debt.")
-        .await
-        .unwrap();
-    let genesis = db.genesis().await.unwrap();
-    let branch = db.fork(&kept, &BranchId::genesis(), 1, 7).await.unwrap();
-    author
-        .record_pick(&kept, Some(branch.branch()), "The quarrel shows the debt.")
-        .await
-        .unwrap();
-    drop((genesis, branch));
-    author
-        .add_assumption(
-            &run,
-            "ch1/sc1/plan",
-            "author",
-            &Assumption {
-                doubt: "Whether Silas lies.".into(),
-                choice: "He lies.".into(),
-            },
-        )
-        .await
-        .unwrap();
-    // A draft, and the revision the review asked for: the checkpoint asks
-    // about the revision.
-    let draft = author
         .add_chapter(1, VersionOrigin::Draft, "## One\n\nA first draft.")
         .await
         .unwrap();
     author
-        .add_summary(&draft.id, "An earlier summary.")
-        .await
-        .unwrap();
-    let revised = author
         .add_chapter(
             1,
             VersionOrigin::Revision,
             "## One\n\nThe ferry never came.",
         )
-        .await
-        .unwrap();
-    author
-        .add_summary(&revised.id, "Mara learns of the debt.")
         .await
         .unwrap();
     author
@@ -273,67 +212,11 @@ async fn an_unapproved_canon_pauses_at_once_and_spends_nothing() {
     assert!(board.of_chat(fixture.spec.chat).is_empty());
 }
 
-/// At P2 the landing carries the version asked about, not the one before it,
-/// with its summary, the note of each scene kept — a rerun's request is no
-/// pick — and the chapter's assumptions, all read from the stores, so a run
-/// that only found the question pending lands the same.
-/// A question the chapter answered again lands once, with its latest
-/// answer (docs/fabula.md §4, *A chapter's choices stand*).
+/// At P2 the landing carries the version asked about, not the one before
+/// it, read from the stores, so a run that only found the question pending
+/// lands the same.
 #[tokio::test]
-async fn a_question_answered_again_lands_once_with_its_latest_answer() {
-    let fixture = story(async |db, author| {
-        at_checkpoint(db, author).await;
-        let run = db
-            .run_log_writer()
-            .await
-            .unwrap()
-            .start_run(&json!({}))
-            .await
-            .unwrap();
-        for (step, doubt, choice) in [
-            (
-                "ch1/sc1/r1/pick",
-                "Whether Silas lies",
-                "He tells the truth.",
-            ),
-            ("ch1/sc2/plan", "Whether the ferry runs.", "It does not."),
-        ] {
-            author
-                .add_assumption(
-                    &run,
-                    step,
-                    "author",
-                    &Assumption {
-                        doubt: doubt.into(),
-                        choice: choice.into(),
-                    },
-                )
-                .await
-                .unwrap();
-        }
-    })
-    .await;
-    let board = StoryBoard::new();
-
-    let landed = run_on(&fixture.spec, Arc::default(), &board).await;
-
-    assert_eq!(
-        landed.assumptions,
-        [
-            Assumption {
-                doubt: "Whether Silas lies.".into(),
-                choice: "He tells the truth.".into(),
-            },
-            Assumption {
-                doubt: "Whether the ferry runs.".into(),
-                choice: "It does not.".into(),
-            },
-        ]
-    );
-}
-
-#[tokio::test]
-async fn a_chapter_at_its_checkpoint_lands_with_its_summary_picks_and_assumptions() {
+async fn a_chapter_at_its_checkpoint_lands_with_the_version_asked_about() {
     let fixture = story(async |db, author| at_checkpoint(db, author).await).await;
     let board = StoryBoard::new();
 
@@ -349,111 +232,8 @@ async fn a_chapter_at_its_checkpoint_lands_with_its_summary_picks_and_assumption
             number: 1,
             version: 2,
             text: "## One\n\nThe ferry never came.".to_owned(),
-            summary: Some("Mara learns of the debt.".to_owned()),
         })
     );
-    assert_eq!(
-        landed.picks,
-        [(1, "The quarrel shows the debt.".to_owned())],
-        "by the scene's number"
-    );
-    assert_eq!(
-        landed.assumptions,
-        [Assumption {
-            doubt: "Whether Silas lies.".into(),
-            choice: "He lies.".into(),
-        }]
-    );
-}
-
-/// Chapter 1's checkpoint with two threads its register leaves open: the
-/// Author kept the first open on purpose and accepted the note on the second.
-async fn with_open_threads(db: &StoryDb, author: &mut AuthorWriter) {
-    at_checkpoint(db, author).await;
-    let thread = |n: usize, question: &str| Thread {
-        id: format!("ch1.thread{n}"),
-        question: question.to_owned(),
-        quote: "a quote".to_owned(),
-    };
-    author
-        .add_register(
-            &ChapterId::of(1, 2),
-            &Register {
-                opened: vec![
-                    thread(1, "Whose steps were on the path?"),
-                    thread(2, "Who wrote the log's last line?"),
-                ],
-                paid: Vec::new(),
-                facts: Vec::new(),
-            },
-        )
-        .await
-        .unwrap();
-    let note = |n: usize| NewNote {
-        kind: NoteKind::OpenThread,
-        severity: NoteSeverity::High,
-        anchor: Some(format!("ch1.thread{n}")),
-        body: "Unpaid.".to_owned(),
-        evidence: Vec::new(),
-    };
-    let draft = ChapterId::of(1, 1);
-    db.review_writer(&draft, Reviewer::Continuity)
-        .await
-        .unwrap()
-        .write(&[note(1), note(2)])
-        .await
-        .unwrap();
-    let decided = |n: usize, decision, reason: &str| Decided {
-        note: NoteId::new(format!("ch1/v1/continuity/n{n}")),
-        decision,
-        reason: reason.to_owned(),
-    };
-    author
-        .record_decisions(
-            &draft,
-            &[
-                decided(1, NoteDecision::Rejected, "Left for the reader."),
-                decided(2, NoteDecision::Accepted, "Pay it off."),
-            ],
-        )
-        .await
-        .unwrap();
-}
-
-/// At the arc's last chapter the landing lists the threads the story leaves
-/// open, with the Author's reason where it kept one open; a chapter before
-/// the last lists none (docs/fabula.md §6, T16).
-#[tokio::test]
-async fn the_last_chapter_lands_with_the_threads_it_leaves_open() {
-    let fixture = story(async |db, author| with_open_threads(db, author).await).await;
-    let landed = run_on(&fixture.spec, Arc::default(), &StoryBoard::new()).await;
-    assert_eq!(
-        landed.left_open,
-        [
-            LeftOpen {
-                question: "Whose steps were on the path?".into(),
-                reason: Some("Left for the reader.".into()),
-            },
-            LeftOpen {
-                question: "Who wrote the log's last line?".into(),
-                reason: None,
-            },
-        ],
-        "a note the Author accepted gives no reason to leave it"
-    );
-
-    let fixture = story(async |db, author| {
-        with_open_threads(db, author).await;
-        let mut canon = fixture_canon();
-        canon.arc.chapters.push(ChapterArc {
-            goal: "Ines decides whom to trust.".into(),
-        });
-        author.import_canon(&canon).await.unwrap();
-    })
-    .await;
-    let landed = run_on(&fixture.spec, Arc::default(), &StoryBoard::new()).await;
-    assert!(landed.chapter.is_some());
-    assert!(landed.left_open.is_empty(), "not the arc's last chapter");
 }
 
 /// Stopped while its first call hangs, the run stops at that step, which the
@@ -579,37 +359,15 @@ async fn a_newer_story_or_one_another_run_holds_does_not_run() {
     assert!(board.of_chat(fixture.spec.chat).is_empty());
 }
 
-/// Characters run muted, every other role thinks — the Author at a medium
-/// effort with room for a chapter (G1, PR 6).
+/// The writer thinks at a medium effort with room for a chapter, as the
+/// Author did (G1, PR 6) and M3's B0 with it.
 #[test]
-fn the_roles_sample_as_measured() {
-    let muted = character_sampling();
-    assert_eq!(muted.thinking, Some(false));
-    assert_eq!(muted.reasoning_effort, Some(ReasoningEffort::None));
-    assert_eq!(muted.reasoning_budget, Some(0));
-    let roles = role_sampling();
-    for role in [
-        Role::WorldMaster,
-        Role::Author,
-        Role::Reader,
-        Role::Continuity,
-        Role::CanonKeeper,
-    ] {
-        let (_, sampling) = roles.iter().find(|(r, _)| *r == role).unwrap();
-        assert_eq!(sampling.thinking, Some(true), "{role:?}");
-    }
-    let (_, author) = roles.iter().find(|(r, _)| *r == Role::Author).unwrap();
-    assert_eq!(author.reasoning_effort, Some(ReasoningEffort::Medium));
-    assert_eq!(author.max_tokens, Some(32_000));
-    for role in [Role::Reader, Role::Continuity, Role::CanonKeeper] {
-        let (_, sampling) = roles.iter().find(|(r, _)| *r == role).unwrap();
-        assert_eq!(
-            sampling.max_tokens,
-            Some(32_000),
-            "{role:?}: PR 10 found 16,384 cut on Qwen"
-        );
-    }
-    assert!(!roles.iter().any(|(r, _)| *r == Role::Character));
+fn the_writer_samples_as_measured() {
+    let writer = writer_sampling();
+    assert_eq!(writer.thinking, Some(true));
+    assert_eq!(writer.reasoning_effort, Some(ReasoningEffort::Medium));
+    assert_eq!(writer.max_tokens, Some(32_000));
+    assert_eq!(writer.temperature, Some(0.8));
 }
 
 /// The settings' budget reaches the chapter's session as its ceiling, `0`
@@ -703,6 +461,5 @@ async fn a_run_lands_what_its_calls_spent_and_the_step_that_failed() {
     assert_eq!(landed.spent.output_tokens, 30);
     let cost = landed.spent.cost_usd.expect("the provider reported it");
     assert!((cost - 0.02).abs() < 1e-9, "{cost}");
-    assert!(landed.assumptions.is_empty() && landed.picks.is_empty());
     assert_eq!(landed.chapter, None, "no chapter is asked about");
 }

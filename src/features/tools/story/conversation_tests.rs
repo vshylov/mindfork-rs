@@ -275,7 +275,6 @@ fn every_text_reads_filled_in_both_languages() {
         let unclear = ReadingReply {
             answers: Vec::new(),
             changes: Vec::new(),
-            scene: None,
             decision: Reading::Unclear,
         };
         for refusal in [
@@ -308,50 +307,21 @@ fn every_text_reads_filled_in_both_languages() {
             chapter: 1,
             version: 2,
         };
-        let resolved = |body: &QuestionBody, decision, rerun| Resolved {
+        let resolved = |body: &QuestionBody, decision| Resolved {
             body: body.clone(),
             decision,
-            rerun,
         };
         for resolved in [
             None,
-            Some(resolved(&QuestionBody::Canon, Decision::Approve, None)),
-            Some(resolved(&chapter, Decision::Approve, None)),
-            Some(resolved(&chapter, Decision::Change, None)),
-            Some(resolved(&chapter, Decision::Change, Some(2))),
-            Some(resolved(
-                &QuestionBody::Scene {
-                    chapter: 1,
-                    scene: 2,
-                    rerun: 2,
-                    errors: Vec::new(),
-                },
-                Decision::Answer,
-                None,
-            )),
+            Some(resolved(&QuestionBody::Canon, Decision::Approve)),
+            Some(resolved(&chapter, Decision::Approve)),
+            Some(resolved(&chapter, Decision::Change)),
         ] {
             let started = started_text(loc, "harbour", resolved.as_ref(), "chat://abc");
             filled(&started);
             assert!(started.contains("chat://abc"), "{started}");
             filled(&brief_text(loc, resolved.as_ref()));
         }
-        let rerun = started_text(
-            loc,
-            "harbour",
-            Some(&resolved(&chapter, Decision::Change, Some(2))),
-            "chat://abc",
-        );
-        assert!(rerun.contains('2') && rerun.contains('1'), "{rerun}");
-        assert_ne!(
-            rerun,
-            started_text(
-                loc,
-                "harbour",
-                Some(&resolved(&chapter, Decision::Change, None)),
-                "chat://abc"
-            ),
-            "a rerun is not a revision"
-        );
         // A woken turn's resume says the decision is the user's and names
         // the call to make once they have made it.
         let woken = continue_refusal_text(loc, "harbour", &ContinueRefusal::NotAsked, None);

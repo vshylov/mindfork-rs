@@ -6,8 +6,9 @@ use super::{
     Answer, Attempt, Attempts, CallAddress, LlmPort, PortError, Prompt, Role, decide,
     prompt_sha256, run_json, run_text,
 };
-use crate::entities::story::{BranchId, Proposal, RunId, SceneId, fixture_canon};
-use crate::features::story::schema::{CanonKeys, Property, Schema, StorySchema};
+use crate::entities::story::RunId;
+use crate::features::story::answer::{ReadingReply, reading_schema};
+use crate::features::story::schema::{Property, Schema};
 use crate::shared::storage::story::CallStatus;
 
 /// Attempts answered from a script, every request kept.
@@ -278,27 +279,11 @@ fn the_prompt_hash_covers_both_parts_and_the_schema() {
 }
 
 #[test]
-fn a_character_call_is_addressed_by_branch_round_and_act() {
-    let scene = SceneId::of(1, 2, 0);
-    let call = CallAddress::character(
-        &RunId::nth(3),
-        &BranchId::of_scene(&scene, 1),
-        4,
-        &"mara".into(),
-        "propose",
-    );
-    assert_eq!(call.run.as_str(), "run3");
-    assert_eq!(call.address, "ch1/sc2/r0/k1/round4/mara/propose");
-    let roles = [
-        Role::Character,
-        Role::WorldMaster,
-        Role::Author,
-        Role::Reader,
-        Role::Continuity,
-        Role::CanonKeeper,
-    ];
+fn every_role_has_a_name_of_its_own() {
+    let roles = [Role::Author, Role::Listener, Role::Judge];
     let names: std::collections::BTreeSet<&str> = roles.iter().map(|r| r.as_str()).collect();
     assert_eq!(names.len(), roles.len());
+    assert_eq!(Role::Author.as_str(), "author");
 }
 
 /// A port that answers every JSON call with one value.
@@ -327,9 +312,9 @@ async fn a_value_its_type_cannot_read_is_an_invalid_reply() {
         run: RunId::nth(1),
         address: "a".to_owned(),
     };
-    let schema = Proposal::schema(&CanonKeys::of(&fixture_canon()));
+    let schema = reading_schema();
     let port = Fixed(json!({"mood": "calm"}));
-    let error = decide::<Proposal>(&port, &call, Role::Character, &schema, &prompt())
+    let error = decide::<ReadingReply>(&port, &call, Role::Listener, &schema, &prompt())
         .await
         .unwrap_err();
     assert!(

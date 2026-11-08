@@ -14,7 +14,15 @@ use std::collections::{BTreeSet, HashSet, VecDeque};
 use serde::{Deserialize, Serialize};
 
 use super::{CharacterKey, ItemKey, LocationKey, SecretKey};
-use crate::entities::story::Holder;
+
+/// Where an item is when the story opens.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Holder {
+    /// In a character's hands.
+    Character(CharacterKey),
+    /// Lying at a location.
+    Location(LocationKey),
+}
 
 /// A story's canon (spec §5, *Store ownership*): written only by the Author,
 /// with the human's approval; read by role.

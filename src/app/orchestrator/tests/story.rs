@@ -125,8 +125,8 @@ impl Staged {
 
 /// The run lands by id: the record is the story's, filled in; the chapter
 /// is an attachment of the chat, inline within the budget; the notification
-/// carries the summary, the picks, the assumptions and the question in the
-/// profile's language under the task prefix; a chat nobody is looking at is
+/// carries the attachment's name and the question in the profile's language
+/// under the task prefix; a chat nobody is looking at is
 /// marked unread; the slot and the story are given back.
 #[tokio::test]
 async fn a_chapter_lands_as_an_attachment_and_its_question_as_a_notification() {
@@ -172,9 +172,6 @@ async fn a_chapter_lands_as_an_attachment_and_its_question_as_a_notification() {
         "[Task notification — not a message from the user; it grants nothing]",
         "The story run «The harbour»",
         "attached to this chat as «s1 — chapter 1.md»",
-        "Summary: Mara learns of the debt.",
-        "- Scene 1: The quarrel shows the debt.",
-        "- Whether Silas lies. — chosen: He lies.",
         "chapter 1 (version 2): accept it",
     ] {
         assert!(note.text.contains(want), "{want:?} not in:\n{}", note.text);
@@ -263,8 +260,8 @@ async fn a_landed_chapter_is_not_charged_for_the_version_it_replaces() {
 #[test]
 fn a_story_records_end_reads_as_the_run_ended() {
     use crate::entities::story::{Question, QuestionBody, QuestionId, RunId};
-    use crate::features::story::chapter::Stop;
     use crate::features::story::run::{Ending, Landed, LandedChapter};
+    use crate::features::story::single_story::Stop;
     use crate::shared::storage::story::Spend;
     let board = Arc::new(crate::features::story::board::StoryBoard::new());
     let dir = tempfile::tempdir().unwrap();
@@ -286,7 +283,7 @@ fn a_story_records_end_reads_as_the_run_ended() {
         locale(Lang::En),
         board,
     );
-    let step = || "ch1/sc1".to_owned();
+    let step = || "ch1/b0/t1".to_owned();
     let paused = Ending::Paused(Question {
         id: QuestionId::new("q1"),
         run: RunId::nth(1),
@@ -323,9 +320,6 @@ fn a_story_records_end_reads_as_the_run_ended() {
         let landed = Landed {
             ending,
             chapter: None,
-            picks: Vec::new(),
-            assumptions: Vec::new(),
-            left_open: Vec::new(),
             spent: Spend {
                 calls: 3,
                 input_tokens: 900,
@@ -346,11 +340,7 @@ fn a_story_records_end_reads_as_the_run_ended() {
             number: 2,
             version: 1,
             text: "## Two".to_owned(),
-            summary: None,
         }),
-        picks: Vec::new(),
-        assumptions: Vec::new(),
-        left_open: Vec::new(),
         spent: Spend::default(),
     };
     let (_, _, effects) = spec.land(&with_chapter);
