@@ -96,19 +96,31 @@ impl Db {
 /// is placed by [`crate::features::data_migration`] (peeking `user_version` before
 /// opening storage).
 fn migrate(conn: &mut Connection) -> Result<()> {
+    // The baseline and its stamp are **one** transaction. In autocommit every
+    // statement was a transaction of its own — 31 on a fresh file, each with a
+    // journal created and deleted and two fsyncs — so a fresh database cost 31
+    // commits where one does, and a failure partway left the tables before it
+    // behind. Measured (docs/journal/storage.md, "the schema in one transaction"):
+    // a fresh `Db::open` 363 ms → 13 ms on a slow disk, and the test suite on the
+    // Windows CI runner 562 s → 161 s. On an existing database the statements write
+    // nothing, so the transaction commits empty.
+    let tx = conn.transaction()?;
     // CREATE ... IF NOT EXISTS runs EVERY time — this is the mechanism for adding new
     // tables/indexes to an existing DB without a version bump (the additive policy, F12).
-    baseline_ddl(conn)?;
+    baseline_ddl(&tx)?;
 
-    let from = read_user_version(conn)?;
+    let from = read_user_version(&tx)?;
     if from > DB_SCHEMA {
+        // Dropping `tx` rolls the DDL above back: a newer version's file is refused
+        // untouched.
         bail!("data.db is from a newer app version (schema {from}, supported is {DB_SCHEMA})");
     }
     // An existing/fresh DB (user_version = 0) gets stamped with the baseline version.
     // This is not a data migration (the DDL is idempotent) — no pre-migration backup needed.
     if from == 0 {
-        set_user_version(conn, DB_SCHEMA)?;
+        set_user_version(&tx, DB_SCHEMA)?;
     }
+    tx.commit()?;
     apply_db_steps(conn, DB_STEPS, from)?;
     Ok(())
 }
@@ -693,6 +705,37 @@ mod migrate_tests {
         let mut conn = Connection::open_in_memory().unwrap();
         set_user_version(&conn, DB_SCHEMA + 5).unwrap();
         assert!(migrate(&mut conn).is_err());
+    }
+
+    /// The baseline is one transaction: a schema that fails partway keeps none of the
+    /// tables it created before the failure, and no stamp. A view named like a table
+    /// makes it fail there — `CREATE TABLE IF NOT EXISTS notes` passes over the view
+    /// and the index on it is refused — after `meta` has been created.
+    #[test]
+    fn a_baseline_that_fails_partway_leaves_nothing_behind() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE VIEW notes AS SELECT 1 AS profile_id")
+            .unwrap();
+        assert!(migrate(&mut conn).is_err());
+        assert!(
+            !table_exists(&conn, "meta"),
+            "a table created before the failure outlived it"
+        );
+        assert_eq!(read_user_version(&conn).unwrap(), 0);
+    }
+
+    /// A database from a newer version is refused untouched: the additive DDL that
+    /// runs before the version is read goes back with the refusal.
+    #[test]
+    fn a_newer_database_is_refused_untouched() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        set_user_version(&conn, DB_SCHEMA + 5).unwrap();
+        assert!(migrate(&mut conn).is_err());
+        assert!(
+            !table_exists(&conn, "notes"),
+            "the refusal wrote the schema"
+        );
+        assert_eq!(read_user_version(&conn).unwrap(), DB_SCHEMA + 5);
     }
 
     #[test]

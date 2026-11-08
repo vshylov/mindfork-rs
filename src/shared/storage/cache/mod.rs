@@ -572,11 +572,17 @@ fn migrate(conn: &Connection) -> Result<()> {
     if version != 0 && version != CACHE_SCHEMA {
         bail!("cache.db schema is {version}, this build indexes {CACHE_SCHEMA}");
     }
+    // One transaction for the schema and its stamp, as for `data.db` (see
+    // `db::migrate`): one commit instead of one per statement, and a creation that
+    // fails keeps nothing. `unchecked_` only because this takes `&Connection`;
+    // nothing else is open on it here.
+    let tx = conn.unchecked_transaction()?;
     // Idempotent, and also repairs a database whose creation was interrupted.
-    baseline_ddl(conn)?;
+    baseline_ddl(&tx)?;
     if version == 0 {
-        set_user_version(conn, CACHE_SCHEMA)?;
+        set_user_version(&tx, CACHE_SCHEMA)?;
     }
+    tx.commit()?;
     Ok(())
 }
 
@@ -682,6 +688,26 @@ mod tests {
 
     fn cache() -> CacheDb {
         CacheDb::open_in_memory().unwrap()
+    }
+
+    /// The cache's schema is one transaction too: one it cannot finish keeps none of
+    /// what it began. A view named `messages` stops it at the index on `messages`,
+    /// after `indexed_chats` was created ([`CacheDb::open`] then wipes the file).
+    #[test]
+    fn a_schema_that_fails_partway_leaves_nothing_behind() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE VIEW messages AS SELECT 1 AS sub_id")
+            .unwrap();
+        assert!(migrate(&conn).is_err());
+        let left: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE name = 'indexed_chats'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(left, 0, "a table created before the failure outlived it");
+        assert_eq!(read_user_version(&conn).unwrap(), 0);
     }
 
     fn msg(text: &str) -> IndexedMessage {
