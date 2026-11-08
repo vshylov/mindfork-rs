@@ -2092,10 +2092,17 @@ machine's — on a pod there is none — and the same refusal asked them to copy
   says it; `Ctrl+V` stays a paste.
 - **`ImageSource::File` holds a `PathBuf`**, so a path off the clipboard never takes a
   round trip through a lossy string.
+- **The clipboard is read through a seam** (`PasteSource`, implemented by the runtime's
+  arboard slot), so `paste_from_clipboard`'s routing is tested over a clipboard the test
+  makes. The PR's first analysis failed Sonar's gate at **68.9 %** coverage on new code:
+  the routing was reachable only through a real clipboard, and the new `#[ignore]`
+  round trip sat in the inline `mod tests`, where CI never runs it — the trap #720 met.
+  Both real-clipboard round trips now live in `runtime/clipboard/tests/live.rs`, which
+  `cargo llvm-cov` leaves out; measured locally the PR's new lines are then 92 % covered.
 - The key-reference gate read `notes.txt` in a new test as a bundle key (the `notes.`
   prefix) — docs/lessons.md §7's collision, again; the fixture became `letter.txt`.
 
-**Tests** (+9, +1 `#[ignore]`): `image_prepare` — the extension judged by the decoders we
+**Tests** (+16, +1 `#[ignore]`): `image_prepare` — the extension judged by the decoders we
 have (`heic`, `tiff`, a dotfile, `archive.png.zip` are not pictures); `runtime::clipboard`
 — the "far" rule (SSH with and without a forwarded display), copied files split keeping
 their order, the names a note shows (three, then `…`), each reason a typed paste finds
@@ -2103,11 +2110,16 @@ nothing worded in both locales with its route; the orchestrator — copied pictu
 under their own names with their paths as sources, a batch past the cap staging what
 fits and saying the rest once, a batch with no room refused before any work, and the cap
 at landing for stagings that raced past the early check (a bare orchestrator, since
-through the loop the race is timing). **4726 unit tests green, 315 `#[ignore]`**,
-clippy `-D warnings`/fmt clean.
+through the loop the race is timing), a batch with no chat open; `runtime` — the paste's
+routing over a fake clipboard: pixels first and nothing else asked, copied pictures
+staged together with the rest named once and their paths never pasted as text (both
+routes), pictures alone leaving no note, `Ctrl+V` over non-pictures still pasting text,
+each reason a typed paste finds nothing; and the system clipboard read through the seam,
+read-only, empty where it cannot be opened. **4734 unit tests green, 315 `#[ignore]`**
+(on the tree merged with `main`), clippy `-D warnings`/fmt clean.
 
 **Live check — GO** (2026-11-08, Windows 11, the real clipboard; the owner's clipboard
-saved first and put back): `clipboard_file_list_round_trip` (new, `#[ignore]`) puts a
+saved first and put back): `clipboard_file_list_round_trip` (new, `#[ignore]`, `runtime/clipboard/tests/live.rs`) puts a
 picture and a text file on the clipboard as a file list — `get_image` finds nothing,
 the list comes back, one staged and one named — and `clipboard_image_round_trip` still
 passes. Then `mindfork demo` driven in a hidden console (`tools/console_probe.py`'s

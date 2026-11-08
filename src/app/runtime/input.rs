@@ -387,14 +387,17 @@ fn handle_key_event(
 /// a copied picture is staged rather than pasted as its path where the file manager also
 /// offers that as text (docs/research/pasted-image-names.md A1). A copied file that is
 /// not a picture leaves `Ctrl+V` exactly as it was.
-fn paste_from_clipboard(
+///
+/// Generic over where the clipboard is read ([`PasteSource`]): the runtime passes its
+/// arboard slot, the tests a clipboard of their own making.
+pub(super) fn paste_from_clipboard(
     text_fallback: bool,
     screen: &mut ChatScreen,
     active: &mut ActiveScreen,
     cmd_tx: &UnboundedSender<AppCommand>,
-    clipboard: &mut Option<arboard::Clipboard>,
+    clipboard: &mut impl PasteSource,
 ) {
-    if let Some((width, height, rgba)) = clipboard_image(clipboard) {
+    if let Some((width, height, rgba)) = clipboard.image() {
         let _ = cmd_tx.send(AppCommand::ImagePaste(Box::new(ClipboardImage {
             width,
             height,
@@ -402,7 +405,7 @@ fn paste_from_clipboard(
         })));
         return;
     }
-    let (images, others) = split_copied_files(clipboard_files(clipboard));
+    let (images, others) = split_copied_files(clipboard.files());
     if !images.is_empty() {
         // The rest of a mixed selection is named once, here, rather than each file
         // refused at staging: they are not pictures, and nobody asked to stage them.
@@ -423,7 +426,7 @@ fn paste_from_clipboard(
         // No image: behave exactly as a paste always has. On a terminal that forwards
         // Ctrl+V this is what makes the key do what the help overlay says it does; on one
         // that swallows it, nothing reaches us and the terminal has already pasted.
-        if let Some(text) = clipboard_text(clipboard) {
+        if let Some(text) = clipboard.text() {
             active.handle_paste(screen, &text);
         }
         return;
@@ -433,6 +436,6 @@ fn paste_from_clipboard(
     // that does not depend on the clipboard at all.
     let loc = screen.loc();
     screen.set_image_progress(crate::features::image_command::ImageProgress::Failed(
-        nothing_to_paste(&others, clipboard_is_far(), loc),
+        nothing_to_paste(&others, clipboard.far(), loc),
     ));
 }

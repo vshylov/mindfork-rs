@@ -81,6 +81,35 @@ pub(super) fn clipboard_files(slot: &mut Option<arboard::Clipboard>) -> Vec<Path
         .unwrap_or_default()
 }
 
+/// What a paste reads off the clipboard, in the order it asks — the seam that lets the
+/// paste's routing (`input::paste_from_clipboard`) be tested without the system
+/// clipboard. The one real source is the runtime's arboard slot.
+pub(super) trait PasteSource {
+    /// Pixels: a screenshot, a browser's *Copy image* ([`clipboard_image`]).
+    fn image(&mut self) -> Option<(u32, u32, Vec<u8>)>;
+    /// The paths a file manager's *Copy* put there ([`clipboard_files`]).
+    fn files(&mut self) -> Vec<PathBuf>;
+    /// Text, for `Ctrl+V`'s fallback ([`clipboard_text`]).
+    fn text(&mut self) -> Option<String>;
+    /// Whether this clipboard is on another machine than the person's ([`clipboard_is_far`]).
+    fn far(&self) -> bool;
+}
+
+impl PasteSource for Option<arboard::Clipboard> {
+    fn image(&mut self) -> Option<(u32, u32, Vec<u8>)> {
+        clipboard_image(self)
+    }
+    fn files(&mut self) -> Vec<PathBuf> {
+        clipboard_files(self)
+    }
+    fn text(&mut self) -> Option<String> {
+        clipboard_text(self)
+    }
+    fn far(&self) -> bool {
+        clipboard_is_far()
+    }
+}
+
 /// Splits copied files into the ones a paste stages — pictures, judged by the extension
 /// before anything is read ([`has_image_extension`]) — and the rest, which it only names.
 /// Order is kept: the files stage in the order the file manager listed them.
@@ -462,6 +491,23 @@ mod tests {
         assert!(!far(false, true), "a local desktop session");
     }
 
+    /// The system clipboard read through the paste's seam, **read-only**: every question
+    /// answers without failing, the distance is [`clipboard_is_far`]'s, and a clipboard
+    /// that cannot be opened at all — a headless box, CI — reads as empty rather than as
+    /// an error, which is what lets a paste fall through to its refusal.
+    #[test]
+    fn the_system_clipboard_answers_the_paste_and_reads_empty_when_absent() {
+        let absent = arboard::Clipboard::new().is_err();
+        let mut slot: Option<arboard::Clipboard> = None;
+        let image = PasteSource::image(&mut slot);
+        let files = PasteSource::files(&mut slot);
+        let text = PasteSource::text(&mut slot);
+        assert_eq!(PasteSource::far(&slot), clipboard_is_far());
+        if absent {
+            assert!(image.is_none() && files.is_empty() && text.is_none());
+        }
+    }
+
     /// Pictures are staged, everything else only named — and in the order the file
     /// manager listed them, since that is the order the person sees them land.
     #[test]
@@ -522,122 +568,8 @@ mod tests {
             assert_eq!(msg, loc.t("ui.err.image_no_clipboard"), "{lang:?}");
         }
     }
-
-    /// A real round trip through the **operating system's** clipboard: put a file list on
-    /// it — what "Copy" on a file in a file manager does — and read it back the way a
-    /// paste does, then split it the way a paste would.
-    ///
-    /// `#[ignore]` for the reason [`clipboard_image_round_trip`] is: it clobbers what the
-    /// developer copied, and a headless box has no clipboard. Measured on Windows before
-    /// this existed: the file list came back while `get_image` failed on it, so a copied
-    /// picture file was refused as "no image on the clipboard"
-    /// (docs/research/pasted-image-names.md §3.1).
-    ///
-    /// Run: `cargo test clipboard_file_list_round_trip -- --ignored --nocapture`.
-    #[test]
-    #[ignore = "uses the real system clipboard (clobbers what the user copied)"]
-    fn clipboard_file_list_round_trip() {
-        let dir = tempfile::tempdir().unwrap();
-        let picture = dir.path().join("copied-picture.png");
-        let letter = dir.path().join("letter.txt");
-        image::RgbImage::from_pixel(8, 8, image::Rgb([200, 30, 30]))
-            .save(&picture)
-            .unwrap();
-        std::fs::write(&letter, "not a picture").unwrap();
-
-        let mut slot: Option<arboard::Clipboard> = match arboard::Clipboard::new() {
-            Ok(c) => Some(c),
-            Err(e) => {
-                eprintln!("skip: no system clipboard here ({e})");
-                return;
-            }
-        };
-        slot.as_mut()
-            .unwrap()
-            .set()
-            .file_list(&[&picture, &letter])
-            .expect("putting a file list on the clipboard");
-
-        // What a paste checks first finds nothing: the clipboard holds paths, not pixels.
-        assert!(
-            clipboard_image(&mut slot).is_none(),
-            "a copied file is not an image on the clipboard"
-        );
-        let files = clipboard_files(&mut slot);
-        let canon = |p: &std::path::Path| std::fs::canonicalize(p).unwrap();
-        let back: Vec<PathBuf> = files.iter().map(|p| canon(p)).collect();
-        assert_eq!(back, vec![canon(&picture), canon(&letter)]);
-        let (images, others) = split_copied_files(files);
-        assert_eq!(images.len(), 1, "the picture is staged");
-        assert_eq!(others.len(), 1, "the text file is only named");
-        eprintln!("clipboard file list round trip: {images:?} staged, {others:?} named");
-    }
-
-    /// A real round trip through the **operating system's** clipboard: put an image on
-    /// it, read it back, and encode it the way a paste would.
-    ///
-    /// `#[ignore]` because it touches a shared global resource — it would clobber whatever
-    /// the developer had copied, and on a headless CI box there is no clipboard at all.
-    /// It exists because everything else about this path is a unit test against pixels we
-    /// made up: only a real clipboard can show that arboard's `image-data` feature is
-    /// actually wired on this platform, that the bytes really come back RGBA in the size
-    /// reported, and that the round trip survives the platform's own format conversion
-    /// (`CF_DIB` on Windows, `image/png` on X11).
-    ///
-    /// Run: `cargo test clipboard_image_round_trip -- --ignored --nocapture`.
-    #[test]
-    #[ignore = "uses the real system clipboard (clobbers what the user copied)"]
-    fn clipboard_image_round_trip() {
-        let (w, h) = (64u32, 32u32);
-        // Distinct per-pixel values, so a stride or channel-order mistake shows up as a
-        // mismatch rather than as a plausible-looking picture.
-        let source: Vec<u8> = (0..w as usize * h as usize)
-            .flat_map(|i| [(i % 251) as u8, (i % 253) as u8, (i % 257 % 256) as u8, 255])
-            .collect();
-
-        let mut slot: Option<arboard::Clipboard> = None;
-        if slot.is_none() {
-            match arboard::Clipboard::new() {
-                Ok(c) => slot = Some(c),
-                Err(e) => {
-                    eprintln!("skip: no system clipboard here ({e})");
-                    return;
-                }
-            }
-        }
-        slot.as_mut()
-            .unwrap()
-            .set_image(arboard::ImageData {
-                width: w as usize,
-                height: h as usize,
-                bytes: source.clone().into(),
-            })
-            .expect("putting an image on the clipboard");
-
-        let (rw, rh, rgba) = clipboard_image(&mut slot).expect("an image back off the clipboard");
-        assert_eq!((rw, rh), (w, h), "the size must survive the round trip");
-        assert_eq!(rgba.len(), source.len(), "RGBA8, four bytes per pixel");
-        // Not asserting byte equality: a platform may composite onto an opaque background
-        // or reorder channels internally. What must hold is that the pixels are *ours* —
-        // an all-black or all-white buffer would mean the image never made it.
-        let distinct = rgba
-            .chunks(4)
-            .map(|p| (p[0], p[1], p[2]))
-            .collect::<std::collections::HashSet<_>>();
-        assert!(
-            distinct.len() > 100,
-            "the round trip flattened the image into {} distinct colours",
-            distinct.len()
-        );
-
-        // And the encode a paste would do accepts what came back.
-        let prepared =
-            crate::features::image_prepare::prepare_rgba(rw, rh, &rgba, 1568).expect("encoding");
-        assert_eq!(prepared.mime, "image/png");
-        assert_eq!((prepared.width, prepared.height), (w, h));
-        eprintln!(
-            "clipboard round trip: {w}x{h} -> {} bytes png",
-            prepared.bytes.len()
-        );
-    }
 }
+
+#[cfg(test)]
+#[path = "clipboard/tests/live.rs"]
+mod live_tests;

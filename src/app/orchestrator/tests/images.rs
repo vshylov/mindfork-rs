@@ -406,6 +406,23 @@ async fn a_file_paste_with_no_room_is_refused_before_any_work() {
     assert_eq!(staged_list(&cmd_tx, &mut evt_rx).await.len(), 1);
 }
 
+/// With no chat open there is nowhere to stage copied files: refused with the attach's
+/// own words, and nothing is read.
+#[test]
+fn a_file_paste_with_no_chat_open_is_refused() {
+    let (_dir, mut orch, mut rx) = bare_orch_rx();
+    orch.handle_image_paste_files(vec!["C:\\shot.png".into()]);
+    let refused: Vec<String> = std::iter::from_fn(|| rx.try_recv().ok())
+        .filter_map(|e| match e {
+            AppEvent::ImageProgress(ImageProgress::Failed(msg)) => Some(msg),
+            _ => None,
+        })
+        .collect();
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::default());
+    assert_eq!(refused, [loc.t("ui.err.image_no_active_chat")]);
+    assert!(orch.staged_images.is_empty());
+}
+
 /// The cap holds where an image **lands**, not only where its staging starts: several
 /// stagings can be in flight at once — the files of one paste, an attach typed while a
 /// paste still encodes — and each passed the early check before any had landed. Driven
