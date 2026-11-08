@@ -411,6 +411,23 @@ impl Orchestrator {
         self.title_after_user_message(active_id);
     }
 
+    /// Announces a terminal turn and begins the state machine on it — unless it was
+    /// reserved, which did both when it was parked (docs/research/pasted-image-names.md
+    /// F4, [`super::pasted_names`]).
+    fn begin_turn(
+        &mut self,
+        started: AppEvent,
+        id: Uuid,
+        cancel: &CancellationToken,
+        reserved: bool,
+    ) {
+        if reserved {
+            return;
+        }
+        let _ = self.evt_tx.send(started);
+        self.gen_state.begin(id, cancel.clone());
+    }
+
     /// Automatic titling at the `AfterUserMessage` point (spec §11.2), fired for the
     /// conversation's first user message — **after** the reply's own request, so on a
     /// single-slot server the title never queues ahead of the answer
@@ -1157,11 +1174,7 @@ impl Orchestrator {
         let (confirm_tx, confirm_rx) = tokio::sync::mpsc::unbounded_channel();
         let evt_tx = match surface {
             Surface::Terminal => {
-                // A reserved turn began when it was parked.
-                if reserved.is_none() {
-                    let _ = self.evt_tx.send(started);
-                    self.gen_state.begin(id, cancel.clone());
-                }
+                self.begin_turn(started, id, &cancel, reserved.is_some());
                 self.inflight = Some(super::InflightTurn {
                     generation: id,
                     chat: active_id,
