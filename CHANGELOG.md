@@ -14,6 +14,16 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Changed
+
+- **The story settings no longer share a word with the chat's history.** In Russian
+  the story engine's group, its rows, its tool labels in the feed and the `mindfork
+  stats` labels said *istoriya*, the word the interface already uses for a
+  conversation's history, so *Istoriya: chapter budget* read as a setting of the
+  chat's history; they now say *rasskaz*, the everyday word for a written story. In
+  English the group is *Story writing (experimental)*, beside *Image generation*; the
+  *Story tools* toggle keeps its name.
+
 ## [0.24.0] — 2026-11-08
 
 **Stories.** The assistant can write a story with you, chapter by chapter. Give it your

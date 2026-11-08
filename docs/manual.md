@@ -575,7 +575,7 @@ is open and idle; otherwise the chat list marks it unread.
 
 ### Stories (experimental)
 
-Turn on **Story tools** in `Ctrl+P → Tools → Stories (experimental)`. The story engine is an
+Turn on **Story tools** in `Ctrl+P → Tools → Story writing (experimental)`. The story engine is an
 experiment: one writer, the chat's own model, drafts each chapter, reads it as its
 editor would and writes it again, up to 24 times, so a chapter takes some fifty
 calls and can take an hour or more.
