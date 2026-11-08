@@ -1,6 +1,6 @@
 # Fabula — a story engine used from the chat: track plan
 
-**Status:** in progress — M0 done (PRs 1 and 2, Gate G0 GO); M1 done (PRs 3–5, Gate G1 GO, 2026-11-01); M2 done (PR 6, the Author's loop, 2026-11-01; PR 7, stories in mindfork's data, 2026-11-02; PR 8, the story run in the background, 2026-11-02; PR 9, the story driven from the chat, 2026-11-02; Gate G2 GO, 2026-11-03; PR 10, a scene played again, 2026-11-03); before M3, the readers' findings settled (PR 11, the story's register; PR 12, the craft of the scenes and the lines; a chapter's choices standing for its later steps; a map every scene can reach; 2026-11-04 to 2026-11-05); M3 begun (PR 13, the hidden runner and the twelve premises frozen, 2026-11-06; PR 14, the blind judging by three models, and the judging itself, 2026-11-07: F lost both decisions, 3 pairs of 36 each, and A1 against B0, which picks what follows, is the owner's call). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
+**Status:** stopped by M3's decision rule (2026-11-07) — M0 done (PRs 1 and 2, Gate G0 GO); M1 done (PRs 3–5, Gate G1 GO, 2026-11-01); M2 done (PR 6, the Author's loop, 2026-11-01; PR 7, stories in mindfork's data, 2026-11-02; PR 8, the story run in the background, 2026-11-02; PR 9, the story driven from the chat, 2026-11-02; Gate G2 GO, 2026-11-03; PR 10, a scene played again, 2026-11-03); before M3, the readers' findings settled (PR 11, the story's register; PR 12, the craft of the scenes and the lines; a chapter's choices standing for its later steps; a map every scene can reach; 2026-11-04 to 2026-11-05); M3 done (PR 13, the hidden runner and the twelve premises frozen, 2026-11-06; PR 14, the blind judging by three models, and the judging itself, 2026-11-07: F lost both decisions, 3 pairs of 36 each, and A1 lost to B0, 5 of 36, so neither beats B0 and the track stops; the owner kept the story tools, off, running B0, 2026-11-08). Plan of 2026-10-31. Every fork of the research is decided by the owner, and
 so are the twenty-three this plan adds (§6) and where development runs (§4, *The development
 stack*). The design —
 the engine, its stores, its contracts, its evaluation — is
@@ -770,13 +770,35 @@ and was chosen in 16 of their 120 readings. On the four measures F's stories ave
 B0's 6.5–7.3 and A1's 6.1–7.0.
 
 By the decision rule, F does not continue, and the simulation does not stay. Which of the two
-branches left follows turns on A1 against B0, which T23 did not judge: if A1 wins 24 of its 36
-pairs, a pull request switches the tools to A1's pipeline; if not, the track stops. Judging it
-would cost some $77 at this run's rates (Fable $41, Astra $33, Argon $3), and the decision to run
-it is the owner's ([journal/stories.md](journal/stories.md), *M3's judging*).
+branches left follows turned on A1 against B0, which T23 did not judge: with 24 of its 36 pairs
+A1's pipeline would take the tools, with fewer the track stops. Judging it was put at some $77 at
+this run's rates, and the owner had it run ([journal/stories.md](journal/stories.md), *M3's
+judging*).
 
-After M3, Russian prose under the English prompts is compared with prose under Russian
-ones (spec §15).
+**A1 against B0 (2026-11-07).** The same session ran the same binary, with the same panel, over
+the 36 pairs both ways: 216 readings in 52 min for $93.62 (Fable $50.87, Astra $38.89, Argon
+$3.86), every one answered at its first attempt and none of the 504 before it changed. On a
+closer pair the judges reasoned longer, Fable 12,456 output tokens a reading on the mean against
+9,620 on F against B0, and the brief's limit of $90 checked every quarter of an hour was passed
+by $3.62.
+
+| | A1 won | A1 lost | tied | p | A1's pairs, judge alone (Fable, Astra, Argon) |
+| --- | --- | --- | --- | --- | --- |
+| A1 against B0 | 5 | 29 | 2 | ≈ 1 | 2, 6, 6 |
+
+The three B0 stories F beat, `clash-4`, `mystery-4` and `mystery-5` at seed 3, A1 beat too. The
+judges (Fable, Astra, Argon) chose alike in both orders on 32, 28 and 16 of the 36 pairs: Argon
+chose Story 1 in 56 of its 72 readings. On the four measures A1's stories averaged 5.1–6.0 and
+B0's 6.2–7.0. Length did not decide it: A1's story was the longer in 26 pairs and was chosen in
+52 of their 156 readings.
+
+Neither F nor A1 beats B0, so by the decision rule the track stops: M4 is not built, and the
+simulation is not taken further, nor is A1's pipeline. The owner chose to keep the story tools,
+behind `tools.story` and off, running B0 (2026-11-08): a pull request switches them, its forks
+put to the owner first ([journal/stories.md](journal/stories.md), *A1 against B0*).
+
+After M3, Russian prose under the English prompts was to be compared with prose under
+Russian ones (spec §15); with the track stopped, it is not.
 
 ### M4 — the long form, after a GO
 
