@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (41)
+## Entries (42)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -53,6 +53,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: SonarQube follow-up — the source-language gate's fixtures (done)
 - Post-M9: the console probe stops the tree it started, not the `cmd` in front of it (done)
 - Post-M9: SonarQube follow-up — the companion carry's six contexts (done)
+- Post-M9: SonarQube follow-up — B0's session and its two origins (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -2125,3 +2126,28 @@ tree (AGENTS.md §3).
   green. No CHANGELOG entry: nothing
   the user sees changed (AGENTS.md §4). No live run: the same calls in the same order, the
   error paths measured by the unit tests (AGENTS.md §3).
+
+### Post-M9: SonarQube follow-up — B0's session and its two origins (done)
+
+- **One open finding on `main`, the gate green** (read through the Sonar MCP on
+  2026-11-08; branch `refactor/sonar-story-session-origin`): `rust:S3776`, CRITICAL,
+  `write_session` in `features/story/single.rs` at cognitive complexity 31 against the
+  30 allowed. It came with #895 (the story tools on B0, `8630f114`) and was raised on
+  that pull request's own analysis too, whose gate passed: the gate rates new code, and
+  one function a point over does not move the maintainability rating off A.
+- **The point over was a duplication.** A version's origin — `Draft` for turn 1,
+  `Revision` for every later writing turn — was spelled as the same `if … else` twice:
+  in the loop that stores the versions a killed run logged and never stored, and after a
+  reply that is kept. Both sites call `origin(n)` now. Counted by hand, the two were
+  worth 3 and 4 (an `if` at nesting 1 and 2, each with its `else`), so the function goes
+  from 31 to 24; the analysis of the merge is what confirms it.
+- **The recovery loop had no test**, and it was reshaped, so it has one:
+  `a_version_in_the_call_log_without_its_row_is_kept_as_the_turn_that_wrote_it` logs
+  turns 1–3 through the port with no version stored, then runs `write`. The draft and the
+  revision are kept with their origins and texts, turn 1 is not asked again, turn 4 is.
+  It fails with the loop's origin forced to `Revision` (the mutant was run).
+- 4714 unit tests green (+1), 307 `#[ignore]`; fmt, clippy and the repository gates
+  green. CLAUDE.md's Status line still said 4876 and 329, the count before #896 removed
+  the simulation; it says what this run counted now. No CHANGELOG entry: nothing the user sees changed (AGENTS.md §4). No live run:
+  the same calls in the same order, the stored origins measured by the unit tests
+  (AGENTS.md §3).
