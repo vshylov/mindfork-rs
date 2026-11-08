@@ -318,6 +318,9 @@ fn bare_orch_rx() -> (tempfile::TempDir, Orchestrator, UnboundedReceiver<AppEven
         // Same for images: staging is exercised through the real loop.
         image_tx: unbounded_channel().0,
         draw_tx: unbounded_channel().0,
+        name_tx: unbounded_channel().0,
+        name_board: crate::features::image_name::NameBoard::new(),
+        parked: None,
         // And launches: what the bare tests assert is the plan and the landing, each
         // called directly (`plan_open`, `handle_open_result`).
         open_tx: unbounded_channel().0,

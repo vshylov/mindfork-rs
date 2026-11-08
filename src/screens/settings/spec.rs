@@ -81,6 +81,7 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
         }
         TMcpEnabled => toggle(|c| c.mcp.enabled = !c.mcp.enabled),
         TMcpImages => toggle(|c| c.tools.mcp_images = !c.tools.mcp_images),
+        ImageNamePasted => toggle(|c| c.images.name_pasted = !c.images.name_pasted),
         ICompat => toggle(|c| c.interface.terminal_compat = !c.interface.terminal_compat),
         ITableSeparators => {
             toggle(|c| c.interface.table_row_separators = !c.interface.table_row_separators)

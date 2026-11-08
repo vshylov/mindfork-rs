@@ -1608,6 +1608,12 @@ pub struct ImageSettings {
     /// `0` disables downscaling — format normalization still happens, because the
     /// provider matrix depends on it (fork F3).
     pub downscale_px: u32,
+    /// Whether the chat's model names a pasted image by what it shows —
+    /// `clipboard/sunset-lake.png` rather than `clipboard.png`
+    /// (docs/research/pasted-image-names.md). **Off** by default: it sends the image to
+    /// the model once more as soon as it is pasted, which costs a second of a local
+    /// server or a fraction of a cent in the cloud.
+    pub name_pasted: bool,
 }
 
 impl Default for ImageSettings {
@@ -1616,6 +1622,7 @@ impl Default for ImageSettings {
             max_count: DEFAULT_IMAGE_MAX_COUNT,
             max_bytes: DEFAULT_IMAGE_MAX_BYTES,
             downscale_px: DEFAULT_IMAGE_DOWNSCALE_PX,
+            name_pasted: false,
         }
     }
 }

@@ -457,6 +457,14 @@ shows what is staged, `/image remove` unstages.
 Over SSH the clipboard the app can read is the remote machine's, not yours: copy
 the file over and use `/image attach <path>`, or attach the picture by its address.
 
+A pasted picture is `clipboard.png` until it has a better name. `/image paste <name>`
+gives it yours — `clipboard/<name>.png`. Or turn on Settings → Images → *Name pasted
+images*, and the chat's own model names it by what it shows, say
+`clipboard/sunset-lake.png`. That costs one more look at the picture, as soon as it is
+pasted — about a second of a local server, a fraction of a cent in the cloud — so it is
+off until you turn it on. A message sent right after the paste waits for the name, ten
+seconds at most. `/image remove sunset-lake.png` works without the `clipboard/` part.
+
 If the engine cannot take images, the app says so before you send, and a chat
 that already holds images tells the model they exist rather than pretending they
 do not.
@@ -908,7 +916,7 @@ Typed straight into the input box.
 | `/file attach <path>` · `/file remove <name\|#N>` · `/file list` | attach a text file to this chat / detach it / list attachments |
 | `/file open <name\|#N>` · `/file folder` | open one of this chat's files in the system (document types only — anything else opens its folder) / open the chat's files folder |
 | `/image attach <path\|url>` · `/image remove <name\|#N>` · `/image list` | stage an image for your next message / unstage one / list what is staged |
-| `/image paste` | stage the image on the clipboard — a screenshot needs no file — or the picture files copied there |
+| `/image paste [name]` | stage the image on the clipboard — a screenshot needs no file — under your name for it, or the picture files copied there |
 | `/image generate [16:9] <description>` | draw a picture with the image-generation provider, keep it in the chat's files and stage it for your next message ([Drawing pictures](#drawing-pictures)) |
 | `/project attach <directory>` · `/project detach` · `/project status` | attach a code project to this chat / detach it / show what is attached and what the command slots hold |
 | `/project build-cmd [line]` · `run-cmd` · `test-cmd` | set the command the assistant may build / run / test with — or, with no argument, show it |

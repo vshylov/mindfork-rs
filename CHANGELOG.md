@@ -16,6 +16,17 @@ split by subsystem.
 
 ### Added
 
+- **Pasted pictures can have names that say what they show.** With Settings → Images →
+  *Name pasted images* on (it is off by default), the chat's model names a pasted
+  picture by its content — `clipboard/sunset-lake.png` instead of `clipboard.png`. It
+  costs one more look at the picture at the moment you paste it: about a second on a
+  local server, a fraction of a cent in the cloud. A message sent right after the paste
+  waits for the name, at most 10 seconds. `/image paste <name>` names a picture
+  yourself, for free, with the setting on or off.
+- **Every pasted picture in a chat has a name of its own.** A picture pasted after one
+  already sent is `clipboard-2.png` rather than a second `clipboard.png`, so each can be
+  named in `/file list` and given to the assistant's Python by name; `/image remove`
+  also accepts a pasted picture's name without its `clipboard/` part.
 - **A copied picture file can be pasted.** Copy a picture in Explorer, Finder or a
   Linux file manager, then `/image paste` (or `Ctrl+V` where the terminal passes it
   on): it is attached under its own name, as `/image attach <path>` would. Several

@@ -186,8 +186,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-11-08, version 0.24.0)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **4734 unit tests
-green, 315 `#[ignore]`** (live smokes + real-clipboard round trips + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **4752 unit tests
+green, 316 `#[ignore]`** (live smokes + real-clipboard round trips + the
 screenshot-dump and demo-reel regenerators).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -199,6 +199,12 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **A name for a pasted image — track complete** (2026-11-08): a copied picture
+  file is pasted, the SSH refusal names the distance; with `images.name_pasted` (off)
+  the chat's engine names a paste `clipboard/<slug>.png`, a send waits for it ≤ 10 s,
+  `/image paste <name>` by hand. Live **GO**
+  ([docs/research/pasted-image-names.md](docs/research/pasted-image-names.md),
+  [docs/journal/ui-input.md](docs/journal/ui-input.md)).
 - **Fabula, a story engine used from the chat — track closed** (2026-11-08): G0, G1, G2
   GO; a story composed with the person and written chapter by chapter in the background,
   every answer the person's own words. Its simulation — characters, a World Master, an

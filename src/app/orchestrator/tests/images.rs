@@ -283,6 +283,7 @@ fn rgba(width: u32, height: u32) -> crate::app::events::ClipboardImage {
         width,
         height,
         rgba: pixels,
+        name: None,
     }
 }
 
@@ -451,6 +452,7 @@ fn the_cap_holds_at_landing_for_stagings_that_raced_past_the_early_check() {
         chat_id,
         vision: VisionSupport::Supported,
         outcome,
+        ask_name: false,
     };
     let drained = |rx: &mut UnboundedReceiver<AppEvent>| -> Vec<AppEvent> {
         std::iter::from_fn(|| rx.try_recv().ok()).collect()
@@ -1135,4 +1137,382 @@ async fn a_refused_picture_is_said_and_nothing_is_kept() {
     assert!(staged_list(&cmd_tx, &mut evt_rx).await.is_empty());
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
+}
+
+// ---- a pasted image's name (docs/research/pasted-image-names.md, stage 2) ----
+
+/// An engine that tells a naming request from a turn: the naming request — the one with
+/// the naming system message — answers `name_reply`, after the gate opens when it is
+/// gated; a turn answers at once. Every request is kept, in order.
+struct Namer {
+    requests: std::sync::Mutex<Vec<crate::shared::api::ChatRequest>>,
+    name_reply: String,
+    gate: Option<tokio::sync::Semaphore>,
+}
+
+impl Namer {
+    fn new(name_reply: &str, gated: bool) -> Arc<Self> {
+        Arc::new(Self {
+            requests: std::sync::Mutex::new(Vec::new()),
+            name_reply: name_reply.into(),
+            gate: gated.then(|| tokio::sync::Semaphore::new(0)),
+        })
+    }
+
+    fn release(&self) {
+        if let Some(gate) = &self.gate {
+            gate.add_permits(1);
+        }
+    }
+
+    fn is_naming(req: &crate::shared::api::ChatRequest) -> bool {
+        req.system.as_deref() == Some(crate::features::image_name::SYSTEM)
+    }
+
+    fn naming_requests(&self) -> usize {
+        let requests = self.requests.lock().unwrap();
+        requests.iter().filter(|r| Self::is_naming(r)).count()
+    }
+
+    /// The labels the last **turn** carried before its images.
+    fn turn_labels(&self) -> Vec<String> {
+        let requests = self.requests.lock().unwrap();
+        let turn = requests
+            .iter()
+            .rev()
+            .find(|r| !Self::is_naming(r))
+            .expect("a turn's request");
+        turn.messages
+            .iter()
+            .flat_map(|m| m.images.iter())
+            .filter_map(|i| i.label.clone())
+            .collect()
+    }
+
+    fn turns(&self) -> usize {
+        let requests = self.requests.lock().unwrap();
+        requests.iter().filter(|r| !Self::is_naming(r)).count()
+    }
+}
+
+#[async_trait::async_trait]
+impl EngineBackend for Namer {
+    async fn chat_stream(
+        &self,
+        req: crate::shared::api::ChatRequest,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> anyhow::Result<crate::shared::api::contract::ChatStream> {
+        let naming = Self::is_naming(&req);
+        self.requests.lock().unwrap().push(req);
+        let reply = if naming {
+            if let Some(gate) = &self.gate {
+                tokio::select! {
+                    permit = gate.acquire() => permit.unwrap().forget(),
+                    _ = cancel.cancelled() => {
+                        let s = async_stream::stream! {
+                            yield ChatChunk::Finished(crate::shared::api::FinishReason::Cancelled);
+                        };
+                        return Ok(Box::pin(s));
+                    }
+                }
+            }
+            self.name_reply.clone()
+        } else {
+            "ok".to_string()
+        };
+        let s = async_stream::stream! {
+            yield ChatChunk::Text(reply);
+            yield ChatChunk::Finished(crate::shared::api::FinishReason::Stop);
+        };
+        Ok(Box::pin(s))
+    }
+
+    async fn vision(&self) -> crate::shared::api::VisionSupport {
+        crate::shared::api::VisionSupport::Supported
+    }
+}
+
+/// Titling off (its request would interleave with the turn's), naming on or off.
+fn naming_cfg(on: bool) -> AppConfig {
+    let mut cfg = no_auto_cfg();
+    cfg.images.name_pasted = on;
+    cfg
+}
+
+async fn wait_named(rx: &mut UnboundedReceiver<AppEvent>) -> (String, String) {
+    let ev = wait_for(rx, |e| {
+        matches!(e, AppEvent::ImageProgress(ImageProgress::Named { .. }))
+    })
+    .await
+    .expect("a Named event");
+    match ev {
+        AppEvent::ImageProgress(ImageProgress::Named { from, to }) => (from, to),
+        _ => unreachable!(),
+    }
+}
+
+async fn wait_finished(rx: &mut UnboundedReceiver<AppEvent>) -> AppEvent {
+    wait_for(rx, |e| matches!(e, AppEvent::Finished { .. }))
+        .await
+        .expect("a Finished event")
+}
+
+fn paste_named(name: &str) -> AppCommand {
+    let mut image = rgba(8, 8);
+    image.name = Some(name.into());
+    AppCommand::ImagePaste(Box::new(image))
+}
+
+/// With the switch on, a pasted image is staged under `clipboard.png` at once and then
+/// takes the name the chat's model gives it — `clipboard/<slug>.png` — which is the name
+/// the list shows and the label the next turn carries.
+#[tokio::test]
+async fn a_pasted_image_takes_the_name_the_chat_model_gives_it() {
+    let namer = Namer::new("Sunset over the lake", false);
+    let (_dir, cmd_tx, mut evt_rx, _handle) = spawn_orch_cfg(
+        Some(namer.clone() as Arc<dyn EngineBackend>),
+        naming_cfg(true),
+    );
+
+    cmd_tx
+        .send(AppCommand::ImagePaste(Box::new(rgba(24, 24))))
+        .unwrap();
+    assert_eq!(wait_staged(&mut evt_rx).await.name, "clipboard.png");
+    let (from, to) = wait_named(&mut evt_rx).await;
+    assert_eq!(from, "clipboard.png");
+    assert_eq!(to, "clipboard/sunset-over-the-lake.png");
+    let items = staged_list(&cmd_tx, &mut evt_rx).await;
+    assert_eq!(items[0].name, "clipboard/sunset-over-the-lake.png");
+
+    // The naming request carried the image itself, and nothing else.
+    {
+        let requests = namer.requests.lock().unwrap();
+        let naming = requests.iter().find(|r| Namer::is_naming(r)).unwrap();
+        assert_eq!(naming.messages[0].images.len(), 1);
+        assert!(naming.tools.is_empty());
+    }
+
+    cmd_tx
+        .send(AppCommand::SendMessage("what is this?".into()))
+        .unwrap();
+    wait_finished(&mut evt_rx).await;
+    let labels = namer.turn_labels();
+    assert!(
+        labels[0].contains("clipboard/sunset-over-the-lake.png"),
+        "{labels:?}"
+    );
+}
+
+/// Off — the default — nothing is asked: the paste is today's, `clipboard.png`.
+#[tokio::test]
+async fn with_naming_off_no_name_is_asked() {
+    let namer = Namer::new("never-asked", false);
+    let (_dir, cmd_tx, mut evt_rx, _handle) = spawn_orch_cfg(
+        Some(namer.clone() as Arc<dyn EngineBackend>),
+        naming_cfg(false),
+    );
+    cmd_tx
+        .send(AppCommand::ImagePaste(Box::new(rgba(8, 8))))
+        .unwrap();
+    assert_eq!(wait_staged(&mut evt_rx).await.name, "clipboard.png");
+    cmd_tx.send(AppCommand::SendMessage("look".into())).unwrap();
+    wait_finished(&mut evt_rx).await;
+    assert_eq!(namer.naming_requests(), 0);
+    let label = &namer.turn_labels()[0];
+    assert!(
+        label.contains("clipboard.png") && !label.contains("clipboard/"),
+        "{label}"
+    );
+}
+
+/// Paste-then-Enter, the common gesture: the turn is reserved at once — the screen sees
+/// it start — but makes no request until the name is in, and then carries it (F4).
+#[tokio::test]
+async fn a_send_right_after_a_paste_waits_for_the_name() {
+    let namer = Namer::new("cuda-out-of-memory-error", true);
+    let (_dir, cmd_tx, mut evt_rx, _handle) = spawn_orch_cfg(
+        Some(namer.clone() as Arc<dyn EngineBackend>),
+        naming_cfg(true),
+    );
+    cmd_tx
+        .send(AppCommand::ImagePaste(Box::new(rgba(8, 8))))
+        .unwrap();
+    wait_staged(&mut evt_rx).await;
+    cmd_tx.send(AppCommand::SendMessage("why?".into())).unwrap();
+    wait_for(&mut evt_rx, |e| {
+        matches!(e, AppEvent::GenerationStarted { .. })
+    })
+    .await
+    .expect("the turn is reserved at once");
+    // A second message while the turn waits is not a second turn.
+    cmd_tx
+        .send(AppCommand::SendMessage("and again".into()))
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert_eq!(namer.turns(), 0, "no turn request before the name");
+
+    namer.release();
+    let (_, to) = wait_named(&mut evt_rx).await;
+    assert_eq!(to, "clipboard/cuda-out-of-memory-error.png");
+    wait_finished(&mut evt_rx).await;
+    assert_eq!(namer.turns(), 1);
+    assert!(
+        namer.turn_labels()[0].contains(&to),
+        "{:?}",
+        namer.turn_labels()
+    );
+}
+
+/// A name that does not come in time: the turn goes under the name the image has, and
+/// the late one is dropped — the label the model read stays the image's name.
+#[tokio::test(start_paused = true)]
+async fn a_name_past_the_wait_is_dropped_and_the_turn_goes_without_it() {
+    let namer = Namer::new("too-late", true);
+    let (_dir, cmd_tx, mut evt_rx, _handle) = spawn_orch_cfg(
+        Some(namer.clone() as Arc<dyn EngineBackend>),
+        naming_cfg(true),
+    );
+    cmd_tx
+        .send(AppCommand::ImagePaste(Box::new(rgba(8, 8))))
+        .unwrap();
+    wait_staged(&mut evt_rx).await;
+    cmd_tx.send(AppCommand::SendMessage("now".into())).unwrap();
+    // Virtual time runs out the wait while the naming request is held.
+    wait_finished(&mut evt_rx).await;
+    assert_eq!(namer.turns(), 1);
+    let label = &namer.turn_labels()[0];
+    assert!(
+        label.contains("clipboard.png") && !label.contains("clipboard/"),
+        "{label}"
+    );
+
+    namer.release();
+    let named =
+        tokio::time::timeout(std::time::Duration::from_secs(5), wait_named(&mut evt_rx)).await;
+    assert!(named.is_err(), "a late name renames nothing: {named:?}");
+}
+
+/// `Esc` while the turn waits ends it before any request, and the name it was waiting for
+/// is given up with it.
+#[tokio::test]
+async fn esc_while_a_turn_waits_for_a_name_ends_it_with_no_request() {
+    let namer = Namer::new("stopped", true);
+    let (_dir, cmd_tx, mut evt_rx, _handle) = spawn_orch_cfg(
+        Some(namer.clone() as Arc<dyn EngineBackend>),
+        naming_cfg(true),
+    );
+    cmd_tx
+        .send(AppCommand::ImagePaste(Box::new(rgba(8, 8))))
+        .unwrap();
+    wait_staged(&mut evt_rx).await;
+    cmd_tx
+        .send(AppCommand::SendMessage("never mind".into()))
+        .unwrap();
+    wait_for(&mut evt_rx, |e| {
+        matches!(e, AppEvent::GenerationStarted { .. })
+    })
+    .await
+    .unwrap();
+    cmd_tx.send(AppCommand::Cancel).unwrap();
+    let ev = wait_finished(&mut evt_rx).await;
+    assert!(matches!(
+        ev,
+        AppEvent::Finished {
+            reason: crate::shared::api::FinishReason::Cancelled,
+            ..
+        }
+    ));
+    namer.release();
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert_eq!(namer.turns(), 0, "the stopped turn made no request");
+    let late = std::iter::from_fn(|| evt_rx.try_recv().ok())
+        .any(|e| matches!(e, AppEvent::ImageProgress(ImageProgress::Named { .. })));
+    assert!(!late, "the name a stopped turn gave up on is dropped");
+
+    // The chat is free again: the next message is a turn of its own.
+    cmd_tx
+        .send(AppCommand::SendMessage("again".into()))
+        .unwrap();
+    wait_finished(&mut evt_rx).await;
+    assert_eq!(namer.turns(), 1);
+}
+
+/// A name the person typed is used as it is — slugged, under the prefix — and nothing is
+/// asked, even with the switch on (F7); a name with no letters is refused, by name.
+#[tokio::test]
+async fn a_typed_name_is_used_and_nothing_is_asked() {
+    let namer = Namer::new("not-asked", false);
+    let (_dir, cmd_tx, mut evt_rx, _handle) = spawn_orch_cfg(
+        Some(namer.clone() as Arc<dyn EngineBackend>),
+        naming_cfg(true),
+    );
+    cmd_tx.send(paste_named("My Quarterly Chart")).unwrap();
+    assert_eq!(
+        wait_staged(&mut evt_rx).await.name,
+        "clipboard/my-quarterly-chart.png"
+    );
+
+    cmd_tx.send(paste_named("???")).unwrap();
+    let msg = wait_refusal(&mut evt_rx).await;
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::default());
+    assert_eq!(msg, loc.tf("ui.err.image_paste_name", &[("name", "???")]));
+    assert_eq!(namer.naming_requests(), 0);
+}
+
+/// Names are unique across the whole chat (F6): a paste after one already sent is
+/// `clipboard-2.png` even with naming off, and two pictures named alike get `-2` — so
+/// each is reachable by name in `/file list` and in `files`.
+#[tokio::test]
+async fn pasted_names_are_unique_across_the_chat() {
+    let namer = Namer::new("same-thing", false);
+    let (_dir, cmd_tx, mut evt_rx, _handle) = spawn_orch_cfg(
+        Some(namer.clone() as Arc<dyn EngineBackend>),
+        naming_cfg(false),
+    );
+    cmd_tx
+        .send(AppCommand::ImagePaste(Box::new(rgba(8, 8))))
+        .unwrap();
+    assert_eq!(wait_staged(&mut evt_rx).await.name, "clipboard.png");
+    cmd_tx
+        .send(AppCommand::SendMessage("first".into()))
+        .unwrap();
+    wait_finished(&mut evt_rx).await;
+    cmd_tx
+        .send(AppCommand::ImagePaste(Box::new(rgba(8, 8))))
+        .unwrap();
+    assert_eq!(
+        wait_staged(&mut evt_rx).await.name,
+        "clipboard-2.png",
+        "the sent one still holds clipboard.png"
+    );
+
+    cmd_tx.send(paste_named("same thing")).unwrap();
+    assert_eq!(
+        wait_staged(&mut evt_rx).await.name,
+        "clipboard/same-thing.png"
+    );
+    cmd_tx.send(paste_named("Same Thing")).unwrap();
+    assert_eq!(
+        wait_staged(&mut evt_rx).await.name,
+        "clipboard/same-thing-2.png"
+    );
+}
+
+/// `/image remove` takes a pasted image's name without its prefix too (F5).
+#[tokio::test]
+async fn a_pasted_image_is_removed_by_its_short_name() {
+    let (_dir, cmd_tx, mut evt_rx, _handle) = spawn_orch(None);
+    cmd_tx.send(paste_named("lake")).unwrap();
+    assert_eq!(wait_staged(&mut evt_rx).await.name, "clipboard/lake.png");
+    cmd_tx
+        .send(AppCommand::ImageRemove {
+            target: "lake.png".into(),
+        })
+        .unwrap();
+    wait_for(&mut evt_rx, |e| {
+        matches!(e, AppEvent::ImageProgress(ImageProgress::Removed { .. }))
+    })
+    .await
+    .expect("removed by its short name");
+    assert!(staged_list(&cmd_tx, &mut evt_rx).await.is_empty());
 }

@@ -361,8 +361,11 @@ fn handle_key_event(
         // Pasting from the clipboard (`Ctrl+V`, `/image paste`) — the same reasoning as
         // above: only this function holds the `arboard` client, so the read happens here
         // and the orchestrator receives pixels rather than a request to go and look.
-        Some(AnyIntent::Chat(ChatIntent::PasteImage { text_fallback })) => {
-            paste_from_clipboard(text_fallback, screen, active, cmd_tx, clipboard);
+        Some(AnyIntent::Chat(ChatIntent::PasteImage {
+            text_fallback,
+            name,
+        })) => {
+            paste_from_clipboard(text_fallback, name, screen, active, cmd_tx, clipboard);
             false
         }
         // The chat's typed `/help` routes into the overlay, which lives here,
@@ -392,6 +395,7 @@ fn handle_key_event(
 /// arboard slot, the tests a clipboard of their own making.
 pub(super) fn paste_from_clipboard(
     text_fallback: bool,
+    name: Option<String>,
     screen: &mut ChatScreen,
     active: &mut ActiveScreen,
     cmd_tx: &UnboundedSender<AppCommand>,
@@ -402,6 +406,7 @@ pub(super) fn paste_from_clipboard(
             width,
             height,
             rgba,
+            name,
         })));
         return;
     }

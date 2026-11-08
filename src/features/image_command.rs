@@ -37,7 +37,11 @@ pub enum ImageCommand {
     /// Terminal binds it to its own paste and swallows it, and with an image on the
     /// clipboard there is no text to inject, so the app would see nothing at all. This
     /// route works everywhere. See spec §9.10.
-    Paste,
+    ///
+    /// `name` is the person's own name for the picture (`/image paste <name>`,
+    /// docs/research/pasted-image-names.md F7): free, on every engine, and with naming
+    /// off — it becomes `clipboard/<name>.png`.
+    Paste { name: Option<String> },
     /// Draw a picture with the picture slot's provider, keep it in the chat's
     /// files and stage it for the next message — the person's own road to the
     /// slot, with no model and no round (spec §9.15,
@@ -59,6 +63,9 @@ pub enum ImageProgress {
     },
     /// The staged list (`/image list`); empty — nothing staged.
     Listed { items: Vec<ImageInfo> },
+    /// A pasted image took the name the chat's model gave it
+    /// (docs/research/pasted-image-names.md): `from` the name it was staged under.
+    Named { from: String, to: String },
     /// The image was staged, but the engine could not say whether it takes images.
     /// Not an error — attaching optimistically is the deliberate choice for an engine
     /// that has no `/props` (fork F4); the note tells the user where they will find out.
@@ -149,7 +156,9 @@ pub fn parse(input: &str, loc: &Locale) -> Option<Result<ImageCommand, String>> 
     } else if sub.eq_ignore_ascii_case("list") {
         Some(Ok(ImageCommand::List))
     } else if sub.eq_ignore_ascii_case("paste") {
-        Some(Ok(ImageCommand::Paste))
+        Some(Ok(ImageCommand::Paste {
+            name: argument(&rest),
+        }))
     } else if sub.eq_ignore_ascii_case("generate") {
         // The description is taken as typed — its line breaks and spacing are
         // the person's — after the two words before it.
@@ -245,14 +254,18 @@ mod tests {
     }
 
     #[test]
-    fn parses_paste_and_takes_no_argument() {
-        assert_eq!(parse("/image paste", en()), Some(Ok(ImageCommand::Paste)));
-        assert_eq!(parse("/IMAGE PASTE", en()), Some(Ok(ImageCommand::Paste)));
-        // Trailing words are ignored rather than rejected: `paste` has nothing to take,
-        // and refusing "/image paste please" would be pedantry, not a service.
+    fn parses_paste_with_and_without_a_name() {
+        let bare = Some(Ok(ImageCommand::Paste { name: None }));
+        assert_eq!(parse("/image paste", en()), bare);
+        assert_eq!(parse("/IMAGE PASTE", en()), bare);
+        assert_eq!(parse("/image paste   ", en()), bare);
+        // The rest of the line is the person's name for the picture, as typed
+        // (docs/research/pasted-image-names.md F7); the slug is made later.
         assert_eq!(
-            parse("/image paste please", en()),
-            Some(Ok(ImageCommand::Paste))
+            parse("/image paste Sunset over the lake", en()),
+            Some(Ok(ImageCommand::Paste {
+                name: Some("Sunset over the lake".into())
+            }))
         );
     }
 

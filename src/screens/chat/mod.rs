@@ -295,8 +295,12 @@ pub enum ChatIntent {
     /// `text_fallback` says what to do when the clipboard holds no image: `Ctrl+V` must
     /// still paste text, because that is what the help overlay has always promised the key
     /// does; a typed `/image paste` must not, and says instead that there is no image.
+    ///
+    /// `name` is the person's name for the picture (`/image paste <name>`), `None` from
+    /// `Ctrl+V` (docs/research/pasted-image-names.md F7).
     PasteImage {
         text_fallback: bool,
+        name: Option<String>,
     },
     /// Speak the chat's messages (command `/tts`, `/tts N`, `/tts all`). See spec §11.9.
     Tts(crate::features::tts_command::TtsScope),

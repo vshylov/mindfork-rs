@@ -65,7 +65,10 @@ impl ChatInput {
     pub fn matches(&self, target: &str) -> bool {
         let t = target.trim().trim_matches(|c| c == '"' || c == '\'');
         let same = crate::entities::chat_file::same_name;
-        same(&self.name, t) || same(&self.source, t)
+        same(&self.name, t)
+            || same(&self.source, t)
+            || crate::entities::message_image::short_name(&self.name)
+                .is_some_and(|short| same(short, t))
     }
 
     /// Whether the item is one of the chat's images.

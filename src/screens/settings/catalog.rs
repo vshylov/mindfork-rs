@@ -1749,6 +1749,12 @@ impl SettingsScreen {
                     FieldKind::Text(self.config.images.downscale_px.to_string()),
                 )
                 .describe(loc.t("ui.settings.desc.image_downscale")),
+                row(
+                    FieldId::ImageNamePasted,
+                    loc.t("ui.settings.field.image_name_pasted"),
+                    FieldKind::Toggle(self.config.images.name_pasted),
+                )
+                .describe(loc.t("ui.settings.desc.image_name_pasted")),
             ],
         ));
         rows.extend(grouped(

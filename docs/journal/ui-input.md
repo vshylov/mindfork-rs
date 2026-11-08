@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (38)
+## Entries (39)
 
 - Post-M9: fast multiline clipboard paste (done)
 - Post-M9: `↑/↓` navigation by visual row of a wrapped line (done)
@@ -50,6 +50,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the keys on a real Mac (done)
 - Post-M9: the line-break key is a setting (done)
 - Post-M9: pasting a copied picture file, and the paste over SSH (done)
+- Post-M9: a name for a pasted image (done)
 
 ### Post-M9: fast multiline clipboard paste (done)
 - **Symptom**: a large clipboard paste lagged in Windows Terminal, and a line break
@@ -2132,3 +2133,69 @@ the key the route is the same function.
 
 **A live model run is not required** (AGENTS.md §3): no engine, memory or tool is
 touched — the staging path is the attach's.
+
+### Post-M9: a name for a pasted image (done)
+
+**What.** Stage 2 of [pasted-image-names.md](../research/pasted-image-names.md) (forks
+F1–F9, the owner's decision of 2026-11-08, every one as recommended). With
+`images.name_pasted` on — Settings → Images → *Name pasted images*, **off** by default —
+the chat's own engine names a pasted picture, which becomes `clipboard/<slug>.png`; a
+send right after the paste waits for the name, at most 10 s; `/image paste <name>` names
+it by hand; and every pasted name is unique in its chat, with the switch on or off.
+
+**Key decisions.**
+
+- **The chat's own engine, asked at paste, one attempt** (F1, F2). The request is the
+  one the research measured — a fixed English system message (F3), the image as the one
+  content part, the automatic title's muted sampling — in the silent lane, yielding to a
+  turn that needs its room. A failure of any kind is a log line and the image keeps
+  `clipboard.png` (F9).
+- **The wait parks the turn before it is built** (F4). The turn's request, the label
+  before each image and the chat's list of files in the system prompt are all rendered
+  from the chat when the turn starts. Waiting *inside* the turn and patching the label
+  was weighed and dropped: the pinned list of files and its `/w/in` names would keep the
+  old name, and a withheld image's marker names it too. So `handle_send` reserves the
+  turn — `GenerationStarted` sent, the state machine begun, so the screen shows it, `Esc`
+  stops it and nothing starts beside it — and `start_generation` builds it under that id
+  once the names land or 10 s pass. `Esc` and a chat switch end a parked turn with no
+  request (`unpark_if_cancelled` after both places a turn is cancelled).
+- **One board decides whether a name may still land** (`features::image_name::NameBoard`):
+  `Pending` → `Named` only while the image waits; a turn that stops waiting settles the
+  rest, so a late name is dropped rather than rewriting a label the model has read.
+- **`Shape::Name` in the session budget**, priced with the image's tokens as a floor and
+  never recorded: the text estimate cannot see an image, so its exact-to-estimate ratio
+  would be the picture's size, not the tokenizer's density — and recorded under the
+  title's kind it would have priced every later title by it.
+- **The slug is the only part of the answer kept**: `a–z`, `0–9` and single hyphens for
+  the model's name, any letters for a typed one; at most five words and 48 characters;
+  quotes and a trailing image extension stripped first (an answer in backticks hid its
+  `.png` in the first draft — a test caught it).
+- **`clipboard/` stays a prefix, not a folder** (F5): `/image remove`, `/file remove` and
+  `files` also take the part after it (`message_image::short_name`), which is what
+  `/w/in` calls the file. **Unique across the chat** (F6): the first free
+  `clipboard*.png` used to be looked up among the *staged* images only, so a chat with
+  several sent pastes held several `clipboard.png` that no command could name.
+- The settings row shifted the settings dumps' section counter (Memory 25 → 26):
+  regenerated; the renderer reproduced the old dumps pixel for pixel first.
+
+**Tests** (+18, +1 `#[ignore]`): `image_name` — answers to slugs, hostile and empty
+answers, typed names keeping their letters, the thoughts fallback, the prefix, the first
+free number, the request's muted shape, the board landing a name only while awaited;
+the orchestrator — a pasted image taking the model's name in the list and the next
+turn's label, nothing asked with the switch off, a send right after a paste reserved at
+once and built after the name, a name past the wait dropped (virtual time), `Esc` while
+parked ending the turn with no request, a typed name used and a blank one refused,
+names unique across the chat, removal by the short name; the settings switch off by
+default; `MessageImage` matching its short name. **4752 unit tests green, 316
+`#[ignore]`**, clippy `-D warnings`/fmt clean.
+
+**Live — GO** (2026-11-08, `a_pasted_image_is_named_live`: the app's settings screen
+pasted, a message sent at once):
+
+| Engine | Name | Named after the send | First token |
+|---|---|---|---|
+| Gemma 4 E2B Q8_0 + projector, llama.cpp b12191, RTX 4090 | `clipboard/model-server-settings.png` | 0.54 s | 0.91 s |
+| Gemma 4 31B Q4_0 + projector, same stack | `clipboard/llm-server-settings.png` | 1.03 s | 3.76 s |
+| Claude Haiku 5.5 through OpenRouter | `clipboard/llama-server-settings-panel.png` | 1.53 s | 4.64 s |
+
+Each turn streamed only after its image was named.

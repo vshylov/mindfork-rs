@@ -27,6 +27,20 @@ use uuid::Uuid;
 /// user.
 const PATCH_PX: u32 = 28;
 
+/// The folder-like prefix a pasted image's name carries — `clipboard/sunset-lake.png`
+/// (docs/research/pasted-image-names.md F5): the origin stays visible in the chip, the
+/// list and the label the model reads.
+pub const PASTED_PREFIX: &str = "clipboard/";
+
+/// A pasted image's name without its prefix: `sunset-lake.png` for
+/// `clipboard/sunset-lake.png`. What `/image remove`, `/file remove` and `python_exec`'s
+/// `files` accept besides the whole name — and what `/w/in` calls the file, since
+/// `sanitize_name` keeps the last segment.
+pub fn short_name(name: &str) -> Option<&str> {
+    name.strip_prefix(PASTED_PREFIX)
+        .filter(|rest| !rest.is_empty())
+}
+
 /// An image attached to a message.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MessageImage {
@@ -105,9 +119,13 @@ impl MessageImage {
     /// [`same_name`](super::chat_file::same_name)'s and so is Unicode rather than ASCII.
     /// Trimming stays `resolve_handle`'s, as the note in `resolve_target_by_index_name_and_path`
     /// records.
+    /// A pasted image also answers to its name without the `clipboard/` prefix
+    /// ([`short_name`]).
     pub fn matches(&self, target: &str) -> bool {
         let same = super::chat_file::same_name;
-        same(&self.name, target) || same(&self.source, target)
+        same(&self.name, target)
+            || same(&self.source, target)
+            || short_name(&self.name).is_some_and(|short| same(short, target))
     }
 }
 
@@ -208,6 +226,21 @@ mod tests {
         // Folded over Unicode, not ASCII: `ru` is a supported locale, and the name the
         // listing shows has to be the name the removal takes.
         assert!(image("Отчёт.png", 8, 8).matches("отчёт.png"));
+    }
+
+    /// A pasted image answers to its whole name and to the part after `clipboard/`
+    /// (docs/research/pasted-image-names.md F5) — and only a pasted one does: another
+    /// name with a slash is a name, not a prefix.
+    #[test]
+    fn a_pasted_image_also_matches_its_short_name() {
+        let pasted = image("clipboard/Sunset-Lake.png", 8, 8);
+        assert!(pasted.matches("clipboard/sunset-lake.png"));
+        assert!(pasted.matches("sunset-lake.png"));
+        assert!(!pasted.matches("clipboard"));
+        assert_eq!(short_name("clipboard/x.png"), Some("x.png"));
+        assert_eq!(short_name("clipboard/"), None);
+        assert_eq!(short_name("photos/x.png"), None);
+        assert!(!image("photos/x.png", 8, 8).matches("x.png"));
     }
 
     #[test]

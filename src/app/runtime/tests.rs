@@ -2894,6 +2894,7 @@ impl Harness {
     fn paste(&mut self, clip: &mut FakeClipboard, text_fallback: bool) {
         paste_from_clipboard(
             text_fallback,
+            None,
             &mut self.screen,
             &mut self.active,
             &self.cmd_tx,
