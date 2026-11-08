@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (29)
+## Entries (30)
 
 - Post-M9: cutting GitHub Actions minutes (done)
 - Post-M9: skipping the test job for docs-only pull requests (done)
@@ -42,6 +42,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the gate's Qwen is 3.8 (done)
 - Post-M9: the steady-monitor test on a paused clock, closed for good (done)
 - Post-M9: the Windows-only code is linted (done)
+- Post-M9: the test job's ceilings, re-measured (done)
 
 ### Post-M9: cutting GitHub Actions minutes (done)
 - **Trigger**: the `v0.9.4` release run was refused by GitHub with *"The job was
@@ -1926,3 +1927,51 @@ real gap, though.
 **Gates**: no Rust changed. `actionlint` reports one SC2086 info on the `changes` job,
 which is on `main` too; `actions_pin_check.py`, `doc_index_check.py`,
 `link_check.py` and `cyrillic_scan.py` are clean.
+
+### Post-M9: the test job's ceilings, re-measured (done)
+
+The `test` matrix's comment still carried the figures it was sized from in August:
+Windows p50 6.1 min, max 27.6. Meanwhile the Windows job had run at 34.8 min under its
+35-minute ceiling on 2026-11-07. The figures are now recomputed from every CI run
+between 2026-09-08 and 11-08: 1000 runs, the API's cap for one query. That is 434
+Windows, 231 macOS and 462 Linux test jobs on pull requests (successful or failed;
+cancelled ones cut short are left out). Fifteen Windows logs were read to split the
+build from the run.
+
+- **Linux**: p50 3.2 min, p99 5.0, max 5.8 (push runs: max 8.5). Ceiling 15 kept.
+- **macOS**: p50 6.1, p99 10.3, max 15.8 (the week of 2026-11-02), max 9.4 since 11-08.
+  Its one run that reached the ceiling (25.35 min, run 37710341077) was a hang in the
+  pull request's own slow-prefill tests: #719, whose next commit fixed them. Ceiling 25
+  kept.
+- **Windows**: p50 10.8, p99 31.0, max 34.8. The weekly p50 held at 9.5-12.5 from
+  September to the week of 10-19, then reached 15.6 and, in the week of 11-02, 27.5. The
+  build is not what moved: warm, it stayed at 1m41s-3m27s in every fully cached log. The
+  test run moved. 4002 tests ran in 357-420 s on 2026-10-10 and 4613 in 786-835 s on
+  11-01. On 11-03 to 11-07, 4767-4865 tests took 1372-1762 s, and the 11-07 log shows 19
+  tests past 60 s, all in `features::story::chapter`, the simulation's chapter loop (its
+  `tests`, `take_tests`, `register_tests` and `last_version_tests`). The 11-03 to 11-06
+  logs show 11-13 of them. They were deleted with the simulation (30c84c80). Since then
+  4714 tests run in 683-845 s and the jobs take 14.2-17.6 min (5 runs). Even without the
+  simulation, then, the run doubled in a month (6-7 to 13-14 min, for 15 % more tests),
+  with at most one test past 60 s and a different one each time. That is not
+  investigated here.
+- **What a cold cache adds**: a Cargo.lock change restores a partial cache (`full match:
+  false`; every other sampled log was a full match). On Windows one such run (base64
+  0.23.1, 2026-09-17) rebuilt 365 crates in 10m20s. Two others (2026-11-01) recompiled
+  49 and 8 crates in 3m41s and 2m52s. So the worst measured rebuild is about 8 min over
+  a warm build.
+- **The ceilings stay**: each is about twice the current regime's longest job, which
+  leaves room for that rebuild (35 against 17.6, 25 against 9.4, 15 against 4.2). The
+  Windows ceiling is deliberately not raised to cover the early-November regime. A warm
+  run near 35 means the suite doubled, and the log says where: libtest prints "has been
+  running for over 60 seconds" for each slow test, which is how the simulation's tests
+  showed. A ceiling that fires there costs a rerun and points at the cause; a raised one
+  would have hidden it.
+- **The other jobs**, checked against the same runs: `lint` p50 1.45, max 4.1 (ceiling
+  15); `sonar` p50 4.8, max 9.2 (30); `changes` max 1.9 (5); `CI gate` max 0.6 (5);
+  `clippy-windows` 4.2-5.3 over its first three runs (15). Every ceiling holds, so their
+  comments were left as they are.
+
+**Gates**: no Rust changed. `actionlint` reports one SC2086 info on the `changes` job,
+which is on `main` too; `actions_pin_check.py`, `doc_index_check.py`, `link_check.py`
+and `cyrillic_scan.py` are clean.
