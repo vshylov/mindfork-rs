@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (30)
+## Entries (31)
 
 - Post-M9: cutting GitHub Actions minutes (done)
 - Post-M9: skipping the test job for docs-only pull requests (done)
@@ -43,6 +43,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the steady-monitor test on a paused clock, closed for good (done)
 - Post-M9: the Windows-only code is linted (done)
 - Post-M9: the test job's ceilings, re-measured (done)
+- Post-M9: why the Windows tests were slow (done)
 
 ### Post-M9: cutting GitHub Actions minutes (done)
 - **Trigger**: the `v0.9.4` release run was refused by GitHub with *"The job was
@@ -1975,3 +1976,63 @@ build from the run.
 **Gates**: no Rust changed. `actionlint` reports one SC2086 info on the `changes` job,
 which is on `main` too; `actions_pin_check.py`, `doc_index_check.py`, `link_check.py`
 and `cyrillic_scan.py` are clean.
+
+### Post-M9: why the Windows tests were slow (done)
+
+The Windows test run took 11-14 min on CI where Linux took about one: 683-845 s for 4714
+tests, where 4002 had taken 357-420 s a month before (the previous entry left that
+doubling uninvestigated). Asked why, and measured on a throwaway branch
+(`spike/windows-test-times`: push-triggered, never merged, deleted afterwards) in four
+rounds.
+
+- **Round 1, per-test times from libtest itself.** Stable libtest has
+  `--format json --report-time` behind `-Z unstable-options`, and the test binary checks
+  `RUSTC_BOOTSTRAP` when it runs, so the build stays the one CI does and only the run
+  sets it. August used nextest for this, whose process per test is what Windows charges
+  most for. Two Windows arms of two runs each, TEMP as the image sets it (C:) and on
+  `RUNNER_TEMP` (D:), and a Linux run. One fsync'd small write: 6.9 and 16.5 ms on C:,
+  0.4-0.7 ms on D:, 0.6-1.4 ms on Linux. The suite: 730 and 963 s on C:, 570 and 591 s
+  on D:, 71 s on Linux. Half the tests ran at Linux speed (median ratio 1.0-1.1). The
+  excess sat in tests that open a file-backed store: the 577 orchestrator tests averaged
+  2.5 s on D: against 0.24 s on Linux. libtest's sum-over-wall read 4.0x, which counts
+  waiting as running.
+- **Round 2, the phases of one test**, `new_chat_adds_to_list_and_activates` (28 s on C:
+  and 4.6 s on D: inside the suite). Run alone on D:, the whole test took about 60 ms
+  and `Storage::open` 27 ms, as on Linux; on C:, `Storage::open` took 0.8-1.5 s and one
+  autocommit insert 20 ms. Under strace on Linux the test made 151 fsyncs, and 30 of its
+  opens were `data.db-journal`: `baseline_ddl` ran its 27 `CREATE`s, 3 `ALTER`s and the
+  stamp in autocommit, 31 transactions for every fresh database. (2187 of its 2285 opens
+  were the CA bundle, loaded nine times, apparently once per HTTP client built. That is
+  Linux's platform verifier; Windows' reads no files, which likely accounts for this
+  test's 0.3 s on Linux against 0.06 s on Windows.)
+- **Round 3, the suite at 1, 2 and 4 threads**, each event stamped on arrival. On one
+  machine: 198 s, 155 s and 257 s, so four threads were slower than one. The runner has
+  2 physical cores (4 logical). In the timeline, trivial orchestrator tests took 4-5 s
+  inside the suite against about 0.1 s alone, each running beside others like it. A
+  probe test that does nothing but open databases went from 0.20 s to 11.4 s. That is
+  consistent with FlushFileBuffers flushing the device on Windows: each commit waits
+  behind the others'.
+- **Round 4, the fix as a switch**, the same binary in every arm, all on D:. Control:
+  562 s. The schema in one transaction: 161 s, both on EPYC 7763 machines. With
+  `synchronous=OFF` on top: 73 s, on a 9V74 and only as an upper bound. Linux: 105 s to
+  93 s.
+- **What changed**: each database's schema is created in one transaction
+  ([storage.md](storage.md), "the schema in one transaction"), and the Windows test job
+  sets `TEMP`/`TMP` to `RUNNER_TEMP`. Not taken: `synchronous=OFF` under test, because
+  tests should run the production pragma. `--test-threads=2` was not decided either: it
+  was measured only before the fix, and across different machines.
+- **Result on the pull request's own run** (42499641360): the Windows job took 271 s,
+  down from 14-18 min; its test run 84 s, down from 683-845 s; its build 2m18s on a full
+  cache match. The longest job of that run was macOS's, at 591 s. The Windows ceiling
+  stays at 35 until the new regime has a history.
+- **The runners are not one machine.** The twelve Windows jobs whose CPU was logged met
+  three hardware classes: EPYC 7763 with a SAS virtual disk, and EPYC 9V74 and 9V45 with
+  NVMe. The same control code took 562 s on a 7763 and 257 s on a 9V74. That is the
+  spread every single-run comparison of this job has carried, the August entry's 30 %
+  included.
+
+**Gates**: 4717 unit tests green on Linux and on the Windows runner (307 `#[ignore]` on
+Linux, 314 on Windows); the three new tests were red on the old code. clippy
+`-D warnings`, fmt, `actionlint` (its one SC2086 info is on `main` too),
+`actions_pin_check`, `cyrillic_scan`, `layer_check`, `link_check` and `doc_index_check`
+clean.

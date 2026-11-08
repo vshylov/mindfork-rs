@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (30)
+## Entries (31)
 
 - Post-M9: persisting the input-box draft in the chat file (done)
 - Post-M9: persisting deleted exchanges in the chat file (`Ctrl+E`/`Ctrl+R`) (done)
@@ -42,6 +42,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: every backup's manifest records the schemas its files hold (done)
 - Post-M9: a restore no longer writes over the copy it is restoring (done)
 - Post-M9: a chat file that holds no chat no longer stops the start (done)
+- Post-M9: the schema in one transaction (done)
 
 ### Post-M9: persisting the input-box draft in the chat file (done)
 - **Unsaved input-box text is stored on the chat and restored on
@@ -1749,3 +1750,30 @@ the track; fixed on its own branch.
   that exercise the defect failed on the old code.
 
 **Gates**: 4729 unit tests green, 324 `#[ignore]`; clippy `-D warnings`, fmt, `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.
+
+### Post-M9: the schema in one transaction (done)
+
+- **What**: `db::migrate` and `cache::migrate` ran `baseline_ddl` in autocommit, so each
+  statement was a transaction of its own: 31 on a fresh `data.db` (27 `CREATE`s, the 3
+  guarded `ALTER`s, the stamp), each with a journal created and deleted and two fsyncs.
+  Now, in each database, the baseline and its stamp are one transaction. The breaking
+  steps of ADR 0006 keep their own transactions after it.
+- **How it came up**: the Windows CI investigation ([ci.md](ci.md), "why the Windows
+  tests were slow"). Every test with a file-backed store paid the 31 commits, and on the
+  runner four tests at once queued behind one another's flushes. With this change the
+  suite went from 562 s to 161 s on the same class of Windows runner, and from 138 s to
+  69 s on the development droplet.
+- **What else it fixes**: creation is atomic, where a failure partway used to keep the
+  tables before it. A newer version's file is refused untouched: the additive DDL was
+  committed before the downgrade refusal, which was harmless because additive, but it
+  was still a write to a file the app then refuses.
+- **What it costs a normal start: nothing.** On an existing database,
+  `CREATE ... IF NOT EXISTS` writes nothing, so the transaction commits empty. A first
+  launch: a fresh `Db::open` went from 363 ms to 13 ms on the droplet's disk.
+- **Tests**: three, each red on the old code. A view named like a table stops the
+  baseline partway (`CREATE TABLE IF NOT EXISTS` passes over the view, and the index on
+  it is refused), and afterwards no table created before it is left, in `data.db` and in
+  `cache.db`. A newer database is refused with no schema written.
+
+**Gates**: 4717 unit tests green, 307 `#[ignore]` (Linux); clippy `-D warnings`, fmt,
+`cyrillic_scan` and `layer_check` clean.
