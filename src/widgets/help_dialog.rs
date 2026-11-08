@@ -278,7 +278,7 @@ pub const HELP_COMMANDS: &[(&str, &str)] = &[
     // Listed as a command, not only as `Ctrl+V`: whether that key ever reaches the app is
     // the terminal's decision (Windows Terminal binds it to its own paste), and an image
     // on the clipboard produces no text for the terminal to inject.
-    ("/image paste", "ui.help.image_paste"),
+    ("ui.help.k.image_paste", "ui.help.image_paste"),
     // The person's own road to the picture slot (spec §9.15): what it draws is
     // staged like a pasted picture, and kept in the chat's files besides.
     ("ui.help.k.image_generate", "ui.help.image_generate"),

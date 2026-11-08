@@ -456,15 +456,12 @@ effort tiers and Fabula — have all closed
   ([osc52-clipboard.md](history/osc52-clipboard.md)); nothing the app can send
   fixes that. `/export` is the route that works there, and the copy's message
   points at it.
-- **A name for a pasted image** — **idea**, researched and probed 2026-11-08,
-  every fork decided by the owner the same day as recommended
-  ([pasted-image-names.md](research/pasted-image-names.md) §5); stage 1 — a
-  copied picture file pasted, the refusal over SSH — is built, stage 2, the
-  names, is next (§6). Every pasted image is `clipboard.png`, and in a chat with
-  several of them none is reachable by name. One muted request to the chat's own
-  engine names it — well formed in 240 of 240 answers on Gemma 4 E2B/31B, Qwen 3.6
-  and three cheap clouds; about a second locally, $0.00013 in the cloud — behind
-  a switch that is off by default.
+- **The clipboard on a Wayland session without XWayland** — **idea**. The build
+  leaves arboard's `wayland-data-control` feature (`wl-clipboard-rs`) off, so on a
+  compositor with no XWayland — a bare wlroots session — `/image paste` cannot open
+  the clipboard; GNOME and KDE run XWayland by default. Measure on the Linux
+  terminal stand before turning it on
+  ([pasted-image-names.md](research/pasted-image-names.md) §3.1, §7).
 - **`terminal_compat` on legacy conhost** — **deferred**. Whether the switch
   could be detected rather than set is a question with no measurement yet
   ([robustness-and-defaults.md §1](research/robustness-and-defaults.md)).
@@ -746,6 +743,15 @@ An index, newest first — one line per track, with the release that shipped it
 and where its story is told. What a track left open is a bullet above, under
 its area.
 
+- **A name for a pasted image** — unreleased (2026-11-08), research and two pull
+  requests. A picture file copied in a file manager is pasted, and over SSH the
+  refusal names the distance; with Settings → Images → *Name pasted images* on (off
+  by default), the chat's own engine names a pasted picture `clipboard/<slug>.png`,
+  a send waits for the name up to 10 s, `/image paste <name>` names it by hand, and
+  every pasted name is unique in its chat. Live GO on Gemma 4 E2B and 31B and on
+  Claude Haiku 5.5 through OpenRouter
+  ([pasted-image-names.md](research/pasted-image-names.md),
+  [ui-input.md](journal/ui-input.md)).
 - **Fabula, a story engine used from the chat** — unreleased (2026-11-08), sixteen
   pull requests: a story composed with the person and written chapter by chapter in the
   background, every answer the person's own words. Its simulation — characters, a World

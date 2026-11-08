@@ -31,6 +31,7 @@ pub mod file_command;
 pub mod followups;
 pub mod image_command;
 pub mod image_fetch;
+pub mod image_name;
 pub mod image_prepare;
 pub mod impersonation_command;
 pub mod import;

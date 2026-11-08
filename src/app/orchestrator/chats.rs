@@ -243,6 +243,7 @@ impl Orchestrator {
         {
             token.cancel();
         }
+        self.unpark_if_cancelled();
         if self.view(id).is_some() {
             self.activate_focused(id, focus);
             // A follow-up delivered while this conversation was not open is

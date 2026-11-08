@@ -2687,7 +2687,8 @@ fn both_paste_routes_produce_an_intent_and_differ_only_in_the_text_fallback() {
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL)),
         Some(ChatIntent::PasteImage {
-            text_fallback: true
+            text_fallback: true,
+            name: None,
         }),
         "Ctrl+V keeps working as a text paste when there is no image"
     );
@@ -2696,7 +2697,8 @@ fn both_paste_routes_produce_an_intent_and_differ_only_in_the_text_fallback() {
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
         Some(ChatIntent::PasteImage {
-            text_fallback: false
+            text_fallback: false,
+            name: None,
         })
     );
     assert!(s.input.is_empty(), "the field is cleared after the command");

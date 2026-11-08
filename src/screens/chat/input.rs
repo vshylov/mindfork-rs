@@ -144,6 +144,7 @@ impl ChatScreen {
             // `/image paste` exists as well (spec §9.10).
             'v' => Some(Some(ChatIntent::PasteImage {
                 text_fallback: true,
+                name: None,
             })),
             // The settings screen (Ctrl+P) — opens once the settings
             // snapshot has arrived.
@@ -518,8 +519,9 @@ impl ChatScreen {
             }
             // A typed command must not silently turn into a text paste: the user asked
             // for an image, so an absent one is reported rather than substituted.
-            Ok(ImageCommand::Paste) => Some(ChatIntent::PasteImage {
+            Ok(ImageCommand::Paste { name }) => Some(ChatIntent::PasteImage {
                 text_fallback: false,
+                name,
             }),
             Err(msg) => {
                 self.push_error(&self.loc.tf("ui.image.failed", &[("err", &msg)]));

@@ -773,6 +773,8 @@ enum FieldId {
     ImageMaxBytes,
     /// Long-edge ceiling in pixels; `0` disables downscaling.
     ImageDownscale,
+    /// Whether the chat's model names a pasted image (`images.name_pasted`, off).
+    ImageNamePasted,
     // Self-model (narrative, prompt injection)
     SmMaxNarrative,
     SmNarrativeInPrompt,

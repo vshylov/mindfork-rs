@@ -32,6 +32,9 @@ pub struct ClipboardImage {
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
+    /// The person's own name for it (`/image paste <name>`), as typed — `None` from
+    /// `Ctrl+V` and a bare `/image paste` (docs/research/pasted-image-names.md F7).
+    pub name: Option<String>,
 }
 
 /// Command from UI to orchestrator.

@@ -9191,3 +9191,106 @@ async fn image_generate_command_stages_a_picture_the_model_sees_live() {
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 }
+
+/// A pasted image named by a live vision model (docs/research/pasted-image-names.md,
+/// stage 2): with `images.name_pasted` on, the paste is staged as `clipboard.png`, the
+/// chat's engine names it, and a message sent **right after** the paste waits for the
+/// name and carries it in the label before the image (F4). The picture is the app's own
+/// settings screen, so the name has something to read.
+///
+/// Needs `MINDFORK_ENGINE_URL` serving a model that sees images — llama.cpp with its
+/// `--mmproj`, or a vision model through a gateway (`MINDFORK_ENGINE_KEY`,
+/// `MINDFORK_ENGINE_MODEL`). Prints the name and how long the turn waited for it.
+#[tokio::test]
+#[ignore = "requires a live vision chat server (MINDFORK_ENGINE_URL)"]
+async fn a_pasted_image_is_named_live() {
+    use crate::app::events::{ClipboardImage, ImageProgress};
+    let mut config = AppConfig::default();
+    config.images.name_pasted = true;
+    config.interface.auto_title = crate::shared::config::AutoTitleMode::Off;
+    let Some((_dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live_cfg(config) else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+
+    let shot = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("assets/screenshots/settings-model-light-en.png");
+    let rgba = image::open(&shot).expect("the screenshot").to_rgba8();
+    let (width, height) = rgba.dimensions();
+    cmd_tx
+        .send(AppCommand::ImagePaste(Box::new(ClipboardImage {
+            width,
+            height,
+            rgba: rgba.into_raw(),
+            name: None,
+        })))
+        .unwrap();
+    let staged = wait_for(&mut evt_rx, |e| {
+        matches!(
+            e,
+            AppEvent::ImageProgress(ImageProgress::Attached { .. } | ImageProgress::Failed(_))
+        )
+    })
+    .await
+    .unwrap();
+    let AppEvent::ImageProgress(ImageProgress::Attached { info, .. }) = staged else {
+        panic!("the paste was refused: {staged:?}");
+    };
+    assert_eq!(info.name, "clipboard.png");
+
+    // Sent at once, before the name can have landed.
+    let sent = std::time::Instant::now();
+    cmd_tx
+        .send(AppCommand::SendMessage(
+            "In one sentence: what is in this image, and what is it called?".into(),
+        ))
+        .unwrap();
+    let mut named = None;
+    let mut first_token = None;
+    let finished = loop {
+        let ev = tokio::time::timeout(std::time::Duration::from_secs(180), evt_rx.recv())
+            .await
+            .expect("the turn ends within three minutes")
+            .expect("the loop is alive");
+        match ev {
+            AppEvent::ImageProgress(ImageProgress::Named { from, to }) => {
+                named = Some((from, to, sent.elapsed()));
+            }
+            AppEvent::Chunk { .. } | AppEvent::Thoughts { .. } if first_token.is_none() => {
+                first_token = Some(sent.elapsed());
+            }
+            AppEvent::Finished { reason, .. } => break reason,
+            _ => {}
+        }
+    };
+    let (from, to, after) = named.expect("the image was named");
+    eprintln!(
+        "named {from} -> {to} {:.2} s after the send; first token at {:?}; turn {finished:?}",
+        after.as_secs_f64(),
+        first_token.map(|t| t.as_secs_f64()),
+    );
+    assert_eq!(from, "clipboard.png");
+    let slug = to
+        .strip_prefix("clipboard/")
+        .and_then(|s| s.strip_suffix(".png"))
+        .expect("clipboard/<slug>.png");
+    assert!(
+        !slug.is_empty()
+            && slug.split('-').all(|w| !w.is_empty()
+                && w.chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())),
+        "a slug of lowercase words: {to}"
+    );
+    if let Some(first) = first_token {
+        assert!(
+            first >= after,
+            "the turn streamed before its image was named"
+        );
+    }
+    assert_eq!(finished, crate::shared::api::FinishReason::Stop);
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+}

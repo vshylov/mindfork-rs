@@ -49,6 +49,7 @@ mod mcp;
 mod model_name;
 mod notes_view;
 mod notify;
+mod pasted_names;
 mod pool;
 mod profiles;
 mod prompt_cut;
@@ -259,6 +260,8 @@ pub async fn run(deps: OrchestratorDeps) {
     let (image_tx, mut image_rx) = unbounded_channel::<ImageAttachResult>();
     // And for `/image generate`: a picture takes ten to thirty seconds to draw.
     let (draw_tx, mut draw_rx) = unbounded_channel::<ImageDrawResult>();
+    // And for a pasted image's name: the answer, and a parked turn's deadline.
+    let (name_tx, mut name_rx) = unbounded_channel::<pasted_names::NameEvent>();
     // And for `/file open`: the shell call blocks until the handler has started, and what
     // it answers is addressed to the chat it was asked in (`handle_open_result`).
     let (open_tx, mut open_rx) = unbounded_channel::<OpenResult>();
@@ -313,6 +316,9 @@ pub async fn run(deps: OrchestratorDeps) {
         attach_tx,
         image_tx,
         draw_tx,
+        name_tx,
+        name_board: crate::features::image_name::NameBoard::new(),
+        parked: None,
         open_tx,
         staged_images: StagedImages::default(),
         tts_cancel: None,
@@ -483,6 +489,11 @@ pub async fn run(deps: OrchestratorDeps) {
             res = draw_rx.recv() => {
                 if let Some(res) = res {
                     orch.handle_draw_result(res);
+                }
+            }
+            event = name_rx.recv() => {
+                if let Some(event) = event {
+                    orch.handle_name_event(event);
                 }
             }
             res = attach_rx.recv() => {
@@ -835,6 +846,13 @@ struct Orchestrator {
     image_tx: UnboundedSender<ImageAttachResult>,
     /// Channel for what `/image generate` drew ([`ImageDrawResult`]).
     draw_tx: UnboundedSender<ImageDrawResult>,
+    /// Channel for a pasted image's name and a parked turn's deadline ([`pasted_names`]).
+    name_tx: UnboundedSender<pasted_names::NameEvent>,
+    /// Whether each pasted image still waits for its name — read by the landing and by
+    /// the parked turn ([`pasted_names`], docs/research/pasted-image-names.md F4).
+    name_board: Arc<crate::features::image_name::NameBoard>,
+    /// The turn reserved for a message whose pasted images wait for their names.
+    parked: Option<pasted_names::ParkedTurn>,
     /// Channel for what a launch handed to the desktop's handler came back as (`/file open`,
     /// `/file folder`; a blocking task → the loop). See [`attachments`].
     open_tx: UnboundedSender<OpenResult>,
@@ -1037,6 +1055,9 @@ impl Orchestrator {
                 if !seat && let Some(token) = self.gen_state.request_cancel() {
                     token.cancel();
                 }
+                // A turn parked for its pasted images' names never reaches a stream
+                // to be stopped in: it ends here (docs/research/pasted-image-names.md).
+                self.unpark_if_cancelled();
             }
             AppCommand::SendMessage(text) => self.handle_send(text),
             AppCommand::ConfirmTool {

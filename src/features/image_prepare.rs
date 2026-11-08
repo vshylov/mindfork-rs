@@ -65,7 +65,14 @@ const DECODED_EXTENSIONS: [&str; 6] = ["png", "jpg", "jpeg", "webp", "gif", "bmp
 pub fn has_image_extension(path: &std::path::Path) -> bool {
     path.extension()
         .and_then(std::ffi::OsStr::to_str)
-        .is_some_and(|e| DECODED_EXTENSIONS.iter().any(|d| e.eq_ignore_ascii_case(d)))
+        .is_some_and(is_image_extension)
+}
+
+/// Is `ext` (no dot, any case) the extension of a format [`prepare`] decodes?
+pub fn is_image_extension(ext: &str) -> bool {
+    DECODED_EXTENSIONS
+        .iter()
+        .any(|d| ext.eq_ignore_ascii_case(d))
 }
 
 /// Prepares `bytes` for attachment. `downscale_px` is the long-edge ceiling; `0` disables

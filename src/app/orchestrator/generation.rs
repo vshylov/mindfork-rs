@@ -385,6 +385,11 @@ impl Orchestrator {
         // message, and from this point `/image remove` can no longer reach them. Taken
         // only after every early return above, so a failed send leaves them staged.
         let images = self.take_staged_images(active_id);
+        // Pasted images whose names are still on their way park the turn until they
+        // land (docs/research/pasted-image-names.md F4).
+        let unnamed = self
+            .name_board
+            .pending(&images.iter().map(|i| i.id).collect::<Vec<_>>());
 
         // Add the user's message to the history and echo it in the feed. The UI
         // cleared the input box on send — also clear the chat's saved draft.
@@ -398,19 +403,44 @@ impl Orchestrator {
         self.mark_dirty(active_id);
         let _ = self.evt_tx.send(AppEvent::UserMessage(text));
 
+        if !unnamed.is_empty() {
+            self.park_turn(active_id, backend, unnamed);
+            return;
+        }
         self.start_generation(active_id, backend, None);
-        // Automatic titling at the `AfterUserMessage` point (spec §11.2), fired
-        // for the conversation's first user message — **after** the reply's own
-        // request, so on a single-slot server the title never queues ahead of
-        // the answer (docs/history/auto-chat-title.md D3).
+        self.title_after_user_message(active_id);
+    }
+
+    /// Announces a terminal turn and begins the state machine on it — unless it was
+    /// reserved, which did both when it was parked (docs/research/pasted-image-names.md
+    /// F4, [`super::pasted_names`]).
+    fn begin_turn(
+        &mut self,
+        started: AppEvent,
+        id: Uuid,
+        cancel: &CancellationToken,
+        reserved: bool,
+    ) {
+        if reserved {
+            return;
+        }
+        let _ = self.evt_tx.send(started);
+        self.gen_state.begin(id, cancel.clone());
+    }
+
+    /// Automatic titling at the `AfterUserMessage` point (spec §11.2), fired for the
+    /// conversation's first user message — **after** the reply's own request, so on a
+    /// single-slot server the title never queues ahead of the answer
+    /// (docs/history/auto-chat-title.md D3). A parked turn fires it when it starts.
+    pub(super) fn title_after_user_message(&mut self, chat_id: Uuid) {
         if self
             .chats
             .iter()
-            .find(|c| c.id == active_id)
+            .find(|c| c.id == chat_id)
             .is_some_and(|c| crate::features::rename_chat::is_first_user_message(&c.messages))
         {
             self.maybe_auto_title(
-                active_id,
+                chat_id,
                 crate::shared::config::AutoTitleMode::AfterUserMessage,
             );
         }
@@ -691,7 +721,14 @@ impl Orchestrator {
         backend: Arc<dyn EngineBackend>,
         continuation: Option<ContinuationSeed>,
     ) {
-        self.start_generation_woken(active_id, backend, continuation, false, Surface::Terminal);
+        self.start_generation_woken(
+            active_id,
+            backend,
+            continuation,
+            false,
+            Surface::Terminal,
+            None,
+        );
     }
 
     /// The turn the app starts on a background run's task notification
@@ -702,7 +739,7 @@ impl Orchestrator {
         active_id: Uuid,
         backend: Arc<dyn EngineBackend>,
     ) {
-        self.start_generation_woken(active_id, backend, None, true, Surface::Terminal);
+        self.start_generation_woken(active_id, backend, None, true, Surface::Terminal, None);
     }
 
     /// A messenger's turn on `chat_id`, in a seat of its own beside the
@@ -714,11 +751,32 @@ impl Orchestrator {
         backend: Arc<dyn EngineBackend>,
         woken: bool,
     ) -> Option<(Uuid, CancellationToken)> {
-        self.start_generation_woken(chat_id, backend, None, woken, Surface::Bridge)
+        self.start_generation_woken(chat_id, backend, None, woken, Surface::Bridge, None)
+    }
+
+    /// The turn a parked message was reserved for (docs/research/pasted-image-names.md
+    /// F4, [`super::pasted_names`]): built now that its images' names are in, under the
+    /// id and the token it began with — `GenerationStarted` already went out, and the
+    /// state machine is already busy with it. `None` when the chat is gone.
+    pub(super) fn start_reserved_generation(
+        &mut self,
+        chat_id: Uuid,
+        backend: Arc<dyn EngineBackend>,
+        reserved: (Uuid, CancellationToken),
+    ) -> Option<(Uuid, CancellationToken)> {
+        self.start_generation_woken(
+            chat_id,
+            backend,
+            None,
+            false,
+            Surface::Terminal,
+            Some(reserved),
+        )
     }
 
     /// [`Self::start_generation`] with the flags its entry points differ by:
-    /// whether the app woke the turn itself, and which surface it answers.
+    /// whether the app woke the turn itself, which surface it answers, and — for a
+    /// parked turn — the id and token it was reserved with.
     fn start_generation_woken(
         &mut self,
         active_id: Uuid,
@@ -726,6 +784,7 @@ impl Orchestrator {
         continuation: Option<ContinuationSeed>,
         woken: bool,
         surface: Surface,
+        reserved: Option<(Uuid, CancellationToken)>,
     ) -> Option<(Uuid, CancellationToken)> {
         // Speech stops per the setting (off by default: listening to the reply
         // while the next one is being written is legitimate). See spec §11.9.
@@ -943,7 +1002,9 @@ impl Orchestrator {
         // The turn's cancellation token is created before the tool context: its
         // clone goes into `ToolContext.cancel` (long-running tools — MCP/network —
         // are interrupted via Esc).
-        let cancel = CancellationToken::new();
+        let cancel = reserved
+            .as_ref()
+            .map_or_else(CancellationToken::new, |(_, c)| c.clone());
 
         // Resolved once and used three times: `ToolContext.model_name` (what
         // `get_llm_name` answers, spec §9.14), the `GenerationStarted` event
@@ -1100,7 +1161,7 @@ impl Orchestrator {
         // is what makes the wire ask the server to continue it in place.
         request.continue_final = continuation.is_some();
 
-        let id = Uuid::new_v4();
+        let id = reserved.as_ref().map_or_else(Uuid::new_v4, |(id, _)| *id);
         let started = AppEvent::GenerationStarted {
             generation_id: id,
             model: model_name.clone(),
@@ -1113,8 +1174,7 @@ impl Orchestrator {
         let (confirm_tx, confirm_rx) = tokio::sync::mpsc::unbounded_channel();
         let evt_tx = match surface {
             Surface::Terminal => {
-                let _ = self.evt_tx.send(started);
-                self.gen_state.begin(id, cancel.clone());
+                self.begin_turn(started, id, &cancel, reserved.is_some());
                 self.inflight = Some(super::InflightTurn {
                     generation: id,
                     chat: active_id,

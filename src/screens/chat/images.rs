@@ -50,6 +50,12 @@ impl ChatScreen {
                 };
                 self.push_note(&msg);
             }
+            ImageProgress::Named { from, to } => {
+                let msg = self
+                    .loc
+                    .tf("ui.image.named", &[("from", &from), ("to", &to)]);
+                self.push_note(&msg);
+            }
             ImageProgress::Listed { items } => {
                 let text = format_staged_images(&items, self.loc);
                 self.push_note(&text);

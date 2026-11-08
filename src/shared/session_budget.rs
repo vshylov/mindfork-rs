@@ -119,11 +119,15 @@ pub enum Shape {
     Impersonation,
     /// The page summary inside a tool — priced, never recorded.
     Summary,
+    /// A pasted image's name (docs/research/pasted-image-names.md) — priced with the
+    /// image's tokens as its floor, never recorded: the text estimate cannot see an
+    /// image, so its ratio would be the picture's size, not the tokenizer's density.
+    Name,
 }
 
 impl Shape {
     /// How many kinds there are — the ratio array's size.
-    pub const COUNT: usize = 7;
+    pub const COUNT: usize = 8;
 }
 
 /// A stream's place in the budget: one permit and its token reservation,

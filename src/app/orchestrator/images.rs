@@ -78,6 +78,9 @@ pub(super) struct ImageAttachResult {
     /// Carried through so the note can be written once, next to the outcome.
     pub(super) vision: VisionSupport,
     pub(super) outcome: Result<MessageImage, String>,
+    /// Whether the chat's model is to name the image once it is staged — a pasted image,
+    /// with `images.name_pasted` on and no name typed (docs/research/pasted-image-names.md).
+    pub(super) ask_name: bool,
 }
 
 /// What the user asked to stage, before anything has been read. The split exists because
@@ -103,6 +106,8 @@ enum ImageSource {
     Clipboard {
         image: Box<crate::app::events::ClipboardImage>,
         name: String,
+        /// Ask the chat's model for a better name once it is staged.
+        ask_name: bool,
     },
     /// Bytes that came off the network, plus the URL they came from — which is both the
     /// image's `source` (so re-attaching the same URL replaces it) and where its display
@@ -141,7 +146,7 @@ impl ImageSource {
     fn prepare(self, cfg: &ImageSettings, loc: &'static Locale) -> Result<MessageImage, String> {
         match self {
             ImageSource::File(path) => prepare_image(&path, cfg, loc),
-            ImageSource::Clipboard { image, name } => prepare_clipboard(*image, name, cfg, loc),
+            ImageSource::Clipboard { image, name, .. } => prepare_clipboard(*image, name, cfg, loc),
             ImageSource::Downloaded { fetched, url } => prepare_downloaded(*fetched, url, cfg, loc),
         }
     }
@@ -201,15 +206,38 @@ impl Orchestrator {
     ///
     /// The name is chosen here rather than in the background task because it depends on
     /// what is *already* staged, which only the orchestrator knows.
+    ///
+    /// A name the person typed (`/image paste <name>`, F7) becomes `clipboard/<name>.png`
+    /// at once; without one the image is `clipboard.png` — made unique in the chat (F6) —
+    /// and, with `images.name_pasted` on, the chat's model is asked for a better one once
+    /// it is staged (docs/research/pasted-image-names.md).
     pub(super) fn handle_image_paste(&mut self, image: crate::app::events::ClipboardImage) {
+        use crate::features::image_name::{self, Letters};
+        let loc = self.ui_locale();
         let Some(chat_id) = self.active_id else {
-            self.fail_image(self.ui_locale().t("ui.err.image_no_active_chat"));
+            self.fail_image(loc.t("ui.err.image_no_active_chat"));
             return;
         };
-        let name = self.free_clipboard_name(chat_id);
+        let (name, ask_name) = match image.name.as_deref() {
+            Some(typed) => match image_name::slug(typed, Letters::Any) {
+                Some(slug) => (
+                    self.free_image_name(chat_id, &image_name::pasted_name(&slug), None),
+                    false,
+                ),
+                None => {
+                    self.fail_image(&loc.tf("ui.err.image_paste_name", &[("name", typed)]));
+                    return;
+                }
+            },
+            None => (
+                self.free_image_name(chat_id, image_name::FALLBACK_NAME, None),
+                self.config.images.name_pasted,
+            ),
+        };
         self.stage_image(Staging::Local(ImageSource::Clipboard {
             image: Box::new(image),
             name,
+            ask_name,
         }));
     }
 
@@ -416,6 +444,10 @@ impl Orchestrator {
         }
 
         let loc = self.ui_locale();
+        let ask_name = matches!(
+            source,
+            Staging::Local(ImageSource::Clipboard { ask_name: true, .. })
+        );
         // `Unknown` when the engine is not ready or cannot be asked — that is the
         // optimistic path (fork F4), not a failure.
         let backend = self.engines.backend_if_ready(loc).ok();
@@ -439,6 +471,7 @@ impl Orchestrator {
                     chat_id,
                     vision,
                     outcome: Err(loc.t(key).to_string()),
+                    ask_name,
                 });
                 return;
             }
@@ -457,25 +490,9 @@ impl Orchestrator {
                 chat_id,
                 vision,
                 outcome,
+                ask_name,
             });
         });
-    }
-
-    /// The first unused `clipboard*.png` name among the chat's staged images, so two
-    /// pastes are told apart in `/image list` and in the label the model reads.
-    fn free_clipboard_name(&self, chat_id: Uuid) -> String {
-        let staged = self.staged_images.get(&chat_id);
-        let taken = |name: &str| {
-            staged.is_some_and(|v| v.iter().any(|i| i.name.eq_ignore_ascii_case(name)))
-        };
-        if !taken(CLIPBOARD_NAME) {
-            return CLIPBOARD_NAME.to_string();
-        }
-        // Bounded by `max_count`, so this always terminates well before the guard.
-        (2..)
-            .map(|n| format!("clipboard-{n}.png"))
-            .find(|name| !taken(name))
-            .unwrap_or_else(|| CLIPBOARD_NAME.to_string())
     }
 
     /// Applies the result of a background prepare: stages the image and reports.
@@ -506,6 +523,11 @@ impl Orchestrator {
                 .tf("ui.err.image_too_many", &[("max", &max.to_string())]);
             self.fail_image(&msg);
             return;
+        }
+        // A pasted image is staged under the name it has; its better one is asked for
+        // now that the bytes the turn will send exist (docs/research/pasted-image-names.md).
+        if res.ask_name {
+            self.start_naming(res.chat_id, &image);
         }
         let staged = self.staged_images.entry(res.chat_id).or_default();
         // Staging the same file twice replaces the earlier copy — idempotent, like
@@ -647,10 +669,6 @@ impl Orchestrator {
 
 /// The staging store: images waiting for the next message, per chat.
 pub(super) type StagedImages = HashMap<Uuid, Vec<MessageImage>>;
-
-/// The display name a pasted image gets when nothing else is staged under it. `.png`
-/// is not a guess — [`prepare_rgba`] always encodes a clipboard image as png.
-const CLIPBOARD_NAME: &str = "clipboard.png";
 
 /// Encodes clipboard pixels into an attachable image (blocking — runs on the blocking
 /// pool). Errors are already localized (axis B).

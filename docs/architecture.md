@@ -292,6 +292,14 @@ src/
 │  │  │                     keeps one, the prepared copy staged as
 │  │  │                     `MessageImage::copy_of(file)`; the chat is changed in
 │  │  │                     `handle_draw_result`, by its owner
+│  │  ├─ pasted_names.rs    a pasted image's name (spec §9.10, `images.name_pasted`):
+│  │  │                     the chat's engine asked once at paste, in the silent lane
+│  │  │                     (`Shape::Name`); the answer slugged, made unique in the
+│  │  │                     chat and landed on the image by id — staged or on a
+│  │  │                     message not yet sent; a send whose images await names is
+│  │  │                     a **parked** turn — reserved (id begun, GenerationStarted
+│  │  │                     sent) and built only once the names land or 10 s pass;
+│  │  │                     `NameBoard` decides whether a name may still land
 │  │  ├─ search.rs          chat content search (`Ctrl+F` in the list): indexes a
 │  │  │                     chat right after it is saved + the startup reconciliation
 │  │  │                     pass (stat-only walk of `chats/`), and answers a query —
@@ -745,6 +753,10 @@ src/
 │  │                        http(s) only re-checked per redirect, ≤5 hops, timeouts,
 │  │                        a byte ceiling on the stream; the address itself is not
 │  │                        filtered — the user typed it (spec §9.10)
+│  ├─ image_name.rs         a pasted image's name: the naming request (English, muted),
+│  │                        the answer → `[a-z0-9-]` slug, `clipboard/<slug>.png`, the
+│  │                        name made unique in a chat, and `NameBoard` — whether a name
+│  │                        may still land (docs/research/pasted-image-names.md)
 │  ├─ image_prepare.rs      decode/downscale/normalize an attached image to png|jpeg
 │  │                        (the `image` crate; a png already within the ceiling is
 │  │                        passed through byte for byte); `jpeg_copy` — always JPEG,

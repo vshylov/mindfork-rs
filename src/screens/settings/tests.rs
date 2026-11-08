@@ -3876,6 +3876,7 @@ fn image_group_follows_the_attachment_budgets() {
                     | FieldId::ImageMaxCount
                     | FieldId::ImageMaxBytes
                     | FieldId::ImageDownscale
+                    | FieldId::ImageNamePasted
             )
         })
         .map(|f| f.id)
@@ -3887,6 +3888,7 @@ fn image_group_follows_the_attachment_budgets() {
             FieldId::ImageMaxCount,
             FieldId::ImageMaxBytes,
             FieldId::ImageDownscale,
+            FieldId::ImageNamePasted,
         ],
         "the image rows follow the attachment budgets"
     );
@@ -3901,10 +3903,25 @@ fn image_group_follows_the_attachment_budgets() {
         FieldId::ImageMaxCount,
         FieldId::ImageMaxBytes,
         FieldId::ImageDownscale,
+        FieldId::ImageNamePasted,
     ] {
         assert_eq!(group(id), images, "{id:?} left the images group");
         assert!(field_desc(&s, id).is_some(), "{id:?} has no description");
     }
+}
+
+/// Naming pasted images is a switch of its own in the images group, **off** by default —
+/// it costs a request per paste (docs/research/pasted-image-names.md) — and turning it on
+/// saves the config with the flag raised.
+#[test]
+fn naming_pasted_images_is_a_switch_off_by_default() {
+    let mut s = screen();
+    assert!(!AppConfig::default().images.name_pasted);
+    match s.toggle_field(FieldId::ImageNamePasted) {
+        Some(SettingsIntent::SaveConfig(c)) => assert!(c.images.name_pasted),
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+    assert!(field_desc(&s, FieldId::ImageNamePasted).is_some());
 }
 
 /// The image budgets commit through the `field_spec` access table like their

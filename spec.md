@@ -1774,7 +1774,7 @@ whole conversation on every mutation. Measured on the reference stack, the
 append-only shape keeps the prefix cache intact across an image turn
 (`cache_n = 73` of 78; an appended turn prefills 23 tokens).
 
-- **Commands**: `/image attach <path|url>`, `/image paste`, `/image generate
+- **Commands**: `/image attach <path|url>`, `/image paste [name]`, `/image generate
   [ratio] <description>` (a picture drawn by the picture slot, kept in the chat's
   files and staged — [9.15](#915-drawing-a-picture-image_generate)),
   `/image remove <name|#N>`, `/image list` — the same surface and the same `#N`
@@ -1825,9 +1825,12 @@ append-only shape keeps the prefix cache intact across an image turn
   than a request to go and look. arboard normalizes each platform's storage
   (`CF_DIB`, `image/png`, `NSImage`) to raw RGBA, so there is no container to
   sniff; the encode happens on the blocking pool with everything else.
-  A pasted image has no file, so it gets the first free `clipboard*.png` name and
-  a source that cannot collide — pasting twice stages two images rather than the
-  second replacing the first. It is **always encoded as png**, unlike a file,
+  A pasted image has no file, so it gets the first `clipboard*.png` name **nothing
+  in the chat** holds — staged images, sent ones, stored files, attachments — and
+  a source that cannot collide: pasting twice stages two images rather than the
+  second replacing the first, and each stays reachable by name in `/file list`
+  and in `python_exec`'s `files`, where a name two items share resolves to
+  nothing. It is **always encoded as png**, unlike a file,
   whose photographic formats become jpeg: the dominant clipboard image is a
   screenshot, and jpeg artifacts on small text are the expensive failure.
   **A copied picture file** is not an image on the clipboard: a file manager's
@@ -1856,6 +1859,38 @@ append-only shape keeps the prefix cache intact across an image turn
   by address — instead of asking the person to copy again what they already
   copied. Research: [docs/research/pasted-image-names.md](docs/research/pasted-image-names.md)
   §3.1, forks A1–A2.
+- **A name for a pasted image** (`images.name_pasted`, settings → Images, **off**
+  by default; [docs/research/pasted-image-names.md](docs/research/pasted-image-names.md),
+  every fork as recommended). With it on, the chat's **own engine** is asked what
+  the picture shows — one request, the automatic title's muted sampling, the image
+  as the one content part, a fixed English system message (F3: clean on every
+  model asked, typeable on any layout) — and the image, staged at once as
+  `clipboard.png`, becomes **`clipboard/<slug>.png`** when the answer lands (F5):
+  the origin stays visible in the chip, the list and the label the model reads, and
+  `remove`, `/file remove` and `files` also take the part after the slash, which is
+  what `/w/in` calls the file. The answer is reduced to a slug — `a–z`, `0–9`,
+  single hyphens, at most five words and 48 characters — so nothing an image's text
+  talks the model into becomes a path, a quote or a second line; a slug two images
+  share takes `-2` (F6). Measured before it was built: 240 of 240 answers well
+  formed and on the subject on Gemma 4 E2B/31B, Qwen 3.6 27B and three cheap
+  clouds, about a second on a 4090 and $0.00013 an image on the cheap tier.
+  The request goes **at paste** (F2): with a cloud engine the picture reaches the
+  provider before the message is sent, which the setting's description says. It
+  runs in the session budget's silent lane as its own kind (`Shape::Name`, priced
+  with the image's tokens as a floor — the text estimate cannot see an image —
+  and never recorded), one attempt, yielding to a turn that needs its room.
+  **A send while a name is on its way waits for it** (F4), at most 10 s: the turn
+  is reserved at once — `GenerationStarted` goes out, `Esc` stops it, nothing
+  else starts beside it — but **built** only when the names are in, so the request,
+  the label before the image and the chat's list of files in the system prompt are
+  all rendered on the same name. Past the wait the turn goes under the name the
+  image has, and a late name is dropped: renaming a label the model has read would
+  rewrite history under the prompt cache. Whether a name may still land is one
+  board's to say (`features::image_name::NameBoard`), shared by the landing and the
+  parked turn. A failure is quiet (F9): a log line, and the image keeps
+  `clipboard.png`. `/image paste <name>` names it by hand (F7) — free, on every
+  engine, with the switch on or off, the person's own letters kept; a name with no
+  letters or digits is refused with an example. Only pasted images are named (F8).
 - **Staging.** `attach` does not create a message; it stages the image for the
   **next** one. Staging lives in the orchestrator, is keyed by chat, and is
   **session-only** — what was staged and never sent is a half-finished thought,
