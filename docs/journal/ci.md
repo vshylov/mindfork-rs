@@ -2021,10 +2021,11 @@ rounds.
   sets `TEMP`/`TMP` to `RUNNER_TEMP`. Not taken: `synchronous=OFF` under test, because
   tests should run the production pragma. `--test-threads=2` was not decided either: it
   was measured only before the fix, and across different machines.
-- **Result on the pull request's own run** (42499641360): the Windows job took 271 s,
-  down from 14-18 min; its test run 84 s, down from 683-845 s; its build 2m18s on a full
-  cache match. The longest job of that run was macOS's, at 591 s. The Windows ceiling
-  stays at 35 until the new regime has a history.
+- **Result on the pull request's own runs**: the Windows job took 271 s and 415 s (runs
+  42499641360 and 42500774785), down from 14-18 min. Its test run took 84 s and 171 s,
+  down from 683-845 s, and its build 2m18s and 3m08s on a full cache match. The longest
+  job of the first run was macOS's, at 591 s. The Windows ceiling stays at 35 until the
+  new regime has a history.
 - **The runners are not one machine.** The twelve Windows jobs whose CPU was logged met
   three hardware classes: EPYC 7763 with a SAS virtual disk, and EPYC 9V74 and 9V45 with
   NVMe. The same control code took 562 s on a 7763 and 257 s on a 9V74. That is the

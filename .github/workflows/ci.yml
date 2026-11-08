@@ -328,15 +328,15 @@ jobs:
     #     tests of the Fabula simulation ran past a minute each; since their
     #     removal 4714 run in 11-14 (jobs of 14-18 min). Then each database's
     #     schema went into one transaction and TEMP onto D: (the step below;
-    #     docs/journal/ci.md, "why the Windows tests were slow"): the first run
-    #     after it took 84 s for the tests and 4.5 min for the job.
+    #     docs/journal/ci.md, "why the Windows tests were slow"): its first two
+    #     runs took 84 and 171 s for the tests, 4.5 and 6.9 min for the job.
     # A partial cache (a Cargo.lock change) rebuilt 365 crates in 10m20s on
     # Windows, ~8 min over a warm build.
     # Each ceiling is about twice today's longest job, which leaves room for that
     # rebuild: Windows 35 against 17.6, macOS 25 against 9.4, Linux 15 against
     # 4.2 (since 2026-11-08) — the three values this measurement kept. Windows'
-    # 35 now holds its 4.5-minute job many times over; it is re-sized once that
-    # regime has a history, not from one run. A warm
+    # 35 now holds its 4.5-7 minute job many times over; it is re-sized once that
+    # regime has a history, not from two runs. A warm
     # Windows run near 35 means the suite has doubled: look for "has been
     # running for over 60 seconds" in its log before raising the ceiling — that
     # is how the simulation's tests showed on 2026-11-07, at 34.8 of 35.
@@ -412,7 +412,7 @@ jobs:
   # A job of its own, not a step after the Windows tests the way macOS has one:
   # clippy is a build of its own (check mode shares nothing with the test
   # build but the build scripts), so as a step it would add its whole duration
-  # to that job — 14-18 min when this job was made, 4.5 since the fix in the
+  # to that job — 14-18 min when this job was made, 4.5-7 since the fix in the
   # matrix comment above. Here it runs beside the tests.
   #
   # Pull requests only — `main` takes code that already passed here — and no
