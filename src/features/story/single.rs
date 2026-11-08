@@ -333,6 +333,16 @@ fn last_words(replies: &BTreeMap<u32, (String, u64)>, n: u32) -> u32 {
         .map_or(0, |(text, _)| author_prompts::words_of(text))
 }
 
+/// Where the version writing turn `n` wrote comes from: turn 1 drafts, every
+/// later writing turn revises.
+fn origin(n: u32) -> VersionOrigin {
+    if n == 1 {
+        VersionOrigin::Draft
+    } else {
+        VersionOrigin::Revision
+    }
+}
+
 /// Whether a version breaks off mid-sentence. A provider may end a reply it
 /// cut as if it had finished: PR 13's pilot met one on Qwen 3.8 through
 /// DeepInfra, a revision of 17,493 tokens ending in the middle of a word.
@@ -484,12 +494,7 @@ pub async fn write_session(
         .filter(|(n, (t, _))| kept(**n, t))
         .skip(stored as usize)
     {
-        let origin = if *n == 1 {
-            VersionOrigin::Draft
-        } else {
-            VersionOrigin::Revision
-        };
-        author.add_chapter(ask.n, origin, text).await?;
+        author.add_chapter(ask.n, origin(*n), text).await?;
     }
     let mut versions = stored.max(written);
     let ended = loop {
@@ -538,12 +543,7 @@ pub async fn write_session(
             Err(e) => break Ended::Failed(ask.address(next), e.to_string()),
         };
         if kept(next, &reply) {
-            let origin = if next == 1 {
-                VersionOrigin::Draft
-            } else {
-                VersionOrigin::Revision
-            };
-            author.add_chapter(ask.n, origin, &reply).await?;
+            author.add_chapter(ask.n, origin(next), &reply).await?;
             versions += 1;
         }
         // The turn's size as the call log has it, for the window's check.

@@ -15,6 +15,7 @@ use crate::entities::sampling::SamplingConfig;
 use crate::entities::story::{RunId, VersionOrigin, fixture_canon};
 use crate::features::story::author_prompts;
 use crate::features::story::engine::{EngineAdapter, SharedLog};
+use crate::features::story::port::{CallAddress, LlmPort, Role, Turn};
 use crate::shared::api::contract::{ChatChunk, FinishReason, TokenUsage};
 use crate::shared::api::mock::MockBackend;
 use crate::shared::storage::story::{AuthorWriter, RunLogWriter, Spend, StoryDb};
@@ -193,6 +194,56 @@ async fn a_session_cut_by_a_failure_goes_on_from_its_call_log() {
     assert_eq!(messages[1]["content"], "## Version 1\n\nText 1.");
     assert_eq!(messages[3]["content"], "Critique 1.");
     assert_eq!(story.db.chapter_versions(1).await.unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn a_version_in_the_call_log_without_its_row_is_kept_as_the_turn_that_wrote_it() {
+    // A run killed after its calls were logged and before their versions
+    // were stored: turns 1 to 3 are in the log, the chapter has no version.
+    let (mut story, log) = fresh_story().await;
+    let log: SharedLog = Arc::new(tokio::sync::Mutex::new(log));
+    let killed = port(turns(3), &log);
+    for k in 1..=3 {
+        let call = CallAddress {
+            run: story.run.clone(),
+            address: format!("b0/t{k}"),
+        };
+        let turn = Turn {
+            role: "user",
+            content: format!("Turn {k}."),
+        };
+        killed
+            .session(&call, Role::Author, "system", &[turn])
+            .await
+            .unwrap();
+    }
+    drop(killed);
+    assert!(story.db.chapter_versions(1).await.unwrap().is_empty());
+
+    let rest: Vec<Vec<ChatChunk>> = turns(9).into_iter().skip(3).collect();
+    let resumed = port(rest, &log);
+    let written = write(&story.db, &mut story.author, &log, &resumed, &config(700))
+        .await
+        .unwrap();
+    assert_eq!(written.ended, Ended::Spent);
+    assert_eq!(written.versions, 3);
+    let versions = story.db.chapter_versions(1).await.unwrap();
+    let kept: Vec<(VersionOrigin, &str)> = versions
+        .iter()
+        .map(|v| (v.origin, v.text.as_str()))
+        .collect();
+    assert_eq!(
+        kept,
+        [
+            (VersionOrigin::Draft, "## Version 1\n\nText 1."),
+            (VersionOrigin::Revision, "## Version 2\n\nText 3."),
+            (VersionOrigin::Revision, "## Version 3\n\nText 5."),
+        ]
+    );
+    // The logged turns are read back, not asked again.
+    let run = story.db.runs().await.unwrap().pop().unwrap();
+    assert!(story.db.call(&run, "b0/t1", 1).await.unwrap().is_none());
+    assert!(story.db.call(&run, "b0/t4", 1).await.unwrap().is_some());
 }
 
 #[tokio::test]
