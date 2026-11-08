@@ -316,14 +316,25 @@ jobs:
         # included; what it costs is a third job beside Windows' longer one.
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-    # Measured: Linux p50 2.3 min, max 4.7 over 269 runs. Windows p50 6.1, max
-    # 27.6 over 231 runs — the worst of them before the 2026-08-05 speedup
-    # (since then max 16), but a cold cache on top of the disk-contention tail
-    # the journal records (a 2.4x test phase) can still reach the low twenties,
-    # so Windows keeps the wider ceiling rather than the current-regime one.
-    # macOS: no history yet; the probe measured a cold test build at 4m20s-4m53s
-    # and the run at 35-50s on the 3-core M1 VMs (docs/research/macos.md §3), plus
-    # the clippy pass below — 25 leaves a cold cache room.
+    # Measured over every pull-request run from 2026-09-08 to 11-08
+    # (docs/journal/ci.md, "the test job's ceilings, re-measured"):
+    #   * Linux: p50 3.2 min, p99 5.0, max 5.8 over 462 runs.
+    #   * macOS: p50 6.1, p99 10.3, max 15.8 over 231 (clippy pass included). The
+    #     one run that reached the ceiling was a hang in that pull request's own
+    #     tests (#719, fixed in it) — what the ceiling is for.
+    #   * Windows: p50 10.8, p99 31.0, max 34.8 over 434. The test *run* sets it,
+    #     not the build (2-3.5 min warm): 4002 tests ran in 6-7 min on 2026-10-10,
+    #     4613 in 13-14 on 11-01, and 4767-4865 in 23-29 the week after, when 19
+    #     tests of the Fabula simulation ran past a minute each; since their
+    #     removal 4714 run in 11-14 (jobs of 14-18 min).
+    # A partial cache (a Cargo.lock change) rebuilt 365 crates in 10m20s on
+    # Windows, ~8 min over a warm build.
+    # Each ceiling is about twice today's longest job, which leaves room for that
+    # rebuild: Windows 35 against 17.6, macOS 25 against 9.4, Linux 15 against
+    # 4.2 (since 2026-11-08) — the three values this measurement kept. A warm
+    # Windows run near 35 means the suite has doubled: look for "has been
+    # running for over 60 seconds" in its log before raising the ceiling — that
+    # is how the simulation's tests showed on 2026-11-07, at 34.8 of 35.
     timeout-minutes: ${{ matrix.os == 'windows-latest' && 35 || matrix.os == 'macos-latest' && 25 || 15 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -382,11 +393,11 @@ jobs:
   # a warning.
   #
   # A job of its own, not a step after the Windows tests the way macOS has one:
-  # those tests took p50 27 min, max 34 over 35 pull-request runs (2026-11-01 to
-  # 11-08) under that job's 35-minute ceiling, and clippy is a build of its own
-  # (check mode shares nothing with the test build but the build scripts), so
-  # as a step it would add its whole duration to the pull request's longest
-  # job. Here it runs beside the tests.
+  # those tests are the pull request's longest job (14-18 min, up to 34.8 in
+  # early November — the matrix comment above), and clippy is a build of its
+  # own (check mode shares nothing with the test build but the build scripts),
+  # so as a step it would add its whole duration to that job and to the
+  # ceiling's margin. Here it runs beside the tests.
   #
   # Pull requests only — `main` takes code that already passed here — and no
   # cache: every run is cold, measured at 4.2 and 5.3 min on its first two
