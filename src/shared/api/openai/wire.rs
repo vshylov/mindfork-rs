@@ -170,7 +170,7 @@ pub struct WireJsonSchema {
 
 /// The gateway's provider preferences: that every parameter of the request be
 /// honoured, and for Fabula's evaluation runner alone the providers it is
-/// pinned to (docs/fabula.md §4, PR 13). The app never pins: its routing stays
+/// pinned to (docs/history/fabula.md §4, PR 13). The app never pins: its routing stays
 /// the gateway's.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct WireProvider {
@@ -554,7 +554,7 @@ impl ChatCompletionRequest {
     /// A body with a schema asks for `provider.require_parameters`: without it an
     /// endpoint may take the schema as a hint (docs/research/fabula-engine.md §8).
     /// The body pinned to `providers` alone, with no fallback: the
-    /// evaluation runner's, never the app's (docs/fabula.md §4, PR 13).
+    /// evaluation runner's, never the app's (docs/history/fabula.md §4, PR 13).
     pub fn pinned_to(mut self, providers: &[String]) -> Self {
         if providers.is_empty() {
             return self;
@@ -2736,7 +2736,7 @@ mod prefix_completion_tests {
     }
 }
 
-/// The reply's schema on the wire (docs/fabula.md §4, PR 3).
+/// The reply's schema on the wire (docs/history/fabula.md §4, PR 3).
 #[cfg(test)]
 mod output_schema_tests {
     use super::build_chat_request;
@@ -2754,7 +2754,7 @@ mod output_schema_tests {
     }
 
     /// `response_format` in the shape every enforcing server reads, the
-    /// schema's text as it was printed (docs/fabula.md §4, PR 3), and no
+    /// schema's text as it was printed (docs/history/fabula.md §4, PR 3), and no
     /// `provider` outside the gateway's dialect.
     #[test]
     fn a_schema_rides_as_response_format_in_its_printed_order() {
@@ -2796,7 +2796,7 @@ mod output_schema_tests {
     }
 
     /// Fabula's evaluation runner pins the gateway to its providers, with no
-    /// fallback, the schema's ask kept (docs/fabula.md §4, PR 13); no pin is
+    /// fallback, the schema's ask kept (docs/history/fabula.md §4, PR 13); no pin is
     /// the body as it was.
     #[test]
     fn a_pinned_body_names_its_providers_and_allows_no_fallback() {

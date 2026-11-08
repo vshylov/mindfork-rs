@@ -11,7 +11,7 @@
 //!
 //! What differs from the spec's sketch, and why:
 //!
-//! - **The simulation's tables are gone** (docs/fabula.md §6, T28): the
+//! - **The simulation's tables are gone** (docs/history/fabula.md §6, T28): the
 //!   branches, the events and their witnesses, the scenes and their picks,
 //!   the reviews, the outlines, the summaries, the registers, the assumptions,
 //!   the takes and the steps. The file was in no release, so the schema
@@ -22,8 +22,8 @@
 //! - **`canon_doc` keeps the author's order** (`position`) and marks a removed
 //!   document by a version whose `body_json` is null.
 //! - **`llm_call.cost_usd`**: the dollar cap applies where a provider reports
-//!   cost (docs/fabula.md §6, T1).
-//! - **The manuscript's own tables** (docs/fabula.md §4, PR 6): `chapter`
+//!   cost (docs/history/fabula.md §6, T1).
+//! - **The manuscript's own tables** (docs/history/fabula.md §4, PR 6): `chapter`
 //!   records each version's `origin` (draft, revision, the human's revision);
 //!   `question` and `answer` are the pauses (spec §14).
 //! - **The default rollback journal, not WAL.** Every read and write goes

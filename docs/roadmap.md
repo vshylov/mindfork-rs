@@ -28,24 +28,6 @@ evidence. Adding or closing an item is part of every task's documentation step
 
 ## Most valuable next
 
-**Fabula, the story engine, stopped at its evaluation** ([fabula.md](fabula.md)): built
-through PR 12 — a story created and driven from the chat, every chapter written in the
-background, a scene named at a checkpoint played again with the ones after it, the story's
-register of open threads and dated facts, scenes planned as collisions with a price and a
-staging pass on every chapter, a chapter's choices standing for its later steps, and a
-map every scene can reach; Gate G2
-GO on a two-chapter story. G2's readers' findings came before the evaluation: the register
-(PR 11), then the craft of the scenes and the lines and G2 again (PR 12; [fabula.md](fabula.md),
-*Before M3*). M3, the evaluation, is done: PR 13 built its hidden runner, with the
-systems of spec §11 as its options and a batch meant to run for days on a cloud machine.
-The owner chose twelve of twenty premise candidates, frozen with their hashes, and after a
-pilot on Qwen 3.8 and Sonnet 5.5 and a reading of Haiku 5.5, the full run's model is Haiku 5.5,
-on a DigitalOcean droplet (T19). Its 108 stories are written and judged blind by PR 14's panel of three
-flagship models, in place of the three people the plan had (T24): F lost to B0 and to A1,
-3 pairs of 36 each, and A1 lost to B0, 5 of 36, so by the decision rule the track stops and
-the long form (M4) is not built. The owner chose to keep the story tools, behind
-`tools.story` and off, running B0 (2026-11-08); a pull request switches them.
-
 The last two code tracks — small windows, and the reasoning effort a model
 does not have — closed on 2026-09-30 and 2026-10-01 and ship together in
 0.14.0 ([Closed](#closed)); what the first left is listed in its research's
@@ -55,8 +37,8 @@ providers* below.
 
 The tracks this section carried before — the first public release, images,
 retry/backoff, the prompt-caching measurement, the attachment birth turn,
-colour modes with user themes, the OpenRouter mode, small windows and the
-effort tiers — have all closed
+colour modes with user themes, the OpenRouter mode, small windows, the
+effort tiers and Fabula — have all closed
 ([Closed](#closed)); the lists below are an idea bank of equal weight.
 
 ## Open
@@ -230,7 +212,7 @@ effort tiers — have all closed
 ### Tools and MCP
 
 - **A story's cost: a character's memory window and Anthropic's cache** — **deferred** to the
-  Fabula track ([fabula.md](fabula.md) §5): G2 on Claude Sonnet 5.5 (PR 9) read 14 million
+  Fabula track ([fabula.md](history/fabula.md) §5): G2 on Claude Sonnet 5.5 (PR 9) read 14 million
   prompt tokens with no cache read, and a character's call grew threefold from the first
   chapter to the second, since it carries every reflection it ever wrote. What would bring it
   forward: the long form (M4), or a chapter's price on a cloud model.
@@ -754,6 +736,16 @@ down.
 An index, newest first — one line per track, with the release that shipped it
 and where its story is told. What a track left open is a bullet above, under
 its area.
+
+- **Fabula, a story engine used from the chat** — unreleased (2026-11-08), sixteen
+  pull requests: a story composed with the person and written chapter by chapter in the
+  background, every answer the person's own words. Its simulation — characters, a World
+  Master, an Author picking among branches, reviewers — lost to one writer in one session
+  in M3's blind judging by three models: F won 3 of 36 pairs against that writer and 3
+  against A1, and A1 won 5 of 36 against it. By the decision rule the track stopped: the
+  long form was not built, the story tools run that writer, behind `tools.story` and off,
+  and the simulation is removed (tag `fabula/f-final`). The hidden runner and the judging
+  stay for a later comparison. [fabula.md](history/fabula.md) §4, §6 T25–T28.
 
 - **Image generation by cloud models** — unreleased (2026-10-30), a probe and three
   stages, every fork the owner's: a slot of its own (OpenAI by default, Gemini, the

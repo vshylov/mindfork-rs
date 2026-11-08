@@ -5831,7 +5831,7 @@ fn background_rows_save_their_fields() {
     }
 }
 
-// ---------- Stories (tools.story*, docs/fabula.md §4, PR 8) ----------
+// ---------- Stories (tools.story*, docs/history/fabula.md §4, PR 8) ----------
 
 /// The story rows are a group of their own, the last of the Tools section:
 /// the switch (off), the run's time limit, the chapter's token budget and its

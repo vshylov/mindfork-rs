@@ -1,6 +1,6 @@
 //! The human's answer to a pause, read from their own words
 //! (docs/research/fabula-engine.md §14, *The answer is the user's own words*;
-//! docs/fabula.md §4, PR 9).
+//! docs/history/fabula.md §4, PR 9).
 //!
 //! When the assistant calls `story_continue`, the answer does not come from
 //! the call's arguments. The orchestrator takes the rows the user wrote after

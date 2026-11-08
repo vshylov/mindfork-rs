@@ -1,4 +1,4 @@
-//! Tests of the story tools' engine after M3 (docs/fabula.md §6, T25–T27):
+//! Tests of the story tools' engine after M3 (docs/history/fabula.md §6, T25–T27):
 //! B0's session a chapter, over the engine adapter and a scripted engine, so
 //! every turn is in the call log as a live run's is.
 

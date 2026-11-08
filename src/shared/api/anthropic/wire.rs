@@ -1076,7 +1076,7 @@ mod tests {
 
     /// The mute the application sends (`thinking: false`, effort `none`,
     /// budget `0`) asks for thinking off in so many words: the 5.5 generation
-    /// thinks when the field is absent (docs/fabula.md §4, *Thinking on
+    /// thinks when the field is absent (docs/history/fabula.md §4, *Thinking on
     /// Claude*). No `display`, no effort; a continuation sends neither.
     #[test]
     fn a_muted_turn_asks_for_thinking_disabled() {
@@ -1440,7 +1440,7 @@ mod tests {
     }
 
     /// `output_config.format` with the schema's text as it was printed, and no
-    /// effort beside it on a turn without thinking (docs/fabula.md §4, PR 3).
+    /// effort beside it on a turn without thinking (docs/history/fabula.md §4, PR 3).
     #[test]
     fn a_schema_rides_as_output_config_format_in_its_printed_order() {
         let r = with_schema(req(vec![ApiMessage::user("hi")]));

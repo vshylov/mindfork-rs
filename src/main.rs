@@ -157,7 +157,7 @@ fn real_main(
             loc,
         );
     }
-    // Fabula's evaluation runner (docs/fabula.md §4, PR 13) writes only into
+    // Fabula's evaluation runner (docs/history/fabula.md §4, PR 13) writes only into
     // its own output directory, its log beside the stories: no data root is
     // created, and no single-instance lock is taken, so a running app is left
     // alone.

@@ -1,4 +1,4 @@
-//! Tests of B0, one agent in one session (docs/fabula.md §6, T21): through
+//! Tests of B0, one agent in one session (docs/history/fabula.md §6, T21): through
 //! the engine adapter over a scripted engine, so every turn is in the call
 //! log with its tokens, as a live session's is.
 

@@ -1,5 +1,5 @@
 //! A story as the chat drives it (docs/research/fabula-engine.md §14, *The
-//! chat tools and the human in the loop*; docs/fabula.md §4, PR 9): what
+//! chat tools and the human in the loop*; docs/history/fabula.md §4, PR 9): what
 //! `story_create` and `story_continue` do to the story's files, worded by the
 //! tools (`features::tools::story`) and started by the orchestrator.
 //!
@@ -318,7 +318,7 @@ pub enum ContinueRefusal {
     /// No question waits, and the turn answers no message of the person's:
     /// one the app woke on a run's notification may not resume the run,
     /// since whether a stopped story goes on is the person's to say (the
-    /// owner's decision, docs/fabula.md §6, T14).
+    /// owner's decision, docs/history/fabula.md §6, T14).
     NotAsked,
     /// Their messages read as no decision.
     Unclear(ReadingReply),
@@ -387,7 +387,7 @@ async fn room_for(db: &StoryDb, budget: Budget) -> Result<(), ContinueRefusal> {
     let Some(chapter) = open_chapter(db, &canon).await? else {
         return Ok(());
     };
-    // A take's budget is its own (docs/fabula.md §6, T12).
+    // A take's budget is its own (docs/history/fabula.md §6, T12).
     let spend = db.chapter_spend(chapter).await?;
     match budget.spent(&spend) {
         Some(spent) => Err(ContinueRefusal::BudgetSpent { chapter, spent }),

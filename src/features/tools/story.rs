@@ -1,4 +1,4 @@
-//! The story tools (docs/fabula.md §3; docs/research/fabula-engine.md §14,
+//! The story tools (docs/history/fabula.md §3; docs/research/fabula-engine.md §14,
 //! *Tools*): their schemas, descriptions and results, en and ru like every
 //! tool's, and the words a story run's landing is told in. Offered only while
 //! `tools.story` is on ([`ToolGate::Story`]). PR 8 built `story_status` and

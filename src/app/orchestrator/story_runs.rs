@@ -1,11 +1,11 @@
-//! A story run out in the background (docs/fabula.md §4, PR 8;
+//! A story run out in the background (docs/history/fabula.md §4, PR 8;
 //! docs/research/fabula-engine.md §14, *The chat tools and the human in the
 //! loop*): the third payload beside the sub-agent's and the dialogue's
 //! ([`super::generation::RunSpec`]).
 //!
 //! It shares every later step with them — the seat, the landing by id, the
 //! notification with its wake, `/subagents stop`, the cancel on a quit — and
-//! takes a background slot as a dialogue does (docs/fabula.md §6, T7). What
+//! takes a background slot as a dialogue does (docs/history/fabula.md §6, T7). What
 //! differs is what runs and what lands:
 //!
 //! - **The engine runs, not a loop.** [`crate::features::story::run::run`]

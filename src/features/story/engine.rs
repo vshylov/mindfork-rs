@@ -1,4 +1,4 @@
-//! The model port over the chat's own `EngineBackend` (docs/fabula.md §3;
+//! The model port over the chat's own `EngineBackend` (docs/history/fabula.md §3;
 //! docs/research/fabula-engine.md §8, §14 *Integration work*): every attempt
 //! goes to the model and into the call log, under its address.
 //!
@@ -60,13 +60,13 @@ pub struct EngineAdapter {
     /// Never send the schema to the provider, whatever it can do.
     fallback_only: bool,
     /// The app's session budget, which every call takes as a background
-    /// dialogue's lines do (docs/fabula.md §3): at `sessions = 1` a story's
+    /// dialogue's lines do (docs/history/fabula.md §3): at `sessions = 1` a story's
     /// calls and the chat's turns take turns request by request. `None` — no
     /// budget, as the harnesses run.
     sessions: Option<Arc<SessionBudget>>,
     /// What a call costs where the provider names no price (Anthropic): the
     /// runner's list price, so that B0's equal cost is money there too
-    /// (docs/fabula.md §6, T21). `None` — the provider's price or none.
+    /// (docs/history/fabula.md §6, T21). `None` — the provider's price or none.
     price: Option<ListPrice>,
 }
 
@@ -154,7 +154,7 @@ impl EngineAdapter {
 
     /// The same adapter on the fallback mechanism alone: for an engine that
     /// says it constrains and must not be asked to — a managed `llama-server`
-    /// with a draft model, whose grammar crashes under `json_schema` (docs/
+    /// with a draft model, whose grammar crashes under `json_schema` (docs/history/
     /// fabula.md §5) — and for measuring one mechanism against the other.
     pub fn fallback_only(mut self) -> Self {
         self.fallback_only = true;

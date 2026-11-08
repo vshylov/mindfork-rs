@@ -1,4 +1,4 @@
-//! A story's state for `story_status` (docs/fabula.md §4, PR 8;
+//! A story's state for `story_status` (docs/history/fabula.md §4, PR 8;
 //! docs/research/fabula-engine.md §14, *Tools*): where the story stands, read
 //! while a run may be writing it.
 //!
@@ -49,7 +49,7 @@ pub struct StoryStatus {
     /// works on; `None` once every planned chapter is accepted.
     pub open_chapter: Option<u32>,
     /// What the open chapter has cost so far, in every run of its latest take
-    /// (docs/fabula.md §6, T1, T12); nothing when the call log is gone.
+    /// (docs/history/fabula.md §6, T1, T12); nothing when the call log is gone.
     pub spend: Spend,
 }
 

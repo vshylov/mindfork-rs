@@ -1,4 +1,4 @@
-//! Live `#[ignore]` checks of a story driven from the chat (docs/fabula.md §4,
+//! Live `#[ignore]` checks of a story driven from the chat (docs/history/fabula.md §4,
 //! PR 9; docs/research/fabula-engine.md §14). The model is the chat's own and
 //! every role's; the person is a script, which reads where the story stands
 //! and answers as a person would.
@@ -15,11 +15,11 @@
 //!   (`target/fabula/story-live-<time>`), whose `data/`, when a run left one
 //!   there, is taken up where it stands; `MINDFORK_FABULA_BUDGET` is the
 //!   chapter's budget in tokens (the default's). Gate G2 was this test on
-//!   Claude Sonnet 5.5, in Russian (`MINDFORK_FABULA_LANG=ru`; docs/fabula.md
+//!   Claude Sonnet 5.5, in Russian (`MINDFORK_FABULA_LANG=ru`; docs/history/fabula.md
 //!   §6, T9–T10). Each chapter is accepted with a wish for the next. With
 //!   `MINDFORK_FABULA_REVISE=1` the person answers the first chapter's
 //!   checkpoint by asking for changes, and the revision lands as a landing of
-//!   its own (docs/fabula.md §6, T26); every chapter's versions are reported
+//!   its own (docs/history/fabula.md §6, T26); every chapter's versions are reported
 //!   with the story.
 //! - `story_chat_live_map_mended` — the model's first `story_create` with a map
 //!   has its routes dropped, the slip a live story found, and the story stored

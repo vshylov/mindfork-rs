@@ -1,4 +1,4 @@
-//! The story as markdown (docs/fabula.md §4, PR 6; docs/research/
+//! The story as markdown (docs/history/fabula.md §4, PR 6; docs/research/
 //! fabula-engine.md §13): each chapter in order, its accepted version, or
 //! while it is being written its latest. What the evaluation reads, and what
 //! a story's landing in the chat will carry (PR 8).

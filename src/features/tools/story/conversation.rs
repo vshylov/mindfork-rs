@@ -1,5 +1,5 @@
 //! `story_create` and `story_continue` (docs/research/fabula-engine.md §14,
-//! *Tools*; docs/fabula.md §4, PR 9): their schemas, descriptions and words,
+//! *Tools*; docs/history/fabula.md §4, PR 9): their schemas, descriptions and words,
 //! en and ru like every tool's.
 //!
 //! - `story_create` is an ordinary, synchronous tool: the canon arrives as

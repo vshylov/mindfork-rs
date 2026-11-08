@@ -1151,12 +1151,12 @@ pub const DEFAULT_SUBAGENT_BACKGROUND_MAX: u32 = 2;
 /// up to ~8 minutes in the stage-0 probe (two-agent-dialogue.md §5.2).
 pub const DEFAULT_DIALOGUE_RUN_TIMEOUT_SECS: u64 = 1800;
 /// Default time limit for one story run (`tools.story_run_timeout_secs`,
-/// docs/fabula.md §6, T2 (a)): six hours, a backstop for a hung run, while the
+/// docs/history/fabula.md §6, T2 (a)): six hours, a backstop for a hung run, while the
 /// chapter's budget bounds the spend. A chapter takes about an hour on a local
 /// 12B model and twice that on a 27B one, before reruns.
 pub const DEFAULT_STORY_RUN_TIMEOUT_SECS: u64 = 6 * 60 * 60;
 /// Default token budget of one chapter (`tools.story_budget_tokens`,
-/// docs/fabula.md §6, T11 (a), which replaced T6's 2,000,000): the app's own
+/// docs/history/fabula.md §6, T11 (a), which replaced T6's 2,000,000): the app's own
 /// chapter shape spent 2,000,000 tokens by the third of four scenes on Qwen 3.8
 /// 27B and 5.8 million on a whole chapter on Claude Sonnet 5.5 (PR 9's live
 /// runs, docs/journal/stories.md), so a Qwen chapter fits with room and a
@@ -1376,19 +1376,19 @@ pub struct ToolSettings {
     /// How many background runs may be out at once; a `start_subagent` past
     /// the cap is refused with a result that says so (research §4.8).
     pub subagent_background_max: u32,
-    /// Offer the story tools (Fabula, docs/fabula.md; spec §9.16) — the story
+    /// Offer the story tools (Fabula, docs/history/fabula.md; spec §9.16) — the story
     /// engine run from the chat, a chapter written in the background. **Off**
-    /// by default until the evaluation decides the engine (docs/fabula.md §4,
+    /// by default until the evaluation decides the engine (docs/history/fabula.md §4,
     /// M3): the tools are absent from the catalog and nothing about a turn
     /// changes. A story run takes a background slot, as a dialogue does
-    /// (`subagent_background_max`, docs/fabula.md §6, T7 (a)).
+    /// (`subagent_background_max`, docs/history/fabula.md §6, T7 (a)).
     pub story: bool,
     /// Time limit for one story run, in seconds: from where the story stands
-    /// to its next pause (docs/fabula.md §6, T2). A run it ends resumes from
+    /// to its next pause (docs/history/fabula.md §6, T2). A run it ends resumes from
     /// its first unfinished step when the story is continued.
     pub story_run_timeout_secs: u64,
     /// A chapter's budget in tokens, prompt and reply, every call under the
-    /// chapter in every run (docs/fabula.md §6, T1 (a), T6 (a)); `0` — none.
+    /// chapter in every run (docs/history/fabula.md §6, T1 (a), T6 (a)); `0` — none.
     pub story_budget_tokens: u64,
     /// A chapter's budget in dollars, counted where the provider reports a
     /// call's cost, as OpenRouter does; `None`, the default — none (T6 (a)).
@@ -3830,7 +3830,7 @@ mod tests {
             DEFAULT_DIALOGUE_RUN_TIMEOUT_SECS
         );
         // The story tools are off until the evaluation decides them, with a
-        // six-hour run and a two-million-token chapter (docs/fabula.md §6).
+        // six-hour run and a two-million-token chapter (docs/history/fabula.md §6).
         assert!(!c.tools.story);
         assert_eq!(c.tools.story_run_timeout_secs, 6 * 60 * 60);
         assert_eq!(c.tools.story_budget_tokens, 6_000_000);

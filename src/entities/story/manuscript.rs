@@ -1,6 +1,6 @@
 //! The story's stores beyond the canon: a chapter's versions, and the pauses —
 //! the questions a run stops at and the human's answers (docs/research/
-//! fabula-engine.md §14 *Pauses*; docs/fabula.md §4, PR 6; §6, T26).
+//! fabula-engine.md §14 *Pauses*; docs/history/fabula.md §4, PR 6; §6, T26).
 //!
 //! Every row is written once and never changed: a revision is a new version
 //! of its chapter, an answer a row beside its question.
@@ -179,7 +179,7 @@ stored_names!(Decision {
 
 /// A question's answer: the decision, the human's notes for the writer, and
 /// the evidence the decision rests on — the messages' ids and quotes, which
-/// the chat tools fill (docs/fabula.md §4, PR 9).
+/// the chat tools fill (docs/history/fabula.md §4, PR 9).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Resolution {
     /// The decision.

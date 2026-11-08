@@ -1,4 +1,4 @@
-//! A story's summary for `mindfork stats` (docs/fabula.md §4, PR 7; spec §12.4):
+//! A story's summary for `mindfork stats` (docs/history/fabula.md §4, PR 7; spec §12.4):
 //! read-only, and readable whatever wrote the file.
 //!
 //! The file is opened read-only, or loaded from a backup's entry into memory,
@@ -15,7 +15,7 @@
 //! Ids alone would not do, since two machines continuing one story write the
 //! same ids with different content, and that is what the digest tells apart.
 //! The simulation's tables, which a story written before it was removed may
-//! hold (docs/fabula.md §6, T28), are not read.
+//! hold (docs/history/fabula.md §6, T28), are not read.
 
 use std::io::Read;
 use std::path::Path;

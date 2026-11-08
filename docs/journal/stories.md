@@ -4,7 +4,7 @@ Fabula, the multi-agent story engine used from the chat: its database and event 
 simulation (characters and the World Master), the Author's loop and its reviewers, the story
 tools with their pauses, and the evaluation that decides whether the simulation stays.
 
-**Reference documents for this area:** [docs/fabula.md](../fabula.md) (the track plan),
+**Reference documents for this area:** [docs/history/fabula.md](../history/fabula.md) (the track plan),
 [docs/research/fabula-engine.md](../research/fabula-engine.md) (the design),
 [ADR 0014](../decisions/0014-fabula-story-engine.md), architecture.md §3
 
@@ -44,7 +44,7 @@ shape read the reference documents named above; for the traps that recur across 
 
 ### Post-M9: Fabula — PR 1, the story database (done)
 
-The first code of the track (docs/fabula.md §4, M0): the domain types, a story's database
+The first code of the track (docs/history/fabula.md §4, M0): the domain types, a story's database
 behind one actor, and the fold of the world over a branch path. Nothing in the application
 calls it yet — the background story run is PR 8 — so both new modules carry an
 `allow(dead_code)` that goes when it lands, and nothing here is user-visible (no CHANGELOG
@@ -121,7 +121,7 @@ item; no released build writes a story).
 
 ### Post-M9: Fabula — PR 2, the model port and replay; Gate G0 GO (done)
 
-M0's second half (docs/fabula.md §4): the model port, its two adapters, the replies'
+M0's second half (docs/history/fabula.md §4): the model port, its two adapters, the replies'
 schemas with their validator and the dialect's check, and one scene played by script, which
 together let a scene be recorded against a model and replayed from its call log. All of it
 sits in `features/story/` under an `allow(dead_code)` until PR 8; nothing is user-visible.
@@ -201,7 +201,7 @@ clean.
 
 ### Post-M9: Fabula — PR 3, the reply's schema on the wire (done)
 
-M1's first pull request (docs/fabula.md §4): schema-constrained decoding on the two wires
+M1's first pull request (docs/history/fabula.md §4): schema-constrained decoding on the two wires
 development runs on, and the engine adapter using it. Nothing the person sees changes: no
 chat turn sets the field, and every request without a schema is the bytes it was.
 
@@ -234,7 +234,7 @@ chat turn sets the field, and every request without a schema is the bytes it was
   meaning is read; and with one prompt for both, M1 compares the decoding alone. The prompt
   hash is unchanged, so PR 2's fixture still replays without drift.
   `EngineAdapter::fallback_only` is for a managed server with a draft model, whose grammar
-  crashes under `json_schema` (docs/fabula.md §5): the supervisor knows that, the adapter
+  crashes under `json_schema` (docs/history/fabula.md §5): the supervisor knows that, the adapter
   cannot, and PR 8 wires it. The live smoke uses it to measure one mechanism against the
   other.
 - **Live: the spec's §8 probe as a smoke** (`schema_live_tests`). Each run plays the harbour
@@ -272,7 +272,7 @@ chat turn sets the field, and every request without a schema is the bytes it was
   `thinking` is not sent, and only Haiku 5.5 takes `disabled`, so the "off" arms there are
   the model's default. On Haiku 5.5 that default wrote more (438–493 tokens) than adaptive
   thinking at the lowest effort (230–251). How the characters mute it on Claude is PR 4's to
-  decide (docs/fabula.md §4, *Thinking on Claude*).
+  decide (docs/history/fabula.md §4, *Thinking on Claude*).
 - **Mutation check:** six mutants, one build. Each was killed:
   - the decorator's delegation;
   - DeepSeek's refusal;
@@ -292,7 +292,7 @@ clean.
 
 ### Post-M9: Fabula — PR 4, the simulation; Gate G1 GO (done)
 
-M1's second pull request (docs/fabula.md §4): the characters and the World Master on a
+M1's second pull request (docs/history/fabula.md §4): the characters and the World Master on a
 live model, a scene as K branches, each character's memory filtered by what it perceived,
 and the planted secrets followed through every call.
 
@@ -411,7 +411,7 @@ and the planted secrets followed through every call.
 
 ### Post-M9: Fabula — PR 5, the reply's schema on the cloud wires (done)
 
-M1's last pull request (docs/fabula.md §4): `ChatRequest.output_schema` on the two wires
+M1's last pull request (docs/history/fabula.md §4): `ChatRequest.output_schema` on the two wires
 PR 3 left, so that a story runs under the constraint whichever cloud the person's model is
 on. Nothing the person sees changes: no chat turn sets the field, and a request without a
 schema is the bytes it was.
@@ -502,7 +502,7 @@ schema is the bytes it was.
 
 ### Post-M9: Fabula — PR 6, the Author's loop (done)
 
-M2's first pull request (docs/fabula.md §4): a chapter from the canon's approval to its
+M2's first pull request (docs/history/fabula.md §4): a chapter from the canon's approval to its
 checkpoint, every step of it resumable. Nothing the person sees changes; the chat tools
 that start a run are PR 8 and PR 9.
 
@@ -651,12 +651,12 @@ that start a run are PR 8 and PR 9.
 
 ### Post-M9: Fabula — PR 7, stories in mindfork's data (done)
 
-M2's second pull request (docs/fabula.md §4): where a story lives in the data directory,
+M2's second pull request (docs/history/fabula.md §4): where a story lives in the data directory,
 what a backup does with it, and what `mindfork stats` says of it. No model is called, and
 nothing the person sees changes until a story exists, which the chat tools of PR 8 and
 PR 9 make. Data without stories backs up, restores and keeps its fingerprint as before.
 
-- **Two forks the plan left open, decided by the owner (2026-11-02, docs/fabula.md §6).**
+- **Two forks the plan left open, decided by the owner (2026-11-02, docs/history/fabula.md §6).**
   *T4:* the plan's row said a story is "hidden and purged with its chat", while mindfork
   has no hard delete (spec §5): a deleted chat is only marked, and its `files/` and
   `workspace/` stay. A story counts as deleted while its chat is hidden, read from the
@@ -743,13 +743,13 @@ PR 9 make. Data without stories backs up, restores and keeps its fingerprint as 
 
 ### Post-M9: Fabula — PR 8, the story run in the background (done)
 
-M2's third pull request (docs/fabula.md §4): a story's run goes out as the third
+M2's third pull request (docs/history/fabula.md §4): a story's run goes out as the third
 background payload, beside the sub-agent's and the dialogue's, and lands in its chat.
 Nothing starts one yet — `story_create` and `story_continue` are PR 9 — so the payload is
 built and proved on the mock engine, and the one tool a person can reach is `story_status`,
 behind `tools.story`, off by default.
 
-- **Two forks the plan left open, decided by the owner (2026-11-02, docs/fabula.md §6).**
+- **Two forks the plan left open, decided by the owner (2026-11-02, docs/history/fabula.md §6).**
   *T6:* T1 named the budget's unit, not its amount. A chapter is bounded by 2,000,000
   tokens, about twice the 718,865 a chapter of three scenes took on Qwen 3.8 27B in PR 6,
   and by no dollar cap unless one is set: Anthropic reports no cost, so a default in
@@ -860,11 +860,11 @@ the settings screenshots regenerated (the Tools section's count, the profile's n
 
 ### Post-M9: Fabula — PR 9, the story driven from the chat; Gate G2 GO (done)
 
-M2's fourth pull request (docs/fabula.md §4): `story_create` and `story_continue`, so a
+M2's fourth pull request (docs/history/fabula.md §4): `story_create` and `story_continue`, so a
 person makes a story from the chat and every answer it waits for is their own words. With it
 the engine is reachable end to end from a chat turn, behind `tools.story`, off by default.
 
-- **Forks decided by the owner (2026-11-02, docs/fabula.md §6).** *T8:* the named scene
+- **Forks decided by the owner (2026-11-02, docs/history/fabula.md §6).** *T8:* the named scene
   rerun at P2 needs the main line to step back, with the scenes after it, the chapter's text
   and its review made again under addresses of their own; it is PR 10, and until then a
   request to replay a scene reads as `change` and revises the text. *T9:* G2 on Claude
@@ -965,7 +965,7 @@ the engine is reachable end to end from a chat turn, behind `tools.story`, off b
   strong, spare prose with its things, numbers and secrets kept, and the faults in its deeper
   logic — clues planted and never paid, a timeline and a kinship that do not add up, every
   conflict resolved at once at no cost, lines that report the scene's state, and chapter 1's
-  summary contradicting itself. Their proposals are in docs/fabula.md, *What G2's readers
+  summary contradicting itself. Their proposals are in docs/history/fabula.md, *What G2's readers
   found*, undecided. Three things the run itself found:
   - *The default budget stopped the first chapter in its second scene* (2,010,278 tokens,
     238 calls), and the script's "go on" restarted a run seven times, each stopping before
@@ -981,7 +981,7 @@ the engine is reachable end to end from a chat turn, behind `tools.story`, off b
     to — and a character's call carries every reflection it has written since the story
     began: the average character prompt was 5,801 tokens in chapter 1's first scene, 14,359
     in its fourth and 17,879 in chapter 2's first; the World Master's 8,209, 20,409 and
-    24,951. A memory window and the cache breakpoints are the levers (docs/fabula.md §5);
+    24,951. A memory window and the cache breakpoints are the levers (docs/history/fabula.md §5);
     the roadmap carries them.
 - **Mutation check:** 27 mutants in one pass and one build: 24 killed. The survivors got a
   test each, seen failing with the mutant: the dialect's echo of a canon problem, a woken
@@ -994,10 +994,10 @@ the engine is reachable end to end from a chat turn, behind `tools.story`, off b
 
 ### Post-M9: Fabula — PR 10, a scene played again at the checkpoint (done)
 
-M2's last pull request (docs/fabula.md §4): P2's fourth answer, *rerun a named scene*, which PR 6
+M2's last pull request (docs/history/fabula.md §4): P2's fourth answer, *rerun a named scene*, which PR 6
 left out because the main line has to step back, and PR 9 read as a revision until it could.
 
-- **Forks decided by the owner (2026-11-03, docs/fabula.md §6).** *T12:* a take has the
+- **Forks decided by the owner (2026-11-03, docs/history/fabula.md §6).** *T12:* a take has the
   chapter's budget of its own, counting the chapter's calls in the runs after it began. *T13:*
   the live check on Qwen 3.8 27B through OpenRouter. Both as recommended.
 - **The take.** Every store is append-only and every id positional, and `scene` is unique by
@@ -1085,10 +1085,10 @@ left out because the main line has to step back, and PR 9 read as a revision unt
 
 ### Post-M9: Fabula — PR 11, the story's register (done)
 
-The first of the two pull requests that act on what G2's readers found (docs/fabula.md §4,
+The first of the two pull requests that act on what G2's readers found (docs/history/fabula.md §4,
 *Before M3*): the bookkeeping they found missing above a world state that held.
 
-- **Forks decided by the owner (2026-11-04, docs/fabula.md §6).** *T15:* two pull requests
+- **Forks decided by the owner (2026-11-04, docs/history/fabula.md §6).** *T15:* two pull requests
   before M3, the bookkeeping first, then the craft. *T16:* a thread still open in the arc's
   last chapter is reported, and the Author pays it off or keeps it open with its reason, which
   the last checkpoint shows. *T17:* the scenes' and the lines' rules in the prompts, with the
@@ -1234,7 +1234,7 @@ The first of the two pull requests that act on what G2's readers found (docs/fab
 
 ### Post-M9: Fabula — PR 12, the craft of the scenes and the lines (done)
 
-The second of the two pull requests that act on what G2's readers found (docs/fabula.md §4,
+The second of the two pull requests that act on what G2's readers found (docs/history/fabula.md §4,
 *Before M3*): the faults of the story's deeper logic that the register does not reach —
 every conflict resolved at once at no cost, lines that report the scene's state or open on
 thanks, a kinship no reviewer could place.
@@ -1356,7 +1356,7 @@ thanks, a kinship no reviewer could place.
   assistant said so and where to raise it and started nothing, and the run was finished at
   14,000,000, the first G2's ceiling. The rules did not lengthen the scenes: chapter 2's
   branches ran 6.0 rounds on average, the first G2's 6.1; the chapter's cost is the story's,
-  which grows with it (docs/fabula.md §5). Things it found:
+  which grows with it (docs/history/fabula.md §5). Things it found:
   - *The scenes are planned as collisions*: every intent names whose goals clash and the price
     (the Russian plans write "Collision:" and "Price:"). The secrets are spent one at a time, over
     two chapters: Timur tells Galina at his father's grave in chapter 1 and Vera only in
@@ -1559,7 +1559,7 @@ not run", 51 minutes and a kept scene in.
 
 M3 measures the simulation against simpler systems at equal cost (spec §11). PR 13 builds the
 runner those systems run in. The owner started M3 on 2026-11-05 and accepted the five forks the
-runner needed (docs/fabula.md §6, T19–T23).
+runner needed (docs/history/fabula.md §6, T19–T23).
 
 - **The premises.** Four agents drafted twenty candidates against the rubric of spec §15:
   - five each in four genres: a mystery, a clash of goals, a villain, a quiet story of a
@@ -1842,7 +1842,7 @@ the record. Each slip was traced to the call that made it, from the stored repli
   secret, which nothing in the story told him: one writer holds every sheet. That is the leak
   F's simulation is built to prevent, and PR 14's rubric should count it. B0's sheet also ends
   on a tray no one carried it to.
-- **As built** (docs/fabula.md §4, *The last version checked*; the owner chose every
+- **As built** (docs/history/fabula.md §4, *The last version checked*; the owner chose every
   recommendation on 2026-11-06):
   - F1. The last revision is reviewed and triaged, and never revised. When the Author accepts
     more high-severity notes on it than on the version before, that version's text goes on as
@@ -1919,7 +1919,7 @@ why; one chapter of the five reached its goal, Sonnet's on `mystery-2`.
   - The pick scored tension, surprise, truth to character and consequences, never the goals.
   - The Author narrowed "someone is betrayed before nine" into "Nina signs", one character's
     decision, which the simulated Nina refused in all three runs.
-- **As built** (docs/fabula.md §4, *A chapter that reaches its goal*; the owner chose every
+- **As built** (docs/history/fabula.md §4, *A chapter that reaches its goal*; the owner chose every
   recommendation on 2026-11-06):
   - G1. The outline, the plan and the pick name the chapter as N of M, and the arc's last as
     the one no chapter comes after.
@@ -1993,7 +1993,7 @@ The owner chose Haiku 5.5 for every system (T19) and ran the batch on a DigitalO
 away from this computer's power and line. A Claude Code session on the droplet did the work
 from a brief: it built `main` at `64c12819` (the code of PR #886) in 6 min 25 s, wrote the key
 from the droplet's own variable into the unit's file without printing it, and started the unit
-of docs/fabula.md §4 with `--parallel 8` and a 9-million-token chapter budget. On its own it
+of docs/history/fabula.md §4 with `--parallel 8` and a 9-million-token chapter budget. On its own it
 added a timer that summed the call logs' dollars every five minutes and would have stopped the
 unit past $65.
 
@@ -2016,7 +2016,7 @@ unit past $65.
     her patient's heart against the plane's one place: every branch of a scene failed on it,
     twice, and the story stopped for good. All 30 refusals of the run, in 22,884 calls, were
     that step on `clash-3`; its seed 3 met six and finished. The refused replies were benign
-    deliberation in her own voice, cut at a few hundred tokens: what docs/fabula.md §5 lists
+    deliberation in her own voice, cut at a few hundred tokens: what docs/history/fabula.md §5 lists
     as a refusal of what reads as the model's own reasoning.
 - **Equal cost.** B0 spent 5–12% above the average of its premise's finished F stories on every
   premise, 9% on the mean: its stop is checked before a critique, so the revision that crosses
@@ -2076,7 +2076,7 @@ limits of the engine's plumbing would have decided five pairs. The owner chose t
 ### Post-M9: Fabula — PR 14, the blind judging by three models (done)
 
 Spec §11 had three people judge a calibration set of 12 pairs before a panel of models took
-the rest. The owner set that aside (2026-11-07, docs/fabula.md §6, T24): neither they nor the
+the rest. The owner set that aside (2026-11-07, docs/history/fabula.md §6, T24): neither they nor the
 friends who would read are literary professionals, and three flagship models, told what to
 weigh and reasoning at their most, may read better. The judges are Claude Fable 5.1 on
 Anthropic's API, and GPT-6 Astra and Gemini 4 Argon through OpenRouter, pinned to `openai` and
@@ -2291,7 +2291,7 @@ $90, $50 of it Fable's, with the phase's cost read from the call logs every quar
 ### Post-M9: Fabula — PR 15, the story tools on B0 (done)
 
 M3's rule stopped the track, and the owner kept the story tools, behind `tools.story` and off,
-running B0, and took every recommendation of the switch's forks (2026-11-08; docs/fabula.md
+running B0, and took every recommendation of the switch's forks (2026-11-08; docs/history/fabula.md
 §6, T25–T28). This pull request is the switch; the next one removes F.
 
 - **A chapter is B0's session** (`features/story/single_story.rs`). The session M3 judged is

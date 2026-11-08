@@ -1,5 +1,5 @@
 //! Orchestrator tests — a story's run out in the **background**
-//! (docs/fabula.md §4, PR 8): the third payload beside the sub-agent's and the
+//! (docs/history/fabula.md §4, PR 8): the third payload beside the sub-agent's and the
 //! dialogue's. The record a `story_continue` call leaves is staged by hand (the
 //! call itself is tested in [`super::story_conversation`]), the run spawns
 //! through the same seat every background run takes, and its end lands by id:

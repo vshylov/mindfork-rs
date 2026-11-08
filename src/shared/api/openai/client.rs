@@ -88,7 +88,7 @@ struct Gateway {
     attribution: bool,
     /// The providers every request is pinned to: none in the app, whose
     /// routing stays the gateway's; Fabula's evaluation runner may pin one
-    /// (docs/fabula.md §4, PR 13).
+    /// (docs/history/fabula.md §4, PR 13).
     pinned: Vec<String>,
 }
 
@@ -186,7 +186,7 @@ impl OpenAiClient {
     /// Pins every request to `providers`, with no fallback. Builder-style;
     /// only on the gateway ([`Self::for_openrouter`] first). The app never
     /// calls it: Fabula's evaluation runner does, so that every story of a
-    /// comparison is written by the same endpoint (docs/fabula.md §4, PR 13).
+    /// comparison is written by the same endpoint (docs/history/fabula.md §4, PR 13).
     pub fn pinned_to(mut self, providers: Vec<String>) -> Self {
         if let Some(gateway) = self.gateway.as_mut() {
             gateway.pinned = providers;

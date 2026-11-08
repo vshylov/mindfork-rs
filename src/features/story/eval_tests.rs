@@ -1,4 +1,4 @@
-//! Tests of the evaluation runner (docs/fabula.md §4, PR 13; §6, T28): the
+//! Tests of the evaluation runner (docs/history/fabula.md §4, PR 13; §6, T28): the
 //! systems' names, the premises held to their hashes, the command's
 //! arguments, the batch's skipping, and one story written end to end with its
 //! markdown and trace.
@@ -349,7 +349,7 @@ async fn a_story_is_written_into_its_directory_with_its_markdown_and_trace() {
 }
 
 /// A story its time limit cuts stops at the step in flight, its trace says
-/// so, and a batch tries it again (docs/fabula.md §6, T2).
+/// so, and a batch tries it again (docs/history/fabula.md §6, T2).
 #[tokio::test]
 async fn a_story_cut_by_its_time_limit_is_told_so_and_is_not_ended() {
     let out = tempfile::tempdir().unwrap();

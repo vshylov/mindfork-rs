@@ -763,7 +763,7 @@ const QWEN: &str = r#"{"data":{"id":"qwen/qwen3.8-27b","context_length":262144,
 /// A schema whose properties are not in alphabetical order.
 const SCHEMA: &str = r#"{"type":"object","properties":{"thought":{"type":"string"},"act":{"type":"string"}},"required":["thought","act"],"additionalProperties":false}"#;
 
-/// docs/fabula.md §4, PR 3: a model whose entry lists `structured_outputs` is
+/// docs/history/fabula.md §4, PR 3: a model whose entry lists `structured_outputs` is
 /// asked with the schema, in the bytes it was printed as, and with
 /// `require_parameters`, so no endpoint that would take it as a hint answers.
 #[tokio::test]
@@ -796,7 +796,7 @@ async fn a_schema_reaches_the_gateway_as_printed() {
     );
 }
 
-/// Fabula's evaluation runner pins the client to one provider (docs/fabula.md
+/// Fabula's evaluation runner pins the client to one provider (docs/history/fabula.md
 /// §4, PR 13): every chat request names it, with no fallback, beside the
 /// schema's ask.
 #[tokio::test]

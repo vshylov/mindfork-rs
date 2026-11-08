@@ -1,4 +1,4 @@
-//! Stories in `mindfork stats` and `--compare` (docs/fabula.md §4, PR 7). The
+//! Stories in `mindfork stats` and `--compare` (docs/history/fabula.md §4, PR 7). The
 //! stories are written by the story store's own writers into the data root the
 //! summary's other tests use, so the reader meets what the engine leaves on
 //! disk: a story under its chat, counted as deleted while the chat is hidden
@@ -350,7 +350,7 @@ fn a_copy_without_stories_keeps_its_fingerprint() {
 
 /// Writes the fixture root with two stories, one in a deleted chat, into
 /// `MINDFORK_STORY_DATA_OUT`: the data the previous release is run on, by its
-/// binary, for a backup that holds stories (docs/fabula.md §4, PR 7;
+/// binary, for a backup that holds stories (docs/history/fabula.md §4, PR 7;
 /// docs/lessons.md §8). Skipped without the variable.
 #[test]
 #[ignore]

@@ -2628,12 +2628,12 @@ what it charged for it.
 
 Fabula is a story engine run from the chat. Each chapter is written by one writer,
 the chat's own model, in a session of its own: a draft, then a critique and a
-revision at a time (docs/fabula.md §6, T25–T27). The simulation it was built around —
+revision at a time (docs/history/fabula.md §6, T25–T27). The simulation it was built around —
 characters proposing actions, a World Master committing them to a branched event
 log, an Author picking a branch and reviewers returning notes — lost to that writer
-in M3's blind judging and is not in the tools (docs/fabula.md §4, M3). The design is
+in M3's blind judging and is not in the tools (docs/history/fabula.md §4, M3). The design is
 [docs/research/fabula-engine.md](docs/research/fabula-engine.md) (*the Fabula
-spec* below), the plan [docs/fabula.md](docs/fabula.md), the decision to build it
+spec* below), the plan [docs/history/fabula.md](docs/history/fabula.md), the decision to build it
 here [ADR 0014](docs/decisions/0014-fabula-story-engine.md). The engine is an
 experiment, so the tools sit behind **`tools.story`, off by default**: off, none of them is in the catalog's effective
 set and no request differs by a byte. A profile can turn them off in its tool list
@@ -2676,7 +2676,7 @@ they like, or asks for changes.
   that stopped short, but only on a turn that answers the person: a turn the app
   woke on a run's notification is refused, since whether a stopped story goes on
   — after a stop the person made, a time limit, a call that failed — is the
-  person's to say (docs/fabula.md §6, T14 (a)); the woken assistant says where and
+  person's to say (docs/history/fabula.md §6, T14 (a)); the woken assistant says where and
   why it stopped and asks. A chapter whose budget is spent starts no run, which would
   stop before its first call: the tool says what was spent and where the budget is
   raised, and an answer read on the way is kept. It takes the background slot
@@ -2704,13 +2704,13 @@ they like, or asks for changes.
   with everything they share: the seat, the record on the call that started it
   (`kind: story`, the reason for `CHAT_SCHEMA` 7→8, [§12.2](#122-schema-versioning-and-migration)),
   the landing by id, the notification and its wake, `/subagents stop` and `F6`,
-  the tasks screen, a slot of `tools.subagent_background_max` (docs/fabula.md §6,
+  the tasks screen, a slot of `tools.subagent_background_max` (docs/history/fabula.md §6,
   T7 (a)). It takes the story **from where it stands to its next pause** — the
   canon's approval (P1) or a chapter's checkpoint (P2) — on the chat's own engine,
   each call under the app's session budget, so at `sessions = 1` a chapter's calls
   and the chat's turns take turns request by request. A story has one run at a
   time; a second is refused with the first one's address.
-- **A chapter** (docs/fabula.md §6, T25–T27) is a session of the writer's, its
+- **A chapter** (docs/history/fabula.md §6, T25–T27) is a session of the writer's, its
   turns sent as the conversation they are, at a medium effort with room for 32,000
   tokens a reply. It is given the canon, the chapter's goal in the arc, the text of
   every accepted chapter before it, whole, and what the person asked of it at the
@@ -2730,7 +2730,7 @@ they like, or asks for changes.
   calls, not the run: the engine stops at the step in flight and records it. The
   chapter's budget is `tools.story_budget_tokens` (6,000,000, prompt and reply,
   every call of the chapter in every run of its latest take; `0` — none;
-  docs/fabula.md §6, T11 (a), T12 (a)) and
+  docs/history/fabula.md §6, T11 (a), T12 (a)) and
   `tools.story_budget_usd` (empty — none), counted where the provider reports a
   call's cost; it is checked before each turn, and a spent one ends the chapter at
   its last version written, asked about at P2 — or, with no version yet, stops the
@@ -5774,7 +5774,7 @@ names a self-hosted `telegram-bot-api` (not on the settings screen).
 
 ### 12.3. Backup and deletion
 
-- **Soft delete is mandatory** (`is_hidden`; cascading profile→chats→notes/RAG). A chat's stories go with it: a story counts as deleted while its chat is hidden, which is read from the chat and never stored twice, and its files stay ([docs/fabula.md](docs/fabula.md) §6, T4).
+- **Soft delete is mandatory** (`is_hidden`; cascading profile→chats→notes/RAG). A chat's stories go with it: a story counts as deleted while its chat is hidden, which is read from the chat and never stored twice, and its files stay ([docs/history/fabula.md](docs/history/fabula.md) §6, T4).
 - A chat-file backup on save (atomic write-rename).
 - **Backing up/restoring all data** — a TUI-free CLI (`features/backup.rs`): `mindfork backup [-o FILE] [-c 0..9] [-p PASSWORD]` (zips the data directory: `chats/`, `dictionaries/`, `locales/`, `themes/`, `files/`, `workspace/`, `stories/`, `data.db`, `profiles.json`, `settings.json`, `personal_dictionary.txt`, every `*.bak`, and `tools.fs_root` if it's inside the data directory; excluding `backups/`/`logs/`/`story-logs/`/`defaults.json`/`location.json`; compression level 0–9) and `mindfork restore <archive> [-p PASSWORD]`. The directory list is **one constant** for both halves — what a backup packs is what a restore clears — so a directory cannot be packed and then survive a restore, or be cleared and never come back. Two of them hold bytes nothing can recompute: `files/`, what `python_exec` saved for a chat ([§9.7](#97-chat-file-attachments-file-attach)), and `workspace/`, the pre-image of every file the assistant edited in a chat's project ([§9.12](#912-the-code-workspace-project-and-the-code_-tools)) — without the latter a restored chat can still show what changed but no longer put it back. `stories/` holds each chat's Fabula stories, `stories/<chat-id>/<story-id>.db`, packed as they lie: a story is written only through its database actor, under the default rollback journal, and the commands hold the lock. Each story's call log, `story-logs/<chat-id>/<story-id>.db`, is in neither half by the owner's decision ([docs/research/fabula-engine.md](docs/research/fabula-engine.md) §15): it is kept for replay and is the bulk of a story's bytes. A restore can therefore put back a story behind its log, so the story's next run is numbered past the last run of either file, and a chapter's budget counts only the calls of runs the story knows. The commands take the single-instance lock (protecting `data.db` from a race). **Restore is transactional**: archive validation (anti-zip-slip) before any destructive action → if data exists, an automatic pre-restore copy into `backups/` → clearing → unpacking; if unpacking fails — roll back to the pre-restore copy. The outcome is reported to the console. An archive the app names itself (`<prefix>-<date>-<time>.zip`, to the second) never takes a name that exists: a taken one gets `-2`, `-3`…. Before that, restoring the pre-restore copy in the second it was made wrote the new copy over it, and unpacked that.
 - **The archive can be password-protected.** The password comes either from `--password` on `backup`/`restore` or from the settings ("Data" section), where it is stored **encrypted and bound to this machine**, exactly like a cloud API key ([ADR 0008](docs/decisions/0008-api-key-storage.md)); the argument wins over the setting, an empty value means "no password". The stored password and `tools.fs_root` are read from the **raw JSON** of `settings.json`, not through the typed configuration: a settings file the app refuses to start on ([§12.2](#122-schema-versioning-and-migration)) is exactly the one its owner wants a backup of before repairing it, and that backup must not come out in plaintext because one unrelated value failed the parse. When the file cannot give them at all — it is not JSON — the command runs without them and says that the stored password is unavailable. With one set, every data entry is encrypted with **WinZip AES-256** (`manifest.json` deliberately stays readable — it holds no user data, so the "backup from a newer version" warning still works without the password), and the archive remains openable by 7-Zip/WinZip. Restore accepts an encrypted **and** an unencrypted archive with no mode switch: the zip layer discards a password an entry doesn't need. A missing or wrong password is refused **before** anything is deleted — the password is verified when an entry is opened, so the pre-flight validation above covers it; on an interactive terminal `restore` prompts for it (up to three attempts) instead of failing, which is the case when restoring an archive from another machine. The copies the app makes on its own — the pre-restore copy and the pre-migration backup ([§12.2](#122-schema-versioning-and-migration)) — are encrypted too, so the setting has no exception that quietly writes a plaintext copy of everything. **What it does not protect** ([docs/history/backup-password.md](docs/history/backup-password.md) §2): entry names, sizes and the directory structure stay visible (ZIP AES encrypts content only); the key derivation is fixed by the format at PBKDF2-HMAC-SHA1/1000, which is weak against offline brute force of a short password — hence the hint asking for a passphrase; and a password known only to a dead machine makes its archives unreadable, so it has to be recorded elsewhere.

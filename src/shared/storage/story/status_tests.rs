@@ -1,4 +1,4 @@
-//! Tests of a story's state as `story_status` reads it (docs/fabula.md §4,
+//! Tests of a story's state as `story_status` reads it (docs/history/fabula.md §4,
 //! PR 8): written by the store's own writers, read beside a store that is
 //! still open, and left as it was.
 

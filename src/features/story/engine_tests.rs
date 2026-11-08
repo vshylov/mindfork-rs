@@ -338,7 +338,7 @@ fn call_at(story: &crate::features::story::single::tests::Story, address: &str) 
     }
 }
 
-/// docs/fabula.md §4, PR 3: where the backend constrains, every JSON attempt
+/// docs/history/fabula.md §4, PR 3: where the backend constrains, every JSON attempt
 /// carries the schema as printed, named for its role, the repair included; the
 /// prompt keeps the schema too; the log says `schema`; and the backend is asked
 /// once for the adapter's life.
@@ -470,7 +470,7 @@ async fn a_role_gets_its_own_sampling_and_the_others_keep_the_adapters() {
     assert_eq!(judge.call.role, "judge");
 }
 
-/// Every call takes the app's session budget (docs/fabula.md §3): with its one
+/// Every call takes the app's session budget (docs/history/fabula.md §3): with its one
 /// permit held — the chat's turn streaming — a call waits, and streams once
 /// the turn's stream ends; cancelled while it waits, it records nothing.
 #[tokio::test]

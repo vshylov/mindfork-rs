@@ -7294,7 +7294,7 @@ Gemma 4's replies to English requests into a JSON envelope —
 
 ### Post-M9: thinking off reaches Claude (done)
 
-Found while building the story engine's characters (docs/fabula.md §4, PR 4), which run
+Found while building the story engine's characters (docs/history/fabula.md §4, PR 4), which run
 with thinking off: on Claude a muted turn was not muted. The Anthropic wire sent no
 `thinking` field for one, reading absence as off, and the 5.5 generation thinks when the
 field is absent (PR 3's probe: Haiku 5.5's "off" arms wrote 438–493 tokens, its thinking

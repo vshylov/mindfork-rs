@@ -679,7 +679,7 @@ enum FieldId {
     /// How long a quit waits for the app's own background tasks to land
     /// (`tools.quit_settle_secs`; empty — until they do).
     TQuitSettle,
-    /// Offer the story tools (`tools.story`, docs/fabula.md), off by default.
+    /// Offer the story tools (`tools.story`, docs/history/fabula.md), off by default.
     TStory,
     /// The time limit of one story run, in seconds (`tools.story_run_timeout_secs`).
     TStoryTimeout,

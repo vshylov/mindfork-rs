@@ -1308,7 +1308,7 @@ impl SettingsScreen {
                 .describe(loc.t("ui.settings.desc.workspace_max_rounds")),
             ],
         ));
-        // The story engine (docs/fabula.md): a group of its own, last, since it
+        // The story engine (docs/history/fabula.md): a group of its own, last, since it
         // is experimental and runs for hours rather than minutes.
         rows.extend(grouped(
             loc.t("ui.settings.group.story"),
@@ -1331,7 +1331,7 @@ impl SettingsScreen {
                     FieldKind::Text(t.story_budget_tokens.to_string()),
                 )
                 .describe(loc.t("ui.settings.desc.story_budget_tokens")),
-                // Empty — no dollar cap (docs/fabula.md §6, T6).
+                // Empty — no dollar cap (docs/history/fabula.md §6, T6).
                 row(
                     FieldId::TStoryBudgetUsd,
                     loc.t("ui.settings.field.story_budget_usd"),

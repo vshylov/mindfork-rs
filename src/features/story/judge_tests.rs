@@ -1,4 +1,4 @@
-//! Tests of M3's blind judging (docs/fabula.md §4, PR 14): the pairs and
+//! Tests of M3's blind judging (docs/history/fabula.md §4, PR 14): the pairs and
 //! their names, what a judge is shown, the controls' shuffle, both orders,
 //! the count of the votes and the binomial test, and one judge's run written
 //! end to end and resumed.

@@ -56,7 +56,7 @@ pub struct GenConfig {
     /// `responseJsonSchema` and not the `responseFormat` the API reference
     /// now recommends: `gemini-2.5-flash` ignores `responseFormat` in silence
     /// and answers in prose, 4 times of 4, where `responseJsonSchema` holds on
-    /// 2.5, 3.5, 3.8 and Gemma 4 alike (measured 2026-11-01, docs/fabula.md
+    /// 2.5, 3.5, 3.8 and Gemma 4 alike (measured 2026-11-01, docs/history/fabula.md
     /// §4, PR 5). A field the API one day stops reading fails loudly, as a
     /// `400`; a field a model ignores fails as prose.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1220,7 +1220,7 @@ mod cache_figure_tests {
     }
 }
 
-/// The reply's schema on the wire (docs/fabula.md §4, PR 5).
+/// The reply's schema on the wire (docs/history/fabula.md §4, PR 5).
 #[cfg(test)]
 mod output_schema_tests {
     use super::build_request;

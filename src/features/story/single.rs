@@ -1,4 +1,4 @@
-//! M3's B0 (docs/research/fabula-engine.md §11; docs/fabula.md §6, T21):
+//! M3's B0 (docs/research/fabula-engine.md §11; docs/history/fabula.md §6, T21):
 //! one agent, one session. It is given the canon as the Author is, and the
 //! same rules of the prose. It writes the story, then reads it as an editor
 //! and writes it again, each turn seeing the whole session, until it has
@@ -6,7 +6,7 @@
 //! next turn would not fit the model's window. The story is the last
 //! version written that does not break off mid-sentence.
 //!
-//! The story tools write each chapter as such a session (docs/fabula.md §6,
+//! The story tools write each chapter as such a session (docs/history/fabula.md §6,
 //! T25–T27; [`super::single_story`]): an [`Ask`] names the chapter, its place
 //! in the arc, the accepted chapters before it and the person's notes for it.
 //! A story of one chapter is asked what M3 asked, word for word.
@@ -125,7 +125,7 @@ pub struct Written {
 }
 
 /// What a session writes: M3's story of one chapter, or chapter `n` of a
-/// story the chat's tools write (docs/fabula.md §6, T27).
+/// story the chat's tools write (docs/history/fabula.md §6, T27).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Ask {
     /// The chapter, from 1.
@@ -283,7 +283,7 @@ pub fn draft_ask(canon: &Canon, words: (u32, u32)) -> String {
 
 /// The editor's turn: what a reviewer of F would look for (spec §7's Reader
 /// and Continuity checker, the craft's rules of PR 12, the staging pass's
-/// names and languages and the engine's length of docs/fabula.md §4, *The last
+/// names and languages and the engine's length of docs/history/fabula.md §4, *The last
 /// version checked*), asked of the writer.
 pub const CRITIQUE_ASK: &str = "Now read your story as its editor would, without rewriting \
 it yet. Name each thing that does not work, and where: a conflict that goes slack or ends \

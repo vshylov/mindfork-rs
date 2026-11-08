@@ -3,7 +3,7 @@
 //! reads a schema as the JSON a provider would receive and names every rule
 //! the schema breaks, whatever built it. The tests hold every schema the
 //! engine derives to it; `story_create` holds the canon it receives to the
-//! same rules (docs/fabula.md §4, PR 9).
+//! same rules (docs/history/fabula.md §4, PR 9).
 //!
 //! The rules: the root is a closed object; every object is closed
 //! (`additionalProperties: false`) and lists every property as required; a

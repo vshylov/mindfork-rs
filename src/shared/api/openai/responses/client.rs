@@ -384,7 +384,7 @@ mod tests {
     }
 
     /// `text.format` is strict on every OpenAI model, so the story engine
-    /// sends its schemas there (docs/fabula.md §4, PR 5).
+    /// sends its schemas there (docs/history/fabula.md §4, PR 5).
     #[tokio::test]
     async fn the_responses_client_enforces_a_schema() {
         let client = ResponsesClient::new("http://127.0.0.1:9", "k", "gpt-x");

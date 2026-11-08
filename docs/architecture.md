@@ -30,7 +30,7 @@ sources of truth:
   [0013](decisions/0013-messenger-bridge.md) — the messenger bridge: a seat of
   its own for a turn whose chat is not on screen, Telegram first; and
   [0014](decisions/0014-fabula-story-engine.md) — Fabula, a multi-agent story
-  engine inside mindfork, used from the chat through tools (in progress, [fabula.md](fabula.md));
+  engine inside mindfork, used from the chat through tools (in progress, [fabula.md](history/fabula.md));
 - **[docs/install.md](install.md)** — install/run, engine, env.
 
 > Terminology: **engine** = the inference provider behind the `EngineBackend`
@@ -323,7 +323,7 @@ src/
 │  │  ├─ background.rs      slot registry for silent background tasks (BgSlot by BackgroundKind)
 │  │  ├─ background_runs.rs sub-agent runs out in the background: seats, landing by id, the notification (spec §9.3.2)
 │  │  ├─ story_runs.rs      a story's run out in the background, the third payload (spec §9.16,
-│  │  │                     docs/fabula.md PR 8): its spec and placeholder, the run on the turn's
+│  │  │                     docs/history/fabula.md PR 8): its spec and placeholder, the run on the turn's
 │  │  │                     backend under the app's budget, the landing — the record, the
 │  │  │                     notification's body, the chapter's attachment decided against the chat
 │  │  │                     at the landing, the line a quit leaves; the turn's snapshot of the
@@ -645,7 +645,7 @@ src/
 │  │  │                     refusals and started lines, and the reminder line (PR 9)
 │  │  └─ subagent.rs        call_subagent — schema + args; the loop runs it (ADR 0010)
 │  ├─ spellcheck/           check, segment, dict, mod — Hunspell + segmenter + personal dictionary
-│  ├─ story/                Fabula's engine (docs/fabula.md §3; the simulation removed after M3, §6
+│  ├─ story/                Fabula's engine (docs/history/fabula.md §3; the simulation removed after M3, §6
 │  │                        T28): port.rs — LlmPort and the one policy every answer walks (a cut
 │  │                        or a transient failure tried once more, an invalid reply repaired once
 │  │                        quoting the validator, a refusal final); engine.rs — the port over the
@@ -781,7 +781,7 @@ src/
 │  │                        stories by their rows (`storage::story::stats`), the verdict;
 │  │                        `data_stats/snapshot.rs` — reading the other copy
 │  │                        (a snapshot, format-guarded, or an archive — told by the bytes).
-│  │                        A story is deleted while its chat is (docs/fabula.md §6 T4)
+│  │                        A story is deleted while its chat is (docs/history/fabula.md §6 T4)
 │  ├─ data_migration.rs     schema migration orchestration at startup (ADR 0006): downgrade/
 │  │                        corruption gates, pre-migration backup, control-parse
 │  ├─ terminal_input.rs     CLI terminal input: the hidden backup-password prompt, and
@@ -852,7 +852,7 @@ src/
 │  ├─ rag.rs                RagDocument / RagHit
 │  ├─ sampling.rs           SamplingConfig, ReasoningEffort, resolve (three-tier priority)
 │  ├─ self_model.rs         SelfModel — the per-profile self-model (§9)
-│  ├─ story/                Fabula's domain (docs/research/fabula-engine.md §4–§5, docs/fabula.md):
+│  ├─ story/                Fabula's domain (docs/research/fabula-engine.md §4–§5, docs/history/fabula.md):
 │  │                        keys the canon fixes and ids derived from position (`run2`, `ch1/v2`,
 │  │                        `q3`); canon.rs — Canon and check() (every problem at once: keys,
 │  │                        routes, a map every place of which reaches every other, starts, empty
@@ -4857,7 +4857,7 @@ Principles:
   `profiles.json`, `chats/`, `data.db`, `personal_dictionary.txt`,
   `dictionaries/`, `backups/`, `logs/`, and the chats' stories with their call
   logs, `stories/<chat-id>/<story-id>.db` and `story-logs/<chat-id>/<story-id>.db`
-  (docs/fabula.md §6 T5). A `defaults.json` file next to the
+  (docs/history/fabula.md §6 T5). A `defaults.json` file next to the
   binary (always outside `data/`; `Defaults` = `DataLocation`
   `portable`/`system`/`path` + `default_language`) switches the root to a
   standard OS folder (the `directories` crate) or a custom directory, and

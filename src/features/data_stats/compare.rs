@@ -25,7 +25,7 @@
 //! A story is lined up by its chat's id and its own, and compared by its rows
 //! (`StoryRow::units`): nothing in a story changes in place, so a side that
 //! holds every row of the other's is **ahead**, and one id under two contents
-//! is a row each side lacks, which makes the story **diverged** (docs/fabula.md
+//! is a row each side lacks, which makes the story **diverged** (docs/history/fabula.md
 //! §4, PR 7).
 
 use std::collections::{BTreeMap, BTreeSet};

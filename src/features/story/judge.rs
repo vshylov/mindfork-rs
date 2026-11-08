@@ -1,8 +1,8 @@
-//! M3's blind judging (docs/fabula.md §4, PR 14; docs/research/fabula-engine.md
+//! M3's blind judging (docs/history/fabula.md §4, PR 14; docs/research/fabula-engine.md
 //! §11): every pair of stories read by a panel of models, in both orders, and
 //! the decision rule's count.
 //!
-//! - **The judges are models** (docs/fabula.md §6, T24): three flagships of
+//! - **The judges are models** (docs/history/fabula.md §6, T24): three flagships of
 //!   three families take the place of the three people, each run by its own
 //!   `story-eval judge` on its own wire, its calls in its own call log.
 //! - **Blind.** A judge reads two stories as "Story 1" and "Story 2", their

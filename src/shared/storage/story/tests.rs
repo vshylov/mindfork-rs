@@ -1,4 +1,4 @@
-//! The story database against the harbour fixture (docs/fabula.md §4, PR 1):
+//! The story database against the harbour fixture (docs/history/fabula.md §4, PR 1):
 //! what the schema refuses, the single writer, the canon's versions, the run
 //! log, and the files' versions.
 

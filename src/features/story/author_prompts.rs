@@ -1,5 +1,5 @@
 //! The writer's prompts' shared parts (docs/research/fabula-engine.md §15;
-//! docs/fabula.md §6, T21): the canon as the writer reads it and the rules of
+//! docs/history/fabula.md §6, T21): the canon as the writer reads it and the rules of
 //! the prose, in English by the owner's decision. The writer sees the whole
 //! canon, the arc and every secret included, but never a planted token: a
 //! secret's text is shown without its `[SECRET-…]` marker, so the prose
@@ -17,7 +17,7 @@ pub fn story_language(canon: &Canon) -> &str {
 
 /// The canon as the Author reads it: the world's rules, the places and their
 /// routes, the items, the whole cast with their goals and secrets, the style,
-/// the premise and the arc. M3's B0 is given it too (docs/fabula.md §6, T21).
+/// the premise and the arc. M3's B0 is given it too (docs/history/fabula.md §6, T21).
 pub fn canon_brief(canon: &Canon) -> String {
     let places: Vec<String> = canon
         .locations
@@ -134,7 +134,7 @@ pub fn writing_rules(canon: &Canon, words: (u32, u32)) -> String {
     )
 }
 
-/// A revision's names (docs/fabula.md §4, *The last version checked*, F4):
+/// A revision's names (docs/history/fabula.md §4, *The last version checked*, F4):
 /// each writing call puts the canon's names into the story's language anew,
 /// and Haiku's last revision on `villain-4` gave Pavel a second patronymic.
 pub const KEEP_NAMES: &str = "Keep every name, patronymic and form of address as the chapter \

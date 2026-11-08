@@ -1,4 +1,4 @@
-//! `story_continue` as the turn's loop runs it (docs/fabula.md §4, PR 9;
+//! `story_continue` as the turn's loop runs it (docs/history/fabula.md §4, PR 9;
 //! docs/research/fabula-engine.md §14, *The answer is the user's own words*).
 //!
 //! The loop intercepts the call, as it intercepts `start_dialogue`: the

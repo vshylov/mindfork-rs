@@ -1,4 +1,4 @@
-//! The actor's queries over the manuscript and the pauses (docs/fabula.md §4,
+//! The actor's queries over the manuscript and the pauses (docs/history/fabula.md §4,
 //! PR 6; docs/research/fabula-engine.md §6, §14 *Pauses*): chapter versions,
 //! questions and their answers, and what a chapter's calls cost.
 //!
@@ -306,7 +306,7 @@ impl Actor {
     // ---------- the spend ----------
 
     /// What chapter `chapter` has cost, every call of it in every run
-    /// (docs/fabula.md §6, T1).
+    /// (docs/history/fabula.md §6, T1).
     pub(in crate::shared::storage::story) fn chapter_spend(
         &self,
         chapter: u32,
@@ -315,10 +315,10 @@ impl Actor {
     }
 
     /// What the calls at addresses under `prefix` (`ch1/`) cost, across every
-    /// run of the story and every attempt (docs/fabula.md §6, T1). A run the
+    /// run of the story and every attempt (docs/history/fabula.md §6, T1). A run the
     /// call log holds and the story does not is left out: a story restored
     /// from a backup, which carries no log, is behind its log, and that run's
-    /// calls built what the restore took back (docs/fabula.md §4, PR 7).
+    /// calls built what the restore took back (docs/history/fabula.md §4, PR 7).
     pub(in crate::shared::storage::story) fn spend(
         &self,
         prefix: &str,

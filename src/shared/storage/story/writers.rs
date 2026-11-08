@@ -6,7 +6,7 @@
 //! "Not `Clone`" is checked at compile time below: the crate has no library
 //! target, so neither `trybuild` nor a `compile_fail` doctest can run, and the
 //! ambiguity trick `static_assertions::assert_not_impl_any!` uses stands in
-//! (docs/fabula.md §5).
+//! (docs/history/fabula.md §5).
 
 use serde_json::Value;
 

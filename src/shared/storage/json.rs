@@ -73,7 +73,7 @@ impl JsonStore {
         self.paths.files_dir()
     }
 
-    /// The database of story `story_id` in chat `chat_id` (docs/fabula.md §6,
+    /// The database of story `story_id` in chat `chat_id` (docs/history/fabula.md §6,
     /// T5). See [`Paths::story_db`].
     pub fn story_db(&self, chat_id: &str, story_id: &str) -> std::path::PathBuf {
         self.paths.story_db(chat_id, story_id)

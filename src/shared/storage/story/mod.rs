@@ -1,5 +1,5 @@
 //! A story's database: Fabula's stores behind one actor
-//! (docs/research/fabula-engine.md §5, §6, §9; docs/fabula.md §3).
+//! (docs/research/fabula-engine.md §5, §6, §9; docs/history/fabula.md §3).
 //!
 //! - **One physical writer.** A thread of its own owns the only connections
 //!   to the story's two files (the database and its call log); rusqlite calls
@@ -135,7 +135,7 @@ fn join(problems: &[CanonProblem]) -> String {
         .join("; ")
 }
 
-/// What a set of calls cost, as the call log recorded it (docs/fabula.md §6,
+/// What a set of calls cost, as the call log recorded it (docs/history/fabula.md §6,
 /// T1: tokens on every provider, dollars where the provider reports them).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Spend {
@@ -395,7 +395,7 @@ impl StoryDb {
         self.run(|a| Ok(a.canon()?.map(|c| (*c).clone()))).await
     }
 
-    /// What chapter `chapter` has cost, against its budget (docs/fabula.md
+    /// What chapter `chapter` has cost, against its budget (docs/history/fabula.md
     /// §6, T1).
     pub async fn chapter_spend(&self, chapter: u32) -> Result<Spend, StoryDbError> {
         self.run(move |a| a.chapter_spend(chapter)).await

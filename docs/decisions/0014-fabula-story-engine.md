@@ -3,7 +3,7 @@
 **Status:** accepted (2026-10-31) — the owner chose option A (inside mindfork-rs, against
 the research's recommendation of a separate repository), the tool form, one model for
 every role, and the answers to every open question (*Decision* below). Not built yet; the
-stages are [docs/fabula.md](../fabula.md). The design and its evidence —
+stages are [docs/history/fabula.md](../history/fabula.md). The design and its evidence —
 [docs/research/fabula-engine.md](../research/fabula-engine.md) (*the spec*). Related:
 [ADR 0004](0004-engine-contract-multi-provider.md) (the engine contract the roles call
 through), [ADR 0006](0006-data-schema-versioning.md) (the story database's schema),
@@ -79,7 +79,7 @@ after M3 (D, recommended). The owner chose A.
 
    **After M3 (2026-11-08).** Neither the simulation nor A1 beat B0, one writer in one
    session, in a blind judging by three models. The owner kept the tools on B0, and the
-   simulation is removed (docs/fabula.md §6, T25–T28).
+   simulation is removed (docs/history/fabula.md §6, T25–T28).
 
 ## Consequences
 

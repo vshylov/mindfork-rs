@@ -344,7 +344,7 @@ impl Actor {
     /// The number of the last run of **either** file. A backup carries the
     /// story and leaves its call log out (spec §15), so a restore can put
     /// back a story behind its log; a run id the log already holds would
-    /// collide with that run's calls (docs/fabula.md §4, PR 7).
+    /// collide with that run's calls (docs/history/fabula.md §4, PR 7).
     pub(super) fn last_run(&self) -> Result<u64, StoryDbError> {
         let last = |conn: &rusqlite::Connection, sql: &str| -> Result<u64, StoryDbError> {
             Ok(conn

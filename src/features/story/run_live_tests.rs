@@ -1,4 +1,4 @@
-//! PR 8's live check of a story run as the app starts it (docs/fabula.md §4):
+//! PR 8's live check of a story run as the app starts it (docs/history/fabula.md §4):
 //! the fixture story with its canon approved, run on a real route under the
 //! app's session budget, three times over the same story — to a small chapter
 //! budget, to a stop by its token while a call is out, and to its time limit.

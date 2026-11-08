@@ -13,7 +13,7 @@
 //!   **pre-image** of every file the assistant edited, which exists nowhere else once
 //!   the file is overwritten, so a restore without them can show a change but not put
 //!   it back); `stories/` — each chat's Fabula stories, `stories/<chat-id>/<story-id>.db`
-//!   (docs/fabula.md §6 T5), packed as they lie: every read and write of one goes
+//!   (docs/history/fabula.md §6 T5), packed as they lie: every read and write of one goes
 //!   through its database actor and the default rollback journal, and a backup holds
 //!   the single-instance lock, so no story is mid-write while it is packed;
 //! - all `*.bak` at the root (`settings.bak`, `profiles.bak`);
@@ -1415,7 +1415,7 @@ mod tests {
             // The pre-images of what the assistant edited in a chat's project: the one
             // thing that track stores which cannot be recomputed (spec §9.12).
             "workspace/c1/journal.json",
-            // A chat's story (docs/fabula.md §6, T5).
+            // A chat's story (docs/history/fabula.md §6, T5).
             "stories/c1/s1.db",
         ] {
             assert!(
@@ -2040,7 +2040,7 @@ mod tests {
     }
 
     /// A story the engine's own store wrote, with its call log: the story
-    /// database at `STORY_SCHEMA` under its chat (docs/fabula.md §6, T5).
+    /// database at `STORY_SCHEMA` under its chat (docs/history/fabula.md §6, T5).
     pub(crate) fn seed_story(root: &Path, chat: &str, story: &str) {
         use crate::shared::storage::story::StoryDb;
         let paths = Paths::with_root(root);

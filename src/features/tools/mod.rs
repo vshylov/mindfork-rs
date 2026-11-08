@@ -136,12 +136,12 @@ pub struct ToolContext {
     /// at its round's end, and `attachment_search` waits on it for a file still being
     /// indexed (docs/research/attachment-birth-turn.md §5, G1–G2).
     pub index_board: Arc<crate::features::attachment_index::IndexBoard>,
-    /// The story runs out in the background (docs/fabula.md §4, PR 8): what
+    /// The story runs out in the background (docs/history/fabula.md §4, PR 8): what
     /// `story_status` reports of a run in progress. One board, the
     /// orchestrator's.
     pub story_board: Arc<crate::features::story::board::StoryBoard>,
     /// The stories' questions waiting for the person when the turn began,
-    /// with the rows they wrote since (docs/fabula.md §4, PR 9): what
+    /// with the rows they wrote since (docs/history/fabula.md §4, PR 9): what
     /// `story_continue` may read as an answer. Set by the orchestrator; empty
     /// unless the turn offers the story tools.
     pub story_pending: Arc<[crate::features::story::conversation::PendingAnswer]>,
@@ -328,7 +328,7 @@ pub struct ToolParams {
 }
 
 /// The model's window as the settings name it, for a story's chapter
-/// (docs/fabula.md §6, T25): a typed `compaction.context_tokens` first, then
+/// (docs/history/fabula.md §6, T25): a typed `compaction.context_tokens` first, then
 /// a managed server's `-c`; `None` — the run asks the engine.
 fn story_window(cfg: &AppConfig) -> Option<u64> {
     if let Some(typed) = cfg.compaction.context_tokens.filter(|&n| n > 0) {
@@ -912,7 +912,7 @@ pub struct ToolGates {
     /// `image_gen.enabled` — `image_generate` (spec §9.15). Off by default, and
     /// off for a turn nobody is waiting for, whatever the switch says (F7).
     pub image_gen: bool,
-    /// `tools.story` — the story tools (docs/fabula.md). Off by default.
+    /// `tools.story` — the story tools (docs/history/fabula.md). Off by default.
     pub story: bool,
     /// Whether **this chat** has a compacted-away range (spec §6.7, S12).
     pub history: bool,
@@ -1120,7 +1120,7 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     reg.register(Arc::new(subagent::StartSubagent));
     reg.register(Arc::new(dialogue::RunDialogue));
     reg.register(Arc::new(dialogue::StartDialogue));
-    // The story engine's tools (docs/fabula.md): gated by `tools.story` in
+    // The story engine's tools (docs/history/fabula.md): gated by `tools.story` in
     // `effective_tool_ids`, so at the default no request carries them.
     reg.register(Arc::new(story::StoryStatusTool));
     reg.register(Arc::new(story::StoryCreateTool));
