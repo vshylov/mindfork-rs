@@ -389,7 +389,10 @@ jobs:
   # job. Here it runs beside the tests.
   #
   # Pull requests only — `main` takes code that already passed here — and no
-  # cache, see docs/journal/ci.md, "the Windows-only code is linted".
+  # cache: every run is cold, measured at 4.2 and 5.3 min on its first two
+  # runs, well inside the tests beside it, so a cache would buy no wall clock
+  # and would cost ~0.5 GB in a cache store already at its 10 GB limit
+  # (docs/journal/ci.md, "the Windows-only code is linted").
   clippy-windows:
     name: Clippy (the Windows-only code)
     needs: changes
@@ -399,7 +402,9 @@ jobs:
           && needs.changes.outputs.docs_only != 'true'
           && github.event_name == 'pull_request' }}
     runs-on: windows-latest
-    timeout-minutes: 30
+    # Measured cold (it always is): 4.2 and 5.3 min. Room for the runner's
+    # disk-contention tail (a 2.4x test phase, docs/journal/ci.md) on top.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: Install the toolchain (from rust-toolchain.toml)
