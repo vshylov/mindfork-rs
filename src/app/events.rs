@@ -263,6 +263,11 @@ pub enum AppCommand {
     /// orchestrator is involved the clipboard has already been consulted. `Box` — an
     /// uncompressed screenshot is megabytes, and every other variant would pay for it.
     ImagePaste(Box<ClipboardImage>),
+    /// Stage the picture files a file manager put on the clipboard (`Ctrl+V`, `/image
+    /// paste` — docs/research/pasted-image-names.md A1): each as `/image attach <path>`
+    /// would, under its own name. One command for the whole selection, so the per-message
+    /// cap is applied to the batch once rather than to each file before any has landed.
+    ImagePasteFiles { paths: Vec<std::path::PathBuf> },
     /// Speak the active chat's messages (the `/tts [N|all]` command). The orchestrator
     /// (the owner of `Chat`) takes a **snapshot** of the conversation at command time and
     /// starts a background synthesis/playback task. A new command interrupts the current
@@ -459,6 +464,7 @@ impl AppCommand {
             | AppCommand::ImageRemove { .. }
             | AppCommand::ImageList
             | AppCommand::ImagePaste(_)
+            | AppCommand::ImagePasteFiles { .. }
             | AppCommand::Tts(_)
             | AppCommand::TtsStop
             | AppCommand::TtsPause

@@ -1830,6 +1830,32 @@ append-only shape keeps the prefix cache intact across an image turn
   second replacing the first. It is **always encoded as png**, unlike a file,
   whose photographic formats become jpeg: the dominant clipboard image is a
   screenshot, and jpeg artifacts on small text are the expensive failure.
+  **A copied picture file** is not an image on the clipboard: a file manager's
+  *Copy* puts the file's path there (`CF_HDROP`, `text/uri-list`, `NSURL`), which
+  arboard's `get_image` refuses — measured on Windows, where `/image paste` used
+  to tell a person who had just copied a picture that the clipboard held none. So
+  after the pixels the paste asks for **files**, and before `Ctrl+V`'s text, so a
+  copied picture is not pasted as its path where the file manager also offers that
+  as text. The ones whose extension names a format the app decodes are staged
+  exactly as `/image attach <path>` stages a file — their own names, their paths
+  as sources, the same refusals — and the bytes, not the name, decide in the end.
+  A copied file that is not a picture leaves `Ctrl+V` as it was and is **named**
+  by `/image paste`, which points at `/file attach`; in a mixed selection the
+  pictures are staged and the rest named once. The selection reaches the
+  orchestrator as one command, so the per-message cap is applied to the batch —
+  what fits is staged and the rest said once — and the cap is checked again where
+  any image **lands**, since stagings in flight together each pass the early check
+  before any of them has landed.
+  **Over SSH** the clipboard the app reads is the remote machine's — on a pod
+  there is none at all — while the screenshot is on the machine the person types
+  on, and no terminal protocol carries an image back (OSC 52 is text). When the
+  session looks remote (`SSH_TTY` / `SSH_CONNECTION`, the test OSC 52 uses) and
+  no display was forwarded (`DISPLAY` / `WAYLAND_DISPLAY` on Linux: under
+  `ssh -X` the clipboard is the person's own), an empty `/image paste` says so
+  and names the routes that work — copy the file over and attach it, or attach
+  by address — instead of asking the person to copy again what they already
+  copied. Research: [docs/research/pasted-image-names.md](docs/research/pasted-image-names.md)
+  §3.1, forks A1–A2.
 - **Staging.** `attach` does not create a message; it stages the image for the
   **next** one. Staging lives in the orchestrator, is keyed by chat, and is
   **session-only** — what was staged and never sent is a half-finished thought,

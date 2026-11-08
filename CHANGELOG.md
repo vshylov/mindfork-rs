@@ -14,6 +14,21 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Added
+
+- **A copied picture file can be pasted.** Copy a picture in Explorer, Finder or a
+  Linux file manager, then `/image paste` (or `Ctrl+V` where the terminal passes it
+  on): it is attached under its own name, as `/image attach <path>` would. Several
+  copied pictures are attached together, up to the per-message limit; copied files
+  that are not pictures are named and left out.
+
+### Fixed
+
+- **`/image paste` over SSH says why the clipboard is empty.** The clipboard the app
+  reads there is the remote machine's, not the one you copied to; instead of asking
+  you to copy the image again, the message now says so and points at `/image attach`
+  with a copied file or an address.
+
 ### Changed
 
 - **The story settings no longer share a word with the chat's history.** In Russian

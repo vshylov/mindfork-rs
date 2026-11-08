@@ -1111,6 +1111,7 @@ impl Orchestrator {
                 self.handle_image_generate(prompt, aspect)
             }
             AppCommand::ImagePaste(image) => self.handle_image_paste(*image),
+            AppCommand::ImagePasteFiles { paths } => self.handle_image_paste_files(paths),
             AppCommand::Tts(scope) => self.handle_tts(scope),
             AppCommand::TtsStop => self.stop_tts(),
             AppCommand::TtsPause => self.handle_tts_pause(),

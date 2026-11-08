@@ -7,8 +7,9 @@ F1 (a) the chat's own engine, F2 (a) named at paste, F3 (a) English names,
 F4 (a) a send waits for a pending name up to 10 s, F5 (a)
 `clipboard/<slug>.png`, F6 (a) unique across the chat with the switch on or
 off, F7 (a) `/image paste <name>`, F8 (a) pasted images only, F9 (a) a failure
-is quiet. Implementation follows in the two pull requests of §6; nothing is
-built yet.
+is quiet. Implementation follows in the two pull requests of §6. **Stage 1, the
+paste's gaps (A1, A2), is built** — docs/journal/ui-input.md, "pasting a copied
+picture file, and the paste over SSH"; stage 2, the names, is next.
 
 The ask (the owner, 2026-11-08): look into pasting images into the chat from the
 clipboard; where possible, give a pasted image a name that says what it shows —
