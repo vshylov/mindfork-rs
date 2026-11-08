@@ -105,75 +105,70 @@ fn tokenize(input: &str, loc: &Locale) -> Result<Vec<Token>> {
         let c = chars[i];
         match c {
             c if c.is_whitespace() => i += 1,
-            '+' => {
-                tokens.push(Token::Plus);
-                i += 1;
-            }
-            '-' => {
-                tokens.push(Token::Minus);
-                i += 1;
-            }
-            '*' => {
-                tokens.push(Token::Star);
-                i += 1;
-            }
-            '/' => {
-                tokens.push(Token::Slash);
-                i += 1;
-            }
-            '%' => {
-                tokens.push(Token::Percent);
-                i += 1;
-            }
-            '^' => {
-                tokens.push(Token::Caret);
-                i += 1;
-            }
-            '(' => {
-                tokens.push(Token::LParen);
-                i += 1;
-            }
-            ')' => {
-                tokens.push(Token::RParen);
-                i += 1;
-            }
-            ',' => {
-                tokens.push(Token::Comma);
-                i += 1;
-            }
             c if c.is_ascii_digit() || c == '.' => {
-                let start = i;
-                while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
-                    i += 1;
-                }
-                // Exponential notation: 1e3, 2.5E-4.
-                if i < chars.len() && (chars[i] == 'e' || chars[i] == 'E') {
-                    i += 1;
-                    if i < chars.len() && (chars[i] == '+' || chars[i] == '-') {
-                        i += 1;
-                    }
-                    while i < chars.len() && chars[i].is_ascii_digit() {
-                        i += 1;
-                    }
-                }
-                let s: String = chars[start..i].iter().collect();
+                let end = number_end(&chars, i);
+                let s: String = chars[i..end].iter().collect();
                 let n = s
                     .parse::<f64>()
                     .map_err(|_| anyhow::anyhow!(loc.tf("calc.err.bad_number", &[("s", &s)])))?;
                 tokens.push(Token::Number(n));
+                i = end;
             }
             c if c.is_alphabetic() || c == '_' => {
-                let start = i;
-                while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
-                    i += 1;
-                }
-                let s: String = chars[start..i].iter().collect();
+                let end = scan_while(&chars, i, |c| c.is_alphanumeric() || c == '_');
+                let s: String = chars[i..end].iter().collect();
                 tokens.push(Token::Ident(s.to_lowercase()));
+                i = end;
             }
-            other => anyhow::bail!(loc.tf("calc.err.unknown_char", &[("c", &other.to_string())])),
+            other => {
+                let token = single_char_token(other).ok_or_else(|| {
+                    anyhow::anyhow!(loc.tf("calc.err.unknown_char", &[("c", &other.to_string())]))
+                })?;
+                tokens.push(token);
+                i += 1;
+            }
         }
     }
     Ok(tokens)
+}
+
+/// The token a one-character operator or delimiter stands for; `None` for any other character.
+fn single_char_token(c: char) -> Option<Token> {
+    Some(match c {
+        '+' => Token::Plus,
+        '-' => Token::Minus,
+        '*' => Token::Star,
+        '/' => Token::Slash,
+        '%' => Token::Percent,
+        '^' => Token::Caret,
+        '(' => Token::LParen,
+        ')' => Token::RParen,
+        ',' => Token::Comma,
+        _ => return None,
+    })
+}
+
+/// The index of the first character at or after `from` that `keep` rejects (or the end).
+fn scan_while(chars: &[char], from: usize, keep: impl Fn(char) -> bool) -> usize {
+    chars[from..]
+        .iter()
+        .position(|&c| !keep(c))
+        .map_or(chars.len(), |n| from + n)
+}
+
+/// Where a number starting at `start` ends: digits and dots, then an optional exponent
+/// (`1e3`, `2.5E-4`). The span is taken greedily and parsed afterwards, so a malformed
+/// one (`1.2.3`, `2e`) is reported whole as a bad number rather than split into tokens.
+fn number_end(chars: &[char], start: usize) -> usize {
+    let mut i = scan_while(chars, start, |c| c.is_ascii_digit() || c == '.');
+    if matches!(chars.get(i), Some('e' | 'E')) {
+        i += 1;
+        if matches!(chars.get(i), Some('+' | '-')) {
+            i += 1;
+        }
+        i = scan_while(chars, i, |c| c.is_ascii_digit());
+    }
+    i
 }
 
 // ------------------------- Parser/evaluator -------------------------
@@ -468,6 +463,44 @@ mod tests {
     fn scientific_notation() {
         assert!(approx(eval("1e3").unwrap(), 1000.0));
         assert!(approx(eval("2.5e-2").unwrap(), 0.025));
+    }
+
+    #[test]
+    fn the_tokenizer_takes_numbers_and_names_whole() {
+        let tokens = |s: &str| tokenize(s, ru()).unwrap();
+        assert_eq!(
+            tokens("2.5E-4*Sin(x_1)"),
+            vec![
+                Token::Number(2.5e-4),
+                Token::Star,
+                Token::Ident("sin".into()),
+                Token::LParen,
+                Token::Ident("x_1".into()),
+                Token::RParen,
+            ]
+        );
+        assert_eq!(
+            tokens(" 1e+3^2 % 4, -.5 / 7"),
+            vec![
+                Token::Number(1000.0),
+                Token::Caret,
+                Token::Number(2.0),
+                Token::Percent,
+                Token::Number(4.0),
+                Token::Comma,
+                Token::Minus,
+                Token::Number(0.5),
+                Token::Slash,
+                Token::Number(7.0),
+            ]
+        );
+        // A malformed number is reported as the whole span, not cut where it stops parsing.
+        for bad in ["1.2.3", "2e", "3E+x"] {
+            let err = tokenize(bad, ru()).unwrap_err().to_string();
+            let span = bad.trim_end_matches('x');
+            assert!(err.contains(&format!("«{span}»")), "{bad:?}: {err}");
+        }
+        assert!(tokenize("2 @", ru()).is_err());
     }
 
     #[test]
