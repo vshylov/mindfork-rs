@@ -679,6 +679,13 @@ impl ChatScreen {
         self.push_note(&format!("{warn} {message}"));
     }
 
+    /// The feed's texts, oldest first — for the tests a layer up, which see the screen
+    /// only through its public surface (the paste's routing, `app::runtime`).
+    #[cfg(test)]
+    pub(crate) fn feed_texts(&self) -> Vec<&str> {
+        self.feed.iter().map(|m| m.text.as_str()).collect()
+    }
+
     /// Appends a neutral note to the feed (e.g. a confirmation of a chat-list
     /// operation once the list screen is already closed — a late auto-title/copy reply).
     pub fn push_note(&mut self, text: &str) {

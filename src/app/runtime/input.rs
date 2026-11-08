@@ -382,15 +382,22 @@ fn handle_key_event(
 ///
 /// The order matters: an image is checked **first**, because a screenshot copied from a
 /// browser often puts both an image and its alt text on the clipboard, and the image is
-/// what the user meant by pressing paste on it.
-fn paste_from_clipboard(
+/// what the user meant by pressing paste on it. **Files** come next — a picture file
+/// copied in a file manager puts its path there, not its pixels — and only then text, so
+/// a copied picture is staged rather than pasted as its path where the file manager also
+/// offers that as text (docs/research/pasted-image-names.md A1). A copied file that is
+/// not a picture leaves `Ctrl+V` exactly as it was.
+///
+/// Generic over where the clipboard is read ([`PasteSource`]): the runtime passes its
+/// arboard slot, the tests a clipboard of their own making.
+pub(super) fn paste_from_clipboard(
     text_fallback: bool,
     screen: &mut ChatScreen,
     active: &mut ActiveScreen,
     cmd_tx: &UnboundedSender<AppCommand>,
-    clipboard: &mut Option<arboard::Clipboard>,
+    clipboard: &mut impl PasteSource,
 ) {
-    if let Some((width, height, rgba)) = clipboard_image(clipboard) {
+    if let Some((width, height, rgba)) = clipboard.image() {
         let _ = cmd_tx.send(AppCommand::ImagePaste(Box::new(ClipboardImage {
             width,
             height,
@@ -398,19 +405,37 @@ fn paste_from_clipboard(
         })));
         return;
     }
+    let (images, others) = split_copied_files(clipboard.files());
+    if !images.is_empty() {
+        // The rest of a mixed selection is named once, here, rather than each file
+        // refused at staging: they are not pictures, and nobody asked to stage them.
+        if !others.is_empty() {
+            let loc = screen.loc();
+            screen.push_note(&loc.tf(
+                "ui.image.paste_files_skipped",
+                &[
+                    ("n", &others.len().to_string()),
+                    ("files", &file_names(&others)),
+                ],
+            ));
+        }
+        let _ = cmd_tx.send(AppCommand::ImagePasteFiles { paths: images });
+        return;
+    }
     if text_fallback {
         // No image: behave exactly as a paste always has. On a terminal that forwards
         // Ctrl+V this is what makes the key do what the help overlay says it does; on one
         // that swallows it, nothing reaches us and the terminal has already pasted.
-        if let Some(text) = clipboard_text(clipboard) {
+        if let Some(text) = clipboard.text() {
             active.handle_paste(screen, &text);
         }
         return;
     }
-    // A typed `/image paste` with nothing to paste: say so, and name the route that does
-    // not depend on the clipboard at all.
+    // A typed `/image paste` with nothing to paste: say why — files that are not
+    // pictures, a clipboard on another machine, or simply none — and name the route
+    // that does not depend on the clipboard at all.
     let loc = screen.loc();
     screen.set_image_progress(crate::features::image_command::ImageProgress::Failed(
-        loc.t("ui.err.image_no_clipboard").to_string(),
+        nothing_to_paste(&others, clipboard.far(), loc),
     ));
 }

@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (37)
+## Entries (38)
 
 - Post-M9: fast multiline clipboard paste (done)
 - Post-M9: `↑/↓` navigation by visual row of a wrapped line (done)
@@ -49,6 +49,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `mindfork keys` — each key as the app receives it (done)
 - Post-M9: the keys on a real Mac (done)
 - Post-M9: the line-break key is a setting (done)
+- Post-M9: pasting a copied picture file, and the paste over SSH (done)
 
 ### Post-M9: fast multiline clipboard paste (done)
 - **Symptom**: a large clipboard paste lagged in Windows Terminal, and a line break
@@ -2051,3 +2052,83 @@ reader beside a typo the typed parse rejects. **4819 unit tests green,
 **A live model run is not required** (AGENTS.md §3) — keys and a settings row,
 no engine, memory or tool. The rendered chat, settings and `F3` frames were
 read through `TestBackend`.
+
+### Post-M9: pasting a copied picture file, and the paste over SSH (done)
+
+**What.** Stage 1 of [pasted-image-names.md](../research/pasted-image-names.md) (forks
+A1 and A2, the owner's decision of 2026-11-08): a picture file copied in a file manager
+is pasted — staged as `/image attach <path>` stages it — and an empty `/image paste`
+over SSH says that the clipboard is the remote machine's. Stage 2, the names, is next.
+
+**Why — measured before** (research §3.1, Windows 11, arboard 3.7.0): *Copy* on a file
+in Explorer puts `CF_HDROP` on the clipboard; `get_image` failed on it while
+`get().file_list()` returned the path, and `/image paste` told the person who had just
+copied a picture that there was none. Over SSH the clipboard the app reads is the remote
+machine's — on a pod there is none — and the same refusal asked them to copy again.
+
+**Key decisions.**
+
+- **Pixels, then files, then text.** Files come before `Ctrl+V`'s text fallback because a
+  Linux file manager offers a copied file's path as text too, and a copied picture must
+  be staged rather than pasted as its path.
+- **A picture is judged by its extension before anything is read**
+  (`image_prepare::has_image_extension`, the list of the decoders compiled in). A wrong
+  "no" costs nothing — `Ctrl+V` pastes text as it did; a wrong "yes" is refused by the
+  decoder, which judges the bytes. A copied file that is not a picture leaves `Ctrl+V`
+  alone and is **named** by `/image paste`, which points at `/file attach`; in a mixed
+  selection the pictures are staged and the rest named once, by the runtime, before the
+  staging notes.
+- **One command for the selection** (`AppCommand::ImagePasteFiles`): the per-message cap
+  is applied to the batch, and what does not fit is said once. Sent as one attach per
+  file, every file would pass the early cap check, since none has landed yet.
+- **The cap is checked again where an image lands.** Found while designing the batch:
+  stagings in flight together each pass the early check before any lands, so before this
+  an attach typed while a paste still encoded could take a message past
+  `images.max_count`. A copy that replaces one already staged (same source) takes no new
+  slot.
+- **"Far" is SSH without a forwarded display** — `osc52::session_looks_remote()` and, on
+  Linux, neither `DISPLAY` nor `WAYLAND_DISPLAY` (under `ssh -X` arboard talks to the
+  person's own display server, and the clipboard is theirs). Only the typed command
+  says it; `Ctrl+V` stays a paste.
+- **`ImageSource::File` holds a `PathBuf`**, so a path off the clipboard never takes a
+  round trip through a lossy string.
+- **The clipboard is read through a seam** (`PasteSource`, implemented by the runtime's
+  arboard slot), so `paste_from_clipboard`'s routing is tested over a clipboard the test
+  makes. The PR's first analysis failed Sonar's gate at **68.9 %** coverage on new code:
+  the routing was reachable only through a real clipboard, and the new `#[ignore]`
+  round trip sat in the inline `mod tests`, where CI never runs it — the trap #720 met.
+  Both real-clipboard round trips now live in `runtime/clipboard/tests/live.rs`, which
+  `cargo llvm-cov` leaves out; measured locally the PR's new lines are then 92 % covered.
+- The key-reference gate read `notes.txt` in a new test as a bundle key (the `notes.`
+  prefix) — docs/lessons.md §7's collision, again; the fixture became `letter.txt`.
+
+**Tests** (+16, +1 `#[ignore]`): `image_prepare` — the extension judged by the decoders we
+have (`heic`, `tiff`, a dotfile, `archive.png.zip` are not pictures); `runtime::clipboard`
+— the "far" rule (SSH with and without a forwarded display), copied files split keeping
+their order, the names a note shows (three, then `…`), each reason a typed paste finds
+nothing worded in both locales with its route; the orchestrator — copied pictures staged
+under their own names with their paths as sources, a batch past the cap staging what
+fits and saying the rest once, a batch with no room refused before any work, and the cap
+at landing for stagings that raced past the early check (a bare orchestrator, since
+through the loop the race is timing), a batch with no chat open; `runtime` — the paste's
+routing over a fake clipboard: pixels first and nothing else asked, copied pictures
+staged together with the rest named once and their paths never pasted as text (both
+routes), pictures alone leaving no note, `Ctrl+V` over non-pictures still pasting text,
+each reason a typed paste finds nothing; and the system clipboard read through the seam,
+read-only, empty where it cannot be opened. **4734 unit tests green, 315 `#[ignore]`**
+(on the tree merged with `main`), clippy `-D warnings`/fmt clean.
+
+**Live check — GO** (2026-11-08, Windows 11, the real clipboard; the owner's clipboard
+saved first and put back): `clipboard_file_list_round_trip` (new, `#[ignore]`, `runtime/clipboard/tests/live.rs`) puts a
+picture and a text file on the clipboard as a file list — `get_image` finds nothing,
+the list comes back, one staged and one named — and `clipboard_image_round_trip` still
+passes. Then `mindfork demo` driven in a hidden console (`tools/console_probe.py`'s
+`Session` from a scratch script), `/image paste` typed in four cases: two pictures and a
+text file (both pictures staged under their names, the 3840-pixel photo downscaled to
+1568, the text file named once); a text file alone (named, `/file attach` offered); an
+empty clipboard (today's message); an empty clipboard with `SSH_CONNECTION` set (the new
+message). `Ctrl+V` was not driven: the inbox console handles that key itself, and past
+the key the route is the same function.
+
+**A live model run is not required** (AGENTS.md §3): no engine, memory or tool is
+touched — the staging path is the attach's.

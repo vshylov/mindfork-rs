@@ -9,7 +9,9 @@
 //! either half.
 
 use std::io;
+use std::path::PathBuf;
 
+use crate::features::image_prepare::has_image_extension;
 use crate::shared::i18n::Locale;
 use crate::shared::osc52::{self, Osc52Mode};
 
@@ -61,6 +63,121 @@ pub(super) fn clipboard_image(
         u32::try_from(data.height).ok()?,
     );
     Some((width, height, data.bytes.into_owned()))
+}
+
+/// The files a file manager put on the clipboard — "Copy" on a file in Explorer, Finder
+/// or a Linux file manager (`CF_HDROP`, `NSURL`, `text/uri-list`, all read by arboard).
+/// Empty for every "no files" case alike, as [`clipboard_image`] is `None` for every "no
+/// image" case.
+///
+/// A copied picture *file* puts its path on the clipboard, not its pixels, so the paste
+/// asks for files once the pixels are not there (docs/research/pasted-image-names.md A1).
+pub(super) fn clipboard_files(slot: &mut Option<arboard::Clipboard>) -> Vec<PathBuf> {
+    if slot.is_none() {
+        *slot = arboard::Clipboard::new().ok();
+    }
+    slot.as_mut()
+        .and_then(|c| c.get().file_list().ok())
+        .unwrap_or_default()
+}
+
+/// What a paste reads off the clipboard, in the order it asks — the seam that lets the
+/// paste's routing (`input::paste_from_clipboard`) be tested without the system
+/// clipboard. The one real source is the runtime's arboard slot.
+pub(super) trait PasteSource {
+    /// Pixels: a screenshot, a browser's *Copy image* ([`clipboard_image`]).
+    fn image(&mut self) -> Option<(u32, u32, Vec<u8>)>;
+    /// The paths a file manager's *Copy* put there ([`clipboard_files`]).
+    fn files(&mut self) -> Vec<PathBuf>;
+    /// Text, for `Ctrl+V`'s fallback ([`clipboard_text`]).
+    fn text(&mut self) -> Option<String>;
+    /// Whether this clipboard is on another machine than the person's ([`clipboard_is_far`]).
+    fn far(&self) -> bool;
+}
+
+impl PasteSource for Option<arboard::Clipboard> {
+    fn image(&mut self) -> Option<(u32, u32, Vec<u8>)> {
+        clipboard_image(self)
+    }
+    fn files(&mut self) -> Vec<PathBuf> {
+        clipboard_files(self)
+    }
+    fn text(&mut self) -> Option<String> {
+        clipboard_text(self)
+    }
+    fn far(&self) -> bool {
+        clipboard_is_far()
+    }
+}
+
+/// Splits copied files into the ones a paste stages — pictures, judged by the extension
+/// before anything is read ([`has_image_extension`]) — and the rest, which it only names.
+/// Order is kept: the files stage in the order the file manager listed them.
+pub(super) fn split_copied_files(files: Vec<PathBuf>) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    files.into_iter().partition(|p| has_image_extension(p))
+}
+
+/// Is the clipboard this process reads on a machine other than the person's?
+///
+/// Over SSH it is the remote one, which on a pod has no display and no clipboard at all,
+/// while the screenshot sits on the machine the person types on — no terminal protocol
+/// carries an image the other way (OSC 52 is text). The exception is a forwarded display
+/// (`ssh -X`, waypipe): then arboard talks to the person's own display server, and the
+/// clipboard is theirs. macOS has no such forwarding for its pasteboard.
+pub(super) fn clipboard_is_far() -> bool {
+    let forwarded = cfg!(all(unix, not(target_os = "macos")))
+        && (std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some());
+    far(osc52::session_looks_remote(), forwarded)
+}
+
+/// [`clipboard_is_far`]'s rule, apart from the environment it reads.
+fn far(remote: bool, forwarded_display: bool) -> bool {
+    remote && !forwarded_display
+}
+
+/// Why a typed `/image paste` found nothing to stage, in words that close the door
+/// (docs/lessons.md §4): each case names what the person actually did and the route
+/// that works from there.
+///
+/// - files were copied, none of them a picture → name them, and the command that takes
+///   a document;
+/// - the session's clipboard is on another machine → say so, rather than asking the person
+///   to copy what they already copied (A2);
+/// - otherwise → the clipboard is simply empty of images.
+pub(super) fn nothing_to_paste(others: &[PathBuf], far: bool, loc: &'static Locale) -> String {
+    if !others.is_empty() {
+        loc.tf(
+            "ui.err.image_clipboard_not_image",
+            &[("files", &file_names(others))],
+        )
+    } else if far {
+        loc.t("ui.err.image_clipboard_remote").to_string()
+    } else {
+        loc.t("ui.err.image_no_clipboard").to_string()
+    }
+}
+
+/// How many copied files a note names before it stops — the rest is an ellipsis, since a
+/// selection of a hundred files must not become a hundred names in the feed.
+const NAMED_FILES: usize = 3;
+
+/// The copied files' names for a note: the last path segment of the first
+/// [`NAMED_FILES`], then `…` if there were more.
+pub(super) fn file_names(files: &[PathBuf]) -> String {
+    let mut names: Vec<String> = files
+        .iter()
+        .take(NAMED_FILES)
+        .map(|p| {
+            p.file_name().map_or_else(
+                || p.display().to_string(),
+                |n| n.to_string_lossy().into_owned(),
+            )
+        })
+        .collect();
+    if files.len() > NAMED_FILES {
+        names.push("…".to_string());
+    }
+    names.join(", ")
 }
 
 /// Writes text into the system clipboard, creating the client lazily and reusing
@@ -361,71 +478,98 @@ mod tests {
         }
     }
 
-    /// A real round trip through the **operating system's** clipboard: put an image on
-    /// it, read it back, and encode it the way a paste would.
-    ///
-    /// `#[ignore]` because it touches a shared global resource — it would clobber whatever
-    /// the developer had copied, and on a headless CI box there is no clipboard at all.
-    /// It exists because everything else about this path is a unit test against pixels we
-    /// made up: only a real clipboard can show that arboard's `image-data` feature is
-    /// actually wired on this platform, that the bytes really come back RGBA in the size
-    /// reported, and that the round trip survives the platform's own format conversion
-    /// (`CF_DIB` on Windows, `image/png` on X11).
-    ///
-    /// Run: `cargo test clipboard_image_round_trip -- --ignored --nocapture`.
+    /// Over SSH the clipboard is the remote machine's — unless a display was forwarded,
+    /// which makes it the person's again. A local session is never "far".
     #[test]
-    #[ignore = "uses the real system clipboard (clobbers what the user copied)"]
-    fn clipboard_image_round_trip() {
-        let (w, h) = (64u32, 32u32);
-        // Distinct per-pixel values, so a stride or channel-order mistake shows up as a
-        // mismatch rather than as a plausible-looking picture.
-        let source: Vec<u8> = (0..w as usize * h as usize)
-            .flat_map(|i| [(i % 251) as u8, (i % 253) as u8, (i % 257 % 256) as u8, 255])
-            .collect();
-
-        let mut slot: Option<arboard::Clipboard> = None;
-        if slot.is_none() {
-            match arboard::Clipboard::new() {
-                Ok(c) => slot = Some(c),
-                Err(e) => {
-                    eprintln!("skip: no system clipboard here ({e})");
-                    return;
-                }
-            }
-        }
-        slot.as_mut()
-            .unwrap()
-            .set_image(arboard::ImageData {
-                width: w as usize,
-                height: h as usize,
-                bytes: source.clone().into(),
-            })
-            .expect("putting an image on the clipboard");
-
-        let (rw, rh, rgba) = clipboard_image(&mut slot).expect("an image back off the clipboard");
-        assert_eq!((rw, rh), (w, h), "the size must survive the round trip");
-        assert_eq!(rgba.len(), source.len(), "RGBA8, four bytes per pixel");
-        // Not asserting byte equality: a platform may composite onto an opaque background
-        // or reorder channels internally. What must hold is that the pixels are *ours* —
-        // an all-black or all-white buffer would mean the image never made it.
-        let distinct = rgba
-            .chunks(4)
-            .map(|p| (p[0], p[1], p[2]))
-            .collect::<std::collections::HashSet<_>>();
+    fn the_clipboard_is_far_only_over_ssh_without_a_forwarded_display() {
         assert!(
-            distinct.len() > 100,
-            "the round trip flattened the image into {} distinct colours",
-            distinct.len()
+            far(true, false),
+            "ssh, no display: the remote machine's clipboard"
         );
+        assert!(!far(true, true), "ssh -X: the person's own display server");
+        assert!(!far(false, false), "a local session");
+        assert!(!far(false, true), "a local desktop session");
+    }
 
-        // And the encode a paste would do accepts what came back.
-        let prepared =
-            crate::features::image_prepare::prepare_rgba(rw, rh, &rgba, 1568).expect("encoding");
-        assert_eq!(prepared.mime, "image/png");
-        assert_eq!((prepared.width, prepared.height), (w, h));
-        eprintln!(
-            "clipboard round trip: {w}x{h} -> {} bytes png",
-            prepared.bytes.len()
+    /// The system clipboard read through the paste's seam, **read-only**: every question
+    /// answers without failing, the distance is [`clipboard_is_far`]'s, and a clipboard
+    /// that cannot be opened at all — a headless box, CI — reads as empty rather than as
+    /// an error, which is what lets a paste fall through to its refusal.
+    #[test]
+    fn the_system_clipboard_answers_the_paste_and_reads_empty_when_absent() {
+        let absent = arboard::Clipboard::new().is_err();
+        let mut slot: Option<arboard::Clipboard> = None;
+        let image = PasteSource::image(&mut slot);
+        let files = PasteSource::files(&mut slot);
+        let text = PasteSource::text(&mut slot);
+        assert_eq!(PasteSource::far(&slot), clipboard_is_far());
+        if absent {
+            assert!(image.is_none() && files.is_empty() && text.is_none());
+        }
+    }
+
+    /// Pictures are staged, everything else only named — and in the order the file
+    /// manager listed them, since that is the order the person sees them land.
+    #[test]
+    fn copied_files_split_into_pictures_and_the_rest_keeping_their_order() {
+        let files: Vec<PathBuf> = ["b.png", "letter.txt", "a.JPG", "dir", "c.webp"]
+            .iter()
+            .map(PathBuf::from)
+            .collect();
+        let (images, others) = split_copied_files(files);
+        assert_eq!(
+            images,
+            ["b.png", "a.JPG", "c.webp"].map(PathBuf::from).to_vec()
         );
+        assert_eq!(others, ["letter.txt", "dir"].map(PathBuf::from).to_vec());
+    }
+
+    /// A note names the files by their last segment, and stops after three: a selection
+    /// of a hundred must not become a hundred names in the feed.
+    #[test]
+    fn file_names_are_the_last_segments_and_stop_after_three() {
+        let one = [PathBuf::from("/home/u/Pictures/letter.txt")];
+        assert_eq!(file_names(&one), "letter.txt");
+        let four: Vec<PathBuf> = ["a.txt", "b.txt", "c.txt", "d.txt"]
+            .iter()
+            .map(|n| PathBuf::from("dir").join(n))
+            .collect();
+        assert_eq!(file_names(&four), "a.txt, b.txt, c.txt, …");
+        let three = &four[..3];
+        assert_eq!(file_names(three), "a.txt, b.txt, c.txt");
+    }
+
+    /// Each reason a typed `/image paste` finds nothing gets its own words, in both
+    /// locales — and each names the route that works from there (docs/lessons.md §4).
+    #[test]
+    fn nothing_to_paste_says_why_and_names_the_route_that_works() {
+        use crate::shared::i18n::{Lang, locale};
+        let docs = [PathBuf::from("report.docx")];
+        for lang in [Lang::En, Lang::Ru] {
+            let loc = locale(lang);
+            // Files, none a picture — named, and pointed at the command for documents.
+            let msg = nothing_to_paste(&docs, true, loc);
+            assert_eq!(
+                msg,
+                loc.tf(
+                    "ui.err.image_clipboard_not_image",
+                    &[("files", "report.docx")]
+                ),
+                "copied files win over the distance in {lang:?}"
+            );
+            assert!(msg.contains("/file attach"), "{lang:?}: {msg}");
+            // Nothing at all, over SSH — the distance, and the two routes around it.
+            let msg = nothing_to_paste(&[], true, loc);
+            assert_eq!(msg, loc.t("ui.err.image_clipboard_remote"), "{lang:?}");
+            assert!(msg.contains("SSH"), "{lang:?}: {msg}");
+            assert!(msg.contains("/image attach <url>"), "{lang:?}: {msg}");
+            // Nothing at all, locally — today's message, unchanged.
+            let msg = nothing_to_paste(&[], false, loc);
+            assert_eq!(msg, loc.t("ui.err.image_no_clipboard"), "{lang:?}");
+        }
     }
 }
+
+#[cfg(test)]
+#[path = "clipboard/tests/live.rs"]
+mod live_tests;

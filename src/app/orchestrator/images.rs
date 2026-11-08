@@ -95,8 +95,9 @@ enum Staging {
 /// (the cap, the capability probe, the background encode, the staging itself) is one path,
 /// in [`Orchestrator::stage_image`].
 enum ImageSource {
-    /// A file the user named. Decoded and normalized by its own extension.
-    File(String),
+    /// A file the user named, or one a file manager put on the clipboard. Decoded by its
+    /// content, and named by its own file name.
+    File(std::path::PathBuf),
     /// Pixels off the system clipboard, plus the synthetic name they will carry (there is
     /// no file to take one from).
     Clipboard {
@@ -139,7 +140,7 @@ impl ImageSource {
     /// Turns the source into an attachable image. Runs on the blocking pool.
     fn prepare(self, cfg: &ImageSettings, loc: &'static Locale) -> Result<MessageImage, String> {
         match self {
-            ImageSource::File(path) => prepare_image(std::path::Path::new(&path), cfg, loc),
+            ImageSource::File(path) => prepare_image(&path, cfg, loc),
             ImageSource::Clipboard { image, name } => prepare_clipboard(*image, name, cfg, loc),
             ImageSource::Downloaded { fetched, url } => prepare_downloaded(*fetched, url, cfg, loc),
         }
@@ -159,7 +160,40 @@ impl Orchestrator {
         if image_fetch::looks_like_url(&path) {
             self.stage_image(Staging::Url(path));
         } else {
+            self.stage_image(Staging::Local(ImageSource::File(path.into())));
+        }
+    }
+
+    /// Stages the picture files a file manager put on the clipboard (`Ctrl+V`, `/image
+    /// paste`; docs/research/pasted-image-names.md A1) — each exactly as `/image attach
+    /// <path>` would, so a file keeps its own name and meets every refusal the attach
+    /// already words.
+    ///
+    /// The cap is applied to the **batch**, here: sent as one attach each, every file
+    /// would pass the early check — none has landed yet — and the extras would only be
+    /// stopped at landing, one refusal apiece. What does not fit is said once.
+    pub(super) fn handle_image_paste_files(&mut self, paths: Vec<std::path::PathBuf>) {
+        let loc = self.ui_locale();
+        let Some(chat_id) = self.active_id else {
+            self.fail_image(loc.t("ui.err.image_no_active_chat"));
+            return;
+        };
+        let max = self.config.images.max_count;
+        let staged = self.staged_images.get(&chat_id).map_or(0, Vec::len);
+        let room = max.saturating_sub(staged);
+        if room == 0 {
+            self.fail_image(&loc.tf("ui.err.image_too_many", &[("max", &max.to_string())]));
+            return;
+        }
+        let left = paths.len().saturating_sub(room);
+        for path in paths.into_iter().take(room) {
             self.stage_image(Staging::Local(ImageSource::File(path)));
+        }
+        if left > 0 {
+            self.fail_image(&loc.tf(
+                "ui.err.image_paste_files_over",
+                &[("n", &left.to_string()), ("max", &max.to_string())],
+            ));
         }
     }
 
@@ -455,6 +489,22 @@ impl Orchestrator {
         };
         // The chat may have been deleted while the image was being decoded.
         if !self.chats.iter().any(|c| c.id == res.chat_id) {
+            return;
+        }
+        // The cap again, at landing: several stagings can be in flight at once — the
+        // files of one paste, or an attach typed while a paste still encodes — and each
+        // passed the early check before any of them had landed. A copy that replaces one
+        // already staged takes no new slot.
+        let max = self.config.images.max_count;
+        let full = self
+            .staged_images
+            .get(&res.chat_id)
+            .is_some_and(|v| v.len() >= max && !v.iter().any(|i| i.source == image.source));
+        if full {
+            let msg = self
+                .ui_locale()
+                .tf("ui.err.image_too_many", &[("max", &max.to_string())]);
+            self.fail_image(&msg);
             return;
         }
         let staged = self.staged_images.entry(res.chat_id).or_default();

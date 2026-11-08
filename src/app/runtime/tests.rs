@@ -2850,3 +2850,182 @@ fn self_model_history_round_trip() {
         Ok(AppCommand::RequestSelfModelHistory)
     ));
 }
+
+// ---- the paste's routing (docs/research/pasted-image-names.md A1, A2) ----
+//
+// Driven through `paste_from_clipboard` itself, over a clipboard of the test's own
+// making: the system clipboard is shared and, on a headless box, absent. Its own round
+// trips live in `clipboard/tests/live.rs`.
+
+/// A clipboard that holds what the test put on it and records what the paste asked.
+#[derive(Default)]
+struct FakeClipboard {
+    image: Option<(u32, u32, Vec<u8>)>,
+    files: Vec<std::path::PathBuf>,
+    text: Option<String>,
+    far: bool,
+    asked: Vec<&'static str>,
+}
+
+impl PasteSource for FakeClipboard {
+    fn image(&mut self) -> Option<(u32, u32, Vec<u8>)> {
+        self.asked.push("image");
+        self.image.take()
+    }
+    fn files(&mut self) -> Vec<std::path::PathBuf> {
+        self.asked.push("files");
+        std::mem::take(&mut self.files)
+    }
+    fn text(&mut self) -> Option<String> {
+        self.asked.push("text");
+        self.text.take()
+    }
+    fn far(&self) -> bool {
+        self.far
+    }
+}
+
+fn paths(names: &[&str]) -> Vec<std::path::PathBuf> {
+    names.iter().map(std::path::PathBuf::from).collect()
+}
+
+impl Harness {
+    /// One paste: `Ctrl+V` when `text_fallback`, a typed `/image paste` otherwise.
+    fn paste(&mut self, clip: &mut FakeClipboard, text_fallback: bool) {
+        paste_from_clipboard(
+            text_fallback,
+            &mut self.screen,
+            &mut self.active,
+            &self.cmd_tx,
+            clip,
+        );
+    }
+
+    fn feed_has(&self, text: &str) -> bool {
+        self.screen.feed_texts().iter().any(|t| t.contains(text))
+    }
+}
+
+/// Pixels win: a screenshot copied from a browser often comes with files or text beside
+/// it, and the picture is what paste meant. Nothing else is even asked.
+#[test]
+fn a_paste_takes_pixels_first_and_asks_nothing_else() {
+    let mut h = Harness::new();
+    let mut clip = FakeClipboard {
+        image: Some((2, 1, vec![0; 8])),
+        files: paths(&["a.png"]),
+        text: Some("alt text".into()),
+        ..Default::default()
+    };
+    h.paste(&mut clip, true);
+    assert!(matches!(h.next_command(), Some(AppCommand::ImagePaste(i)) if i.width == 2));
+    assert!(h.next_command().is_none());
+    assert_eq!(clip.asked, ["image"]);
+}
+
+/// Copied picture files are staged as one command, in their order; the files beside
+/// them that are not pictures are named once — and the text a file manager offers
+/// beside them (their paths) is never pasted, for either route.
+#[test]
+fn copied_pictures_are_staged_together_and_the_rest_named_once() {
+    for text_fallback in [true, false] {
+        let mut h = Harness::new();
+        let mut clip = FakeClipboard {
+            files: paths(&["a.png", "letter.txt", "b.JPG"]),
+            text: Some("a.png letter.txt b.JPG".into()),
+            ..Default::default()
+        };
+        h.paste(&mut clip, text_fallback);
+        match h.next_command() {
+            Some(AppCommand::ImagePasteFiles { paths: got }) => {
+                assert_eq!(got, paths(&["a.png", "b.JPG"]));
+            }
+            other => panic!("expected the pictures staged, got {other:?}"),
+        }
+        assert!(h.next_command().is_none());
+        let loc = h.screen.loc();
+        let note = loc.tf(
+            "ui.image.paste_files_skipped",
+            &[("n", "1"), ("files", "letter.txt")],
+        );
+        assert!(h.feed_has(&note), "the left-out file is named: {note}");
+        assert_eq!(clip.asked, ["image", "files"], "text is never read");
+        assert!(h.screen.take_dirty_draft().is_none(), "no path was pasted");
+    }
+}
+
+/// Pictures alone: staged, and no note — there is nothing left out to name.
+#[test]
+fn copied_pictures_alone_leave_no_note() {
+    let mut h = Harness::new();
+    let mut clip = FakeClipboard {
+        files: paths(&["shot.png"]),
+        ..Default::default()
+    };
+    h.paste(&mut clip, false);
+    assert!(matches!(
+        h.next_command(),
+        Some(AppCommand::ImagePasteFiles { .. })
+    ));
+    assert!(
+        h.screen.feed_texts().is_empty(),
+        "{:?}",
+        h.screen.feed_texts()
+    );
+}
+
+/// `Ctrl+V` over files that are not pictures pastes text exactly as it always did —
+/// a copied document must not turn the key into an image refusal.
+#[test]
+fn ctrl_v_over_files_that_are_not_pictures_still_pastes_text() {
+    let mut h = Harness::new();
+    let mut clip = FakeClipboard {
+        files: paths(&["letter.txt"]),
+        text: Some("hello".into()),
+        ..Default::default()
+    };
+    h.paste(&mut clip, true);
+    assert!(h.next_command().is_none());
+    assert_eq!(clip.asked, ["image", "files", "text"]);
+    assert!(
+        h.screen
+            .take_dirty_draft()
+            .is_some_and(|d| d.contains("hello")),
+        "the text went into the input box"
+    );
+    assert!(
+        h.screen.feed_texts().is_empty(),
+        "no refusal for a key that pastes"
+    );
+}
+
+/// A typed `/image paste` that finds nothing says why: files that are not pictures by
+/// name, a clipboard on another machine by the distance, an empty one as before. Text
+/// is never read for it.
+#[test]
+fn a_typed_paste_that_finds_nothing_says_why() {
+    let cases: [(&[&str], bool, &str); 3] = [
+        (&["letter.txt"], true, "ui.err.image_clipboard_not_image"),
+        (&[], true, "ui.err.image_clipboard_remote"),
+        (&[], false, "ui.err.image_no_clipboard"),
+    ];
+    for (files, far, key) in cases {
+        let mut h = Harness::new();
+        let mut clip = FakeClipboard {
+            files: paths(files),
+            text: Some("never read".into()),
+            far,
+            ..Default::default()
+        };
+        h.paste(&mut clip, false);
+        assert!(h.next_command().is_none(), "{key}");
+        let loc = h.screen.loc();
+        let expected = if files.is_empty() {
+            loc.t(key).to_string()
+        } else {
+            loc.tf(key, &[("files", "letter.txt")])
+        };
+        assert!(h.feed_has(&expected), "{key}: {:?}", h.screen.feed_texts());
+        assert_eq!(clip.asked, ["image", "files"], "{key}");
+    }
+}

@@ -327,6 +327,165 @@ async fn pasting_twice_stages_two_images_under_distinct_names() {
     assert_eq!(items.len(), 2);
 }
 
+/// Picture files a file manager put on the clipboard stage as `/image attach <path>`
+/// would — under their **own** names, not `clipboard.png`, and with the file's path as
+/// the source (docs/research/pasted-image-names.md A1).
+#[tokio::test]
+async fn copied_picture_files_stage_under_their_own_names() {
+    let (dir, cmd_tx, mut evt_rx, _handle) = spawn_orch(None);
+    let chart = write_png(&dir, "chart.png", 40, 20);
+    let shot = write_png(&dir, "shot.png", 20, 40);
+
+    cmd_tx
+        .send(AppCommand::ImagePasteFiles {
+            paths: vec![chart.into(), shot.into()],
+        })
+        .unwrap();
+    let mut names = vec![
+        wait_staged(&mut evt_rx).await.name,
+        wait_staged(&mut evt_rx).await.name,
+    ];
+    // The two prepare concurrently, so they may land in either order.
+    names.sort();
+    assert_eq!(names, ["chart.png", "shot.png"]);
+
+    let items = staged_list(&cmd_tx, &mut evt_rx).await;
+    assert_eq!(items.len(), 2);
+    assert!(
+        items.iter().all(|i| !i.source.starts_with("clipboard:")),
+        "a copied file's source is its path: {items:?}"
+    );
+}
+
+/// More copied pictures than the message has room for: what fits is staged, and what
+/// does not is said **once**, with the numbers — not one refusal per file.
+#[tokio::test]
+async fn a_file_paste_past_the_cap_stages_what_fits_and_says_the_rest_once() {
+    let mut cfg = AppConfig::default();
+    cfg.images.max_count = 2;
+    let (dir, cmd_tx, mut evt_rx, _handle) = spawn_orch_cfg(None, cfg);
+    let paths: Vec<std::path::PathBuf> = ["a.png", "b.png", "c.png"]
+        .iter()
+        .map(|n| write_png(&dir, n, 16, 16).into())
+        .collect();
+
+    cmd_tx.send(AppCommand::ImagePasteFiles { paths }).unwrap();
+    // Said while the command is handled, before any file has been read.
+    let msg = wait_refusal(&mut evt_rx).await;
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::default());
+    assert_eq!(
+        msg,
+        loc.tf("ui.err.image_paste_files_over", &[("n", "1"), ("max", "2")])
+    );
+    wait_staged(&mut evt_rx).await;
+    wait_staged(&mut evt_rx).await;
+    assert_eq!(staged_list(&cmd_tx, &mut evt_rx).await.len(), 2);
+}
+
+/// With no room left, a file paste is refused before anything is read — the same
+/// refusal a typed attach gets.
+#[tokio::test]
+async fn a_file_paste_with_no_room_is_refused_before_any_work() {
+    let mut cfg = AppConfig::default();
+    cfg.images.max_count = 1;
+    let (dir, cmd_tx, mut evt_rx, _handle) = spawn_orch_cfg(None, cfg);
+    cmd_tx
+        .send(AppCommand::ImagePaste(Box::new(rgba(8, 8))))
+        .unwrap();
+    wait_staged(&mut evt_rx).await;
+
+    let path = write_png(&dir, "late.png", 8, 8);
+    cmd_tx
+        .send(AppCommand::ImagePasteFiles {
+            paths: vec![path.into()],
+        })
+        .unwrap();
+    let msg = wait_refusal(&mut evt_rx).await;
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::default());
+    assert_eq!(msg, loc.tf("ui.err.image_too_many", &[("max", "1")]));
+    assert_eq!(staged_list(&cmd_tx, &mut evt_rx).await.len(), 1);
+}
+
+/// With no chat open there is nowhere to stage copied files: refused with the attach's
+/// own words, and nothing is read.
+#[test]
+fn a_file_paste_with_no_chat_open_is_refused() {
+    let (_dir, mut orch, mut rx) = bare_orch_rx();
+    orch.handle_image_paste_files(vec!["C:\\shot.png".into()]);
+    let refused: Vec<String> = std::iter::from_fn(|| rx.try_recv().ok())
+        .filter_map(|e| match e {
+            AppEvent::ImageProgress(ImageProgress::Failed(msg)) => Some(msg),
+            _ => None,
+        })
+        .collect();
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::default());
+    assert_eq!(refused, [loc.t("ui.err.image_no_active_chat")]);
+    assert!(orch.staged_images.is_empty());
+}
+
+/// The cap holds where an image **lands**, not only where its staging starts: several
+/// stagings can be in flight at once — the files of one paste, an attach typed while a
+/// paste still encodes — and each passed the early check before any had landed. Driven
+/// on a bare orchestrator, since through the loop the race is a matter of timing.
+#[test]
+fn the_cap_holds_at_landing_for_stagings_that_raced_past_the_early_check() {
+    use super::super::images::ImageAttachResult;
+    use crate::entities::message_image::MessageImage;
+    use crate::shared::api::VisionSupport;
+
+    let (_dir, mut orch, mut rx) = bare_orch_rx();
+    let profile = Profile::new("P", "sys");
+    let chat = Chat::from_profile(&profile, "t");
+    let chat_id = chat.id;
+    orch.profiles.push(profile);
+    orch.chats.push(chat);
+    orch.active_id = Some(chat_id);
+    orch.config.images.max_count = 1;
+    let image =
+        |source: &str| MessageImage::new("x.png", source, "image/png", 10, 10, "AAAA".into());
+    orch.staged_images
+        .entry(chat_id)
+        .or_default()
+        .push(image("C:\\first.png"));
+    let landed = |outcome| ImageAttachResult {
+        chat_id,
+        vision: VisionSupport::Supported,
+        outcome,
+    };
+    let drained = |rx: &mut UnboundedReceiver<AppEvent>| -> Vec<AppEvent> {
+        std::iter::from_fn(|| rx.try_recv().ok()).collect()
+    };
+
+    // A second image lands into a full message: refused, the first kept.
+    orch.handle_image_result(landed(Ok(image("C:\\second.png"))));
+    let refused = drained(&mut rx).into_iter().find_map(|e| match e {
+        AppEvent::ImageProgress(ImageProgress::Failed(msg)) => Some(msg),
+        _ => None,
+    });
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::default());
+    assert_eq!(
+        refused,
+        Some(loc.tf("ui.err.image_too_many", &[("max", "1")]))
+    );
+    let sources = |orch: &Orchestrator| -> Vec<String> {
+        orch.staged_images[&chat_id]
+            .iter()
+            .map(|i| i.source.clone())
+            .collect()
+    };
+    assert_eq!(sources(&orch), ["C:\\first.png"]);
+
+    // A fresh copy of what is already staged replaces it and takes no new slot.
+    orch.handle_image_result(landed(Ok(image("C:\\first.png"))));
+    assert!(
+        drained(&mut rx)
+            .iter()
+            .any(|e| matches!(e, AppEvent::ImageProgress(ImageProgress::Attached { .. }))),
+        "a replacement is staged, not refused"
+    );
+    assert_eq!(sources(&orch), ["C:\\first.png"]);
+}
+
 /// A clipboard that reports a size its buffer cannot back is refused with its own
 /// message: it is not the user's file being wrong, so it must not read that way.
 #[tokio::test]

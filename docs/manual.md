@@ -450,8 +450,12 @@ in that same folder and appear in `/file list` beside the ones you attached.
 
 `/image attach <path|url>` stages a picture for your **next** message;
 `/image paste` takes the one on the clipboard, which is what a screenshot needs
-(`Ctrl+V` does the same where the terminal forwards it). `/image list` shows what
-is staged, `/image remove` unstages.
+(`Ctrl+V` does the same where the terminal forwards it). Picture files you copied
+in a file manager are pasted the same way and keep their own names. `/image list`
+shows what is staged, `/image remove` unstages.
+
+Over SSH the clipboard the app can read is the remote machine's, not yours: copy
+the file over and use `/image attach <path>`, or attach the picture by its address.
 
 If the engine cannot take images, the app says so before you send, and a chat
 that already holds images tells the model they exist rather than pretending they
@@ -904,7 +908,7 @@ Typed straight into the input box.
 | `/file attach <path>` · `/file remove <name\|#N>` · `/file list` | attach a text file to this chat / detach it / list attachments |
 | `/file open <name\|#N>` · `/file folder` | open one of this chat's files in the system (document types only — anything else opens its folder) / open the chat's files folder |
 | `/image attach <path\|url>` · `/image remove <name\|#N>` · `/image list` | stage an image for your next message / unstage one / list what is staged |
-| `/image paste` | stage the image on the clipboard — a screenshot needs no file |
+| `/image paste` | stage the image on the clipboard — a screenshot needs no file — or the picture files copied there |
 | `/image generate [16:9] <description>` | draw a picture with the image-generation provider, keep it in the chat's files and stage it for your next message ([Drawing pictures](#drawing-pictures)) |
 | `/project attach <directory>` · `/project detach` · `/project status` | attach a code project to this chat / detach it / show what is attached and what the command slots hold |
 | `/project build-cmd [line]` · `run-cmd` · `test-cmd` | set the command the assistant may build / run / test with — or, with no argument, show it |

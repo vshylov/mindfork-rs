@@ -52,6 +52,22 @@ pub enum PrepareError {
     Failed(String),
 }
 
+/// The extensions of the formats [`prepare`] decodes — the `image` crate's features in
+/// `Cargo.toml`, spelled the ways files carry them. Lower case; compare folded.
+const DECODED_EXTENSIONS: [&str; 6] = ["png", "jpg", "jpeg", "webp", "gif", "bmp"];
+
+/// Does `path` name an image this module can decode, judged by its extension?
+///
+/// A guess by name, made **before** the file is read, for one caller: a paste that finds
+/// files on the clipboard rather than pixels (docs/research/pasted-image-names.md A1).
+/// There a wrong "no" costs nothing — `Ctrl+V` pastes text as it always did — and a
+/// wrong "yes" is refused by [`prepare`], which judges the bytes, never the name.
+pub fn has_image_extension(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .is_some_and(|e| DECODED_EXTENSIONS.iter().any(|d| e.eq_ignore_ascii_case(d)))
+}
+
 /// Prepares `bytes` for attachment. `downscale_px` is the long-edge ceiling; `0` disables
 /// downscaling (but not format normalization, which is what the provider matrix needs).
 pub fn prepare(bytes: &[u8], downscale_px: u32) -> Result<PreparedImage, PrepareError> {
@@ -184,6 +200,34 @@ fn mime_of(format: ImageFormat) -> &'static str {
 mod tests {
     use super::*;
     use image::{DynamicImage, ImageBuffer, Rgb, Rgba};
+
+    #[test]
+    fn an_image_extension_is_judged_by_the_decoders_we_have() {
+        use std::path::Path;
+        for yes in [
+            "shot.png",
+            "photo.JPG",
+            "photo.jpeg",
+            "a/b/anim.gif",
+            "x.webp",
+            "scan.Bmp",
+        ] {
+            assert!(has_image_extension(Path::new(yes)), "{yes}");
+        }
+        // HEIC and TIFF have no decoder here; a document, a folder and a dotfile are
+        // not pictures; and `png` with no dot is a name, not an extension.
+        for no in [
+            "photo.heic",
+            "scan.tiff",
+            "letter.txt",
+            "folder",
+            ".png",
+            "png",
+            "archive.png.zip",
+        ] {
+            assert!(!has_image_extension(Path::new(no)), "{no}");
+        }
+    }
 
     fn png(width: u32, height: u32) -> Vec<u8> {
         let buf = ImageBuffer::from_fn(width, height, |x, _| Rgb([(x % 256) as u8, 10, 20]));
