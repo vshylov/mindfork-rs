@@ -14,6 +14,16 @@ split by subsystem.
 
 ## [Unreleased]
 
+## [0.24.0] — 2026-11-08
+
+**Stories.** The assistant can write a story with you, chapter by chapter. Give it your
+sketches and it composes the story's canon — the world, its places, the characters with
+their goals and secrets, the chapters — and nothing is written until you approve it in
+your own words. Each chapter is written in the background, read as an editor would and
+written again, and lands in the chat with a question for you. It is experimental and off
+by default. The line-break key is now a setting, thinking turned off now reaches Claude,
+and a restore no longer writes over the copy it is restoring.
+
 ### Added (experimental)
 
 - **Stories written from the chat.** With Settings → Tools → *Stories (experimental)*
@@ -82,24 +92,33 @@ split by subsystem.
 
 ### Data
 
-- `settings.json` gains `interface.newline_key` — `auto`, `shift_enter`, `alt_enter`,
-  `ctrl_enter` or `ctrl_j`. An addition: nothing is migrated, and a value a version
-  does not know reads as `auto` rather than costing the file. An older version starts
-  on the file but does not keep the field: when it next saves the settings, the choice
-  is gone and the key is `auto` again.
-
+- **Chat files move to schema 8** for the record a story's run leaves in its chat:
+  0.23.1 would skip a chat holding one without a word, and with the new version
+  stamped it refuses the data as a newer version's instead. The step changes nothing
+  in a file but its version, and the start backs every chat up first, as for every
+  step.
+- **Checked with the published 0.23.1.** On data this version wrote, it stops at start
+  with *"Data (…) was created by a newer version of mindfork (schema 8, supported 7)"*,
+  naming the chat file, and changes nothing. To go back, restore the backup made before
+  the step (`backups/pre-migrate-….zip`) with 0.23.1: it restores it with no warning
+  and reads every chat in it — what you wrote since is not in it. A backup this version
+  makes is restored by 0.23.1 with a warning that names the chat files' schema 8, and
+  then refused at start.
 - **Backups carry stories.** A backup now packs `stories/`, where the story tools
   (experimental) keep each chat's stories, and its `manifest.json` records
   their format. Each story's call log, `story-logs/`, stays out, as `logs/` does: a
   restore neither packs nor clears it. `mindfork stats` counts the stories, counts one
   as deleted while its chat is, and compares two copies of a story by what each holds.
   Data without stories backs up, restores and keeps its fingerprint as before.
-- **Chat files move to schema 8** for the record a story's run leaves in its chat. The
-  step changes nothing in a file but its version, and the start backs every chat up
-  first, as for every step. 0.23.1 refuses the migrated data as a newer version's;
-  the pre-migration backup is the way back. **Going back to 0.23.x after writing
-  stories:** that version restores a backup with stories but leaves them out of its own
-  backups.
+  **Going back to 0.23.x after writing stories:** restoring the pre-migration backup
+  leaves `stories/` as it is, since 0.23.x does not know it, and that version's own
+  backups leave it out. Back on this version, `mindfork stats` names such stories as
+  under a chat the data holds no file of.
+- `settings.json` gains `interface.newline_key` — `auto`, `shift_enter`, `alt_enter`,
+  `ctrl_enter` or `ctrl_j`. An addition: nothing is migrated, and a value a version
+  does not know reads as `auto` rather than costing the file. An older version starts
+  on the file but does not keep the field: when it next saves the settings, the choice
+  is gone and the key is `auto` again.
 
 ## [0.23.1] — 2026-10-31
 
@@ -3866,7 +3885,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.23.1...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.24.0...HEAD
+[0.24.0]: https://github.com/vshylov/mindfork-rs/compare/v0.23.1...v0.24.0
 [0.23.1]: https://github.com/vshylov/mindfork-rs/compare/v0.23.0...v0.23.1
 [0.23.0]: https://github.com/vshylov/mindfork-rs/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/vshylov/mindfork-rs/compare/v0.21.0...v0.22.0
