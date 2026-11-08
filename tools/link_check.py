@@ -44,7 +44,12 @@ from pathlib import Path
 # are not used anywhere in this repo; add them here if that changes.
 LINK = re.compile(r"\]\(\s*([^)\s]+)")
 FENCE = re.compile(r"^\s*(```|~~~)")
-SKIP_SCHEME = ("http://", "https://", "mailto:", "data:", "//")
+# A target that is not a file in this repository: a web address (`http://`,
+# `https://`, or the scheme-less `//host`), `mailto:` or `data:`. Matched at the
+# start and in any case. A pattern rather than a tuple of literal prefixes, which
+# Sonar's `python:S5332` read as this tool using clear-text HTTP — a false
+# positive, since a matching link is skipped, never fetched.
+EXTERNAL = re.compile(r"(?:(?:https?:)?//|mailto:|data:)", re.IGNORECASE)
 
 
 def _close_run(line: str, start: int, k: int) -> int:
@@ -127,7 +132,7 @@ def broken_links(path: Path):
     for lineno, line in enumerate(strip_code(text.split("\n")), 1):
         for m in LINK.finditer(line):
             target = m.group(1).strip()
-            if not target or target.startswith("#") or target.lower().startswith(SKIP_SCHEME):
+            if not target or target.startswith("#") or EXTERNAL.match(target):
                 continue
             # Anchors and query strings are not part of the path on disk.
             file_part = target.split("#", 1)[0].split("?", 1)[0]

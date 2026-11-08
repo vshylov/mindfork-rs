@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (42)
+## Entries (43)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -54,6 +54,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the console probe stops the tree it started, not the `cmd` in front of it (done)
 - Post-M9: SonarQube follow-up — the companion carry's six contexts (done)
 - Post-M9: SonarQube follow-up — B0's session and its two origins (done)
+- Post-M9: SonarQube follow-up — two of the five resolved findings, closed in code (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -2151,3 +2152,41 @@ tree (AGENTS.md §3).
   the simulation; it says what this run counted now. No CHANGELOG entry: nothing the user sees changed (AGENTS.md §4). No live run:
   the same calls in the same order, the stored origins measured by the unit tests
   (AGENTS.md §3).
+
+### Post-M9: SonarQube follow-up — two of the five resolved findings, closed in code (done)
+
+- **The project page said 5 issues, the project card 0** (read through the Sonar MCP on
+  2026-11-08; branch `refactor/sonar-calc-link-check`). The card and the measures API
+  (`violations`, `open_issues`, `software_quality_security_issues`) count open issues and
+  read 0; the *Project health dashboard* read "Issues 5" and "Security issues 1, Low". The
+  five are exactly the issues in `RESOLVED`: the four `rust:S3776` Accepted on 2026-08-06
+  (`settings/spec.rs::field_spec`, `features/tools/calc.rs::tokenize`, `markdown/latex.rs` ×2) and
+  the `python:S5332` marked False Positive the same day (`tools/link_check.py`, the
+  `SKIP_SCHEME` tuple) — that one is the "security issue". The same page rates Security
+  **A**, which one open Low issue would make B, so nothing is open; the dashboard counts
+  decisions taken in the UI as well. The server does not close such an issue by itself (the
+  S2208 entry above measured it); it closes when the rule stops raising it.
+- **Two of the five were cheap to close in code, so they are.** `tokenize` stood at 31
+  against 30: the nine one-character operators, each an arm of its own, are one table now
+  (`single_char_token`, the unknown-character error its `None`), and the number's and the
+  identifier's scanning loops are `number_end` and `scan_while`. The tokens are the same,
+  and a malformed number is still taken as one span and reported whole. New test
+  `the_tokenizer_takes_numbers_and_names_whole` pins the token stream (exponent with a
+  sign, a leading dot, identifiers lowercased) and the error text for `1.2.3`, `2e` and
+  `3E+x` (`«3E+»`, not a prefix); it fails with the exponent's sign left unscanned (the
+  mutant was run).
+- **`link_check.py`'s skip list is a pattern**, `EXTERNAL`: `(https?:)?//`, `mailto:`,
+  `data:`, at the start, any case — the tuple's five prefixes, with no `http://` literal
+  for the rule to read as a request. Measured, not argued: old and new predicates over all
+  1522 link targets in the tracked Markdown (537 skipped by each) and 22 edge cases
+  (`HTTP://`, `https:/`, `http:x`, `ftp://`, a leading space, `x.md#http://y` …) — no
+  disagreement, and the gate's own run is clean. The `indexnow.py` note in
+  `sonar-project.properties` cited this tuple as its precedent; it says the tuple is gone
+  and why the namespace URI there cannot follow.
+- **Left Accepted**: `field_spec` and the two LaTeX converter tables — the shapes the
+  2026-08-06 triage kept on purpose. The dashboard should read 3 after the merge's
+  analysis, which is what confirms both closures.
+- 4718 unit tests green (+1), 307 `#[ignore]`; fmt, clippy and the repository gates
+  green. No CHANGELOG entry: nothing the user sees changed (AGENTS.md §4). No live run:
+  the calculator's tokens and the link gate's verdicts are the same, measured by the unit
+  tests and the predicate comparison (AGENTS.md §3).
