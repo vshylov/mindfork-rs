@@ -367,6 +367,18 @@ jobs:
         run: >-
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
           && sudo apt-get install -y libasound2-dev
+      # The image's TEMP is on C:, the runner's OS disk, and the suite makes a
+      # temporary directory 446 times: one fsync'd small write there took 6.9-16.5
+      # ms against 0.4-0.7 on D:, where the workspace and RUNNER_TEMP are
+      # (docs/journal/ci.md, "why the Windows tests were slow"). Every test that
+      # opens a file-backed store pays that per commit, and four of them at once
+      # queue behind one another's flushes.
+      - name: TEMP on the workspace disk (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          echo "TMP=$RUNNER_TEMP" >> "$GITHUB_ENV"
+          echo "TEMP=$RUNNER_TEMP" >> "$GITHUB_ENV"
       # On `main` the Windows entry builds without running: the suite already
       # passed on the pull request, and building is what fills the cache. This
       # keeps the same job id — and therefore the same rust-cache key, which
