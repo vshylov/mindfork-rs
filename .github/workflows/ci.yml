@@ -326,12 +326,17 @@ jobs:
     #     not the build (2-3.5 min warm): 4002 tests ran in 6-7 min on 2026-10-10,
     #     4613 in 13-14 on 11-01, and 4767-4865 in 23-29 the week after, when 19
     #     tests of the Fabula simulation ran past a minute each; since their
-    #     removal 4714 run in 11-14 (jobs of 14-18 min).
+    #     removal 4714 run in 11-14 (jobs of 14-18 min). Then each database's
+    #     schema went into one transaction and TEMP onto D: (the step below;
+    #     docs/journal/ci.md, "why the Windows tests were slow"): its first two
+    #     runs took 84 and 171 s for the tests, 4.5 and 6.9 min for the job.
     # A partial cache (a Cargo.lock change) rebuilt 365 crates in 10m20s on
     # Windows, ~8 min over a warm build.
     # Each ceiling is about twice today's longest job, which leaves room for that
     # rebuild: Windows 35 against 17.6, macOS 25 against 9.4, Linux 15 against
-    # 4.2 (since 2026-11-08) — the three values this measurement kept. A warm
+    # 4.2 (since 2026-11-08) — the three values this measurement kept. Windows'
+    # 35 now holds its 4.5-7 minute job many times over; it is re-sized once that
+    # regime has a history, not from two runs. A warm
     # Windows run near 35 means the suite has doubled: look for "has been
     # running for over 60 seconds" in its log before raising the ceiling — that
     # is how the simulation's tests showed on 2026-11-07, at 34.8 of 35.
@@ -367,6 +372,18 @@ jobs:
         run: >-
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
           && sudo apt-get install -y libasound2-dev
+      # The image's TEMP is on C:, the runner's OS disk, and the suite makes a
+      # temporary directory 446 times: one fsync'd small write there took 6.9-16.5
+      # ms against 0.4-0.7 on D:, where the workspace and RUNNER_TEMP are
+      # (docs/journal/ci.md, "why the Windows tests were slow"). Every test that
+      # opens a file-backed store pays that per commit, and four of them at once
+      # queue behind one another's flushes.
+      - name: TEMP on the workspace disk (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          echo "TMP=$RUNNER_TEMP" >> "$GITHUB_ENV"
+          echo "TEMP=$RUNNER_TEMP" >> "$GITHUB_ENV"
       # On `main` the Windows entry builds without running: the suite already
       # passed on the pull request, and building is what fills the cache. This
       # keeps the same job id — and therefore the same rust-cache key, which
@@ -393,11 +410,10 @@ jobs:
   # a warning.
   #
   # A job of its own, not a step after the Windows tests the way macOS has one:
-  # those tests are the pull request's longest job (14-18 min, up to 34.8 in
-  # early November — the matrix comment above), and clippy is a build of its
-  # own (check mode shares nothing with the test build but the build scripts),
-  # so as a step it would add its whole duration to that job and to the
-  # ceiling's margin. Here it runs beside the tests.
+  # clippy is a build of its own (check mode shares nothing with the test
+  # build but the build scripts), so as a step it would add its whole duration
+  # to that job — 14-18 min when this job was made, 4.5-7 since the fix in the
+  # matrix comment above. Here it runs beside the tests.
   #
   # Pull requests only — `main` takes code that already passed here — and no
   # cache: every run is cold, measured at 4.2 and 5.3 min on its first two

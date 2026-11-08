@@ -840,6 +840,16 @@ not the reasoning, decided each design.
 languages*, *raw HTML blocks render their text*, *`youtube_watch` — a degraded answer
 has to close the door*.
 
+**Per-test times need neither nightly nor nextest.** libtest's
+`--format json --report-time` sits behind `-Z unstable-options`, and the test binary
+checks `RUSTC_BOOTSTRAP` when it runs: build as usual, then run the binary with
+`RUSTC_BOOTSTRAP=1`. The suite runs in the same single process CI uses; nextest's process
+per test is what Windows charges most for. Stamp each line as it arrives
+(`perl -MTime::HiRes=time -ne 'printf "%.3f %s", time, $_'`), and the timeline shows who
+ran beside whom. libtest's own sum-over-wall "parallelism" counts waiting as running, so
+it read 4.0x on a suite that was faster at one thread.
+— *why the Windows tests were slow*.
+
 **Use the project's own client as the instrument, not curl and awk.** A curl+awk cosine
 measurement returned corrupted values (0.97 on everything, 1.000 on antonyms); the real
 numbers came from `OpenAiClient`. A CHANGELOG-extraction "bug" was an artifact of a
@@ -2024,6 +2034,15 @@ before the first such check, and ask for the window to be closed rather than
 going round the lock; `mindfork demo` and anything in a container are not held
 by it.
 — *release 0.14.0, the draft*.
+
+**A Windows CI runner's TEMP is on its OS disk, and flushes from parallel tests queue.**
+The image sets `TEMP` to C:, where one fsync'd small write took 6.9-16.5 ms, against
+0.4-0.7 ms on D:, where the workspace and `RUNNER_TEMP` are. On Windows a flush waits on
+the device, so four tests committing at once wait on one another: the suite ran slower
+at four threads than at one. Point `TEMP`/`TMP` at `RUNNER_TEMP`, and count the commits
+a fixture makes: a schema in autocommit is one commit per statement, 31 for a fresh
+`data.db`.
+— *why the Windows tests were slow*, *the schema in one transaction*.
 
 ## 7. i18n, gates and localization
 
