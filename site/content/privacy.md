@@ -2,11 +2,11 @@
 # Generated from PRIVACY.md by tools/site_legal_pages.py - do not edit.
 title = "Privacy policy"
 description = "What mindfork keeps on your machine, what leaves it and only on which setting of yours, and what reaches its author — which is nothing."
-updated = "2026-10-30"
+updated = "2026-11-08"
 template = "doc.html"
 +++
 
-Effective **2026-10-30**. It covers three things that are easy to confuse: the
+Effective **2026-11-08**. It covers three things that are easy to confuse: the
 **mindfork application**, the website **mindfork.io**, and the project's
 presence on **GitHub**. They have very different answers, so they are kept
 apart below.
@@ -63,6 +63,8 @@ machine. On Windows the profile's own permissions do that.
 | The full-text search index | `cache.db` (SQLite) | **yes** — derived; delete it and it rebuilds |
 | Pre-images of every project file the assistant edited, for the `F4` diff and revert | `workspace/<chat-id>/` | your source code |
 | Files kept with a chat — what the Python sandbox saved (charts, tables, workbooks), and files you attached with `/file attach` whose original is kept: binaries, and the PDF, DOCX or HTML beside its extracted text | `files/<chat-id>/` | **yes** — your files, and what the code made of them |
+| Stories written with the story tools (experimental, off by default) — each story's canon, every version of its chapters, and your answers to its questions | `stories/<chat-id>/<story-id>.db` (SQLite) | **yes** |
+| Every model call a story's run made — the request and the reply — kept for replay | `story-logs/<chat-id>/<story-id>.db` (SQLite) | **yes** — not in backups |
 | Backups | `backups/`, or the location you choose | yes — see §7 |
 | Diagnostics | `logs/` | no — see §6 |
 | The Python sandbox runtime | `sandbox/` | no |
@@ -158,7 +160,8 @@ they are worth knowing about because they are ordinary requests to the same
 provider: naming a new chat (on by default, after the first substantive reply),
 compacting a long history into a rolling summary, summarizing a page that
 `fetch_url` retrieved, sub-agents and `run_dialogue`, and — only when you turn
-them on — reflection and the notes/self-model consolidation passes.
+them on — reflection, the notes/self-model consolidation passes, and the
+chapters of a story, each written in the background in some fifty requests.
 
 **Probes.** In managed and external mode the app asks the server `/health` and
 `/props`, and `GET /models` for what it is running — the model's name, context
@@ -631,9 +634,10 @@ holds the value at all. Keys are sent only to the service they belong to.
 **Backups** contain settings, profiles, your personal dictionary, a copy of
 `data.db`, the whole `chats/` directory — that is, your conversations — the
 files kept with chats (`files/`), the copies of project files the assistant
-edited (`workspace/`), your dictionaries and locale overrides, the `.bak` copies
-of all of these, and the file tools' folder when it lies inside the data folder.
-They exclude logs and previous backups. A backup can be encrypted with a password
+edited (`workspace/`), the stories (`stories/`), your dictionaries and locale
+overrides, the `.bak` copies of all of these, and the file tools' folder when it
+lies inside the data folder. They exclude logs, the stories' call logs
+(`story-logs/`) and previous backups. A backup can be encrypted with a password
 (AES-256); note that even then the archive's manifest, entry names and sizes
 remain readable without it. Where you put a backup, and who can read it, is your
 decision — an unencrypted backup is a copy of everything.

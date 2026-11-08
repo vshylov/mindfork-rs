@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (85)
+## Entries (86)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -97,6 +97,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Release 0.23.0 (prepared)
 - Release 0.23.1 (prepared)
 - Post-M9: the screenshots' search icon on Linux — DejaVu Sans Mono as a fallback (done)
+- Release 0.24.0 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -5639,3 +5640,110 @@ it lacks. `tools/demo_reel.py` imports the same list.
   the other fallback icons (`▤ ⚙ ▸ ✦`).
 
 No Rust changed and no live stack is involved; the test count is unchanged.
+
+### Release 0.24.0 (prepared)
+
+- **A release PR** per [AGENTS.md §6](../../AGENTS.md), branch `chore/release-0.24.0`:
+  - `Cargo.toml` `0.23.1 → 0.24.0` (+ one line of `Cargo.lock`), and the site's
+    `app_version`;
+  - `CHANGELOG.md`: `[Unreleased]` → `[0.24.0] — 2026-11-08` under a lead paragraph,
+    "Stories"; the **Data** section put in the order a user needs it — the schema step,
+    what was measured (below), the stories in backups with the way back measured, the
+    settings field — a fresh `[Unreleased]`, and the comparison links;
+  - CLAUDE.md's status heading;
+  - the release's post, and `/llms.txt` regenerated from it;
+  - the privacy policy, which had no word of stories (below): `PRIVACY.md`, its Russian
+    translation, the site's page and both privacy RTFs.
+
+  Since `v0.23.1`, the pull requests with behaviour:
+  - the Fabula track (855–898): the story tools, `story_create`, `story_continue` and
+    `story_status`, behind *Stories (experimental)*, off by default — PR 7 (866) put
+    stories in the data, backups and `stats`, PR 8 (869) the run in the background and
+    `CHAT_SCHEMA` 7 → 8, PR 15 (895) the tools on B0, and PR 16 (896) removed F, the
+    simulation, once M3's judging had chosen B0 (docs/journal/stories.md);
+  - 863, thinking off reaching Claude (in the simulation's pull request), and 859/864,
+    the reply's schema on every wire;
+  - 866's fix, a restore that wrote over the copy it was restoring;
+  - 870, a file in `chats/` that holds no chat no longer stopping the start;
+  - 881, the line-break key as a setting (docs/journal/ui-input.md).
+
+  The rest moved no behaviour: the dependency groups (860–862: twelve minor and patch
+  updates, `rusqlite` 0.41.1, `rodio` 0.23.0), two actions' pins (867, 868), the
+  screenshots' fallback font (878), the remote dev machine's documents (877, 879), and
+  the track's research, runs and judging (854, 855, 880, 884, 888–894, 897, 898).
+- **A MINOR**: a track of features, §6's rule for `0.x`. One schema constant moved:
+  `CHAT_SCHEMA` 7 → 8 (869); `STORY_SCHEMA` and `STORY_CALLS_SCHEMA` are new at 1, for
+  files no earlier version writes.
+- **The `Data` rubric, by measurement.** Since `v0.23.1` three things are stored that
+  0.23.1 never wrote: `RunKind::Story` in a chat file, the reason for chat schema 8;
+  `interface.newline_key` with `NewlineKey`, a field new in this release, so the ledger
+  names it at settings schema 7 with no step; and `stories/` with the manifest's `story`
+  number. Run on the droplet (Ubuntu 24.04) with **the published 0.23.1** — the Linux
+  archive downloaded from its release, matching `sha256sums.txt` — beside a debug build
+  of this branch; each binary pointed at a root by a `defaults.json` of mode `path`, the
+  start made by `mindfork import` with a bare `mindfork-import` document, and the stored
+  files hashed before and after. 0.23.1's own root: 0.23.1 imported a profile and five
+  chats from a seed document, with the six golden chat files (v1–v7) beside them, which
+  it stepped to 7 — eleven chat files at 7; `stats` counts five chats (the golden files
+  belong to no profile there), fingerprint `a605ef150b3b70fe`.
+  - *The settings field*: that root given `interface.newline_key = "ctrl_j"`. 0.23.1
+    starts (exit 0) and rewrites `settings.json` without the field; the other 25
+    sections are the same, compared one by one.
+  - *Forward*: this version on 0.23.1's root — exit 0, all eleven chat files stamped 8,
+    one `pre-migrate-*.zip` whose manifest says `settings 7, profiles 1, chat 7, db 1,
+    story 0`, `newline_key` written as `auto`, and `stats` with the same counts and
+    fingerprint.
+  - *Back, on what it migrated*: 0.23.1 refuses with *"Data (…/chats/274e925c-….json)
+    was created by a newer version of mindfork (schema 8, supported 7). Update the app
+    or restore a backup."*, exit 1, all 26 stored files byte for byte as they were. Its
+    `stats` (exit 0) counts what it can read and says a newer version wrote the data.
+  - *The way back*: 0.23.1 restores that pre-migration backup into an empty root with
+    **no warning**, exit 0 — eleven chat files at 7, fingerprint `a605ef150b3b70fe` —
+    and starts on it (exit 0).
+  - *Stories*: the fixture root of `write_a_data_root_with_stories` (`#[ignore]`) — two
+    stories, one in a deleted chat, two chats at 8, and two files in `chats/` that are no
+    chat. This version's `stats`: 2 stories, 1 deleted, 3 of 4 chapters accepted, one
+    question waiting, fingerprint `1724073eee0657d7`; its `backup` packs both story
+    files and no call log, manifest `chat 8, story 1`. 0.23.1's `stats` of the archive
+    leaves the stories out, with the newer-version note; its `restore` into an empty root
+    warns *"…holds data newer than this version of mindfork reads (chats/*.json: schema
+    8, supported 7); it was created by version 0.24.0…"*, unpacks both story files, and
+    the start then refuses as above.
+  - *Going back after writing stories*: this version started on a copy of that root
+    (exit 0; its log names both non-chat files as skipped, 870's fix), then 0.23.1
+    restored its own pre-migration backup over it — exit 0, a `pre-restore-*.zip` first,
+    and `stories/` left as it was, both files in it. 0.23.1 starts (exit 0), with its
+    fingerprint `a605ef150b3b70fe`, and its `backup` holds no entry under `stories/`.
+    This version on that root again: exit 0, `stats` counts the two stories and names
+    both as under a chat the copy holds no readable file of. The CHANGELOG's sentence on
+    the way back said 0.23.x "restores a backup with stories"; it does, and then refuses
+    to start, since such a backup's chats are at 8 — so the item now says what the way
+    back, the pre-migration backup, does.
+  - *The droplet's dev root*, a copy (one chat at 8, `newline_key` `shift_enter`, written
+    by this branch's builds): 0.23.1 refuses as above, exit 1, all 7 stored files as
+    they were; this version starts on it and rewrites only `settings.bak`.
+  - The copies were deleted afterwards.
+- **Found on the way: the privacy policy had no word of stories.** Its §2 lists every
+  file the app keeps and whether it holds your conversations, §7 what a backup holds, and
+  §3 the requests the app makes that you did not type; none of them named `stories/`,
+  `story-logs/` — every request and reply of a story's run, kept for replay — or a
+  chapter's fifty requests in the background. Two rows, a clause in each paragraph, the
+  effective date `2026-10-30 → 2026-11-08`, and the same in the Russian translation;
+  `site_legal_pages.py` and `wizard_rtf.py` regenerated the site's page and the
+  installer's two privacy RTFs (docs/lessons.md §1). Nothing the app sends changed: a
+  story's requests go to the chat's own provider.
+- **No rehearsal.** `git diff v0.23.1 -- .github packaging tools` holds two actions'
+  pins (`taiki-e/install-action` 2.88.1, `SonarSource/sonarqube-scan-action` 8.4.0),
+  the screenshots' fallback font, and this PR's two RTFs — as for 0.23.0.
+  `release_guard.py --tag v0.24.0` accepts the tag and cuts 103 lines of notes. Not run
+  here: `cargo deny check` and `zola build`, neither installed on the droplet — the
+  audit and the site's build run on this PR, which touches `Cargo.toml`, `Cargo.lock`
+  and `site/`, and `packaging.yml` compiles the installer with the new RTFs.
+- **Tests:** 4714 unit tests green, 307 `#[ignore]` — unchanged; the release adds no
+  code.
+
+**Gates**: unit tests green; clippy `-D warnings`, fmt, `cyrillic_scan`, `link_check`,
+`doc_index_check`, `layer_check`, `list_scroll_check`, `claude_md_chart --check`,
+`wizard_rtf --check`, `site_legal_pages --check`, `site_llms_txt --check`,
+`indexnow --check`, `actions_pin_check`, and the release guard's and the site gate's
+self-tests clean.
