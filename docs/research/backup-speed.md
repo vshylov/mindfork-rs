@@ -118,7 +118,8 @@ read it the way they read today's.
   At 27.7 MB it does not show (four threads came within 7 % of a perfect 4×), but
   a database of gigabytes would become the whole backup's duration. Splitting
   one entry needs a pigz-style chunked deflate, which `zip` has no API to write
-  (§5).
+  (§5). Studied after the owner's run, where `data.db` was two thirds of the
+  root: [backup-big-entry.md](backup-big-entry.md).
 - **What stays serial**: `VACUUM INTO` (0.35 s), the directory walk, and
   `SchemaVersions::held_by` reading every chat's version — together ~0.45 s,
   about a third of the parallel backup. `VACUUM INTO` can run beside the
