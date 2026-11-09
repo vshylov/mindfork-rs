@@ -134,6 +134,7 @@ pub(super) fn write_archive(
         jobs: &jobs,
         next: AtomicUsize::new(0),
         stop: AtomicBool::new(false),
+        memory_cap: spec.memory_cap,
     };
     let has_db = paths.data_db().is_file();
     let mut writer = Writer {
@@ -223,6 +224,8 @@ struct Pool<'a> {
     jobs: &'a [Job<'a>],
     next: AtomicUsize,
     stop: AtomicBool,
+    /// The largest database compacted in memory ([`ZipSpec::memory_cap`]).
+    memory_cap: u64,
 }
 
 impl Pool<'_> {
@@ -233,14 +236,7 @@ impl Pool<'_> {
             let Some(job) = self.jobs.get(self.next.fetch_add(1, Ordering::Relaxed)) else {
                 break;
             };
-            let landed = run_job(
-                job,
-                self.paths,
-                self.out_path,
-                self.options,
-                self.scratch,
-                self.loc,
-            );
+            let landed = run_job(job, self);
             let failed = landed.is_err();
             if tx.send(landed).is_err() || failed {
                 break;
@@ -307,23 +303,17 @@ impl Writer {
 }
 
 /// Runs one job on a worker.
-fn run_job(
-    job: &Job<'_>,
-    paths: &Paths,
-    out_path: &Path,
-    options: &EntryOptions<'_>,
-    scratch: &Scratch<'_>,
-    loc: &Locale,
-) -> Result<Landed> {
+fn run_job(job: &Job<'_>, pool: &Pool<'_>) -> Result<Landed> {
+    let (options, scratch, loc) = (pool.options, pool.scratch, pool.loc);
     match job {
         Job::Database => {
-            let (packed, schema) = pack_database(paths, out_path, options, scratch, loc)?;
+            let (packed, schema) = pack_database(pool)?;
             Ok(Landed::Entries {
                 packed,
                 db_schema: Some(schema),
             })
         }
-        Job::Schemas => Ok(Landed::Schemas(SchemaVersions::held_by(paths))),
+        Job::Schemas => Ok(Landed::Schemas(SchemaVersions::held_by(pool.paths))),
         Job::File(entry) => Ok(Landed::Entries {
             packed: vec![pack_file(entry, options, scratch, loc)?],
             db_schema: None,
@@ -335,15 +325,19 @@ fn run_job(
 /// copy to be had — the raw files with their sidecars. Returns the packed entries
 /// and the `user_version` of the database file that went in (`0` — none).
 ///
-/// The copy is dated by the newest of the files it was made of: a write that
-/// reached only the `-wal` sidecar is in the copy, and so is its time.
-fn pack_database(
-    paths: &Paths,
-    out_path: &Path,
-    options: &EntryOptions<'_>,
-    scratch: &Scratch<'_>,
-    loc: &Locale,
-) -> Result<(Vec<Packed>, u32)> {
+/// The copy is made in memory when the database fits under the cap, and through
+/// a scratch file beside the archive otherwise or when that fails
+/// (docs/research/backup-big-entry.md F2) — the same bytes either way. It is dated
+/// by the newest of the files it was made of: a write that reached only the
+/// `-wal` sidecar is in the copy, and so is its time.
+fn pack_database(pool: &Pool<'_>) -> Result<(Vec<Packed>, u32)> {
+    let (paths, out_path, options, scratch, loc) = (
+        pool.paths,
+        pool.out_path,
+        pool.options,
+        pool.scratch,
+        pool.loc,
+    );
     let live = paths.data_db();
     if !live.is_file() {
         return Ok((Vec::new(), 0));
@@ -357,13 +351,41 @@ fn pack_database(
             Entry::of(abs, (*name).to_string(), meta.as_ref())
         })
         .collect();
+    let mtime = raw.iter().filter_map(|e| e.mtime).max();
+    let size: u64 = raw.iter().map(|e| e.len).sum();
+    if size <= pool.memory_cap {
+        match db::vacuum_into_memory(&live).and_then(|mut copy| {
+            let bytes = copy.bytes()?;
+            let entry = Entry {
+                abs: live.clone(),
+                name: "data.db".into(),
+                len: bytes.len() as u64,
+                mtime,
+            };
+            let schema = db::user_version_in_header(&bytes).unwrap_or(0);
+            tracing::info!(
+                before = size,
+                after = entry.len,
+                "backup: database compacted in memory"
+            );
+            Ok((
+                pack_from(&entry, &mut &bytes[..], options, scratch, loc)?,
+                schema,
+            ))
+        }) {
+            Ok((packed, schema)) => return Ok((vec![packed], schema)),
+            Err(e) => {
+                tracing::warn!(error = %format!("{e:#}"), "backup: compacting in memory failed; through a file");
+            }
+        }
+    }
     if let Some(compact) = compacted_db(paths, out_path) {
         let schema = db::header_user_version(compact.path()).unwrap_or(0);
         let entry = Entry {
             abs: compact.path().to_path_buf(),
             name: "data.db".into(),
             len: file_len(compact.path()),
-            mtime: raw.iter().filter_map(|e| e.mtime).max(),
+            mtime,
         };
         let packed = pack_file(&entry, options, scratch, loc)?;
         // The copy is removed here, once packed — its compressed entry is a
@@ -386,10 +408,23 @@ fn pack_file(
     scratch: &Scratch<'_>,
     loc: &Locale,
 ) -> Result<Packed> {
-    let (abs, name, len) = (&entry.abs, entry.name.as_str(), entry.len);
-    let options = dated(*options, entry.mtime);
+    let abs = &entry.abs;
     let mut src = File::open(abs)
         .with_context(|| loc.tf("backup.ctx.open", &[("path", &abs.display().to_string())]))?;
+    pack_from(entry, &mut src, options, scratch, loc)
+}
+
+/// [`pack_file`] from `src` rather than the file — the database's copy in
+/// memory. `entry.abs` names the source in an error.
+fn pack_from(
+    entry: &Entry,
+    src: &mut dyn Read,
+    options: &EntryOptions<'_>,
+    scratch: &Scratch<'_>,
+    loc: &Locale,
+) -> Result<Packed> {
+    let (abs, name, len) = (&entry.abs, entry.name.as_str(), entry.len);
+    let options = dated(*options, entry.mtime);
     if len >= scratch.spill_over {
         let file = scratch.next();
         let out = File::create(file.path()).with_context(|| {
@@ -398,7 +433,7 @@ fn pack_file(
                 &[("path", &file.path().display().to_string())],
             )
         })?;
-        write_one(ZipWriter::new(out), name, options, &mut src, abs, loc)?;
+        write_one(ZipWriter::new(out), name, options, src, abs, loc)?;
         Ok(Packed::Spilled {
             name: name.to_string(),
             file,
@@ -406,7 +441,7 @@ fn pack_file(
     } else {
         let capacity = usize::try_from(len / 2).unwrap_or(0);
         let out = Cursor::new(Vec::with_capacity(capacity));
-        let bytes = write_one(ZipWriter::new(out), name, options, &mut src, abs, loc)?;
+        let bytes = write_one(ZipWriter::new(out), name, options, src, abs, loc)?;
         Ok(Packed::Memory {
             name: name.to_string(),
             bytes: bytes.into_inner(),
@@ -419,7 +454,7 @@ fn write_one<W: Write + Seek>(
     mut zip: ZipWriter<W>,
     name: &str,
     options: FullFileOptions<'_, 'static>,
-    src: &mut File,
+    src: &mut dyn Read,
     abs: &Path,
     loc: &Locale,
 ) -> Result<W> {

@@ -4,7 +4,10 @@
 same day, each at the recommendation: **F1(a)**, **F2(a)**, **F3(a)**, **F4(a)**,
 **F5(a)**. The plan in §9 is built in that order. **Stage 1 (F3, F5) is built**:
 a restore into an empty root 9.0 s → 0.90 s, over data 34.6 s → 12 s; a debug backup
-3.64 s → 1.11 s ([docs/journal/storage.md](../journal/storage.md)).
+3.64 s → 1.11 s ([docs/journal/storage.md](../journal/storage.md)). **Stage 2 (F2) is
+built**: a backup of that root 11.0–16.5 s → 7.3 s. Measured, the copy in memory peaks
+at about twice the database (`memdb` grows by doubling), so the cap is an eighth of the
+memory, not a quarter — the peak stays within the quarter decided.
 
 **Related:** [backup-speed.md](backup-speed.md) — the pool this builds on, and its
 §3.4, the limit studied here; spec §12.3; `src/features/backup/parallel.rs`;
