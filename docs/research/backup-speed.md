@@ -1,8 +1,10 @@
 # Research: faster backup and restore
 
-**Status:** research, measured 2026-11-09. The format fork F1 was decided by the
-user the same day: **parallel zip, not 7z**. F2–F4 are open; the plan in §7
-assumes the recommendations.
+**Status:** research, measured 2026-11-09; every fork decided by the user the
+same day. **F1** parallel zip, not 7z; **F2** the level is a setting, 6 by
+default; **F3** the internal copies take the level the setting holds; **F4** the
+thread count is a setting, never more than the machine's cores. The plan in §7
+is written for these answers.
 
 **Related:** spec §12.3, architecture §7,
 [docs/history/backup-password.md](../history/backup-password.md) (the encryption
@@ -249,6 +251,9 @@ pursued.**
 6 is the level `companion_carry` already uses. `-c 9` stays available. The change
 is `cli::DEFAULT_COMPRESSION`; no help text names the default.
 
+**User's decision (2026-11-09): a setting, 6 by default.** The level lives in
+`settings.json` and on the settings screen; `-c` overrides it for one run.
+
 ### F3. The level of the internal copies (pre-restore, pre-migration)
 
 Both are hard-coded at 9 today (`restore_backup`, `data_migration`).
@@ -258,6 +263,8 @@ Both are hard-coded at 9 today (`restore_backup`, `data_migration`).
   already brings it to ~1 s here.
 - **(b) level 1.** About 0.6 s faster on this root, at +27 % disk for a file
   that stays.
+
+**User's decision (2026-11-09): (a)** — the level the setting holds.
 
 ### F4. The number of threads
 
@@ -269,9 +276,21 @@ Both are hard-coded at 9 today (`restore_backup`, `data_migration`).
   that should keep cores free.
 - **(c) a setting** in the settings screen.
 
-## 7. Plan, for the recommendations
+**User's decision (2026-11-09): a setting, and never more than the cores.** `0`
+means every core; a number above what the machine has counts as all of them, so
+a portable data root moved to a smaller machine keeps working at its size.
+
+## 7. Plan, for the decisions
 
 One PR, `feat/backup-parallel`.
+
+- **Settings** (`settings.json`, additive — no schema step): `backup.compression`
+  (0–9, default 6) and `backup.threads` (0 = all cores), two rows in the "Data"
+  section beside the password. `mindfork backup` without `-c`, the pre-restore
+  copy and the pre-migration backup take the level from there; packing and
+  unpacking take the thread count, capped at the cores. The backup commands read
+  both from the raw JSON, like the password (`backup_settings`): a settings file
+  the app refuses to start on can still be backed up.
 
 - **Writer** (`write_zip`):
   - Workers compress entries largest first, each into a one-entry zip.
