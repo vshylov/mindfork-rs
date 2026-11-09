@@ -7,8 +7,11 @@ thread count is a setting, never more than the machine's cores. The plan in §7
 is written for these answers, and was **built** the same day: `backup` 4.5 s →
 1.1 s, `restore` over data 5.9 s → 2.0 s on the release binary, live **GO** on
 Linux — what was built, the tests and the mutations are in
-[docs/journal/storage.md](../journal/storage.md). The owner's Windows machine is
-the go/no-go still open.
+[docs/journal/storage.md](../journal/storage.md). On the owner's Windows machine
+(i9-9900K, real data, a debug build) `backup` went from 95.3 s to 21.8 s — the
+go/no-go passed for the backup; the restore was timed on Linux only. With a
+194 MB database the one-entry-one-thread limit of §3.4 is now real: `data.db` is
+two thirds of that root.
 
 **Related:** spec §12.3, architecture §7,
 [docs/history/backup-password.md](../history/backup-password.md) (the encryption
@@ -123,9 +126,9 @@ read it the way they read today's.
   `SchemaVersions::held_by` reading every chat's version — together ~0.45 s,
   about a third of the parallel backup. `VACUUM INTO` can run beside the
   compression of the other entries (§7).
-- **Windows is not measured.** NTFS and Defender make creating many small files
-  slower there; parallel unpacking usually gains more from that, but this is
-  what the go/no-go in §7 is for.
+- **Windows was measured after the build** — the backup only: 95.3 s → 21.8 s on
+  an i9-9900K with the owner's data, in a debug build. Unpacking on Windows, where
+  NTFS and Defender make creating many small files slower, was not timed.
 
 ## 4. 7z
 
