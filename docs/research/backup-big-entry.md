@@ -1,6 +1,8 @@
 # Research: one big file on many threads
 
-**Status:** research, measured 2026-11-09. The forks in §8 are open.
+**Status:** research, measured 2026-11-09. Every fork in §8 decided by the user the
+same day, each at the recommendation: **F1(a)**, **F2(a)**, **F3(a)**, **F4(a)**,
+**F5(a)**. The plan in §9 is built in that order.
 
 **Related:** [backup-speed.md](backup-speed.md) — the pool this builds on, and its
 §3.4, the limit studied here; spec §12.3; `src/features/backup/parallel.rs`;
@@ -226,6 +228,8 @@ so this entry carries the DOS date like the rest.
   same pool, through the hand-written entry of §4.
 - **(b) No**: one entry, one thread, and the database's deflate stays the chain.
 
+**User's decision (2026-11-09): (a).**
+
 ### F2. Where the database is compacted at backup
 
 - **(a) In memory** *(recommended)*: `VACUUM INTO` a `memdb`, chunks compressed
@@ -233,11 +237,15 @@ so this entry carries the DOS date like the rest.
   it, the file path of today.
 - **(b) A file, as today.**
 
+**User's decision (2026-11-09): (a).**
+
 ### F3. The restore's in-place `VACUUM`
 
 - **(a) Only when the header counts free pages** *(recommended)*. Our own archives
   skip it; older and foreign ones are compacted as now.
 - **(b) Always, as today.**
+
+**User's decision (2026-11-09): (a).**
 
 ### F4. The deflate backend
 
@@ -245,13 +253,17 @@ so this entry carries the DOS date like the rest.
   a second, and the backend is every `flate2` user's.
 - **(b) `zlib-rs`**: 2× more, unsafe code in every inflate the app does.
 
+**User's decision (2026-11-09): (a).**
+
 ### F5. Optimized compression crates in debug builds
 
 - **(a) Yes** *(recommended)*: the eight crates of §6 at `opt-level = 3` in the
   dev profile. Nothing shipped changes.
 - **(b) No.**
 
-## 9. Plan, for the recommendations
+**User's decision (2026-11-09): (a).**
+
+## 9. Plan, for the decisions
 
 Stages, each its own PR:
 
