@@ -144,6 +144,11 @@
   .dot {
     fill: var(--accent);
   }
+  // A bar of a single series: the accent, as the line is. Its label and its
+  // value are text beside it, in text tokens.
+  .bar {
+    fill: var(--accent);
+  }
   .key {
     fill: var(--accent);
     stroke: var(--bg);
@@ -176,6 +181,8 @@
 }
 .prose details.chart-data {
   margin: 0 0 30px;
+  // A table wider than a phone scrolls inside its own box, never the page.
+  overflow-x: auto;
   summary {
     cursor: pointer;
     color: var(--muted);
