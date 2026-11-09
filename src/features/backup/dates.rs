@@ -23,7 +23,8 @@
 //! The manifest and a companion export are written directly and carry both. When
 //! `zip` keeps the field, a backup's entries carry it with no change here:
 //! `a_raw_copy_drops_the_extended_timestamp` pins today's behaviour and fails
-//! then.
+//! then. Reported upstream, with the cause and a fix:
+//! <https://github.com/zip-rs/zip2/issues/1285>.
 
 use std::io::Read;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -207,7 +208,8 @@ mod tests {
     /// the `UT` field is dropped, the DOS date kept — an odd second comes back as
     /// the even one below it. **When this fails**, `zip` keeps the field through a
     /// raw copy and a backup's entries carry the exact time: update the module doc
-    /// and spec §12.3, and turn this into a test that the time survives.
+    /// and spec §12.3, and turn this into a test that the time survives. The
+    /// upstream report to watch: <https://github.com/zip-rs/zip2/issues/1285>.
     #[test]
     fn a_raw_copy_drops_the_extended_timestamp() {
         let mtime = at(1_715_000_001); // an odd second
