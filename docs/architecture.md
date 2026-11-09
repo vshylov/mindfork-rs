@@ -789,6 +789,9 @@ src/
 │  │                        (`raw_copy_file`) by the writer as it lands, the database's
 │  │                        compaction the first job; unpacking on per-worker handles
 │  │                        (docs/research/backup-speed.md)
+│  │  ├─ chunked.rs         a big entry on many threads: deflate in 1 MiB chunks ended
+│  │                        by a sync flush, assembled in order into a one-entry zip
+│  │                        by the writer — WinZip AE-2 applied here with a password
 │  │  └─ dates.rs           the dates entries carry: written as the file's mtime (DOS
 │  │                        date + `UT` field; a raw copy keeps the DOS date only),
 │  │                        read back on restore, the 1980 default read as none

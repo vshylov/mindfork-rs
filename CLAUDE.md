@@ -186,7 +186,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-11-09, version 0.24.0)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **4783 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **4789 unit tests
 green, 317 `#[ignore]`** (live smokes + real-clipboard round trips + the
 screenshot-dump and demo-reel regenerators).
 
@@ -199,6 +199,10 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **One big file on many threads — track complete** (2026-11-09, three stages): a big
+  entry deflated in chunks on the pool, its AE-2 written here; the database compacted in
+  memory; a restore's needless `VACUUM` gone; optimized debug builds. 352 MB root: backup
+  11.0 → 2.95 s, restore 34.6 → 4.0 s ([docs/research/backup-big-entry.md](docs/research/backup-big-entry.md)).
 - **Backup and restore on a pool of threads** (2026-11-09): every core packs and
   unpacks (`backup.threads`, never more than the cores), at `backup.compression`
   (6 by default; the app's own copies too); a parallel zip, not 7z. 4.5 s → 1.1 s,
@@ -280,11 +284,6 @@ being recent is dropped, not shortened.
   told from its `usage` ([docs/research/ollama-window.md](docs/research/ollama-window.md),
   [prompt-cut-detection.md](docs/research/prompt-cut-detection.md),
   [docs/journal/engine.md](docs/journal/engine.md)).
-- **Scoop and the AUR** (2026-10-03): `vshylov/scoop-bucket` — the release's zip,
-  data in `%APPDATA%`, Excavator for updates — is live; `mindfork-rs-bin` is built
-  and checked by every release (`aur.yml`) and **blocked**: the AUR's registration
-  is closed, so no user doc names it yet ([docs/research/package-managers.md](docs/research/package-managers.md),
-  [docs/journal/release.md](docs/journal/release.md)).
 - **An animated demo generated from code** (2026-10-03): a ~25 s scripted turn
   played through the runtime's own path, drawn to GIF/WebP by
   `tools/demo_reel.py` in every release (English and Russian), played by mindfork.io

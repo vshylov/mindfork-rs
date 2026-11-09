@@ -2148,6 +2148,7 @@ dependencies = [
 name = "mindfork"
 version = "0.24.0"
 dependencies = [
+ "aes 0.9.3",
  "ansi-to-tui",
  "anyhow",
  "arboard",
@@ -2158,19 +2159,23 @@ dependencies = [
  "chacha20poly1305",
  "chardetng",
  "chrono",
+ "crc32fast",
  "crossterm",
  "directories",
  "encoding_rs",
  "eventsource-stream",
  "flate2",
  "futures-util",
+ "getrandom 0.4.2",
  "hkdf",
+ "hmac",
  "ignore",
  "image",
  "libc",
  "mermaid-text",
  "ogg",
  "opus-rs",
+ "pbkdf2",
  "pdf-extract",
  "percent-encoding",
  "pulldown-cmark",
@@ -2183,6 +2188,7 @@ dependencies = [
  "scraper",
  "serde",
  "serde_json",
+ "sha1",
  "sha2 0.11.1",
  "similar",
  "single-instance",
@@ -2204,6 +2210,7 @@ dependencies = [
  "uuid",
  "windows-sys 0.61.2",
  "winresource",
+ "zeroize",
  "zip",
 ]
 

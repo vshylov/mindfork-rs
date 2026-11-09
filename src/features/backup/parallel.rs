@@ -21,10 +21,11 @@
 //! For a restore that is the same `Err` the single loop returned, so the rollback
 //! is unchanged. Whatever a failed run left in scratch files is removed with them.
 
+use std::borrow::Cow;
 use std::cmp::Reverse;
 use std::fs::{self, File};
-use std::io::{self, Cursor, Read, Seek, Write};
-use std::path::Path;
+use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::thread;
@@ -34,6 +35,7 @@ use anyhow::{Context, Result, anyhow};
 use zip::write::{FileOptions, FullFileOptions, SimpleFileOptions};
 use zip::{AesMode, CompressionMethod, ZipArchive, ZipWriter};
 
+use super::chunked::{self, Assembly, Chunk};
 use super::{
     BackupManifest, DB_FILES, Entry, EntryProgress, MANIFEST_NAME, SchemaVersions, ScratchFile,
     ZipSpec, compacted_db, dated, entry_name, file_len, normalize,
@@ -59,26 +61,23 @@ enum Packed {
 
 /// A unit of the packing pool's work, in the order the workers take them.
 enum Job<'a> {
-    /// `data.db`: compacted into a scratch copy and packed as that, or packed
-    /// raw with its sidecars when it cannot be compacted (the module doc of
-    /// `backup`). First, because it is the longest chain.
-    Database,
     /// The schemas the files hold, for the manifest ([`SchemaVersions::held_by`]):
     /// a read of every chat, so a job of its own rather than the writer's wait.
     Schemas,
+    /// Chunk `index` of big entry `entry` ([`chunked`]).
+    Chunk { entry: usize, index: usize },
     /// A file, as gathered.
     File(&'a Entry),
+    /// The database's compacted copy, held in memory, too small to chunk.
+    Bytes { entry: &'a Entry, bytes: &'a [u8] },
 }
 
 /// What a finished job hands the writer.
 enum Landed {
-    /// Entries to append — a file's one, the database's one to three (none
-    /// when there is no database) — and, from the database job, the schema of
-    /// the database file packed.
-    Entries {
-        packed: Vec<Packed>,
-        db_schema: Option<u32>,
-    },
+    /// An entry to append whole.
+    Packed(Packed),
+    /// A chunk of big entry `entry`, compressed.
+    Chunk { entry: usize, chunk: Chunk },
     /// The schema scan, `db` still `0`.
     Schemas(SchemaVersions),
 }
@@ -103,6 +102,162 @@ impl Scratch<'_> {
     }
 }
 
+/// The database, made ready before the pool starts: its compacted copy in memory,
+/// the same copy in a scratch file when it is over the cap or memory failed, or
+/// the raw files with their sidecars when it cannot be compacted (the module doc
+/// of `backup`). Ready first because its chunks are the pool's longest work, and
+/// a copy in memory must outlive the pool that reads it.
+enum Database {
+    None,
+    Memory {
+        copy: db::MemoryCopy,
+        entry: Entry,
+        schema: u32,
+    },
+    File {
+        // Held so the copy outlives the pool; removed on drop.
+        _compact: ScratchFile,
+        entry: Entry,
+        schema: u32,
+    },
+    Raw {
+        entries: Vec<Entry>,
+        schema: u32,
+    },
+}
+
+/// Compacts the database for packing (docs/research/backup-big-entry.md F2): in
+/// memory when it and its `-wal` are at most `memory_cap`, else — or when that
+/// fails — through a scratch file beside the archive, else raw. The copy is
+/// dated by the newest of the files it was made of: a write that reached only
+/// the `-wal` is in the copy, and so is its time. Never fails: a backup that
+/// happens is worth more than a compact one.
+fn prepare_database(paths: &Paths, out_path: &Path, memory_cap: u64) -> Database {
+    let live = paths.data_db();
+    if !live.is_file() {
+        return Database::None;
+    }
+    let raw: Vec<Entry> = DB_FILES
+        .iter()
+        .map(|name| (paths.root().join(name), name))
+        .filter(|(abs, _)| abs.is_file())
+        .map(|(abs, name)| {
+            let meta = fs::metadata(&abs).ok();
+            Entry::of(abs, (*name).to_string(), meta.as_ref())
+        })
+        .collect();
+    let mtime = raw.iter().filter_map(|e| e.mtime).max();
+    let size: u64 = raw.iter().map(|e| e.len).sum();
+    let data_db = |abs: PathBuf, len| Entry {
+        abs,
+        name: "data.db".into(),
+        len,
+        mtime,
+    };
+    if size <= memory_cap {
+        let in_memory = db::vacuum_into_memory(&live).and_then(|mut copy| {
+            let bytes = copy.bytes()?;
+            let (len, schema) = (bytes.len() as u64, db::user_version_in_header(&bytes));
+            drop(bytes);
+            Ok((copy, len, schema.unwrap_or(0)))
+        });
+        match in_memory {
+            Ok((copy, len, schema)) => {
+                tracing::info!(
+                    before = size,
+                    after = len,
+                    "backup: database compacted in memory"
+                );
+                let entry = data_db(live, len);
+                return Database::Memory {
+                    copy,
+                    entry,
+                    schema,
+                };
+            }
+            Err(e) => {
+                tracing::warn!(error = %format!("{e:#}"), "backup: compacting in memory failed; through a file");
+            }
+        }
+    }
+    if let Some(compact) = compacted_db(paths, out_path) {
+        let schema = db::header_user_version(compact.path()).unwrap_or(0);
+        let entry = data_db(compact.path().to_path_buf(), file_len(compact.path()));
+        return Database::File {
+            _compact: compact,
+            entry,
+            schema,
+        };
+    }
+    let schema = db::header_user_version(&live).unwrap_or(0);
+    Database::Raw {
+        entries: raw,
+        schema,
+    }
+}
+
+/// Where a big entry's bytes are read from: the database's copy in memory, or a
+/// file.
+enum Source<'a> {
+    Memory(&'a [u8]),
+    File(&'a Path),
+}
+
+/// An entry compressed in chunks: what the workers read, what the writer
+/// assembles.
+struct Big<'a> {
+    name: &'a str,
+    len: u64,
+    mtime: Option<SystemTime>,
+    source: Source<'a>,
+    chunks: usize,
+}
+
+/// The pool's work: the schema scan, every big entry's chunks — the bulk, so
+/// first —, then the rest whole, largest first.
+fn plan<'a>(
+    entries: &'a [Entry],
+    database: &[&'a Entry],
+    db_bytes: Option<&'a [u8]>,
+    spec: &ZipSpec<'_>,
+) -> (Vec<Job<'a>>, Vec<Big<'a>>) {
+    let chunk = spec.chunk.max(1);
+    let mut bigs = Vec::new();
+    let mut whole: Vec<Job<'a>> = Vec::new();
+    let mut by_size: Vec<(u64, Job<'a>)> = Vec::new();
+    for entry in database.iter().copied().chain(entries) {
+        let in_memory =
+            db_bytes.filter(|_| database.len() == 1 && std::ptr::eq(entry, database[0]));
+        if chunked::chunked(entry.len, spec.level, spec.chunked_from) {
+            let source = match in_memory {
+                Some(bytes) => Source::Memory(bytes),
+                None => Source::File(&entry.abs),
+            };
+            let chunks = usize::try_from(entry.len.div_ceil(chunk as u64)).unwrap_or(usize::MAX);
+            bigs.push(Big {
+                name: &entry.name,
+                len: entry.len,
+                mtime: entry.mtime,
+                source,
+                chunks,
+            });
+        } else {
+            let job = match in_memory {
+                Some(bytes) => Job::Bytes { entry, bytes },
+                None => Job::File(entry),
+            };
+            by_size.push((entry.len, job));
+        }
+    }
+    by_size.sort_by_key(|(len, _)| Reverse(*len));
+    whole.push(Job::Schemas);
+    for (b, big) in bigs.iter().enumerate() {
+        whole.extend((0..big.chunks).map(|index| Job::Chunk { entry: b, index }));
+    }
+    whole.extend(by_size.into_iter().map(|(_, job)| job));
+    (whole, bigs)
+}
+
 /// Writes the archive at `out_path`: `entries`, the database, and the manifest
 /// last. See the module doc.
 pub(super) fn write_archive(
@@ -124,24 +279,47 @@ pub(super) fn write_archive(
         seq: AtomicUsize::new(0),
         spill_over: spec.spill_over,
     };
-    let jobs = schedule(entries);
+    let mut database = prepare_database(paths, out_path, spec.memory_cap);
+    let (data, db_entries, db_schema) = match &mut database {
+        Database::None => (None, Vec::new(), 0),
+        Database::Memory {
+            copy,
+            entry,
+            schema,
+        } => (Some(copy.bytes()?), vec![&*entry], *schema),
+        Database::File { entry, schema, .. } => (None, vec![&*entry], *schema),
+        Database::Raw { entries, schema } => (None, entries.iter().collect(), *schema),
+    };
+    let (jobs, bigs) = plan(entries, &db_entries, data.as_deref(), spec);
+    let password = normalize(spec.password);
+    let assemblies = bigs
+        .iter()
+        .map(|big| {
+            let dos = super::dates::dos_fields(big.mtime);
+            let file = scratch.next();
+            Assembly::new(big.name, big.chunks, dos, password, file)
+                .map(Some)
+                .with_context(|| loc.tf("backup.ctx.write_entry", &[("name", big.name)]))
+        })
+        .collect::<Result<Vec<_>>>()?;
     let pool = &Pool {
         paths,
-        out_path,
         options: &options,
         scratch: &scratch,
         loc,
         jobs: &jobs,
+        bigs: &bigs,
+        level: u32::try_from(spec.level.clamp(1, 9)).unwrap_or(6),
+        chunk: spec.chunk.max(1),
         next: AtomicUsize::new(0),
         stop: AtomicBool::new(false),
-        memory_cap: spec.memory_cap,
     };
-    let has_db = paths.data_db().is_file();
     let mut writer = Writer {
         zip,
-        ticker: EntryProgress::new(entries.len() + usize::from(has_db)),
+        ticker: EntryProgress::new(entries.len() + db_entries.len()),
         schemas: SchemaVersions::default(),
-        db_schema: 0,
+        db_schema,
+        assemblies,
     };
 
     let workers = spec.threads.clamp(1, jobs.len());
@@ -202,30 +380,21 @@ fn entry_options<'a>(spec: &ZipSpec<'a>) -> (SimpleFileOptions, EntryOptions<'a>
     (plain, options)
 }
 
-/// The jobs in the order the workers take them: the database, the schema scan,
-/// then the files, largest first (the module doc).
-fn schedule(entries: &[Entry]) -> Vec<Job<'_>> {
-    let mut files: Vec<&Entry> = entries.iter().collect();
-    files.sort_by_key(|e| Reverse(e.len));
-    [Job::Database, Job::Schemas]
-        .into_iter()
-        .chain(files.into_iter().map(Job::File))
-        .collect()
-}
-
 /// What every worker of one packing shares: the jobs and the next one to take,
 /// the stop flag, and what a job needs.
 struct Pool<'a> {
     paths: &'a Paths,
-    out_path: &'a Path,
     options: &'a EntryOptions<'a>,
     scratch: &'a Scratch<'a>,
     loc: &'a Locale,
     jobs: &'a [Job<'a>],
+    bigs: &'a [Big<'a>],
+    /// The deflate level of a chunk, `1..=9`.
+    level: u32,
+    /// The chunk a big entry is cut into ([`ZipSpec::chunk`]).
+    chunk: usize,
     next: AtomicUsize,
     stop: AtomicBool,
-    /// The largest database compacted in memory ([`ZipSpec::memory_cap`]).
-    memory_cap: u64,
 }
 
 impl Pool<'_> {
@@ -245,17 +414,19 @@ impl Pool<'_> {
     }
 }
 
-/// The calling thread's side: the archive, the progress line, and what the
-/// manifest will record.
+/// The calling thread's side: the archive, the progress line, what the manifest
+/// will record, and the big entries being assembled.
 struct Writer {
     zip: ZipWriter<File>,
     ticker: EntryProgress,
     schemas: SchemaVersions,
     db_schema: u32,
+    assemblies: Vec<Option<Assembly>>,
 }
 
 impl Writer {
-    /// Takes in one finished job: appends its entries, or keeps what it found.
+    /// Takes in one finished job: appends its entry, a big entry's chunk — and
+    /// the big entry once it is whole —, or keeps what it found.
     fn land(
         &mut self,
         landed: Landed,
@@ -263,16 +434,30 @@ impl Writer {
         progress: &mut impl FnMut(&str),
     ) -> Result<()> {
         match landed {
-            Landed::Entries { packed, db_schema } => {
-                if !packed.is_empty() {
+            Landed::Packed(packed) => {
+                self.ticker.tick(loc, progress);
+                append(&mut self.zip, packed, loc)
+            }
+            Landed::Chunk { entry, chunk } => {
+                let slot = self
+                    .assemblies
+                    .get_mut(entry)
+                    .ok_or_else(|| anyhow!("a chunk of an entry that is not being assembled"))?;
+                let assembly = slot
+                    .as_mut()
+                    .ok_or_else(|| anyhow!("a chunk of an entry already assembled"))?;
+                let name = assembly.name().to_string();
+                let complete = assembly
+                    .land(chunk)
+                    .with_context(|| loc.tf("backup.ctx.write_entry", &[("name", &name)]))?;
+                if complete && let Some(assembly) = slot.take() {
+                    let file = assembly
+                        .finish()
+                        .with_context(|| loc.tf("backup.ctx.write_entry", &[("name", &name)]))?;
                     self.ticker.tick(loc, progress);
+                    append(&mut self.zip, Packed::Spilled { name, file }, loc)?;
                 }
-                if let Some(schema) = db_schema {
-                    self.db_schema = schema;
-                }
-                packed
-                    .into_iter()
-                    .try_for_each(|p| append(&mut self.zip, p, loc))
+                Ok(())
             }
             Landed::Schemas(found) => {
                 self.schemas = found;
@@ -284,6 +469,9 @@ impl Writer {
     /// Writes the schema-version manifest (metadata, not a user file) last, and
     /// finishes the archive.
     fn finish(mut self, plain: SimpleFileOptions, loc: &Locale) -> Result<()> {
+        if let Some(left) = self.assemblies.iter().flatten().next() {
+            return Err(anyhow!("{} was left unassembled", left.name()));
+        }
         let manifest = BackupManifest::written_now(SchemaVersions {
             db: self.db_schema,
             ..self.schemas
@@ -306,98 +494,58 @@ impl Writer {
 fn run_job(job: &Job<'_>, pool: &Pool<'_>) -> Result<Landed> {
     let (options, scratch, loc) = (pool.options, pool.scratch, pool.loc);
     match job {
-        Job::Database => {
-            let (packed, schema) = pack_database(pool)?;
-            Ok(Landed::Entries {
-                packed,
-                db_schema: Some(schema),
+        Job::Schemas => Ok(Landed::Schemas(SchemaVersions::held_by(pool.paths))),
+        Job::File(entry) => Ok(Landed::Packed(pack_file(entry, options, scratch, loc)?)),
+        Job::Bytes { entry, bytes } => Ok(Landed::Packed(pack_from(
+            entry,
+            &mut &bytes[..],
+            options,
+            scratch,
+            loc,
+        )?)),
+        Job::Chunk { entry, index } => {
+            let big = &pool.bigs[*entry];
+            let start = (*index as u64) * pool.chunk as u64;
+            let end = (start + pool.chunk as u64).min(big.len);
+            let data = read_chunk(big, start, end, loc)?;
+            let last = index + 1 == big.chunks;
+            let deflated = chunked::deflate_chunk(&data, pool.level, last)
+                .with_context(|| loc.tf("backup.ctx.write_entry", &[("name", big.name)]))?;
+            Ok(Landed::Chunk {
+                entry: *entry,
+                chunk: Chunk {
+                    index: *index,
+                    deflated,
+                    crc: crc32fast::hash(&data),
+                    len: end - start,
+                },
             })
         }
-        Job::Schemas => Ok(Landed::Schemas(SchemaVersions::held_by(pool.paths))),
-        Job::File(entry) => Ok(Landed::Entries {
-            packed: vec![pack_file(entry, options, scratch, loc)?],
-            db_schema: None,
-        }),
     }
 }
 
-/// The database job: a compacted copy packed as `data.db`, or — when there is no
-/// copy to be had — the raw files with their sidecars. Returns the packed entries
-/// and the `user_version` of the database file that went in (`0` — none).
-///
-/// The copy is made in memory when the database fits under the cap, and through
-/// a scratch file beside the archive otherwise or when that fails
-/// (docs/research/backup-big-entry.md F2) — the same bytes either way. It is dated
-/// by the newest of the files it was made of: a write that reached only the
-/// `-wal` sidecar is in the copy, and so is its time.
-fn pack_database(pool: &Pool<'_>) -> Result<(Vec<Packed>, u32)> {
-    let (paths, out_path, options, scratch, loc) = (
-        pool.paths,
-        pool.out_path,
-        pool.options,
-        pool.scratch,
-        pool.loc,
-    );
-    let live = paths.data_db();
-    if !live.is_file() {
-        return Ok((Vec::new(), 0));
-    }
-    let raw: Vec<Entry> = DB_FILES
-        .iter()
-        .map(|name| (paths.root().join(name), name))
-        .filter(|(abs, _)| abs.is_file())
-        .map(|(abs, name)| {
-            let meta = fs::metadata(&abs).ok();
-            Entry::of(abs, (*name).to_string(), meta.as_ref())
-        })
-        .collect();
-    let mtime = raw.iter().filter_map(|e| e.mtime).max();
-    let size: u64 = raw.iter().map(|e| e.len).sum();
-    if size <= pool.memory_cap {
-        match db::vacuum_into_memory(&live).and_then(|mut copy| {
-            let bytes = copy.bytes()?;
-            let entry = Entry {
-                abs: live.clone(),
-                name: "data.db".into(),
-                len: bytes.len() as u64,
-                mtime,
-            };
-            let schema = db::user_version_in_header(&bytes).unwrap_or(0);
-            tracing::info!(
-                before = size,
-                after = entry.len,
-                "backup: database compacted in memory"
-            );
-            Ok((
-                pack_from(&entry, &mut &bytes[..], options, scratch, loc)?,
-                schema,
-            ))
-        }) {
-            Ok((packed, schema)) => return Ok((vec![packed], schema)),
-            Err(e) => {
-                tracing::warn!(error = %format!("{e:#}"), "backup: compacting in memory failed; through a file");
-            }
+/// The bytes `start..end` of a big entry: a slice of the copy in memory, or read
+/// from its file.
+fn read_chunk<'a>(big: &Big<'a>, start: u64, end: u64, loc: &Locale) -> Result<Cow<'a, [u8]>> {
+    match big.source {
+        Source::Memory(bytes) => {
+            let range = usize::try_from(start)?..usize::try_from(end)?;
+            let slice = bytes
+                .get(range)
+                .ok_or_else(|| anyhow!("{}: a chunk past the end", big.name))?;
+            Ok(Cow::Borrowed(slice))
+        }
+        Source::File(path) => {
+            let pack = || loc.tf("backup.ctx.pack", &[("path", &path.display().to_string())]);
+            let mut file = File::open(path).with_context(|| {
+                loc.tf("backup.ctx.open", &[("path", &path.display().to_string())])
+            })?;
+            file.seek(SeekFrom::Start(start)).with_context(pack)?;
+            let mut data = vec![0; usize::try_from(end - start)?];
+            file.read_exact(&mut data).with_context(pack)?;
+            Ok(Cow::Owned(data))
         }
     }
-    if let Some(compact) = compacted_db(paths, out_path) {
-        let schema = db::header_user_version(compact.path()).unwrap_or(0);
-        let entry = Entry {
-            abs: compact.path().to_path_buf(),
-            name: "data.db".into(),
-            len: file_len(compact.path()),
-            mtime,
-        };
-        let packed = pack_file(&entry, options, scratch, loc)?;
-        // The copy is removed here, once packed — its compressed entry is a
-        // copy of its own, in memory or in a scratch file.
-        return Ok((vec![packed], schema));
-    }
-    let schema = db::header_user_version(&live).unwrap_or(0);
-    let packed = raw
-        .iter()
-        .map(|entry| pack_file(entry, options, scratch, loc))
-        .collect::<Result<_>>()?;
-    Ok((packed, schema))
 }
 
 /// Compresses `entry`'s file into a zip holding it alone, under its name and

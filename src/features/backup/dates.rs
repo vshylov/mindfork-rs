@@ -99,6 +99,14 @@ pub(crate) fn entry_mtime<R: Read>(entry: &ZipFile<'_, R>) -> Option<SystemTime>
     Some(local.into())
 }
 
+/// `mtime` as the (time, date) fields of a header written by hand — the big
+/// entry's (`chunked`): the DOS date-time in local time, or the format's default
+/// when it is not known or out of range.
+pub(crate) fn dos_fields(mtime: Option<SystemTime>) -> (u16, u16) {
+    let dos = mtime.and_then(dos_time).unwrap_or_default();
+    (dos.timepart(), dos.datepart())
+}
+
 /// `mtime` as a DOS date-time in local time; `None` outside 1980–2107.
 fn dos_time(mtime: SystemTime) -> Option<zip::DateTime> {
     let local: chrono::DateTime<chrono::Local> = mtime.into();

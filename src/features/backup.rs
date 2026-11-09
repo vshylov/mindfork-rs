@@ -109,6 +109,7 @@ use crate::shared::storage::schema::{
 /// release-engineering.md §3.4.
 const MANIFEST_NAME: &str = "manifest.json";
 
+mod chunked;
 mod dates;
 mod parallel;
 
@@ -676,6 +677,8 @@ pub fn create_backup(
         threads: packing.threads,
         spill_over: parallel::SPILL_OVER,
         memory_cap: memory_cap(),
+        chunked_from: chunked::CHUNKED_FROM,
+        chunk: chunked::CHUNK,
     };
     progress(loc.t("backup.progress.packing"));
     parallel::write_archive(paths, &out_path, &entries, &spec, loc, &mut progress).with_context(
@@ -701,6 +704,10 @@ struct ZipSpec<'a> {
     /// The largest database compacted in memory rather than through a scratch
     /// file ([`memory_cap`]); a seam too — the tests force either path.
     memory_cap: u64,
+    /// From this size an entry is compressed in chunks, on many workers, and the
+    /// chunk it is cut into (`chunked`; seams, lowered by the tests).
+    chunked_from: u64,
+    chunk: usize,
 }
 
 /// The largest database a backup compacts in memory
@@ -3112,6 +3119,8 @@ mod tests {
                 threads: 4,
                 spill_over,
                 memory_cap: u64::MAX,
+                chunked_from: chunked::CHUNKED_FROM,
+                chunk: chunked::CHUNK,
             };
             let archive = out.path().join(name);
             parallel::write_archive(&paths, &archive, &entries, &spec, ru(), &mut |_| {}).unwrap();
@@ -3149,6 +3158,8 @@ mod tests {
             threads: 4,
             spill_over: 0,
             memory_cap: u64::MAX,
+            chunked_from: chunked::CHUNKED_FROM,
+            chunk: chunked::CHUNK,
         };
         let archive = out.path().join("x.zip");
         let err = parallel::write_archive(&paths, &archive, &entries, &spec, ru(), &mut |_| {})
@@ -3395,6 +3406,8 @@ mod tests {
                 threads: 4,
                 spill_over,
                 memory_cap: u64::MAX,
+                chunked_from: chunked::CHUNKED_FROM,
+                chunk: chunked::CHUNK,
             };
             parallel::write_archive(&paths, &archive, &entries, &spec, ru(), &mut |_| {}).unwrap();
             let dates = entry_dates(&archive);
@@ -3531,6 +3544,8 @@ mod tests {
                 threads: 4,
                 spill_over: parallel::SPILL_OVER,
                 memory_cap,
+                chunked_from: chunked::CHUNKED_FROM,
+                chunk: chunked::CHUNK,
             };
             let archive = out.path().join(name);
             parallel::write_archive(&paths, &archive, &entries, &spec, ru(), &mut |_| {}).unwrap();
@@ -3575,6 +3590,8 @@ mod tests {
                 threads: 2,
                 spill_over: parallel::SPILL_OVER,
                 memory_cap,
+                chunked_from: chunked::CHUNKED_FROM,
+                chunk: chunked::CHUNK,
             };
             parallel::write_archive(&paths, &archive, &entries, &spec, ru(), &mut |_| {}).unwrap();
             let packed = out.path().join("packed.db");
@@ -3594,5 +3611,121 @@ mod tests {
         assert!(cap <= 1 << 30, "{cap}");
         assert!(cap <= memory / 8, "{cap} of {memory}");
         assert!(cap == 1 << 30 || cap == memory / 8, "{cap}");
+    }
+
+    // ---- a big entry on many threads (docs/research/backup-big-entry.md F1) ----
+
+    fn compressed_size(archive: &Path, name: &str) -> u64 {
+        let mut zip = ZipArchive::new(File::open(archive).unwrap()).unwrap();
+        let index = zip.index_for_name(name).unwrap();
+        zip.by_index_raw(index).unwrap().compressed_size()
+    }
+
+    /// A spec with chunks small enough for test data: every entry of 4 KiB and up
+    /// is cut into 1 KiB chunks.
+    fn chunky(password: Option<&str>, memory_cap: u64) -> ZipSpec<'_> {
+        ZipSpec {
+            level: 6,
+            password,
+            threads: 4,
+            spill_over: parallel::SPILL_OVER,
+            memory_cap,
+            chunked_from: 4 << 10,
+            chunk: 1 << 10,
+        }
+    }
+
+    /// Big entries compressed in chunks on the pool — the database's copy from
+    /// memory or from its scratch file, a big stored file from disk — pack what
+    /// one thread does, with a password and without; the archive restores; and
+    /// the scratch files are gone.
+    #[test]
+    fn big_entries_chunked_on_the_pool_pack_what_one_thread_does() {
+        let dir = tempfile::tempdir().unwrap();
+        seed_many(dir.path());
+        let big: Vec<u8> = (0..300_000u32)
+            .map(|i| (i % 251) as u8 ^ (i / 997) as u8)
+            .collect();
+        fs::write(dir.path().join("files").join("c1").join("big.bin"), &big).unwrap();
+        let paths = Paths::with_root(dir.path());
+        let entries = gather_entries(&paths, None, ru()).unwrap();
+        let out = tempfile::tempdir().unwrap();
+        for password in [None, Some(PW)] {
+            let whole = out.path().join("whole.zip");
+            let spec = ZipSpec {
+                chunked_from: u64::MAX,
+                ..chunky(password, u64::MAX)
+            };
+            parallel::write_archive(&paths, &whole, &entries, &spec, ru(), &mut |_| {}).unwrap();
+            let expected = archive_contents(&whole, password);
+            for memory_cap in [u64::MAX, 0] {
+                let archive = out.path().join("chunked.zip");
+                let spec = chunky(password, memory_cap);
+                parallel::write_archive(&paths, &archive, &entries, &spec, ru(), &mut |_| {})
+                    .unwrap();
+                assert_eq!(
+                    archive_contents(&archive, password),
+                    expected,
+                    "{password:?} {memory_cap}"
+                );
+                // Chunked, not merely equal: every chunk ends in a sync-flush marker
+                // and starts with an empty window, so the stream is longer.
+                for name in ["data.db", "files/c1/big.bin"] {
+                    assert!(
+                        compressed_size(&archive, name) > compressed_size(&whole, name),
+                        "{name} was not chunked ({password:?}, {memory_cap})"
+                    );
+                }
+                assert_eq!(
+                    raw_names(&archive).last().map(String::as_str),
+                    Some(MANIFEST_NAME)
+                );
+
+                let dst = tempfile::tempdir().unwrap();
+                let restored = Paths::with_root(dst.path());
+                let packing = Packing {
+                    level: 6,
+                    threads: 4,
+                };
+                restore_backup(&restored, &archive, packing, None, password, ru(), |_| {}).unwrap();
+                assert_eq!(
+                    fs::read(dst.path().join("files").join("c1").join("big.bin")).unwrap(),
+                    big
+                );
+                assert_eq!(
+                    leftovers(out.path(), &["whole.zip", "chunked.zip"]),
+                    Vec::<String>::new()
+                );
+            }
+        }
+    }
+
+    /// A big entry that cannot be read fails the backup with its name, and the
+    /// half-assembled entry's scratch file is removed with it.
+    #[test]
+    fn an_unreadable_big_entry_fails_the_pack_and_leaves_no_scratch() {
+        let dir = tempfile::tempdir().unwrap();
+        seed_data(dir.path());
+        let paths = Paths::with_root(dir.path());
+        let mut entries = gather_entries(&paths, None, ru()).unwrap();
+        entries.push(Entry {
+            abs: dir.path().join("files").join("gone.bin"),
+            name: "files/gone.bin".into(),
+            len: 64 << 10,
+            mtime: None,
+        });
+        let out = tempfile::tempdir().unwrap();
+        let archive = out.path().join("x.zip");
+        let err = parallel::write_archive(
+            &paths,
+            &archive,
+            &entries,
+            &chunky(Some(PW), 0),
+            ru(),
+            &mut |_| {},
+        )
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("gone.bin"), "{err:#}");
+        assert_eq!(leftovers(out.path(), &["x.zip"]), Vec::<String>::new());
     }
 }

@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (35)
+## Entries (36)
 
 - Post-M9: persisting the input-box draft in the chat file (done)
 - Post-M9: persisting deleted exchanges in the chat file (`Ctrl+E`/`Ctrl+R`) (done)
@@ -47,6 +47,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a backup's entries carry their files' dates (done)
 - Post-M9: a big database's restore without a needless VACUUM; optimized debug builds (done)
 - Post-M9: a big database compacted in memory for its backup (done)
+- Post-M9: a big entry compressed on many threads, its AE-2 written here (done)
 
 ### Post-M9: persisting the input-box draft in the chat file (done)
 - **Unsaved input-box text is stored on the chat and restored on
@@ -1972,4 +1973,53 @@ the owner's decision of 2026-11-09.
   fails the path test.
 
 **Gates**: 4784 unit tests green, 310 `#[ignore]` (Linux); clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.
+
+### Post-M9: a big entry compressed on many threads, its AE-2 written here (done)
+
+Stage 3 of [docs/research/backup-big-entry.md](../research/backup-big-entry.md) — fork F1,
+the owner's decision of 2026-11-09; the research's last stage.
+
+- **What**: the pool gave an entry one thread, and with a big database that entry was
+  most of a backup. An entry of 16 MiB up to 4 GiB, compressed at all, is now cut into
+  1 MiB chunks; each is a job of the same pool — raw deflate ended by a sync flush, the
+  last one ending the stream (`chunked::deflate_chunk`) — so the thread count is still
+  the setting's. The writer assembles the entry as the chunks land, in order, into a
+  zip of one entry in a scratch file (`chunked::Assembly`) and appends it raw like any
+  other. `zip` cannot take a stream compressed elsewhere into an encrypted entry
+  (`ZipFileBuilder` refuses encryption, `AesWriter` is private), so AE-2 is written
+  here as `zip` writes it: a random salt, PBKDF2-HMAC-SHA1 × 1000 for 66 bytes of keys,
+  AES-256-CTR with a little-endian counter from 1, the first 10 bytes of an HMAC-SHA1
+  of the ciphertext; a plain entry carries the CRC combined per chunk. The crypto
+  crates are the ones `zip` pulls in, at its versions — no new crate in the tree; seven
+  direct dependencies and seven rows of the "About" list.
+- **The database is ready before the pool** (`prepare_database`): in memory under the
+  cap (stage 2), then a scratch file, then raw — so the copy's bytes outlive the pool
+  and its chunks are slices of them, no `unsafe`, no queue that grows. The order of
+  jobs: the schema scan, every big entry's chunks, the rest largest first.
+- **A trap kept out**: `Assembly` declares its open file before its `ScratchFile`, so an
+  abandoned assembly closes the file before removing it — Windows refuses to remove an
+  open file, and a failed backup would have left the scratch behind.
+- **Measured** (release, 4 vCPU, the 352 MB root with a 285 MB database): `backup`
+  **7.3 s → 2.93–2.97 s** (a cold first run 6.75 s), with a password 3.09 s, the archive
+  +0.16 %; `restore` over existing data **8.3–9.6 s → 3.95–4.02 s**. Across the three
+  stages: backup **11.0 s → 2.95 s**, restore over data **34.6 s → 4.0 s**, into an empty
+  root **9.0 s → 0.9 s**.
+- **Live interop**: the encrypted archive's `data.db` — the hand-written AE-2 entry —
+  decrypted by `pyzipper` is byte for byte the file this build restores; 0.24.0
+  restores the archive too, its database (which 0.24.0 compacts again) holding the same
+  rows, integrity `ok`; a wrong password refused by `pyzipper`; Python's `zipfile` and
+  Info-ZIP's `unzip -t` pass the plain archive's CRCs. 7-Zip on the owner's machine is
+  the open go/no-go.
+- **Tests** (+6): chunks compressed apart are one stream; a plain assembled entry —
+  chunks landed out of order — reads back through the `zip` crate's CRC check, with its
+  name and date; an encrypted one reads back through its HMAC check, refuses a wrong
+  password, catches a flipped byte, holds no plaintext; what is chunked; on the pool the
+  database's copy (from memory and from its scratch file) and a big stored file pack
+  what one thread does, with a password and without, the archive restores, and they are
+  chunked indeed (each entry's stream longer by its flush markers); an unreadable big
+  entry fails the backup with its name and leaves no scratch. **Mutation-tested**:
+  never chunking fails the pool test and the predicate's.
+
+**Gates**: 4790 unit tests green, 310 `#[ignore]` (Linux); clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.
