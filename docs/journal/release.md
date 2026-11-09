@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (86)
+## Entries (87)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -98,6 +98,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Release 0.23.1 (prepared)
 - Post-M9: the screenshots' search icon on Linux — DejaVu Sans Mono as a fallback (done)
 - Release 0.24.0 (prepared)
+- Release 0.25.0 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -5809,3 +5810,112 @@ No Rust changed and no live stack is involved; the test count is unchanged.
 `wizard_rtf --check`, `site_legal_pages --check`, `site_llms_txt --check`,
 `indexnow --check`, `actions_pin_check`, and the release guard's and the site gate's
 self-tests clean.
+
+### Release 0.25.0 (prepared)
+
+- **A release PR** per [AGENTS.md §6](../../AGENTS.md), branch `chore/release-0.25.0`:
+  - `Cargo.toml` `0.24.0 → 0.25.0` (+ one line of `Cargo.lock`), and the site's
+    `app_version`;
+  - `CHANGELOG.md`: `[Unreleased]` → `[0.25.0] — 2026-11-09` under a lead paragraph,
+    "Faster backups, and pictures pasted by name"; a **Data** section, measured (below);
+    one sentence of *Changed* corrected by the measurement; a fresh `[Unreleased]`, and
+    the comparison links;
+  - CLAUDE.md's status heading;
+  - the release's post, and `/llms.txt` regenerated from it;
+  - the privacy policy (below): `PRIVACY.md`, its Russian translation, the site's page
+    and both privacy RTFs.
+
+  Since `v0.24.0`, the pull requests with behaviour:
+  - the pasted-image track (907–910): a copied picture file pasted and the SSH refusal
+    (907), a name for a pasted image behind `images.name_pasted` (908), the Wayland
+    clipboard read and written directly (909), a refusal for a clipboard that will not
+    open (910) (docs/journal/ui-input.md);
+  - the backup track (912–920): the pool of threads with `backup.compression` and
+    `backup.threads` (912), the entries' dates (916), a restore that compacts only what
+    has space to give back (918), the database compacted in memory (919), a big entry
+    deflated in chunks with its AE-2 written by hand (920) (docs/journal/storage.md);
+  - 903, each database's schema created in one transaction — found by the Windows
+    tests' times, and with no CHANGELOG item of its own until this PR's Data section;
+  - 904, the story settings in Russian as *rasskaz*.
+
+  The rest moved no behaviour: 0.24.0's published record (900), CI (901, 902), two
+  Sonar findings closed in code (905), two actions' pins (913, 914), the research and
+  the Windows measurements (906, 911, 915, 917, 921, 922), and the Fabula article on
+  the site (923).
+- **A MINOR**: features, §6's rule for `0.x`. **No schema constant moved** — the
+  manifests of a 0.24.0 backup and a 0.25.0 backup of the same root both say
+  `settings 7, profiles 1, chat 8, db 1, story 0`.
+- **The `Data` rubric, by measurement.** No new value of a stored enum: what 0.24.0
+  never wrote is two settings fields, one settings section, a picture name with a
+  slash in it, and the archive's new shape. Run on the droplet (Ubuntu 24.04) with **the
+  published 0.24.0** — the Linux archive downloaded from its release, matching
+  `sha256sums.txt` — beside a debug build of this branch; each binary pointed at a root
+  by a `defaults.json` of mode `path`, the start made by `mindfork import` with a bare
+  `mindfork-import` document, and the stored files hashed before and after. The root:
+  0.24.0 imported a profile and two chats from a seed document; `stats` fingerprint
+  `141111e00d3c2544`.
+  - *Forward*: this version on 0.24.0's root — exit 0, no `pre-migrate-*.zip`, the chats,
+    `profiles.json`, `data.db` and `cache.db` byte for byte as they were; `settings.json`
+    rewritten with `backup: {compression: 6, threads: 0}` and `images.name_pasted:
+    false`, nothing else in it changed, its old content as `settings.bak`.
+  - *The settings back*: that root given `images.name_pasted = true` and
+    `backup = {compression: 9, threads: 2}`. 0.24.0 starts (exit 0) and rewrites
+    `settings.json` without `backup` and without `name_pasted`; the other 24 sections
+    are the same, compared one by one. The CHANGELOG says so.
+  - *A pasted picture's name*: a chat file of that root (schema 8) given a user message
+    with two images named `clipboard/sunset-lake.png` and `clipboard-2.png`, sources
+    `clipboard:<uuid>`, a 1×1 PNG each — the shape 908's tests pin, written by hand,
+    since a paste needs a terminal. 0.24.0's `stats` counts 2 images, fingerprint
+    unchanged; its start exits 0 and leaves the file byte for byte.
+  - *Backups*: the root's `data.db` grown to 49.4 MB with a filler table of 12 000 rows
+    (sha-256 of the rows `177b7fa78024ce2f…`), past `CHUNKED_FROM` (16 MiB), so this
+    version packs it in chunks. Its `backup`, plain and with a password: 8 entries each,
+    dated, 21.1 MB, 0.35 s and 0.41 s. **0.24.0**: `stats` of each archive (exit 0) —
+    2 chats, 2 images, fingerprint `141111e00d3c2544`, *"Created … by mindfork 0.25.0"*,
+    no newer-version note; `restore` of each into an empty root (exit 0, no warning, its
+    own "Compacting the database…"); a start on each (exit 0); the same fingerprint,
+    the filler's 12 000 rows with the same digest, `integrity_check` ok. The restored
+    files are dated at the restore, as 0.24.0 always did.
+  - *This version on 0.24.0's archive*: 0.24.0's `backup` with a password (entries dated
+    1980-01-01, as the fix says); this version restores it into an empty root (exit 0),
+    same fingerprint, rows and digest — and **does not** compact it again, since 0.24.0
+    packed a `VACUUM INTO` copy too: no free page, no `-wal`
+    (`restored_db_needs_compaction`). The *Changed* item said "archives from older
+    versions … are still compacted"; backups have held the database compacted since
+    0.9.5 (`741cfa36`), so the item now says older archives skip the step too, and only
+    a database with space to give back is compacted.
+  - *Its own archive, over existing data*: exit 0, a `pre-restore-*.zip` first, the same
+    fingerprint, rows and digest, and the files given their dates back (`profiles.json`
+    21:55:12, as in the source).
+  - *An encrypted archive's dates*: `zipinfo` and Python's `zipfile` read each entry's
+    date without the password (AE-2 encrypts the data, not the headers), as they read
+    the names and sizes — a sentence the privacy policy's §7 now carries.
+  - The copies were deleted afterwards.
+- **Found on the way: the privacy policy had no word of naming a pasted picture.** §3.1
+  lists the requests the app makes that you did not type, and §4 what is off until you
+  turn it on; `images.name_pasted` is both — the picture goes to the chat's model once
+  more as it is pasted — and 908 added it to neither. A clause in §3.1, a line in §4,
+  "modification dates" in §7's list of what an encrypted backup leaves readable, the
+  effective date `2026-11-08 → 2026-11-09`, and the same in the Russian translation —
+  where the stories' rows and clauses also took 904's *rasskaz*, the word the
+  interface now uses (*Instrumenty dlya rasskazov*). `site_legal_pages.py` and
+  `wizard_rtf.py` regenerated the site's page and the installer's two privacy RTFs
+  (docs/lessons.md §1). Nothing the app sends changed: the naming request goes to the
+  chat's own provider and is off by default.
+- **No rehearsal.** `git diff v0.24.0 -- .github packaging tools` holds `ci.yml` (901,
+  902, 903), two actions' pins in `packaging.yml` and `release.yml`
+  (`taiki-e/install-action` 2.90.2), `link_check.py` (905), and this PR's two RTFs.
+  `release_guard.py --tag v0.25.0` accepts the tag and cuts 107 lines of notes.
+  Not run here: `cargo deny check` and `zola build`, neither installed on the droplet —
+  the audit and the site's build run on this PR, which touches `Cargo.toml`,
+  `Cargo.lock` and `site/`, and `packaging.yml` compiles the installer with the new
+  RTFs.
+- **Tests:** 4790 unit tests green, 310 `#[ignore]` (Linux) — unchanged; the release adds
+  no code. CLAUDE.md's status line said 4789 and 317, a count that had drifted from the
+  storage journal's last entry (4790, 310); it now says what this run measured.
+
+**Gates**: unit tests green; clippy `-D warnings`, fmt, `cyrillic_scan` (+ its
+self-test), `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check`,
+`claude_md_chart --check`, `wizard_rtf --check`, `site_legal_pages --check`,
+`site_llms_txt --check`, `indexnow --check`, `actions_pin_check`, and the release
+guard's, the site gate's and the AUR renderer's self-tests clean.

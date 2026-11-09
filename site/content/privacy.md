@@ -2,11 +2,11 @@
 # Generated from PRIVACY.md by tools/site_legal_pages.py - do not edit.
 title = "Privacy policy"
 description = "What mindfork keeps on your machine, what leaves it and only on which setting of yours, and what reaches its author — which is nothing."
-updated = "2026-11-08"
+updated = "2026-11-09"
 template = "doc.html"
 +++
 
-Effective **2026-11-08**. It covers three things that are easy to confuse: the
+Effective **2026-11-09**. It covers three things that are easy to confuse: the
 **mindfork application**, the website **mindfork.io**, and the project's
 presence on **GitHub**. They have very different answers, so they are kept
 apart below.
@@ -160,8 +160,10 @@ they are worth knowing about because they are ordinary requests to the same
 provider: naming a new chat (on by default, after the first substantive reply),
 compacting a long history into a rolling summary, summarizing a page that
 `fetch_url` retrieved, sub-agents and `run_dialogue`, and — only when you turn
-them on — reflection, the notes/self-model consolidation passes, and the
-chapters of a story, each written in the background in some fifty requests.
+them on — reflection, the notes/self-model consolidation passes, naming a
+pasted picture by what it shows (the picture is sent to the chat's model once
+more, as soon as you paste it), and the chapters of a story, each written in the
+background in some fifty requests.
 
 **Probes.** In managed and external mode the app asks the server `/health` and
 `/props`, and `GET /models` for what it is running — the model's name, context
@@ -553,6 +555,8 @@ next, as a picture you attached does.
 - the **self-model tools** — and with them the injection of the self-model into
   the system prompt;
 - **reflection** and the consolidation passes;
+- **naming a pasted picture** by what it shows (`images.name_pasted`), which is
+  one extra model request for each picture you paste (§3.1);
 - reaching **private or loopback addresses** from the web tools;
 - the **confirmation prompt** before a dangerous tool call
   (`tools.confirm_dangerous`) — it is opt-in, so tools you have enabled run
@@ -638,9 +642,9 @@ edited (`workspace/`), the stories (`stories/`), your dictionaries and locale
 overrides, the `.bak` copies of all of these, and the file tools' folder when it
 lies inside the data folder. They exclude logs, the stories' call logs
 (`story-logs/`) and previous backups. A backup can be encrypted with a password
-(AES-256); note that even then the archive's manifest, entry names and sizes
-remain readable without it. Where you put a backup, and who can read it, is your
-decision — an unencrypted backup is a copy of everything.
+(AES-256); note that even then the archive's manifest, entry names, sizes and
+modification dates remain readable without it. Where you put a backup, and who
+can read it, is your decision — an unencrypted backup is a copy of everything.
 
 ## 8. Files the app can write outside its own folder
 
