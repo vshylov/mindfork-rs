@@ -5913,6 +5913,78 @@ self-tests clean.
 - **Tests:** 4790 unit tests green, 310 `#[ignore]` (Linux) — unchanged; the release adds
   no code. CLAUDE.md's status line said 4789 and 317, a count that had drifted from the
   storage journal's last entry (4790, 310); it now says what this run measured.
+- **The draft — not checked before the publication, again.** The owner merged 924
+  (`e9d03dc2`, 22:38:06Z) and set `v0.25.0` on `e9d03dc2`, which was `origin/main`.
+  - `release.yml` (run 42713781347) was green in all eight jobs in **18 min 40 s**
+    (0.24.0: 15 min 32 s). Windows took the longest at 17 min 29 s, then macOS
+    14 min 56 s, Linux 8 min 51 s, and the demo 5 min 20 s.
+  - The draft was up at 22:57:50Z and was published 23 min 34 s later, by accident and
+    before the agent had looked at it. So §6 step 5's checks below ran on the
+    **published** release, with a 0.25.1 as the way out had one failed. None did.
+- **The published release, checked as the draft would have been.**
+  - Not a prerelease, immutable, fifteen assets — the same set as 0.24.0's. Every
+    downloaded file matched `sha256sums.txt`, fourteen of fourteen. Its notes are the
+    `[0.25.0]` section line for line (107 lines), with the workflow's footer below.
+  - **`install.sh` and the six animation files are 0.24.0's byte for byte** — nothing
+    the reel shows moved.
+  - **The released archives.** Linux, Windows and macOS: 49, 48 and 49 entries, the
+    same lists as 0.24.0's. The Linux `mindfork` says `mindfork 0.25.0`; the Windows
+    `mindfork.exe` is a PE32+ for x86-64; the macOS `mindfork` a 64-bit Mach-O for arm64
+    (`cf fa ed fe`, CPU type `0x0100000c`), mode 0755. Each archive's `PRIVACY.md` is
+    effective 2026-11-09 and names the pasted-picture request and an encrypted
+    backup's readable dates, and so does each `PRIVACY.ru.md`. Not run: there is no Mac
+    here.
+  - **The packages**: the `.deb` is `mindfork-rs 0.25.0-1 amd64` and its binary says
+    `mindfork 0.25.0`; the Arch package's `.PKGINFO` says `0.25.0-1 x86_64`; the `.rpm`
+    is named so (no `rpm` here to read it).
+  - **Attestations** verify for the three archives, the installer and `install.sh`; a
+    scratch file exits 1.
+- **The Data rubric again, on the released binary.** The Linux archive's `mindfork` in
+  place of the debug build, beside the published 0.24.0, the same scenarios on a fresh
+  root (fingerprint `7909d8c84a6fe31b`):
+  - *Forward*: exit 0, no `pre-migrate-*.zip`, only `settings.json` rewritten — with
+    `backup {6, 0}` and `name_pasted: false` — and its old content as `settings.bak`.
+  - *The settings back*: 0.24.0 starts (exit 0) on `name_pasted = true`,
+    `backup = {9, 2}` and saves without both; 24 of the 26 sections unchanged.
+  - *Pasted names*: 0.24.0 counts both images, the same fingerprint, and its start
+    leaves the chat file byte for byte.
+  - *Backups*, `data.db` at 49.4 MB with the filler: the released `backup` plain and
+    with a password, manifest `settings 7, profiles 1, chat 8, db 1, story 0`, every
+    entry dated — read by `zipinfo` without the password. 0.24.0's `stats` and
+    `restore` of each: exit 0, no warning; its start exit 0; the same fingerprint, the
+    12 000 rows with digest `177b7fa78024ce2f`, `integrity_check` ok.
+  - *0.24.0's archive*: the released binary restores it (exit 0), with no compaction
+    line, the same fingerprint and rows. Its own archive over existing data: exit 0, a
+    `pre-restore-*.zip` first, the same data, `profiles.json` dated 23:25:00 for a
+    source of 23:25:01 (the DOS two-second step).
+  - The copies were deleted afterwards.
+- **The interface on the released binary**, for the first time on the droplet:
+  `mindfork demo` in a pseudo-terminal of 110×34, read back with `pyte`. The demo chat
+  draws — the table, the decision tree, `note_save`'s card, the input box and the
+  status bar — and `Ctrl+P` → *Data* shows *Backup password*, *Compression level 6* and
+  *Threads 0*. Not run: a live turn, `/image paste` (no clipboard on the droplet), the
+  installer and the packages beyond what their jobs install.
+- **Published, and the numbers of it.**
+  - **Published at 23:21:24Z by the owner** (immutable).
+  - `crates-io.yml` (run 42719788094) ran 23:21:26Z → 23:24:23Z. `mindfork 0.25.0` was
+    on the registry at 23:24:18Z (5 233 806 bytes), **2 min 54 s** after the
+    publication (0.24.0: 2 min 32 s).
+  - `Site` (run 42720188471) started 3 s after `crates.io` completed and deployed at
+    23:25:05Z — **3 min 41 s after the publication** (0.24.0: 3 min 29 s). The hold on
+    the merge had shown as before (run 42713638531): "Is this version out?" green, the
+    build and the deploy skipped.
+  - From outside:
+    - the post answers 200 at `/blog/mindfork-0-25-0/`;
+    - the home page's and the install page's structured data say
+      `"softwareVersion": "0.25.0"`;
+    - the blog's index, `/llms.txt`, the Atom feed and the sitemap list the post;
+    - the privacy page is effective 2026-11-09 and names the pasted-picture request;
+    - `releases/latest` resolves to `v0.25.0`;
+    - `mindfork.io/demo/mindfork-demo-dark-en.gif` is the release's, byte for byte.
+- **The package managers.** `aur.yml` (run 42719787851) built and installed
+  `mindfork-rs-bin` 0.25.0 (`installed: mindfork 0.25.0`) and stopped at its notice,
+  because there is no key. At 23:27Z, Scoop's bucket and the tap's formula still named
+  0.24.0. Neither was waited for.
 
 **Gates**: unit tests green; clippy `-D warnings`, fmt, `cyrillic_scan` (+ its
 self-test), `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check`,
