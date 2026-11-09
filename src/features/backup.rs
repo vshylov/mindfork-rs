@@ -768,15 +768,15 @@ pub fn restore_backup(
 
     match attempt {
         Ok(()) => {
-            // 3a. Compact what was unpacked. Deliberately after the attempt
-            // rather than inside it: the data is already in place and correct,
-            // so a compaction failure must not turn a successful restore into a
-            // rollback (the rollback path unpacks a pre-restore copy, which
-            // `create_backup` already compacted).
-            if paths.data_db().is_file() {
+            // 3a. Compact what was unpacked, when there is anything to compact.
+            // Deliberately after the attempt rather than inside it: the data is
+            // already in place and correct, so a compaction failure must not turn
+            // a successful restore into a rollback (the rollback path unpacks a
+            // pre-restore copy, which `create_backup` already compacted).
+            if restored_db_needs_compaction(paths) {
                 progress(loc.t("backup.progress.compacting"));
+                compact_restored_db(paths);
             }
-            compact_restored_db(paths);
             Ok(RestoreOutcome::Restored { pre_restore })
         }
         Err(restore_error) => match &pre_restore {
@@ -906,6 +906,21 @@ fn compacted_db(paths: &Paths, out_path: &Path) -> Option<ScratchFile> {
             None
         }
     }
+}
+
+/// Whether the unpacked database has anything an in-place `VACUUM` would give
+/// back: free pages its header counts, or a `-wal` beside it, whose pages the
+/// header does not know of (docs/research/backup-big-entry.md F3). A backup since
+/// compaction packs a `VACUUM INTO` copy — no free page, no sidecar — so its
+/// restore skips the step, which rewrites the whole file twice for nothing (8 s
+/// for 285 MB, measured). An archive from before compaction, or from another
+/// tool, is compacted as before. A file that is not a database is left as it is:
+/// the `VACUUM` would refuse it anyway.
+fn restored_db_needs_compaction(paths: &Paths) -> bool {
+    let path = paths.data_db();
+    let wal = paths.root().join("data.db-wal");
+    path.is_file()
+        && (file_len(&wal) > 0 || db::header_freelist_count(&path).is_some_and(|free| free > 0))
 }
 
 /// Compacts the restored database in place.
@@ -1861,13 +1876,14 @@ mod tests {
             order.windows(2).all(|w| w[0] < w[1]),
             "phases out of order: {log:#?}"
         );
-        // The prior root had a database, so both compaction points spoke up:
-        // once for the pre-restore copy, once for what was unpacked.
+        // The prior root had a database, so the pre-restore copy's compaction
+        // spoke up; what was unpacked is not a database (`seed_data`'s bytes), so
+        // there is nothing to compact and nothing is announced after unpacking.
         assert_eq!(
             log.iter()
                 .filter(|l| *l == ru().t("backup.progress.compacting"))
                 .count(),
-            2,
+            1,
             "{log:#?}"
         );
     }
@@ -3410,5 +3426,71 @@ mod tests {
         let paths = Paths::with_root(dst.path());
         restore_backup(&paths, &archive, Packing::at(6), None, None, ru(), |_| {}).unwrap();
         assert!(date_of(&dst.path().join("settings.json")) >= started);
+    }
+
+    // ---- the restore's compaction (docs/research/backup-big-entry.md F3) ----
+
+    /// An archive this app wrote holds a compacted database: no free page, no
+    /// sidecar. Its restore leaves the file as it was unpacked — byte for byte
+    /// the archive's — and says nothing of compacting after the unpacking.
+    #[test]
+    fn a_restore_of_our_own_archive_leaves_the_database_as_unpacked() {
+        let src = tempfile::tempdir().unwrap();
+        seed_data(src.path());
+        fs::remove_file(src.path().join("data.db")).unwrap();
+        seed_fragmented_db(src.path());
+        let archive = create_backup(
+            &Paths::with_root(src.path()),
+            Some(src.path().join("snap.zip")),
+            Packing::at(6),
+            None,
+            None,
+            ru(),
+            |_| {},
+        )
+        .unwrap();
+        let mut packed = Vec::new();
+        let mut zip = ZipArchive::new(File::open(&archive).unwrap()).unwrap();
+        io::Read::read_to_end(&mut zip.by_name("data.db").unwrap(), &mut packed).unwrap();
+
+        let dst = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(dst.path());
+        let mut log = Vec::new();
+        restore_backup(&paths, &archive, Packing::at(6), None, None, ru(), |m| {
+            log.push(m.to_string())
+        })
+        .unwrap();
+        assert_eq!(fs::read(paths.data_db()).unwrap(), packed, "rewritten");
+        let unpacked = step_at(&log, "backup.progress.extracting");
+        assert!(
+            !log[unpacked..].contains(&ru().t("backup.progress.compacting").to_string()),
+            "{log:#?}"
+        );
+    }
+
+    /// What decides the in-place `VACUUM`: free pages in the header, or a `-wal`
+    /// beside the file whose pages the header does not know of. No database, a
+    /// compacted one, and a file that is not a database are each left alone.
+    #[test]
+    fn a_restored_database_is_compacted_only_when_there_is_something_to_give_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(dir.path());
+        assert!(!restored_db_needs_compaction(&paths), "no database");
+
+        seed_fragmented_db(dir.path());
+        assert!(restored_db_needs_compaction(&paths), "free pages");
+
+        let compact = dir.path().join("compact.db");
+        db::vacuum_into(&paths.data_db(), &compact).unwrap();
+        fs::rename(&compact, paths.data_db()).unwrap();
+        assert!(!restored_db_needs_compaction(&paths), "compacted");
+
+        fs::write(dir.path().join("data.db-wal"), b"pages").unwrap();
+        assert!(restored_db_needs_compaction(&paths), "a WAL beside it");
+        fs::write(dir.path().join("data.db-wal"), b"").unwrap();
+        assert!(!restored_db_needs_compaction(&paths), "an empty WAL");
+
+        fs::write(paths.data_db(), b"SQLITE").unwrap();
+        assert!(!restored_db_needs_compaction(&paths), "not a database");
     }
 }

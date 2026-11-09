@@ -2,7 +2,9 @@
 
 **Status:** research, measured 2026-11-09. Every fork in §8 decided by the user the
 same day, each at the recommendation: **F1(a)**, **F2(a)**, **F3(a)**, **F4(a)**,
-**F5(a)**. The plan in §9 is built in that order.
+**F5(a)**. The plan in §9 is built in that order. **Stage 1 (F3, F5) is built**:
+a restore into an empty root 9.0 s → 0.90 s, over data 34.6 s → 12 s; a debug backup
+3.64 s → 1.11 s ([docs/journal/storage.md](../journal/storage.md)).
 
 **Related:** [backup-speed.md](backup-speed.md) — the pool this builds on, and its
 §3.4, the limit studied here; spec §12.3; `src/features/backup/parallel.rs`;

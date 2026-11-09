@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (33)
+## Entries (34)
 
 - Post-M9: persisting the input-box draft in the chat file (done)
 - Post-M9: persisting deleted exchanges in the chat file (`Ctrl+E`/`Ctrl+R`) (done)
@@ -45,6 +45,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the schema in one transaction (done)
 - Post-M9: backup and restore on a pool of threads, the level and threads as settings (done)
 - Post-M9: a backup's entries carry their files' dates (done)
+- Post-M9: a big database's restore without a needless VACUUM; optimized debug builds (done)
 
 ### Post-M9: persisting the input-box draft in the chat file (done)
 - **Unsaved input-box text is stored on the chat and restored on
@@ -1895,4 +1896,43 @@ clean.
 - Also: the `[Unreleased]` changelog had two *Changed* headings since #912 — merged.
 
 **Gates**: 4776 unit tests green, 310 `#[ignore]` (Linux); clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.
+
+### Post-M9: a big database's restore without a needless VACUUM; optimized debug builds (done)
+
+Stage 1 of [docs/research/backup-big-entry.md](../research/backup-big-entry.md) — forks
+F3 and F5, the owner's decision of 2026-11-09 at the recommendation.
+
+- **F3, what**: a restore compacted every database it unpacked with an in-place
+  `VACUUM`, which rewrites the whole file twice — 8.05 s for a 285 MB database with
+  nothing to free. Since compaction exists every archive this app writes holds a
+  `VACUUM INTO` copy, so the step only ever did that. Now it runs only when there is
+  something to give back: free pages the header counts (`db::header_freelist_count`,
+  offset 36, read with no SQLite open, beside `header_user_version`), or a non-empty
+  `-wal` beside the file, whose pages the header does not know of. An archive from
+  before compaction, or from another tool, is compacted as before; a file that is not
+  a database is left alone, where the `VACUUM` used to be announced and then refused.
+- **F5, what**: `[profile.dev.package.*] opt-level = 3` for `miniz_oxide`, `flate2`,
+  `zip`, `crc32fast`, `aes`, `sha1`, `hmac`, `pbkdf2`, `libsqlite3-sys` and
+  `sqlite-vec` — the last two compile C through `cc`, which takes its `-O` from there.
+  The owner measures with `cargo run`. No release binary changes. One dev rebuild of
+  those crates: 43 s.
+- **Measured** (4 vCPU droplet):
+  - Release, a 352 MB root holding a 285 MB database. Restore into an empty root:
+    **9.0 s → 0.90 s**. Restore over existing data: **34.6 s → 11.9–12.2 s**, now
+    almost all the pre-restore copy, which is a backup. Backup: unchanged by this
+    stage, at 11.0–16.5 s, swinging with the disk — the `VACUUM INTO` scratch file,
+    which stage 2 takes off the disk.
+  - Debug, the 110 MB root: a backup **3.64 s → 1.11 s** (release: 1.07 s).
+- **Tests** (+3): the header's free-page count is the pragma's — some on a database
+  that deleted rows, none on its compacted copy, nothing from a non-database; a
+  restore of our own archive leaves `data.db` byte for byte as unpacked and announces
+  no compaction after the unpacking; the predicate — no database, compacted, a WAL, an
+  empty WAL, a non-database. `restore_announces_every_phase_in_order` now counts one
+  compaction line: its unpacked "database" is `seed_data`'s bytes, nothing to compact.
+  `restore_compacts_the_database` (an old archive's fragmented database) still
+  compacts. **Mutation-tested**: compacting whenever there is a file fails all three
+  of the restore's tests that care.
+
+**Gates**: 4779 unit tests green, 310 `#[ignore]` (Linux); clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.
