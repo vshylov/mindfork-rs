@@ -675,6 +675,7 @@ pub fn create_backup(
         password,
         threads: packing.threads,
         spill_over: parallel::SPILL_OVER,
+        memory_cap: memory_cap(),
     };
     progress(loc.t("backup.progress.packing"));
     parallel::write_archive(paths, &out_path, &entries, &spec, loc, &mut progress).with_context(
@@ -697,6 +698,20 @@ struct ZipSpec<'a> {
     password: Option<&'a str>,
     threads: usize,
     spill_over: u64,
+    /// The largest database compacted in memory rather than through a scratch
+    /// file ([`memory_cap`]); a seam too — the tests force either path.
+    memory_cap: u64,
+}
+
+/// The largest database a backup compacts in memory
+/// (docs/research/backup-big-entry.md F2): the smaller of 1 GiB and an eighth of
+/// the machine's memory. The decision named a quarter for the copy; measured, the
+/// copy peaks at about twice the database — SQLite's `memdb` grows its buffer by
+/// doubling, 584 MB of RSS for a 285 MB database — so an eighth for the database
+/// keeps that peak within the quarter. `0` when the machine will not say how much
+/// it has, which leaves every database to the scratch file, as before.
+fn memory_cap() -> u64 {
+    crate::shared::machine::physical_memory().map_or(0, |memory| (memory / 8).min(1 << 30))
 }
 
 /// Restores data from archive `archive`, replacing the current data.
@@ -3096,6 +3111,7 @@ mod tests {
                 password: Some(PW),
                 threads: 4,
                 spill_over,
+                memory_cap: u64::MAX,
             };
             let archive = out.path().join(name);
             parallel::write_archive(&paths, &archive, &entries, &spec, ru(), &mut |_| {}).unwrap();
@@ -3132,6 +3148,7 @@ mod tests {
             password: None,
             threads: 4,
             spill_over: 0,
+            memory_cap: u64::MAX,
         };
         let archive = out.path().join("x.zip");
         let err = parallel::write_archive(&paths, &archive, &entries, &spec, ru(), &mut |_| {})
@@ -3377,6 +3394,7 @@ mod tests {
                 password: Some(PW),
                 threads: 4,
                 spill_over,
+                memory_cap: u64::MAX,
             };
             parallel::write_archive(&paths, &archive, &entries, &spec, ru(), &mut |_| {}).unwrap();
             let dates = entry_dates(&archive);
@@ -3492,5 +3510,89 @@ mod tests {
 
         fs::write(paths.data_db(), b"SQLITE").unwrap();
         assert!(!restored_db_needs_compaction(&paths), "not a database");
+    }
+
+    // ---- the database compacted in memory (docs/research/backup-big-entry.md F2) ----
+
+    /// Compacted in memory or through a scratch file, the database goes into the
+    /// archive as the same bytes, the manifest records the same schema, and
+    /// neither path leaves a file behind.
+    #[test]
+    fn a_database_compacted_in_memory_packs_what_a_scratch_file_does() {
+        let dir = tempfile::tempdir().unwrap();
+        seed_many(dir.path());
+        let paths = Paths::with_root(dir.path());
+        let entries = gather_entries(&paths, None, ru()).unwrap();
+        let out = tempfile::tempdir().unwrap();
+        for (name, memory_cap) in [("memory.zip", u64::MAX), ("file.zip", 0)] {
+            let spec = ZipSpec {
+                level: 6,
+                password: Some(PW),
+                threads: 4,
+                spill_over: parallel::SPILL_OVER,
+                memory_cap,
+            };
+            let archive = out.path().join(name);
+            parallel::write_archive(&paths, &archive, &entries, &spec, ru(), &mut |_| {}).unwrap();
+        }
+        let (memory, file) = (out.path().join("memory.zip"), out.path().join("file.zip"));
+        assert_eq!(
+            archive_contents(&memory, Some(PW)),
+            archive_contents(&file, Some(PW))
+        );
+        let schema = |a: &Path| read_manifest(a).unwrap().unwrap().schemas.db;
+        assert_eq!(schema(&memory), schema::DB_SCHEMA);
+        assert_eq!(schema(&file), schema::DB_SCHEMA);
+        assert_eq!(
+            leftovers(out.path(), &["memory.zip", "file.zip"]),
+            Vec::<String>::new()
+        );
+    }
+
+    /// Which path ran, told apart: with the scratch file made impossible (a
+    /// directory where it would go), a database under the cap still goes in
+    /// compacted — no free page — and one over it falls back to the raw file,
+    /// free pages and all.
+    #[test]
+    fn under_the_cap_the_database_is_compacted_without_a_scratch_file() {
+        let dir = tempfile::tempdir().unwrap();
+        seed_data(dir.path());
+        fs::remove_file(dir.path().join("data.db")).unwrap();
+        seed_fragmented_db(dir.path());
+        let paths = Paths::with_root(dir.path());
+        assert!(db::header_freelist_count(&paths.data_db()).unwrap() > 0);
+        let entries = gather_entries(&paths, None, ru()).unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let scratch = out
+            .path()
+            .join(format!("data.db.compact-{}.tmp", std::process::id()));
+        fs::create_dir(&scratch).unwrap();
+        for (memory_cap, free_pages) in [(u64::MAX, false), (0, true)] {
+            let archive = out.path().join(format!("cap-{memory_cap}.zip"));
+            let spec = ZipSpec {
+                level: 6,
+                password: None,
+                threads: 2,
+                spill_over: parallel::SPILL_OVER,
+                memory_cap,
+            };
+            parallel::write_archive(&paths, &archive, &entries, &spec, ru(), &mut |_| {}).unwrap();
+            let packed = out.path().join("packed.db");
+            extract_entry(&archive, "data.db", &packed);
+            let free = db::header_freelist_count(&packed).unwrap();
+            assert_eq!(free > 0, free_pages, "cap {memory_cap}: {free} free pages");
+        }
+    }
+
+    /// The cap is the smaller of 1 GiB and an eighth of the machine's memory —
+    /// the copy's peak, about twice the database, then stays within a quarter.
+    #[test]
+    fn the_memory_cap_is_an_eighth_of_the_memory_and_at_most_a_gibibyte() {
+        let memory = crate::shared::machine::physical_memory().unwrap();
+        let cap = memory_cap();
+        assert!(cap > 0);
+        assert!(cap <= 1 << 30, "{cap}");
+        assert!(cap <= memory / 8, "{cap} of {memory}");
+        assert!(cap == 1 << 30 || cap == memory / 8, "{cap}");
     }
 }

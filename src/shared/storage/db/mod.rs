@@ -240,6 +240,72 @@ pub fn vacuum_into(src: &std::path::Path, dest: &std::path::Path) -> Result<()> 
     Ok(())
 }
 
+/// A compacted copy of a database held in SQLite's memory (`memdb`), not on
+/// disk: what [`vacuum_into_memory`] makes. Its bytes are the file a
+/// [`vacuum_into`] would have written. Dropped, the memory is freed — the
+/// `memdb` lives exactly as long as the one connection to it.
+pub struct MemoryCopy {
+    conn: Connection,
+}
+
+impl MemoryCopy {
+    /// The copy's bytes — the database file it would be on disk. SQLite hands
+    /// a `memdb`'s pages over without copying them.
+    pub fn bytes(&mut self) -> Result<rusqlite::serialize::Data<'_>> {
+        self.conn
+            .serialize(rusqlite::MAIN_DB)
+            .context("reading the compacted copy out of memory")
+    }
+}
+
+/// [`vacuum_into`], into memory: the same compacted copy, with no scratch file.
+/// Writing that file was most of a big database's compaction on a slow disk —
+/// 4.06 s for 285 MB, where this took 0.24 s
+/// (docs/research/backup-big-entry.md §5, F2). The copy costs RAM — up to about
+/// twice the database's size, as `memdb` grows its buffer by doubling — so the
+/// caller decides when it fits. The source is opened as
+/// [`vacuum_into`] opens it: header-checked, read-only, never modified.
+pub fn vacuum_into_memory(src: &std::path::Path) -> Result<MemoryCopy> {
+    use rusqlite::OpenFlags;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    register_sqlite_vec();
+    if !is_sqlite_file(src) {
+        bail!("{} is not a SQLite database", src.display());
+    }
+    // A `memdb` name is shared by every connection of the process that opens
+    // it, so each copy gets one of its own.
+    let name = format!(
+        "file:/mindfork-compact-{}-{}?vfs=memdb",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    );
+    // Opened first and held: a `memdb` is freed when its last connection closes,
+    // and the `VACUUM INTO` below opens and closes one of its own.
+    let conn = Connection::open_with_flags(
+        &name,
+        OpenFlags::SQLITE_OPEN_READ_WRITE
+            | OpenFlags::SQLITE_OPEN_CREATE
+            | OpenFlags::SQLITE_OPEN_URI
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .context("opening an in-memory database")?;
+    // `SQLITE_OPEN_URI` is what makes `VACUUM INTO` read its target as a URI;
+    // the source's own name is a path and is read as one.
+    let source = Connection::open_with_flags(
+        src,
+        OpenFlags::SQLITE_OPEN_READ_ONLY
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX
+            | OpenFlags::SQLITE_OPEN_URI,
+    )
+    .with_context(|| format!("opening {} read-only", src.display()))?;
+    source
+        .execute("VACUUM INTO ?1", [&name])
+        .with_context(|| format!("compacting {} into memory", src.display()))?;
+    Ok(MemoryCopy { conn })
+}
+
 /// Compacts the database file in place (`VACUUM`). Transactional: on failure
 /// the file is left exactly as it was. Refuses a file that isn't a database
 /// rather than opening it (see [`vacuum_into`] on why opening is not free).
@@ -283,11 +349,17 @@ pub fn header_user_version(path: &std::path::Path) -> Option<u32> {
 
     let mut head = [0u8; 64];
     std::fs::File::open(path).ok()?.read_exact(&mut head).ok()?;
-    if &head[..16] != SQLITE_MAGIC {
+    user_version_in_header(&head)
+}
+
+/// [`header_user_version`] of a database's bytes already in hand — a copy in
+/// memory ([`vacuum_into_memory`]).
+pub fn user_version_in_header(head: &[u8]) -> Option<u32> {
+    if head.get(..16)? != SQLITE_MAGIC {
         return None;
     }
-    let [a, b, c, d] = [head[60], head[61], head[62], head[63]];
-    Some(u32::from_be_bytes([a, b, c, d]))
+    let field: [u8; 4] = head.get(60..64)?.try_into().ok()?;
+    Some(u32::from_be_bytes(field))
 }
 
 /// The number of free pages a database file's header records (offset 36, four
@@ -783,6 +855,11 @@ mod migrate_tests {
             Some(peek_user_version(&stamped).unwrap())
         );
 
+        // The same answer from bytes already in hand, and none from a cut header.
+        let bytes = std::fs::read(&stamped).unwrap();
+        assert_eq!(user_version_in_header(&bytes), Some(0x0102_0304));
+        assert_eq!(user_version_in_header(&bytes[..63]), None);
+
         let not_a_db = dir.path().join("x.db");
         std::fs::write(&not_a_db, b"SQLITE").unwrap();
         assert_eq!(header_user_version(&not_a_db), None);
@@ -900,6 +977,34 @@ mod compact_tests {
         let not_a_db = dir.path().join("x.db");
         std::fs::write(&not_a_db, b"SQLITE").unwrap();
         assert_eq!(header_freelist_count(&not_a_db), None);
+    }
+
+    /// The copy in memory is, byte for byte, the file `vacuum_into` writes —
+    /// the vector index joined, the free pages gone, the schema stamp kept — and
+    /// a file that is not a database is refused before SQLite opens it.
+    #[test]
+    fn vacuum_into_memory_makes_the_file_vacuum_into_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("data.db");
+        fragmented_db(&src);
+        let on_disk = dir.path().join("compact.db");
+        vacuum_into(&src, &on_disk).unwrap();
+        let mut copy = vacuum_into_memory(&src).unwrap();
+        let bytes = copy.bytes().unwrap();
+        assert_eq!(&bytes[..], &std::fs::read(&on_disk).unwrap()[..]);
+        drop(bytes);
+        // Two copies at once are two databases, not one.
+        let mut second = vacuum_into_memory(&src).unwrap();
+        assert_eq!(second.bytes().unwrap().len(), copy.bytes().unwrap().len());
+
+        let not_a_db = dir.path().join("x.db");
+        std::fs::write(&not_a_db, b"SQLITE").unwrap();
+        assert!(vacuum_into_memory(&not_a_db).is_err());
+        assert_eq!(
+            std::fs::read(&not_a_db).unwrap(),
+            b"SQLITE",
+            "left as it was"
+        );
     }
 
     fn freelist(path: &std::path::Path) -> i64 {

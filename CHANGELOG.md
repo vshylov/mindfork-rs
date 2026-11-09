@@ -40,6 +40,10 @@ split by subsystem.
   about a second instead of four and a half, and a restore over existing data two
   seconds instead of six. The archive is the same zip — older versions and 7-Zip open
   it as before.
+- **Backing up a large database no longer writes a copy of it to disk first.** The
+  database is compacted in memory when it fits — at most 1 GB, and an eighth of the
+  computer's memory — and packed from there; on a 352 MB data folder with a 285 MB
+  database a backup took seven seconds instead of eleven.
 - **Restoring a large database no longer rewrites it for nothing.** A backup already
   holds the database compacted, so a restore of one no longer compacts it again; on a
   352 MB data folder with a 285 MB database a restore into an empty folder took under

@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (34)
+## Entries (35)
 
 - Post-M9: persisting the input-box draft in the chat file (done)
 - Post-M9: persisting deleted exchanges in the chat file (`Ctrl+E`/`Ctrl+R`) (done)
@@ -46,6 +46,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: backup and restore on a pool of threads, the level and threads as settings (done)
 - Post-M9: a backup's entries carry their files' dates (done)
 - Post-M9: a big database's restore without a needless VACUUM; optimized debug builds (done)
+- Post-M9: a big database compacted in memory for its backup (done)
 
 ### Post-M9: persisting the input-box draft in the chat file (done)
 - **Unsaved input-box text is stored on the chat and restored on
@@ -1935,4 +1936,40 @@ F3 and F5, the owner's decision of 2026-11-09 at the recommendation.
   of the restore's tests that care.
 
 **Gates**: 4779 unit tests green, 310 `#[ignore]` (Linux); clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.
+
+### Post-M9: a big database compacted in memory for its backup (done)
+
+Stage 2 of [docs/research/backup-big-entry.md](../research/backup-big-entry.md) — fork F2,
+the owner's decision of 2026-11-09.
+
+- **What**: a backup compacted the database by `VACUUM INTO` a scratch file and packed
+  that — 4.06 s for 285 MB here, most of it writing the file. Now the copy is made in
+  SQLite's `memdb` (`db::vacuum_into_memory` → `MemoryCopy::bytes`, the pages handed
+  over without a copy) and packed from memory (`pack_from`, a reader in place of the
+  file), when the database and its `-wal` are at most the cap; above it, or if that
+  fails, the scratch file as before, then the raw files. The copy is byte for byte the
+  file `vacuum_into` writes.
+- **The cap, and one thing the research had wrong**: the research assumed RAM equal to
+  the database; measured, the backup's peak RSS was 584 MB for a 285 MB database —
+  `memdb` grows its buffer by doubling. The decision named a quarter of the machine's
+  memory, so the cap is the smaller of 1 GiB and an **eighth**: the peak, about twice
+  the database, stays within the quarter (`memory_cap`). On 8 GB and more it is 1 GiB
+  either way. The machine's memory is a new `shared::machine::physical_memory` —
+  `sysconf` on unix (`libc`, already there), `GlobalMemoryStatusEx` on Windows (one
+  more `windows-sys` feature, no new crate); unknown, the cap is 0 and the file path
+  stays.
+- **Measured** (release, 4 vCPU, the 352 MB root with a 285 MB database): `backup`
+  **11.0–16.5 s → 7.3 s** (a cold first run 12.0 s), the archive the same size;
+  `restore` over existing data **12 s → 8.3–9.6 s**, its pre-restore copy being a
+  backup. What remains of the backup is the database's deflate on one thread — stage 3.
+- **Tests** (+5): the machine reports its memory; the copy in memory is the file's
+  bytes and two copies are two databases, a non-database refused untouched; the header
+  read from bytes in hand; in memory and through the file the archive is the same and
+  nothing is left behind; with the scratch file made impossible, a database under the
+  cap still goes in compacted and one over it raw (which path ran, told apart); the cap
+  is an eighth and at most 1 GiB. **Mutation-tested**: never taking the memory path
+  fails the path test.
+
+**Gates**: 4784 unit tests green, 310 `#[ignore]` (Linux); clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.

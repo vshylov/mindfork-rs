@@ -20,6 +20,7 @@ pub mod image_gen;
 pub mod instance;
 pub mod keys;
 pub mod logging;
+pub mod machine;
 pub mod markdown;
 pub mod mcp;
 pub mod messenger;
