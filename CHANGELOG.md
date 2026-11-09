@@ -45,9 +45,20 @@ split by subsystem.
   smaller archive and took a fifth longer) and *Threads* (0 — all cores; never more
   than the computer has). `mindfork backup -c` still overrides the level for one run;
   the copies the app makes before a restore and before a data upgrade use the setting.
+- **The story settings no longer share a word with the chat's history.** In Russian
+  the story engine's group, its rows, its tool labels in the feed and the `mindfork
+  stats` labels said *istoriya*, the word the interface already uses for a
+  conversation's history, so *Istoriya: chapter budget* read as a setting of the
+  chat's history; they now say *rasskaz*, the everyday word for a written story. In
+  English the group is *Story writing (experimental)*, beside *Image generation*; the
+  *Story tools* toggle keeps its name.
 
 ### Fixed
 
+- **Files in a backup keep their dates.** Every file in a backup archive was dated
+  1980-01-01 — in 7-Zip and any other tool that shows it; now each carries its own
+  modification time, and a restore gives the files their dates back. An archive made
+  by an earlier version restores as before, its files dated at the restore.
 - **The clipboard works on Wayland desktops.** On a session with no XWayland the app
   had no clipboard at all — no pasted picture, no local copy — and on KDE Plasma, sway,
   Hyprland and other wlroots desktops a picture copied by a Wayland app (a browser, a
@@ -62,16 +73,6 @@ split by subsystem.
   reads there is the remote machine's, not the one you copied to; instead of asking
   you to copy the image again, the message now says so and points at `/image attach`
   with a copied file or an address.
-
-### Changed
-
-- **The story settings no longer share a word with the chat's history.** In Russian
-  the story engine's group, its rows, its tool labels in the feed and the `mindfork
-  stats` labels said *istoriya*, the word the interface already uses for a
-  conversation's history, so *Istoriya: chapter budget* read as a setting of the
-  chat's history; they now say *rasskaz*, the everyday word for a written story. In
-  English the group is *Story writing (experimental)*, beside *Image generation*; the
-  *Story tools* toggle keeps its name.
 
 ## [0.24.0] — 2026-11-08
 

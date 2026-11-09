@@ -398,7 +398,9 @@ Three things worth knowing before relying on it:
   encrypted files; chat file names are UUIDs.
 
 The archive is standard: 7-Zip, WinZip and the like open it with the password, so
-files can be pulled out by hand without the application.
+files can be pulled out by hand without the application. Each file in it keeps its
+own date (to two seconds, in local time), and a restore gives the files their dates
+back; archives made by 0.24.0 and earlier show every file as 1980-01-01.
 
 The archive includes: `chats/`, `dictionaries/`, `locales/`, `themes/`, `data.db`,
 `personal_dictionary.txt`, `profiles.json`, `settings.json`, all `*.bak` files, and

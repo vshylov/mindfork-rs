@@ -242,11 +242,14 @@ pub fn export(
             Some(pw) => plain.with_aes_encryption(AesMode::Aes256, pw),
             None => plain,
         };
-        zip.start_file(MANIFEST_ENTRY, plain)?;
+        // Every entry is made now, so it is dated now — not the zip format's
+        // default 1980 (spec §12.3, `backup::dated`).
+        let now = Some(std::time::SystemTime::now());
+        zip.start_file(MANIFEST_ENTRY, backup::dated(plain, now))?;
         zip.write_all(&serde_json::to_vec_pretty(&CarryManifest::current())?)?;
-        zip.start_file(PROFILE_ENTRY, options)?;
+        zip.start_file(PROFILE_ENTRY, backup::dated(options, now))?;
         zip.write_all(&serde_json::to_vec_pretty(&profile)?)?;
-        zip.start_file(MEMORY_ENTRY, options)?;
+        zip.start_file(MEMORY_ENTRY, backup::dated(options, now))?;
         io::copy(&mut File::open(&memory.0)?, &mut zip)?;
         zip.finish()?;
         Ok(())
@@ -443,6 +446,11 @@ mod tests {
         );
         // The archive itself holds no account: an archive travels.
         let mut zip = zip::ZipArchive::new(File::open(&out).unwrap()).unwrap();
+        // Its entries are dated when they were made, not the format's 1980.
+        for i in 0..zip.len() {
+            let dos = zip.by_index_raw(i).unwrap().last_modified().unwrap();
+            assert!(dos.year() >= 2025, "{dos:?}");
+        }
         let mut carried = String::new();
         std::io::Read::read_to_string(&mut zip.by_name(PROFILE_ENTRY).unwrap(), &mut carried)
             .unwrap();

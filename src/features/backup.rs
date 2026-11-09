@@ -89,7 +89,7 @@ use std::fs::{self, File};
 use std::io;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context, Result, bail};
 use chrono::Local;
@@ -109,7 +109,10 @@ use crate::shared::storage::schema::{
 /// release-engineering.md §3.4.
 const MANIFEST_NAME: &str = "manifest.json";
 
+mod dates;
 mod parallel;
+
+pub(crate) use dates::dated;
 
 /// The data schema of each kind of stored file in an archive (ADR 0006 §11):
 /// what the archive **holds**, read from its files as they are packed
@@ -343,12 +346,27 @@ const TOP_DIRS: &[&str] = &[
 ];
 
 /// A packing entry: the source's absolute path, its name inside the archive (with
-/// `/`), and its size — which the pool schedules by, largest first, and which
-/// decides whether its compressed copy waits in memory or in a scratch file.
+/// `/`), its size — which the pool schedules by, largest first, and which
+/// decides whether its compressed copy waits in memory or in a scratch file —
+/// and its modification time, which the entry carries ([`dates`]; `None` — not
+/// known, and the entry goes undated).
 struct Entry {
     abs: PathBuf,
     name: String,
     len: u64,
+    mtime: Option<SystemTime>,
+}
+
+impl Entry {
+    /// The file at `abs`, as `name`, with its size and date read from `meta`.
+    fn of(abs: PathBuf, name: String, meta: Option<&fs::Metadata>) -> Self {
+        Self {
+            abs,
+            name,
+            len: meta.map_or(0, fs::Metadata::len),
+            mtime: meta.and_then(|m| m.modified().ok()),
+        }
+    }
 }
 
 /// How an archive is packed and unpacked: the deflate level and how many
@@ -801,11 +819,8 @@ fn gather_entries(paths: &Paths, fs_root: Option<&Path>, loc: &Locale) -> Result
     for f in TOP_FILES {
         let abs = root.join(f);
         if abs.is_file() {
-            out.push(Entry {
-                len: file_len(&abs),
-                abs,
-                name: (*f).to_string(),
-            });
+            let meta = fs::metadata(&abs).ok();
+            out.push(Entry::of(abs, (*f).to_string(), meta.as_ref()));
         }
     }
 
@@ -817,11 +832,8 @@ fn gather_entries(paths: &Paths, fs_root: Option<&Path>, loc: &Locale) -> Result
                 && path.extension().is_some_and(|e| e == "bak")
                 && let Some(name) = path.file_name().and_then(OsStr::to_str)
             {
-                out.push(Entry {
-                    len: file_len(&path),
-                    abs: path.clone(),
-                    name: name.to_string(),
-                });
+                let meta = entry.metadata().ok();
+                out.push(Entry::of(path.clone(), name.to_string(), meta.as_ref()));
             }
         }
     }
@@ -949,11 +961,8 @@ fn collect_dir(abs: &Path, prefix: &str, out: &mut Vec<Entry>, loc: &Locale) -> 
         if ft.is_dir() {
             collect_dir(&child_abs, &child_name, out, loc)?;
         } else if ft.is_file() {
-            out.push(Entry {
-                len: entry.metadata().map_or(0, |m| m.len()),
-                abs: child_abs,
-                name: child_name,
-            });
+            let meta = entry.metadata().ok();
+            out.push(Entry::of(child_abs, child_name, meta.as_ref()));
         }
     }
     Ok(())
@@ -3100,6 +3109,7 @@ mod tests {
             abs: dir.path().join("chats").join("gone.json"),
             name: "chats/gone.json".into(),
             len: 3_000,
+            mtime: None,
         });
         let spec = ZipSpec {
             level: 6,
@@ -3286,5 +3296,119 @@ mod tests {
         assert_eq!(worker_count(u32::MAX), cores);
         assert_eq!(Packing::default().threads, cores);
         assert_eq!(Packing::default().level, 6);
+    }
+
+    // ---- the entries' dates (spec §12.3, `dates`) ----
+
+    /// Dates `path` at `mtime`, as an editor that saved it then would have.
+    fn set_date(path: &Path, mtime: SystemTime) {
+        fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(mtime)
+            .unwrap();
+    }
+
+    fn date_of(path: &Path) -> SystemTime {
+        fs::metadata(path).unwrap().modified().unwrap()
+    }
+
+    /// Each entry's date, by name, as the archive says it.
+    fn entry_dates(archive: &Path) -> std::collections::HashMap<String, Option<SystemTime>> {
+        let mut zip = ZipArchive::new(File::open(archive).unwrap()).unwrap();
+        (0..zip.len())
+            .map(|i| {
+                let entry = zip.by_index_raw(i).unwrap();
+                (entry_name(&entry), dates::entry_mtime(&entry))
+            })
+            .collect()
+    }
+
+    /// An entry carries its file's date — held in memory or spilled, encrypted
+    /// or not — the compacted database carries the newest of the database's
+    /// files, the manifest the time it was written; and a restore gives every
+    /// file its date back, a stored file's after its origin mark. The date is the
+    /// DOS one (`dates`: `zip` drops the exact one from a raw copy), so an odd
+    /// second comes back as the even one below it.
+    #[test]
+    fn an_archive_carries_its_files_dates_and_a_restore_gives_them_back() {
+        let dir = tempfile::tempdir().unwrap();
+        seed_many(dir.path());
+        let odd = SystemTime::UNIX_EPOCH + Duration::from_secs(1_715_000_001);
+        let chat = SystemTime::UNIX_EPOCH + Duration::from_secs(1_715_000_000);
+        let picture = SystemTime::UNIX_EPOCH + Duration::from_secs(1_600_000_000);
+        let database = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        set_date(&dir.path().join("chats").join("c07.json"), odd);
+        set_date(
+            &dir.path().join("files").join("c1").join("chart.png"),
+            picture,
+        );
+        for name in DB_FILES {
+            let path = dir.path().join(name);
+            if path.is_file() {
+                set_date(&path, database);
+            }
+        }
+        let paths = Paths::with_root(dir.path());
+        let entries = gather_entries(&paths, None, ru()).unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let started = SystemTime::now() - Duration::from_secs(2);
+        for (name, spill_over) in [("memory.zip", u64::MAX), ("spilled.zip", 0)] {
+            let archive = out.path().join(name);
+            let spec = ZipSpec {
+                level: 6,
+                password: Some(PW),
+                threads: 4,
+                spill_over,
+            };
+            parallel::write_archive(&paths, &archive, &entries, &spec, ru(), &mut |_| {}).unwrap();
+            let dates = entry_dates(&archive);
+            assert_eq!(dates["chats/c07.json"], Some(chat), "{name}");
+            assert_eq!(dates["files/c1/chart.png"], Some(picture), "{name}");
+            assert_eq!(dates["data.db"], Some(database), "{name}");
+            let manifest = dates[MANIFEST_NAME].expect("the manifest is dated");
+            assert!(manifest >= started, "{name}: {manifest:?}");
+            assert!(
+                dates.values().all(Option::is_some),
+                "{name}: an undated entry"
+            );
+
+            let dst = tempfile::tempdir().unwrap();
+            let restored = Paths::with_root(dst.path());
+            let packing = Packing {
+                level: 6,
+                threads: 4,
+            };
+            restore_backup(&restored, &archive, packing, None, Some(PW), ru(), |_| {}).unwrap();
+            assert_eq!(date_of(&dst.path().join("chats").join("c07.json")), chat);
+            assert_eq!(
+                date_of(&dst.path().join("files").join("c1").join("chart.png")),
+                picture
+            );
+        }
+    }
+
+    /// An archive from before entries were dated carries the format's default,
+    /// 1980-01-01, which reads as no date: its files are dated when they are
+    /// restored, as they always were — not set back to 1980.
+    #[test]
+    fn an_undated_archive_restores_its_files_dated_now() {
+        use std::io::Write;
+        let work = tempfile::tempdir().unwrap();
+        let archive = work.path().join("old.zip");
+        {
+            let mut zip = ZipWriter::new(File::create(&archive).unwrap());
+            zip.start_file("settings.json", SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(b"{}").unwrap();
+            zip.finish().unwrap();
+        }
+        assert_eq!(entry_dates(&archive)["settings.json"], None);
+        let started = SystemTime::now() - Duration::from_secs(2);
+        let dst = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(dst.path());
+        restore_backup(&paths, &archive, Packing::at(6), None, None, ru(), |_| {}).unwrap();
+        assert!(date_of(&dst.path().join("settings.json")) >= started);
     }
 }
