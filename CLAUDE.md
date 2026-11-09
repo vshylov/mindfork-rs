@@ -202,7 +202,8 @@ being recent is dropped, not shortened.
 - **One big file on many threads — track complete** (2026-11-09, three stages): a big
   entry deflated in chunks on the pool, its AE-2 written here; the database compacted in
   memory; a restore's needless `VACUUM` gone; optimized debug builds. 352 MB root: backup
-  11.0 → 2.95 s, restore 34.6 → 4.0 s ([docs/research/backup-big-entry.md](docs/research/backup-big-entry.md)).
+  11.0 → 2.95 s, restore 34.6 → 4.0 s; the owner's Windows, real data: 1.6 s, 7-Zip opens
+  it ([docs/research/backup-big-entry.md](docs/research/backup-big-entry.md)).
 - **Backup and restore on a pool of threads** (2026-11-09): every core packs and
   unpacks (`backup.threads`, never more than the cores), at `backup.compression`
   (6 by default; the app's own copies too); a parallel zip, not 7z. 4.5 s → 1.1 s,
