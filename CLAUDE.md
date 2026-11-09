@@ -206,8 +206,8 @@ being recent is dropped, not shortened.
 - **Backup and restore on a pool of threads** (2026-11-09): every core packs and
   unpacks (`backup.threads`, never more than the cores), at `backup.compression`
   (6 by default; the app's own copies too); a parallel zip, not 7z. 4.5 s → 1.1 s,
-  restore 5.9 s → 2.0 s on 110 MB. Live **GO**; Windows the open go/no-go
-  ([docs/research/backup-speed.md](docs/research/backup-speed.md),
+  restore 5.9 s → 2.0 s on 110 MB. Live **GO**; on Windows a backup of real data
+  95 s → 22 s (debug build) ([docs/research/backup-speed.md](docs/research/backup-speed.md),
   [docs/journal/storage.md](docs/journal/storage.md)).
 - **A name for a pasted image — track complete** (2026-11-08): a copied picture
   file is pasted, the SSH refusal names the distance; with `images.name_pasted` (off)
