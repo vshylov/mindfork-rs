@@ -113,6 +113,59 @@ pub(super) fn write_archive(
     progress: &mut impl FnMut(&str),
 ) -> Result<()> {
     let dir = out_path.parent().unwrap_or_else(|| Path::new("."));
+    let zip = create_output(dir, out_path, loc)?;
+    let (plain, options) = entry_options(spec);
+    let scratch = Scratch {
+        dir,
+        stem: out_path
+            .file_name()
+            .map_or_else(|| "backup".into(), |n| n.to_string_lossy().into_owned()),
+        seq: AtomicUsize::new(0),
+        spill_over: spec.spill_over,
+    };
+    let jobs = schedule(entries);
+    let pool = &Pool {
+        paths,
+        out_path,
+        options: &options,
+        scratch: &scratch,
+        loc,
+        jobs: &jobs,
+        next: AtomicUsize::new(0),
+        stop: AtomicBool::new(false),
+    };
+    let has_db = paths.data_db().is_file();
+    let mut writer = Writer {
+        zip,
+        ticker: EntryProgress::new(entries.len() + usize::from(has_db)),
+        schemas: SchemaVersions::default(),
+        db_schema: 0,
+    };
+
+    let workers = spec.threads.clamp(1, jobs.len());
+    let (tx, rx) = mpsc::sync_channel::<Result<Landed>>(workers);
+    thread::scope(|s| -> Result<()> {
+        for _ in 0..workers {
+            let tx = tx.clone();
+            s.spawn(move || pool.work(&tx));
+        }
+        drop(tx);
+        // `rx` moves into this closure: an early return drops it before the scope
+        // joins the workers, so none of them waits on a full channel for ever.
+        let rx = rx;
+        for landed in rx.iter() {
+            if let Err(err) = landed.and_then(|landed| writer.land(landed, loc, progress)) {
+                pool.stop.store(true, Ordering::Relaxed);
+                return Err(err);
+            }
+        }
+        Ok(())
+    })?;
+    writer.finish(plain, loc)
+}
+
+/// Creates the archive file, and the directory it goes in.
+fn create_output(dir: &Path, out_path: &Path, loc: &Locale) -> Result<ZipWriter<File>> {
     fs::create_dir_all(dir).with_context(|| {
         loc.tf(
             "backup.ctx.create_dir",
@@ -125,8 +178,13 @@ pub(super) fn write_archive(
             &[("path", &out_path.display().to_string())],
         )
     })?;
-    let mut zip = ZipWriter::new(file);
+    Ok(ZipWriter::new(file))
+}
 
+/// The manifest's options — the level, `0` stored — and the data entries':
+/// the same, encrypted when a password is set. The manifest carries no user
+/// data and stays readable without the password.
+fn entry_options<'a>(spec: &ZipSpec<'a>) -> (SimpleFileOptions, EntryOptions<'a>) {
     let level = spec.level.clamp(0, 9);
     let plain = if level == 0 {
         SimpleFileOptions::default().compression_method(CompressionMethod::Stored)
@@ -135,98 +193,116 @@ pub(super) fn write_archive(
             .compression_method(CompressionMethod::Deflated)
             .compression_level(Some(level))
     };
-    // Data entries: encrypted when a password is set. The manifest always uses
-    // `plain` — it carries no user data and stays readable without the password.
-    let options: EntryOptions<'_> = match normalize(spec.password) {
+    let options = match normalize(spec.password) {
         Some(pw) => plain.with_aes_encryption(AesMode::Aes256, pw),
         None => plain,
     };
-    let scratch = Scratch {
-        dir,
-        stem: out_path
-            .file_name()
-            .map_or_else(|| "backup".into(), |n| n.to_string_lossy().into_owned()),
-        seq: AtomicUsize::new(0),
-        spill_over: spec.spill_over,
-    };
+    (plain, options)
+}
 
+/// The jobs in the order the workers take them: the database, the schema scan,
+/// then the files, largest first (the module doc).
+fn schedule(entries: &[Entry]) -> Vec<Job<'_>> {
     let mut files: Vec<&Entry> = entries.iter().collect();
     files.sort_by_key(|e| Reverse(e.len));
-    let jobs: Vec<Job<'_>> = [Job::Database, Job::Schemas]
+    [Job::Database, Job::Schemas]
         .into_iter()
         .chain(files.into_iter().map(Job::File))
-        .collect();
-    let has_db = paths.data_db().is_file();
-    let mut ticker = EntryProgress::new(entries.len() + usize::from(has_db));
-    let mut schemas = SchemaVersions::default();
-    let mut db_schema = 0;
+        .collect()
+}
 
-    let workers = spec.threads.clamp(1, jobs.len());
-    let (next, stop) = (&AtomicUsize::new(0), &AtomicBool::new(false));
-    let (jobs, scratch, options) = (&jobs, &scratch, &options);
-    let (tx, rx) = mpsc::sync_channel::<Result<Landed>>(workers);
-    thread::scope(|s| -> Result<()> {
-        for _ in 0..workers {
-            let tx = tx.clone();
-            s.spawn(move || {
-                while !stop.load(Ordering::Relaxed) {
-                    let Some(job) = jobs.get(next.fetch_add(1, Ordering::Relaxed)) else {
-                        break;
-                    };
-                    let landed = run_job(job, paths, out_path, options, scratch, loc);
-                    let failed = landed.is_err();
-                    if tx.send(landed).is_err() || failed {
-                        break;
-                    }
-                }
-            });
-        }
-        drop(tx);
-        // `rx` moves into this closure: an early return drops it before the scope
-        // joins the workers, so none of them waits on a full channel for ever.
-        let rx = rx;
-        for landed in rx.iter() {
-            let appended = landed.and_then(|landed| match landed {
-                Landed::Entries {
-                    packed,
-                    db_schema: d,
-                } => {
-                    if !packed.is_empty() {
-                        ticker.tick(loc, progress);
-                    }
-                    if let Some(d) = d {
-                        db_schema = d;
-                    }
-                    packed
-                        .into_iter()
-                        .try_for_each(|p| append(&mut zip, p, loc))
-                }
-                Landed::Schemas(found) => {
-                    schemas = found;
-                    Ok(())
-                }
-            });
-            if let Err(err) = appended {
-                stop.store(true, Ordering::Relaxed);
-                return Err(err);
+/// What every worker of one packing shares: the jobs and the next one to take,
+/// the stop flag, and what a job needs.
+struct Pool<'a> {
+    paths: &'a Paths,
+    out_path: &'a Path,
+    options: &'a EntryOptions<'a>,
+    scratch: &'a Scratch<'a>,
+    loc: &'a Locale,
+    jobs: &'a [Job<'a>],
+    next: AtomicUsize,
+    stop: AtomicBool,
+}
+
+impl Pool<'_> {
+    /// A worker's loop: takes the next job until there are none, the pool is
+    /// stopped, its own job fails, or the writer has gone.
+    fn work(&self, tx: &mpsc::SyncSender<Result<Landed>>) {
+        while !self.stop.load(Ordering::Relaxed) {
+            let Some(job) = self.jobs.get(self.next.fetch_add(1, Ordering::Relaxed)) else {
+                break;
+            };
+            let landed = run_job(
+                job,
+                self.paths,
+                self.out_path,
+                self.options,
+                self.scratch,
+                self.loc,
+            );
+            let failed = landed.is_err();
+            if tx.send(landed).is_err() || failed {
+                break;
             }
         }
-        Ok(())
-    })?;
+    }
+}
 
-    // The schema-version manifest (metadata, not a user file) — written last.
-    let manifest = BackupManifest::written_now(SchemaVersions {
-        db: db_schema,
-        ..schemas
-    });
-    let manifest = serde_json::to_vec_pretty(&manifest).context("serializing backup manifest")?;
-    zip.start_file(MANIFEST_NAME, plain)
-        .with_context(|| loc.tf("backup.ctx.write_entry", &[("name", MANIFEST_NAME)]))?;
-    io::copy(&mut manifest.as_slice(), &mut zip)
-        .with_context(|| loc.tf("backup.ctx.pack", &[("path", MANIFEST_NAME)]))?;
-    zip.finish()
-        .with_context(|| loc.t("backup.ctx.finalize").to_string())?;
-    Ok(())
+/// The calling thread's side: the archive, the progress line, and what the
+/// manifest will record.
+struct Writer {
+    zip: ZipWriter<File>,
+    ticker: EntryProgress,
+    schemas: SchemaVersions,
+    db_schema: u32,
+}
+
+impl Writer {
+    /// Takes in one finished job: appends its entries, or keeps what it found.
+    fn land(
+        &mut self,
+        landed: Landed,
+        loc: &Locale,
+        progress: &mut impl FnMut(&str),
+    ) -> Result<()> {
+        match landed {
+            Landed::Entries { packed, db_schema } => {
+                if !packed.is_empty() {
+                    self.ticker.tick(loc, progress);
+                }
+                if let Some(schema) = db_schema {
+                    self.db_schema = schema;
+                }
+                packed
+                    .into_iter()
+                    .try_for_each(|p| append(&mut self.zip, p, loc))
+            }
+            Landed::Schemas(found) => {
+                self.schemas = found;
+                Ok(())
+            }
+        }
+    }
+
+    /// Writes the schema-version manifest (metadata, not a user file) last, and
+    /// finishes the archive.
+    fn finish(mut self, plain: SimpleFileOptions, loc: &Locale) -> Result<()> {
+        let manifest = BackupManifest::written_now(SchemaVersions {
+            db: self.db_schema,
+            ..self.schemas
+        });
+        let manifest =
+            serde_json::to_vec_pretty(&manifest).context("serializing backup manifest")?;
+        self.zip
+            .start_file(MANIFEST_NAME, plain)
+            .with_context(|| loc.tf("backup.ctx.write_entry", &[("name", MANIFEST_NAME)]))?;
+        io::copy(&mut manifest.as_slice(), &mut self.zip)
+            .with_context(|| loc.tf("backup.ctx.pack", &[("path", MANIFEST_NAME)]))?;
+        self.zip
+            .finish()
+            .with_context(|| loc.t("backup.ctx.finalize").to_string())?;
+        Ok(())
+    }
 }
 
 /// Runs one job on a worker.
