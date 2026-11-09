@@ -245,6 +245,19 @@ uuid = { version = "1.23.3", features = ["v4", "v5", "serde"] }
 # crates only (aes/hmac/pbkdf2/sha1/constant_time_eq) — still no C dependency.
 # See features/backup.rs, docs/history/backup-password.md.
 zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2", "aes-crypto"] }
+# A big entry of a backup (`data.db`) compressed in chunks on many threads and written
+# as its own one-entry zip (docs/research/backup-big-entry.md F1): `zip` cannot take a
+# stream compressed elsewhere into an encrypted entry, so WinZip AE-2 is applied here —
+# AES-256-CTR, PBKDF2-HMAC-SHA1 keys, an HMAC-SHA1 tag — and the CRC combined per
+# chunk. Every one of these is a crate `zip` already pulls in, at the version it does:
+# no new crate in the tree. See features/backup/chunked.rs.
+aes = "0.9"
+hmac = "0.13"
+sha1 = "0.11"
+pbkdf2 = "0.13"
+getrandom = "0.4"
+crc32fast = "1.5"
+zeroize = "1.9"
 
 # Windows specifics:
 # * `Win32_System_JobObjects` — an OS-level memory limit for the Python sandbox via a Job

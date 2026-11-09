@@ -1327,6 +1327,14 @@ gate it in `lint` the way `list_scroll_check.py` holds the scroll rule — a
 convention is what let both spread (`tools/layer_check.py`).
 — *the FSD layer rule gets a gate*.
 
+**A memory estimate is a measurement waiting to happen.** The research for the
+backup's in-memory compaction costed it at RAM equal to the database; the release run
+measured 584 MB of RSS for a 285 MB database — SQLite's `memdb` grows its buffer by
+doubling, which no line of the plan had asked about. The cap the owner decided (a
+quarter of memory) was kept by halving the size it admits. Measure the peak of any
+"holds it in memory" design on the real binary before writing down its cost.
+— *a big database compacted in memory for its backup*.
+
 ## 4. The recurring defect class: a message must close the door
 
 **Never let a message describe a situation without saying what is and is not possible
@@ -2089,6 +2097,13 @@ at four threads than at one. Point `TEMP`/`TMP` at `RUNNER_TEMP`, and count the 
 a fixture makes: a schema in autocommit is one commit per statement, 31 for a fresh
 `data.db`.
 — *why the Windows tests were slow*, *the schema in one transaction*.
+
+**An open file must be dropped before whatever removes it.** A struct that owns both
+a file handle and the RAII guard that deletes the file drops its fields in declaration
+order; with the guard first, an abandoned value tries to delete a file it still holds
+open — which works on Linux and fails on Windows, leaving the scratch behind exactly
+when something has already gone wrong. Declare the handle first, and say why beside it.
+— *a big entry compressed on many threads* (`chunked::Assembly`).
 
 ## 7. i18n, gates and localization
 
