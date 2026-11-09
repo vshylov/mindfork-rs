@@ -9,8 +9,11 @@ built**: a backup of that root 11.0–16.5 s → 7.3 s. Measured, the copy in me
 at about twice the database (`memdb` grows by doubling), so the cap is an eighth of the
 memory, not a quarter — the peak stays within the quarter decided. **Stage 3 (F1) is built — the track is
 complete**: a backup 7.3 s → 2.95 s, a restore over data 8.3–9.6 s → 4.0 s; across the
-three stages 11.0 s → 2.95 s and 34.6 s → 4.0 s. The open go/no-go is the owner's machine:
-real data, a release build, 7-Zip opening the encrypted archive.
+three stages 11.0 s → 2.95 s and 34.6 s → 4.0 s. **The go/no-go passed on the owner's
+machine** (Windows, i9-9900K, real data, a release build): a backup in 1.64 s; a restore
+into an empty data folder in 5.3 s, the password typed at the prompt included; and 7-Zip
+opens the encrypted archive and extracts its files with the password — the AE-2 entry
+this app writes itself included.
 
 **Related:** [backup-speed.md](backup-speed.md) — the pool this builds on, and its
 §3.4, the limit studied here; spec §12.3; `src/features/backup/parallel.rs`;

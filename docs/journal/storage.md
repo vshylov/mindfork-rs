@@ -2009,8 +2009,17 @@ the owner's decision of 2026-11-09; the research's last stage.
   decrypted by `pyzipper` is byte for byte the file this build restores; 0.24.0
   restores the archive too, its database (which 0.24.0 compacts again) holding the same
   rows, integrity `ok`; a wrong password refused by `pyzipper`; Python's `zipfile` and
-  Info-ZIP's `unzip -t` pass the plain archive's CRCs. 7-Zip on the owner's machine is
-  the open go/no-go.
+  Info-ZIP's `unzip -t` pass the plain archive's CRCs.
+- **Windows, the owner's machine and real data — GO** (2026-11-09, after all three
+  stages merged): an i9-9900K, the real data root (~290 MB, a 194 MB `data.db`), a
+  release build through `cargo run --release`. `backup` **1.64 s** — the same root's
+  debug-build backup was 95.3 s before the pool and 21.8 s with it, so the numbers are
+  not one comparison, but the order of magnitude is the point. `restore` into an empty
+  data folder **5.3 s**, an upper bound: the folder held the stored password, so the
+  restore prompted for it and the typing is in the time. **7-Zip** opens the encrypted
+  archive and extracts its files with the password — the hand-written AE-2 `data.db`
+  among them, the one reader the droplet could not run — and lists each entry with its
+  own date (the dates fix, live).
 - **Tests** (+6): chunks compressed apart are one stream; a plain assembled entry —
   chunks landed out of order — reads back through the `zip` crate's CRC check, with its
   name and date; an encrypted one reads back through its HMAC check, refuses a wrong
