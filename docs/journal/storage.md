@@ -1882,7 +1882,9 @@ clean.
   an even second and read back in local time; the manifest and a companion export,
   written directly, carry both. `a_raw_copy_drops_the_extended_timestamp` pins this
   and fails when `zip` keeps the field, at which point backups carry exact UTC times
-  with no other change.
+  with no other change. Reported upstream, with the cause and a fix, the owner's decision
+  (2026-11-09): [zip-rs/zip2#1285](https://github.com/zip-rs/zip2/issues/1285) —
+  reproduced on 9.1.3, 9.5.0 and `master` at b03a868e.
 - **Live**: a debug build's backup of the 110 MB root — Info-ZIP's `unzip -Z` shows
   each entry's own date and the manifest's; a restore gives `settings.json` 13:25:26
   for a file of 13:25:27.7 (the DOS step) and the chats theirs; 0.24.0 restores the
