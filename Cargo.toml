@@ -306,3 +306,31 @@ opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
+
+# Debug builds run deflate, the backup's AES and SQLite at release speed
+# (docs/research/backup-big-entry.md F5). Unoptimized, they made a debug backup
+# of a 110 MB root take 3.6 s where it takes 1.3 s with these at `opt-level = 3`
+# (release: 1.1 s) — and `cargo run -- backup` is how the owner measures. Every
+# test that compresses or opens SQLite gains too. The C of the two SQLite crates
+# is built by `cc`, which takes its `-O` from here. No shipped binary changes:
+# `release` is optimized whole.
+[profile.dev.package.miniz_oxide]
+opt-level = 3
+[profile.dev.package.flate2]
+opt-level = 3
+[profile.dev.package.zip]
+opt-level = 3
+[profile.dev.package.crc32fast]
+opt-level = 3
+[profile.dev.package.aes]
+opt-level = 3
+[profile.dev.package.sha1]
+opt-level = 3
+[profile.dev.package.hmac]
+opt-level = 3
+[profile.dev.package.pbkdf2]
+opt-level = 3
+[profile.dev.package.libsqlite3-sys]
+opt-level = 3
+[profile.dev.package.sqlite-vec]
+opt-level = 3

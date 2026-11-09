@@ -40,6 +40,11 @@ split by subsystem.
   about a second instead of four and a half, and a restore over existing data two
   seconds instead of six. The archive is the same zip — older versions and 7-Zip open
   it as before.
+- **Restoring a large database no longer rewrites it for nothing.** A backup already
+  holds the database compacted, so a restore of one no longer compacts it again; on a
+  352 MB data folder with a 285 MB database a restore into an empty folder took under
+  a second instead of nine, and one over existing data twelve seconds instead of 35.
+  Archives from older versions, or from other tools, are still compacted.
 - **The backup's compression level and thread count are settings.** Settings → Data
   has *Compression level* (6 by default, where it was 9 — on real data 9 made no
   smaller archive and took a fifth longer) and *Threads* (0 — all cores; never more

@@ -411,9 +411,10 @@ restore, §2), and the defaults files `defaults.json`/`location.json` are exclud
 **The database is compacted** on both commands. `data.db` keeps hold of the space
 freed by deleted notes, `/rag remove`, and chats whose attachment index went away,
 so a backup packs a compacted copy of it (which also makes the archive smaller),
-and a restore compacts what it unpacked — including an archive made by an older
-version. If the file can't be read as a database it's copied as-is instead; the
-backup never modifies the data it's copying.
+and a restore compacts what it unpacked when that has space to give back — an
+archive made by an older version or another tool; one made by this version is
+already compact, and is left as it is. If the file can't be read as a database
+it's copied as-is instead; the backup never modifies the data it's copying.
 
 **The level and the speed are settings.** The "Data" section holds two more fields
 beside the password. *Compression level* (0–9, **6** by default) is what `mindfork

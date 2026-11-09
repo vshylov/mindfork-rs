@@ -290,6 +290,24 @@ pub fn header_user_version(path: &std::path::Path) -> Option<u32> {
     Some(u32::from_be_bytes([a, b, c, d]))
 }
 
+/// The number of free pages a database file's header records (offset 36, four
+/// bytes, big-endian), read from the bytes alone, like [`header_user_version`].
+/// `0` — nothing a `VACUUM` would give back: a file `VACUUM INTO` wrote, which is
+/// what every backup since compaction packs. `None` — not a SQLite file, or
+/// shorter than its header. In WAL mode the main file's header can lag; the
+/// caller asks whether a `-wal` lies beside it.
+pub fn header_freelist_count(path: &std::path::Path) -> Option<u32> {
+    use std::io::Read;
+
+    let mut head = [0u8; 64];
+    std::fs::File::open(path).ok()?.read_exact(&mut head).ok()?;
+    if &head[..16] != SQLITE_MAGIC {
+        return None;
+    }
+    let [a, b, c, d] = [head[36], head[37], head[38], head[39]];
+    Some(u32::from_be_bytes([a, b, c, d]))
+}
+
 /// The idempotent DB schema (additive; see [`migrate`]).
 fn baseline_ddl(conn: &Connection) -> Result<()> {
     conn.execute_batch(
@@ -863,6 +881,25 @@ mod compact_tests {
         });
         db.batch(|| db.rag_delete_by_source(profile, "scratch").unwrap());
         profile
+    }
+
+    /// The header's free-page count is what `PRAGMA freelist_count` says: some
+    /// on a database that deleted rows, none on its `VACUUM INTO` copy — what a
+    /// backup packs — and nothing at all from a file that is not SQLite.
+    #[test]
+    fn header_freelist_count_reads_the_pragma_from_the_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("data.db");
+        fragmented_db(&src);
+        let free = header_freelist_count(&src).unwrap();
+        assert!(free > 0);
+        assert_eq!(i64::from(free), freelist(&src));
+        let dest = dir.path().join("compact.db");
+        vacuum_into(&src, &dest).unwrap();
+        assert_eq!(header_freelist_count(&dest), Some(0));
+        let not_a_db = dir.path().join("x.db");
+        std::fs::write(&not_a_db, b"SQLITE").unwrap();
+        assert_eq!(header_freelist_count(&not_a_db), None);
     }
 
     fn freelist(path: &std::path::Path) -> i64 {
