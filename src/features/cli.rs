@@ -20,9 +20,6 @@ use std::path::PathBuf;
 
 use crate::shared::i18n::Locale;
 
-/// Default backup compression level (matches the previous `default_value_t = 9`).
-pub const DEFAULT_COMPRESSION: i64 = 9;
-
 /// A parsed CLI command. No subcommand → [`CliCommand::Run`] (launch the TUI).
 #[derive(Debug, PartialEq, Eq)]
 pub enum CliCommand {
@@ -31,7 +28,9 @@ pub enum CliCommand {
     /// Create a backup (`backup`).
     Backup {
         output: Option<PathBuf>,
-        compression: i64,
+        /// `-c`: the level for this run. `None` — the one in the settings
+        /// (`backup.compression`, 6 unless changed; spec §12.3).
+        compression: Option<i64>,
         /// Encrypt the archive with this password (spec §12.3). `None` — fall
         /// back to the one stored in the settings, if any.
         password: Option<String>,
@@ -251,7 +250,7 @@ pub fn parse(args: &[String], loc: &Locale) -> Result<CliCommand, String> {
 
 fn parse_backup(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
     let mut output = None;
-    let mut compression = DEFAULT_COMPRESSION;
+    let mut compression = None;
     let mut password = None;
     let mut i = 0;
     while i < toks.len() {
@@ -263,7 +262,7 @@ fn parse_backup(toks: &[&str], loc: &Locale) -> Result<CliCommand, String> {
         } else if let Some(v) = opt_value(toks, &mut i, loc, &["-o", "--output"])? {
             output = Some(PathBuf::from(v));
         } else if let Some(v) = opt_value(toks, &mut i, loc, &["-c", "--compression"])? {
-            compression = parse_compression(v, loc)?;
+            compression = Some(parse_compression(v, loc)?);
         } else if let Some(v) = opt_value(toks, &mut i, loc, &["-p", "--password"])? {
             password = Some(v.to_string());
         } else if a.starts_with('-') {
@@ -1351,7 +1350,7 @@ mod tests {
             p(&["backup"]).unwrap(),
             CliCommand::Backup {
                 output: None,
-                compression: DEFAULT_COMPRESSION,
+                compression: None,
                 password: None,
             }
         );
@@ -1360,7 +1359,7 @@ mod tests {
             p(&["backup", "-o", "a.zip", "-c", "3"]).unwrap(),
             CliCommand::Backup {
                 output: Some(PathBuf::from("a.zip")),
-                compression: 3,
+                compression: Some(3),
                 password: None,
             }
         );
@@ -1368,7 +1367,7 @@ mod tests {
             p(&["backup", "--output=b.zip", "--compression=0"]).unwrap(),
             CliCommand::Backup {
                 output: Some(PathBuf::from("b.zip")),
-                compression: 0,
+                compression: Some(0),
                 password: None,
             }
         );
@@ -1382,7 +1381,7 @@ mod tests {
             p(&["backup", "-p", "s3cret"]).unwrap(),
             CliCommand::Backup {
                 output: None,
-                compression: DEFAULT_COMPRESSION,
+                compression: None,
                 password: Some("s3cret".into()),
             }
         );

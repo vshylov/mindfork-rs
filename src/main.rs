@@ -640,7 +640,7 @@ fn acquire_cli_guard(loc: &Locale, action: &str) -> anyhow::Result<instance::Ins
 /// that happens is worth more than one that was refused (spec §12.3). It is
 /// **said**, though — without the stored password a backup is written in
 /// plaintext, and that must not be found out from the archive.
-fn backup_config(paths: &Paths, loc: &Locale) -> backup::BackupSettings {
+fn backup_config(paths: &Paths, loc: &Locale) -> backup::BackupInputs {
     backup::backup_settings(paths).unwrap_or_else(|err| {
         tracing::warn!(error = %format!("{err:#}"),
             "the settings could not be read for a backup command");
@@ -651,7 +651,7 @@ fn backup_config(paths: &Paths, loc: &Locale) -> backup::BackupSettings {
                 &[("path", &paths.settings_file().display().to_string())]
             )
         );
-        backup::BackupSettings::default()
+        backup::BackupInputs::default()
     })
 }
 
@@ -661,11 +661,22 @@ fn effective_password(arg: Option<String>, stored: Option<String>) -> Option<Str
     arg.or(stored).filter(|p| !p.is_empty())
 }
 
+/// How `mindfork backup` packs: `-c` is this run's level, and without it the
+/// settings' (spec §12.3, docs/research/backup-speed.md F2); the thread count is
+/// always the settings', capped at the cores.
+fn backup_packing(
+    compression: Option<i64>,
+    settings: &shared::config::BackupSettings,
+) -> backup::Packing {
+    let level = compression.unwrap_or_else(|| i64::from(settings.compression));
+    backup::Packing::new(level, settings.threads)
+}
+
 /// CLI: creating a backup. Output goes to stdout (the TUI isn't running).
 fn run_backup(
     paths: &Paths,
     output: Option<PathBuf>,
-    compression: i64,
+    compression: Option<i64>,
     password: Option<String>,
     loc: &Locale,
 ) -> anyhow::Result<()> {
@@ -675,7 +686,7 @@ fn run_backup(
     let out = backup::create_backup(
         paths,
         output,
-        compression,
+        backup_packing(compression, &cfg.archive),
         cfg.fs_root.as_deref(),
         password.as_deref(),
         loc,
@@ -919,6 +930,7 @@ fn run_restore(
     let outcome = backup::restore_backup(
         paths,
         archive,
+        backup::Packing::from_settings(&cfg.archive),
         cfg.fs_root.as_deref(),
         password.as_deref(),
         loc,
@@ -2400,7 +2412,34 @@ mod tests {
         std::fs::write(paths.settings_file(), b"{ this is not json").unwrap();
         assert_eq!(
             backup_config(&paths, i18n::locale(Lang::En)),
-            backup::BackupSettings::default()
+            backup::BackupInputs::default()
+        );
+    }
+
+    /// `-c` wins over the settings' level for one run; without it the settings
+    /// decide. The thread count is always the settings', and never more than the
+    /// cores (docs/research/backup-speed.md F2–F4).
+    #[test]
+    fn a_backup_packs_at_the_flag_or_the_settings_level() {
+        use crate::shared::config::BackupSettings;
+        let settings = BackupSettings {
+            compression: 7,
+            threads: 1,
+        };
+        assert_eq!(backup_packing(None, &settings).level, 7);
+        assert_eq!(backup_packing(Some(2), &settings).level, 2);
+        assert_eq!(backup_packing(Some(2), &settings).threads, 1);
+        assert_eq!(
+            backup_packing(None, &BackupSettings::default()),
+            backup::Packing::default()
+        );
+        let greedy = BackupSettings {
+            compression: 6,
+            threads: u32::MAX,
+        };
+        assert_eq!(
+            backup_packing(None, &greedy).threads,
+            backup::machine_cores()
         );
     }
 

@@ -39,6 +39,17 @@
 //! database at all) the raw file is packed / left as unpacked, because a backup
 //! that happens is worth more than a compact one. Details — [`db::vacuum_into`].
 //!
+//! **Packing and unpacking run on a pool of threads** ([`Packing`], spec §12.3,
+//! docs/research/backup-speed.md): a worker compresses — and encrypts — one entry
+//! whole, into a zip of its own, and the writer appends it raw
+//! (`raw_copy_file`), in the order the entries finish; unpacking gives every
+//! worker a handle on the archive of its own. The archive is the standard zip a
+//! single thread wrote — any reader, any older build — only its entries' order
+//! differs. The database's compaction is the pool's first job, so the chats are
+//! packed while it runs. How many workers — `backup.threads`, never more than
+//! the cores; at which level — `backup.compression` unless `-c` says otherwise,
+//! the copies the app makes itself included. See [`parallel`].
+//!
 //! **Restore is transactional.** The archive is validated first (before any
 //! destructive action). If the root already has data, it is automatically
 //! saved into `backups/` (a pre-restore copy), and only then is the root
@@ -76,15 +87,16 @@ use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io;
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
-use zip::write::SimpleFileOptions;
-use zip::{AesMode, CompressionMethod, ZipArchive, ZipWriter};
+use zip::ZipArchive;
 
+use crate::shared::config::{BackupSettings, MAX_BACKUP_COMPRESSION};
 use crate::shared::i18n::Locale;
 use crate::shared::paths::Paths;
 use crate::shared::storage::db;
@@ -96,6 +108,8 @@ use crate::shared::storage::schema::{
 /// extracted into the root — read separately by [`read_manifest`]). See
 /// release-engineering.md §3.4.
 const MANIFEST_NAME: &str = "manifest.json";
+
+mod parallel;
 
 /// The data schema of each kind of stored file in an archive (ADR 0006 §11):
 /// what the archive **holds**, read from its files as they are packed
@@ -132,14 +146,16 @@ impl SchemaVersions {
     /// The schemas of the files a backup of `paths` packs, read the way the
     /// start-up reads them (`schema::*_artifact().detect`): `settings.json`,
     /// `profiles.json`, the **newest** of `chats/*.json` — a reader older than
-    /// one chat refuses that one file — and the `user_version` in the header of
-    /// `packed_db`, the database file that goes into the archive (the compacted
-    /// copy, else the live file; never opened through SQLite — see
-    /// [`db::header_user_version`]), and the newest `user_version` among the
-    /// stories, read the same way. A file that is missing or does not parse
+    /// one chat refuses that one file — and the newest `user_version` among the
+    /// stories, read from the header (never opened through SQLite — see
+    /// [`db::header_user_version`]). A file that is missing or does not parse
     /// counts as none: `0`. Never fails — a backup that happens is worth more
     /// than an exact manifest.
-    fn held_by(paths: &Paths, packed_db: Option<&Path>) -> Self {
+    ///
+    /// `db` is left `0`: it is the `user_version` of the database file that goes
+    /// into the archive — the compacted copy, else the live file — known once
+    /// the pool has packed it ([`parallel`] fills it in).
+    fn held_by(paths: &Paths) -> Self {
         let chat = schema::chat_artifact();
         let chats = fs::read_dir(paths.chats_dir())
             .into_iter()
@@ -150,12 +166,11 @@ impl SchemaVersions {
             .map(|path| detected(&path, &chat))
             .max()
             .unwrap_or(0);
-        let live_db = paths.data_db();
         Self {
             settings: detected(&paths.settings_file(), &schema::settings_artifact()),
             profiles: detected(&paths.profiles_file(), &schema::profiles_artifact()),
             chat: chats,
-            db: db::header_user_version(packed_db.unwrap_or(&live_db)).unwrap_or(0),
+            db: 0,
             story: story_files(&paths.stories_dir())
                 .iter()
                 .filter_map(|path| db::header_user_version(path))
@@ -327,10 +342,71 @@ const TOP_DIRS: &[&str] = &[
     "stories",
 ];
 
-/// A packing entry: the source's absolute path + its name inside the archive (with `/`).
+/// A packing entry: the source's absolute path, its name inside the archive (with
+/// `/`), and its size — which the pool schedules by, largest first, and which
+/// decides whether its compressed copy waits in memory or in a scratch file.
 struct Entry {
     abs: PathBuf,
     name: String,
+    len: u64,
+}
+
+/// How an archive is packed and unpacked: the deflate level and how many
+/// workers do it (spec §12.3, docs/research/backup-speed.md F2–F4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Packing {
+    /// `0..=9`, `0` — stored; out of range is clamped where it is used.
+    pub level: i64,
+    /// Worker threads, at least one. [`Packing::new`] caps the setting at the
+    /// cores; the field is public for a test that needs a pool larger than the
+    /// machine it runs on.
+    pub threads: usize,
+}
+
+impl Packing {
+    /// `level` on the workers the setting `threads` amounts to here
+    /// ([`worker_count`]).
+    pub fn new(level: i64, threads: u32) -> Self {
+        Self {
+            level,
+            threads: worker_count(threads),
+        }
+    }
+
+    /// What the settings say: `backup.compression` on `backup.threads`.
+    pub fn from_settings(settings: &BackupSettings) -> Self {
+        Self::new(i64::from(settings.compression), settings.threads)
+    }
+
+    /// `level` on every core — the tests' shorthand.
+    #[cfg(test)]
+    pub fn at(level: i64) -> Self {
+        Self::new(level, 0)
+    }
+}
+
+impl Default for Packing {
+    /// The settings' defaults: level 6 on every core.
+    fn default() -> Self {
+        Self::from_settings(&BackupSettings::default())
+    }
+}
+
+/// The cores this process may run on, as the OS reports them; `1` when it
+/// cannot say.
+pub fn machine_cores() -> usize {
+    std::thread::available_parallelism().map_or(1, NonZeroUsize::get)
+}
+
+/// The workers the setting `threads` amounts to on this machine: `0` — every
+/// core, any other number — itself, but never more than the cores (the user's
+/// decision, docs/research/backup-speed.md F4), and at least one.
+pub fn worker_count(threads: u32) -> usize {
+    let cores = machine_cores();
+    match usize::try_from(threads) {
+        Ok(0) | Err(_) => cores,
+        Ok(n) => n.min(cores),
+    }
 }
 
 /// Restore outcome — what actually happened (for user-facing messages).
@@ -543,8 +619,8 @@ impl EntryProgress {
 /// Creates a backup of user data.
 ///
 /// `output` — path to the archive to create (`None` → an auto-name in
-/// `backups/`). `level` — compression level `0..=9` (`0` → no compression,
-/// store). `fs_root` — the file-tool sandbox directory from the config
+/// `backups/`). `packing` — the compression level `0..=9` (`0` → no
+/// compression, store) and the worker count. `fs_root` — the file-tool sandbox directory from the config
 /// (included only when it lies inside the data root). `password` — encrypts
 /// every data entry with AES-256 (`None`/empty → a plain archive). Returns the
 /// path to the created archive. `progress` receives localized lines for a
@@ -558,7 +634,7 @@ impl EntryProgress {
 pub fn create_backup(
     paths: &Paths,
     output: Option<PathBuf>,
-    level: i64,
+    packing: Packing,
     fs_root: Option<&Path>,
     password: Option<&str>,
     loc: &Locale,
@@ -569,36 +645,40 @@ pub fn create_backup(
         None => default_backup_path(paths, "mindfork-backup"),
     };
     // A compacted copy is packed in place of the live database (see the module
-    // doc); `None` — there is none, or it couldn't be compacted, and the raw
-    // files go in instead. The scratch file lives until the archive is written.
+    // doc) — the pool's first job, which runs while the other entries are
+    // packed. The two lines keep their order: the compaction is announced as it
+    // starts, and the packing starts with it.
     if paths.data_db().is_file() {
         progress(loc.t("backup.progress.compacting"));
     }
-    let compact = compacted_db(paths, &out_path);
-    let packed_db = compact.as_ref().map(TempDb::path);
-    let entries = gather_entries(paths, fs_root, packed_db, loc)?;
+    let entries = gather_entries(paths, fs_root, loc)?;
     let spec = ZipSpec {
-        level,
+        level: packing.level,
         password,
-        manifest: BackupManifest::written_now(SchemaVersions::held_by(paths, packed_db)),
+        threads: packing.threads,
+        spill_over: parallel::SPILL_OVER,
     };
     progress(loc.t("backup.progress.packing"));
-    write_zip(&out_path, &entries, &spec, loc, &mut progress).with_context(|| {
-        loc.tf(
-            "backup.ctx.create_archive",
-            &[("path", &out_path.display().to_string())],
-        )
-    })?;
+    parallel::write_archive(paths, &out_path, &entries, &spec, loc, &mut progress).with_context(
+        || {
+            loc.tf(
+                "backup.ctx.create_archive",
+                &[("path", &out_path.display().to_string())],
+            )
+        },
+    )?;
     Ok(out_path)
 }
 
 /// How an archive is written: the compression level `0..=9`, the password that
-/// encrypts its data entries (`None`/empty — none), and the manifest that goes
-/// in beside them.
+/// encrypts its data entries (`None`/empty — none), how many workers pack it,
+/// and the size from which an entry's compressed copy waits in a scratch file
+/// rather than in memory (a seam: the tests lower it to spill every entry).
 struct ZipSpec<'a> {
     level: i64,
     password: Option<&'a str>,
-    manifest: BackupManifest,
+    threads: usize,
+    spill_over: u64,
 }
 
 /// Restores data from archive `archive`, replacing the current data.
@@ -612,9 +692,12 @@ struct ZipSpec<'a> {
 /// `password` is the run's **one effective password**
 /// (docs/history/backup-password.md §4 F3): it both opens `archive` and encrypts the
 /// pre-restore copy, so the copy is never weaker than what the user asked for.
+/// `packing` is the settings': the pre-restore copy is made at their level
+/// (docs/research/backup-speed.md F3) and unpacking runs on their workers.
 pub fn restore_backup(
     paths: &Paths,
     archive: &Path,
+    packing: Packing,
     fs_root: Option<&Path>,
     password: Option<&str>,
     loc: &Locale,
@@ -638,7 +721,7 @@ pub fn restore_backup(
         let path = create_backup(
             paths,
             Some(default_backup_path(paths, "pre-restore")),
-            9,
+            packing,
             fs_root,
             password,
             loc,
@@ -655,7 +738,14 @@ pub fn restore_backup(
         progress(loc.t("backup.progress.clearing"));
         clear_user_data(paths, fs_root, loc)?;
         progress(loc.t("backup.progress.extracting"));
-        extract_archive(paths, archive, password, loc, &mut progress)
+        parallel::extract_archive(
+            paths,
+            archive,
+            password,
+            packing.threads,
+            loc,
+            &mut progress,
+        )
     })();
 
     match attempt {
@@ -677,7 +767,8 @@ pub fn restore_backup(
                 let rollback = (|| -> Result<()> {
                     progress(loc.t("backup.progress.rolling_back"));
                     clear_user_data(paths, fs_root, loc)?;
-                    extract_archive(paths, backup, password, loc, &mut progress)
+                    let threads = packing.threads;
+                    parallel::extract_archive(paths, backup, password, threads, loc, &mut progress)
                 })();
                 match rollback {
                     Ok(()) => Ok(RestoreOutcome::RolledBack {
@@ -700,35 +791,22 @@ pub fn restore_backup(
     }
 }
 
-/// Gathers the list of files to pack (deduplicated by archive name).
-///
-/// `compact_db` — a compacted copy of `data.db` to pack under that name instead
-/// of the live file; when it is `Some`, the `-wal`/`-shm` sidecars are skipped
-/// too (their content is already folded into the copy).
-fn gather_entries(
-    paths: &Paths,
-    fs_root: Option<&Path>,
-    compact_db: Option<&Path>,
-    loc: &Locale,
-) -> Result<Vec<Entry>> {
+/// Gathers the list of files to pack (deduplicated by archive name) — all but
+/// the database, which is the pool's job of its own: compacted first, packed
+/// raw with its sidecars only when it cannot be ([`parallel`]).
+fn gather_entries(paths: &Paths, fs_root: Option<&Path>, loc: &Locale) -> Result<Vec<Entry>> {
     let root = paths.root();
     let mut out: Vec<Entry> = Vec::new();
 
-    let raw_db: &[&str] = if compact_db.is_some() { &[] } else { DB_FILES };
-    for f in TOP_FILES.iter().chain(raw_db) {
+    for f in TOP_FILES {
         let abs = root.join(f);
         if abs.is_file() {
             out.push(Entry {
+                len: file_len(&abs),
                 abs,
                 name: (*f).to_string(),
             });
         }
-    }
-    if let Some(compact) = compact_db {
-        out.push(Entry {
-            abs: compact.to_path_buf(),
-            name: "data.db".to_string(),
-        });
     }
 
     // All top-level `*.bak` files (settings.bak, profiles.bak, etc.).
@@ -740,6 +818,7 @@ fn gather_entries(
                 && let Some(name) = path.file_name().and_then(OsStr::to_str)
             {
                 out.push(Entry {
+                    len: file_len(&path),
                     abs: path.clone(),
                     name: name.to_string(),
                 });
@@ -762,18 +841,19 @@ fn gather_entries(
     Ok(out)
 }
 
-/// A compacted copy of `data.db`, packed in place of the live file and removed
-/// on drop — including after a failed `VACUUM INTO`, which can leave a partial
-/// file behind.
-struct TempDb(PathBuf);
+/// A scratch file beside the archive, removed on drop: the compacted copy of
+/// `data.db` packed in place of the live file — removed after a failed `VACUUM
+/// INTO` too, which can leave a partial file behind — and an entry's compressed
+/// copy too big to wait in memory ([`parallel`]).
+struct ScratchFile(PathBuf);
 
-impl TempDb {
+impl ScratchFile {
     fn path(&self) -> &Path {
         &self.0
     }
 }
 
-impl Drop for TempDb {
+impl Drop for ScratchFile {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.0);
     }
@@ -785,7 +865,7 @@ impl Drop for TempDb {
 /// or one that isn't SQLite at all); the caller then packs the raw files, which
 /// is the pre-compaction behaviour. Best effort by design: a backup must still
 /// happen for a database we can't read.
-fn compacted_db(paths: &Paths, out_path: &Path) -> Option<TempDb> {
+fn compacted_db(paths: &Paths, out_path: &Path) -> Option<ScratchFile> {
     let src = paths.data_db();
     if !src.is_file() {
         return None;
@@ -799,7 +879,7 @@ fn compacted_db(paths: &Paths, out_path: &Path) -> Option<TempDb> {
     }
     // The process id keeps concurrent runs apart (the single-instance lock
     // already makes that unlikely); `Drop` cleans it up either way.
-    let temp = TempDb(dir.join(format!("data.db.compact-{}.tmp", std::process::id())));
+    let temp = ScratchFile(dir.join(format!("data.db.compact-{}.tmp", std::process::id())));
     match db::vacuum_into(&src, temp.path()) {
         Ok(()) => {
             tracing::info!(
@@ -870,80 +950,12 @@ fn collect_dir(abs: &Path, prefix: &str, out: &mut Vec<Entry>, loc: &Locale) -> 
             collect_dir(&child_abs, &child_name, out, loc)?;
         } else if ft.is_file() {
             out.push(Entry {
+                len: entry.metadata().map_or(0, |m| m.len()),
                 abs: child_abs,
                 name: child_name,
             });
         }
     }
-    Ok(())
-}
-
-/// Writes the archive from the entry list at `spec`'s compression level,
-/// encrypting the data entries when it names a password (the manifest stays
-/// readable — see the module doc).
-fn write_zip(
-    out_path: &Path,
-    entries: &[Entry],
-    spec: &ZipSpec<'_>,
-    loc: &Locale,
-    progress: &mut impl FnMut(&str),
-) -> Result<()> {
-    if let Some(parent) = out_path.parent() {
-        fs::create_dir_all(parent).with_context(|| {
-            loc.tf(
-                "backup.ctx.create_dir",
-                &[("path", &parent.display().to_string())],
-            )
-        })?;
-    }
-    let file = File::create(out_path).with_context(|| {
-        loc.tf(
-            "backup.ctx.create_file",
-            &[("path", &out_path.display().to_string())],
-        )
-    })?;
-    let mut zip = ZipWriter::new(file);
-
-    let level = spec.level.clamp(0, 9);
-    let plain = if level == 0 {
-        SimpleFileOptions::default().compression_method(CompressionMethod::Stored)
-    } else {
-        SimpleFileOptions::default()
-            .compression_method(CompressionMethod::Deflated)
-            .compression_level(Some(level))
-    };
-    // Data entries: encrypted when a password is set. The manifest always uses
-    // `plain` — it carries no user data and stays readable without the password.
-    let options = match normalize(spec.password) {
-        Some(pw) => plain.with_aes_encryption(AesMode::Aes256, pw),
-        None => plain,
-    };
-
-    let mut ticker = EntryProgress::new(entries.len());
-    for e in entries {
-        // Counted as the entry starts, not as it finishes: the unpacking loop
-        // skips entries with `continue`, and both loops read the same way.
-        ticker.tick(loc, progress);
-        zip.start_file(e.name.as_str(), options)
-            .with_context(|| loc.tf("backup.ctx.write_entry", &[("name", &e.name)]))?;
-        let mut src = File::open(&e.abs).with_context(|| {
-            loc.tf("backup.ctx.open", &[("path", &e.abs.display().to_string())])
-        })?;
-        io::copy(&mut src, &mut zip).with_context(|| {
-            loc.tf("backup.ctx.pack", &[("path", &e.abs.display().to_string())])
-        })?;
-    }
-
-    // The schema-version manifest (metadata, not a user file) — written last.
-    let manifest =
-        serde_json::to_vec_pretty(&spec.manifest).context("serializing backup manifest")?;
-    zip.start_file(MANIFEST_NAME, plain)
-        .with_context(|| loc.tf("backup.ctx.write_entry", &[("name", MANIFEST_NAME)]))?;
-    io::copy(&mut manifest.as_slice(), &mut zip)
-        .with_context(|| loc.tf("backup.ctx.pack", &[("path", MANIFEST_NAME)]))?;
-
-    zip.finish()
-        .with_context(|| loc.t("backup.ctx.finalize").to_string())?;
     Ok(())
 }
 
@@ -987,84 +999,6 @@ fn validate_archive(archive: &Path, password: Option<&str>, loc: &Locale) -> Res
         ArchivePassword::Required => bail!("{}", loc.t("backup.err.password_required")),
         ArchivePassword::Wrong => bail!("{}", loc.t("backup.err.wrong_password")),
     }
-}
-
-/// Unpacks the archive into the data root (entry names are already
-/// considered safe — `enclosed_name` rejects escaping outside the root).
-///
-/// A `password` given for an unencrypted archive is harmlessly discarded by the
-/// zip layer, so one code path restores both kinds.
-fn extract_archive(
-    paths: &Paths,
-    archive: &Path,
-    password: Option<&str>,
-    loc: &Locale,
-    progress: &mut impl FnMut(&str),
-) -> Result<()> {
-    let file = File::open(archive).with_context(|| {
-        loc.tf(
-            "backup.ctx.open_archive",
-            &[("path", &archive.display().to_string())],
-        )
-    })?;
-    let mut zip =
-        ZipArchive::new(file).with_context(|| loc.t("backup.ctx.read_archive").to_string())?;
-    let mut ticker = EntryProgress::new(zip.len());
-    for i in 0..zip.len() {
-        ticker.tick(loc, progress);
-        let mut entry = match password {
-            Some(pw) => zip.by_index_decrypt(i, pw.as_bytes())?,
-            None => zip.by_index(i)?,
-        };
-        let rel = entry.enclosed_name().ok_or_else(|| {
-            anyhow!(
-                "{}",
-                loc.tf("backup.err.unsafe_entry", &[("name", &entry_name(&entry))])
-            )
-        })?;
-        // The manifest is archive metadata, not user data: not written into the root.
-        if rel == Path::new(MANIFEST_NAME) {
-            continue;
-        }
-        let dest = paths.root().join(&rel);
-        if entry.is_dir() {
-            fs::create_dir_all(&dest).with_context(|| {
-                loc.tf(
-                    "backup.ctx.create_dir",
-                    &[("path", &dest.display().to_string())],
-                )
-            })?;
-            continue;
-        }
-        if let Some(parent) = dest.parent() {
-            fs::create_dir_all(parent).with_context(|| {
-                loc.tf(
-                    "backup.ctx.create_dir",
-                    &[("path", &parent.display().to_string())],
-                )
-            })?;
-        }
-        let mut out = File::create(&dest).with_context(|| {
-            loc.tf(
-                "backup.ctx.create_file",
-                &[("path", &dest.display().to_string())],
-            )
-        })?;
-        io::copy(&mut entry, &mut out).with_context(|| {
-            loc.tf(
-                "backup.ctx.extract",
-                &[("path", &dest.display().to_string())],
-            )
-        })?;
-        // An archive carries no stored file's origin, and it came from wherever the user
-        // kept it: a restored `files/` entry carries the mark a call's output does (§13
-        // U11), a user's own copy included.
-        if rel.starts_with("files") {
-            drop(out);
-            crate::features::chat_files::mark(&dest, Some(crate::shared::os_open::FROM_ELSEWHERE));
-        }
-    }
-    Ok(())
 }
 
 /// Removes user data from the root, **keeping** `backups/`, `logs/`, and the
@@ -1154,33 +1088,36 @@ fn fs_root_under_root(root: &Path, fs_root: Option<&Path>) -> Option<(PathBuf, S
 }
 
 /// What a backup or a restore needs out of `settings.json`: the file-tools
-/// sandbox (for inclusion/cleanup) and the stored backup password.
+/// sandbox (for inclusion/cleanup), the stored backup password, and how the
+/// archive is packed — the level and the thread count (`backup`).
 #[derive(Debug, Default, PartialEq, Eq)]
-pub struct BackupSettings {
+pub struct BackupInputs {
     pub fs_root: Option<PathBuf>,
     pub stored_password: Option<String>,
+    pub archive: BackupSettings,
 }
 
-/// Reads [`BackupSettings`] out of the **raw** JSON of `settings.json`, not
+/// Reads [`BackupInputs`] out of the **raw** JSON of `settings.json`, not
 /// through `AppConfig`.
 ///
 /// A settings file holding one value the typed parse refuses is a file the app
 /// will not start on (`features::data_migration`), and the person it has just
 /// refused is the one who wants a backup before repairing anything — so these
-/// commands must not need the whole file to be readable, only their two values
+/// commands must not need the whole file to be readable, only their own values
 /// (docs/research/settings-typed-parse.md F2). Read through the typed config
 /// with a fallback to the defaults, such a file gave *no password*, and a
 /// backup the settings call encrypted was written in plaintext.
 ///
-/// No file — the defaults. `Err` — there is a file and the two values cannot be
-/// had from it: it is not JSON, or its key list is not one.
-pub fn backup_settings(paths: &Paths) -> Result<BackupSettings> {
+/// No file — the defaults. `Err` — there is a file and the sandbox and the
+/// password cannot be had from it: it is not JSON, or its key list is not one.
+/// The level and the thread count never fail it ([`archive_settings`]).
+pub fn backup_settings(paths: &Paths) -> Result<BackupInputs> {
     use crate::shared::secrets;
 
     let file = paths.settings_file();
     let bytes = match fs::read(&file) {
         Ok(bytes) => bytes,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(BackupSettings::default()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(BackupInputs::default()),
         Err(e) => return Err(e).with_context(|| format!("reading {}", file.display())),
     };
     let raw: serde_json::Value =
@@ -1197,10 +1134,36 @@ pub fn backup_settings(paths: &Paths) -> Result<BackupSettings> {
         .pointer("/tools/fs_root")
         .and_then(serde_json::Value::as_str)
         .map(PathBuf::from);
-    Ok(BackupSettings {
+    Ok(BackupInputs {
         fs_root,
         stored_password,
+        archive: archive_settings(&raw),
     })
+}
+
+/// `backup.compression` and `backup.threads` out of the raw settings, each on
+/// its own. A value that is not a whole non-negative number is that value's
+/// default, said in the log: a backup that happens is worth more than one
+/// refused over its level, and nothing read here is saved back. A level above 9
+/// is 9, as the settings screen stores it.
+fn archive_settings(raw: &serde_json::Value) -> BackupSettings {
+    let defaults = BackupSettings::default();
+    let number = |key: &str| {
+        let value = raw.pointer(key)?;
+        let number = value.as_u64();
+        if number.is_none() {
+            tracing::warn!(key, %value, "backup: not a whole number, using the default");
+        }
+        number
+    };
+    BackupSettings {
+        compression: number("/backup/compression").map_or(defaults.compression, |v| {
+            let max = MAX_BACKUP_COMPRESSION;
+            u8::try_from(v).map_or(max, |v| v.min(max))
+        }),
+        threads: number("/backup/threads")
+            .map_or(defaults.threads, |v| u32::try_from(v).unwrap_or(u32::MAX)),
+    }
 }
 
 /// Auto-name for an archive in `backups/`: `<prefix>-YYYYMMDD-HHMMSS.zip`, or
@@ -1232,6 +1195,8 @@ fn unused_name(dir: &Path, prefix: &str, stamp: &str) -> PathBuf {
 mod tests {
     use super::*;
     use crate::shared::i18n::{Lang, locale};
+    use zip::write::SimpleFileOptions;
+    use zip::{CompressionMethod, ZipWriter};
 
     /// Reference locale for tests (error text isn't checked here — only the
     /// signature matters; ru byte-for-byte with the previous strings).
@@ -1261,6 +1226,10 @@ mod tests {
         )
         .unwrap();
         config.tools.fs_root = Some("sandbox-files".into());
+        config.backup = BackupSettings {
+            compression: 1,
+            threads: 2,
+        };
         let mut raw = serde_json::to_value(&config).unwrap();
         raw["interface"]["theme"] = "drak".into();
         let bytes = serde_json::to_vec_pretty(&raw).unwrap();
@@ -1270,9 +1239,13 @@ mod tests {
 
         assert_eq!(
             backup_settings(&paths).unwrap(),
-            BackupSettings {
+            BackupInputs {
                 fs_root: Some(PathBuf::from("sandbox-files")),
                 stored_password: Some("a pass phrase".into()),
+                archive: BackupSettings {
+                    compression: 1,
+                    threads: 2,
+                },
             }
         );
     }
@@ -1284,7 +1257,7 @@ mod tests {
     fn backup_settings_tell_no_file_from_an_unreadable_one() {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::with_root(dir.path());
-        assert_eq!(backup_settings(&paths).unwrap(), BackupSettings::default());
+        assert_eq!(backup_settings(&paths).unwrap(), BackupInputs::default());
 
         for unreadable in ["{ this is not json", r#"{"api_keys": "none"}"#] {
             fs::write(paths.settings_file(), unreadable).unwrap();
@@ -1295,7 +1268,7 @@ mod tests {
 
         // Neither value set: a file that says nothing about them.
         fs::write(paths.settings_file(), r#"{"tools": {"fs_root": null}}"#).unwrap();
-        assert_eq!(backup_settings(&paths).unwrap(), BackupSettings::default());
+        assert_eq!(backup_settings(&paths).unwrap(), BackupInputs::default());
     }
 
     /// Prepares a root with a typical set of user data.
@@ -1394,7 +1367,7 @@ mod tests {
         seed_data(dir.path());
         let paths = Paths::with_root(dir.path());
 
-        let out = create_backup(&paths, None, 9, None, None, ru(), |_| {}).unwrap();
+        let out = create_backup(&paths, None, Packing::at(9), None, None, ru(), |_| {}).unwrap();
         assert!(out.starts_with(paths.backups_dir()));
         let names = archive_names(&out);
 
@@ -1441,7 +1414,16 @@ mod tests {
         fs::create_dir_all(&inside).unwrap();
         fs::write(inside.join("note.txt"), b"hi").unwrap();
         let paths = Paths::with_root(dir.path());
-        let out = create_backup(&paths, None, 9, Some(&inside), None, ru(), |_| {}).unwrap();
+        let out = create_backup(
+            &paths,
+            None,
+            Packing::at(9),
+            Some(&inside),
+            None,
+            ru(),
+            |_| {},
+        )
+        .unwrap();
         assert!(archive_names(&out).contains(&"sandbox/note.txt".to_string()));
 
         // Outside the root — not included.
@@ -1450,8 +1432,16 @@ mod tests {
         fs::write(outside.path().join("secret.txt"), b"no").unwrap();
         seed_data(outside_root.path());
         let paths2 = Paths::with_root(outside_root.path());
-        let out2 =
-            create_backup(&paths2, None, 0, Some(outside.path()), None, ru(), |_| {}).unwrap();
+        let out2 = create_backup(
+            &paths2,
+            None,
+            Packing::at(0),
+            Some(outside.path()),
+            None,
+            ru(),
+            |_| {},
+        )
+        .unwrap();
         assert!(
             !archive_names(&out2)
                 .iter()
@@ -1470,7 +1460,7 @@ mod tests {
         create_backup(
             &src_paths,
             Some(archive_path.clone()),
-            9,
+            Packing::at(9),
             None,
             None,
             ru(),
@@ -1510,7 +1500,16 @@ mod tests {
         .unwrap();
         let dst_paths = Paths::with_root(dst.path());
 
-        let outcome = restore_backup(&dst_paths, &archive_path, None, None, ru(), |_| {}).unwrap();
+        let outcome = restore_backup(
+            &dst_paths,
+            &archive_path,
+            Packing::default(),
+            None,
+            None,
+            ru(),
+            |_| {},
+        )
+        .unwrap();
         match outcome {
             RestoreOutcome::Restored { pre_restore } => {
                 // The prior data existed, so a pre-restore copy was created.
@@ -1577,7 +1576,7 @@ mod tests {
         create_backup(
             &Paths::with_root(src.path()),
             Some(archive_path.clone()),
-            9,
+            Packing::at(9),
             None,
             None,
             ru(),
@@ -1589,6 +1588,7 @@ mod tests {
         restore_backup(
             &Paths::with_root(dst.path()),
             &archive_path,
+            Packing::default(),
             None,
             None,
             ru(),
@@ -1621,7 +1621,7 @@ mod tests {
         create_backup(
             &src_paths,
             Some(archive.clone()),
-            1,
+            Packing::at(1),
             None,
             None,
             ru(),
@@ -1644,7 +1644,16 @@ mod tests {
         }
         let before: Vec<Vec<u8>> = names.iter().map(|n| fs::read(n).unwrap()).collect();
 
-        let outcome = restore_backup(&dst_paths, &names[0], None, None, ru(), |_| {}).unwrap();
+        let outcome = restore_backup(
+            &dst_paths,
+            &names[0],
+            Packing::default(),
+            None,
+            None,
+            ru(),
+            |_| {},
+        )
+        .unwrap();
 
         let RestoreOutcome::Restored {
             pre_restore: Some(copy),
@@ -1688,7 +1697,7 @@ mod tests {
         let bad = dst.path().join("bad.zip");
         fs::write(&bad, b"this is not a zip file").unwrap();
 
-        let err = restore_backup(&paths, &bad, None, None, ru(), |_| {});
+        let err = restore_backup(&paths, &bad, Packing::default(), None, None, ru(), |_| {});
         assert!(
             err.is_err(),
             "a corrupted archive should give Err before any cleanup"
@@ -1706,7 +1715,7 @@ mod tests {
         create_backup(
             &Paths::with_root(src.path()),
             Some(archive.clone()),
-            9,
+            Packing::at(9),
             None,
             None,
             ru(),
@@ -1716,7 +1725,16 @@ mod tests {
 
         let dst = tempfile::tempdir().unwrap();
         let paths = Paths::with_root(dst.path());
-        let outcome = restore_backup(&paths, &archive, None, None, ru(), |_| {}).unwrap();
+        let outcome = restore_backup(
+            &paths,
+            &archive,
+            Packing::default(),
+            None,
+            None,
+            ru(),
+            |_| {},
+        )
+        .unwrap();
         match outcome {
             RestoreOutcome::Restored { pre_restore } => assert!(pre_restore.is_none()),
             _ => panic!("expected a Restored with no pre-restore"),
@@ -1752,7 +1770,16 @@ mod tests {
         fs::create_dir_all(dst.path().join("blocker")).unwrap();
 
         let paths = Paths::with_root(dst.path());
-        let outcome = restore_backup(&paths, &archive, None, None, ru(), |_| {}).unwrap();
+        let outcome = restore_backup(
+            &paths,
+            &archive,
+            Packing::default(),
+            None,
+            None,
+            ru(),
+            |_| {},
+        )
+        .unwrap();
         match outcome {
             RestoreOutcome::RolledBack { pre_restore, .. } => assert!(pre_restore.exists()),
             _ => panic!("expected RolledBack on an unpack failure"),
@@ -1788,7 +1815,7 @@ mod tests {
         create_backup(
             &Paths::with_root(src.path()),
             Some(archive.clone()),
-            9,
+            Packing::at(9),
             None,
             None,
             ru(),
@@ -1800,9 +1827,15 @@ mod tests {
         seed_data(dst.path());
         let paths = Paths::with_root(dst.path());
         let mut log = Vec::new();
-        let outcome = restore_backup(&paths, &archive, None, None, ru(), |m| {
-            log.push(m.to_string())
-        })
+        let outcome = restore_backup(
+            &paths,
+            &archive,
+            Packing::default(),
+            None,
+            None,
+            ru(),
+            |m| log.push(m.to_string()),
+        )
         .unwrap();
         assert!(matches!(outcome, RestoreOutcome::Restored { .. }));
 
@@ -1839,7 +1872,7 @@ mod tests {
         create_backup(
             &Paths::with_root(src.path()),
             Some(archive.clone()),
-            9,
+            Packing::at(9),
             None,
             None,
             ru(),
@@ -1852,6 +1885,7 @@ mod tests {
         restore_backup(
             &Paths::with_root(dst.path()),
             &archive,
+            Packing::default(),
             None,
             None,
             ru(),
@@ -1896,6 +1930,7 @@ mod tests {
         let outcome = restore_backup(
             &Paths::with_root(dst.path()),
             &archive,
+            Packing::default(),
             None,
             None,
             ru(),
@@ -1920,7 +1955,7 @@ mod tests {
         create_backup(
             &Paths::with_root(dir.path()),
             None,
-            9,
+            Packing::at(9),
             None,
             None,
             ru(),
@@ -1984,7 +2019,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         seed_data(dir.path());
         let paths = Paths::with_root(dir.path());
-        let out = create_backup(&paths, None, 0, None, None, ru(), |_| {}).unwrap();
+        let out = create_backup(&paths, None, Packing::at(0), None, None, ru(), |_| {}).unwrap();
         // The archive is valid and opens.
         validate_archive(&out, None, ru()).unwrap();
     }
@@ -1994,7 +2029,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         seed_data(dir.path());
         let paths = Paths::with_root(dir.path());
-        let out = create_backup(&paths, None, 9, None, None, ru(), |_| {}).unwrap();
+        let out = create_backup(&paths, None, Packing::at(9), None, None, ru(), |_| {}).unwrap();
 
         assert!(archive_names(&out).contains(&MANIFEST_NAME.to_string()));
         let m = read_manifest(&out)
@@ -2090,7 +2125,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         seed_versions(dir.path(), SETTINGS_SCHEMA, CHAT_SCHEMA - 1);
         let paths = Paths::with_root(dir.path());
-        let out = create_backup(&paths, None, 1, None, None, ru(), |_| {}).unwrap();
+        let out = create_backup(&paths, None, Packing::at(1), None, None, ru(), |_| {}).unwrap();
 
         let m = read_manifest(&out).unwrap().expect("a manifest");
         assert_eq!(m.schemas, reader_before_the_chat_step());
@@ -2107,7 +2142,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         seed_versions(dir.path(), SETTINGS_SCHEMA, CHAT_SCHEMA);
         let paths = Paths::with_root(dir.path());
-        let out = create_backup(&paths, None, 1, None, None, ru(), |_| {}).unwrap();
+        let out = create_backup(&paths, None, Packing::at(1), None, None, ru(), |_| {}).unwrap();
 
         let m = read_manifest(&out).unwrap().expect("a manifest");
         assert_eq!(m.schemas, SchemaVersions::current());
@@ -2143,7 +2178,7 @@ mod tests {
             fs::write(root.join("chats").join(name), body).unwrap();
         }
         let paths = Paths::with_root(root);
-        let out = create_backup(&paths, None, 1, None, None, ru(), |_| {}).unwrap();
+        let out = create_backup(&paths, None, Packing::at(1), None, None, ru(), |_| {}).unwrap();
 
         let m = read_manifest(&out).unwrap().expect("a manifest");
         let held = SchemaVersions {
@@ -2172,7 +2207,7 @@ mod tests {
         create_backup(
             &Paths::with_root(&other),
             Some(archive.clone()),
-            1,
+            Packing::at(1),
             None,
             None,
             ru(),
@@ -2180,7 +2215,16 @@ mod tests {
         )
         .unwrap();
 
-        let outcome = restore_backup(&paths, &archive, None, None, ru(), |_| {}).unwrap();
+        let outcome = restore_backup(
+            &paths,
+            &archive,
+            Packing::default(),
+            None,
+            None,
+            ru(),
+            |_| {},
+        )
+        .unwrap();
 
         let RestoreOutcome::Restored {
             pre_restore: Some(pre),
@@ -2216,7 +2260,7 @@ mod tests {
         conn.execute_batch("PRAGMA user_version = 99;").unwrap();
         drop(conn);
 
-        let out = create_backup(&paths, None, 1, None, None, ru(), |_| {}).unwrap();
+        let out = create_backup(&paths, None, Packing::at(1), None, None, ru(), |_| {}).unwrap();
 
         let m = read_manifest(&out).unwrap().expect("a manifest");
         assert_eq!(m.schemas.story, STORY_SCHEMA + 1);
@@ -2310,7 +2354,7 @@ mod tests {
         let live_len = fs::metadata(dir.path().join("data.db")).unwrap().len();
 
         let paths = Paths::with_root(dir.path());
-        let out = create_backup(&paths, None, 9, None, None, ru(), |_| {}).unwrap();
+        let out = create_backup(&paths, None, Packing::at(9), None, None, ru(), |_| {}).unwrap();
 
         let names = archive_names(&out);
         assert!(names.contains(&"data.db".to_string()), "{names:?}");
@@ -2350,7 +2394,7 @@ mod tests {
         fs::write(dir.path().join("data.db-wal"), b"wal bytes").unwrap();
         let paths = Paths::with_root(dir.path());
 
-        let out = create_backup(&paths, None, 9, None, None, ru(), |_| {}).unwrap();
+        let out = create_backup(&paths, None, Packing::at(9), None, None, ru(), |_| {}).unwrap();
 
         let names = archive_names(&out);
         assert!(names.contains(&"data.db-wal".to_string()), "{names:?}");
@@ -2382,7 +2426,16 @@ mod tests {
 
         let dst = tempfile::tempdir().unwrap();
         let paths = Paths::with_root(dst.path());
-        let outcome = restore_backup(&paths, &archive, None, None, ru(), |_| {}).unwrap();
+        let outcome = restore_backup(
+            &paths,
+            &archive,
+            Packing::default(),
+            None,
+            None,
+            ru(),
+            |_| {},
+        )
+        .unwrap();
         assert!(matches!(outcome, RestoreOutcome::Restored { .. }));
 
         let restored = dst.path().join("data.db");
@@ -2404,7 +2457,7 @@ mod tests {
         create_backup(
             &Paths::with_root(src.path()),
             Some(archive.clone()),
-            0,
+            Packing::at(0),
             None,
             None,
             ru(),
@@ -2414,7 +2467,16 @@ mod tests {
 
         let dst = tempfile::tempdir().unwrap();
         let paths = Paths::with_root(dst.path());
-        let outcome = restore_backup(&paths, &archive, None, None, ru(), |_| {}).unwrap();
+        let outcome = restore_backup(
+            &paths,
+            &archive,
+            Packing::default(),
+            None,
+            None,
+            ru(),
+            |_| {},
+        )
+        .unwrap();
         assert!(matches!(outcome, RestoreOutcome::Restored { .. }));
         assert_eq!(fs::read(dst.path().join("data.db")).unwrap(), b"SQLITE");
     }
@@ -2426,7 +2488,7 @@ mod tests {
         let out = create_backup(
             &Paths::with_root(src.path()),
             None,
-            9,
+            Packing::at(9),
             None,
             None,
             ru(),
@@ -2436,7 +2498,8 @@ mod tests {
 
         let dst = tempfile::tempdir().unwrap();
         let paths = Paths::with_root(dst.path());
-        let outcome = restore_backup(&paths, &out, None, None, ru(), |_| {}).unwrap();
+        let outcome =
+            restore_backup(&paths, &out, Packing::default(), None, None, ru(), |_| {}).unwrap();
         assert!(matches!(outcome, RestoreOutcome::Restored { .. }));
         // Data was restored, but the internal manifest didn't land in the root.
         assert!(dst.path().join("settings.json").exists());
@@ -2461,14 +2524,15 @@ mod tests {
         .unwrap();
         let paths = Paths::with_root(dir.path());
 
-        let out = create_backup(&paths, None, 9, None, Some(PW), ru(), |_| {}).unwrap();
+        let out =
+            create_backup(&paths, None, Packing::at(9), None, Some(PW), ru(), |_| {}).unwrap();
 
         // Level 0 (store) so the marker would be literally present if unencrypted —
         // deflate could otherwise hide it and make this test lie.
         let plain = create_backup(
             &paths,
             Some(dir.path().join("plain.zip")),
-            0,
+            Packing::at(0),
             None,
             None,
             ru(),
@@ -2500,7 +2564,7 @@ mod tests {
         let enc = create_backup(
             &paths,
             Some(dir.path().join("enc.zip")),
-            9,
+            Packing::at(9),
             None,
             Some(PW),
             ru(),
@@ -2510,7 +2574,7 @@ mod tests {
         let plain = create_backup(
             &paths,
             Some(dir.path().join("plain.zip")),
-            9,
+            Packing::at(9),
             None,
             None,
             ru(),
@@ -2549,7 +2613,7 @@ mod tests {
             create_backup(
                 &Paths::with_root(src.path()),
                 Some(archive.clone()),
-                9,
+                Packing::at(9),
                 None,
                 password,
                 ru(),
@@ -2561,7 +2625,16 @@ mod tests {
             let paths = Paths::with_root(dst.path());
             // The restore always holds the password — for the plain archive it
             // must simply be ignored.
-            let outcome = restore_backup(&paths, &archive, None, Some(PW), ru(), |_| {}).unwrap();
+            let outcome = restore_backup(
+                &paths,
+                &archive,
+                Packing::default(),
+                None,
+                Some(PW),
+                ru(),
+                |_| {},
+            )
+            .unwrap();
             assert!(
                 matches!(outcome, RestoreOutcome::Restored { .. }),
                 "password={password:?}"
@@ -2586,7 +2659,7 @@ mod tests {
         create_backup(
             &Paths::with_root(src.path()),
             Some(archive.clone()),
-            9,
+            Packing::at(9),
             None,
             Some(PW),
             ru(),
@@ -2600,7 +2673,15 @@ mod tests {
             fs::write(dst.path().join("settings.json"), b"{\"from\":\"original\"}").unwrap();
             let paths = Paths::with_root(dst.path());
 
-            let err = restore_backup(&paths, &archive, None, password, ru(), |_| {});
+            let err = restore_backup(
+                &paths,
+                &archive,
+                Packing::default(),
+                None,
+                password,
+                ru(),
+                |_| {},
+            );
             assert!(err.is_err(), "password={password:?} should be refused");
             // Nothing was cleared, and no pre-restore copy was even made.
             assert_eq!(
@@ -2624,7 +2705,7 @@ mod tests {
         let out = create_backup(
             &Paths::with_root(dir.path()),
             None,
-            9,
+            Packing::at(9),
             None,
             Some(PW),
             ru(),
@@ -2652,7 +2733,7 @@ mod tests {
         let out = create_backup(
             &Paths::with_root(dir.path()),
             None,
-            9,
+            Packing::at(9),
             None,
             Some(""),
             ru(),
@@ -2676,7 +2757,7 @@ mod tests {
         create_backup(
             &Paths::with_root(src.path()),
             Some(archive.clone()),
-            9,
+            Packing::at(9),
             None,
             Some(PW),
             ru(),
@@ -2689,7 +2770,16 @@ mod tests {
         let paths = Paths::with_root(dst.path());
         let RestoreOutcome::Restored {
             pre_restore: Some(pre),
-        } = restore_backup(&paths, &archive, None, Some(PW), ru(), |_| {}).unwrap()
+        } = restore_backup(
+            &paths,
+            &archive,
+            Packing::default(),
+            None,
+            Some(PW),
+            ru(),
+            |_| {},
+        )
+        .unwrap()
         else {
             panic!("expected a Restored with a pre-restore copy");
         };
@@ -2709,7 +2799,7 @@ mod tests {
         let out = create_backup(
             &Paths::with_root(dir.path()),
             None,
-            0,
+            Packing::at(0),
             None,
             Some(PW),
             ru(),
@@ -2731,7 +2821,15 @@ mod tests {
         let paths = Paths::with_root(dst.path());
         // Either the pre-flight check or the extraction rejects it — what must
         // never happen is a silent success with mangled content.
-        let refused = match restore_backup(&paths, &corrupt, None, Some(PW), ru(), |_| {}) {
+        let refused = match restore_backup(
+            &paths,
+            &corrupt,
+            Packing::default(),
+            None,
+            Some(PW),
+            ru(),
+            |_| {},
+        ) {
             Err(_) => true,
             Ok(RestoreOutcome::Restored { .. }) => false,
             Ok(_) => true,
@@ -2812,8 +2910,16 @@ mod tests {
         // ...and restored.
         let dst = tempfile::tempdir().unwrap();
         let paths = Paths::with_root(dst.path());
-        let outcome =
-            restore_backup(&paths, &archive, None, Some(PINNED_PW), ru(), |_| {}).unwrap();
+        let outcome = restore_backup(
+            &paths,
+            &archive,
+            Packing::default(),
+            None,
+            Some(PINNED_PW),
+            ru(),
+            |_| {},
+        )
+        .unwrap();
         assert!(matches!(outcome, RestoreOutcome::Restored { .. }));
         assert_eq!(
             fs::read(dst.path().join("settings.json")).unwrap(),
@@ -2827,5 +2933,358 @@ mod tests {
             fs::read(dst.path().join("files").join("c1").join("empty.txt")).unwrap(),
             b""
         );
+    }
+
+    // ---- the worker pool (spec §12.3, docs/research/backup-speed.md) ----
+
+    /// Every file entry of an archive as (name, bytes), sorted by name, the
+    /// manifest left out — what two archives of one root must agree on.
+    fn archive_contents(archive: &Path, password: Option<&str>) -> Vec<(String, Vec<u8>)> {
+        let mut zip = ZipArchive::new(File::open(archive).unwrap()).unwrap();
+        let mut out: Vec<(String, Vec<u8>)> = (0..zip.len())
+            .filter_map(|i| {
+                let mut entry = match password {
+                    Some(pw) => zip.by_index_decrypt(i, pw.as_bytes()).unwrap(),
+                    None => zip.by_index(i).unwrap(),
+                };
+                let name = entry_name(&entry);
+                if name == MANIFEST_NAME || entry.is_dir() {
+                    return None;
+                }
+                let mut bytes = Vec::new();
+                io::Read::read_to_end(&mut entry, &mut bytes).unwrap();
+                Some((name, bytes))
+            })
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// The names in the archive's own order, read without the password.
+    fn raw_names(archive: &Path) -> Vec<String> {
+        let mut zip = ZipArchive::new(File::open(archive).unwrap()).unwrap();
+        (0..zip.len())
+            .map(|i| entry_name(&zip.by_index_raw(i).unwrap()))
+            .collect()
+    }
+
+    /// Every file under `root` as (relative path, bytes), `backups/` and `logs/`
+    /// left out.
+    fn tree(root: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+        fn walk(root: &Path, dir: &Path, out: &mut std::collections::BTreeMap<String, Vec<u8>>) {
+            for entry in fs::read_dir(dir).unwrap().flatten() {
+                let path = entry.path();
+                let rel = path
+                    .strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                if rel == "backups" || rel == "logs" {
+                    continue;
+                }
+                if path.is_dir() {
+                    walk(root, &path, out);
+                } else {
+                    out.insert(rel, fs::read(&path).unwrap());
+                }
+            }
+        }
+        let mut out = std::collections::BTreeMap::new();
+        walk(root, root, &mut out);
+        out
+    }
+
+    /// A root that keeps a pool busy: the usual seed, a real database to compact,
+    /// and forty chats of forty sizes.
+    fn seed_many(root: &Path) {
+        seed_data(root);
+        fs::remove_file(root.join("data.db")).unwrap();
+        seed_fragmented_db(root);
+        for i in 0..40 {
+            let body = format!(
+                "{{\"v\":1,\"n\":{i},\"text\":\"{}\"}}",
+                "word ".repeat(i * 300)
+            );
+            fs::write(root.join("chats").join(format!("c{i:02}.json")), body).unwrap();
+        }
+    }
+
+    /// What is left in `dir` besides `keep`: a scratch file the pool did not remove.
+    fn leftovers(dir: &Path, keep: &[&str]) -> Vec<String> {
+        let mut left: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| !keep.contains(&n.as_str()))
+            .collect();
+        left.sort();
+        left
+    }
+
+    /// The pool's archive holds what one worker's does — every name and every
+    /// byte, the compacted database included — with a password and without; the
+    /// manifest is still the last entry, and still readable without the password.
+    #[test]
+    fn a_pool_packs_what_one_worker_packs() {
+        let dir = tempfile::tempdir().unwrap();
+        seed_many(dir.path());
+        let paths = Paths::with_root(dir.path());
+        let out = tempfile::tempdir().unwrap();
+        for password in [None, Some(PW)] {
+            let pack = |name: &str, threads| {
+                let packing = Packing { level: 6, threads };
+                let path = Some(out.path().join(name));
+                create_backup(&paths, path, packing, None, password, ru(), |_| {}).unwrap()
+            };
+            let one = pack("one.zip", 1);
+            let four = pack("four.zip", 4);
+            let contents = archive_contents(&one, password);
+            assert!(contents.len() > 40, "{}", contents.len());
+            assert!(contents.iter().any(|(name, _)| name == "data.db"));
+            assert_eq!(contents, archive_contents(&four, password), "{password:?}");
+            for archive in [&one, &four] {
+                assert_eq!(
+                    raw_names(archive).last().map(String::as_str),
+                    Some(MANIFEST_NAME)
+                );
+                let manifest = read_manifest(archive).unwrap().expect("a manifest");
+                assert_eq!(manifest.schemas.db, schema::DB_SCHEMA, "{password:?}");
+            }
+            assert_eq!(
+                leftovers(out.path(), &["one.zip", "four.zip"]),
+                Vec::<String>::new()
+            );
+        }
+    }
+
+    /// An entry whose compressed copy waits in a scratch file packs to the same
+    /// bytes as one held in memory, and the scratch file is gone afterwards.
+    #[test]
+    fn a_spilled_entry_packs_the_same_and_leaves_nothing_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        seed_many(dir.path());
+        let paths = Paths::with_root(dir.path());
+        let out = tempfile::tempdir().unwrap();
+        let entries = gather_entries(&paths, None, ru()).unwrap();
+        for (name, spill_over) in [("memory.zip", u64::MAX), ("spilled.zip", 0)] {
+            let spec = ZipSpec {
+                level: 6,
+                password: Some(PW),
+                threads: 4,
+                spill_over,
+            };
+            let archive = out.path().join(name);
+            parallel::write_archive(&paths, &archive, &entries, &spec, ru(), &mut |_| {}).unwrap();
+        }
+        assert_eq!(
+            archive_contents(&out.path().join("memory.zip"), Some(PW)),
+            archive_contents(&out.path().join("spilled.zip"), Some(PW))
+        );
+        assert_eq!(
+            leftovers(out.path(), &["memory.zip", "spilled.zip"]),
+            Vec::<String>::new()
+        );
+    }
+
+    /// A file that cannot be read fails the whole backup with its name — the
+    /// pool stops rather than hangs — and the scratch files of the entries
+    /// packed before it are removed.
+    #[test]
+    fn an_unreadable_file_fails_the_pack_and_leaves_no_scratch() {
+        let dir = tempfile::tempdir().unwrap();
+        seed_many(dir.path());
+        let paths = Paths::with_root(dir.path());
+        let out = tempfile::tempdir().unwrap();
+        let mut entries = gather_entries(&paths, None, ru()).unwrap();
+        // Scheduled in the middle: some entries are spilled before it, some after.
+        entries.push(Entry {
+            abs: dir.path().join("chats").join("gone.json"),
+            name: "chats/gone.json".into(),
+            len: 3_000,
+        });
+        let spec = ZipSpec {
+            level: 6,
+            password: None,
+            threads: 4,
+            spill_over: 0,
+        };
+        let archive = out.path().join("x.zip");
+        let err = parallel::write_archive(&paths, &archive, &entries, &spec, ru(), &mut |_| {})
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("gone.json"), "{err:#}");
+        assert_eq!(leftovers(out.path(), &["x.zip"]), Vec::<String>::new());
+    }
+
+    /// Unpacking on a pool puts back what one worker does, and both are the
+    /// source's files (the database aside: restore compacts it in place).
+    #[test]
+    fn a_pool_unpacks_what_one_worker_unpacks() {
+        let src = tempfile::tempdir().unwrap();
+        seed_many(src.path());
+        let work = tempfile::tempdir().unwrap();
+        let archive = create_backup(
+            &Paths::with_root(src.path()),
+            Some(work.path().join("a.zip")),
+            Packing::at(6),
+            None,
+            Some(PW),
+            ru(),
+            |_| {},
+        )
+        .unwrap();
+        let restored = [1, 4].map(|threads| {
+            let dst = tempfile::tempdir().unwrap();
+            let packing = Packing { level: 6, threads };
+            let paths = Paths::with_root(dst.path());
+            let outcome = restore_backup(&paths, &archive, packing, None, Some(PW), ru(), |_| {});
+            assert!(matches!(
+                outcome.unwrap(),
+                RestoreOutcome::Restored { pre_restore: None }
+            ));
+            tree(dst.path())
+        });
+        assert_eq!(restored[0], restored[1]);
+        // What a backup leaves out by design (the module doc), and the database,
+        // which a restore compacts in place.
+        let packed = |name: &String| {
+            !name.starts_with("story-logs/")
+                && !name.starts_with("data.db")
+                && name != "defaults.json"
+                && name != "location.json"
+        };
+        let mut source = tree(src.path());
+        source.retain(|name, _| packed(name));
+        let mut unpacked = restored[0].clone();
+        unpacked.retain(|name, _| packed(name));
+        assert!(unpacked.len() > 40, "{}", unpacked.len());
+        assert_eq!(unpacked, source);
+    }
+
+    /// An entry that cannot be written fails the unpacking with its path, on a
+    /// pool as on one worker — the error a restore rolls back on.
+    #[test]
+    fn an_unwritable_entry_fails_the_pool_with_its_path() {
+        let src = tempfile::tempdir().unwrap();
+        seed_many(src.path());
+        let work = tempfile::tempdir().unwrap();
+        let archive = create_backup(
+            &Paths::with_root(src.path()),
+            Some(work.path().join("a.zip")),
+            Packing::at(1),
+            None,
+            None,
+            ru(),
+            |_| {},
+        )
+        .unwrap();
+        let dst = tempfile::tempdir().unwrap();
+        // A directory where a chat's file should go.
+        fs::create_dir_all(dst.path().join("chats").join("c39.json")).unwrap();
+        let paths = Paths::with_root(dst.path());
+        let err =
+            parallel::extract_archive(&paths, &archive, None, 4, ru(), &mut |_| {}).unwrap_err();
+        assert!(format!("{err:#}").contains("c39.json"), "{err:#}");
+    }
+
+    /// The copy a restore takes first is packed at the level it is given — the
+    /// settings' (F3) — not at a level of its own: stored at 0, deflated above.
+    #[test]
+    fn the_pre_restore_copy_is_packed_at_the_given_level() {
+        let src = tempfile::tempdir().unwrap();
+        seed_data(src.path());
+        let work = tempfile::tempdir().unwrap();
+        let archive = create_backup(
+            &Paths::with_root(src.path()),
+            Some(work.path().join("a.zip")),
+            Packing::at(6),
+            None,
+            None,
+            ru(),
+            |_| {},
+        )
+        .unwrap();
+        for (level, method) in [
+            (0, CompressionMethod::Stored),
+            (6, CompressionMethod::Deflated),
+        ] {
+            let dst = tempfile::tempdir().unwrap();
+            seed_data(dst.path());
+            let paths = Paths::with_root(dst.path());
+            let outcome = restore_backup(
+                &paths,
+                &archive,
+                Packing::at(level),
+                None,
+                None,
+                ru(),
+                |_| {},
+            );
+            let RestoreOutcome::Restored {
+                pre_restore: Some(copy),
+            } = outcome.unwrap()
+            else {
+                panic!("expected a pre-restore copy");
+            };
+            let mut zip = ZipArchive::new(File::open(&copy).unwrap()).unwrap();
+            let methods: Vec<_> = (0..zip.len())
+                .filter_map(|i| {
+                    let e = zip.by_index_raw(i).unwrap();
+                    (entry_name(&e) != MANIFEST_NAME && e.size() > 0).then(|| e.compression())
+                })
+                .collect();
+            assert!(!methods.is_empty());
+            assert!(
+                methods.iter().all(|m| *m == method),
+                "level {level}: {methods:?}"
+            );
+        }
+    }
+
+    /// The level and the thread count come out of the raw settings each on its
+    /// own: absent — the defaults; a level above 9 — 9; a value that is not a
+    /// whole non-negative number — that value's default, the other kept.
+    #[test]
+    fn the_level_and_threads_are_read_from_the_raw_settings() {
+        let read = |json: &str| archive_settings(&serde_json::from_str(json).unwrap());
+        assert_eq!(read("{}"), BackupSettings::default());
+        assert_eq!(read(r#"{"backup":{}}"#), BackupSettings::default());
+        assert_eq!(
+            read(r#"{"backup":{"compression":2,"threads":3}}"#),
+            BackupSettings {
+                compression: 2,
+                threads: 3
+            }
+        );
+        assert_eq!(read(r#"{"backup":{"compression":42}}"#).compression, 9);
+        assert_eq!(
+            read(r#"{"backup":{"compression":"fast","threads":2}}"#),
+            BackupSettings {
+                compression: 6,
+                threads: 2
+            }
+        );
+        assert_eq!(
+            read(r#"{"backup":{"compression":1,"threads":-1}}"#),
+            BackupSettings {
+                compression: 1,
+                threads: 0
+            }
+        );
+        assert_eq!(
+            read(r#"{"backup":{"threads":99999999999}}"#).threads,
+            u32::MAX
+        );
+    }
+
+    /// `0` is every core, and no number is more than the cores (F4).
+    #[test]
+    fn the_worker_count_never_passes_the_cores() {
+        let cores = machine_cores();
+        assert!(cores >= 1);
+        assert_eq!(worker_count(0), cores);
+        assert_eq!(worker_count(1), 1);
+        assert_eq!(worker_count(u32::try_from(cores + 1).unwrap()), cores);
+        assert_eq!(worker_count(u32::MAX), cores);
+        assert_eq!(Packing::default().threads, cores);
+        assert_eq!(Packing::default().level, 6);
     }
 }

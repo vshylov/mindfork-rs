@@ -3138,6 +3138,43 @@ pub struct CopySettings {
     pub copy_tool_results: bool,
 }
 
+/// The compression level a backup is packed at unless `-c` says otherwise —
+/// also the level of the copies the app makes by itself, before a restore and
+/// before a data upgrade (spec §12.3, docs/research/backup-speed.md F2–F3).
+/// Level 9 compressed no better than 6 on a real-shaped data root and took ~20 %
+/// longer.
+pub const DEFAULT_BACKUP_COMPRESSION: u8 = 6;
+
+/// The highest deflate level; a stored value above it reads as it.
+pub const MAX_BACKUP_COMPRESSION: u8 = 9;
+
+/// How a backup archive is packed and unpacked (spec §12.3,
+/// docs/research/backup-speed.md F2–F4) — the "Data" section of the settings.
+///
+/// The backup commands do **not** read it through this struct: they read the
+/// raw JSON (`features::backup::backup_settings`), so that a settings file the
+/// app refuses to start on can still be backed up. This struct is what the
+/// settings screen edits and what an unreadable value falls back to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BackupSettings {
+    /// Deflate level `0..=9`; `0` stores without compressing. Above 9 reads as 9.
+    pub compression: u8,
+    /// How many threads pack and unpack an archive. `0` — every core; a number
+    /// above the machine's cores counts as all of them (F4: a portable data root
+    /// moved to a smaller machine keeps working at that machine's size).
+    pub threads: u32,
+}
+
+impl Default for BackupSettings {
+    fn default() -> Self {
+        Self {
+            compression: DEFAULT_BACKUP_COMPRESSION,
+            threads: 0,
+        }
+    }
+}
+
 /// An impersonation profile — the **user** persona the model writes a reply on
 /// behalf of (`Ctrl+U`, spec §11.8): its own name and system message. Assistant
 /// profiles reference one by id ([`crate::entities::profile::Profile::impersonation_profile_id`]);
@@ -3233,6 +3270,9 @@ pub struct AppConfig {
     pub interface: InterfaceSettings,
     /// What to include when copying the chat conversation to the clipboard (`F5`).
     pub copy: CopySettings,
+    /// How a backup is packed and unpacked: its level and its thread count
+    /// (spec §12.3). Additive: an older build ignores the section.
+    pub backup: BackupSettings,
     /// MCP host: plugin tools via external MCP servers (stdio).
     pub mcp: McpSettings,
     /// Speaking chat messages aloud (the `/tts` command, spec §11.9).
@@ -3335,6 +3375,7 @@ impl Default for AppConfig {
             notes: NotesSettings::default(),
             interface: InterfaceSettings::default(),
             copy: CopySettings::default(),
+            backup: BackupSettings::default(),
             mcp: McpSettings::default(),
             tts: TtsSettings::default(),
             stt: SttSettings::default(),
@@ -3351,6 +3392,36 @@ impl Default for AppConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The backup section is additive (lessons §8): a file written before it
+    /// reads as level 6 on every core, a half-written section keeps the other
+    /// value, and the section round-trips through the typed config
+    /// (docs/research/backup-speed.md F2–F4).
+    #[test]
+    fn the_backup_section_is_additive() {
+        let old: AppConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(
+            old.backup,
+            BackupSettings {
+                compression: DEFAULT_BACKUP_COMPRESSION,
+                threads: 0
+            }
+        );
+        assert_eq!(DEFAULT_BACKUP_COMPRESSION, 6);
+        let half: AppConfig = serde_json::from_str(r#"{"backup":{"threads":2}}"#).unwrap();
+        assert_eq!(half.backup.compression, DEFAULT_BACKUP_COMPRESSION);
+        assert_eq!(half.backup.threads, 2);
+        let config = AppConfig {
+            backup: BackupSettings {
+                compression: 9,
+                threads: 3,
+            },
+            ..AppConfig::default()
+        };
+        let back: AppConfig =
+            serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+        assert_eq!(back.backup, config.backup);
+    }
 
     /// The `/continue` capability matrix (spec §6.4) and the Anthropic version
     /// gate behind it: an allowlist by generation, refusing what it cannot

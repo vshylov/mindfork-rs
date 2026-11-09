@@ -301,7 +301,16 @@ mod tests {
         let (_dir, paths, _, _) = root();
         let out = tempfile::tempdir().unwrap();
         let archive = out.path().join("mf-backup.zip");
-        backup::create_backup(&paths, Some(archive.clone()), 6, None, None, en(), |_| {}).unwrap();
+        backup::create_backup(
+            &paths,
+            Some(archive.clone()),
+            backup::Packing::at(6),
+            None,
+            None,
+            en(),
+            |_| {},
+        )
+        .unwrap();
         let from_archive = collect_timeline_archive(&archive, None, en()).unwrap();
         let from_root = collect_timeline_root(&paths).unwrap();
         assert_eq!(from_archive.profiles, from_root.profiles);

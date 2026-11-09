@@ -737,6 +737,13 @@ enum FieldId {
     /// never the value; editing goes out as [`SettingsIntent::SetSecret`].
     /// See spec §12.3, docs/history/backup-password.md.
     BackupPassword,
+    /// The level backups are packed at (`backup.compression`, 0–9): `mindfork
+    /// backup` without `-c` and the copies the app makes itself. Spec §12.3,
+    /// docs/research/backup-speed.md F2–F3.
+    BackupCompression,
+    /// How many threads pack and unpack a backup (`backup.threads`, 0 — every
+    /// core; never more than the cores where it is used). Spec §12.3, F4.
+    BackupThreads,
     // Conversation history compression (a rolling summary), spec §6.7 — the
     // "Context" group of the "Memory" section: about the current conversation,
     // ahead of the long-term memory groups that follow.

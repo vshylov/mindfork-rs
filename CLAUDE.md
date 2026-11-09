@@ -186,7 +186,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-11-09, version 0.24.0)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **4755 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **4768 unit tests
 green, 317 `#[ignore]`** (live smokes + real-clipboard round trips + the
 screenshot-dump and demo-reel regenerators).
 
@@ -199,6 +199,12 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **Backup and restore on a pool of threads** (2026-11-09): every core packs and
+  unpacks (`backup.threads`, never more than the cores), at `backup.compression`
+  (6 by default; the app's own copies too); a parallel zip, not 7z. 4.5 s → 1.1 s,
+  restore 5.9 s → 2.0 s on 110 MB. Live **GO**; Windows the open go/no-go
+  ([docs/research/backup-speed.md](docs/research/backup-speed.md),
+  [docs/journal/storage.md](docs/journal/storage.md)).
 - **A name for a pasted image — track complete** (2026-11-08): a copied picture
   file is pasted, the SSH refusal names the distance; with `images.name_pasted` (off)
   the chat's engine names a paste `clipboard/<slug>.png`, a send waits for it ≤ 10 s,
@@ -382,13 +388,6 @@ being recent is dropped, not shortened.
   / `machine-id` measurements
   ([docs/research/cloud-provisioning.md](docs/research/cloud-provisioning.md) §7–§8,
   [docs/journal/release.md](docs/journal/release.md), install.md §1, §3.3–§3.4).
-- **The site waits for the release.** The release PR's merge deployed its own
-  post 25 min 28 s before the release was public (measured on 0.10.2). `site.yml`
-  now holds a deploy while `Cargo.toml` names an unpublished version and runs
-  again when `crates.io` completes; `force` overrides. Rehearsed **GO**, and seen
-  for real on 0.11.0: held on the merge, live 3 min 37 s *after* the publication
-  ([docs/research/site-waits-for-release.md](docs/research/site-waits-for-release.md),
-  [docs/journal/website.md](docs/journal/website.md)).
 - **`mindfork stats` — which copy of the data is the newest, and what the other
   one holds** (both stages). A read-only summary of the live data or of a backup
   archive, encrypted ones included: nothing is created, migrated or unpacked.

@@ -257,7 +257,16 @@ fn files_from_other_schema_versions_are_still_counted() {
 
 pub(super) fn backup(root: &Root, password: Option<&str>) -> PathBuf {
     let out = root.dir.path().join("copy.zip");
-    backup::create_backup(&root.paths, Some(out), 1, None, password, en(), |_| {}).unwrap()
+    backup::create_backup(
+        &root.paths,
+        Some(out),
+        backup::Packing::at(1),
+        None,
+        password,
+        en(),
+        |_| {},
+    )
+    .unwrap()
 }
 
 /// The archive is summarized to the same numbers as the root it was made

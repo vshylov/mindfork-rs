@@ -851,6 +851,23 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
                 c.interface.input_max_rows = v.clamp(1, u32::from(limit)) as u16;
             }
         }),
+        // The backup's level (spec §12.3, docs/research/backup-speed.md F2):
+        // clamped rather than rejected, like `CompactThreshold` — above 9 there is
+        // no level, and a refused entry would read as a broken field.
+        BackupCompression => int(|c, t| {
+            if let Ok(v) = t.parse::<u32>() {
+                let max = crate::shared::config::MAX_BACKUP_COMPRESSION;
+                c.backup.compression = u8::try_from(v).map_or(max, |v| v.min(max));
+            }
+        }),
+        // Stored as typed, not clamped to this computer's cores: the cap is
+        // applied where the threads are started (F4), so a portable root moved to
+        // a bigger machine uses what it was given there.
+        BackupThreads => int(|c, t| {
+            if let Ok(v) = t.parse::<u32>() {
+                c.backup.threads = v;
+            }
+        }),
         INtfyUrl => text(|c, t| c.notifications.ntfy_url = t.trim().to_string()),
         IDicts => text(|c, t| {
             c.interface.selected_dictionaries = t
