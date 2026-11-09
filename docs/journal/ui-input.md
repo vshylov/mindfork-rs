@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (40)
+## Entries (41)
 
 - Post-M9: fast multiline clipboard paste (done)
 - Post-M9: `↑/↓` navigation by visual row of a wrapped line (done)
@@ -52,6 +52,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: pasting a copied picture file, and the paste over SSH (done)
 - Post-M9: a name for a pasted image (done)
 - Post-M9: the clipboard on Wayland, read directly (done)
+- Post-M9: the clipboard on GNOME and KDE, and a paste refused for a clipboard that will not open (done)
 
 ### Post-M9: fast multiline clipboard paste (done)
 - **Symptom**: a large clipboard paste lagged in Windows Terminal, and a line break
@@ -2242,3 +2243,49 @@ XWayland and in plain X11 (Xvfb): both real-clipboard round trips
 tests pass in all three — and with `--nocapture` the round trips printed their results
 rather than a skip, which a session with no clipboard would have shown
 (docs/lessons.md §6). Windows' gates are untouched by a Linux-only feature and green.
+
+### Post-M9: the clipboard on GNOME and KDE, and a paste refused for a clipboard that will not open (done)
+
+**What.** The two desktops [pasted-image-names.md](../research/pasted-image-names.md)
+§3.3 left unmeasured, measured at the owner's ask (2026-11-09; §3.4), and the one
+defect they turned up, fixed: a `/image paste` whose clipboard would not open was told
+the clipboard held no image and asked to copy one.
+
+**Measured** (Docker, the compositors headless — KWin 6.8.2 and 5.27.11, mutter 51.1
+and 46.2, from Arch and Ubuntu 24.04; `wl-copy` and `xclip` playing the apps; the app's
+test binary built for Linux): the current build pastes a Wayland app's picture and a
+copied file, and copies, on all four. Plasma is read over data-control — 6.8 offers
+only `ext-data-control-v1`, 5.27 the wlr one — and had sway's gap before the previous
+entry: KWin, too, syncs into X only towards a focused X window. GNOME offers no
+data-control at all, and arboard's X11 fallback works there because mutter bridges
+the selection with no focus; mutter also keeps copied text after the app quits. GNOME
+with XWayland turned off has no clipboard for a program in a terminal.
+
+**Key decisions.**
+
+- **Ask once more, at the refusal.** Four readers fold an open failure into "nothing
+  there", which is right for routing. The refusal now asks `PasteSource::unreachable`,
+  which tries `arboard::Clipboard::new()` again and keeps the error — cheap where it
+  fails (no display: at once), asked only once everything else came back empty, so the
+  paste's order is untouched and `Ctrl+V` stays silent: the terminal has already
+  pasted what it could.
+- **The session speaks before arboard.** On Linux arboard's error is the X11
+  fallback's, "X11 server connection timed out", naming a server the person may never
+  have had. No display variable at all is `NoDisplay` — a pod's web terminal, which is
+  not SSH, so the distance did not speak either — pointed at copying the file over and
+  at an address; Wayland alone with a compositor answering on its socket is `NoBridge`,
+  named as GNOME without XWayland; a `WAYLAND_DISPLAY` nobody answers on (an old tmux)
+  or an X server that refuses is quoted in arboard's words. The socket check is what
+  keeps a stale variable from being blamed on GNOME.
+- **SSH first, still**: over SSH the clipboard fails to open too, and the distance is
+  the better reason.
+
+**Tests.** Five unit tests new or extended — the refusal's six cases in both locales,
+the session's reading of a closed clipboard, libwayland's socket rule, a socket that
+answers only while something listens (Unix), the routing through the paste seam — and
+the read-only `clipboard_refusal_in_this_session`, `#[ignore]`: **4755 green, 317
+`#[ignore]`**. **Live — GO**: the Linux test binary in eleven sessions of the stand.
+Wherever the clipboard opened — KWin and mutter with XWayland, KWin without — both
+round trips ran and the refusal kept the old words; mutter 51.1 and 46.2 with no
+XWayland gave `NoBridge`; no display at all gave `NoDisplay`; a stale `WAYLAND_DISPLAY`
+and mutter's XWayland without `XAUTHORITY` gave arboard's words.

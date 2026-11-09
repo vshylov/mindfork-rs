@@ -437,10 +437,12 @@ pub(super) fn paste_from_clipboard(
         return;
     }
     // A typed `/image paste` with nothing to paste: say why — files that are not
-    // pictures, a clipboard on another machine, or simply none — and name the route
-    // that does not depend on the clipboard at all.
+    // pictures, a clipboard on another machine, one that would not open, or simply
+    // none — and name the route that does not depend on the clipboard at all.
+    let far = clipboard.far();
+    let unreachable = clipboard.unreachable();
     let loc = screen.loc();
     screen.set_image_progress(crate::features::image_command::ImageProgress::Failed(
-        nothing_to_paste(&others, clipboard.far(), loc),
+        nothing_to_paste(&others, far, unreachable.as_ref(), loc),
     ));
 }

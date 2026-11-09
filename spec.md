@@ -1830,8 +1830,17 @@ append-only shape keeps the prefix cache intact across an image turn
   where the compositor offers none: without it a session with no XWayland had no
   clipboard at all, and on wlroots (sway, Hyprland) with XWayland a picture a
   Wayland app copied never reached X11, which syncs the selection only towards a
-  focused X window — never an app inside a terminal. Measured:
-  [docs/research/pasted-image-names.md](docs/research/pasted-image-names.md) §3.3.
+  focused X window — never an app inside a terminal; KDE Plasma's KWin syncs the
+  same way, and is read over `ext-` or `wlr-data-control`. GNOME's mutter offers
+  neither and is read through XWayland, which it bridges with no focus; with XWayland
+  turned off there is no clipboard for a program in a terminal. Measured:
+  [docs/research/pasted-image-names.md](docs/research/pasted-image-names.md) §3.3–§3.4.
+  **A clipboard that will not open is not an empty one**: a `/image paste` that finds
+  nothing asks once more whether it opens, and when it does not, the refusal says so —
+  on Linux the session first (no `DISPLAY` and no `WAYLAND_DISPLAY`: no clipboard here,
+  with the routes from elsewhere; Wayland alone, its compositor answering: GNOME
+  without XWayland), else the platform's own error — instead of asking for a copy the
+  app cannot reach. SSH keeps its own refusal, below, and comes first.
   A pasted image has no file, so it gets the first `clipboard*.png` name **nothing
   in the chat** holds — staged images, sent ones, stored files, attachments — and
   a source that cannot collide: pasting twice stages two images rather than the

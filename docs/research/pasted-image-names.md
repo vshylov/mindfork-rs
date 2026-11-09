@@ -10,7 +10,9 @@ off, F7 (a) `/image paste <name>`, F8 (a) pasted images only, F9 (a) a failure
 is quiet. **The track is complete** (2026-11-08), in the two pull requests of §6:
 stage 1, the paste's gaps (A1, A2), and stage 2, the names — docs/journal/ui-input.md,
 "pasting a copied picture file, and the paste over SSH" and "a name for a pasted
-image". What it left open is in §7 and on the roadmap.
+image". What it left open is in §7 and on the roadmap. After it: the Wayland
+clipboard read directly (§3.3), then GNOME and KDE measured and a refusal for a
+clipboard that will not open (§3.4).
 
 The ask (the owner, 2026-11-08): look into pasting images into the chat from the
 clipboard; where possible, give a pasted image a name that says what it shows —
@@ -259,8 +261,7 @@ shipped (X11 only), and with `wayland-data-control`.
   it quits a session with no clipboard manager loses it — arboard's X11 behaviour
   already. Before, a session with no XWayland could not copy locally at all, and the
   OSC 52 fallback put the text in the terminal, which kept it.
-- **Not measured**: GNOME (Mutter offers no data-control protocol as far as is known
-  here, so it falls back to X11 — today's path) and KDE Plasma (which offers it).
+- **GNOME and KDE** were not measured here — they are in §3.4.
 
 **Turned on** (the owner's decision, 2026-11-09). One supply-chain catch on the way:
 the lock first resolved `wayland-scanner` 0.31.10, whose `quick-xml` 0.39.4 carries
@@ -269,6 +270,70 @@ RUSTSEC-2026-0194 and -0195; `wayland-scanner` 0.31.11 takes `quick-xml` 0.41, a
 real-clipboard round trips and the clipboard tests, built for Linux, pass in a
 Wayland session with no XWayland, in sway with XWayland, and in plain X11 (Xvfb) —
 and with output on, the round trips ran rather than skipped.
+
+### 3.4 GNOME and KDE (2026-11-09)
+
+Asked by the owner after §3.3, which had left both unmeasured. In Docker, headless,
+each desktop's **compositor** on its own — the clipboard and the bridge to X live
+there, not in the shell above it: KWin (`kwin_wayland --virtual`) and mutter
+(`mutter --headless --virtual-monitor`), each in Arch's current release and in
+Ubuntu 24.04 LTS's. The two checkers of §3.3, `wl-copy` playing a Wayland app and
+`xclip` an X app, and the app's own real-clipboard tests built for Linux.
+
+| Session | Data-control offered | A Wayland app's picture, before §3.3 | Today | The app's real-clipboard round trips |
+|---|---|---|---|---|
+| KWin 6.8.2, no XWayland | `ext-data-control-v1` | no clipboard | 760×380 RGBA | ran, passed |
+| KWin 6.8.2, XWayland | `ext-data-control-v1` | **nothing** | 760×380 RGBA | ran, passed |
+| KWin 5.27.11 (Ubuntu 24.04), no XWayland | `wlr-data-control` | no clipboard | 760×380 RGBA | ran, passed |
+| KWin 5.27.11, XWayland | `wlr-data-control` | **nothing** | 760×380 RGBA | ran, passed |
+| mutter 51.1, XWayland | none | 760×380 RGBA, through X | the same | ran, passed |
+| mutter 46.2 (Ubuntu 24.04), XWayland | none | 760×380 RGBA, through X | the same | ran, passed |
+| mutter 51.1 or 46.2, no XWayland | none | no clipboard | **no clipboard** | skipped: it does not open |
+
+- **Plasma had the gap §3.3 found on sway.** KWin, like wlroots, hands the Wayland
+  selection to X only towards a focused X window, so before §3.3 a picture a browser
+  or Spectacle copied never reached the app inside a terminal on Plasma either, 5.27
+  and 6.8 alike. Now it is read over data-control: 6.8 offers only the newer
+  `ext-data-control-v1` (`wl-clipboard-rs` speaks it since 0.9.2), 5.27 the wlr one.
+  A copied file came back as its path, and text the app copied was pasted by a
+  Wayland app.
+- **GNOME offers no data-control protocol, and here needs none.** arboard falls back to
+  X11 (§3.3), and mutter, unlike wlroots and KWin, bridges the selection to an X
+  client with no focus: a Wayland app's picture and a copied file came through on
+  both releases, before §3.3 and after; text the app copied was pasted by Wayland and
+  X apps alike. mutter also **keeps copied text after its owner quits**, so a copy
+  outlives the app on GNOME; on Plasma that is Klipper's job (not run here — without
+  it the text went with the app, as §3.3 says).
+- **GNOME with XWayland turned off gives a program in a terminal no clipboard.** The
+  only way in would be a window of its own. The paste refused it as *there is no image
+  on the clipboard — copy one*, advice that cannot work there. The same words met a
+  session with **no display at all** — a pod's web terminal, a console, `docker exec`,
+  none of them SSH, so the distance (A2) did not speak either — and arboard's own
+  error in both is the X11 fallback's, "X11 server connection timed out", naming a
+  server the person may never have had.
+- **Not shown by the stand**: real applications, the shells (gnome-shell,
+  plasmashell) and Klipper. `xclip` has no window, so where KWin waits for an X
+  window's focus before syncing — the app's copy towards an X app on both releases,
+  an X app's copy towards Wayland on 5.27 — the stand shows a gap a person would not
+  meet, since they focus the app they paste into or copy from.
+
+**Fixed with it**: a `/image paste` that finds nothing asks once more whether the
+clipboard opens at all, and when it does not, says so — never "copy one". On Linux
+the session speaks before arboard's error: no `DISPLAY` and no `WAYLAND_DISPLAY` is a
+session with no clipboard, pointed at the routes that bring a picture from elsewhere;
+Wayland alone, its compositor answering on its socket, is GNOME without XWayland; a
+`WAYLAND_DISPLAY` nobody answers on (an old tmux) or an X server that refuses (no
+`XAUTHORITY`) is quoted in arboard's words. SSH still speaks first. Live, the
+read-only `clipboard_refusal_in_this_session` gave each of these in its session, and
+the old wording wherever the clipboard opened.
+
+Stand traps (docs/lessons.md §6): headless mutter's seat has **no keyboard**, and
+mutter takes a selection only from a focused client, so nothing can copy until a
+remote-desktop D-Bus session (`org.gnome.Mutter.RemoteDesktop`: `CreateSession`,
+`Start`, one key) adds a virtual one; mutter guards XWayland with an Xauthority file a
+GNOME session exports as `XAUTHORITY`; `kwin_wayland` carries a file capability
+(`CAP_SYS_NICE` on Arch, `CAP_SYS_RESOURCE` on Ubuntu) a container must grant; mutter
+46 wants `/tmp/.X11-unix` made beforehand, mode 1777.
 
 ## 4. Design
 

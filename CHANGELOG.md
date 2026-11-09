@@ -36,11 +36,15 @@ split by subsystem.
 ### Fixed
 
 - **The clipboard works on Wayland desktops.** On a session with no XWayland the app
-  had no clipboard at all — no pasted picture, no local copy — and on sway, Hyprland
-  and other wlroots desktops a picture copied by a Wayland app (a browser, a
-  screenshot tool) could not be pasted even with XWayland running. The app now talks
+  had no clipboard at all — no pasted picture, no local copy — and on KDE Plasma, sway,
+  Hyprland and other wlroots desktops a picture copied by a Wayland app (a browser, a
+  screenshot tool) could not be pasted even with XWayland running. GNOME was not
+  affected. The app now talks
   to the Wayland clipboard directly, and falls back to the old way where the desktop
   offers no such access. Nothing new needs to be installed.
+- **`/image paste` says when there is no clipboard to read**, instead of asking you
+  to copy the image again: a session with no display (a pod's web terminal), GNOME
+  with XWayland turned off, or a clipboard that fails to open, with the reason.
 - **`/image paste` over SSH says why the clipboard is empty.** The clipboard the app
   reads there is the remote machine's, not the one you copied to; instead of asking
   you to copy the image again, the message now says so and points at `/image attach`

@@ -1546,6 +1546,17 @@ for one case is weighed against requests in every case.
 — *the duplicate gate's hint: the repeat is already written*, *an observation asked for
 is recorded*.
 
+**A reader that turns every failure into "nothing there" hands the refusal the wrong
+reason.** The clipboard readers fold an open failure into `None` — right for routing,
+whose next step is the same — and `/image paste` then told a person on GNOME without
+XWayland, or in a pod's web terminal, that the clipboard held no image and to copy one:
+advice that cannot work where there is no clipboard. Where the message is written, ask
+again for the reason or carry it there, and let the session's own facts speak before a
+library's error that names the wrong thing — "X11 server connection timed out" on a
+Wayland desktop.
+— *the clipboard on GNOME and KDE, and a paste refused for a clipboard that will not
+open*.
+
 ## 5. Terminal and ratatui rendering
 
 **A state that a key can put the user into needs a key that takes them out — check a
@@ -1804,6 +1815,18 @@ picture. A Wayland session's clipboard has to be read through Wayland (arboard's
 smoke that skips when the clipboard cannot open passes in a session where nothing
 works: read its output for the skip before calling it green.
 — *the clipboard on Wayland, read directly*.
+
+**Headless mutter has no keyboard, so nothing can copy.** mutter takes a selection only
+from the client with keyboard focus, and `mutter --headless` starts with an empty seat:
+`wl-copy` answers "This seat has no keyboard". A remote-desktop session over D-Bus
+(`org.gnome.Mutter.RemoteDesktop`: `CreateSession`, `Start`, one
+`NotifyKeyboardKeycode`) adds a virtual keyboard for as long as its caller holds the
+session. Its XWayland wants the session's `XAUTHORITY`
+(`$XDG_RUNTIME_DIR/.mutter-Xwaylandauth.*`): without it every X client is refused, which
+reads like a missing display. KWin in a container needs the file capability its binary
+carries (`CAP_SYS_NICE` on Arch, `CAP_SYS_RESOURCE` on Ubuntu).
+— *the clipboard on GNOME and KDE, and a paste refused for a clipboard that will not
+open*.
 
 **A port that will not bind with `WinError 10013` is reserved, not taken.** Windows
 (Hyper-V, WinNAT) excludes whole port ranges, and a socket in one fails with "access

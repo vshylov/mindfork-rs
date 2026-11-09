@@ -81,6 +81,99 @@ pub(super) fn clipboard_files(slot: &mut Option<arboard::Clipboard>) -> Vec<Path
         .unwrap_or_default()
 }
 
+/// Why a paste found no clipboard to read — not an empty one: one that would not open.
+/// Every reader above folds this into "nothing there", which is right for routing and
+/// wrong for the refusal: "copy one" is no advice to a person whose copy the app cannot
+/// reach (docs/research/pasted-image-names.md §3.4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Unreachable {
+    /// A Linux session with no display server at all — neither `DISPLAY` nor
+    /// `WAYLAND_DISPLAY`: a pod's web terminal, a console, a `docker exec`. There is no
+    /// clipboard here to read, and the picture is on some other machine.
+    NoDisplay,
+    /// A Wayland session with no X server named, whose compositor answers yet would not
+    /// open: it offers no data-control protocol — the one way a program without a window
+    /// of its own reads the clipboard there — and there is no XWayland to fall back
+    /// through. GNOME with XWayland turned off.
+    NoBridge,
+    /// The clipboard would not open, in the platform's words.
+    Failed(String),
+}
+
+/// Opens the clipboard if the slot holds none, and says why it would not — `None` once it
+/// is open. The readers above have already tried and dropped the error; asking again
+/// costs nothing where it fails (no display: at once) and is only asked by a refusal.
+pub(super) fn clipboard_unreachable(slot: &mut Option<arboard::Clipboard>) -> Option<Unreachable> {
+    if slot.is_some() {
+        return None;
+    }
+    match arboard::Clipboard::new() {
+        Ok(c) => {
+            *slot = Some(c);
+            None
+        }
+        Err(e) if cfg!(all(unix, not(target_os = "macos"))) => Some(closed_because(
+            e.to_string(),
+            std::env::var_os("DISPLAY").is_some(),
+            std::env::var_os("WAYLAND_DISPLAY"),
+            std::env::var_os("XDG_RUNTIME_DIR"),
+        )),
+        Err(e) => Some(Unreachable::Failed(e.to_string())),
+    }
+}
+
+/// Why a Linux clipboard would not open, read off the session's display variables.
+/// arboard's error there is the X11 fallback's ("X11 server connection timed out"),
+/// which names a server the person may never have had, so the session speaks first:
+///
+/// - no display variable at all → [`Unreachable::NoDisplay`];
+/// - Wayland alone, its compositor answering on its socket → [`Unreachable::NoBridge`]:
+///   the refusal was the compositor's, not a display that has gone away (a stale
+///   `WAYLAND_DISPLAY` inside an old tmux);
+/// - anything else → arboard's words.
+fn closed_because(
+    err: String,
+    x11: bool,
+    wayland: Option<std::ffi::OsString>,
+    runtime_dir: Option<std::ffi::OsString>,
+) -> Unreachable {
+    if x11 {
+        return Unreachable::Failed(err);
+    }
+    let Some(display) = wayland else {
+        return Unreachable::NoDisplay;
+    };
+    if wayland_socket(display, runtime_dir).is_some_and(|s| answers(&s)) {
+        Unreachable::NoBridge
+    } else {
+        Unreachable::Failed(err)
+    }
+}
+
+/// Where a Wayland client connects — libwayland's rule: `WAYLAND_DISPLAY` itself when it
+/// is a path, else that name under `XDG_RUNTIME_DIR`.
+fn wayland_socket(
+    display: std::ffi::OsString,
+    runtime_dir: Option<std::ffi::OsString>,
+) -> Option<PathBuf> {
+    let display = PathBuf::from(display);
+    if display.is_absolute() {
+        return Some(display);
+    }
+    Some(PathBuf::from(runtime_dir?).join(display))
+}
+
+/// Whether something listens on this Unix socket.
+#[cfg(unix)]
+fn answers(socket: &std::path::Path) -> bool {
+    std::os::unix::net::UnixStream::connect(socket).is_ok()
+}
+
+#[cfg(not(unix))]
+fn answers(_socket: &std::path::Path) -> bool {
+    false
+}
+
 /// What a paste reads off the clipboard, in the order it asks — the seam that lets the
 /// paste's routing (`input::paste_from_clipboard`) be tested without the system
 /// clipboard. The one real source is the runtime's arboard slot.
@@ -93,6 +186,9 @@ pub(super) trait PasteSource {
     fn text(&mut self) -> Option<String>;
     /// Whether this clipboard is on another machine than the person's ([`clipboard_is_far`]).
     fn far(&self) -> bool;
+    /// Why the clipboard would not open at all ([`clipboard_unreachable`]) — asked only
+    /// once everything above came back empty.
+    fn unreachable(&mut self) -> Option<Unreachable>;
 }
 
 impl PasteSource for Option<arboard::Clipboard> {
@@ -107,6 +203,9 @@ impl PasteSource for Option<arboard::Clipboard> {
     }
     fn far(&self) -> bool {
         clipboard_is_far()
+    }
+    fn unreachable(&mut self) -> Option<Unreachable> {
+        clipboard_unreachable(self)
     }
 }
 
@@ -142,18 +241,33 @@ fn far(remote: bool, forwarded_display: bool) -> bool {
 /// - files were copied, none of them a picture → name them, and the command that takes
 ///   a document;
 /// - the session's clipboard is on another machine → say so, rather than asking the person
-///   to copy what they already copied (A2);
+///   to copy what they already copied (A2) — first, since over SSH the clipboard also
+///   fails to open and the distance is the better reason;
+/// - the clipboard would not open → say that, and why ([`Unreachable`]), rather than
+///   call it empty;
 /// - otherwise → the clipboard is simply empty of images.
-pub(super) fn nothing_to_paste(others: &[PathBuf], far: bool, loc: &'static Locale) -> String {
+pub(super) fn nothing_to_paste(
+    others: &[PathBuf],
+    far: bool,
+    unreachable: Option<&Unreachable>,
+    loc: &'static Locale,
+) -> String {
     if !others.is_empty() {
-        loc.tf(
+        return loc.tf(
             "ui.err.image_clipboard_not_image",
             &[("files", &file_names(others))],
-        )
-    } else if far {
-        loc.t("ui.err.image_clipboard_remote").to_string()
-    } else {
-        loc.t("ui.err.image_no_clipboard").to_string()
+        );
+    }
+    if far {
+        return loc.t("ui.err.image_clipboard_remote").to_string();
+    }
+    match unreachable {
+        Some(Unreachable::NoDisplay) => loc.t("ui.err.image_clipboard_no_display").to_string(),
+        Some(Unreachable::NoBridge) => loc.t("ui.err.image_clipboard_no_bridge").to_string(),
+        Some(Unreachable::Failed(err)) => {
+            loc.tf("ui.err.image_clipboard_unreachable", &[("err", err)])
+        }
+        None => loc.t("ui.err.image_no_clipboard").to_string(),
     }
 }
 
@@ -506,6 +620,83 @@ mod tests {
         if absent {
             assert!(image.is_none() && files.is_empty() && text.is_none());
         }
+        // A clipboard that would not open says so — and one that opened has no reason.
+        let unreachable = PasteSource::unreachable(&mut slot);
+        assert_eq!(unreachable.is_some(), absent, "{unreachable:?}");
+        if let Some(Unreachable::Failed(err)) = &unreachable {
+            assert!(!err.is_empty(), "the platform's words, not a blank");
+        }
+    }
+
+    /// libwayland's rule for where a client connects: the variable itself when it is a
+    /// path, else the name under the runtime directory.
+    #[test]
+    fn the_wayland_socket_is_found_where_libwayland_looks() {
+        use std::ffi::OsString;
+        let run = std::env::temp_dir();
+        assert_eq!(
+            wayland_socket("wayland-1".into(), Some(run.clone().into_os_string())),
+            Some(run.join("wayland-1"))
+        );
+        let absolute = run.join("elsewhere").join("wayland-9");
+        assert_eq!(
+            wayland_socket(absolute.clone().into_os_string(), None),
+            Some(absolute),
+            "an absolute name needs no runtime directory"
+        );
+        assert_eq!(wayland_socket(OsString::from("wayland-1"), None), None);
+    }
+
+    /// The session speaks before arboard's error, which on Linux is always the X11
+    /// fallback's: no display variable at all is a session with no clipboard; an X
+    /// server named, or a Wayland one nobody answers on, leaves arboard's words.
+    #[test]
+    fn a_closed_clipboard_is_explained_by_the_session_first() {
+        let err = || "X11 server connection timed out".to_string();
+        let failed = Unreachable::Failed(err());
+        let run = Some(std::env::temp_dir().into_os_string());
+        assert_eq!(
+            closed_because(err(), false, None, None),
+            Unreachable::NoDisplay
+        );
+        assert_eq!(
+            closed_because(err(), true, None, None),
+            failed,
+            "X named: its words"
+        );
+        let stale = Some("mindfork-no-such-wayland-socket".into());
+        assert_eq!(
+            closed_because(err(), false, stale.clone(), run.clone()),
+            failed,
+            "nobody answers: a display that went away, not GNOME"
+        );
+        assert_eq!(closed_because(err(), true, stale, run), failed);
+    }
+
+    /// A compositor is told from a stale variable by whether its socket answers: a
+    /// listener does, a path with nobody behind it does not.
+    #[cfg(unix)]
+    #[test]
+    fn a_socket_answers_only_while_something_listens() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("wayland-0");
+        assert!(!answers(&socket), "no file at all");
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        assert!(answers(&socket), "a compositor is listening");
+        // ...and with nothing but Wayland named, its answer makes the refusal GNOME's.
+        let run = Some(dir.path().as_os_str().to_owned());
+        let named = || Some(std::ffi::OsString::from("wayland-0"));
+        assert_eq!(
+            closed_because("e".into(), false, named(), run.clone()),
+            Unreachable::NoBridge
+        );
+        assert_eq!(
+            closed_because("e".into(), true, named(), run),
+            Unreachable::Failed("e".into()),
+            "with XWayland named the X11 error is the one that counts"
+        );
+        drop(listener);
+        assert!(!answers(&socket), "the file outlived its compositor");
     }
 
     /// Pictures are staged, everything else only named — and in the order the file
@@ -548,7 +739,7 @@ mod tests {
         for lang in [Lang::En, Lang::Ru] {
             let loc = locale(lang);
             // Files, none a picture — named, and pointed at the command for documents.
-            let msg = nothing_to_paste(&docs, true, loc);
+            let msg = nothing_to_paste(&docs, true, Some(&Unreachable::NoBridge), loc);
             assert_eq!(
                 msg,
                 loc.tf(
@@ -558,13 +749,55 @@ mod tests {
                 "copied files win over the distance in {lang:?}"
             );
             assert!(msg.contains("/file attach"), "{lang:?}: {msg}");
-            // Nothing at all, over SSH — the distance, and the two routes around it.
-            let msg = nothing_to_paste(&[], true, loc);
-            assert_eq!(msg, loc.t("ui.err.image_clipboard_remote"), "{lang:?}");
-            assert!(msg.contains("SSH"), "{lang:?}: {msg}");
+            // Nothing at all, over SSH — the distance, and the two routes around it, even
+            // though the clipboard there would not open either.
+            let failed = Unreachable::Failed("no display".into());
+            for unreachable in [None, Some(&failed)] {
+                let msg = nothing_to_paste(&[], true, unreachable, loc);
+                assert_eq!(msg, loc.t("ui.err.image_clipboard_remote"), "{lang:?}");
+                assert!(msg.contains("SSH"), "{lang:?}: {msg}");
+                assert!(msg.contains("/image attach <url>"), "{lang:?}: {msg}");
+            }
+            // A clipboard that would not open is not called empty: a Wayland desktop that
+            // shares it with no windowless program is named, any other failure quoted.
+            let msg = nothing_to_paste(&[], false, Some(&Unreachable::NoBridge), loc);
+            assert_eq!(msg, loc.t("ui.err.image_clipboard_no_bridge"), "{lang:?}");
+            assert!(
+                msg.contains("XWayland") && msg.contains("GNOME"),
+                "{lang:?}: {msg}"
+            );
+            let msg = nothing_to_paste(&[], false, Some(&failed), loc);
+            assert_eq!(
+                msg,
+                loc.tf(
+                    "ui.err.image_clipboard_unreachable",
+                    &[("err", "no display")]
+                ),
+                "{lang:?}"
+            );
+            assert!(msg.contains("(no display)"), "{lang:?}: {msg}");
+            // No display at all — a pod's web terminal: no clipboard, and the routes that
+            // bring a picture from elsewhere.
+            let msg = nothing_to_paste(&[], false, Some(&Unreachable::NoDisplay), loc);
+            assert_eq!(msg, loc.t("ui.err.image_clipboard_no_display"), "{lang:?}");
+            assert!(
+                msg.contains("DISPLAY") && msg.contains("WAYLAND_DISPLAY"),
+                "{msg}"
+            );
             assert!(msg.contains("/image attach <url>"), "{lang:?}: {msg}");
-            // Nothing at all, locally — today's message, unchanged.
-            let msg = nothing_to_paste(&[], false, loc);
+            for msg in [
+                nothing_to_paste(&[], false, Some(&Unreachable::NoDisplay), loc),
+                nothing_to_paste(&[], false, Some(&Unreachable::NoBridge), loc),
+                nothing_to_paste(&[], false, Some(&failed), loc),
+            ] {
+                assert!(
+                    msg.contains("/image attach <"),
+                    "the route that works: {msg}"
+                );
+                assert_ne!(msg, loc.t("ui.err.image_no_clipboard"), "{lang:?}");
+            }
+            // Nothing at all, locally, the clipboard open — today's message, unchanged.
+            let msg = nothing_to_paste(&[], false, None, loc);
             assert_eq!(msg, loc.t("ui.err.image_no_clipboard"), "{lang:?}");
         }
     }

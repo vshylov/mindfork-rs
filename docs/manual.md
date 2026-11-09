@@ -456,6 +456,9 @@ shows what is staged, `/image remove` unstages.
 
 Over SSH the clipboard the app can read is the remote machine's, not yours: copy
 the file over and use `/image attach <path>`, or attach the picture by its address.
+On Linux the clipboard is read directly on KDE Plasma, sway and Hyprland, and through
+XWayland on GNOME, where it is on by default; GNOME with XWayland turned off gives a
+program in a terminal no clipboard, and `/image paste` says so.
 
 A pasted picture is `clipboard.png` until it has a better name. `/image paste <name>`
 gives it yours — `clipboard/<name>.png`. Or turn on Settings → Images → *Name pasted
