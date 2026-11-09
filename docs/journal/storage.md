@@ -1813,8 +1813,18 @@ the track; fixed on its own branch.
   into an empty root 2.82 s → 0.89 s. All four restored roots byte-identical (482
   files, `data.db` included); `pyzipper` reads the new archive with 0 mismatches and
   the manifest last; 0.24.0 restores the new archive and the new build 0.24.0's, both
-  byte-identical; a wrong password still refused before anything is touched. The
-  owner's Windows machine and real data are the open go/no-go of the research's §7.
+  byte-identical; a wrong password still refused before anything is touched.
+- **Windows, the owner's machine and real data — backup GO** (2026-11-09): an Intel
+  Core i9-9900K (8 cores, 16 threads), a debug build through `cargo run`, the same
+  command before and after: `backup` **95.3 s → 21.8 s** (4.4×). The root is ~290 MB,
+  and two thirds of it is one entry: `data.db`, 193.9 MB packed to 38.9 MB (the chats
+  87.2 MB → 26.9 MB). Settings → Data shows the two new rows at their defaults beside
+  the stored password, and 7-Zip lists the archive as before. A restore was not timed
+  on Windows; its numbers are the Linux ones above. Two things the run shows: one
+  entry is one thread (research §3.4), so with a database this size it is
+  `data.db`'s compression that the remaining time waits on, most of all in a debug
+  build; and the entries are dated 1980-01-01 — as 0.24.0's were (`zip` without a
+  time feature writes its default date), not something this change did.
 - **Screenshots**: the settings menu counts the "Data" section's rows (1 → 3), so the
   four settings dumps were regenerated. The committed PNGs are Windows renders, so
   only the change was carried over, as before (ui-input.md): each new PNG is the
