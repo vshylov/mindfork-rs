@@ -2864,6 +2864,7 @@ struct FakeClipboard {
     files: Vec<std::path::PathBuf>,
     text: Option<String>,
     far: bool,
+    unreachable: Option<Unreachable>,
     asked: Vec<&'static str>,
 }
 
@@ -2882,6 +2883,10 @@ impl PasteSource for FakeClipboard {
     }
     fn far(&self) -> bool {
         self.far
+    }
+    fn unreachable(&mut self) -> Option<Unreachable> {
+        self.asked.push("unreachable");
+        self.unreachable.clone()
     }
 }
 
@@ -3027,6 +3032,51 @@ fn a_typed_paste_that_finds_nothing_says_why() {
             loc.tf(key, &[("files", "letter.txt")])
         };
         assert!(h.feed_has(&expected), "{key}: {:?}", h.screen.feed_texts());
-        assert_eq!(clip.asked, ["image", "files"], "{key}");
+        assert_eq!(clip.asked, ["image", "files", "unreachable"], "{key}");
+    }
+}
+
+/// A clipboard that would not open is refused as one, not as an empty clipboard: "copy
+/// one" is no advice to a person whose copy the app cannot reach. `Ctrl+V` over it stays
+/// silent — the terminal has already pasted whatever it could, and only a typed
+/// `/image paste` asks why.
+#[test]
+fn a_typed_paste_says_when_the_clipboard_would_not_open() {
+    let cases = [
+        (Unreachable::NoDisplay, "ui.err.image_clipboard_no_display"),
+        (Unreachable::NoBridge, "ui.err.image_clipboard_no_bridge"),
+        (
+            Unreachable::Failed("no display".into()),
+            "ui.err.image_clipboard_unreachable",
+        ),
+    ];
+    for (unreachable, key) in cases {
+        let mut h = Harness::new();
+        let mut clip = FakeClipboard {
+            unreachable: Some(unreachable.clone()),
+            ..Default::default()
+        };
+        h.paste(&mut clip, false);
+        assert!(h.next_command().is_none(), "{key}");
+        let loc = h.screen.loc();
+        let expected = match &unreachable {
+            Unreachable::Failed(err) => loc.tf(key, &[("err", err)]),
+            Unreachable::NoDisplay | Unreachable::NoBridge => loc.t(key).to_string(),
+        };
+        assert!(h.feed_has(&expected), "{key}: {:?}", h.screen.feed_texts());
+        assert!(
+            !h.feed_has(loc.t("ui.err.image_no_clipboard")),
+            "{key}: not called empty"
+        );
+
+        let mut h = Harness::new();
+        let mut clip = FakeClipboard {
+            unreachable: Some(unreachable),
+            ..Default::default()
+        };
+        h.paste(&mut clip, true);
+        assert!(h.next_command().is_none(), "{key}");
+        assert!(h.screen.feed_texts().is_empty(), "Ctrl+V refuses nothing");
+        assert_eq!(clip.asked, ["image", "files", "text"], "{key}");
     }
 }

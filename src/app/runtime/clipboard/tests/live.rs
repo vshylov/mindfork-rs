@@ -124,3 +124,24 @@ fn clipboard_image_round_trip() {
         prepared.bytes.len()
     );
 }
+
+/// What a typed `/image paste` would say **in this session** with nothing to paste —
+/// read-only, so nothing the developer copied is lost. Run in each desktop session of
+/// the Linux stand (docs/research/pasted-image-names.md §3.4) to read the words a person
+/// would: on GNOME with XWayland off the clipboard does not open, and the refusal must
+/// say so rather than call it empty.
+///
+/// Run: `cargo test clipboard_refusal_in_this_session -- --ignored --nocapture`.
+#[test]
+#[ignore = "reads the real system clipboard, which the session decides"]
+fn clipboard_refusal_in_this_session() {
+    let loc = crate::shared::i18n::locale(crate::shared::i18n::Lang::En);
+    let mut slot: Option<arboard::Clipboard> = None;
+    let image = clipboard_image(&mut slot).map(|(w, h, _)| (w, h));
+    let unreachable = clipboard_unreachable(&mut slot);
+    let msg = nothing_to_paste(&[], clipboard_is_far(), unreachable.as_ref(), loc);
+    if unreachable.is_some() {
+        assert_ne!(msg, loc.t("ui.err.image_no_clipboard"), "not called empty");
+    }
+    eprintln!("clipboard here: image {image:?}, unreachable {unreachable:?}; refusal: {msg}");
+}
