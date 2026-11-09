@@ -22,6 +22,7 @@ The assistant keeps notes about you, a model of itself that it revisits, and a k
 - [The code workspace: containment before capability](https://mindfork.io/articles/code-workspace/): A project attached to a chat: what the assistant can read, edit and run there, why the commands are only ever yours, how every change is a diff with a way back — and the semantic index that was measured and did not ship.
 - [Background runs, and the pool they share](https://mindfork.io/articles/background-runs/): A subagent that outlives its round, the app's own quiet requests, and one local llama-server with one context pool under all of them: what the server does when the pool overflows, how the app keeps it from happening, and what parallel sessions actually buy on one GPU.
 - [What replaces code ownership when AI writes the code](https://mindfork.io/articles/what-replaces-code-ownership/): 262K lines of Rust, 788 PRs, zero read diffs, and four months of green metrics. How externalized memory, mutation testing, and CI gates replaced reading the code.
+- [Fabula: the story engine that lost to one writer](https://mindfork.io/articles/fabula-story-engine/): mindfork's story tools were first built as a simulation: characters who know only what they witnessed, a World Master ruling on every deed, an Author keeping one of three versions of each scene. Then 108 stories were judged blind, and one writer revising its own draft won 33 pairs of 36. What was built, how it was measured, and what stayed.
 
 ## News
 

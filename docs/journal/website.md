@@ -10,7 +10,7 @@ the reasoning behind the site, not its current shape. For the current shape
 read the research/design doc above; for the traps that recur across areas
 read [lessons.md](../lessons.md).
 
-## Entries (29)
+## Entries (30)
 
 - Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 - Post-M9: website — S2 infra: one CloudFormation stack, mindfork.io live (done)
@@ -41,6 +41,7 @@ read [lessons.md](../lessons.md).
 - Post-M9: website — the home page plays the release's animated demo (done)
 - Post-M9: website — the hero leads with the self-model, and the Ollama recipe (done)
 - Post-M9: website — the essay on what replaced code ownership (done)
+- Post-M9: website — the article on Fabula, the story engine that lost to one writer (done)
 
 ### Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 
@@ -1531,3 +1532,56 @@ both on `main` at `88e5ce29`, the merge of the pull request.
   `llms.txt` regenerated; `zola check`, `zola build`, `link_check.py`,
   `doc_index_check.py` and `cyrillic_scan.py` green; the page looked at in both
   themes at desktop width and at 375 px. No live run: no code of the app changed.
+
+### Post-M9: website — the article on Fabula, the story engine that lost to one writer (done)
+
+- **Why** (branch `docs/article-fabula`). The owner asked for the Fabula track's research
+  gathered into an article for the site. It is the eleventh,
+  `/articles/fabula-story-engine/`, written from the track's own documents: the design
+  ([research/fabula-engine.md](../research/fabula-engine.md)), the plan
+  ([history/fabula.md](../history/fabula.md)), ADR 0014 and
+  [stories.md](stories.md).
+- **What it tells**, in the order a reader who never saw the track needs: the bar (one
+  writer revising alone, and the rule of 24 pairs of 36 written before the code), the
+  design, what held (no leak, the schema, the resumes, and the two things the app kept:
+  the output schema on every wire and thinking off reaching Claude), the first story and
+  what its readers found, the comparison's protocol, the pilot's signs and the repairs made
+  before the full run, the verdict, why it lost as far as the records show, what the
+  result does not show, and what stayed.
+- **The working labels stay in the repository.** F, B0, A1, M3, the gates' and the forks'
+  numbers mean nothing to a reader of the site, so the article says "the simulation",
+  "one writer" and "author and reviewers", and "the owner" where a person decided or read.
+- **Every figure is the journal's.** Four are sums or ratios made here: the judging at
+  $259.74 (the probe's $1.78, the decisions' $164.34 and $93.62 for the author and
+  reviewers against one writer), "more than 700 readings" (6 + 504 + 216), the author and
+  reviewers' spend as 6% of the simulation's and about 5% of the one writer's
+  ($1.64 of $28.32 and of $30.57), and nine days from the design to the removal
+  (2026-10-31 to 2026-11-08).
+- **The sources were read again**, their titles and abstracts: the six links are the ones
+  the design cites. Two attributions were reworded to what the papers say: Zhou et al.
+  measure the gap between an omniscient simulation and one under unequal knowledge, and
+  the leaking secrets and the agreeable cast are the design's own reasoning from it; MAST
+  is described by its three categories.
+- **The limits are in the article**, since the result invites a wider reading than it
+  bears: one model wrote every story, a story is one chapter, the prose is Russian under
+  an English canon, prompts and record, the judges are models, the ablations were not
+  judged, and the author and reviewers lost to one writer at a twentieth of its cost.
+- **A chart of its own.** The three results against the threshold of 24 are an inline SVG
+  in `figure.chart`, as the essay's is: one series in the accent, labels and counts in
+  text tokens, native `<title>` tooltips, a `<details>` table with each judge alone. Bars
+  are new to the site's charts, so `_prose.scss` gains `.bar`. Two things the first look
+  found: a gridline at 12 ran through the labels beside the bars, and went; and at 375 px
+  the opened table, seven columns wide, widened the page to 488 px, so
+  `details.chart-data` now scrolls inside its own box (`overflow-x: auto`), which the
+  essay's three-column table never needed.
+- **Checked here.** Built with the pinned Zola 0.23.6 (the release asset, its attestation
+  verified): `zola check --skip-external-links` and `zola build`. Looked at in a headless
+  Chromium in both themes at 1280 px and at 375 px, the chart's text boxes measured at
+  both widths (no label reaches the threshold line, nothing past the viewBox), and no
+  horizontal scroll with the table open or closed. The article's eleven external links
+  return 200, the tag's page among them. `llms.txt` regenerated; `site_llms_txt.py
+  --check`, `cyrillic_scan.py`, `link_check.py`, `doc_index_check.py` and
+  `claude_md_chart.py --check` pass.
+- An article, not a post: `extra.published` and no top-level `date`, so it stays out of
+  the Atom feed. No live run: no code of the app changed, and the test counts are as they
+  were.
