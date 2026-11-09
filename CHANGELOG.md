@@ -14,6 +14,15 @@ split by subsystem.
 
 ## [Unreleased]
 
+## [0.25.0] — 2026-11-09
+
+**Faster backups, and pictures pasted by name.** A backup and a restore now use every
+core: on a 352 MB data folder a backup takes three seconds where it took eleven, and a
+restore over existing data four where it took 35 — and the files in a backup keep their
+dates. A pasted picture can be named by what it shows, a copied picture file can be
+pasted, and the clipboard works on Wayland desktops. Nothing in your data moves to a new
+format.
+
 ### Added
 
 - **Pasted pictures can have names that say what they show.** With Settings → Images →
@@ -54,7 +63,9 @@ split by subsystem.
   holds the database compacted, so a restore of one no longer compacts it again; on a
   352 MB data folder with a 285 MB database a restore into an empty folder took under
   a second instead of nine, and one over existing data twelve seconds instead of 35.
-  Archives from older versions, or from other tools, are still compacted.
+  Backups have held the database compacted since 0.9.5, so older versions' archives
+  skip the step too; a database that has space to give back, as one packed by hand or
+  by another tool may, is still compacted.
 - **The backup's compression level and thread count are settings.** Settings → Data
   has *Compression level* (6 by default, where it was 9 — on real data 9 made no
   smaller archive and took a fifth longer) and *Threads* (0 — all cores; never more
@@ -88,6 +99,30 @@ split by subsystem.
   reads there is the remote machine's, not the one you copied to; instead of asking
   you to copy the image again, the message now says so and points at `/image attach`
   with a copied file or an address.
+
+### Data
+
+- **No data upgrade.** Every file keeps its format — the settings at schema 7, the
+  chats at 8 — so nothing is migrated at the first start, and going back to 0.24.0
+  needs no backup restored.
+- **Backups are the same zip as before.** Checked with the published 0.24.0: it reads
+  (`mindfork stats`) and restores an archive this version made — with a password and
+  without, its 49 MB database packed in pieces — and comes back with the same
+  fingerprint and the same database rows; this version restores 0.24.0's archives the
+  same way. 0.24.0 dates the restored files at the restore, as it always did. With a
+  password, an archive's entry dates are now readable without it, as its entry names
+  and sizes already were.
+- `settings.json` gains `images.name_pasted` and a `backup` section (`compression`,
+  `threads`). An addition: nothing is migrated. 0.24.0 starts on the file but does not
+  keep them: when it next saves the settings they are gone, and back on this version
+  they read as their defaults — off, level 6, every core.
+- **A pasted picture's name** — `clipboard/sunset-lake.png`, `clipboard-2.png` — is
+  stored in the chat file as any picture's name is; 0.24.0 reads a chat holding them
+  and counts both pictures.
+- **A database's tables are created in one transaction**, `data.db`'s and
+  `cache.db`'s: on a slow disk a new database opens in about a hundredth of a second
+  where it took a third, a failure partway leaves no half-made schema, and a newer
+  version's database is refused with nothing written to it.
 
 ## [0.24.0] — 2026-11-08
 
@@ -3960,7 +3995,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.24.0...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.25.0...HEAD
+[0.25.0]: https://github.com/vshylov/mindfork-rs/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/vshylov/mindfork-rs/compare/v0.23.1...v0.24.0
 [0.23.1]: https://github.com/vshylov/mindfork-rs/compare/v0.23.0...v0.23.1
 [0.23.0]: https://github.com/vshylov/mindfork-rs/compare/v0.22.0...v0.23.0
