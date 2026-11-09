@@ -1610,20 +1610,39 @@ impl SettingsScreen {
 
     /// The "Memory" section: knowledge-base chunking (RAG), notes, "self-model".
     /// The "Data" section: settings about the data root itself rather than about
-    /// the agent — currently the backup password (spec §12.3). Its own section
-    /// because none of the others is about stored data, and a security setting
-    /// filed under an unrelated heading is a setting nobody finds.
+    /// the agent — the backups: their password, level and thread count (spec
+    /// §12.3). Its own section because none of the others is about stored data,
+    /// and a security setting filed under an unrelated heading is a setting
+    /// nobody finds.
     pub(super) fn data_fields(&self) -> Vec<FieldRow> {
         let loc = self.loc();
+        let backup = &self.config.backup;
+        // The thread count's description names this computer's cores: what `0`
+        // means here, and where a larger number stops counting (F4).
+        let cores = crate::features::backup::machine_cores().to_string();
         grouped(
             loc.t("ui.settings.group.backup"),
-            vec![secret_row(
-                FieldId::BackupPassword,
-                self.secret_present(Some(&SecretKey::BackupPassword)),
-                loc.t("ui.settings.field.backup_password"),
-                "ui.settings.desc.backup_password",
-                loc,
-            )],
+            vec![
+                secret_row(
+                    FieldId::BackupPassword,
+                    self.secret_present(Some(&SecretKey::BackupPassword)),
+                    loc.t("ui.settings.field.backup_password"),
+                    "ui.settings.desc.backup_password",
+                    loc,
+                ),
+                num_field(
+                    FieldId::BackupCompression,
+                    loc.t("ui.settings.field.backup_compression"),
+                    backup.compression,
+                )
+                .describe(loc.t("ui.settings.desc.backup_compression")),
+                num_field(
+                    FieldId::BackupThreads,
+                    loc.t("ui.settings.field.backup_threads"),
+                    backup.threads,
+                )
+                .describe(loc.tf("ui.settings.desc.backup_threads", &[("cores", &cores)])),
+            ],
         )
     }
 

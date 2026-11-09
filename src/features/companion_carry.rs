@@ -543,7 +543,7 @@ mod tests {
         backup::create_backup(
             &paths,
             Some(backup_zip.clone()),
-            1,
+            backup::Packing::at(1),
             None,
             None,
             en(),

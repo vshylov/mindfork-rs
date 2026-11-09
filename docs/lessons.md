@@ -183,6 +183,19 @@ first and check the images come back byte-identical, which is cheap because the
 pipeline is deterministic.
 — *the canvas padding measured in cells*.
 
+**When only the change can be carried into a committed screenshot, compare in RGB
+and mask per channel.** The committed PNGs are Windows renders, so a Linux render
+differs in a fallback icon's box, and the way to regenerate is to paste into the
+committed image only the pixels where the new Linux render differs from the old
+one. Two Pillow defaults make that step lie: `getbbox()` on an RGBA difference
+looks at the **alpha** band alone and reports "no change" for two images that differ
+everywhere else, and a mask made with `convert("L")` drops a difference that sits in
+one channel and rounds to zero in luminance. Convert to RGB, build the mask from the
+per-band maximum, and check the result against both images — differing from the
+committed one in the change's box only, and from the new render in the icon's box
+only.
+— *backup and restore on a pool of threads*.
+
 **Anything a build script stamps into the binary goes stale the moment the script
 declares `rerun-if-changed`.** Cargo then re-runs it for those paths *only* — ours
 are `dictionaries/`, `assets/`, `syntaxes/` — so editing `src/` rebuilds the binary

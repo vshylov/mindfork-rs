@@ -1907,6 +1907,8 @@
     "использует слабую функцию выработки ключа, короткий пароль подбирается перебором.",
     "Имена файлов и их размеры в архиве видны и без пароля — шифруется содержимое."
   ],
+  "ui.settings.desc.backup_compression": "0–9: при 0 файлы кладутся без сжатия, 9 даёт самый маленький архив и работает дольше всего. Действует на `mindfork backup` без -c и на копии, которые приложение делает само, — перед восстановлением и перед обновлением данных. По умолчанию 6.",
+  "ui.settings.desc.backup_threads": "Сколько потоков упаковывают и распаковывают резервную копию. 0 — все ядра этого компьютера ({cores}); большее число считается как {cores}.",
   "ui.settings.desc.api_key": [
     "Ключ вводится здесь и хранится зашифрованным, привязанным к этому компьютеру.",
     "Показать сохранённый ключ нельзя — правка вводит его заново; Del удаляет.",
@@ -2162,6 +2164,8 @@
   "ui.settings.field.api_key": "API-ключ",
   "ui.settings.field.api_key_named": "API-ключ {name}",
   "ui.settings.field.backup_password": "Пароль резервных копий",
+  "ui.settings.field.backup_compression": "Степень сжатия",
+  "ui.settings.field.backup_threads": "Потоков",
   "ui.settings.field.api_key_env": "API-ключ (env)",
   "ui.settings.field.api_key_env_named": "API-ключ {name} (env)",
   "ui.settings.field.base_url": "Base URL (опц.)",
@@ -2977,7 +2981,7 @@
   "cli.help.opt.help": "Показать справку.",
   "cli.help.opt.version": "Показать версию.",
   "cli.help.opt.backup.output": "Путь к создаваемому архиву (по умолчанию backups/mindfork-backup-<дата>.zip).",
-  "cli.help.opt.backup.compression": "Степень сжатия 0..9 (0 — без сжатия).",
+  "cli.help.opt.backup.compression": "Степень сжатия 0..9 (0 — без сжатия); по умолчанию — из настроек, если не меняли — 6.",
   "cli.help.opt.backup.password": "Зашифровать архив этим паролем (по умолчанию — пароль из настроек, если задан).",
   "cli.help.opt.restore.password": "Пароль зашифрованного архива (по умолчанию — пароль из настроек; иначе будет запрошен).",
   "cli.help.opt.sandbox.force": "Перекачать/переустановить всё, даже если уже на месте.",

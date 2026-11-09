@@ -4342,6 +4342,47 @@ fn api_key_field_shows_status_in_cloud_modes_only() {
     assert!(!set.contains("sk-"));
 }
 
+/// The backup's level and thread count (spec §12.3, docs/research/backup-speed.md
+/// F2–F4): two described integer rows in "Data" beside the password. A level above
+/// 9 is clamped to 9; the thread count is stored as typed — the cap at the cores is
+/// applied where the threads start, so a portable root keeps what it was given on
+/// a bigger machine — and its description names this machine's cores.
+#[test]
+fn backup_level_and_threads_commit_from_the_data_section() {
+    fn edit(id: FieldId, typed: &str) -> AppConfig {
+        let mut s = screen();
+        goto_section(&mut s, Section::Data);
+        match type_into(&mut s, id, typed) {
+            Some(SettingsIntent::SaveConfig(c)) => *c,
+            other => panic!("{id:?} {typed:?}: expected SaveConfig, got {other:?}"),
+        }
+    }
+    let s = screen();
+    let rows = s.data_fields();
+    let shown = |id| {
+        rows.iter()
+            .find(|f| f.id == id)
+            .map(|f| value_text(&f.kind, s.loc()))
+            .expect("a backup row")
+    };
+    assert_eq!(shown(FieldId::BackupCompression), "6");
+    assert_eq!(shown(FieldId::BackupThreads), "0");
+    for id in [FieldId::BackupCompression, FieldId::BackupThreads] {
+        assert_eq!(field_num_kind(id), Some(NumKind::Int), "{id:?}");
+    }
+    assert!(field_desc(&s, FieldId::BackupCompression).is_some());
+    let cores = crate::features::backup::machine_cores().to_string();
+    let threads = field_desc(&s, FieldId::BackupThreads).expect("described");
+    assert!(threads.contains(&cores), "{threads}");
+    assert!(!threads.contains("{cores}"), "{threads}");
+
+    assert_eq!(edit(FieldId::BackupCompression, "1").backup.compression, 1);
+    assert_eq!(edit(FieldId::BackupCompression, "0").backup.compression, 0);
+    assert_eq!(edit(FieldId::BackupCompression, "12").backup.compression, 9);
+    assert_eq!(edit(FieldId::BackupThreads, "3").backup.threads, 3);
+    assert_eq!(edit(FieldId::BackupThreads, "4096").backup.threads, 4096);
+}
+
 /// The backup password behaves exactly like an API key: a status instead of the
 /// value, an empty masked editor, a commit as its own intent, and `Del` to clear
 /// it. Spec §12.3.

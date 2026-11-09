@@ -784,6 +784,11 @@ src/
 │  ├─ backup.rs             data backup/restore (zip, transactional, optional AES-256
 │  │                        password — spec §12.3); reports phase progress through a
 │  │                        callback, the CLI prints it (sandbox_setup's shape)
+│  │  └─ parallel.rs        the worker pool both halves run on: an entry compressed
+│  │                        whole into a one-entry zip on a worker, appended raw
+│  │                        (`raw_copy_file`) by the writer as it lands, the database's
+│  │                        compaction the first job; unpacking on per-worker handles
+│  │                        (docs/research/backup-speed.md)
 │  ├─ data_stats.rs         `mindfork stats` (spec §12.4): a read-only summary of the live
 │  │                        data or of a backup archive — a tolerant projection of the chat
 │  │                        file, `db::stats_of_file`/`stats_of_image` for data.db, text and
@@ -4888,7 +4893,15 @@ Principles:
   same as an API key); `manifest.json` stays plain so the "newer version"
   warning works without it, validation rejects a missing/wrong password
   before the destructive phase, and the pre-restore and pre-migration copies
-  inherit the password. See spec §12.3, docs/history/backup-password.md. `data.db` is **compacted** on both paths (`VACUUM`, see the
+  inherit the password. See spec §12.3, docs/history/backup-password.md.
+  **Both halves run on a pool of threads** (`features/backup/parallel.rs`):
+  `backup.threads` workers, never more than the cores, at the level
+  `backup.compression` holds (6 by default; `-c` overrides it for `backup`, and
+  the pre-restore and pre-migration copies always use it). The writer is the
+  calling thread and the only one touching the archive, which keeps the zip
+  writer unshared; a bounded channel and an 8 MiB spill-to-scratch threshold keep
+  memory proportional to the pool. The archive stays the zip a single thread
+  wrote; only the entries' order differs (docs/research/backup-speed.md). `data.db` is **compacted** on both paths (`VACUUM`, see the
   storage section above): the archive carries a compacted copy instead of
   the live file (sidecars folded in), and a restore compacts what it
   unpacked; best effort, and the backup never modifies the source.

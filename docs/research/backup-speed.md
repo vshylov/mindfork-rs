@@ -4,7 +4,11 @@
 same day. **F1** parallel zip, not 7z; **F2** the level is a setting, 6 by
 default; **F3** the internal copies take the level the setting holds; **F4** the
 thread count is a setting, never more than the machine's cores. The plan in §7
-is written for these answers.
+is written for these answers, and was **built** the same day: `backup` 4.5 s →
+1.1 s, `restore` over data 5.9 s → 2.0 s on the release binary, live **GO** on
+Linux — what was built, the tests and the mutations are in
+[docs/journal/storage.md](../journal/storage.md). The owner's Windows machine is
+the go/no-go still open.
 
 **Related:** spec §12.3, architecture §7,
 [docs/history/backup-password.md](../history/backup-password.md) (the encryption

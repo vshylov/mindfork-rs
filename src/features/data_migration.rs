@@ -154,12 +154,14 @@ fn run_with(
     // a setting that says "my backups are encrypted" must not have an exception
     // that quietly writes a plaintext copy of everything. Safe to read ahead of
     // the migration — the secrets list is additive and has never been migrated.
+    // So are the level and the thread count, which the backup takes from there too
+    // (docs/research/backup-speed.md F3).
     let backup_path = backup::default_backup_path(paths, "pre-migrate");
-    let password = stored_backup_password(paths);
+    let (password, packing) = stored_backup_inputs(paths);
     backup::create_backup(
         paths,
         Some(backup_path.clone()),
-        9,
+        packing,
         None,
         password.as_deref(),
         loc,
@@ -203,14 +205,22 @@ fn run_with(
     Ok(())
 }
 
-/// The backup password stored in the settings, read straight from the raw JSON
+/// The backup password stored in the settings and the archive's packing — the
+/// level and the thread count — read straight from the raw JSON
 /// ([`backup::backup_settings`]).
 ///
 /// Runs before storage opens and before any migration, so the typed `AppConfig`
 /// isn't available. Every failure (no file, corrupt JSON, no entry, a foreign
-/// machine's entry) reads as "no password", which is the pre-existing behaviour.
-fn stored_backup_password(paths: &Paths) -> Option<String> {
-    backup::backup_settings(paths).ok()?.stored_password
+/// machine's entry) reads as "no password", which is the pre-existing behaviour,
+/// and as the default packing.
+fn stored_backup_inputs(paths: &Paths) -> (Option<String>, backup::Packing) {
+    match backup::backup_settings(paths) {
+        Ok(inputs) => (
+            inputs.stored_password,
+            backup::Packing::from_settings(&inputs.archive),
+        ),
+        Err(_) => (None, backup::Packing::default()),
+    }
 }
 
 /// The two refusals a file can earn by what it holds: it is not JSON
@@ -724,6 +734,48 @@ mod tests {
         };
         assert_eq!(m.schemas, before_the_step);
         assert_eq!(m.app_version, env!("CARGO_PKG_VERSION"), "who wrote it");
+    }
+
+    /// The pre-migration backup is packed at the level the settings hold, like
+    /// every copy the app makes itself (docs/research/backup-speed.md F3): at 0
+    /// its data entries are stored, at the default they are deflated. Read from
+    /// the raw settings, before the settings themselves are migrated.
+    #[test]
+    fn the_pre_migrate_backup_is_packed_at_the_settings_level() {
+        use zip::CompressionMethod;
+        for (level, method) in [
+            (Some(0), CompressionMethod::Stored),
+            (None, CompressionMethod::Deflated),
+        ] {
+            let (_dir, paths) = root_before_generated_pictures();
+            if let Some(level) = level {
+                let raw = fs::read_to_string(paths.settings_file()).unwrap();
+                let mut settings: Value = serde_json::from_str(&raw).unwrap();
+                settings["backup"] = json!({ "compression": level });
+                write(&paths.settings_file(), &settings.to_string());
+            }
+
+            run(&paths, ru()).unwrap();
+
+            let archive = fs::read_dir(paths.backups_dir())
+                .unwrap()
+                .map(|e| e.unwrap().path())
+                .find(|p| p.to_string_lossy().contains("pre-migrate"))
+                .expect("a pre-migrate backup");
+            let mut zip = zip::ZipArchive::new(fs::File::open(&archive).unwrap()).unwrap();
+            let methods: Vec<_> = (0..zip.len())
+                .filter_map(|i| {
+                    let e = zip.by_index_raw(i).unwrap();
+                    let data = backup::entry_name(&e) != "manifest.json" && e.size() > 0;
+                    data.then(|| e.compression())
+                })
+                .collect();
+            assert!(!methods.is_empty());
+            assert!(
+                methods.iter().all(|m| *m == method),
+                "{level:?}: {methods:?}"
+            );
+        }
     }
 
     /// One chat already at this build's schema among older ones makes the

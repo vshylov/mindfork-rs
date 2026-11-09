@@ -33,6 +33,19 @@ split by subsystem.
   copied pictures are attached together, up to the per-message limit; copied files
   that are not pictures are named and left out.
 
+### Changed
+
+- **Backups and restores are three to four times faster.** Packing and unpacking now
+  use every core instead of one: on four cores a backup of a 110 MB data folder takes
+  about a second instead of four and a half, and a restore over existing data two
+  seconds instead of six. The archive is the same zip — older versions and 7-Zip open
+  it as before.
+- **The backup's compression level and thread count are settings.** Settings → Data
+  has *Compression level* (6 by default, where it was 9 — on real data 9 made no
+  smaller archive and took a fifth longer) and *Threads* (0 — all cores; never more
+  than the computer has). `mindfork backup -c` still overrides the level for one run;
+  the copies the app makes before a restore and before a data upgrade use the setting.
+
 ### Fixed
 
 - **The clipboard works on Wayland desktops.** On a session with no XWayland the app

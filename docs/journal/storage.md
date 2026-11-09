@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (31)
+## Entries (32)
 
 - Post-M9: persisting the input-box draft in the chat file (done)
 - Post-M9: persisting deleted exchanges in the chat file (`Ctrl+E`/`Ctrl+R`) (done)
@@ -43,6 +43,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a restore no longer writes over the copy it is restoring (done)
 - Post-M9: a chat file that holds no chat no longer stops the start (done)
 - Post-M9: the schema in one transaction (done)
+- Post-M9: backup and restore on a pool of threads, the level and threads as settings (done)
 
 ### Post-M9: persisting the input-box draft in the chat file (done)
 - **Unsaved input-box text is stored on the chat and restored on
@@ -1777,3 +1778,63 @@ the track; fixed on its own branch.
 
 **Gates**: 4717 unit tests green, 307 `#[ignore]` (Linux); clippy `-D warnings`, fmt,
 `cyrillic_scan` and `layer_check` clean.
+
+### Post-M9: backup and restore on a pool of threads, the level and threads as settings (done)
+
+- **What**: `mindfork backup` and `restore` packed and unpacked on one core, and most
+  of a restore was not the unpacking but the level-9 pre-restore copy before it
+  (measured: ~4.1 s of 5.3 s). Both now run on a pool of worker threads
+  (`features/backup/parallel.rs`); the level and the thread count are settings.
+  Research and every fork in [docs/research/backup-speed.md](../research/backup-speed.md).
+- **The owner's decisions (2026-11-09)**: F1 — a parallel zip, not 7z (`sevenz-rust2`
+  wrote a 20–45 % smaller archive but took 10.4 s on four threads at level 6, and its
+  encryption is unauthenticated); F2 — the level is a setting, 6 by default (9
+  compressed no better and took ~20 % longer); F3 — the pre-restore and pre-migration
+  copies use the setting's level; F4 — the thread count is a setting, never more than
+  the cores.
+- **How**: jobs taken in order — the database first (its `VACUUM INTO` and its packing
+  are the longest chain, so the chats are packed while it runs), then the manifest's
+  schema scan, then the files largest first. A worker compresses (and encrypts) one
+  file whole into a one-entry zip; the calling thread appends it with `raw_copy_file`
+  in completion order and writes the manifest last. The channel holds `threads`
+  entries and an entry of 8 MiB or more waits in a scratch file beside the archive,
+  so memory follows the pool, not the root (peak RSS 29 MB here). Unpacking gives
+  each worker its own `ZipArchive`; the first error stops the pool and is the run's,
+  so the rollback is unchanged. `backup.compression`/`backup.threads` are read from
+  the raw JSON like the password (a non-number is that value's default); in the
+  typed config they are an additive section, and two rows in Settings → Data.
+- **Live run — GO** (no engine path, so the real CLI stands in, AGENTS.md §3): the
+  release binary against 0.24.0's on the same synthetic 110 MB root of 482 files,
+  4 vCPU, with a password, two rounds. `backup` 4.52–4.84 s → **1.07 s** at the new
+  default (1.42 s at `-c 9`); `restore` over existing data 5.86–6.59 s → **2.00 s**;
+  into an empty root 2.82 s → 0.89 s. All four restored roots byte-identical (482
+  files, `data.db` included); `pyzipper` reads the new archive with 0 mismatches and
+  the manifest last; 0.24.0 restores the new archive and the new build 0.24.0's, both
+  byte-identical; a wrong password still refused before anything is touched. The
+  owner's Windows machine and real data are the open go/no-go of the research's §7.
+- **Screenshots**: the settings menu counts the "Data" section's rows (1 → 3), so the
+  four settings dumps were regenerated. The committed PNGs are Windows renders, so
+  only the change was carried over, as before (ui-input.md): each new PNG is the
+  committed one with the pixels where the new Linux render differs from the old one
+  (the digit's 13×16 box) — checked to differ from the committed image in that box
+  alone and from the Linux render in the icon's box alone. The SVGs are the new
+  renders; they also pick up "Memory 26", which the committed SVGs had missed.
+- **Tests** (+13): a pool of 4 packs the names and bytes one worker does, with a
+  password and without, manifest last and recording the packed database's schema; a
+  spilled entry packs the same and leaves no scratch file; an unreadable file fails
+  the pack with its name and leaves no scratch; a pool unpacks what one worker does
+  and the source's files; an unwritable entry fails the pool with its path; the
+  pre-restore copy and the pre-migration backup are packed at the given level
+  (stored at 0, deflated at 6); the raw read of the two values; the worker count
+  never passes the cores; `-c` over the settings; the screen's rows (clamped at 9,
+  threads stored as typed, the cores in the description); the section is additive;
+  an entry waits in memory or in a scratch file by its size.
+  **Mutation-tested**, nine mutations in two batches, each caught by its own test:
+  the cap at the cores, a fixed level 9 for the pre-restore copy, the default
+  packing for the pre-migration backup, never spilling, the raw and the screen's
+  clamp, `-c` ignored, the manifest's database schema left 0, a scratch file never
+  removed.
+
+**Gates**: 4769 unit tests green, 310 `#[ignore]` (Linux); clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check`
+clean.
