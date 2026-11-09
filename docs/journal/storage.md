@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (32)
+## Entries (33)
 
 - Post-M9: persisting the input-box draft in the chat file (done)
 - Post-M9: persisting deleted exchanges in the chat file (`Ctrl+E`/`Ctrl+R`) (done)
@@ -44,6 +44,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a chat file that holds no chat no longer stops the start (done)
 - Post-M9: the schema in one transaction (done)
 - Post-M9: backup and restore on a pool of threads, the level and threads as settings (done)
+- Post-M9: a backup's entries carry their files' dates (done)
 
 ### Post-M9: persisting the input-box draft in the chat file (done)
 - **Unsaved input-box text is stored on the chat and restored on
@@ -1838,3 +1839,50 @@ the track; fixed on its own branch.
 **Gates**: 4769 unit tests green, 310 `#[ignore]` (Linux); clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check`
 clean.
+
+### Post-M9: a backup's entries carry their files' dates (done)
+
+- **What**: every entry of a backup was dated 1980-01-01 00:00 — the owner saw it in
+  7-Zip on the Windows run of the parallel backup. `zip` is built without a time
+  feature, so `FileOptions::default()` wrote the format's default date; 0.24.0's
+  archives carry it too, so it predates the pool. Now an entry is written with its
+  file's modification time (`features/backup/dates.rs`): the compacted database with
+  the newest of the database's files (a write that reached only the `-wal` is in the
+  copy), the manifest with the time it is written; a companion export's entries with
+  the export's time. A restore gives every file its date back — a stored file's after
+  its origin mark, since on NTFS writing that stream would date the file anew — best
+  effort, as a date is not data. `data.db` alone keeps the restore's time: the restore
+  compacts it in place.
+- **The 1980 default reads as no date**, so a file from an older archive is dated when
+  it is restored, as before, not set back to 1980.
+- **Safe for the search index**: `cache.db` survives a restore and keys each chat on
+  the file's `(mtime, size)`. The archive's date is whole seconds and the index's
+  milliseconds, so a restored chat never matches the stored pair and is re-indexed —
+  the same outcome as a file dated at the restore.
+- **What `zip` does not keep — measured**: the entry is written with the DOS date
+  (local time, two-second steps) and the extended timestamp (`UT`, Unix seconds UTC),
+  but the pool appends entries with `raw_copy_file`, and `zip` 9.1.3 and 9.5.0 drop
+  the `UT` field from a raw copy — `ExtraField::write` serializes no extended
+  timestamp ("nothing to do"), so `raw_copy_options` never re-adds it. A probe wrote
+  the field locally, centrally and both, plain and AES: every direct archive had it,
+  no copied one did. So a backup's entries carry the DOS date alone, rounded down to
+  an even second and read back in local time; the manifest and a companion export,
+  written directly, carry both. `a_raw_copy_drops_the_extended_timestamp` pins this
+  and fails when `zip` keeps the field, at which point backups carry exact UTC times
+  with no other change.
+- **Live**: a debug build's backup of the 110 MB root — Info-ZIP's `unzip -Z` shows
+  each entry's own date and the manifest's; a restore gives `settings.json` 13:25:26
+  for a file of 13:25:27.7 (the DOS step) and the chats theirs; 0.24.0 restores the
+  new archive, 481 files identical.
+- **Tests** (+7): a dated entry reads back its date; the default reads as none; a DOS
+  date alone reads as local time; a date one field cannot hold (past 2038, before
+  1980) is kept by the other; the raw-copy pin; a backup carries its files' dates —
+  in memory and spilled, encrypted, an odd second as the even one, the database's
+  newest, the manifest's now — and a restore gives them back; an undated archive
+  restores its files dated now. The companion export test checks its entries are
+  dated. **Mutation-tested**: the 1980-as-none rule, the `UT` field, and the
+  database's date each fail their tests.
+- Also: the `[Unreleased]` changelog had two *Changed* headings since #912 — merged.
+
+**Gates**: 4776 unit tests green, 310 `#[ignore]` (Linux); clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.

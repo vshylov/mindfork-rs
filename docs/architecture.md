@@ -784,11 +784,14 @@ src/
 │  ├─ backup.rs             data backup/restore (zip, transactional, optional AES-256
 │  │                        password — spec §12.3); reports phase progress through a
 │  │                        callback, the CLI prints it (sandbox_setup's shape)
-│  │  └─ parallel.rs        the worker pool both halves run on: an entry compressed
+│  │  ├─ parallel.rs        the worker pool both halves run on: an entry compressed
 │  │                        whole into a one-entry zip on a worker, appended raw
 │  │                        (`raw_copy_file`) by the writer as it lands, the database's
 │  │                        compaction the first job; unpacking on per-worker handles
 │  │                        (docs/research/backup-speed.md)
+│  │  └─ dates.rs           the dates entries carry: written as the file's mtime (DOS
+│  │                        date + `UT` field; a raw copy keeps the DOS date only),
+│  │                        read back on restore, the 1980 default read as none
 │  ├─ data_stats.rs         `mindfork stats` (spec §12.4): a read-only summary of the live
 │  │                        data or of a backup archive — a tolerant projection of the chat
 │  │                        file, `db::stats_of_file`/`stats_of_image` for data.db, text and

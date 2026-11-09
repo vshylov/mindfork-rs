@@ -28,14 +28,15 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::thread;
+use std::time::SystemTime;
 
 use anyhow::{Context, Result, anyhow};
-use zip::write::{FileOptions, SimpleFileOptions};
+use zip::write::{FileOptions, FullFileOptions, SimpleFileOptions};
 use zip::{AesMode, CompressionMethod, ZipArchive, ZipWriter};
 
 use super::{
     BackupManifest, DB_FILES, Entry, EntryProgress, MANIFEST_NAME, SchemaVersions, ScratchFile,
-    ZipSpec, compacted_db, entry_name, file_len, normalize,
+    ZipSpec, compacted_db, dated, entry_name, file_len, normalize,
 };
 use crate::shared::i18n::Locale;
 use crate::shared::paths::Paths;
@@ -294,7 +295,7 @@ impl Writer {
         let manifest =
             serde_json::to_vec_pretty(&manifest).context("serializing backup manifest")?;
         self.zip
-            .start_file(MANIFEST_NAME, plain)
+            .start_file(MANIFEST_NAME, dated(plain, Some(SystemTime::now())))
             .with_context(|| loc.tf("backup.ctx.write_entry", &[("name", MANIFEST_NAME)]))?;
         io::copy(&mut manifest.as_slice(), &mut self.zip)
             .with_context(|| loc.tf("backup.ctx.pack", &[("path", MANIFEST_NAME)]))?;
@@ -324,14 +325,7 @@ fn run_job(
         }
         Job::Schemas => Ok(Landed::Schemas(SchemaVersions::held_by(paths))),
         Job::File(entry) => Ok(Landed::Entries {
-            packed: vec![pack_file(
-                &entry.abs,
-                &entry.name,
-                entry.len,
-                options,
-                scratch,
-                loc,
-            )?],
+            packed: vec![pack_file(entry, options, scratch, loc)?],
             db_schema: None,
         }),
     }
@@ -340,6 +334,9 @@ fn run_job(
 /// The database job: a compacted copy packed as `data.db`, or — when there is no
 /// copy to be had — the raw files with their sidecars. Returns the packed entries
 /// and the `user_version` of the database file that went in (`0` — none).
+///
+/// The copy is dated by the newest of the files it was made of: a write that
+/// reached only the `-wal` sidecar is in the copy, and so is its time.
 fn pack_database(
     paths: &Paths,
     out_path: &Path,
@@ -351,41 +348,46 @@ fn pack_database(
     if !live.is_file() {
         return Ok((Vec::new(), 0));
     }
+    let raw: Vec<Entry> = DB_FILES
+        .iter()
+        .map(|name| (paths.root().join(name), name))
+        .filter(|(abs, _)| abs.is_file())
+        .map(|(abs, name)| {
+            let meta = fs::metadata(&abs).ok();
+            Entry::of(abs, (*name).to_string(), meta.as_ref())
+        })
+        .collect();
     if let Some(compact) = compacted_db(paths, out_path) {
         let schema = db::header_user_version(compact.path()).unwrap_or(0);
-        let len = file_len(compact.path());
-        let packed = pack_file(compact.path(), "data.db", len, options, scratch, loc)?;
+        let entry = Entry {
+            abs: compact.path().to_path_buf(),
+            name: "data.db".into(),
+            len: file_len(compact.path()),
+            mtime: raw.iter().filter_map(|e| e.mtime).max(),
+        };
+        let packed = pack_file(&entry, options, scratch, loc)?;
         // The copy is removed here, once packed — its compressed entry is a
         // copy of its own, in memory or in a scratch file.
         return Ok((vec![packed], schema));
     }
     let schema = db::header_user_version(&live).unwrap_or(0);
-    let mut packed = Vec::new();
-    for name in DB_FILES {
-        let abs = paths.root().join(name);
-        if abs.is_file() {
-            packed.push(pack_file(
-                &abs,
-                name,
-                file_len(&abs),
-                options,
-                scratch,
-                loc,
-            )?);
-        }
-    }
+    let packed = raw
+        .iter()
+        .map(|entry| pack_file(entry, options, scratch, loc))
+        .collect::<Result<_>>()?;
     Ok((packed, schema))
 }
 
-/// Compresses the file at `abs` into a zip holding it alone, as `name`.
+/// Compresses `entry`'s file into a zip holding it alone, under its name and
+/// dated by its modification time ([`dated`]).
 fn pack_file(
-    abs: &Path,
-    name: &str,
-    len: u64,
+    entry: &Entry,
     options: &EntryOptions<'_>,
     scratch: &Scratch<'_>,
     loc: &Locale,
 ) -> Result<Packed> {
+    let (abs, name, len) = (&entry.abs, entry.name.as_str(), entry.len);
+    let options = dated(*options, entry.mtime);
     let mut src = File::open(abs)
         .with_context(|| loc.tf("backup.ctx.open", &[("path", &abs.display().to_string())]))?;
     if len >= scratch.spill_over {
@@ -416,12 +418,12 @@ fn pack_file(
 fn write_one<W: Write + Seek>(
     mut zip: ZipWriter<W>,
     name: &str,
-    options: &EntryOptions<'_>,
+    options: FullFileOptions<'_, 'static>,
     src: &mut File,
     abs: &Path,
     loc: &Locale,
 ) -> Result<W> {
-    zip.start_file(name, *options)
+    zip.start_file(name, options)
         .with_context(|| loc.tf("backup.ctx.write_entry", &[("name", name)]))?;
     io::copy(src, &mut zip)
         .with_context(|| loc.tf("backup.ctx.pack", &[("path", &abs.display().to_string())]))?;
@@ -572,6 +574,7 @@ fn extract_entry(
             )
         })?;
     }
+    let mtime = super::dates::entry_mtime(&entry);
     let mut out = File::create(&dest).with_context(|| {
         loc.tf(
             "backup.ctx.create_file",
@@ -590,8 +593,23 @@ fn extract_entry(
     if rel.starts_with("files") {
         drop(out);
         crate::features::chat_files::mark(&dest, Some(crate::shared::os_open::FROM_ELSEWHERE));
+        if let Some(mtime) = mtime {
+            // After the mark: on NTFS writing its stream would date the file anew.
+            let reopened = fs::OpenOptions::new().write(true).open(&dest);
+            set_mtime(reopened, &dest, mtime);
+        }
+    } else if let Some(mtime) = mtime {
+        set_mtime(Ok(out), &dest, mtime);
     }
     Ok(())
+}
+
+/// Gives a restored file the date its entry carries. Best effort: a date is not
+/// data, and a restore that put every byte back must not fail over one.
+fn set_mtime(file: io::Result<File>, dest: &Path, mtime: SystemTime) {
+    if let Err(e) = file.and_then(|f| f.set_modified(mtime)) {
+        tracing::warn!(path = %dest.display(), error = %e, "restore: the file's date was not set");
+    }
 }
 
 #[cfg(test)]
@@ -629,9 +647,14 @@ mod tests {
             text
         };
 
+        let entry = Entry {
+            abs: src.clone(),
+            name: "chats/a.json".into(),
+            len,
+            mtime: None,
+        };
         let below = scratch(dir.path(), len + 1);
-        let Packed::Memory { name, bytes } =
-            pack_file(&src, "chats/a.json", len, &options, &below, loc).unwrap()
+        let Packed::Memory { name, bytes } = pack_file(&entry, &options, &below, loc).unwrap()
         else {
             panic!("an entry below the threshold waits in memory");
         };
@@ -640,9 +663,7 @@ mod tests {
             unpack(&mut || ZipArchive::new(Box::new(Cursor::new(bytes.clone())) as _).unwrap());
 
         let at = scratch(dir.path(), len);
-        let Packed::Spilled { file, .. } =
-            pack_file(&src, "chats/a.json", len, &options, &at, loc).unwrap()
-        else {
+        let Packed::Spilled { file, .. } = pack_file(&entry, &options, &at, loc).unwrap() else {
             panic!("an entry at the threshold waits in a scratch file");
         };
         let path = file.path().to_path_buf();
