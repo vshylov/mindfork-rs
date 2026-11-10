@@ -51,11 +51,25 @@ button:disabled { opacity: .55; cursor: default; }
 .titlebar { display: flex; justify-content: space-between; padding: 6px 10px; background: var(--panel);
   border-bottom: 1px solid var(--line); font: 12px/1.4 var(--mono); color: var(--muted); user-select: none; }
 .caption { letter-spacing: .5em; }
-.terminal { padding: 6px; overflow: hidden; }
-.ended { position: absolute; inset: 30px 0 0; display: flex; flex-direction: column; align-items: center;
-  justify-content: center; gap: 4px; background: rgba(9, 9, 11, .88); }
+/* The script gives the box the grid's size before there is a terminal in it,
+   so the window is its final size while the demo loads and after it ends.
+   Not `.terminal`: xterm.js gives that class to its own element, which then
+   took this padding a second time and lost its last column to it. */
+.grid { padding: 6px; overflow: hidden; }
+/* The terminal keeps no scrollback here, and its viewport's own scrollbar -
+   a classic one wherever scrollbars are not overlays - sat under the grid's
+   last column. */
+.grid .xterm-viewport { overflow-y: hidden !important; }
+/* What lies over the terminal's place: the loading notice, and the end. */
+.cover { position: absolute; inset: 31px 0 0; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 12px; background: var(--bg); font: 14px/1.5 var(--mono); color: var(--muted); }
+.cover p { margin: 0; }
 /* `display: flex` above would otherwise beat the attribute. */
-.ended[hidden] { display: none; }
+.cover[hidden] { display: none; }
+progress { width: min(320px, 60%); height: 6px; appearance: none; border: 0; background: var(--line); }
+progress::-webkit-progress-bar { background: var(--line); }
+progress::-webkit-progress-value { background: var(--accent); }
+progress::-moz-progress-bar { background: var(--accent); }
 .status { margin: 10px 0 0; font: 13px/1.5 var(--mono); color: var(--muted); min-height: 1.5em; }
 .keys { color: var(--muted); font-size: 14px; }
 .keys p { margin: 6px 0; max-width: 100ch; }

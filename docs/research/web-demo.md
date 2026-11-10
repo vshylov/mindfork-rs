@@ -1,9 +1,9 @@
 # An interactive demo on mindfork.io — research
 
 Status: **route decided (the owner, 2026-11-10): the emulator, starting with the
-probe** (§9); **stage 1 — the probe — built and measured** (§12), and its
-go/no-go waits for the owner's own browsers. Four routes compared; what this
-machine could measure is measured (§3), what it could not is named (§10).
+probe** (§9); **stage 1 — the probe — GO** (the owner, 2026-11-10, in Chrome,
+Firefox and Edge; §12.7). Four routes compared; what this machine could measure
+is measured (§3), what it could not is named (§10).
 
 ## 1. Context and goal
 
@@ -555,10 +555,37 @@ demo's first frame 3.6 s after being asked.
 
 ### 12.6 Not done
 
-- **Firefox, Safari and a real keyboard** — which chords each browser keeps, and
-  the feel. That is the go/no-go, and it is the owner's.
+- **Safari** — nobody here has a Mac. Firefox, Chrome, Edge and a real keyboard
+  were the owner's run (§12.7).
 - **Resize** (the virtio console's message) and **fullscreen with the keyboard
   lock**: the grid is fixed and scaled.
 - **The multilib path of `build_i686.sh`**, the one a CI runner would take.
 - **The light look and Russian**: the state holds one theme and one language.
+
+### 12.7 The go/no-go — GO
+
+**The owner, 2026-11-10**, on Windows in Chrome, Firefox and Edge (Edge as Chrome):
+"the demo works excellently — no worse than JupyterLab", and an unambiguous go.
+
+- **Speed**: "very decent". A lag shows only while `Up` or `Down` is held on a list
+  in the settings — a key repeating thirty times a second against a screen that
+  takes 31–47 ms.
+- **Keys**: the only ones that do not arrive are the three the page names. `F5` and
+  `Ctrl+R` reach the application and do not reload the tab.
+- **The page**, four defects, all the page's own and all fixed on the branch:
+  - a scrollbar under the grid's right edge, eating its last column. xterm.js's
+    viewport keeps a classic scrollbar wherever scrollbars are not overlays — a
+    headless browser hides them, which is why the probe's own run never drew it —
+    and the page's `.terminal` rule had been applied twice, because xterm.js gives
+    that class to its own element;
+  - a window a few characters wide while the demo loaded, and the same one under
+    "The demo has ended". The window now has the grid's size in all three states,
+    with the progress of the download in it; the size is worked out as the
+    terminal works it out, and checked at four window sizes and four display
+    scales;
+  - the design is the probe's and not the site's — stage 3 uses the site's own
+    styles.
+- **The application**, one: the settings named Russian as the framework language
+  of the demo's English companion. The fixture's defect, in any terminal; fixed on
+  a branch of its own (`fix/demo-profile-language`).
 

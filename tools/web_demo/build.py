@@ -41,6 +41,8 @@ FONTS = ["JetBrainsMono-Regular.woff2", "JetBrainsMono-Bold.woff2", "JetBrainsMo
 # What a press of Start downloads: everything but the page itself and its faces.
 ON_START = ["vendor/libv86.js", "vendor/v86.wasm", "vendor/seabios.bin", "vendor/vgabios.bin", "vendor/xterm.js",
             "vendor/xterm.css", "state.bin.zst", "primer.bin", "machine.json"]
+# The part of it the emulator fetches itself, and reports the progress of.
+BY_EMULATOR = ["vendor/v86.wasm", "vendor/seabios.bin", "vendor/vgabios.bin", "state.bin.zst"]
 
 
 def run(command: list[str]) -> None:
@@ -116,6 +118,8 @@ def main() -> int:
         "@COLS@": str(machine["cols"]),
         "@ROWS@": str(machine["rows"]),
         "@DOWNLOAD_MB@": f"{on_start / 1e6:.0f}",
+        "@DOWNLOAD_BYTES@": str(on_start),
+        "@MACHINE_BYTES@": str(sum((SITE / name).stat().st_size for name in BY_EMULATOR)),
         **pinned_versions(),
     }
     for mark, value in replacements.items():

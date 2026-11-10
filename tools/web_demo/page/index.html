@@ -30,16 +30,21 @@
       The demo will start, but its text will be small: it is made for a desktop browser.</p>
   </section>
 
-  <section id="stage" class="stage" hidden>
+  <section id="stage" class="stage" hidden data-cols="@COLS@" data-rows="@ROWS@"
+           data-bytes="@DOWNLOAD_BYTES@" data-machine-bytes="@MACHINE_BYTES@">
     <div class="window">
       <div class="titlebar"><span class="title">mindfork demo</span><span class="caption" aria-hidden="true">─ □ ✕</span></div>
-      <div id="terminal" class="terminal"></div>
-      <div id="ended" class="ended" hidden>
+      <div id="terminal" class="grid"></div>
+      <div id="loading" class="cover" hidden>
+        <p id="loading-text">Loading the demo…</p>
+        <progress id="loading-bar" max="1" value="0"></progress>
+      </div>
+      <div id="ended" class="cover" hidden>
         <p>The demo has ended.</p>
         <button id="again-button" type="button">Start again</button>
       </div>
     </div>
-    <p id="status" class="status" role="status">Loading…</p>
+    <p id="status" class="status" role="status"></p>
     <div id="keys" class="keys" hidden>
       <p>Click the terminal, then type; a question is already waiting in the input box, and <kbd>Enter</kbd> sends it.
         <kbd>F1</kbd> help and every command · <kbd>Esc</kbd> the chat list ·

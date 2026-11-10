@@ -630,9 +630,9 @@ effort tiers and Fabula — have all closed
   emulator in the visitor's tab — nothing changes in the application and the
   site stays static. Stage 1, the probe, is built and measured: 21.5 MB on a
   click, the first frame about 4 s later on a 50 Mbit/s line, a typed character
-  12 ms after its key. Its go/no-go is the owner trying it in their own
-  browsers; the pipeline and the page follow
-  ([web-demo.md §9, §12](research/web-demo.md)).
+  12 ms after its key — and **GO** from the owner in Chrome, Firefox and Edge.
+  Next: stage 2, the release's pipeline, and stage 3, the page in the site's own
+  design ([web-demo.md §9, §12](research/web-demo.md)).
 - **A Russian version of the site** — **deferred**, on F4's own terms
   ([mindfork-io-website.md §8](research/mindfork-io-website.md), S4).
 - **CloudFront's flat-rate plan with WAF** — **deferred** until traffic asks

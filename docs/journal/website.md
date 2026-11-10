@@ -1611,7 +1611,15 @@ both on `main` at `88e5ce29`, the merge of the pull request.
   frame **4.1–4.2 s** after the click on a 50 Mbit/s line (5), a typed character handed
   to the terminal a median of **12 ms** after its key. A screen opens in 15–105 ms where
   it takes 3–56 natively. Measured in headless Chromium 156 and under Node 22 on the
-  droplet; Firefox, Safari and a real keyboard are the owner's go/no-go.
+  droplet.
+- **GO** (the owner, 2026-11-10, Chrome, Firefox and Edge on Windows): "works
+  excellently — no worse than JupyterLab"; a lag only while a key repeats on a settings
+  list; the only keys that do not arrive are the three the page names. Their four
+  defects of the page are fixed on the branch — a classic scrollbar under the grid's
+  last column (a headless browser hides scrollbars, so the probe's own run never drew
+  it), a window a few characters wide while loading and after the end, and a class name
+  xterm.js also uses — and the fifth, the demo's profile naming Russian as its
+  language, was the fixture's and has a branch of its own.
 - **What made the state small enough**: 33.6 MB as first saved; 23.5 with the kernel
   zeroing the pages it frees (`init_on_free=1`), because a freed page keeps its bytes
   and a saved machine keeps the page; 18.5 with the guest image's own `/usr` deleted
