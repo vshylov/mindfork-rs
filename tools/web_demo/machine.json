@@ -1,0 +1,7 @@
+{
+  "cols": 116,
+  "rows": 44,
+  "memory_size": 134217728,
+  "vga_memory_size": 2097152,
+  "cmdline": "tsc=reliable mitigations=off random.trust_cpu=on init_on_free=1"
+}

@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mindfork - try the interface</title>
+<meta name="description" content="The mindfork interface, running in your browser tab: a demo of the program's interface with a scripted engine, not a session with a real model.">
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="demo.css">
+</head>
+<body>
+<main>
+  <header>
+    <p class="mark"><span class="fork">mindfork</span> <span class="tag">demo</span></p>
+    <h1>Try the interface</h1>
+    <p class="lead">The program's own interface, running in this browser tab. Nothing to install.</p>
+  </header>
+
+  <section class="notice" aria-label="What this demo is">
+    <p><strong>This is a demo of the program's interface, not a session with a real model.</strong>
+    A scripted engine answers with a few fixed replies, whatever you ask. Everything around them is
+    the program itself: its screens, keys, commands, streaming and settings.</p>
+  </section>
+
+  <section id="start" class="start">
+    <button id="start-button" type="button">Start the demo</button>
+    <p class="size">Downloads about @DOWNLOAD_MB@&nbsp;MB once. It needs a keyboard and a desktop-sized window: the
+      interface is drawn at @COLS@&nbsp;×&nbsp;@ROWS@ characters, as large as the window allows.</p>
+    <p id="narrow" class="warn" hidden>This window is smaller than the interface needs, or this device has no keyboard.
+      The demo will start, but its text will be small: it is made for a desktop browser.</p>
+  </section>
+
+  <section id="stage" class="stage" hidden>
+    <div class="window">
+      <div class="titlebar"><span class="title">mindfork demo</span><span class="caption" aria-hidden="true">─ □ ✕</span></div>
+      <div id="terminal" class="terminal"></div>
+      <div id="ended" class="ended" hidden>
+        <p>The demo has ended.</p>
+        <button id="again-button" type="button">Start again</button>
+      </div>
+    </div>
+    <p id="status" class="status" role="status">Loading…</p>
+    <div id="keys" class="keys" hidden>
+      <p>Click the terminal, then type; a question is already waiting in the input box, and <kbd>Enter</kbd> sends it.
+        <kbd>F1</kbd> help and every command · <kbd>Esc</kbd> the chat list ·
+        <kbd>Ctrl+P</kbd> settings · <kbd>F3</kbd> the assistant's self-model · <kbd>Ctrl+Q</kbd> or <code>/exit</code> quit.</p>
+      <p>Your browser keeps <kbd>Ctrl+N</kbd>, <kbd>Ctrl+T</kbd> and <kbd>Ctrl+W</kbd> for itself. Type
+        <code>/new</code>, <code>/thoughts</code> and <code>/mouse</code> instead: every key has a typed command.</p>
+    </div>
+  </section>
+
+  <section class="about">
+    <h2>What is running here</h2>
+    <p>mindfork @VERSION@, the same program you would install, built for 32-bit x86 and running inside
+      a PC emulated in WebAssembly, in this tab. Nothing is installed, nothing you type leaves your browser,
+      and closing the tab discards it. The engine that answers is a script; the machine has no network, so a
+      real model cannot be connected here.</p>
+    <p>It is slower here than on your computer, and the terminal is the browser's rather than yours: fonts,
+      colours and a few keys differ. To use it for real,
+      <a href="https://mindfork.io/install/">install it</a> and run <code>mindfork demo</code> or connect a model.</p>
+  </section>
+
+  <section class="licences">
+    <h2>Licences</h2>
+    <p>mindfork is <a href="https://github.com/vshylov/mindfork-rs/blob/main/LICENSE">MIT</a>; what it is built
+      from is listed in its
+      <a href="https://github.com/vshylov/mindfork-rs/blob/main/THIRD-PARTY-NOTICES.md">third-party notices</a>.
+      This page also runs and redistributes the following, each under its own licence:</p>
+    <ul>
+      <li><a href="https://github.com/copy/v86">v86</a> @V86_VERSION@, the x86 emulator —
+        <a href="vendor/LICENSE.v86">BSD-2-Clause</a>.</li>
+      <li><a href="https://github.com/xtermjs/xterm.js">xterm.js</a> @XTERM_VERSION@, the terminal —
+        <a href="vendor/LICENSE.xterm">MIT</a>.</li>
+      <li><a href="https://www.seabios.org/">SeaBIOS</a> 1.16.2 and its VGA BIOS —
+        <a href="https://github.com/copy/v86/blob/master/bios/COPYING.LESSER">LGPL-3.0</a>; source:
+        <a href="https://git.seabios.org/cgit/seabios.git/tag/?h=rel-1.16.2">rel-1.16.2</a>, built by
+        <a href="https://github.com/copy/v86/blob/master/bios/fetch-and-build-seabios.sh">v86's script</a>.</li>
+      <li>The <a href="https://kernel.org/">Linux kernel</a> 6.8.12 —
+        <a href="https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/tree/COPYING?h=v6.8.12">GPL-2.0</a>;
+        source: <a href="https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.8.12.tar.xz">linux-6.8.12.tar.xz</a>.
+        It is the kernel of the <a href="https://copy.sh/v86/?profile=buildroot">Buildroot image</a> published by
+        v86's author, built with <a href="https://buildroot.org/">Buildroot</a> (GPL-2.0-or-later).</li>
+      <li><a href="https://busybox.net/">BusyBox</a> (GPL-2.0) and
+        <a href="https://uclibc-ng.org/">uClibc-ng</a> 1.0.45 (LGPL-2.1), from the same image.</li>
+      <li>The <a href="https://sourceware.org/glibc/">GNU C Library</a> 2.39 (LGPL-2.1-or-later), the GCC runtime
+        library <code>libgcc_s</code> (GPL-3.0-or-later with the GCC Runtime Library Exception) and the
+        <a href="https://www.alsa-project.org/">ALSA library</a> 1.2.11 (LGPL-2.1-or-later), unmodified, from
+        Ubuntu 24.04's packages
+        <a href="https://packages.ubuntu.com/noble/libc6-i386"><code>libc6-i386</code></a>,
+        <a href="https://packages.ubuntu.com/noble/lib32gcc-s1"><code>lib32gcc-s1</code></a> and
+        <a href="https://packages.ubuntu.com/noble/libasound2t64"><code>libasound2t64</code></a>; their sources are
+        the <a href="https://packages.ubuntu.com/source/noble/glibc">glibc</a>,
+        <a href="https://packages.ubuntu.com/source/noble/gcc-14">gcc-14</a> and
+        <a href="https://packages.ubuntu.com/source/noble/alsa-lib">alsa-lib</a> source packages.</li>
+      <li><a href="https://www.jetbrains.com/lp/mono/">JetBrains Mono</a>, the typeface —
+        <a href="fonts/OFL.txt">SIL Open Font License 1.1</a>.</li>
+    </ul>
+  </section>
+</main>
+<script src="demo.js"></script>
+</body>
+</html>
