@@ -589,3 +589,99 @@ demo's first frame 3.6 s after being asked.
   of the demo's English companion. The fixture's defect, in any terminal; fixed on
   a branch of its own (`fix/demo-profile-language`).
 
+## 13. Stage 2 — groundwork, measured before the pipeline is written
+
+Branch `feat/web-demo-pipeline`, 2026-11-10. Two questions the pipeline's design
+hangs on were put to the emulator first.
+
+### 13.1 A guest made of named packages (F2)
+
+The probe's guest was the Buildroot image v86's site boots: it works, and nobody
+can say exactly what is in it. The same demo was started on **Alpine 3.24's own
+32-bit kernel** (`linux-virt` 6.18.62) **and an initramfs written here**
+([`tools/web_demo/initramfs.py`](../../tools/web_demo/initramfs.py)): a static
+BusyBox from Alpine's package, a certificate bundle, the application with its four
+libraries and loader, and an `/init` of a dozen lines. No distribution is installed
+in the guest; no file in it is of unknown origin.
+
+- **It boots and draws**: the kernel reaches `/init` in 3.8 s, the demo's first
+  frame is complete 7.5 s after power-on, and it is the same 7 259 bytes as on the
+  Buildroot kernel. Nothing but the two files is needed — no 9p share, no shell
+  session to script.
+- **The state is 3 MB larger**: 69.8 MB, 21.6 MB compressed, against the probe's
+  18.5. The bare kernel is 7.5 MB of that — a distribution's kernel has 10 MB of
+  code where Buildroot's had 5. A click then downloads about **24.7 MB**: inside
+  the floor of 25, by 0.3 MB, counted uncompressed in transit. CloudFront will
+  compress the emulator and the terminal on the way (§3.4), which is some 2 MB
+  off; the margin is real but thin, and a kernel built for the purpose is what
+  would widen it.
+- **Two things the initramfs had to learn.** Alpine's BusyBox has no `cttyhack`:
+  the application gets its controlling terminal by being started in a new session
+  that opens the terminal itself. And **a terminal nobody holds open forgets its
+  size**: `stty` on the device, then the application, gave a window of nothing by
+  nothing and a frame with nothing in it — the size is now set on the very
+  descriptors the application inherits.
+
+### 13.2 A terminal the size of the visitor's window
+
+The probe scales one grid, 116×44, to whatever window it finds: 10 px text in a
+1280×720 window. The alternative is a real resize, and a serial line cannot carry
+one. **The virtio console can**: Alpine's kernel has it built in, v86 implements
+its resize message, and with the application started on `/dev/hvc0`:
+
+| | Bytes | Key or message → last byte |
+|---|---|---|
+| `F1` | 12 818 | 89 ms |
+| `Esc` | 9 372 | 40 ms |
+| the window resized | 8 440 | 80 ms |
+| resized again, larger | 10 101 | 73 ms |
+
+The application redraws itself for the new size in the time a screen takes to
+open, as it does when a real terminal window is dragged.
+
+**One trap**: the two numbers arrived swapped. A message of 100 columns by 30 rows
+gave the application a window 30 columns wide. v86 0.5.473 and this kernel
+disagree on the order of the two fields in the message; the page has to send them
+in the order the pinned kernel reads, and the state's check has to prove it by
+resizing and measuring what comes back — or a kernel update turns every visitor's
+terminal on its side.
+
+### 13.3 What stages 2 and 3 are, after this
+
+**Stage 2 — the pipeline** (`feat/web-demo-pipeline`):
+
+1. The tools move from the probe's guest to §13.1's, on the virtio console, and
+   `verify_state.mjs` gains the resize check of §13.2.
+2. A manifest written by the build — every redistributed piece with its version,
+   licence and source — so that the page's list is the build's own and not prose.
+3. A `web-demo` job in `release.yml`, **not a gate**, as the reel's is: the 32-bit
+   build with the runner's multilib, the state, its check, one asset
+   (`mindfork-webdemo.tar`) covered by the checksums and the attestation.
+4. Rehearsed with a prerelease tag before the release that carries it
+   (AGENTS.md §6).
+
+**Stage 3 — the page** (`feat/web-demo-page`): a page of the site, in the site's
+templates and styles; the deploy fetches the asset from the newest release that
+has one, as it fetches the reel; the terminal takes the window's size at a fixed,
+readable font; the notice, the keys and the licences from the manifest; the
+hero's `$ mindfork demo` hint gains a link.
+
+Forks for the owner:
+
+- **F6 — pinning the guest's kernel.** Alpine keeps only the newest build of a
+  package in a branch, so a URL pinned by hash stops resolving within weeks.
+  (a) **Alpine's release images, which are kept forever** — the kernel out of
+  `alpine-virt-3.24.4-x86.iso`, BusyBox and the certificates out of
+  `alpine-minirootfs-3.24.4-x86.tar.gz`, each pinned by its published sha256 —
+  **recommended**: it never rots and fails closed; it costs a 51 MB download per
+  build and thirty lines that read a file out of an ISO. (b) The branch's packages
+  pinned by hash: simplest, and broken by the next kernel update. (c) The branch's
+  newest packages, verified against Alpine's signing key: never rots, but the
+  kernel floats under the demo — and §13.2's trap is a kernel's to spring.
+- **F7 — the page's address.** `/demo/` is where the reel's files live, and the
+  deploy treats that prefix as its own. (a) **`/try/` — recommended**; (b) another
+  name; (c) `/demo/`, with the deploy's two passes reworked around it.
+- **F8 — the certificate bundle.** (a) **Fix the application's panic (§12.5) and
+  ship no bundle — recommended**: one piece fewer to carry and to name; (b) carry
+  the bundle and leave the defect on the roadmap.
+
