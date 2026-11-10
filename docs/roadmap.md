@@ -619,6 +619,11 @@ effort tiers and Fabula — have all closed
 
 ### Website
 
+- **An interactive demo in the browser** — **idea**, researched (2026-11-10)
+  and waiting on the owner's forks: the release's own binary, built for 32-bit
+  x86, in an emulator in the visitor's tab is the one route that changes nothing
+  in the application and keeps the site static; a probe has to say whether it
+  feels right ([web-demo.md §9](research/web-demo.md)).
 - **A Russian version of the site** — **deferred**, on F4's own terms
   ([mindfork-io-website.md §8](research/mindfork-io-website.md), S4).
 - **CloudFront's flat-rate plan with WAF** — **deferred** until traffic asks
