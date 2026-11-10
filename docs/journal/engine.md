@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (111)
+## Entries (112)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -123,6 +123,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: persona drift, measured before it is fought — the companion track's C10 (done)
 - Post-M9: a tool's picture re-homed on every OpenAI-compatible endpoint (done)
 - Post-M9: thinking off reaches Claude (done)
+- Post-M9: an HTTP client on a system with no certificates (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -7330,3 +7331,49 @@ off.
   of Sonnet's refusal and the kept shape were each killed by the tests.
 
 **Gates**: as PR 4's (docs/journal/stories.md).
+
+### Post-M9: an HTTP client on a system with no certificates (done)
+
+- **Why** (branch `fix/no-ca-start`). The web demo's guest is a kernel and a handful of
+  files, and in it the application died before its first frame: `a client with no TLS
+  options must build`, from `guarded_client` in `shared/net.rs`. The same happens in any
+  terminal with `SSL_CERT_FILE=/dev/null mindfork demo` — and in a minimal container
+  that carries no certificate bundle, with a real engine too.
+- **The cause is not that one call.** On Linux `reqwest` verifies servers against the
+  system's CA certificates (`rustls-platform-verifier`), and with none it refuses to
+  build **any** client: `Client::builder().build()` is an error, `Client::new()` a panic
+  — for a client that would only ever speak plain HTTP to a local `llama-server` too.
+  The application built its clients in twenty places, three ways: a builder with a
+  fallback to `Client::new()` ("the same behaviour", as three comments said — the same
+  panic), `unwrap_or_default()`, and `Client::new()` itself. The first one reached at
+  start was the fetch guard's; behind it stood the YouTube tool's.
+- **One way to build a client** — `shared::net::build_client(configure)`, and
+  `plain_client()` for the unconfigured one. A refusal is answered with a second build
+  that trusts **no** certificate (`tls_certs_only` with an empty set): `http://` works,
+  `https://` fails when the request is made, with a certificate error — the right
+  failure at the right time. `configure` is applied to both builds, so the fetch guard
+  is the same guard — resolver, redirect policy, timeout — either way; its old fallback
+  dropped the timeout and still panicked. If even the rootless build fails the TLS
+  backend is broken, and that stays a panic. The log says it once, with the cause
+  `reqwest` keeps two levels down: `builder error: unexpected error: No CA certificates
+  were loaded from the system`.
+- **Every production call site is on it**: the fetch guard, `engine_client`, the
+  catalogue, Telegram, the YouTube tool, the local-servers look, ntfy, and the bare
+  `Client::new()` of speech, recognition, image and video providers and the two probes.
+  Left as they were: the three downloaders (`llama_setup`, `sandbox_setup`,
+  `image_fetch`), which already return an error and fetch over HTTPS only.
+- **Tests**: +4 in `shared::net` — the client that builds is used as it is, a refusal
+  is answered with the rootless one, a backend that builds nothing still panics, and
+  with `reqwest` for real a client with no trusted certificate builds, speaks plain HTTP
+  to the stub and carries what `configure` set. 4795 unit tests green, 310 `#[ignore]`.
+- **Smoke — GO** (2026-11-10; `llama-server` with Gemma 4 E2B Q8 on the droplet's CPU,
+  the system's own certificates in place — the clients every provider now gets):
+  `the_local_server_catalogue_e2e_live`; `fetch_url_address_policy_e2e_live`, a turn
+  that fetches through the guard; and in
+  `fetched_page_is_searched_in_its_birth_turn_e2e_live` the page fetched over HTTPS and
+  its search finding five fragments. That smoke's last assertion — the model quoting
+  two numbers from the page — failed both times on this 2B model; it is about the
+  model, not the client. And the defect itself, in a pseudo-terminal:
+  `SSL_CERT_FILE=/dev/null mindfork demo` panicked before the fix and draws its first
+  frame after it, with the one warning in its log.
+

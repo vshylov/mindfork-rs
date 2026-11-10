@@ -94,7 +94,7 @@ pub struct GatewayImages {
 impl GatewayImages {
     pub fn new(cfg: ImageGenConfig) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: crate::shared::net::plain_client(),
             cfg: ImageGenConfig {
                 model: cfg.model.trim().to_string(),
                 ..cfg

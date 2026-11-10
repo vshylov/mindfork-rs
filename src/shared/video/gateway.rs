@@ -54,7 +54,7 @@ pub struct GatewayVideo {
 impl GatewayVideo {
     pub fn new(cfg: VideoConfig) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: crate::shared::net::plain_client(),
             cfg: VideoConfig {
                 base_url: cfg.base_url.trim_end_matches('/').to_string(),
                 model: cfg.model.trim().to_string(),

@@ -195,10 +195,9 @@ pub async fn ntfy_send(
     body: &str,
 ) -> Result<(), String> {
     let url = ntfy_url(topic, title)?;
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|e| e.to_string())?;
+    let client = crate::shared::net::build_client(|builder| {
+        builder.timeout(std::time::Duration::from_secs(15))
+    });
     let mut req = client.post(url).body(clean(body));
     if let Some(token) = token.map(str::trim).filter(|t| !t.is_empty()) {
         req = req.bearer_auth(token);

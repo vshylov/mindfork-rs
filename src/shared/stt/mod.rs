@@ -174,7 +174,7 @@ pub fn transcriber(hearing: &Hearing, memo: Arc<WavMemo>) -> Result<Transcriber,
         }
     };
     Ok(Transcriber {
-        http: reqwest::Client::new(),
+        http: crate::shared::net::plain_client(),
         endpoint: format!("{}/audio/transcriptions", base.trim_end_matches('/')),
         wire,
         key,

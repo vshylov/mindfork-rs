@@ -50,7 +50,7 @@ pub struct XaiImages {
 impl XaiImages {
     pub fn new(cfg: ImageGenConfig) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: crate::shared::net::plain_client(),
             cfg,
         }
     }

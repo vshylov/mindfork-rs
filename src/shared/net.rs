@@ -367,23 +367,89 @@ impl GuardedClient {
 }
 
 /// The `reqwest::Client` behind [`GuardedClient`]. Private: on its own it is not a guard.
+/// Built by [`build_client`], so on a system with no certificates the guard is the same
+/// guard — resolver, redirect policy, timeout — over a client that trusts nobody.
 fn guarded_client(policy: AddressPolicy, timeout: Duration) -> reqwest::Client {
-    reqwest::Client::builder()
-        .timeout(timeout)
-        .dns_resolver(Arc::new(GuardedResolver { policy }))
-        .redirect(redirect_policy(policy))
-        .build()
-        // The builder only fails when the TLS backend cannot be initialised, which is what
-        // `Client::new()` panics on — but falling back to an *unguarded* client would turn
-        // a TLS problem into a policy hole, so the guard is rebuilt without the timeout
-        // instead.
-        .unwrap_or_else(|_| {
-            reqwest::Client::builder()
-                .dns_resolver(Arc::new(GuardedResolver { policy }))
-                .redirect(redirect_policy(policy))
+    build_client(|builder| {
+        builder
+            .timeout(timeout)
+            .dns_resolver(Arc::new(GuardedResolver { policy }))
+            .redirect(redirect_policy(policy))
+    })
+}
+
+/// Builds an HTTP client — **the way every client in the application is built**.
+///
+/// On Linux `reqwest` verifies servers against the system's CA certificates, and where
+/// the system has none (a minimal container, the web demo's guest) it refuses to build
+/// a client at all: `Client::builder().build()` is an error and `Client::new()` a
+/// panic, for a client that would only ever speak plain HTTP to a local `llama-server`
+/// too. The application died at start there — `mindfork demo` included, which opens no
+/// connection (docs/research/web-demo.md §12.5).
+///
+/// So a refusal is answered with a second build that trusts **no** certificate:
+/// `http://` works, and an `https://` request fails when it is made, with a
+/// certificate error — the right failure at the right time. `configure` is applied to
+/// both builds, so whatever a caller sets (a timeout, a guarded resolver, a redirect
+/// policy) is on the client either way. If even that does not build, the TLS backend
+/// itself is broken, and that is still a panic.
+pub fn build_client(
+    configure: impl Fn(reqwest::ClientBuilder) -> reqwest::ClientBuilder,
+) -> reqwest::Client {
+    client_or_rootless(
+        configure(reqwest::Client::builder())
+            .build()
+            .map_err(with_causes),
+        || {
+            configure(reqwest::Client::builder())
+                .tls_certs_only(std::iter::empty::<reqwest::Certificate>())
                 .build()
-                .expect("a client with no TLS options must build")
-        })
+                .map_err(with_causes)
+        },
+    )
+}
+
+/// An error with what caused it: `reqwest` says only "builder error", and the
+/// sentence that matters — no CA certificates were loaded — is one level down.
+fn with_causes(err: reqwest::Error) -> String {
+    let mut text = err.to_string();
+    let mut cause = std::error::Error::source(&err);
+    while let Some(inner) = cause {
+        text.push_str(": ");
+        text.push_str(&inner.to_string());
+        cause = inner.source();
+    }
+    text
+}
+
+/// A client with nothing configured: what `reqwest::Client::new()` is, without its
+/// panic on a system with no certificates ([`build_client`]).
+pub fn plain_client() -> reqwest::Client {
+    build_client(|builder| builder)
+}
+
+/// The decision inside [`build_client`], apart from `reqwest` so that a test can hand
+/// it a refusal: the first build if it worked, otherwise the rootless one — said once
+/// in the log, since every client of the session will take the same road.
+fn client_or_rootless<C, E: std::fmt::Display>(
+    first: Result<C, E>,
+    rootless: impl FnOnce() -> Result<C, E>,
+) -> C {
+    static SAID: std::sync::Once = std::sync::Once::new();
+    match first {
+        Ok(client) => client,
+        Err(refusal) => {
+            SAID.call_once(|| {
+                tracing::warn!(
+                    "no HTTP client could be built ({refusal}); building clients that trust \
+                     no certificate — plain HTTP works, HTTPS requests will fail"
+                );
+            });
+            rootless().unwrap_or_else(|err| {
+                panic!("an HTTP client must build even with no trusted certificates: {err}")
+            })
+        }
+    }
 }
 
 /// The counting stub server these tests run against — and the live smoke too, so the
@@ -422,6 +488,65 @@ mod tests {
 
     fn ip(s: &str) -> IpAddr {
         s.parse().unwrap()
+    }
+
+    /// A client that built is the client; the rootless build is not even tried.
+    #[test]
+    fn a_client_that_builds_is_used_as_it_is() {
+        let got = client_or_rootless(Ok::<_, String>("first"), || {
+            panic!("the rootless build must not run")
+        });
+        assert_eq!(got, "first");
+    }
+
+    /// A refusal — what a system with no CA certificates answers — is not the end:
+    /// the rootless build stands in. This is the arm `mindfork demo` died in.
+    #[test]
+    fn a_refusal_is_answered_with_the_rootless_client() {
+        let refusal = Err("No CA certificates were loaded from the system".to_string());
+        let got = client_or_rootless(refusal, || Ok("rootless"));
+        assert_eq!(got, "rootless");
+    }
+
+    /// When even a client that trusts nobody will not build, the TLS backend is broken,
+    /// and that stays a panic — with the reason in it.
+    #[test]
+    #[should_panic(expected = "must build even with no trusted certificates: backend gone")]
+    fn a_backend_that_builds_nothing_is_still_a_panic() {
+        let _: &str = client_or_rootless(Err("no roots".to_string()), || {
+            Err("backend gone".to_string())
+        });
+    }
+
+    /// The rootless build itself, with `reqwest` for real: a client that trusts no
+    /// certificate builds — what the fallback stands on — and it is a client that
+    /// reaches a plain-HTTP server, the guard and all.
+    #[tokio::test]
+    async fn a_client_with_no_trusted_certificates_builds_and_speaks_plain_http() {
+        let rootless = reqwest::Client::builder()
+            .tls_certs_only(std::iter::empty::<reqwest::Certificate>())
+            .build()
+            .expect("a client with an empty set of roots builds");
+        let (base, _hits) = stub::counting_stub();
+        let body = rootless
+            .get(&base)
+            .send()
+            .await
+            .expect("plain HTTP needs no certificate")
+            .text()
+            .await
+            .unwrap();
+        assert!(!body.is_empty());
+        // And `configure` reaches the client `build_client` returns: one built
+        // with a 1 ms timeout gives up on a server that never answers.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let silent = format!("http://{}", listener.local_addr().unwrap());
+        let hurried = build_client(|builder| builder.timeout(Duration::from_millis(1)));
+        let err = hurried.get(&silent).send().await.unwrap_err();
+        assert!(
+            err.is_timeout(),
+            "the configured timeout was not applied: {err}"
+        );
     }
 
     /// The CIDR list and the predicate are two spellings of one policy, and the sandbox

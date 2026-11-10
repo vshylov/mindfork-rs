@@ -249,7 +249,7 @@ async fn thinking_model_rejects_prefill_and_the_kwarg_lifts_it() {
         return;
     };
     let base = url.trim_end_matches('/').to_string();
-    let http = reqwest::Client::new();
+    let http = crate::shared::net::plain_client();
     let models: serde_json::Value =
         crate::shared::api::live_bearer(http.get(format!("{base}/models")))
             .send()
@@ -437,7 +437,7 @@ async fn explicit_continuation_knobs_probe() {
         return;
     };
     let base = url.trim_end_matches('/').to_string();
-    let http = reqwest::Client::new();
+    let http = crate::shared::net::plain_client();
     let messages = serde_json::json!([
         {"role": "user", "content": QUESTION},
         {"role": "assistant", "content": PARTIAL},

@@ -246,12 +246,9 @@ impl TelegramClient {
     /// A client for the bot with `token` on the server at `api`
     /// ([`DEFAULT_API`] unless the settings name a self-hosted one).
     pub fn new(api: &str, token: &str) -> Self {
-        let http = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(10))
-            .build()
-            // Fails only when TLS cannot initialise, which `Client::new` panics
-            // on: the same behaviour, without the panic's message.
-            .unwrap_or_else(|_| reqwest::Client::new());
+        let http = crate::shared::net::build_client(|builder| {
+            builder.connect_timeout(Duration::from_secs(10))
+        });
         let api = api.trim_end_matches('/');
         let token = token.trim();
         Self {

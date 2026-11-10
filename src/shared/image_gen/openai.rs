@@ -30,7 +30,7 @@ pub struct OpenAiImages {
 impl OpenAiImages {
     pub fn new(cfg: ImageGenConfig) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: crate::shared::net::plain_client(),
             cfg,
         }
     }

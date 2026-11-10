@@ -902,7 +902,7 @@ async fn dialogue_probe_cache_slots_live() {
         return;
     };
     let base = url.trim_end_matches('/').to_string();
-    let http = reqwest::Client::new();
+    let http = crate::shared::net::plain_client();
     let fx = finite_fixture();
     let mut transcript = vec![Line {
         by_a: fx.opening_by_a,
