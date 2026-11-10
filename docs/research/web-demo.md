@@ -1,8 +1,8 @@
 # An interactive demo on mindfork.io — research
 
-Status: **research (2026-11-10)**. Four routes compared; what this machine could
-measure is measured (§3), what it could not is named (§10). The forks in §9 await
-the owner's decision — nothing is built.
+Status: **route decided (the owner, 2026-11-10): the emulator, starting with the
+probe** (§9). Four routes compared; what this machine could measure is measured
+(§3), what it could not is named (§10).
 
 ## 1. Context and goal
 
@@ -369,6 +369,13 @@ Forks for the owner:
 - **F5 — redistributing GPL and LGPL binaries from mindfork.io.** (a) **accept, with
   notices and the exact sources — recommended**; (b) not acceptable, which sends F2
   to (b) or F1 to (d).
+
+**The owner's decisions (2026-11-10):** F1(a) — the v86 probe; F4 — the proposed
+floors stand; F5(a) — the licences are named on the page, with links. One
+requirement added: **the page says plainly that it is a demo of the program's
+interface, not a full session with a real model.** F2 and F3 were not answered
+apart from that; the probe goes by their recommendations, and the page is where
+both show.
 
 **What would bring A back:** crossterm compiling for wasm upstream, the application
 being split into crates for a reason of its own, or the 32-bit route closing.
