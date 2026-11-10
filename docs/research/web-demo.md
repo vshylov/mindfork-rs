@@ -1,8 +1,9 @@
 # An interactive demo on mindfork.io — research
 
 Status: **route decided (the owner, 2026-11-10): the emulator, starting with the
-probe** (§9). Four routes compared; what this machine could measure is measured
-(§3), what it could not is named (§10).
+probe** (§9); **stage 1 — the probe — built and measured** (§12), and its
+go/no-go waits for the owner's own browsers. Four routes compared; what this
+machine could measure is measured (§3), what it could not is named (§10).
 
 ## 1. Context and goal
 
@@ -328,8 +329,8 @@ It would still be watching.
 | Hosting | static | **static** | a server | static |
 | Each month | ≈ $0 | **≈ $0** | $3.50–7.50, or per session | $0 |
 | What a visitor can break | nothing | **nothing** | a sandbox of ours | nothing |
-| Download | a few MB (not measured) | 2.5 MB of engine + a state (published ones are 5–20 MB; ours not measured), on a click | xterm.js | 1 MB today |
-| Response to a key | native | ≈ 15 ms estimated | the network's round trip | — |
+| Download | a few MB (not measured) | 21.5 MB on a click, measured (§12) | xterm.js | 1 MB today |
+| Response to a key | native | 9–16 ms for a typed character, measured (§12) | the network's round trip | — |
 | To build | weeks | a probe, then two stages | days, then operations | — |
 
 ## 9. Recommendation and forks
@@ -382,11 +383,9 @@ being split into crates for a reason of its own, or the 32-bit route closing.
 
 ## 10. Not measured
 
-- **v86 itself was not run.** The engine, its BIOS files and a guest image were
-  downloaded, but the session that wrote this could not execute downloaded
-  third-party code. Every figure for B beyond §3 is its author's or an estimate —
-  which is why stage 1 exists.
-- The state's size for this application, and the page's total download.
+- **v86 itself was not run** when §5 was written: the session could not execute
+  downloaded third-party code until the owner had chosen the route. Stage 1 ran
+  it; §12 has the figures, and §5's estimates stand beside them as written.
 - A wasm build's size: §3.2 never reached the application's code.
 - Safari's reserved keys, from a current primary source.
 - Whether GitHub's runners build `--platform linux/386` containers natively — only
@@ -447,3 +446,119 @@ Fetched 2026-11-09/10.
   [Lightsail](https://aws.amazon.com/lightsail/pricing/),
   [Fly.io](https://docs.fly.io/about/pricing),
   [Cloudflare Containers](https://developers.cloudflare.com/containers/pricing/).
+
+## 12. Stage 1 — the probe: what was built and measured
+
+Branch `spike/web-demo-v86`, 2026-11-10. Nothing is deployed and nothing is in a
+release; what the tools download and build lives under `target/web-demo/`.
+
+### 12.1 What was built
+
+[`tools/web_demo/`](../../tools/web_demo/README.md):
+
+- **`build_i686.sh`** — the 32-bit release binary, against 32-bit libraries
+  unpacked from Ubuntu's own packages with no root (§3.3's recipe as a script;
+  run from nothing, it gave the same 30 535 236 bytes in six minutes).
+- **`fetch.py`** — the third-party pieces, each pinned by a hash and checked on
+  every run: v86 0.5.473 and xterm.js 6.0.0 from their npm tarballs (the
+  registry's own integrity values), SeaBIOS 1.16.2's two images from v86's
+  repository at a named commit, and the guest's kernel image. v86 comes from its
+  versioned package, not from the repository's rolling release: a state restores
+  only on the build that saved it, and the two were byte-identical on the day.
+- **The guest** is the Buildroot image v86's own site boots — Linux 6.8.12,
+  BusyBox, uClibc — with the binary, its four libraries and loader, and a
+  certificate bundle copied into a RAM disk. A probe's shortcut: F2's guest from
+  named packages is stage 2's.
+- **`make_state.mjs`** boots it under Node, starts `mindfork demo` on the serial
+  terminal at 116×44 and saves the machine once the first frame is drawn;
+  **`verify_state.mjs`** restores that state in a fresh emulator and types into
+  it. `machine.json` holds the machine's options for both and for the page.
+- **The page** (`page/`): the notice the owner asked for — a demo of the
+  interface, not a session with a real model — then **Start**, the terminal,
+  the keys the browser keeps and their typed commands, what is running, and the
+  licences with links. Nothing but the page and its typeface (about 0.2 MB) is
+  loaded before the click.
+
+### 12.2 The three floors
+
+Measured on the droplet of §3 (four shared vCPUs), in headless Chromium 156 and
+under Node 22 — the same JavaScript engine. A visitor's laptop, Firefox and
+Safari are the owner's run.
+
+| Floor | Measured |
+|---|---|
+| First frame within 5 s of the click on a 50 Mbit/s line | **4.1 s and 4.2 s** in two runs — Chromium throttled to 50 Mbit/s with 20 ms of latency, its cache off. 9.3 s at 20 Mbit/s; 0.4 s from a local server; 0.35 s on a second visit |
+| No visible lag between a key and its character | the character is handed to the terminal a **median of 12 ms** after the key (twelve keys, two runs; the session's first, 60–69 ms), and painted on the browser's next frame. Whether that reads as none is the owner's to say |
+| At most 25 MB downloaded | **21.5 MB** (21 489 834 B in the build measured; the state differs by some kilobytes from one build to the next), counted uncompressed in transit: the state 18.45 MB, the emulator 2.37 MB, the terminal 0.50 MB, the BIOS 0.17 MB |
+
+### 12.3 A key to its frame
+
+Milliseconds from the key to the last byte of the frame it caused:
+
+| Beat | Native (§3.1's run) | v86 under Node | v86 in Chromium |
+|---|---|---|---|
+| A typed character | 1–2 of CPU | 9–16 | 10–19 |
+| `PageUp` / `PageDown` | 3 | 12–27 | 15–20 |
+| `F1` — help opens | 7 | 28–86 | 78–80 |
+| `Esc` — back to the chat | 5–8 | 16–43 | 18–37 |
+| `F3` — the self-model | 56 | 81–111 | 96–105 |
+| `Ctrl+P` — settings | 6–8 | 35–84 | 61–63 |
+| `Down` in settings | 3 | 31–47 | 37 |
+| `Enter` — a message sent, to the end of its scripted reply | 458 | 494–591 | 571–609 |
+
+Emulation costs a frame between four and fifteen times what it costs natively —
+around the author's ten — and the slowest screen, the self-model, still arrives
+in about a tenth of a second, where it takes 56 ms natively. The reply streams at
+its own pace: it is the script's delays, not the processor, that set it. The frames are the native ones: `F1`, `Esc`, `F3` and
+`Ctrl+P` write the same 12852, 9387, 7775 and 9208 bytes as §3.3's.
+
+Also checked in Chromium: Cyrillic typed into the input box arrives and is drawn;
+`Ctrl+Q` ends the demo, the page says so, and **Start again** has the next one
+running in 0.35 s; the console logged no error.
+
+### 12.4 The state
+
+The machine is 60.2 MB, and 18.5 MB as `zstd --ultra -22`. How it got there:
+
+| | Compressed |
+|---|---|
+| As first saved | 33.6 MB |
+| The kernel zeroing what it frees (`init_on_free=1`) | 23.5 MB — the guest alone 8.8, the files 13.5, the running application 1.2 |
+| The image's own `/usr` deleted before the start | **18.5 MB** |
+
+It restores in 0.3 s and needs no kernel image beside it, so that image is not
+downloaded. With no state the same machine boots to a shell in 2 s and draws the
+demo's first frame 3.6 s after being asked.
+
+### 12.5 Found on the way
+
+- **The application panics at start where the system has no certificate
+  bundle**: `guarded_client` in `src/shared/net.rs` ends in an `expect` that
+  fires when the TLS backend loads no CA certificate — `demo` included, which
+  never opens a connection. The guest is given a bundle; the defect is the
+  application's own and is on the roadmap.
+- **The demo opens with a draft in its input box**, so what a visitor types is
+  appended to it; the page says that `Enter` sends it.
+- **A terminal that restores a machine has to be shown the frame the application
+  already drew** — the application will only send what changes. The state is
+  saved with that frame's bytes beside it (`primer.bin`, 7 KB), and the page
+  plays them first, with nothing listening to the terminal's answers to the
+  queries inside.
+- **The grid has to fit the window's height, not only its width**: at 44 rows the
+  input box is the first thing to fall below the fold. The page takes the largest
+  font at which both fit — 13 px in a 1400×900 window.
+- **The tab weighs about 380 MB** more once the demo runs (the renderer's
+  resident memory): the guest's 128 MB, the state decompressed, the emulator's
+  translated code.
+- Seven glyphs come from the browser's fallback fonts, the seven the reel's
+  renderer also lacked (`✦ ⚒ ⟳ ∝ ₖ ᵥ ＋`).
+
+### 12.6 Not done
+
+- **Firefox, Safari and a real keyboard** — which chords each browser keeps, and
+  the feel. That is the go/no-go, and it is the owner's.
+- **Resize** (the virtio console's message) and **fullscreen with the keyboard
+  lock**: the grid is fixed and scaled.
+- **The multilib path of `build_i686.sh`**, the one a CI runner would take.
+- **The light look and Russian**: the state holds one theme and one language.
+

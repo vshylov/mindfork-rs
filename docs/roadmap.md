@@ -616,14 +616,23 @@ effort tiers and Fabula — have all closed
   restoring a stranger's backup restores its MCP commands; MCP stdout lines read
   unbounded; the site's CSP header and the Download button's contrast;
   `generation.rs`'s size as a contributor barrier.
+- **A start with no certificate bundle panics** — **on demand**: on a system
+  whose TLS backend finds no CA certificate (a minimal container, the demo's
+  guest) `guarded_client` in `src/shared/net.rs` ends in an `expect`, and the
+  application dies before its first frame — `mindfork demo` included, which
+  opens no connection. Found by the web demo's probe, which hands its guest a
+  bundle ([web-demo.md §12.5](research/web-demo.md)).
 
 ### Website
 
-- **An interactive demo in the browser** — **idea**, researched (2026-11-10)
-  and waiting on the owner's forks: the release's own binary, built for 32-bit
-  x86, in an emulator in the visitor's tab is the one route that changes nothing
-  in the application and keeps the site static; a probe has to say whether it
-  feels right ([web-demo.md §9](research/web-demo.md)).
+- **An interactive demo in the browser** — an open track; the route is the
+  owner's (2026-11-10): the release's own binary, built for 32-bit x86, in an
+  emulator in the visitor's tab — nothing changes in the application and the
+  site stays static. Stage 1, the probe, is built and measured: 21.5 MB on a
+  click, the first frame about 4 s later on a 50 Mbit/s line, a typed character
+  12 ms after its key. Its go/no-go is the owner trying it in their own
+  browsers; the pipeline and the page follow
+  ([web-demo.md §9, §12](research/web-demo.md)).
 - **A Russian version of the site** — **deferred**, on F4's own terms
   ([mindfork-io-website.md §8](research/mindfork-io-website.md), S4).
 - **CloudFront's flat-rate plan with WAF** — **deferred** until traffic asks

@@ -10,7 +10,7 @@ the reasoning behind the site, not its current shape. For the current shape
 read the research/design doc above; for the traps that recur across areas
 read [lessons.md](../lessons.md).
 
-## Entries (30)
+## Entries (31)
 
 - Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 - Post-M9: website — S2 infra: one CloudFormation stack, mindfork.io live (done)
@@ -42,6 +42,7 @@ read [lessons.md](../lessons.md).
 - Post-M9: website — the hero leads with the self-model, and the Ollama recipe (done)
 - Post-M9: website — the essay on what replaced code ownership (done)
 - Post-M9: website — the article on Fabula, the story engine that lost to one writer (done)
+- Post-M9: website — an interactive demo in the browser: research and the v86 probe (done)
 
 ### Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 
@@ -1585,3 +1586,47 @@ both on `main` at `88e5ce29`, the merge of the pull request.
 - An article, not a post: `extra.published` and no top-level `date`, so it stays out of
   the Atom feed. No live run: no code of the app changed, and the test counts are as they
   were.
+
+### Post-M9: website — an interactive demo in the browser: research and the v86 probe (done)
+
+- **Why** (branches `docs/web-demo`, `spike/web-demo-v86`). The owner asked whether
+  `mindfork demo` can be offered on the site, so that a visitor can judge the interface
+  without installing it. The research and its measurements are
+  [docs/research/web-demo.md](../research/web-demo.md); this entry is the outcome.
+- **Four routes, one chosen.** A WebAssembly port: nine dependencies fail to compile for
+  `wasm32-unknown-unknown` and ten for `wasm32-wasip1` before the crate's own code is
+  reached, and what follows is a second core and a gate for good. A terminal on a server:
+  the demo's settings can launch commands, so every visitor would hold a shell on a
+  machine of ours, on a site that has no machine. Recordings: what the site has. The
+  owner's decision (2026-11-10) is the fourth — **the release's own binary, built for
+  32-bit x86, in the v86 emulator in the visitor's tab** — starting with a probe.
+- **The application is a 32-bit program**, which nobody had asked before: it type-checks
+  for `i686-unknown-linux-gnu` with no error and no warning, links, runs, and draws the
+  same frames. And it is light — about 70 ms of CPU to start, one to two per key — which
+  is why an emulator's tenfold cost leaves it usable.
+- **The probe** (`tools/web_demo/`, nothing deployed): the emulator and the terminal
+  pinned by hash, the guest booted under Node with the binary in its RAM, the machine
+  saved once the demo has drawn its first frame, and a page that restores it on a click.
+  Against the three floors the owner accepted: **21.5 MB** downloaded (25), the first
+  frame **4.1–4.2 s** after the click on a 50 Mbit/s line (5), a typed character handed
+  to the terminal a median of **12 ms** after its key. A screen opens in 15–105 ms where
+  it takes 3–56 natively. Measured in headless Chromium 156 and under Node 22 on the
+  droplet; Firefox, Safari and a real keyboard are the owner's go/no-go.
+- **What made the state small enough**: 33.6 MB as first saved; 23.5 with the kernel
+  zeroing the pages it frees (`init_on_free=1`), because a freed page keeps its bytes
+  and a saved machine keeps the page; 18.5 with the guest image's own `/usr` deleted
+  before the application starts.
+- **The page says what it is** — a demo of the interface, not a session with a real
+  model, as the owner asked — and names the licences of everything it redistributes,
+  with links.
+- **Found on the way**: the application panics at start on a system with no certificate
+  bundle (`guarded_client`, `src/shared/net.rs`), `demo` included — on the roadmap. A
+  restored machine's terminal has to be shown the frame the application already drew,
+  so the state is saved with that frame's bytes. A 44-row grid has to fit the window's
+  height before its width.
+- **Checked here.** `build_i686.sh` run from nothing (the same 30 535 236 bytes, six
+  minutes), `build.py` end to end, the page driven in headless Chromium: Start, typing
+  (Cyrillic too), `F1`, `F3`, `Ctrl+P`, a sent message, `Ctrl+Q`, Start again; no console
+  error. `fetch.py --check`, `ruff`, `shellcheck`, `cyrillic_scan.py`, `link_check.py`,
+  `doc_index_check.py` and `layer_check.py` pass. No code of the app changed, so no live
+  run and the test counts are as they were.
