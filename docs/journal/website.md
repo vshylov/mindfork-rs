@@ -1825,6 +1825,18 @@ both on `main` at `88e5ce29`, the merge of the pull request.
   kilobyte of output and then the silence. After it: the cover off 336–403 ms after the
   primer at four window sizes, the frame whole at that moment, and a picture taken then
   identical to one taken 1.5 s later.
+- **The owner's second look** (§14.7): at a display scale of 125% a table's lines had
+  teeth where its cells meet, and at 100% solid bars broke between rows as well. The
+  terminal's default renderer sets those characters as the typeface's glyphs, and a
+  glyph's outline does not land on a cell rounded to the screen's pixels. The page now
+  draws with the terminal's WebGL renderer (`@xterm/addon-webgl` 0.19.0, pinned, in the
+  manifest), which draws box-drawing and block characters itself; without WebGL 2, or
+  when the context is lost, the default one stays and the grid is worked out again for
+  its wider cells. Enlarged pictures at a real display scale of 100%, 125% and 150%
+  show both defects with the default renderer and neither with this one. **The first
+  pictures at 125% were wrong, and it was the test**: under the developer tools'
+  emulation of a display scale a canvas is told its size in CSS pixels and the renderer
+  draws magnified; a browser started at that scale tells the truth (docs/lessons.md).
 - **The owner's decisions**: the terminal stays dark (F9); the demo goes live with the
   next release (F10); the home page's link is a sentence (F11) that must not read as
   access to a model — "see that same demo in this browser — the interface with its

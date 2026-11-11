@@ -49,7 +49,7 @@ STYLE_NAME = "demo.css"
 STANDALONE_STYLE = "standalone.css"
 SITE_SASS = ROOT / "site" / "sass"
 # What the page loads from ``vendor/``, and the site's own faces it draws with.
-VENDOR_FILES = ["libv86.js", "v86.wasm", "seabios.bin", "vgabios.bin", "xterm.js", "xterm.css"]
+VENDOR_FILES = ["libv86.js", "v86.wasm", "seabios.bin", "vgabios.bin", "xterm.js", "xterm-webgl.js", "xterm.css"]
 FONTS = ["JetBrainsMono-Regular.woff2", "JetBrainsMono-Bold.woff2", "JetBrainsMono-Italic.woff2", "OFL.txt"]
 STANDALONE = [PAGE_NAME, STANDALONE_STYLE, *(f"fonts/{name}" for name in FONTS)]
 # What a press of Start downloads: everything but the page itself and its faces.

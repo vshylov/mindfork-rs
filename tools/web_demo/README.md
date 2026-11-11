@@ -48,7 +48,7 @@ about the application's own dependencies.
 | File | What it is |
 |---|---|
 | `paths.py` | where every step reads and writes — all of it under `target/web-demo/` |
-| `fetch.py` | downloads the emulator, the terminal ([xterm.js](https://github.com/xtermjs/xterm.js)), the BIOS images, Alpine's two release images and musl's release, each pinned by a hash and checked on every run; takes the kernel out of the ISO, and BusyBox, musl and the image's record of its packages out of the base archive |
+| `fetch.py` | downloads the emulator, the terminal ([xterm.js](https://github.com/xtermjs/xterm.js)) with its WebGL renderer, the BIOS images, Alpine's two release images and musl's release, each pinned by a hash and checked on every run; takes the kernel out of the ISO, and BusyBox, musl and the image's record of its packages out of the base archive |
 | `build_i686.sh` | unpacks the 32-bit libraries the binary links against into a sysroot — the distribution's own packages, kept beside them — and builds the application for `i686-unknown-linux-gnu` |
 | `initramfs.py` | writes the guest: an `/init` of a dozen lines, the shell, the application and the libraries it loads — everything the machine runs beside its kernel |
 | `machine.json` | the emulated machine's options, the terminal the application starts on and at what size, and the order a resize's two numbers go in — read by the scripts and by the page, because a saved state restores only into the machine that saved it |

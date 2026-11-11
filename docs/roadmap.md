@@ -643,9 +643,10 @@ effort tiers and Fabula — have all closed
   element as the typeface's glyph into a cell rounded to whole pixels. Measured
   in `tools/screenshots.py`'s renderer, which the animation shares: at 16 px,
   drawn at twice the size, a cell is 43 rows and the glyph inks 42, so the top
-  row of every cell stays the background's. Two renderers to fix: that one
-  should fill block elements as rectangles of the cell; the web terminal wants
-  xterm.js's WebGL renderer, which draws them itself
+  row of every cell stays the background's. **The web terminal's half is
+  done** — it draws with xterm.js's WebGL renderer, which draws these characters
+  itself ([web-demo.md §14.7](research/web-demo.md)). Left: the screenshots'
+  cell renderer should fill block elements as rectangles of the cell
   ([web-demo.md §13.5](research/web-demo.md)).
 - **A Russian version of the site** — **deferred**, on F4's own terms
   ([mindfork-io-website.md §8](research/mindfork-io-website.md), S4).

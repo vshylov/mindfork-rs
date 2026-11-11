@@ -59,6 +59,21 @@ PACKAGES = [
             "package/package.json": "xterm.package.json",
         },
     },
+    # The terminal's WebGL renderer, the release made with the terminal's own.
+    # It draws box-drawing and block characters itself, on the cell grid; the
+    # default renderer sets them as the typeface's glyphs, which at a display
+    # scale of 100% or 125% leave gaps between rows and teeth where a table's
+    # lines meet (docs/research/web-demo.md §14.7).
+    {
+        "name": "@xterm/addon-webgl 0.19.0",
+        "url": "https://registry.npmjs.org/@xterm/addon-webgl/-/addon-webgl-0.19.0.tgz",
+        "sha512": "b3fMOsyLVuCeNJWxolACEUED0vm7qC0cy4wRvf3oURSzDTYVQiGPhTnhWZwIHdvC48Y+oLhvYXnY4XDXPoJo6A==",
+        "members": {
+            "package/lib/addon-webgl.js": "xterm-webgl.js",
+            "package/LICENSE": "LICENSE.xterm-webgl",
+            "package/package.json": "xterm-webgl.package.json",
+        },
+    },
 ]
 
 # A single file: where it comes from, its sha256, the name it gets.

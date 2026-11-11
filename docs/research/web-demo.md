@@ -1034,6 +1034,55 @@ click from a local server; at that moment the terminal's first row is as wide as
 the grid and the frame fills it; a picture taken then and one taken 1.5 s later
 are the same file, byte for byte.
 
-**Left**: Firefox and Safari on the site's page; the application's light theme;
-a Russian page.
+### 14.7 The owner's second look — lines with teeth, bars with gaps
+
+With the window the right size, the owner looked at the type. At the display
+scale they use, 125%, a table's lines had small teeth where its cells meet; at
+100% the teeth stayed and solid bars (`█`, `▌`) broke between rows — the gaps
+already on the roadmap. Changing the screen's resolution changed nothing; only
+the scale did.
+
+**The cause** is the terminal's default renderer, which sets every character as
+the typeface's glyph in the page. A cell's size is rounded to the screen's
+pixels and a glyph's outline is not: at 15 px the face's advance is 9 px and its
+line box 19.8, so at 100% a block glyph is a fifth of a pixel short of its 20 px
+cell, and at 125% a line-drawing glyph 11.25 device pixels wide is laid on cells
+that cannot all be the same whole number of them.
+
+**The fix** is the terminal's own WebGL renderer (`@xterm/addon-webgl` 0.19.0,
+the release made with the terminal's; pinned by its registry hash, a piece of the
+manifest like the rest, 248 KB more on a click). It draws on the screen's pixel
+grid, and it draws box-drawing and block characters **itself** rather than from
+the typeface — a rectangle for a bar, a line for a line. Where it cannot start
+(no WebGL 2) or loses its context later, the default renderer stays, and the grid
+is worked out again for it: its cells are another width.
+
+That width is the one thing the page had to learn. The WebGL renderer's cells
+are whole device pixels wide — 11 at 125%, which is 8.8 px where the default
+renderer's are 9 — so the same column of the site holds 115 columns of text at
+100%, 118 at 125% and 119 at 150%, and `cellAt` now rounds as the renderer in
+use does.
+
+**Seen, enlarged, in headless Chromium at a real display scale** (the droplet):
+with the default renderer the bars are broken at 100% and the table's lines
+dotted at 100% and 125%, as in the owner's two screenshots; with the WebGL one
+both are whole at 100%, 125% and 150%. At each of the three: the grid fills the
+column, `F1` and a sent message are answered, "Start again" comes back on the
+same renderer, and a context taken away mid-run (`WEBGL_lose_context`) leaves the
+demo running on the default renderer at 115 columns, the window still inside its
+column. The cover now comes off 459–500 ms after the primer.
+
+**A trap in the measuring.** The first pictures at 125% showed the terminal
+magnified and cut off, and it was the test, not the page: a page told a display
+scale by the developer tools' emulation (Playwright's `device_scale_factor`) has
+`devicePixelRatio` 1.25, but a canvas asking for its size in device pixels
+(`devicePixelContentBoxSize`, which is what the renderer asks) is told CSS
+pixels. A browser started at that scale (`--force-device-scale-factor`) answers
+both truthfully. Recorded in docs/lessons.md.
+
+The same gaps in the site's screenshots and animation are another renderer's
+(`tools/screenshots.py`) and stay on the roadmap.
+
+**Left**: the owner's look at the type on their own screen; Firefox and Safari
+on the site's page; the application's light theme; a Russian page.
 

@@ -68,7 +68,7 @@ const FACE = '"JetBrains Mono"';
 // `keys`: for each key pressed, when it was pressed and how many
 // milliseconds later each piece of the answer had been handed to the
 // terminal - which paints it on the browser's next frame.
-const stats = { clickedAt: null, readyAt: null, firstFrameAt: null, shownAt: null, downloaded: 0, grid: null, keys: [] };
+const stats = { clickedAt: null, readyAt: null, firstFrameAt: null, shownAt: null, downloaded: 0, grid: null, renderer: null, keys: [] };
 window.__demo = { stats };
 
 let term = null;
@@ -120,6 +120,7 @@ function loadParts() {
             fetch(beside("machine.json")).then((r) => r.json()),
             fetch(beside("primer.bin")).then((r) => r.arrayBuffer()),
             loadScript(beside("vendor/xterm.js")),
+            loadScript(beside("vendor/xterm-webgl.js")),
             loadStyle(beside("vendor/xterm.css")),
             loadScript(beside("vendor/libv86.js")),
         ]).then(([machineJson, primer]) => ({ machine: machineJson, primer: new Uint8Array(primer) }));
@@ -127,17 +128,24 @@ function loadParts() {
     return parts;
 }
 
+// Whether the terminal's cells are whole device pixels wide. They are with
+// the WebGL renderer, which draws on the screen's own grid; the default one
+// keeps the face's advance as it is. Until there is a terminal to ask, the
+// guess is that a browser with WebGL 2 will get that renderer.
+let onDevicePixels = Boolean(document.createElement("canvas").getContext("webgl2"));
+
 // A cell at a font size, worked out the way the terminal does it: the
 // face's advance and line box measured on a canvas at that very size -
-// where a browser may round them - and the line box rounded up to whole
-// device pixels.
+// where a browser may round them - the line box rounded up to whole device
+// pixels, and the advance rounded down to them where the renderer does.
 const ruler = document.createElement("canvas").getContext("2d");
 function cellAt(size) {
     ruler.font = size + "px " + FACE + ", monospace";
     const metrics = ruler.measureText("W");
     const lineBox = metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent || size * 1.32;
     const dpr = window.devicePixelRatio || 1;
-    return { width: metrics.width, height: Math.ceil(lineBox * dpr) / dpr };
+    const width = onDevicePixels ? Math.floor(metrics.width * dpr) / dpr : metrics.width;
+    return { width, height: Math.ceil(lineBox * dpr) / dpr };
 }
 
 // The pixels the grid may take: the width the page gives the demo, and the
@@ -236,7 +244,41 @@ function makeTerminal() {
         return !devtools;
     });
     t.open(terminalBox);
+    const webgl = drawnByWebgl(t);
+    stats.renderer = webgl ? "webgl" : "dom";
+    // The window was sized on a guess of the renderer; where the guess was
+    // wrong, the cells are another width and the grid is worked out again.
+    if (webgl !== onDevicePixels) {
+        onDevicePixels = webgl;
+        sizeWindow();
+    }
     return t;
+}
+
+// The terminal's WebGL renderer in place of its default one. The default sets
+// box-drawing and block characters as the typeface's glyphs, and a glyph does
+// not land on the edges of a cell whose size is rounded to the screen's
+// pixels: at a display scale of 100% solid bars break between rows, and at
+// 125% a table's lines meet in teeth (the owner's screenshots, research
+// §14.7). This one draws those characters itself, on the grid. Where it cannot
+// start - no WebGL 2 - or loses its context later, the default one stays.
+function drawnByWebgl(t) {
+    try {
+        const renderer = new window.WebglAddon.WebglAddon();
+        renderer.onContextLoss(() => {
+            // The terminal goes back to its default renderer, whose cells
+            // are another width: the grid is worked out for them again.
+            renderer.dispose();
+            stats.renderer = "dom";
+            onDevicePixels = false;
+            sizeWindow();
+            applyGrid();
+        });
+        t.loadAddon(renderer);
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 // Shown in the window when the demo cannot start, with Start back in reach.

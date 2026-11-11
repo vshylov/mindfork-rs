@@ -753,6 +753,22 @@ row too: the second one lands on what the first one left.
 
 ## 3. Measure; do not assume
 
+**An emulated display scale is not a display scale.** To look at a page at 125%
+the headless browser was given Playwright's `device_scale_factor` — the developer
+tools' emulation. `devicePixelRatio` reads 1.25 under it, and the screenshots come
+out at that density, so it passes for the real thing; but a canvas that asks for
+its size in device pixels (`ResizeObserver`'s `devicePixelContentBoxSize`, which
+is what xterm.js's WebGL renderer asks) is answered in CSS pixels. The renderer
+drew a 1287-pixel frame into a 1030-pixel buffer, and the first pictures showed a
+terminal magnified and cut off — a defect of the measurement that looked exactly
+like one of the page. A browser *started* at the scale
+(`--force-device-scale-factor=1.25`, with the context's viewport emulation off)
+answers both questions truthfully. **When the thing under test reads device
+pixels — a canvas, WebGL, a pixel-snapped layout — give the browser the scale, not
+the page**; and when a picture shows something a user would have reported, check
+the instrument before the code.
+— *website — the web demo's rehearsal, and its page at `/try/`*.
+
 **Write the user's document from the code, and treat a sentence that cannot be
 written as a finding.** The privacy policy's paragraph on two attribution headers was
 drafted as "every request carries them", which is what the switch's own description

@@ -366,6 +366,7 @@ def collect() -> list[Piece]:
     return [
         npm_piece("v86", "v86", "the x86 emulator the machine runs in"),
         npm_piece("xterm", "xterm.js", "the terminal the program draws in"),
+        npm_piece("xterm-webgl", "xterm.js WebGL renderer", "what draws the terminal's cells"),
         Piece(
             name="JetBrains Mono",
             version="",
@@ -410,6 +411,7 @@ def texts(pieces: list[Piece]) -> dict[str, bytes]:
     known = {
         "v86.txt": (VENDOR / "LICENSE.v86").read_bytes(),
         "xterm.txt": (VENDOR / "LICENSE.xterm").read_bytes(),
+        "xterm-webgl.txt": (VENDOR / "LICENSE.xterm-webgl").read_bytes(),
         "musl.txt": (VENDOR / "COPYRIGHT.musl").read_bytes(),
         "mindfork.txt": (ROOT / "LICENSE").read_bytes(),
         "mindfork-syntaxes.txt": syntaxes(),
