@@ -1,0 +1,62 @@
+/* The asset's own page (docs/research/web-demo.md §14.1): what index.html
+   needs to stand alone - the site's palette under the site's names, its
+   terminal window and its buttons, in dark only. On mindfork.io none of this
+   is loaded: the page there is the site's, and these names are the site's own.
+   `font-display: swap`: nothing is measured or drawn in these faces before the
+   script has waited for them. */
+@font-face { font-family: "JetBrains Mono"; font-weight: 400; font-style: normal; font-display: swap;
+  src: url("fonts/JetBrainsMono-Regular.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-weight: 700; font-style: normal; font-display: swap;
+  src: url("fonts/JetBrainsMono-Bold.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-weight: 400; font-style: italic; font-display: swap;
+  src: url("fonts/JetBrainsMono-Italic.woff2") format("woff2"); }
+
+:root {
+  --bg: #09090b;
+  --term-bg: #0c0c0e;
+  --term-bar: #131318;
+  --fg: #d4d4d8;
+  --fg-strong: #fafafa;
+  --muted: #9d9da8;
+  --line: #232329;
+  --accent: #c25a27;
+  --accent-link: #e0783f;
+  --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --font-body: system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html { background: var(--bg); color: var(--fg); }
+body { margin: 0; font: 16px/1.55 var(--font-body); }
+main { margin: 0 auto; padding: 32px 24px 64px; }
+main > header, main > section { max-width: 1100px; margin-left: auto; margin-right: auto; }
+
+header .mark { margin: 0 0 20px; font: 700 15px/1 var(--font-mono); letter-spacing: 0.02em; }
+header .fork { color: var(--fg-strong); }
+header .tag { margin-left: 6px; padding: 2px 6px; border: 1px solid var(--accent); color: var(--accent-link); font-weight: 400; }
+h1 { margin: 0 0 8px; color: var(--fg-strong); font: 700 30px/1.2 var(--font-mono); }
+h2 { margin: 40px 0 10px; color: var(--fg-strong); font: 700 17px/1.3 var(--font-mono); }
+.lead { margin: 0 0 24px; color: var(--muted); }
+p, li { max-width: 78ch; }
+a { color: var(--accent-link); }
+code { font: 0.92em var(--font-mono); }
+
+.notice { margin-bottom: 24px; padding: 2px 16px; border-left: 3px solid var(--accent); background: var(--term-bar); }
+.notice p { max-width: 86ch; }
+
+/* The site's terminal window and buttons, as the fragment borrows them. */
+.term { margin: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--term-bg); }
+.term-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 14px;
+  border-bottom: 1px solid var(--line); background: var(--term-bar); }
+.term-title { color: var(--muted); font: 500 12px var(--font-mono); }
+.term-controls { margin-right: -0.55em; color: var(--muted); font: 400 11px var(--font-mono); letter-spacing: 0.55em;
+  white-space: nowrap; user-select: none; }
+.btn { padding: 12px 22px; border: 1px solid var(--line); border-radius: 9px; background: var(--term-bar);
+  color: var(--fg-strong); font: 600 14px var(--font-mono); }
+.btn-primary { border-color: var(--accent); background: var(--accent); color: #fff; }
+.btn-primary:hover { filter: brightness(1.08); }
+.btn:focus-visible { outline: 2px solid var(--fg-strong); outline-offset: 3px; }
+
+.licences h3 { margin: 18px 0 4px; color: var(--muted); font: 700 14px/1.3 var(--font-mono); }
+.licences ul { margin-top: 4px; padding-left: 20px; }
+.licences li { margin: 6px 0; color: var(--muted); font-size: 14px; }

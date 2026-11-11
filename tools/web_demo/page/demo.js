@@ -5,9 +5,15 @@
 // Nothing heavy is loaded before Start is pressed: the emulator, the terminal
 // and the machine's state are fetched on the click.
 //
-// A module: its names are its own, and it runs once the page is parsed.
+// A module: its names are its own, it runs once the page is parsed, and it
+// finds its files beside itself - so it works wherever the asset is put, in a
+// page that is somewhere else (docs/research/web-demo.md §14.2). The markup it
+// drives is stage.html, which travels with it; every id there is `wd-`.
 
-const $ = (id) => document.getElementById(id);
+const beside = (name) => new URL(name, import.meta.url).href;
+const $ = (id) => document.getElementById("wd-" + id);
+const root = $("root");
+const startBox = $("start");
 const startButton = $("start-button");
 const againButton = $("again-button");
 const stage = $("stage");
@@ -18,20 +24,20 @@ const loadingText = $("loading-text");
 const loadingBar = $("loading-bar");
 const ended = $("ended");
 const terminalBox = $("terminal");
+const frame = stage.querySelector(".wd-window");
+const bar = stage.querySelector(".term-bar");
 
 // The grid the application was saved at, and what a click downloads:
-// written into the page when it is built, so the progress has its scale
+// written into the fragment when it is built, so the progress has its scale
 // before anything has been fetched.
-const SAVED = { cols: Number(stage.dataset.cols), rows: Number(stage.dataset.rows) };
-const ALL_BYTES = Number(stage.dataset.bytes);
-const MACHINE_BYTES = Number(stage.dataset.machineBytes);
+const SAVED = { cols: Number(root.dataset.cols), rows: Number(root.dataset.rows) };
+const ALL_BYTES = Number(root.dataset.bytes);
+const MACHINE_BYTES = Number(root.dataset.machineBytes);
 
-// What the page keeps for itself around the terminal's grid, in pixels:
-// the window's title bar and padding, and the status line under it.
-const CHROME_HEIGHT = 96;
-const CHROME_WIDTH = 30;
-// The terminal box's padding, as demo.css sets it.
+// The terminal box's padding, as demo.css sets it, and the room kept under
+// the window for the status line.
 const PADDING = 6;
+const UNDER = 44;
 // The text is this size wherever the window gives a grid of at least
 // SMALLEST at it, and smaller only where it does not; LARGEST is where a
 // very large window stops adding cells.
@@ -41,9 +47,10 @@ const SMALLEST = { cols: 80, rows: 24 };
 const LARGEST = { cols: 200, rows: 60 };
 // The application leaves the alternate screen when it quits.
 const LEAVES_ALT_SCREEN = "\x1b[?1049l";
-// Set for the reload that "Start again" is: the page that comes back
-// starts the demo without waiting for a click.
-const AUTOSTART = "mindfork-demo-autostart";
+// The address of a page that starts the demo without waiting for a click:
+// what the reload behind "Start again" comes back to. In the address and not
+// in the browser's storage - the page keeps nothing (§14.4).
+const AUTOSTART = "#start";
 const FACE = '"JetBrains Mono"';
 
 // What the page measures, readable from the console and by a test.
@@ -99,11 +106,11 @@ function loadFaces() {
 function loadParts() {
     if (!parts) {
         parts = Promise.all([
-            fetch("machine.json").then((r) => r.json()),
-            fetch("primer.bin").then((r) => r.arrayBuffer()),
-            loadScript("vendor/xterm.js"),
-            loadStyle("vendor/xterm.css"),
-            loadScript("vendor/libv86.js"),
+            fetch(beside("machine.json")).then((r) => r.json()),
+            fetch(beside("primer.bin")).then((r) => r.arrayBuffer()),
+            loadScript(beside("vendor/xterm.js")),
+            loadStyle(beside("vendor/xterm.css")),
+            loadScript(beside("vendor/libv86.js")),
         ]).then(([machineJson, primer]) => ({ machine: machineJson, primer: new Uint8Array(primer) }));
     }
     return parts;
@@ -122,11 +129,26 @@ function cellAt(size) {
     return { width: metrics.width, height: Math.ceil(lineBox * dpr) / dpr };
 }
 
+// The pixels the grid may take: the width the page gives the demo, and the
+// height of the browser's window - less what the window around the terminal
+// takes itself, and less what the page keeps at the top of the screen for a
+// header that stays there (`--wd-top`, the page's to set; nothing by default).
+function room() {
+    const edges = getComputedStyle(frame);
+    const across = Number.parseFloat(edges.borderLeftWidth) + Number.parseFloat(edges.borderRightWidth);
+    const down = Number.parseFloat(edges.borderTopWidth) + Number.parseFloat(edges.borderBottomWidth);
+    const top = Number.parseFloat(getComputedStyle(root).getPropertyValue("--wd-top")) || 0;
+    stage.style.scrollMarginTop = top + "px";
+    return {
+        width: Math.min(root.clientWidth, window.innerWidth) - across - 2 * PADDING,
+        height: window.innerHeight - top - bar.offsetHeight - down - 2 * PADDING - UNDER,
+    };
+}
+
 // The grid for this window: as many cells as fit at FONT, and smaller text
 // only where even the smallest grid would not fit.
 function layout() {
-    const width = Math.min(document.querySelector("main").clientWidth, window.innerWidth) - CHROME_WIDTH;
-    const height = window.innerHeight - CHROME_HEIGHT;
+    const { width, height } = room();
     for (let size = FONT; ; size -= 1) {
         const cell = cellAt(size);
         const cols = Math.min(LARGEST.cols, Math.floor(width / cell.width));
@@ -207,23 +229,24 @@ function makeTerminal() {
 function failed(error) {
     loadingText.textContent = "The demo could not be loaded: " + error.message;
     startButton.disabled = false;
-    $("start").hidden = false;
+    startBox.hidden = false;
 }
 
-// The window first, at its final size, with the progress in it.
+// The window first, at its final size, with the progress in it. It is shown
+// before it is sized: what it measures has no size while hidden.
 function showWindow() {
-    sizeWindow();
     ended.hidden = true;
     loading.hidden = false;
-    showProgress(0);
     stage.hidden = false;
+    sizeWindow();
+    showProgress(0);
     stage.scrollIntoView({ block: "start" });
 }
 
 async function start() {
     stats.clickedAt = performance.now();
     stats.readyAt = stats.firstFrameAt = null;
-    $("start").hidden = true;
+    startBox.hidden = true;
     startButton.disabled = true;
     againButton.disabled = true;
     statusLine.textContent = "";
@@ -243,14 +266,14 @@ async function start() {
 function run(primer) {
     const session = {
         machine: new window.V86({
-            wasm_path: "vendor/v86.wasm",
+            wasm_path: beside("vendor/v86.wasm"),
             memory_size: machine.memory_size,
             vga_memory_size: machine.vga_memory_size,
             cmdline: machine.cmdline,
             virtio_console: true,
-            bios: { url: "vendor/seabios.bin" },
-            vga_bios: { url: "vendor/vgabios.bin" },
-            initial_state: { url: "state.bin.zst" },
+            bios: { url: beside("vendor/seabios.bin") },
+            vga_bios: { url: beside("vendor/vgabios.bin") },
+            initial_state: { url: beside("state.bin.zst") },
             autostart: true,
             disable_keyboard: true,
             disable_mouse: true,
@@ -370,31 +393,17 @@ startButton.addEventListener("click", () => start().catch(failed));
 // A second machine in a page that has already run one can sit silent for
 // seconds before it answers (docs/research/web-demo.md §13.4), so the next
 // demo gets a page of its own: a reload, with everything it needs already in
-// the browser's cache. Without storage the reloaded page shows Start, one
-// click away.
+// the browser's cache, at the address that starts by itself.
 againButton.addEventListener("click", () => {
-    remember(true);
+    location.hash = AUTOSTART;
     location.reload();
 });
-if (remember(false)) {
+if (location.hash === AUTOSTART) {
+    // The address goes back to the page's own: a reload by hand shows Start.
+    history.replaceState(null, "", location.pathname + location.search);
     try {
         await start();
     } catch (error) {
         failed(error);
-    }
-}
-
-// Sets, or reads and clears, the note that the next page starts by itself.
-function remember(set) {
-    try {
-        if (set) {
-            sessionStorage.setItem(AUTOSTART, "1");
-            return true;
-        }
-        const noted = sessionStorage.getItem(AUTOSTART) !== null;
-        sessionStorage.removeItem(AUTOSTART);
-        return noted;
-    } catch {
-        return false;
     }
 }

@@ -44,8 +44,11 @@ from initramfs import LIBS, library
 from paths import DEBS, NOTICES, ROOT, SYSROOT, VENDOR
 
 # The manifest's own shape. Raised when a field changes meaning, so that a page
-# written for one shape does not read another.
-FORMAT = 1
+# written for one shape does not read another: the site's deploy refuses a
+# format its template was not written for (tools/site_webdemo.py). 2 named the
+# fragment, the script and the stylesheet a page takes, and what is the
+# standalone page's alone.
+FORMAT = 2
 # Where the texts go in the asset, and the distribution's copies of the GNU
 # licences, which its packages' copyright files refer to by these names.
 TEXTS = "licences"
@@ -53,7 +56,10 @@ COMMON_LICENCES = Path("/usr/share/common-licenses")
 # The commit of copy/v86 the BIOS images are read from (fetch.py pins the same).
 V86_BIOS = "https://github.com/copy/v86/tree/315b2b0b758703ef0e6cc7b4088d6068f83f3c20/bios"
 APORTS = "https://gitlab.alpinelinux.org/alpine/aports/-/tree"
+# Where a piece is: in any page that shows the demo, in the asset's own page
+# only, or inside the machine.
 PAGE = "page"
+STANDALONE = "standalone"
 MACHINE = "machine"
 
 
@@ -363,7 +369,7 @@ def collect() -> list[Piece]:
         Piece(
             name="JetBrains Mono",
             version="",
-            part=PAGE,
+            part=STANDALONE,
             role="the typeface",
             licence="OFL-1.1",
             homepage="https://www.jetbrains.com/lp/mono/",
@@ -440,16 +446,19 @@ def piece_html(piece: Piece) -> str:
     return "<li>" + " ".join(parts) + "</li>"
 
 
-def list_html(pieces: list[Piece], part: str) -> str:
-    return "\n".join("      " + piece_html(piece) for piece in pieces if piece.part == part)
+def list_html(pieces: list[Piece], *parts: str) -> str:
+    return "\n".join("      " + piece_html(piece) for piece in pieces if piece.part in parts)
 
 
-def document(pieces: list[Piece], files: dict[str, dict], on_start: list[str], by_emulator: list[str]) -> dict:
-    """The manifest itself: what the asset is of, what is in it, and whose."""
+def document(pieces: list[Piece], files: dict[str, dict], on_start: list[str], by_emulator: list[str], page: dict) -> dict:
+    """The manifest itself: what the asset is of, what is in it, and whose.
+    ``page`` is what a page that shows the demo takes from the asset - the
+    fragment, the script, the stylesheet - and what it leaves."""
     return {
         "format": FORMAT,
         "application": cargo_field("version"),
         "commit": commit(),
+        **page,
         "on_start": on_start,
         "on_start_bytes": sum(files[name]["bytes"] for name in on_start),
         "by_emulator_bytes": sum(files[name]["bytes"] for name in by_emulator),
@@ -531,7 +540,8 @@ def self_test() -> list[str]:
         '<a href="licences/a.txt">a.txt</a>. Unmodified, from Somewhere, a 1-r0. '
         'Source: <a href="https://a.example/src">its source</a>.</li>',
     )
-    expect("the pieces of one part", list_html([piece], PAGE), "")
+    expect("the pieces of one part", list_html([piece], PAGE, STANDALONE), "")
+    expect("the pieces of another", list_html([piece], MACHINE).count("<li>"), 1)
     return problems
 
 

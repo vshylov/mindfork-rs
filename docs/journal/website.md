@@ -10,7 +10,7 @@ the reasoning behind the site, not its current shape. For the current shape
 read the research/design doc above; for the traps that recur across areas
 read [lessons.md](../lessons.md).
 
-## Entries (33)
+## Entries (34)
 
 - Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 - Post-M9: website — S2 infra: one CloudFormation stack, mindfork.io live (done)
@@ -45,6 +45,7 @@ read [lessons.md](../lessons.md).
 - Post-M9: website — an interactive demo in the browser: research and the v86 probe (done)
 - Post-M9: website — the web demo's guest from pinned images, and a terminal the size of the window (done)
 - Post-M9: website — the web demo's manifest, its asset, and the release's job (done)
+- Post-M9: website — the web demo's rehearsal, and its page at `/try/` (done)
 
 ### Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 
@@ -1757,3 +1758,65 @@ both on `main` at `88e5ce29`, the merge of the pull request.
   boot header, a BIOS string, a package record, three shapes of a package's `Source`
   field, a piece's line on the page. Rust is untouched by this part: 4796 unit tests
   green on the merged tree, 310 `#[ignore]`.
+
+### Post-M9: website — the web demo's rehearsal, and its page at `/try/` (done)
+
+- **The rehearsal — `v0.25.0-rc1`, GO** ([web-demo.md §13.6](../research/web-demo.md)).
+  The owner merged the stack and tagged `main`. `release.yml` green in 15 minutes; the
+  `web-demo` job 8 min 39 s beside the builds. `mindfork-webdemo.tar` is in the draft, in
+  `sha256sums.txt` with a matching hash, and attested (`release.yml` at the tag, the
+  tag's commit); its manifest names that commit and every file matches the sha256 it
+  lists; unpacked and served, it ran in headless Chromium. The draft and the tag are the
+  owner's to delete.
+- **Stage 3** (branch `feat/web-demo-page`; §14): the demo as a page of the site, in the
+  site's templates and styles.
+- **Who owns what.** The asset is built from a tag, the site from `main`; what they
+  share has to hold between a release and every state of `main` until the next. So the
+  asset owns the demo — the script and **the markup the script drives**, one fragment,
+  `stage.html` — and the site owns the page: header, title, the notice that this is a
+  demo of the interface and not a session with a real model, the prose, and the licence
+  list, rendered by the site's template from the asset's manifest. The fragment borrows
+  the site's own terminal window and buttons (`.term`, `.btn`) and four palette
+  variables — which is how the owner's "the site's own CSS" is met — and everything of
+  the demo's is `wd-`. The borrowed names are read out of the fragment by `build.py`,
+  which refuses to pack an asset that borrows one the site's Sass does not define. The
+  asset still stands alone: `index.html` is the same fragment with `standalone.css`.
+- **A directory per release**, `/webdemo/<tag>/`: a state restores only on the emulator
+  build beside it, so under fixed names a returning browser could pair yesterday's
+  emulator with today's state. Under the tag an address never means two things, the
+  whole directory is `immutable` for a year, and the page — rechecked every five minutes
+  like any page — is the one thing that points at the current one. The script finds its
+  files beside itself (`import.meta.url`).
+- **The deploy** (`tools/site_webdemo.py`, run by `site.yml`): the newest published
+  release with an asset the site can show; the asset's **attestation verified**; only
+  the files its manifest lists, under vetted names, each matching its sha256, nothing
+  written until all of it is checked; a pointer at `site/webdemo.json`, which is not
+  published. Its own sync pass, `immutable`, run only when a demo was found. An asset of
+  **another manifest format is passed over** for the release before it, not failed on:
+  the first version of the tool failed the whole deploy there, which a release cut
+  between two merges would have turned into a site that cannot be updated.
+- **Until a release carries one** — 0.25.0 does not — `/try/` says the demo is on its
+  way and the home page's hint has no link to it.
+- **A pull request's build renders both shapes**: as it is, and over a stand-in shaped
+  like the asset (`--fixture`), checking that the fragment, the licence list and the
+  home page's link come out.
+- **Nothing stored**: "Start again" carried one flag across its reload in
+  `sessionStorage`; it is now in the address (`#start`, which also starts the demo when
+  opened directly), so the privacy policy's §9 needs no new sentence. `/llms.txt` is
+  unchanged — a running program is not something a model reads.
+- **Live run** (the droplet; Zola 0.23.6; headless Chromium 156; the site built with the
+  local asset): `/try/` in the dark and the light theme at 1400×900, at 1920×1080 and at
+  1100×720 — the grid 147×36, 200×45, 113×27, the window clear of the sticky header and
+  inside the screen, no scrollbar, no page error; `F1` and a sent message answered;
+  three runs through "Start again", then `sessionStorage` and `localStorage` empty;
+  `/try/#start` running without a click; at 375 px no sideways scroll and the
+  small-screen warning shown. The page without a demo, and the home page with and
+  without its link. The deploy's own path against the real releases: no published
+  release with an asset — a notice, nothing written; the rehearsal's asset — downloaded,
+  attested, passed over as format 1, nothing left behind.
+- **Not run**: the deploy itself (the sync, CloudFront) — it runs on a push to `main`;
+  a real browser on the built site, which is the owner's.
+- **Tests**: `site_webdemo.py --self-test` (in ci.yml's `lint`): which release is taken;
+  a file its manifest lies about, a name that climbs out, an asset without its script
+  and a manifest of another format refused, with nothing left behind; that the format
+  read is the one `manifest.py` writes. No Rust changed: 4796 unit tests, 310 `#[ignore]`.

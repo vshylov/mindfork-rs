@@ -1,83 +1,46 @@
-/* The web demo's page as it stands alone (docs/research/web-demo.md §12-§13):
-   the brand's palette and typeface, dark only - a terminal window. On
-   mindfork.io the page is the site's own, in the site's styles (stage 3).
-   `font-display: swap`: nothing is measured or drawn in these faces before
-   the script has waited for them. */
-@font-face { font-family: "JetBrains Mono"; font-weight: 400; font-style: normal; font-display: swap;
-  src: url("fonts/JetBrainsMono-Regular.woff2") format("woff2"); }
-@font-face { font-family: "JetBrains Mono"; font-weight: 700; font-style: normal; font-display: swap;
-  src: url("fonts/JetBrainsMono-Bold.woff2") format("woff2"); }
-@font-face { font-family: "JetBrains Mono"; font-weight: 400; font-style: italic; font-display: swap;
-  src: url("fonts/JetBrainsMono-Italic.woff2") format("woff2"); }
+/* The demo's own parts (docs/research/web-demo.md §14.1): everything here is
+   `wd-`. The window around the terminal and the buttons are the site's -
+   `.term`, `.btn` - and so are the colours: the palette's variables, with a
+   fallback for a page that defines none. The terminal's canvas is the
+   application's, dark in either theme of the site. */
+.wd-root { --wd-canvas: #09090b; --wd-canvas-text: #a1a1aa; }
 
-:root {
-  --bg: #09090b;
-  --panel: #18181b;
-  --line: #3f3f46;
-  --text: #e4e4e7;
-  --muted: #a1a1aa;
-  --accent: #c25a27;
-  --accent-text: #f0a37c;
-  --mono: "JetBrains Mono", ui-monospace, "DejaVu Sans Mono", Menlo, Consolas, monospace;
-  --prose: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-}
+.wd-start { margin: 0 0 24px; }
+.wd-note { margin: 10px 0 0; max-width: 78ch; color: var(--muted, #a1a1aa); font-size: 14px; }
+.wd-warn { color: var(--accent, #c25a27); }
+.wd-root button.btn { cursor: pointer; }
+.wd-root button.btn:disabled { opacity: 0.55; cursor: default; }
 
-* { box-sizing: border-box; }
-html { background: var(--bg); color: var(--text); }
-body { margin: 0; font: 16px/1.55 var(--prose); }
-main { max-width: 1240px; margin: 0 auto; padding: 32px 16px 64px; }
-
-header .mark { margin: 0 0 20px; font: 700 15px/1 var(--mono); letter-spacing: .02em; }
-header .fork { color: var(--text); }
-header .tag { color: var(--accent-text); border: 1px solid var(--accent); padding: 2px 6px; margin-left: 6px; font-weight: 400; }
-h1 { margin: 0 0 8px; font: 700 30px/1.2 var(--mono); }
-h2 { margin: 40px 0 10px; font: 700 17px/1.3 var(--mono); }
-.lead { margin: 0 0 24px; color: var(--muted); }
-p, li { max-width: 78ch; }
-a { color: var(--accent-text); }
-code, kbd { font: 0.92em var(--mono); }
-kbd { border: 1px solid var(--line); border-bottom-width: 2px; padding: 0 5px; white-space: nowrap; }
-
-.notice { border-left: 3px solid var(--accent); background: var(--panel); padding: 2px 16px; margin: 0 0 24px; }
-.notice p { max-width: 86ch; }
-
-.start { margin: 0 0 24px; }
-button { font: 700 16px/1 var(--mono); color: #fff; background: var(--accent); border: 0; padding: 14px 22px; cursor: pointer; }
-button:hover { filter: brightness(1.12); }
-button:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
-button:disabled { opacity: .55; cursor: default; }
-.size { margin: 10px 0 0; color: var(--muted); font-size: 14px; }
-.warn { color: var(--accent-text); font-size: 14px; }
-
-.stage { margin: 0 0 8px; }
-.window { position: relative; display: inline-block; max-width: 100%; border: 1px solid var(--line); background: var(--bg); }
-.titlebar { display: flex; justify-content: space-between; padding: 6px 10px; background: var(--panel);
-  border-bottom: 1px solid var(--line); font: 12px/1.4 var(--mono); color: var(--muted); user-select: none; }
-.caption { letter-spacing: .5em; }
-/* The script gives the box the grid's size before there is a terminal in it,
-   so the window is its final size while the demo loads and after it ends.
-   Not `.terminal`: xterm.js gives that class to its own element, which then
+.wd-stage { margin: 0 0 8px; }
+/* The window hugs its grid: the script gives the box the grid's size before
+   there is a terminal in it, so the window is its final size while the demo
+   loads and after it ends. */
+.wd-window { display: inline-block; max-width: 100%; vertical-align: top; }
+.wd-body { position: relative; background: var(--wd-canvas); }
+/* Not `.terminal`: xterm.js gives that class to its own element, which then
    took this padding a second time and lost its last column to it. */
-.grid { padding: 6px; overflow: hidden; }
+.wd-grid { padding: 6px; overflow: hidden; }
 /* The terminal keeps no scrollback here, and its viewport's own scrollbar -
    a classic one wherever scrollbars are not overlays - sat under the grid's
    last column. By the box's id: the terminal's stylesheet is loaded after this
    one and says `scroll` with two classes, which the id outweighs. */
-#terminal .xterm .xterm-viewport { overflow-y: hidden; }
-/* What lies over the terminal's place: the loading notice, and the end. */
-.cover { position: absolute; inset: 31px 0 0; display: flex; flex-direction: column; align-items: center;
-  justify-content: center; gap: 12px; background: var(--bg); font: 14px/1.5 var(--mono); color: var(--muted); }
-.cover p { margin: 0; }
-/* `display: flex` above would otherwise beat the attribute. */
-.cover[hidden] { display: none; }
-progress { width: min(320px, 60%); height: 6px; appearance: none; border: 0; background: var(--line); }
-progress::-webkit-progress-bar { background: var(--line); }
-progress::-webkit-progress-value { background: var(--accent); }
-progress::-moz-progress-bar { background: var(--accent); }
-.status { display: block; margin: 10px 0 0; font: 13px/1.5 var(--mono); color: var(--muted); min-height: 1.5em; }
-.keys { color: var(--muted); font-size: 14px; }
-.keys p { margin: 6px 0; max-width: 100ch; }
+#wd-terminal .xterm .xterm-viewport { overflow-y: hidden; }
 
-.licences h3 { margin: 18px 0 4px; font: 700 14px/1.3 var(--mono); color: var(--muted); }
-.licences ul { padding-left: 20px; margin-top: 4px; }
-.licences li { margin: 6px 0; color: var(--muted); font-size: 14px; }
+/* What lies over the terminal's place: the loading notice, and the end. */
+.wd-cover { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 12px; background: var(--wd-canvas); color: var(--wd-canvas-text);
+  font: 14px/1.5 var(--font-mono, ui-monospace, monospace); }
+.wd-cover p { margin: 0; }
+/* `display: flex` above would otherwise beat the attribute. */
+.wd-cover[hidden] { display: none; }
+.wd-cover progress { width: min(320px, 60%); height: 6px; appearance: none; border: 0; background: #3f3f46; }
+.wd-cover progress::-webkit-progress-bar { background: #3f3f46; }
+.wd-cover progress::-webkit-progress-value { background: var(--accent, #c25a27); }
+.wd-cover progress::-moz-progress-bar { background: var(--accent, #c25a27); }
+
+.wd-status { display: block; min-height: 1.5em; margin: 10px 0 0; color: var(--muted, #a1a1aa);
+  font: 13px/1.5 var(--font-mono, ui-monospace, monospace); }
+.wd-keys { color: var(--muted, #a1a1aa); font-size: 14px; }
+.wd-keys p { margin: 6px 0; max-width: 100ch; }
+.wd-keys kbd { padding: 0 5px; border: 1px solid var(--line, #3f3f46); border-bottom-width: 2px; border-radius: 4px;
+  font: 0.92em var(--font-mono, ui-monospace, monospace); white-space: nowrap; }

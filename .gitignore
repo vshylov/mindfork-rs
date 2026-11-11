@@ -10,6 +10,8 @@ __pycache__/
 site/public/
 site/static/screenshots/
 site/static/demo/
+site/static/webdemo/
+site/webdemo.json
 site/static/brand/
 site/static/favicon.ico
 # Coverage report for SonarQube Cloud (`cargo llvm-cov`, .github/workflows/ci.yml).

@@ -227,6 +227,12 @@ jobs:
       # demo's own tools change (web-demo.yml); their arms are checked here.
       - name: The web demo manifest's own arms
         run: python3 tools/web_demo/manifest.py --self-test
+      # What the site's deploy does with that asset (site.yml): which release
+      # it takes, what it refuses to write - a file its manifest lies about, a
+      # name that climbs out of its directory, a manifest of another format -
+      # and that the format it reads is the one the build above writes.
+      - name: The web demo placement's own arms
+        run: python3 tools/site_webdemo.py --self-test
       # The rented Mac day's two tools (docs/research/macos.md §13.10): what
       # they decide offline is checked here, so a typo surfaces before a host
       # is paid for by the hour.

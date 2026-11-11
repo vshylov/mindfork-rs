@@ -23,7 +23,11 @@
         <a class="btn btn-primary" href="{{ get_url(path='@/install.md') }}">Install</a>
         <a class="btn" href="{{ config.extra.github }}">Source on GitHub</a>
       </div>
-      <p class="demo-hint"><code>$ mindfork demo</code> — try it in a minute: seeded data, a scripted engine, no model download, nothing written outside a temp folder. Already running Ollama? <a href="{{ get_url(path='@/install.md') }}#already-running-ollama">Two lines</a>.</p>
+      {#- The link to the demo in a browser tab is drawn only when the build has
+          one - the deploy fetches it from the newest release that carries it
+          (tools/site_webdemo.py, docs/research/web-demo.md §14.3). -#}
+      {%- set webdemo = load_data(path="webdemo.json", format="json", required=false) %}
+      <p class="demo-hint"><code>$ mindfork demo</code> — try it in a minute: seeded data, a scripted engine, no model download, nothing written outside a temp folder.{% if webdemo %} Or <a href="{{ get_url(path='@/try.md') }}">try it in this browser</a>, with nothing to install.{% endif %} Already running Ollama? <a href="{{ get_url(path='@/install.md') }}#already-running-ollama">Two lines</a>.</p>
     </div>
     <aside class="hero-fetch" aria-label="mindfork at a glance">
       <div class="term">

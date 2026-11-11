@@ -163,6 +163,7 @@ python tools/actions_pin_check.py  # every workflow action is pinned to a commit
 python tools/release_guard.py --self-test  # the tag guard release.yml runs, against fixtures
 python tools/aur_package.py --self-test    # the AUR renderer aur.yml runs, against fixtures
 python tools/web_demo/manifest.py --self-test  # the web demo manifest's readers, against fixtures
+python tools/site_webdemo.py --self-test  # what the site's deploy does with the web demo's asset
 python tools/console_probe.py      # Windows: drive the TUI in a hidden console, read the screen back
 ```
 
@@ -200,12 +201,13 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
-- **The demo in a browser tab — stages 1–2** (2026-11-11): the release's binary built
+- **The demo in a browser tab — three stages** (2026-11-11): the release's binary built
   for 32-bit x86 and saved, running `mindfork demo`, in the v86 emulator a page restores
-  it into; every piece pinned, the redistributed ones listed in a manifest read from the
-  files; `release.yml` packs it as `mindfork-webdemo.tar` (not a gate; `web-demo.yml`
-  tries the steps on pull requests). The page at `/try/` is stage 3
-  ([docs/research/web-demo.md](docs/research/web-demo.md) §12–§13,
+  it into; every piece pinned, the redistributed ones in a manifest read from the files;
+  `release.yml` packs `mindfork-webdemo.tar` (not a gate; `web-demo.yml` tries it on pull
+  requests); mindfork.io/try/ is the site's page around it, the deploy taking the asset
+  of the newest release that has one (`tools/site_webdemo.py`)
+  ([docs/research/web-demo.md](docs/research/web-demo.md) §12–§14,
   [docs/journal/website.md](docs/journal/website.md)).
 - **One big file on many threads — track complete** (2026-11-09, three stages): a big
   entry deflated in chunks on the pool, its AE-2 written here; the database compacted in

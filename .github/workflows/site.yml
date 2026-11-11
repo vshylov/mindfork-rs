@@ -26,6 +26,7 @@ on:
       - "site/**"
       - "assets/**"
       - "tools/site_sync_assets.py"
+      - "tools/site_webdemo.py"
       - ".github/workflows/site.yml"
   push:
     branches: [main]
@@ -33,6 +34,7 @@ on:
       - "site/**"
       - "assets/**"
       - "tools/site_sync_assets.py"
+      - "tools/site_webdemo.py"
       - ".github/workflows/site.yml"
   # What lets a held deploy go. The release pull request carries the release's
   # own news, so the push that merges it is held by the `gate` job until the
@@ -89,6 +91,19 @@ jobs:
         run: zola --root site check --skip-external-links
       - name: Build
         run: zola --root site build
+      # /try/ has two shapes: with the demo, which the deploy fetches from a
+      # release, and without. The build above is the second; this is the first,
+      # over a stand-in shaped like the asset (tools/site_webdemo.py), so that
+      # the shape a visitor will see is rendered on the pull request that
+      # changes its template - and the home page's link to it with it.
+      - name: Build again, with a stand-in for the web demo
+        run: |
+          set -euo pipefail
+          python3 tools/site_webdemo.py --fixture
+          zola --root site build -o "$RUNNER_TEMP/site-with-demo"
+          grep -q 'id="wd-root"' "$RUNNER_TEMP/site-with-demo/try/index.html"
+          grep -q 'Inside the machine' "$RUNNER_TEMP/site-with-demo/try/index.html"
+          grep -q 'try it in this browser' "$RUNNER_TEMP/site-with-demo/index.html"
 
   # The site says "X.Y.Z is out" only once it is. Held, the run is green and the
   # deploy below is skipped, with a notice naming what releases it; an answer the
@@ -129,6 +144,7 @@ jobs:
     permissions:
       id-token: write # the OIDC token that assumes the deploy role
       contents: read
+      attestations: read # the web demo's provenance is checked before it is published
     env:
       # Outputs of the `mindfork-website` stack (infra/website.cfn.yaml).
       BUCKET: mindfork-website-sitebucket-ioafb7vyycso
@@ -172,6 +188,23 @@ jobs:
           gh release download "$tag" --pattern 'mindfork-demo-*' --dir site/static/demo
           echo "found=true" >> "$GITHUB_OUTPUT"
           echo "The animated demo of $tag:"; ls -l site/static/demo
+      # The demo that runs in a browser tab (docs/research/web-demo.md §14.3) is
+      # a release asset too, taken the same way: from the newest published
+      # release that carries one. Its attestation is verified - what is published
+      # here is what release.yml built - and it is unpacked into a directory
+      # named by its tag, each file checked against the asset's own manifest.
+      # None yet is not a failure: /try/ then says the demo is on its way, and
+      # the home page has no link to it.
+      - name: Fetch the web demo
+        id: webdemo
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 tools/site_webdemo.py
+          if [ -f site/webdemo.json ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Build
         run: zola --root site build
       - name: Assume the deploy role
@@ -223,11 +256,24 @@ jobs:
           aws s3 sync site/public/ "s3://$BUCKET" --delete --no-progress \
             --exclude "*" --include "demo/*" \
             --cache-control "public, max-age=86400"
+      # The web demo's pass, run only when one was found, for the animation's
+      # reason. Its files are the one part of the site whose addresses never mean
+      # two things: they sit under the release's tag, because a saved machine
+      # restores only on the emulator build beside it, and a browser must never
+      # pair one release's with another's. So they can be kept for a year - a
+      # returning visitor does not download 24 MB again - and `--delete` removes
+      # the release before, which nothing points at once the pages are synced.
+      - name: Sync to S3 - the web demo
+        if: steps.webdemo.outputs.found == 'true'
+        run: |
+          aws s3 sync site/public/ "s3://$BUCKET" --delete --no-progress \
+            --exclude "*" --include "webdemo/*" \
+            --cache-control "public, max-age=31536000, immutable"
       - name: Sync to S3 - pages, styles and feeds
         run: |
           aws s3 sync site/public/ "s3://$BUCKET" --delete --no-progress \
             --exclude "fonts/*" --exclude "brand/*" --exclude "screenshots/*" \
-            --exclude "demo/*" \
+            --exclude "demo/*" --exclude "webdemo/*" \
             --cache-control "public, max-age=300, s-maxage=86400"
       - name: Invalidate CloudFront
         run: aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION" --paths "/*"

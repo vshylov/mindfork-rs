@@ -4992,8 +4992,22 @@ Principles:
   Every third-party piece is pinned by a hash (`fetch.py`, and two packages in
   `build_i686.sh`); no tool takes a path (`paths.py`). **Not a gate**, like the
   animation. `web-demo.yml` runs the job's steps on any pull request that
-  changes `tools/web_demo/**` and keeps the asset for a week. Nothing deploys
-  it yet: the page on the site is the track's third stage.
+  changes `tools/web_demo/**` and keeps the asset for a week.
+- **The demo's page, mindfork.io/try/** (docs/research/web-demo.md §14): the
+  site's own template (`site/templates/try.html`) around what the asset brings
+  — the fragment its script drives (`stage.html`), the script, the styles of
+  its own `wd-` parts — with the licence list rendered from the asset's
+  manifest. The fragment borrows the site's `.term` and `.btn`; `build.py`
+  refuses an asset that borrows a name the site's Sass does not define. The
+  site's deploy runs `tools/site_webdemo.py`: the newest published release
+  whose asset the template can read (a manifest of another `format` is passed
+  over for the release before), its attestation verified, unpacked into
+  `site/static/webdemo/<tag>/` file by file against the manifest's sha256, a
+  pointer written to `site/webdemo.json`. A directory per release makes every
+  address final, so that pass syncs `immutable` for a year. A build with no
+  asset — a pull request's, or any before the first release that carries one —
+  renders the page saying so, and the home page without its link; the pull
+  request's build also renders the other shape over a stand-in (`--fixture`).
 
 ---
 
