@@ -26,13 +26,50 @@ sysroot="$root/target/web-demo/sysroot"
 
 # ALSA's 32-bit build is not among the packages apt knows here - that takes the
 # i386 architecture, which takes root - so its two packages are fetched by
-# name, from Launchpad, which keeps every published build for good, and
-# checked against these hashes. The other packages come through
+# name and checked against these hashes. The other packages come through
 # `apt-get download`, which verifies them against the archive's signed index.
 alsa_debs=(
     "libasound2t64_1.2.11-1ubuntu0.3_i386.deb a10771c96026b43a9bbbef2db5429fb6e4799e44195a68a8d6138604537913a7"
     "libasound2-dev_1.2.11-1ubuntu0.3_i386.deb 01f9c499ed37f9511f4794eef822d6a6a5edf6af90a3aea5b77adcb1ed60fbb8"
 )
+
+# Where they are looked for, in order. Launchpad first: it keeps every
+# published build for good, so the pin cannot go stale there. Then mirrors of
+# the archive on other people's networks, which carry what the archive
+# publishes today - the pinned build until Ubuntu supersedes it. They are here
+# because of the release of 0.26.0 (2026-11-11): Canonical's network was down,
+# Launchpad answered neither by name nor by address, and the release went to
+# its draft without the demo. Whichever source answers, the file is the one
+# the hash names or it is not used.
+alsa_sources=(
+    "https://launchpad.net/ubuntu/+archive/primary/+files"
+    "https://mirrors.edge.kernel.org/ubuntu/pool/main/a/alsa-lib"
+    "https://mirrors.mit.edu/ubuntu/pool/main/a/alsa-lib"
+)
+
+# One pinned package into the current directory, from the first source that
+# has it. A source is given a minute and one try: a host that is down does not
+# refuse, it hangs - on that release day curl sat on Launchpad for 13 minutes
+# 43 seconds before it gave up - and the next source is the retry. One that
+# answers with something else (a moved page, a newer build under the old name)
+# is passed over like one that is down.
+fetch_pinned() { # file name, its sha256
+    local source
+    for source in "${alsa_sources[@]}"; do
+        # HTTPS at every hop: Launchpad answers with a redirect to its file
+        # store, and a mirror may answer with one to another.
+        if curl -sfL --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            --connect-timeout 15 --max-time 60 -o "$1" "$source/$1" &&
+            echo "$2  $1" | sha256sum --check --quiet - >/dev/null 2>&1; then
+            echo "$1: from ${source#https://}"
+            return 0
+        fi
+        echo "$1: not from ${source#https://}" >&2
+        rm -f -- "$1"
+    done
+    echo "error: $1 is at none of the sources" >&2
+    return 1
+}
 
 make_sysroot() {
     # A sysroot that was not finished is started again: a package left from an
@@ -55,11 +92,7 @@ make_sysroot() {
         local pin deb sum
         for pin in "${alsa_debs[@]}"; do
             read -r deb sum <<<"$pin"
-            # Launchpad answers with a redirect to its file store: HTTPS there
-            # too, or nothing is fetched.
-            curl -sfL --proto '=https' --proto-redir '=https' --tlsv1.2 --retry 3 -o "$deb" \
-                "https://launchpad.net/ubuntu/+archive/primary/+files/$deb"
-            echo "$sum  $deb" | sha256sum --check --quiet -
+            fetch_pinned "$deb" "$sum"
         done
         for deb in *.deb; do dpkg-deb -x "$deb" ..; done
     )

@@ -6205,3 +6205,47 @@ guard's, the site gate's and the AUR renderer's self-tests clean.
   adds no code. `cargo fmt --check` and `clippy -D warnings` clean. Not run here:
   `cargo deny check`, not installed on the droplet — the audit runs on this PR, which
   touches `Cargo.toml` and `Cargo.lock`.
+- **The tag, and a draft without the demo.** The owner merged 935 (`6d448d97`,
+  13:39:02Z) and set `v0.26.0` on it, which was `origin/main`. `release.yml` (run
+  43031427548) ended green in 18 min 49 s — and **its `web-demo` job had failed**,
+  which the workflow tolerates: the draft was made with fifteen assets, 0.25.0's
+  set of names, and no `mindfork-webdemo.tar`.
+  - *The cause.* `build_i686.sh` fetched ALSA's two i386 packages from Launchpad
+    and nowhere else. curl sat on the first for 13 min 43 s — no time limit was
+    set, and three retries were — and ended with exit 6: the name did not resolve.
+    Measured from the droplet over the next twenty minutes: the system resolver
+    answered `SERVFAIL` for `launchpad.net`, `launchpadlibrarian.net` and
+    `archive.ubuntu.com`; Canonical's three name servers timed out; and
+    `launchpad.net` by an address still in a public resolver's cache timed out
+    too. Canonical's network was down, not this repository's pipeline.
+  - *What a publication would have done*: the crate uploaded, which cannot be
+    undone, and the site deployed with a post about a demo that `/try/` did not
+    have. The owner was told not to publish before anything else was done.
+  - *The fifteen assets, checked as §6 step 5 asks.* All fourteen files match
+    `sha256sums.txt`; the notes are the `[0.26.0]` section line for line, with the
+    workflow's footer. The Linux archive: 49 entries, 0.25.0's list; `mindfork
+    --version` says `mindfork 0.26.0`; its `PRIVACY.md` is effective 2026-11-11 and
+    names `/try/`. The Windows `mindfork.exe` is a PE32+ for x86-64 (48 entries);
+    the macOS `mindfork` a Mach-O for arm64, mode 0755 (49 entries); both carry the
+    new policy. The `.deb` is `mindfork-rs 0.26.0-1 amd64` and its binary says
+    0.26.0; the Arch package's `.PKGINFO` says `0.26.0-1 x86_64`. `install.sh` is
+    the tag's file, byte for byte, with the Arch fix. Attestations verify for the
+    three archives, the installer and `install.sh` — built by `release.yml` at
+    `refs/tags/v0.26.0`, commit `6d448d97` — and a scratch file exits 1.
+  - *The animation.* The reels played here from the tag and drawn here are the
+    release's, pixel for pixel, in all 266 frames; 691 bars, none with a line, GIF
+    and WebP alike.
+  - *The released binary*: a backup it makes records `settings 7, profiles 1,
+    chat 8, db 1, story 0`; `mindfork demo` in a pseudo-terminal of 116×44, read
+    back with `pyte`, draws the demo chat, `F1` opens "About · mindfork v0.26.0",
+    `Ctrl+Q` ends it.
+- **The fix: three places to fetch a pinned package from** (branch
+  `fix/web-demo-package-sources`). The two files, with the pinned hashes, were on
+  kernel.org's, MIT's and Princeton's mirrors and on Azure's all through the
+  outage. `build_i686.sh` now tries Launchpad, then `mirrors.edge.kernel.org`,
+  then `mirrors.mit.edu`; each answer is checked against the pin, each source given
+  one try and a minute at most, a wrong file passed over like a missing one. Run alone
+  during the outage, the script's own function took both packages from kernel.org
+  in 5 s each; with a hash no file has, it passed over all three, exited 1 and left
+  nothing behind. `web-demo.yml` runs the release's steps on the fix's pull request
+  (lessons §10).

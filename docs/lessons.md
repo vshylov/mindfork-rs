@@ -2913,6 +2913,23 @@ it means the same thing at any hour the smoke runs.
 
 ## 10. CI and infrastructure
 
+**A pinned download wants a second place to come from; the hash makes any place
+safe.** The web demo's build fetched two packages from Launchpad — chosen because
+it keeps every published build for good, so a pin never goes stale there — and
+from nowhere else. On the day 0.26.0 was tagged Canonical's network was down:
+`launchpad.net` did not resolve (its name servers timed out) and did not answer by
+address either. The job is not a gate, so the release went to its draft
+**without the one file the release was about**, and a published draft would have
+put a post on the site about a demo that was not there. The same two files, with
+the same hashes, were on kernel.org's and MIT's mirrors all along. A download
+pinned by hash does not need to trust its source, so it can have several: the
+archival one first, mirrors on other networks after, each answer checked against
+the pin — and a time limit on each, because a host that is down hangs rather than
+refuses. Two further things the day showed: **a tolerated failure needs someone
+to read the run before the draft is published** (the workflow was green), and a
+rehearsal proves the pipeline, not the internet on the day.
+— *release — release 0.26.0*.
+
 **An Arch image is upgraded whole before anything is installed into it.** Two steps
 of `packaging.yml` ran `pacman -Sy --noconfirm <packages>` in `archlinux:latest`:
 refresh the package lists, install what the job needs, leave the image as built.
