@@ -162,8 +162,8 @@ def deb_fields(control: str) -> dict[str, str]:
     """A distribution package's name, version and source out of its control
     fields. ``Source`` is absent where it is the package's own name, and carries
     a version in brackets where the source's differs from the package's."""
-    pairs = (line.split(": ", 1) for line in control.splitlines() if ": " in line)
-    fields = {key: value for key, value in pairs}
+    parts = (line.partition(": ") for line in control.splitlines())
+    fields = {key: value for key, separator, value in parts if separator}
     package, version = fields["Package"], fields["Version"]
     name, _, rest = fields.get("Source", package).partition(" ")
     return {"package": package, "version": version, "source": name, "source_version": rest.strip("()") or version}
