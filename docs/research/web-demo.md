@@ -845,6 +845,149 @@ sent and answered, `Ctrl+Q` ending it, no page error.
   14 px it is the bottom row, at 15 px the top row is half inked. On the
   roadmap, with the web terminal's version of the same.
 
-**Left for the owner**: a prerelease tag, to rehearse `release.yml` end to end
-(AGENTS.md §6). Then stage 3.
+### 13.6 The rehearsal — `v0.25.0-rc1`, 2026-11-11: GO
+
+The owner merged the stack and tagged `main`'s head. `release.yml` was green in
+15 minutes, every job; the `web-demo` job took 8 min 39 s beside the builds
+(first frame 11.8 s into the boot, restored in 0.29 s, `130x38 asked, 130x38
+drawn, 64 ms`). What the tag was there to prove, and did:
+
+- **the asset reached the draft**: `mindfork-webdemo.tar`, 25.4 MB, among the
+  sixteen assets of the draft prerelease;
+- **the checksums cover it**: `sha256sums.txt` names it, and the downloaded file
+  matches;
+- **the attestation covers it**: `gh attestation verify` passes — built by
+  `release.yml` at `refs/tags/v0.25.0-rc1`, the tag's commit;
+- **it is the tag's**: the manifest names the tag's commit, all 29 files match
+  the sha256 it lists, eleven pieces, the application's notices among the texts;
+- **it runs**: unpacked and served, driven in headless Chromium — Start, `F1`, a
+  sent message answered, `Ctrl+Q`, no page error.
+
+The draft and the tag are the owner's to delete (AGENTS.md §6).
+
+## 14. Stage 3 — the page on mindfork.io
+
+`feat/web-demo-page`. The demo becomes a page of the site, in the site's own
+templates and styles; the deploy takes the asset from the newest published
+release that carries one, as it takes the animation.
+
+### 14.1 Who owns what
+
+The asset is built from a tag; the site is built from `main`, on any push that
+touches it. Whatever the two share is a contract that must hold between a
+release and every state of `main` until the next one — so it should be small,
+and each side should own what changes with it.
+
+- **The asset owns the demo**: the script, the machine, and the **markup the
+  script drives** — the Start button, the window, the terminal's box, the covers
+  over it, the status line, the key hints — as one fragment, `stage.html`. They
+  change together (a new cover, a new hint) and travel together.
+- **The site owns the page**: the header and footer, the title, the notice that
+  this is a demo of the interface and not a session with a real model, the prose
+  around it, and how the licence list looks — rendered by the site's template
+  from the asset's `manifest.json`.
+- **The contract** is what the fragment borrows from the site's stylesheet, and
+  nothing else: the terminal window (`.term`, `.term-bar`, `.term-title`,
+  `.term-controls`), the buttons (`.btn`, `.btn-primary`), and four of the
+  palette's variables (`--muted`, `--line`, `--accent`, `--font-mono`). These
+  are the site's core motif, the least likely of its names to move; the list is
+  not written down anywhere but read from the fragment and its stylesheet, and
+  `build.py` refuses to pack an asset that borrows a name the site's Sass does
+  not define. Everything of the demo's own is prefixed `wd-`, ids and classes
+  alike, so it meets nothing of the site's by accident. One knob goes the other
+  way: `--wd-top`, which the site sets to the height its header keeps at the
+  top of the screen, so that the demo's window is sized and scrolled clear of it.
+- **The manifest's `format`** is the contract's other half: the site's template
+  reads the manifest's fields. The deploy accepts one format, and an asset of
+  another is not a failure but **passed over** for the release before it - the
+  site and a release are built at different times, and neither waits for the
+  other. The rehearsal's own asset, format 1, was put through that for real:
+  downloaded, its attestation verified, passed over, nothing left behind.
+- The asset still stands alone: its `index.html` is the same fragment in a page
+  of its own, with a small stylesheet (`standalone.css`) that defines those
+  borrowed names — which is what the owner opens to check a draft release.
+
+So **"the site's own CSS"**, the owner's condition at the probe, is met in the
+most direct way: on mindfork.io the window is the site's `.term`, the button the
+site's `.btn`, the colours the site's palette in either theme. The terminal
+inside stays dark in both themes: it is the application's canvas, and the
+application's own light theme is a later step.
+
+### 14.2 Where it lives, and how long a browser may keep it
+
+- The page is **`/try/`** (F7). The asset's files are published under
+  **`/webdemo/<tag>/`** — a directory per release.
+- A directory per release because the pieces only work together: a state
+  restores only on the emulator build that made it, with the primer saved beside
+  it. Under fixed names, a returning visitor's browser could hold yesterday's
+  emulator against today's state. Under the tag, a file's address never means
+  two things, so the whole directory is **`immutable` for a year** — a visitor
+  who comes back does not download 24 MB again — and the page, which a browser
+  rechecks every five minutes like every page of the site, is the only thing
+  that points at the current one. The script finds its files relative to its own
+  address (`import.meta.url`), so nothing in it knows where it was put.
+- The standalone page and its two files are not published: `/try/` is the page.
+
+### 14.3 The deploy
+
+`tools/site_webdemo.py`, run by `site.yml`'s deploy before the build:
+
+1. finds the newest published release — not a draft, not a prerelease — that
+   carries `mindfork-webdemo.tar`; none is not an error (below);
+2. downloads it and **verifies its attestation** against this repository, as
+   the deploy already does for Zola's binary: what is published at mindfork.io
+   is what `release.yml` built;
+3. unpacks it into `site/static/webdemo/<tag>/` — only the files its manifest
+   lists, each checked against the sha256 there, nothing in the archive deciding
+   where a file is written, and nothing written until all of it has been
+   checked: an asset is placed whole or not at all;
+4. writes `site/webdemo.json`, which is how the templates know there is a demo
+   and where — beside the site's sources, not among the files it publishes.
+
+Then a sync pass of its own for `webdemo/*`, run only when a demo was found —
+a deploy that found none leaves the bucket's copy alone — and the pages' pass
+excludes that prefix. `--local` does steps 3–4 from `target/web-demo/`, for a
+preview at a desk.
+
+**On a pull request** the site's build has no release to take a demo from, and
+would only ever render the page without one. So it builds twice: once as it is,
+and once over a stand-in shaped like the asset (`--fixture`), checking that the
+fragment, the licence list and the home page's link come out — the shape a
+visitor will see is rendered where its template is changed.
+
+**Until a release carries the asset** — 0.25.0 does not — the page says so in
+two sentences and points at the animation and the install page, and the home
+page's hint has no link to it. The first release published after this merges
+brings the demo with it, with nothing to remember.
+
+### 14.4 What the page must not change
+
+- **The privacy policy** (PRIVACY.md §9) says the site sets no cookies, has no
+  analytics, no forms and no third-party embeds, and that its files come from
+  its own origin. All of that stays true: the emulator, the terminal and the
+  machine are served from mindfork.io, the machine has no network, and nothing
+  typed leaves the tab. "Start again" used `sessionStorage` to carry one flag
+  across its reload; it now carries it in the address (`#start`), so the page
+  stores nothing at all and the policy needs no new sentence.
+- **`/llms.txt`** lists what a model can read; a page whose content is a running
+  program is not that. Unchanged.
+- **No header the site does not send.** v86 needs no cross-origin isolation, and
+  the site has no Content-Security-Policy to widen.
+
+### 14.5 Forks
+
+- **F9 — the terminal in the site's light theme.** (a) **dark in both —
+  recommended**: it is the application's default canvas, and a screenshot of a
+  dark terminal on a light page is how the home page's own gallery would look
+  with one theme; (b) follow the site's theme, which needs the demo started
+  with the application's light theme — a second saved state, twice the asset.
+- **F10 — the first release to carry it.** (a) **the next one, whenever it is —
+  recommended**; (b) a patch release now (the two fixes of `[Unreleased]` and
+  the asset), so that `/try/` is live within the day this merges.
+- **F11 — the link from the home page.** (a) **a sentence in the hero's hint,
+  shown only when there is a demo — recommended** (§13.3); (b) a third button
+  beside *Install* and *Source on GitHub*.
+
+**Left for the owner**: the forks, and the run in a real browser on the built
+site.
 
