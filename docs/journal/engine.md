@@ -7362,10 +7362,16 @@ off.
   `Client::new()` of speech, recognition, image and video providers and the two probes.
   Left as they were: the three downloaders (`llama_setup`, `sandbox_setup`,
   `image_fetch`), which already return an error and fetch over HTTPS only.
-- **Tests**: +4 in `shared::net` — the client that builds is used as it is, a refusal
-  is answered with the rootless one, a backend that builds nothing still panics, and
-  with `reqwest` for real a client with no trusted certificate builds, speaks plain HTTP
-  to the stub and carries what `configure` set. 4795 unit tests green, 310 `#[ignore]`.
+- **Tests**: +5 in `shared::net` — the client that builds is used as it is, a refusal
+  is answered with the rootless one, a backend that builds nothing still panics, a
+  refused build is told with its cause, and with `reqwest` for real the fallback's own
+  build (`rootless_client`, a function so that a test can call what a machine with
+  certificates never runs) builds a client that speaks plain HTTP to the stub and
+  carries what `configure` set. 4796 unit tests green, 310 `#[ignore]`.
+- **The quality gate read 78.9% of the new lines covered against a floor of 80**: the
+  fallback's closure and `with_causes` run only where a build is refused, which no test
+  machine does. Both are now reached by a test — the closure as the function above,
+  the causes on a build `reqwest` refuses for a header value with a line break.
 - **Smoke — GO** (2026-11-10; `llama-server` with Gemma 4 E2B Q8 on the droplet's CPU,
   the system's own certificates in place — the clients every provider now gets):
   `the_local_server_catalogue_e2e_live`; `fetch_url_address_policy_e2e_live`, a turn

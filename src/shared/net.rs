@@ -400,13 +400,20 @@ pub fn build_client(
         configure(reqwest::Client::builder())
             .build()
             .map_err(with_causes),
-        || {
-            configure(reqwest::Client::builder())
-                .tls_certs_only(std::iter::empty::<reqwest::Certificate>())
-                .build()
-                .map_err(with_causes)
-        },
+        || rootless_client(&configure),
     )
+}
+
+/// The second build of [`build_client`]: the caller's configuration over a client
+/// that trusts no certificate. A function of its own so that a test builds exactly
+/// what the fallback would — on a machine with certificates the fallback never runs.
+fn rootless_client(
+    configure: &impl Fn(reqwest::ClientBuilder) -> reqwest::ClientBuilder,
+) -> Result<reqwest::Client, String> {
+    configure(reqwest::Client::builder())
+        .tls_certs_only(std::iter::empty::<reqwest::Certificate>())
+        .build()
+        .map_err(with_causes)
 }
 
 /// An error with what caused it: `reqwest` says only "builder error", and the
@@ -518,14 +525,12 @@ mod tests {
         });
     }
 
-    /// The rootless build itself, with `reqwest` for real: a client that trusts no
-    /// certificate builds — what the fallback stands on — and it is a client that
-    /// reaches a plain-HTTP server, the guard and all.
+    /// The rootless build itself, with `reqwest` for real — the very function the
+    /// fallback calls: a client that trusts no certificate builds, it reaches a
+    /// plain-HTTP server, and the caller's configuration is on it.
     #[tokio::test]
     async fn a_client_with_no_trusted_certificates_builds_and_speaks_plain_http() {
-        let rootless = reqwest::Client::builder()
-            .tls_certs_only(std::iter::empty::<reqwest::Certificate>())
-            .build()
+        let rootless = rootless_client(&|builder| builder)
             .expect("a client with an empty set of roots builds");
         let (base, _hits) = stub::counting_stub();
         let body = rootless
@@ -537,15 +542,37 @@ mod tests {
             .await
             .unwrap();
         assert!(!body.is_empty());
-        // And `configure` reaches the client `build_client` returns: one built
-        // with a 1 ms timeout gives up on a server that never answers.
+        // `configure` reaches the client on either road: one built with a 1 ms
+        // timeout gives up on a server that never answers.
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let silent = format!("http://{}", listener.local_addr().unwrap());
-        let hurried = build_client(|builder| builder.timeout(Duration::from_millis(1)));
-        let err = hurried.get(&silent).send().await.unwrap_err();
+        let in_a_hurry =
+            |builder: reqwest::ClientBuilder| builder.timeout(Duration::from_millis(1));
+        for hurried in [
+            build_client(in_a_hurry),
+            rootless_client(&in_a_hurry).unwrap(),
+        ] {
+            let err = hurried.get(&silent).send().await.unwrap_err();
+            assert!(
+                err.is_timeout(),
+                "the configured timeout was not applied: {err}"
+            );
+        }
+    }
+
+    /// A refusal is reported with its cause: `reqwest` alone says "builder error",
+    /// and the sentence a person can act on is the one underneath.
+    #[test]
+    fn a_refused_build_names_its_cause() {
+        let refused = reqwest::Client::builder()
+            .user_agent("a header value\nwith a line break")
+            .build()
+            .expect_err("a header value with a line break is refused");
+        let bare = refused.to_string();
+        let told = with_causes(refused);
         assert!(
-            err.is_timeout(),
-            "the configured timeout was not applied: {err}"
+            told.starts_with(&bare) && told.len() > bare.len() + 2,
+            "the cause is missing: {told:?} (reqwest alone: {bare:?})"
         );
     }
 
