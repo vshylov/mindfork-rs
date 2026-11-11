@@ -230,6 +230,17 @@ def described(files: dict[str, bytes]) -> dict[str, dict]:
     return {name: {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()} for name, data in files.items()}
 
 
+# The stand-in's files: an asset in miniature, by the names a real one uses.
+FRAGMENT = "stage.html"
+SCRIPT = "demo.js"
+STYLES = "demo.css"
+OWN_PAGE = "index.html"
+TEXT = "licences/stand-in.txt"
+PART = "vendor/x.bin"
+# A release, in the self-test's list of them.
+NEWEST = "v1.9.0"
+
+
 def piece(name: str, part: str) -> dict:
     """A piece as tools/web_demo/manifest.py writes one."""
     return {
@@ -239,7 +250,7 @@ def piece(name: str, part: str) -> dict:
         "role": "a stand-in",
         "licence": "MIT",
         "homepage": "https://example.test/",
-        "texts": ["licences/stand-in.txt"],
+        "texts": [TEXT],
         "sources": [{"what": "its source", "url": "https://example.test/source"}],
         "package": "",
     }
@@ -252,10 +263,10 @@ def fixture(contents: dict[str, bytes], **changes: object) -> bytes:
         "format": FORMAT,
         "application": "1.2.3",
         "commit": "0" * 40,
-        "fragment": "stage.html",
-        "script": "demo.js",
-        "stylesheet": "demo.css",
-        "standalone": ["index.html"],
+        "fragment": FRAGMENT,
+        "script": SCRIPT,
+        "stylesheet": STYLES,
+        "standalone": [OWN_PAGE],
         "files": described(contents),
         "pieces": [piece("on the page", "page"), piece("of the standalone page", "standalone"), piece("in the machine", "machine")],
         **changes,
@@ -279,12 +290,12 @@ def refused(archive: bytes, directory: Path) -> str:
 
 
 FILES = {
-    "stage.html": b'<div id="wd-root" class="wd-root">a stand-in for the demo</div>\n',
-    "demo.js": b"// a stand-in\n",
-    "demo.css": b"/* a stand-in */\n",
-    "index.html": b"<html>",
-    "licences/stand-in.txt": b"a stand-in\n",
-    "vendor/x.bin": b"\0\1",
+    FRAGMENT: b'<div id="wd-root" class="wd-root">a stand-in for the demo</div>\n',
+    SCRIPT: b"// a stand-in\n",
+    STYLES: b"/* a stand-in */\n",
+    OWN_PAGE: b"<html>",
+    TEXT: b"a stand-in\n",
+    PART: b"\0\1",
 }
 
 
@@ -308,32 +319,32 @@ def self_test() -> list[str]:
         {"tag_name": "v9.9.9", "draft": True, **asset(ASSET)},
         {"tag_name": "v3.0.0-rc1", "prerelease": True, **asset(ASSET)},
         {"tag_name": "v2.0.0", **asset("mindfork-demo-dark-en.webp")},
-        {"tag_name": "v1.9.0", **asset(ASSET)},
+        {"tag_name": NEWEST, **asset(ASSET)},
         {"tag_name": "v1.8.0", **asset(ASSET)},
     ]
-    expect("the published releases with the asset, newest first", with_asset(releases), ["v1.9.0", "v1.8.0"])
+    expect("the published releases with the asset, newest first", with_asset(releases), [NEWEST, "v1.8.0"])
     expect("no release with the asset", with_asset(releases[:3]), [])
-    expect("a release's tag", [bool(TAG.fullmatch(tag)) for tag in ("v1.9.0", "v1.9.0-rc1", "../v1.9.0", "local")], [True, False, False, False])
+    expect("a release's tag", [bool(TAG.fullmatch(tag)) for tag in (NEWEST, f"{NEWEST}-rc1", f"../{NEWEST}", LOCAL)], [True, False, False, False])
 
     with tempfile.TemporaryDirectory() as raw:
         scratch = Path(raw)
         manifest = unpack(fixture(FILES), scratch / "good")
         written = sorted(path.relative_to(scratch / "good").as_posix() for path in (scratch / "good").rglob("*") if path.is_file())
-        expect("what an asset publishes", written, ["demo.css", "demo.js", "licences/stand-in.txt", MANIFEST, "stage.html", "vendor/x.bin"])
+        expect("what an asset publishes", written, sorted([STYLES, SCRIPT, TEXT, MANIFEST, FRAGMENT, PART]))
         expect("the manifest it gives", manifest["application"], "1.2.3")
 
         wrong = described(FILES)
-        wrong["vendor/x.bin"]["sha256"] = "f" * 64
+        wrong[PART]["sha256"] = "f" * 64
         lying = fixture(FILES, files=wrong)
-        expect("a file that is not what its manifest says", "vendor/x.bin does not match" in refused(lying, scratch / "lying"), True)
+        expect("a file that is not what its manifest says", f"{PART} does not match" in refused(lying, scratch / "lying"), True)
         expect("a format the template does not read", "format 1" in refused(fixture(FILES, format=1), scratch / "old"), True)
         try:
             unpack(fixture(FILES, format=FORMAT + 1), scratch / "newer")
             problems.append("an asset of a later format was placed")
         except OtherFormat:
             pass  # passed over, not a failure: the release before it is tried
-        absent = fixture({name: data for name, data in FILES.items() if name != "demo.js"})
-        expect("an asset without its script", "'demo.js'" in refused(absent, scratch / "absent"), True)
+        absent = fixture({name: data for name, data in FILES.items() if name != SCRIPT})
+        expect("an asset without its script", repr(SCRIPT) in refused(absent, scratch / "absent"), True)
         for name in ("../escape.js", "/etc/passwd", "a/../../b", ".hidden", "a//b/../c"):
             climbing = fixture({**FILES, name: b"x"})
             expect(f"a file named {name}", "will not write" in refused(climbing, scratch / "climbing"), True)
