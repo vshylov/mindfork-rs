@@ -14,6 +14,15 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Added
+
+- **A release carries a demo for the browser.** `mindfork-webdemo.tar` is that
+  release's `mindfork demo`, saved while running inside an x86 emulator that a web
+  page restores in a tab: unpack it into an empty folder, serve the folder
+  (`python -m http.server --directory <folder>`), open it and press **Start**. It is
+  a demo of the interface with scripted replies, not a session with a real model.
+  The page for it on mindfork.io is still to come.
+
 ### Fixed
 
 - **The demo's companion is English in the settings too.** `mindfork demo` showed

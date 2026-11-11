@@ -258,7 +258,12 @@ data format change adds an item to `CHANGELOG.md` → `[Unreleased]` (§4).
    back) + the **animated demo** (`mindfork-demo-{dark,light}-en.{gif,webp}` and
    `mindfork-demo-dark-ru.{gif,webp}`, drawn from the tag's own interface by the `demo-reel` job — not a gate: a
    failed job leaves the release without them, and the site keeps the previous
-   release's; docs/research/demo-reel.md §3.6) + `sha256sums.txt` → `gh release create
+   release's; docs/research/demo-reel.md §3.6) + the **demo for the browser**
+   (`mindfork-webdemo.tar`: the tag's binary built for 32-bit x86 and saved, running
+   `mindfork demo`, in the emulator a page restores it into, with the page and a
+   manifest of every redistributed piece — the `web-demo` job, not a gate either;
+   its steps run on pull requests that change `tools/web_demo/**`, by
+   `web-demo.yml`; docs/research/web-demo.md §13.5) + `sha256sums.txt` → `gh release create
    --draft` with notes = the `[X.Y.Z]` section from the CHANGELOG.
    Packaging changes (`packaging/**`) are validated on the PR by a separate `packaging.yml`
    (Linux: package build + install smoke in Ubuntu/Fedora/Arch containers, and
@@ -268,7 +273,10 @@ data format change adds an item to `CHANGELOG.md` → `[Unreleased]` (§4).
 5. **Artifact smoke test — on the draft, before anyone else can see it**:
    download the archive, `mindfork --version` (matches the tag), run the TUI on a
    copy of the data, glance at `mindfork-demo-dark-en.gif` (what the site will
-   play once the release is out); optionally — install the package/installer in a VM. A
+   play once the release is out), and unpack `mindfork-webdemo.tar` into an empty
+   directory, serve it (`python -m http.server --directory <dir>`) and press
+   **Start** — the demo a browser will get; optionally — install the
+   package/installer in a VM. A
    release that moves a schema constant is also run, as released, on files of
    the version before (the golden fixtures of its step), and the previous
    release's binary on what it wrote — it must refuse as a newer version's data.

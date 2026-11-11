@@ -625,10 +625,22 @@ effort tiers and Fabula — have all closed
   site stays static. Stage 1, the probe, is built and measured: 21.5 MB on a
   click, the first frame about 4 s later on a 50 Mbit/s line, a typed character
   12 ms after its key — and **GO** from the owner in Chrome, Firefox and Edge.
-  Stage 2 is in progress: the guest is Alpine's pinned kernel and an initramfs
-  written here, and the page's terminal takes the window's size; the release's
-  job and its asset are next, then stage 3, the page at `/try/` in the site's own
-  design ([web-demo.md §12–§13](research/web-demo.md)).
+  Stage 2 is built: the guest is Alpine's pinned kernel and an initramfs
+  written here, the page's terminal takes the window's size, the licence list is
+  a manifest read out of the files themselves, and `release.yml` builds the whole
+  as one asset, `mindfork-webdemo.tar` — its steps tried on pull requests by
+  `web-demo.yml`. **Waiting on the owner's prerelease tag** to rehearse the
+  release job; then stage 3, the page at `/try/` in the site's own design
+  ([web-demo.md §12–§13](research/web-demo.md)).
+- **Block glyphs drawn with gaps** — reported by the owner on 2026-11-11: thin
+  breaks between rows in solid bars (`█`, `▌`) in the site's screenshots and
+  animation, and the same in the web demo's terminal at 15 px. Both draw a block
+  element as the typeface's glyph into a cell rounded to whole pixels, and the
+  glyph's edge need not land on the cell's (read from `tools/screenshots.py`, not
+  yet measured). Two renderers to fix: the screenshots' cell renderer, which the
+  animation shares, should fill block elements as rectangles of the cell; the web
+  terminal wants xterm.js's WebGL renderer, which draws them itself
+  ([web-demo.md §13.5](research/web-demo.md)).
 - **A Russian version of the site** — **deferred**, on F4's own terms
   ([mindfork-io-website.md §8](research/mindfork-io-website.md), S4).
 - **CloudFront's flat-rate plan with WAF** — **deferred** until traffic asks

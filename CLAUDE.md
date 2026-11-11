@@ -162,6 +162,7 @@ python tools/site_release_gate.py --self-test  # the gate that holds the site's 
 python tools/actions_pin_check.py  # every workflow action is pinned to a commit
 python tools/release_guard.py --self-test  # the tag guard release.yml runs, against fixtures
 python tools/aur_package.py --self-test    # the AUR renderer aur.yml runs, against fixtures
+python tools/web_demo/manifest.py --self-test  # the web demo manifest's readers, against fixtures
 python tools/console_probe.py      # Windows: drive the TUI in a hidden console, read the screen back
 ```
 
@@ -199,6 +200,13 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **The demo in a browser tab — stages 1–2** (2026-11-11): the release's binary built
+  for 32-bit x86 and saved, running `mindfork demo`, in the v86 emulator a page restores
+  it into; every piece pinned, the redistributed ones listed in a manifest read from the
+  files; `release.yml` packs it as `mindfork-webdemo.tar` (not a gate; `web-demo.yml`
+  tries the steps on pull requests). The page at `/try/` is stage 3
+  ([docs/research/web-demo.md](docs/research/web-demo.md) §12–§13,
+  [docs/journal/website.md](docs/journal/website.md)).
 - **One big file on many threads — track complete** (2026-11-09, three stages): a big
   entry deflated in chunks on the pool, its AE-2 written here; the database compacted in
   memory; a restore's needless `VACUUM` gone; optimized debug builds. 352 MB root: backup
@@ -377,17 +385,6 @@ being recent is dropped, not shortened.
   the child, a refused launch said in llama.cpp's words. Live **GO**
   ([docs/research/managed-extra-args.md](docs/research/managed-extra-args.md),
   spec §3.4, [docs/journal/engine.md](docs/journal/engine.md)).
-- **One command from a bare GPU box to a chat — track complete** (2026-09-22).
-  `install.sh` (a release asset, attested; the archive refused unless the
-  checksums agree; whether the app starts decided by running it) hands over to
-  `mindfork setup`, and the README's line ran on a RunPod pod end to end: CUDA
-  llama.cpp with its runtime, the sandbox, a 31B Q8_0 `ready in 4 s — context
-  131072`. The first real pod found the one defect that shipped — root without
-  `CAP_CHOWN`, `tar` restoring the archive's owner — fixed in 0.11.1 with a
-  `capsh` scenario and its control arm. Optional: `pod_probe.sh`'s JIT / volume
-  / `machine-id` measurements
-  ([docs/research/cloud-provisioning.md](docs/research/cloud-provisioning.md) §7–§8,
-  [docs/journal/release.md](docs/journal/release.md), install.md §1, §3.3–§3.4).
 - **`mindfork stats` — which copy of the data is the newest, and what the other
   one holds** (both stages). A read-only summary of the live data or of a backup
   archive, encrypted ones included: nothing is created, migrated or unpacked.

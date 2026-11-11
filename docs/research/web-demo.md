@@ -379,6 +379,11 @@ interface, not a full session with a real model.** F2 and F3 were not answered
 apart from that; the probe goes by their recommendations, and the page is where
 both show.
 
+**The owner, 2026-11-11: the 25 MB floor is dropped.** "The program is for people
+who are ready to download language models of tens of gigabytes." The download is
+still measured and still said on the page; it is no longer a number a build has
+to stay under. The other two floors stand.
+
 **What would bring A back:** crossterm compiling for wasm upstream, the application
 being split into crates for a reason of its own, or the 32-bit route closing.
 
@@ -490,7 +495,7 @@ Safari are the owner's run.
 |---|---|
 | First frame within 5 s of the click on a 50 Mbit/s line | **4.1 s and 4.2 s** in two runs — Chromium throttled to 50 Mbit/s with 20 ms of latency, its cache off. 9.3 s at 20 Mbit/s; 0.4 s from a local server; 0.35 s on a second visit |
 | No visible lag between a key and its character | the character is handed to the terminal a **median of 12 ms** after the key (twelve keys, two runs; the session's first, 60–69 ms), and painted on the browser's next frame. Whether that reads as none is the owner's to say |
-| At most 25 MB downloaded | **21.5 MB** (21 489 834 B in the build measured; the state differs by some kilobytes from one build to the next), counted uncompressed in transit: the state 18.45 MB, the emulator 2.37 MB, the terminal 0.50 MB, the BIOS 0.17 MB |
+| At most 25 MB downloaded — dropped on 2026-11-11 (§9) | **21.5 MB** (21 489 834 B in the build measured; the state differs by some kilobytes from one build to the next), counted uncompressed in transit: the state 18.45 MB, the emulator 2.37 MB, the terminal 0.50 MB, the BIOS 0.17 MB |
 
 ### 12.3 A key to its frame
 
@@ -734,7 +739,99 @@ is not established. **"Start again" is now a reload of the page that starts by
 itself** — every demo is a first machine, with everything it needs in the browser's
 cache: eight restarts out of eight answer, where three of five did not.
 
-**Still to do in stage 2**: the manifest of redistributed pieces, the `web-demo`
-job in `release.yml` with the runner's multilib build, the asset, and the
-prerelease-tag rehearsal.
+### 13.5 Stage 2, second part — the manifest, the asset, the release's job
+
+**The manifest** (`tools/web_demo/manifest.py`). The probe's licence list was
+prose, typed beside pins it described: it said glibc 2.39 because the droplet had
+2.39, and it named musl without a version because nobody had looked. The list is
+now read out of the files the build packs, and the first read corrected the prose
+— the image carries musl **1.2.6**, BusyBox **1.37.0-r31**:
+
+| Piece | Read from |
+|---|---|
+| v86, xterm.js | their npm packages' own `package.json`: version, licence, repository; the source is the pinned archive itself |
+| Linux | the boot image's header — the boot protocol's `kernel_version` field: `6.18.60-0-virt` |
+| SeaBIOS | the image's own version string, `rel-1.16.2-0-g…` |
+| BusyBox, musl | the Alpine image's record of its packages (`lib/apk/db/installed`): version, licence, home page, and the commit of Alpine's build files each was made from |
+| glibc, libgcc_s, ALSA | the packages in the sysroot they were unpacked from: package, version, source package and its version |
+| mindfork | `Cargo.toml` and the commit being built |
+
+What no file says — that glibc's library is LGPL-2.1-or-later, libgcc's GPL-3.0
+with the runtime exception — is one table, keyed by source package, and a source
+package the table does not know stops the build. musl's copyright notice comes
+from musl's own release, pinned, and the build refuses a release other than the
+one the image carries.
+
+Each piece has its **licence texts in the asset** (`licences/`): the emulator's
+and the terminal's from their packages; for the distribution's libraries the
+package's own `copyright` file — the notices their licences require to travel —
+and the GNU texts those files refer to, as the distribution ships them
+(`/usr/share/common-licenses`); musl's `COPYRIGHT`; the application's licence,
+its third-party notices (the same `cargo about` file every archive carries — the
+i686 and x86_64 Linux graphs are the same packages, checked) and the licences of
+the syntax grammars compiled into it. And each names **where its exact source
+is**: the kernel's tarball and Alpine's files for it at the release's tag, the
+aports commit for BusyBox and musl, the Launchpad page of the Ubuntu source
+package at its version, SeaBIOS's release and v86's build files at the pinned
+commit. `manifest.json` also lists every file of the asset with its size and
+sha256, and what a press of **Start** downloads.
+
+**The asset** is the page's tree as one archive, `mindfork-webdemo.tar`: unpacked
+anywhere and served, it is that release's demo — which is how the owner checks a
+draft release's demo before publishing it, and what stage 3's deploy will fetch.
+
+**One road to the 32-bit binary.** §13.3 planned the runner's multilib. Two things
+changed that. It was never run, and it needs a second architecture enabled in apt
+— a known way for a hosted runner's package set to refuse — where the sysroot
+needs nothing installed: `apt-get download` for the four packages Ubuntu ships as
+amd64, verified against the archive's signed index. And the release would have
+built what nobody can build at a desk. So `build_i686.sh` has the sysroot road
+only, and the runner takes it. ALSA's two i386 packages, which apt cannot fetch
+without that second architecture, came over plain HTTP at whatever version was
+installed; they are now **pinned by sha256 and fetched from Launchpad over
+HTTPS**, which keeps every published build for good.
+
+**No tool takes a path.** The first pull requests failed the quality gate: every
+`--binary`, `--libs` and `--out` was an unvalidated path reaching the file system
+or a command line. The lesson was already written down (docs/lessons.md — "prefer
+a fixed path over an argument nobody needed") and nobody needed these: each step
+now reads what the one before it wrote, in the places `paths.py` names.
+
+**The release's job** (`release.yml`, `web-demo`): the toolchain, Node 22, the
+package lists, `build_i686.sh`, the notices, `build.py --release`, the upload —
+on `ubuntu-24.04`, since the machine carries its own C library and the runner's
+age buys nothing. **Not a gate**, as the animation's job is not: a failure shows
+as its red mark, the release goes out without the asset, and the site keeps the
+previous demo. No build cache: a tag's cache is readable by no later tag.
+
+**Tried before a tag.** A release is the wrong day to learn that a pinned download
+moved. `web-demo.yml` is the same steps on any pull request that changes
+`tools/web_demo/**`, and keeps the asset it builds for a week — the pull request's
+own demo, downloadable. What is left for a prerelease tag to prove is only the
+release job's part: the asset copied in before the checksums, attested, attached
+to the draft.
+
+**Measured on the build that carries all this** (the droplet, Node 22, headless
+Chromium 156): the 32-bit build 5 min 10 s; the guest to its first frame 9.8 s;
+the state 69.5 MB, 21.5 MB compressed; restored in 0.33 s; `130x38 asked, 130x38
+drawn, 67 ms`; a click downloads 24.6 MB; the asset 25.1 MB with 11 pieces in its
+manifest. In the page: the grid right at seven window sizes and three pixel
+ratios, no scrollbar, every local link of the licence list resolving, four
+restarts of four answering.
+
+**Found on the way.**
+
+- *The test that looked for the status bar on the last row was wrong, not the
+  page.* At 108 columns the application wraps its bar's hints onto a second row;
+  the frame fills the terminal at every size tried.
+- *The gaps in block glyphs are not the web terminal's alone.* The owner sees
+  them in the site's screenshots and animation too, on `█` and `▌`. Those are
+  drawn by `tools/screenshots.py`'s cell renderer, which `tools/demo_reel.py`
+  shares: it draws a block element as the typeface's glyph, anti-aliased, into a
+  cell whose height is rounded to whole pixels — so the glyph's edge need not
+  land on the cell's. Read from the code, not yet measured; on the roadmap, with
+  the web terminal's version of the same.
+
+**Left for the owner**: a prerelease tag, to rehearse `release.yml` end to end
+(AGENTS.md §6). Then stage 3.
 
