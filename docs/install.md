@@ -59,7 +59,11 @@ starts. On a bare image it does not — the app needs ALSA's runtime library
 the script installs that one package with the system's package manager
 (`apt-get`, `dnf`, `pacman` or `zypper`; as root, or through `sudo` when it needs
 no password), and if it cannot, stops with exit code 3 and the exact command to
-run. When the command after `--` installs llama.cpp (`setup --llama …`,
+run. On Arch it installs from the package lists the system already has and never
+refreshes them — a refresh with one package is a partial upgrade, which Arch does
+not support — so on a system whose lists are missing or behind the mirrors it
+stops with the line that upgrades the system and installs the package in one go
+(`sudo pacman -Syu alsa-lib`). When the command after `--` installs llama.cpp (`setup --llama …`,
 `llama setup …`), it also makes sure of **OpenMP's runtime** (`libgomp.so.1`):
 llama.cpp's Linux builds need it, and a bare image lacks it too (measured on
 `ubuntu:24.04`; RunPod's images carry it). The binary that needs it is not on

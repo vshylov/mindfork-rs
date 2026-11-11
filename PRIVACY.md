@@ -1,6 +1,6 @@
 # Privacy policy
 
-Effective **2026-11-09**. It covers three things that are easy to confuse: the
+Effective **2026-11-11**. It covers three things that are easy to confuse: the
 **mindfork application**, the website **mindfork.io**, and the project's
 presence on **GitHub**. They have very different answers, so they are kept
 apart below.
@@ -669,6 +669,19 @@ The site is **static** — pages generated ahead of time, served from Amazon S3
 through CloudFront. It has **no analytics** of any kind, **no cookies** set by us
 and therefore no cookie banner, **no forms**, no sign-up, no comments, and **no
 third-party embeds**: fonts, styles and images come from the site's own origin.
+
+One page does more than show text. **mindfork.io/try/** runs a demo of the
+application in your browser once you press **Start**: the program itself inside
+an emulated PC, with a script answering in place of a model. Everything it loads
+— the emulator, the machine's saved state, the terminal it draws in — comes from
+the site's own origin too. The emulated machine has no network connection: what
+you type goes to the program in your tab and nowhere else. The demo keeps
+nothing in your browser — no cookie, no local storage, no database — and
+closing or reloading the tab discards it.
+
+The one thing the site keeps in your browser is the theme you chose with its
+light/dark switch, in the browser's local storage, and only if you use the
+switch. The page reads it; it is sent nowhere.
 
 The infrastructure that serves it
 ([infra/website.cfn.yaml](infra/website.cfn.yaml)) configures **no access

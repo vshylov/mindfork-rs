@@ -307,12 +307,26 @@ install_alsa() {
     elif have dnf; then
         as_root dnf install -y -q alsa-lib
     elif have pacman; then
-        as_root pacman -Sy --noconfirm --needed alsa-lib
+        # `-S`, never `-Sy`: Arch has no partial upgrades. Refreshing the package
+        # lists and installing one package resolves it against libraries newer
+        # than the system's own, and the day the repositories move a library on
+        # (OpenSSL 4, 2026-11) that breaks what is installed. From the lists the
+        # system already has, the package either installs or does not — and
+        # when it does not, `pacman_hint`'s line is the way: the system first.
+        as_root pacman -S --noconfirm --needed alsa-lib
     elif have zypper; then
         as_root zypper --non-interactive install alsa
     else
         return 1
     fi
+}
+
+# On Arch the line to run upgrades the system and installs the package in one
+# transaction, which is the only way Arch supports installing onto a system
+# whose package lists are missing (a bare image) or behind the mirrors. A whole
+# system upgrade is the user's to start, so the script only names it.
+pacman_hint() { # package
+    say "    sudo pacman -Syu $1    # upgrades the system first: Arch installs onto an up-to-date one only"
 }
 
 alsa_hint() {
@@ -321,7 +335,7 @@ alsa_hint() {
     elif have dnf; then
         say "    sudo dnf install -y alsa-lib"
     elif have pacman; then
-        say "    sudo pacman -S alsa-lib"
+        pacman_hint alsa-lib
     else
         say "    install ALSA's runtime library (libasound.so.2) with your package manager"
     fi
@@ -348,7 +362,7 @@ ensure_starts() { # install dir, no_deps
         say "  installed"
         return 0
     fi
-    warn "could not install it (not root, no sudo, or no network). The app is unpacked but cannot start until you run:"
+    warn "could not install it (not root, no sudo, no network, or a system to upgrade first). The app is unpacked but cannot start until you run:"
     alsa_hint >&2
     exit 3
 }
@@ -387,7 +401,8 @@ install_openmp() {
     elif have dnf; then
         as_root dnf install -y -q libgomp
     elif have pacman; then
-        as_root pacman -Sy --noconfirm --needed gcc-libs
+        # `-S`, never `-Sy`: see `install_alsa`.
+        as_root pacman -S --noconfirm --needed gcc-libs
     elif have zypper; then
         as_root zypper --non-interactive install libgomp1
     else
@@ -401,7 +416,7 @@ openmp_hint() {
     elif have dnf; then
         say "    sudo dnf install -y libgomp"
     elif have pacman; then
-        say "    sudo pacman -S gcc-libs"
+        pacman_hint gcc-libs
     else
         say "    install OpenMP's runtime library (libgomp.so.1) with your package manager"
     fi
@@ -427,7 +442,7 @@ ensure_openmp() { # no_deps, the hand-over's arguments...
         say "  installed"
         return 0
     fi
-    warn "could not install it (not root, no sudo, or no network). llama.cpp will not start until you run:"
+    warn "could not install it (not root, no sudo, no network, or a system to upgrade first). llama.cpp will not start until you run:"
     openmp_hint >&2
 }
 
