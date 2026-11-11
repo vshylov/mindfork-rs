@@ -430,10 +430,7 @@ pub struct YoutubeWatch {
 
 impl YoutubeWatch {
     pub fn new(video: Option<Arc<dyn VideoUnderstanding>>, max_minutes: u32) -> Self {
-        let http = reqwest::Client::builder()
-            .timeout(META_TIMEOUT)
-            .build()
-            .unwrap_or_default();
+        let http = crate::shared::net::build_client(|builder| builder.timeout(META_TIMEOUT));
         Self {
             http,
             video,

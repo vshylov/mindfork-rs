@@ -157,7 +157,7 @@ impl OpenAiTts {
         speed: f32,
     ) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: crate::shared::net::plain_client(),
             base_url: base_url.trim_end_matches('/').to_string(),
             api_key: Some(api_key),
             model: Some(model),
@@ -183,7 +183,7 @@ impl OpenAiTts {
         gateway: &GatewaySpeech,
     ) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: crate::shared::net::plain_client(),
             base_url: base_url.trim_end_matches('/').to_string(),
             api_key: Some(api_key),
             model: Some(model),
@@ -207,7 +207,7 @@ impl OpenAiTts {
         speed: f32,
     ) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: crate::shared::net::plain_client(),
             base_url: base_url.trim_end_matches('/').to_string(),
             api_key,
             model,
