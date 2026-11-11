@@ -39,12 +39,23 @@ const MACHINE_BYTES = Number(root.dataset.machineBytes);
 const PADDING = 6;
 const UNDER = 44;
 // The text is this size wherever the window gives a grid of at least
-// SMALLEST at it, and smaller only where it does not; LARGEST is where a
-// very large window stops adding cells.
+// SMALLEST at it, and smaller only where it does not. LARGEST is where a
+// large window stops adding cells: the interface is a conversation, and
+// stretched across a wide screen it is a column of text beside an empty
+// field - the owner's finding on the first page that let it stretch.
 const FONT = 15;
 const MIN_FONT = 8;
 const SMALLEST = { cols: 80, rows: 24 };
-const LARGEST = { cols: 200, rows: 60 };
+const LARGEST = { cols: 120, rows: 50 };
+// After the application is told the window's grid, the cover stays until it
+// has drawn for it. Told a new size, it first clears the screen - a few bytes
+// - and draws the frame a fifth of a second later, a kilobyte at a time
+// (measured in the page; longer on a slower machine). So the wait is for a
+// frame's worth of output, FRAME_BYTES, and then for QUIET of silence;
+// REDRAW_LIMIT ends it if that never comes.
+const FRAME_BYTES = 1024;
+const QUIET = 120;
+const REDRAW_LIMIT = 2500;
 // The application leaves the alternate screen when it quits.
 const LEAVES_ALT_SCREEN = "\x1b[?1049l";
 // The address of a page that starts the demo without waiting for a click:
@@ -57,7 +68,7 @@ const FACE = '"JetBrains Mono"';
 // `keys`: for each key pressed, when it was pressed and how many
 // milliseconds later each piece of the answer had been handed to the
 // terminal - which paints it on the browser's next frame.
-const stats = { clickedAt: null, readyAt: null, firstFrameAt: null, downloaded: 0, grid: null, keys: [] };
+const stats = { clickedAt: null, readyAt: null, firstFrameAt: null, shownAt: null, downloaded: 0, grid: null, keys: [] };
 window.__demo = { stats };
 
 let term = null;
@@ -172,13 +183,15 @@ function sizeWindow() {
     setBox(Math.round(grid.cell.width * grid.cols), Math.round(grid.cell.height * grid.rows));
 }
 
-// The terminal and the application both take the window's grid. The
-// message's two numbers go in the order the machine's kernel reads them
-// (machine.json, and docs/research/web-demo.md §13.2).
+// The terminal and the application both take the window's grid; says whether
+// the application had to be told a new one. The message's two numbers go in
+// the order the machine's kernel reads them (machine.json, and
+// docs/research/web-demo.md §13.2).
 function applyGrid() {
-    if (!term || !emulator) return;
+    if (!term || !emulator) return false;
     term.options.fontSize = grid.size;
-    if (term.cols !== grid.cols || term.rows !== grid.rows) {
+    const changed = term.cols !== grid.cols || term.rows !== grid.rows;
+    if (changed) {
         term.resize(grid.cols, grid.rows);
         emulator.bus.send("virtio-console0-resize", machine.resize_sends.map((name) => grid[name]));
     }
@@ -188,6 +201,7 @@ function applyGrid() {
         const screen = terminalBox.querySelector(".xterm-screen");
         if (screen) setBox(screen.offsetWidth, screen.offsetHeight);
     });
+    return changed;
 }
 
 function megabytes(bytes) {
@@ -245,7 +259,7 @@ function showWindow() {
 
 async function start() {
     stats.clickedAt = performance.now();
-    stats.readyAt = stats.firstFrameAt = null;
+    stats.readyAt = stats.firstFrameAt = stats.shownAt = null;
     startBox.hidden = true;
     startButton.disabled = true;
     againButton.disabled = true;
@@ -287,6 +301,10 @@ function run(primer) {
         tail: "",
         // The key being answered, for the page's own measurements.
         key: null,
+        // The timer that takes the cover off, while the application is
+        // drawing for the window's grid, and how much it has drawn since.
+        redrawing: null,
+        drawn: 0,
         // The scripts and the two small files are in by now; the emulator
         // reports the rest as it fetches it.
         fetched: {},
@@ -314,7 +332,29 @@ function onOutput(session, bytes) {
     session.tail = (session.tail + end).slice(-LEAVES_ALT_SCREEN.length);
     if (session.primed) write(session, chunk);
     else session.pending.push(chunk);
+    // The frame for the window's grid is arriving: shown once it is whole.
+    if (session.redrawing) {
+        session.drawn += chunk.length;
+        if (session.drawn >= FRAME_BYTES) revealAfter(session, QUIET);
+    }
     if (session.tail === LEAVES_ALT_SCREEN) finish(session.machine);
+}
+
+function revealAfter(session, ms) {
+    clearTimeout(session.redrawing);
+    session.redrawing = setTimeout(() => reveal(session), ms);
+}
+
+// The cover comes off: what is under it is the application at the window's
+// grid, and from here on a visitor is watching it.
+function reveal(session) {
+    session.redrawing = null;
+    if (emulator !== session.machine) return;
+    stats.shownAt = performance.now();
+    loading.hidden = true;
+    statusLine.textContent = "Running. Ready " + ((stats.shownAt - stats.clickedAt) / 1000).toFixed(1) + " s after the click.";
+    keys.hidden = false;
+    term.focus();
 }
 
 function write(session, chunk) {
@@ -350,12 +390,12 @@ function onPrimed(session) {
     term.onBinary((data) => send(session, Uint8Array.from(data, (unit) => unit.codePointAt(0))));
     session.pending.forEach((chunk) => write(session, chunk));
     session.pending = [];
-    // And now the window's own grid: the application redraws for it.
-    applyGrid();
-    loading.hidden = true;
-    statusLine.textContent = "Running. Ready " + ((stats.firstFrameAt - stats.clickedAt) / 1000).toFixed(1) + " s after the click.";
-    keys.hidden = false;
-    term.focus();
+    // And now the window's own grid. Where it is not the grid the machine was
+    // saved at, the application redraws for it - under the cover: a frame of
+    // one size replaced by another a moment later is not a thing to watch.
+    session.drawn = 0;
+    if (applyGrid()) revealAfter(session, REDRAW_LIMIT);
+    else reveal(session);
 }
 
 // The application quit: the machine has nothing more to show.

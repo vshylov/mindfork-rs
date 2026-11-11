@@ -632,8 +632,9 @@ effort tiers and Fabula — have all closed
   `web-demo.yml`; rehearsed on `v0.25.0-rc1`, **GO**. Stage 3 is built: the
   page at `/try/` in the site's own templates and styles, the deploy taking the
   asset from the newest release that carries one. **The demo goes live with the
-  first release published after stage 3 merges**; until then `/try/` says so.
-  Left: the owner's run in a real browser, Safari, the application's light
+  first release published after stage 3 merges** (the owner's decision); until
+  then `/try/` says so. The owner's run in Chrome is done and what it found is
+  fixed. Left: Firefox and Safari on the site's page, the application's light
   theme in the terminal, a Russian page
   ([web-demo.md §12–§14](research/web-demo.md)).
 - **Block glyphs drawn with gaps** — reported by the owner on 2026-11-11: thin

@@ -1,5 +1,5 @@
 +++
-title = "Try it in your browser"
+title = "Try the interface in your browser"
 description = "The mindfork interface running in a browser tab: the program itself inside an emulated PC, with a scripted engine in place of a model. Nothing to install, nothing leaves the tab."
 template = "try.html"
 +++

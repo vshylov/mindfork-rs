@@ -917,6 +917,8 @@ application's own light theme is a later step.
 
 - The page is **`/try/`** (F7). The asset's files are published under
   **`/webdemo/<tag>/`** — a directory per release.
+- The terminal's window is as wide as the site's own column and as tall as the
+  browser's window allows, 120×50 at most (§14.6).
 - A directory per release because the pieces only work together: a state
   restores only on the emulator build that made it, with the primer saved beside
   it. Under fixed names, a returning visitor's browser could hold yesterday's
@@ -988,6 +990,50 @@ brings the demo with it, with nothing to remember.
   shown only when there is a demo — recommended** (§13.3); (b) a third button
   beside *Install* and *Source on GitHub*.
 
-**Left for the owner**: the forks, and the run in a real browser on the built
-site.
+**The owner's decisions (2026-11-11):** F9(a) — the terminal stays dark; F10(a)
+— the demo goes live with the next release; F11(a) — the sentence in the hero's
+hint, with a caution: **a reader must not take it for full access to a model in
+the browser.** So the link says what is behind it in the same breath — "see that
+same demo in this browser — the interface with its scripted replies, not a
+model" — and the page's title is "Try the interface in your browser", its lede
+"…running in this tab with scripted replies".
+
+### 14.6 The owner's run — the window stretched, and was seen to
+
+Chrome on Windows, a browser window 1984×995, the built site through a tunnel.
+The page and the demo worked; one thing was wrong, in two parts:
+
+- **The interface was stretched across the screen.** The first build of the page
+  gave the terminal the window's whole width: 196 columns on that screen. The
+  interface is a conversation — a column of text — and at that width it is a
+  column beside an empty field.
+- **And it was seen to stretch.** The machine is saved at 116×44. The page showed
+  that frame first, in a box already as wide as the window, and the application
+  redrew for the window's grid "a second later" — the owner noticing, rightly,
+  that the first of the two sizes was the better one.
+
+**What changed.** The grid has a ceiling, **120×50**, and on the site the window
+sits in the site's own column — 115 columns, edge to edge with the header — while
+its height still follows the browser's window. And **the cover stays until the
+application has drawn for the window's grid**: what a visitor first sees is the
+frame they will be looking at.
+
+How long that takes had to be measured, because the first attempt got it wrong.
+Told a new size, the application first clears the screen — sixteen bytes, 36 ms
+after the message — and draws the frame a fifth of a second later, a kilobyte at
+a time (212–310 ms in headless Chromium on the droplet; under Node, on a machine
+that has already answered a key, the whole redraw is over in 64–88 ms — a restored
+machine's first frame is its slow one). A wait for "output, then 120 ms of
+silence" therefore ended on the cleared screen. The wait is now for **a frame's
+worth of output — a kilobyte — and then the silence**, with a limit of 2.5 s if
+none comes; a window whose grid is the saved one waits for nothing.
+
+Measured after the change, at 1984×995, 1400×900, 1280×720 and 1024×700: the
+cover comes off 336–403 ms after the primer is written, 0.73–0.83 s after the
+click from a local server; at that moment the terminal's first row is as wide as
+the grid and the frame fills it; a picture taken then and one taken 1.5 s later
+are the same file, byte for byte.
+
+**Left**: Firefox and Safari on the site's page; the application's light theme;
+a Russian page.
 

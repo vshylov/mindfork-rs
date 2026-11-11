@@ -1814,8 +1814,23 @@ both on `main` at `88e5ce29`, the merge of the pull request.
   without its link. The deploy's own path against the real releases: no published
   release with an asset — a notice, nothing written; the rehearsal's asset — downloaded,
   attested, passed over as format 1, nothing left behind.
+- **The owner's run** (Chrome on Windows, a window 1984×995; §14.6) found the one thing
+  wrong: the terminal took the window's whole width — 196 columns, a conversation beside
+  an empty field — and was *seen* to stretch: the saved 116×44 frame shown first, the
+  redraw for the window's grid a second later. The grid now has a ceiling (120×50) and on
+  the site the window sits in the site's column, 115 columns; and the cover stays until
+  the application has drawn for the window's grid. The first wait for that — output, then
+  120 ms of silence — ended on a cleared screen: told a new size the application clears
+  first (16 bytes at 36 ms) and draws the frame at 212–310 ms. The wait is for a
+  kilobyte of output and then the silence. After it: the cover off 336–403 ms after the
+  primer at four window sizes, the frame whole at that moment, and a picture taken then
+  identical to one taken 1.5 s later.
+- **The owner's decisions**: the terminal stays dark (F9); the demo goes live with the
+  next release (F10); the home page's link is a sentence (F11) that must not read as
+  access to a model — "see that same demo in this browser — the interface with its
+  scripted replies, not a model"; the page is titled "Try the interface in your browser".
 - **Not run**: the deploy itself (the sync, CloudFront) — it runs on a push to `main`;
-  a real browser on the built site, which is the owner's.
+  Firefox and Safari on the site's page.
 - **Tests**: `site_webdemo.py --self-test` (in ci.yml's `lint`): which release is taken;
   a file its manifest lies about, a name that climbs out, an asset without its script
   and a manifest of another format refused, with nothing left behind; that the format

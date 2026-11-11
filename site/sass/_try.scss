@@ -25,14 +25,15 @@
   background: var(--bg-2);
   font-size: 15.5px;
 }
-// The terminal takes the window's width, not the column the prose is set in.
+// The terminal's window is as wide as the site's own column - the header's,
+// the home page's - and no wider: the prose above and below it is set in the
+// narrow one. Its height is the browser window's.
 .try-stage {
-  max-width: none;
   margin-top: 28px;
   margin-bottom: 8px;
 }
 // Before the demo starts, its button stands in the column the page is set
-// in; only the terminal's window, once it is there, takes the full width.
+// in; only the terminal's window, once it is there, is wider.
 .try-stage .wd-start {
   max-width: 732px; // `.wrap.narrow`'s 780px less its padding
   margin-left: auto;

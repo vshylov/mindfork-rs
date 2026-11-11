@@ -103,7 +103,7 @@ jobs:
           zola --root site build -o "$RUNNER_TEMP/site-with-demo"
           grep -q 'id="wd-root"' "$RUNNER_TEMP/site-with-demo/try/index.html"
           grep -q 'Inside the machine' "$RUNNER_TEMP/site-with-demo/try/index.html"
-          grep -q 'try it in this browser' "$RUNNER_TEMP/site-with-demo/index.html"
+          grep -q 'see that same demo in this browser' "$RUNNER_TEMP/site-with-demo/index.html"
 
   # The site says "X.Y.Z is out" only once it is. Held, the run is green and the
   # deploy below is skipped, with a notice naming what releases it; an answer the
