@@ -827,10 +827,12 @@ restarts of four answering.
 - *The gaps in block glyphs are not the web terminal's alone.* The owner sees
   them in the site's screenshots and animation too, on `█` and `▌`. Those are
   drawn by `tools/screenshots.py`'s cell renderer, which `tools/demo_reel.py`
-  shares: it draws a block element as the typeface's glyph, anti-aliased, into a
-  cell whose height is rounded to whole pixels — so the glyph's edge need not
-  land on the cell's. Read from the code, not yet measured; on the roadmap, with
-  the web terminal's version of the same.
+  shares: it draws a block element as the typeface's glyph into a cell whose
+  height is the face's metrics rounded to whole pixels. Measured with the site's
+  own faces: at the default 16 px, drawn at twice the size, a cell is 43 rows
+  and the glyph inks 42 — the top row of every cell stays the background's; at
+  14 px it is the bottom row, at 15 px the top row is half inked. On the
+  roadmap, with the web terminal's version of the same.
 
 **Left for the owner**: a prerelease tag, to rehearse `release.yml` end to end
 (AGENTS.md §6). Then stage 3.

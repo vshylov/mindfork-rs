@@ -635,11 +635,12 @@ effort tiers and Fabula — have all closed
 - **Block glyphs drawn with gaps** — reported by the owner on 2026-11-11: thin
   breaks between rows in solid bars (`█`, `▌`) in the site's screenshots and
   animation, and the same in the web demo's terminal at 15 px. Both draw a block
-  element as the typeface's glyph into a cell rounded to whole pixels, and the
-  glyph's edge need not land on the cell's (read from `tools/screenshots.py`, not
-  yet measured). Two renderers to fix: the screenshots' cell renderer, which the
-  animation shares, should fill block elements as rectangles of the cell; the web
-  terminal wants xterm.js's WebGL renderer, which draws them itself
+  element as the typeface's glyph into a cell rounded to whole pixels. Measured
+  in `tools/screenshots.py`'s renderer, which the animation shares: at 16 px,
+  drawn at twice the size, a cell is 43 rows and the glyph inks 42, so the top
+  row of every cell stays the background's. Two renderers to fix: that one
+  should fill block elements as rectangles of the cell; the web terminal wants
+  xterm.js's WebGL renderer, which draws them itself
   ([web-demo.md §13.5](research/web-demo.md)).
 - **A Russian version of the site** — **deferred**, on F4's own terms
   ([mindfork-io-website.md §8](research/mindfork-io-website.md), S4).

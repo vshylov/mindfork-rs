@@ -1737,8 +1737,9 @@ both on `main` at `88e5ce29`, the merge of the pull request.
   first run of these steps anywhere but the droplet.
 - **Not done**: the prerelease-tag rehearsal of `release.yml`, which only the owner can
   start. The gaps in block glyphs the owner reports in the site's screenshots and
-  animation as well as in the web terminal are on the roadmap, cause read from
-  `tools/screenshots.py` and not yet measured.
+  animation as well as in the web terminal are on the roadmap, with the cause
+  measured in `tools/screenshots.py`'s renderer: at 16 px a cell is 43 rows and
+  `█` inks 42.
 - **Tests**: `manifest.py --self-test` (in ci.yml's `lint`) — the readers on fixtures: a
   boot header, a BIOS string, a package record, three shapes of a package's `Source`
   field, a piece's line on the page. Rust is untouched by this part: 4796 unit tests
