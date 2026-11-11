@@ -4977,6 +4977,23 @@ Principles:
   published release that carries them into `site/static/demo/`; the home page
   draws the animation only when its build finds the files, the still otherwise,
   and the bucket's `demo/` is synced only by a deploy that found them.
+- **The demo for the browser** (docs/research/web-demo.md §12–§13): the
+  release's `web-demo` job builds the tag's binary for `i686-unknown-linux-gnu`
+  (`tools/web_demo/build_i686.sh`: a sysroot of the distribution's 32-bit
+  packages, unpacked without root), writes a guest around it — Alpine's pinned
+  kernel and an initramfs holding BusyBox, the binary and its libraries
+  (`initramfs.py`) — boots that under Node in the v86 emulator, saves the
+  machine once `mindfork demo` has drawn its first frame (`make_state.mjs`),
+  then restores the state, types into it and resizes it (`verify_state.mjs`).
+  The page with everything it loads is packed as one asset,
+  `mindfork-webdemo.tar`, with `manifest.json`: every file's size and sha256,
+  and every redistributed piece — name, version, licence, licence texts, where
+  its exact source is — read out of the files themselves (`manifest.py`).
+  Every third-party piece is pinned by a hash (`fetch.py`, and two packages in
+  `build_i686.sh`); no tool takes a path (`paths.py`). **Not a gate**, like the
+  animation. `web-demo.yml` runs the job's steps on any pull request that
+  changes `tools/web_demo/**` and keeps the asset for a week. Nothing deploys
+  it yet: the page on the site is the track's third stage.
 
 ---
 

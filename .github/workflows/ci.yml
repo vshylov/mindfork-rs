@@ -220,6 +220,13 @@ jobs:
       # be tried on a release day.
       - name: The AUR renderer's own arms
         run: python3 tools/aur_package.py --self-test
+      # The web demo's manifest (docs/research/web-demo.md §13.5) is read out of
+      # the files a build packs: a kernel's header, an image's package record,
+      # a package's control fields. The build that puts real files in front of
+      # those readers runs on a release, and on a pull request only when the
+      # demo's own tools change (web-demo.yml); their arms are checked here.
+      - name: The web demo manifest's own arms
+        run: python3 tools/web_demo/manifest.py --self-test
       # The rented Mac day's two tools (docs/research/macos.md §13.10): what
       # they decide offline is checked here, so a typo surfaces before a host
       # is paid for by the hour.

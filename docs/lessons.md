@@ -159,9 +159,21 @@ another function and a taint analysis does not follow a guard across that
 boundary. What it accepts is validating immediately before use and passing the
 **match object'''s own output** rather than the string it came from. The rule is
 right for a human reader too: a check one function away reads as safe and is one
-refactor from being gone. **Recorded four times.**
+refactor from being gone. **Recorded five times** — and the fifth shows the
+cheaper answer the paragraph above only hints at. The web demo's build tools
+took `--binary`, `--libs`, `--out`, `--node` between steps of **one** pipeline:
+nobody outside it ever chose those paths, so confining them would have been
+ceremony. They went: each step reads what the one before wrote, in places one
+module names (`tools/web_demo/paths.py`), and the findings left with the
+arguments. **Before giving a tool a path argument, ask who would ever pass a
+different one**; if the answer is "the next script", it is a constant. The same
+pull requests add a rule about **stacks**: each pull request of a stack is judged
+against its own base, so a probe's pull request stays red on findings its
+successor has already rewritten away — and a fix made on top never reaches it.
+Look at the gate of every pull request in the stack, not the top one.
 — *demo screenshots — stage 1*, *the code workspace — stages 0 and 1*,
-*Scoop and the AUR*.
+*Scoop and the AUR*, *website — the web demo's manifest, its asset, and the
+release's job*.
 
 **The `LICENSE` file is a machine input; keep it byte-identical to the canonical
 text.** An addendum appended to it — however clearly marked as "not part of the MIT

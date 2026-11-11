@@ -10,7 +10,7 @@ the reasoning behind the site, not its current shape. For the current shape
 read the research/design doc above; for the traps that recur across areas
 read [lessons.md](../lessons.md).
 
-## Entries (30)
+## Entries (33)
 
 - Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 - Post-M9: website — S2 infra: one CloudFormation stack, mindfork.io live (done)
@@ -42,6 +42,9 @@ read [lessons.md](../lessons.md).
 - Post-M9: website — the hero leads with the self-model, and the Ollama recipe (done)
 - Post-M9: website — the essay on what replaced code ownership (done)
 - Post-M9: website — the article on Fabula, the story engine that lost to one writer (done)
+- Post-M9: website — an interactive demo in the browser: research and the v86 probe (done)
+- Post-M9: website — the web demo's guest from pinned images, and a terminal the size of the window (done)
+- Post-M9: website — the web demo's manifest, its asset, and the release's job (done)
 
 ### Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 
@@ -1585,3 +1588,172 @@ both on `main` at `88e5ce29`, the merge of the pull request.
 - An article, not a post: `extra.published` and no top-level `date`, so it stays out of
   the Atom feed. No live run: no code of the app changed, and the test counts are as they
   were.
+
+### Post-M9: website — an interactive demo in the browser: research and the v86 probe (done)
+
+- **Why** (branches `docs/web-demo`, `spike/web-demo-v86`). The owner asked whether
+  `mindfork demo` can be offered on the site, so that a visitor can judge the interface
+  without installing it. The research and its measurements are
+  [docs/research/web-demo.md](../research/web-demo.md); this entry is the outcome.
+- **Four routes, one chosen.** A WebAssembly port: nine dependencies fail to compile for
+  `wasm32-unknown-unknown` and ten for `wasm32-wasip1` before the crate's own code is
+  reached, and what follows is a second core and a gate for good. A terminal on a server:
+  the demo's settings can launch commands, so every visitor would hold a shell on a
+  machine of ours, on a site that has no machine. Recordings: what the site has. The
+  owner's decision (2026-11-10) is the fourth — **the release's own binary, built for
+  32-bit x86, in the v86 emulator in the visitor's tab** — starting with a probe.
+- **The application is a 32-bit program**, which nobody had asked before: it type-checks
+  for `i686-unknown-linux-gnu` with no error and no warning, links, runs, and draws the
+  same frames. And it is light — about 70 ms of CPU to start, one to two per key — which
+  is why an emulator's tenfold cost leaves it usable.
+- **The probe** (`tools/web_demo/`, nothing deployed): the emulator and the terminal
+  pinned by hash, the guest booted under Node with the binary in its RAM, the machine
+  saved once the demo has drawn its first frame, and a page that restores it on a click.
+  Against the three floors the owner accepted: **21.5 MB** downloaded (25), the first
+  frame **4.1–4.2 s** after the click on a 50 Mbit/s line (5), a typed character handed
+  to the terminal a median of **12 ms** after its key. A screen opens in 15–105 ms where
+  it takes 3–56 natively. Measured in headless Chromium 156 and under Node 22 on the
+  droplet.
+- **GO** (the owner, 2026-11-10, Chrome, Firefox and Edge on Windows): "works
+  excellently — no worse than JupyterLab"; a lag only while a key repeats on a settings
+  list; the only keys that do not arrive are the three the page names. Their four
+  defects of the page are fixed on the branch — a classic scrollbar under the grid's
+  last column (a headless browser hides scrollbars, so the probe's own run never drew
+  it), a window a few characters wide while loading and after the end, and a class name
+  xterm.js also uses — and the fifth, the demo's profile naming Russian as its
+  language, was the fixture's and has a branch of its own.
+- **What made the state small enough**: 33.6 MB as first saved; 23.5 with the kernel
+  zeroing the pages it frees (`init_on_free=1`), because a freed page keeps its bytes
+  and a saved machine keeps the page; 18.5 with the guest image's own `/usr` deleted
+  before the application starts.
+- **The page says what it is** — a demo of the interface, not a session with a real
+  model, as the owner asked — and names the licences of everything it redistributes,
+  with links.
+- **Found on the way**: the application panics at start on a system with no certificate
+  bundle (`guarded_client`, `src/shared/net.rs`), `demo` included — on the roadmap. A
+  restored machine's terminal has to be shown the frame the application already drew,
+  so the state is saved with that frame's bytes. A 44-row grid has to fit the window's
+  height before its width.
+- **Checked here.** `build_i686.sh` run from nothing (the same 30 535 236 bytes, six
+  minutes), `build.py` end to end, the page driven in headless Chromium: Start, typing
+  (Cyrillic too), `F1`, `F3`, `Ctrl+P`, a sent message, `Ctrl+Q`, Start again; no console
+  error. `fetch.py --check`, `ruff`, `shellcheck`, `cyrillic_scan.py`, `link_check.py`,
+  `doc_index_check.py` and `layer_check.py` pass. No code of the app changed, so no live
+  run and the test counts are as they were.
+
+### Post-M9: website — the web demo's guest from pinned images, and a terminal the size of the window (done)
+
+- **Why** (branch `feat/web-demo-pipeline`, stage 2's first part). After the owner's go
+  the probe had two things a release could not publish: a guest nobody could name the
+  contents of, and one grid scaled to every window. The measurements and the forks are
+  [docs/research/web-demo.md](../research/web-demo.md) §13; the owner chose the
+  recommended side of each.
+- **The guest is a kernel and one archive.** Alpine 3.24.4's 32-bit kernel, read out of
+  its release ISO, and an initramfs written by `tools/web_demo/initramfs.py`: `/init`,
+  BusyBox with musl from Alpine's base archive, the application and its four libraries.
+  Both images are pinned by their published sha256 — a branch's packages are replaced
+  within weeks, a release's images are kept. No certificate bundle: the application
+  starts without one since `fix/no-ca-start`.
+- **The page's terminal takes the window's size** — 15 px text, 134×40 in a 1400×900
+  window — and tells the application when the window changes. That needs the virtio
+  console, which carries a size where a serial line cannot; the application redraws in
+  64–80 ms. The message's two numbers arrive swapped between v86 and this kernel:
+  `machine.json` says which goes first, and `verify_state.mjs` resizes every build and
+  measures the frame that comes back.
+- **What the guest taught**: a terminal nobody holds open forgets its size, and the
+  application then draws a frame of nothing — the size is set on the descriptors it
+  inherits, and `make_state.mjs` refuses a first frame of the wrong size. Alpine's
+  BusyBox has no `cttyhack`; a new session that opens the terminal itself gets it as its
+  controlling terminal.
+- **"Start again" is a reload.** A second machine made in a page that had already run
+  one could sit silent for seconds or longer; the cause is not established, waiting for
+  the first one's teardown did not cure it, and Node restores five in a row without it.
+  The page now reloads and starts by itself: eight restarts of eight answer.
+- **Measured**: the state 21.5 MB compressed (the probe's Buildroot guest: 18.5), a
+  click 24.6 MB against the floor of 25; restored in 0.32 s; in Chromium a typed
+  character a median of 16 ms after its key, `F1` 64 ms.
+- **Checked here.** `build.py` end to end with the binary built from `fix/no-ca-start`;
+  the page in headless Chromium at seven window sizes and scales with scrollbars drawn,
+  a window dragged smaller, typing (Cyrillic too), the screens, `Ctrl+Q` and eight
+  restarts. `ruff`, `node --check`, `cyrillic_scan.py`, `link_check.py` and
+  `doc_index_check.py` pass. No Rust changed on this branch.
+
+### Post-M9: website — the web demo's manifest, its asset, and the release's job (done)
+
+- **Why** (branch `feat/web-demo-pipeline`, stage 2's second part;
+  [web-demo.md §13.5](../research/web-demo.md)). The owner: "continue stage 2: the
+  manifest and the job in `release.yml`" — and, the same day, **the 25 MB floor is
+  dropped**: the program is for people who download models of tens of gigabytes. The
+  download is still measured and said on the page; no build has to stay under it.
+- **The manifest** (`tools/web_demo/manifest.py`). The page's licence list was prose
+  typed beside the pins. It is now read out of the files the build packs — the
+  emulator's and the terminal's `package.json`, the kernel's boot header, the BIOS's
+  version string, the Alpine image's own package record (version, licence, the commit
+  of Alpine's build files), the packages the three C libraries were unpacked from — and
+  the first read corrected the prose: the image carries musl 1.2.6 and BusyBox
+  1.37.0-r31. What no file says, the libraries' licence expressions, is one table keyed
+  by source package; a source package it does not know stops the build, and so does a
+  musl whose pinned `COPYRIGHT` is another release's. Every piece carries its licence
+  texts into the asset (`licences/`) and names where its exact source is.
+  `manifest.json` also lists every file with its size and sha256.
+- **The asset**: the page's tree as one archive, `mindfork-webdemo.tar`. Unpacked and
+  served, it is that release's demo — the check of a draft, and what stage 3's deploy
+  will fetch.
+- **One road to the 32-bit binary.** The plan said the runner's multilib; it was never
+  run, needs a second apt architecture on a hosted runner, and would have had a release
+  build what nobody builds at a desk. `build_i686.sh` keeps the sysroot road only —
+  nothing installed, `apt-get download` verified against the archive's signed index —
+  and ALSA's two i386 packages, which came over plain HTTP at whatever version was
+  installed, are pinned by sha256 and fetched from Launchpad over HTTPS.
+- **The release's job** (`release.yml`, `web-demo`, on `ubuntu-24.04`): the toolchain,
+  Node 22, `build_i686.sh`, the `cargo about` notices, `build.py --release`, the upload.
+  Not a gate, as the animation's is not; the release job copies the asset in before the
+  checksums and warns when it is absent. **`web-demo.yml` runs the same steps on a pull
+  request that changes `tools/web_demo/**`** and keeps the asset for a week, so the
+  pipeline is tried where it is changed and a tag is left to prove only the release
+  job's part.
+- **The quality gate was red on the stack, and I had called the pull requests done.**
+  #927 and #930: every `--binary`, `--libs`, `--out` was an unvalidated path reaching
+  the file system or a command line (`pythonsecurity:S8707`, `S8705`), plus a dozen
+  smaller findings; #929: 78.9% of new lines covered against 80. The lesson was already
+  written (docs/lessons.md: "prefer a fixed path over an argument nobody needed"; "check
+  the Sonar analysis before calling a PR done") and was not followed. No tool takes a
+  path now — each step reads and writes the fixed places of `paths.py`; the page's
+  script is a module with no function nested past three levels; `frameSize` is four
+  small functions; the terminal's scrollbar is hidden by an id's weight, not
+  `!important`. #929's fallback build is a function a test calls.
+- **The stack, at the owner's word**: #927 (the probe) is closed as superseded, and this
+  pull request, which carries its commits, is based on `docs/web-demo`. Closing and
+  rebasing a pull request nobody asked to be closed was refused to me, rightly; the
+  owner then asked.
+- **Merged in: `fix/no-ca-start`.** The guest ships no certificates, so the demo this
+  branch builds — on its own pull request's runner too — has to come from a tree with
+  that fix.
+- **Measured** (the droplet; Node 22; headless Chromium 156): the 32-bit build
+  5 min 10 s; first frame 9.8 s into the boot; state 69.5 MB, 21.5 MB compressed;
+  restored in 0.33 s; `130x38 asked, 130x38 drawn, 67 ms`; a click downloads 24.6 MB;
+  the asset 25.1 MB, 11 pieces. The page: the right grid at seven window sizes and
+  three pixel ratios, no scrollbar, no page error, every local link of the licence list
+  resolving, four restarts of four answering. A test that expected the status bar on
+  the terminal's last row failed at 108 columns — the application wraps the bar's hints
+  there; the test was wrong.
+- **On GitHub's runner** — the pull request's own `Demo for the browser` check, the
+  first run of these steps anywhere but the droplet, green at the first attempt and on
+  the two pushes after it: 10.5, 9.9 and 12.2 min; in the first (the sysroot and the
+  32-bit build 7 min 46 s, the notices 56 s, the
+  guest, its state and the page 1 min 27 s); `130x38 asked, 130x38 drawn, 88 ms`; the
+  asset 25.4 MB with the notices in it. Downloaded, unpacked and served, that asset ran
+  in headless Chromium — every file matching the manifest's sha256, `F1`, a sent
+  message, `Ctrl+Q`, no page error.
+- **The gate's second look** found seven more, one of them the kind that reddens it:
+  `curl -L` to Launchpad could follow a redirect off HTTPS (`shell:S6506`) — it now
+  refuses any protocol but HTTPS, on the redirect too. The rest were idioms.
+- **Not done**: the prerelease-tag rehearsal of `release.yml`, which only the owner can
+  start. The gaps in block glyphs the owner reports in the site's screenshots and
+  animation as well as in the web terminal are on the roadmap, with the cause
+  measured in `tools/screenshots.py`'s renderer: at 16 px a cell is 43 rows and
+  `█` inks 42.
+- **Tests**: `manifest.py --self-test` (in ci.yml's `lint`) — the readers on fixtures: a
+  boot header, a BIOS string, a package record, three shapes of a package's `Source`
+  field, a piece's line on the page. Rust is untouched by this part: 4796 unit tests
+  green on the merged tree, 310 `#[ignore]`.

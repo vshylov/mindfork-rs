@@ -1,0 +1,72 @@
+# The demo that runs in a browser tab (docs/research/web-demo.md §13), built
+# on a pull request that changes how it is built.
+#
+# release.yml's `web-demo` job builds the demo from a tag, and a release is the
+# wrong day to learn that a pinned download moved or a runner image lost a
+# package. This workflow is that job's steps - the same ones, kept the same -
+# on any pull request that touches the demo's tools, so the pipeline is tried
+# where it is changed. The asset it builds is kept for a week: download it,
+# unpack it, serve the directory, and the pull request's demo is in a tab.
+name: Web demo
+
+on:
+  pull_request:
+    paths:
+      - "tools/web_demo/**"
+      - ".github/workflows/web-demo.yml"
+  # Deliberately no `push: [main]` trigger, for packaging.yml's reason: the
+  # pull_request run validates the merge result for exactly these paths.
+  workflow_dispatch:
+
+concurrency:
+  group: web-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Demo for the browser (the release's steps)
+    runs-on: ubuntu-24.04
+    # Measured: 9.9 to 12.2 min over three runs. release.yml's budget for
+    # the same steps.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Install the toolchain (from rust-toolchain.toml)
+        run: rustup show
+      # The emulator runs under Node to boot the guest and save it. A Node of
+      # its own, not the runner's: the one the state was measured with.
+      - name: Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: "22"
+      # `apt-get download` - how build_i686.sh fetches the 32-bit libraries,
+      # without installing anything - asks for the versions these lists name.
+      - name: Package lists
+        timeout-minutes: 5
+        run: sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+      - name: The 32-bit build
+        run: tools/web_demo/build_i686.sh
+      # The program's own notices travel with it into the machine, as they do
+      # into every archive: the same two steps as the `build` job's. One graph
+      # serves both - i686 and x86_64 Linux resolve to the same packages.
+      - name: Install cargo-about
+        uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2  # v2.90.2
+        with:
+          tool: cargo-about
+      - name: Third-party notices
+        timeout-minutes: 10
+        run: cargo about generate about.hbs -o THIRD-PARTY-NOTICES.md
+      # The guest booted and saved, the state restored and used, the manifest,
+      # the page, the asset. `--release`: refuse to pack without the notices.
+      - name: The machine, its state and the page
+        run: python3 tools/web_demo/build.py --release
+      - name: Upload the demo
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: web-demo
+          path: target/web-demo/mindfork-webdemo.tar
+          if-no-files-found: error
+          retention-days: 7
