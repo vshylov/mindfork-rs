@@ -4976,7 +4976,12 @@ Principles:
   out without the files. The site's deploy fetches them from the newest
   published release that carries them into `site/static/demo/`; the home page
   draws the animation only when its build finds the files, the still otherwise,
-  and the bucket's `demo/` is synced only by a deploy that found them.
+  and the bucket's `demo/` is synced only by a deploy that found them. The cell
+  renderer it shares with the stills (`tools/screenshots.py`) fills a block
+  element (`█ ▌ ▄`…) as the part of its cell its name says, not from the
+  typeface — in the SVG as one `<path>` per colour, boxes that meet joined — so
+  a bar has no line between its rows; `media-tools.yml` runs the renderer's
+  `--self-test` on any pull request that changes the media tools.
 - **The demo for the browser** (docs/research/web-demo.md §12–§13): the
   release's `web-demo` job builds the tag's binary for `i686-unknown-linux-gnu`
   (`tools/web_demo/build_i686.sh`: a sysroot of the distribution's 32-bit

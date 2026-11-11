@@ -164,6 +164,7 @@ python tools/release_guard.py --self-test  # the tag guard release.yml runs, aga
 python tools/aur_package.py --self-test    # the AUR renderer aur.yml runs, against fixtures
 python tools/web_demo/manifest.py --self-test  # the web demo manifest's readers, against fixtures
 python tools/site_webdemo.py --self-test  # what the site's deploy does with the web demo's asset
+python tools/screenshots.py --self-test  # the pictures' cell renderer: block elements (needs Pillow)
 python tools/console_probe.py      # Windows: drive the TUI in a hidden console, read the screen back
 ```
 
