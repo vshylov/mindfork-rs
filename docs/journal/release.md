@@ -6266,15 +6266,16 @@ guard's, the site gate's and the AUR renderer's self-tests clean.
 - **Canonical came back in pieces, and the tag did not have to move.** The owner's
   word was to delete the incomplete draft and run the failed jobs again; the draft
   went at 14:33Z, the tag stayed, and the jobs waited.
-  - The names resolved again by 17:27Z and the archive answered; CI's Linux jobs
-    passed on the fix's pull request from 17:17Z. Launchpad itself still hung until
+  - The names resolved again by 17:27Z and the archive answered; CI's Linux jobs,
+    run again on the fix's pull request, had passed by 17:24Z. Launchpad itself still hung until
     about 17:48Z — which is the case the re-run could not survive, since the tag's
     script has Launchpad alone and no time limit, and a second failure would have
     made a second draft without the demo. So the release's jobs were not re-run
     while it hung; the fix's own `web-demo.yml` was, and passed in 13 min with both
     packages *"not from launchpad.net"*, *"from mirrors.edge.kernel.org"* — the
     release's steps, whole, with Launchpad down.
-  - Once Launchpad had served both packages with their hashes seven times running,
+  - Once Launchpad had answered seven requests running — three of them the
+    packages themselves, checked against their hashes —
     `gh run rerun 43031427548 --failed` (17:49:37Z): the `web-demo` job in
     12 min 21 s, the release job after it in 27 s. One draft, **sixteen assets**.
 - **The second draft, checked.**
