@@ -2,7 +2,8 @@
 
 Status: **route decided (the owner, 2026-11-10): the emulator, starting with the
 probe** (§9); **stage 1 — the probe — GO** (the owner, 2026-11-10, in Chrome,
-Firefox and Edge; §12.7). Four routes compared; what this machine could measure
+Firefox and Edge; §12.7); **stage 2 — the pipeline — in progress**: the guest
+and its window-sized terminal are built (§13.4), the release job is not yet. Four routes compared; what this machine could measure
 is measured (§3), what it could not is named (§10).
 
 ## 1. Context and goal
@@ -684,4 +685,56 @@ Forks for the owner:
 - **F8 — the certificate bundle.** (a) **Fix the application's panic (§12.5) and
   ship no bundle — recommended**: one piece fewer to carry and to name; (b) carry
   the bundle and leave the defect on the roadmap.
+
+**The owner's decisions (2026-11-10):** "as you recommend" — F6(a), Alpine's
+release images; F7(a), `/try/`; F8(a), the panic fixed and no bundle shipped. And
+on how often the demo's binary changes: **only at a release** — the job builds it
+from the tag, and the site takes it from the newest published release that has
+one, exactly as it takes the reel.
+
+### 13.4 Stage 2, first part — what is built
+
+`tools/web_demo/` now builds §13.1's guest on §13.2's console, end to end:
+
+- **`fetch.py`** pins Alpine 3.24.4's two release images by their published
+  sha256 — the kernel (Linux 6.18.60, `linux-virt`) is read out of
+  `alpine-virt-3.24.4-x86.iso` by thirty lines that know an ISO 9660 directory,
+  BusyBox and musl out of `alpine-minirootfs-3.24.4-x86.tar.gz` — and no longer
+  fetches the Buildroot image.
+- **`initramfs.py`** writes the guest: `/init`, BusyBox with musl, the
+  application with its four libraries and loader. **No certificate bundle**: the
+  application starts without one since `fix/no-ca-start`
+  (`shared::net::build_client`), and `--ca-bundle` remains only for a build older
+  than that.
+- **`make_state.mjs`** boots the kernel with that archive and saves the machine
+  once the first frame is drawn — and refuses a frame that is not the size
+  `machine.json` names, which is how a terminal that forgot its size, or an
+  application that never started, fails the build instead of being published.
+- **`verify_state.mjs`** restores the state, presses a key, and **resizes**:
+  wider and shorter at once, so that a swapped pair cannot pass, then measures the
+  frame that comes back. `130x38 asked, 130x38 drawn, 64 ms`. The order the
+  message's numbers go in is `machine.json`'s `resize_sends`.
+- **The page's terminal is the size of the window**: 15 px text and as many
+  cells as fit — 134×40 in a 1400×900 window, 134×49 at 1920×1080, 108×30 at
+  1024×700 — and the application is told when the window changes. Smaller text
+  only where even 80×24 would not fit.
+
+Measured on this build: the state 69.6 MB, 21.5 MB compressed; a click downloads
+**24.6 MB**; restored in 0.32 s; in Chromium a typed character a median of 16 ms
+after its key, `F1` in 64 ms, a reply in 572 ms.
+
+**Found on the way: a second machine in the same page can sit silent.** "Start
+again" used to destroy the machine and make another. With this guest the second
+one, started more than about ten seconds into the page's life, answered nothing —
+not a key, not a resize — for seconds, sometimes for longer than a test would
+wait; a first machine answers within a quarter of a second whenever it is started,
+and under Node five machines restored one after another in one process all answer.
+Waiting for the old machine's `destroy()` to finish did not cure it, and the cause
+is not established. **"Start again" is now a reload of the page that starts by
+itself** — every demo is a first machine, with everything it needs in the browser's
+cache: eight restarts out of eight answer, where three of five did not.
+
+**Still to do in stage 2**: the manifest of redistributed pieces, the `web-demo`
+job in `release.yml` with the runner's multilib build, the asset, and the
+prerelease-tag rehearsal.
 

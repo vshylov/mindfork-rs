@@ -1,11 +1,11 @@
-# The web demo probe
+# The web demo
 
-Stage 1 of [docs/research/web-demo.md](../../docs/research/web-demo.md): the
-release's own binary, built for 32-bit x86, running `mindfork demo` inside an
-x86 emulator ([v86](https://github.com/copy/v86)) in a browser tab. It is a
-**probe** — a local page for a go/no-go on how it feels. Nothing here is
-deployed, nothing is part of a release, and nothing it downloads or builds is
-committed: all of it lives under `target/web-demo/`.
+[docs/research/web-demo.md](../../docs/research/web-demo.md): the release's own
+binary, built for 32-bit x86, running `mindfork demo` inside an x86 emulator
+([v86](https://github.com/copy/v86)) in a browser tab. Stage 1 was the probe
+(§12 there); stage 2 is turning it into what a release builds (§13). Nothing
+here is deployed yet, and nothing it downloads or builds is committed: all of
+it lives under `target/web-demo/`.
 
 ## Building the page
 
@@ -27,23 +27,21 @@ Then open `http://127.0.0.1:8765/` — from another machine, through
 
 | File | What it is |
 |---|---|
-| `fetch.py` | downloads the emulator, the terminal ([xterm.js](https://github.com/xtermjs/xterm.js)), the BIOS images and the guest's kernel image, each pinned by a hash and checked on every run |
+| `fetch.py` | downloads the emulator, the terminal ([xterm.js](https://github.com/xtermjs/xterm.js)), the BIOS images and Alpine's two release images, each pinned by a hash and checked on every run; takes the kernel out of the ISO and BusyBox with musl out of the base archive |
 | `build_i686.sh` | builds the application for `i686-unknown-linux-gnu`; `--make-sysroot` unpacks the 32-bit libraries it links against, without root |
-| `machine.json` | the emulated machine's options and the terminal's size — read by the scripts and by the page, because a saved state restores only into the machine that saved it |
-| `guest.mjs` | a guest under Node, driven over its serial line; the keys every measurement presses |
-| `make_state.mjs` | boots the guest, puts the binary into its RAM, starts the demo and saves the machine once the first frame is drawn; `MEASURE=1` times the keys instead |
-| `verify_state.mjs` | restores a saved machine in a fresh emulator and types into it |
-| `build.py` | runs the three above and puts the page together in `target/web-demo/site/` |
-| `page/` | the page: the notice, **Start**, the terminal, the licences |
+| `initramfs.py` | writes the guest: an `/init` of a dozen lines, the shell, the application and the libraries it loads — everything the machine runs beside its kernel |
+| `machine.json` | the emulated machine's options, the terminal the application starts on and at what size, and the order a resize's two numbers go in — read by the scripts and by the page, because a saved state restores only into the machine that saved it |
+| `guest.mjs` | a guest under Node, driven over its console; the keys every measurement presses; the size of the frame a burst of output draws |
+| `make_state.mjs` | boots the guest and saves the machine once the demo has drawn its first frame, refusing a frame of the wrong size; `MEASURE=1` times the keys instead |
+| `verify_state.mjs` | restores a saved machine in a fresh emulator, types into it and resizes it, and fails if the frame that comes back is not the size asked for |
+| `build.py` | runs the above and puts the page together in `target/web-demo/site/` |
+| `page/` | the page: the notice, **Start**, the terminal at the window's size, the licences |
 
-## What the probe took for granted
+## What is still a probe's
 
-- **The guest is not the final one.** It is the Buildroot image v86's own site
-  boots, with the binary's four libraries and loader from Ubuntu's i386
-  packages beside it. Stage 2 assembles the guest from named packages
-  (research §9, F2).
-- **The terminal has one size**, 116×44, the size the application was started
-  at; the page scales the font to fit the window. A serial line carries no
-  size, so resizing is stage 2's.
 - **The page stands alone.** It is not the site's template and is not linked
-  from anywhere.
+  from anywhere; stage 3 moves it to `/try/`, in the site's own styles.
+- **The licence list is prose.** The build does not yet write the manifest the
+  page should take it from.
+- **No release builds it.** The `web-demo` job and its asset are the rest of
+  stage 2.

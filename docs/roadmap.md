@@ -616,12 +616,6 @@ effort tiers and Fabula — have all closed
   restoring a stranger's backup restores its MCP commands; MCP stdout lines read
   unbounded; the site's CSP header and the Download button's contrast;
   `generation.rs`'s size as a contributor barrier.
-- **A start with no certificate bundle panics** — **on demand**: on a system
-  whose TLS backend finds no CA certificate (a minimal container, the demo's
-  guest) `guarded_client` in `src/shared/net.rs` ends in an `expect`, and the
-  application dies before its first frame — `mindfork demo` included, which
-  opens no connection. Found by the web demo's probe, which hands its guest a
-  bundle ([web-demo.md §12.5](research/web-demo.md)).
 
 ### Website
 
@@ -631,8 +625,10 @@ effort tiers and Fabula — have all closed
   site stays static. Stage 1, the probe, is built and measured: 21.5 MB on a
   click, the first frame about 4 s later on a 50 Mbit/s line, a typed character
   12 ms after its key — and **GO** from the owner in Chrome, Firefox and Edge.
-  Next: stage 2, the release's pipeline, and stage 3, the page in the site's own
-  design ([web-demo.md §9, §12](research/web-demo.md)).
+  Stage 2 is in progress: the guest is Alpine's pinned kernel and an initramfs
+  written here, and the page's terminal takes the window's size; the release's
+  job and its asset are next, then stage 3, the page at `/try/` in the site's own
+  design ([web-demo.md §12–§13](research/web-demo.md)).
 - **A Russian version of the site** — **deferred**, on F4's own terms
   ([mindfork-io-website.md §8](research/mindfork-io-website.md), S4).
 - **CloudFront's flat-rate plan with WAF** — **deferred** until traffic asks

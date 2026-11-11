@@ -19,6 +19,7 @@ import argparse
 import base64
 import hashlib
 import io
+import struct
 import sys
 import tarfile
 import urllib.request
@@ -29,6 +30,7 @@ VENDOR = ROOT / "target" / "web-demo" / "vendor"
 
 # The commit of copy/v86 the BIOS images are read from.
 V86_COMMIT = "315b2b0b758703ef0e6cc7b4088d6068f83f3c20"
+ALPINE = "https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/x86"
 
 # An npm package: its registry tarball, the registry's own integrity value
 # (sha512, base64), and the members taken out of it.
@@ -68,13 +70,23 @@ FILES = [
         "url": f"https://raw.githubusercontent.com/copy/v86/{V86_COMMIT}/bios/vgabios.bin",
         "sha256": "a4bc0d80cc3ca028c73dafa8fee396b8d054ce87ebd8abfbd31b06b437607880",
     },
+    # The guest (docs/research/web-demo.md §13.1, F6): Alpine's release images.
+    # A branch keeps only the newest build of a package, so a package pinned by
+    # hash stops resolving within weeks; a release's images are kept for good,
+    # and each has its sha256 published beside it.
     {
-        # The probe's guest: the Buildroot image v86's own site boots (Linux
-        # 6.8.12, BusyBox, uClibc). Stage 2 replaces it with one assembled from
-        # named distribution packages (docs/research/web-demo.md, F2).
-        "name": "buildroot-bzimage68.bin",
-        "url": "https://i.copy.sh/buildroot-bzimage68.bin",
-        "sha256": "507a759c70ab7a490a233be454d0b5b88bc667956a410b531cb4edc091e2eb1c",
+        "name": "alpine-virt-3.24.4-x86.iso",
+        "url": f"{ALPINE}/alpine-virt-3.24.4-x86.iso",
+        "sha256": "cccf118b601128c81007b98260b9778be077c586c1fd12e04023cb975cc7f4a1",
+        # The kernel: Linux 6.18.60, Alpine's `linux-virt`.
+        "iso_members": {("BOOT", "VMLINUZ_VIRT.;1"): "vmlinuz-virt"},
+    },
+    {
+        "name": "alpine-minirootfs-3.24.4-x86.tar.gz",
+        "url": f"{ALPINE}/alpine-minirootfs-3.24.4-x86.tar.gz",
+        "sha256": "df793865bf166c10acaad3a4d5d40498f9ee3f89fa405d39c7f540464fb3b0c1",
+        # The shell /init runs in, and the C library it is linked against.
+        "tar_members": {"./bin/busybox": "busybox", "./lib/ld-musl-i386.so.1": "ld-musl-i386.so.1"},
     },
 ]
 
@@ -115,6 +127,39 @@ def fetch_package(package: dict, check_only: bool) -> list[str]:
     return []
 
 
+def iso_file(image: bytes, directory: str, name: str) -> bytes | None:
+    """One file out of an ISO 9660 image, by the names of its primary volume
+    descriptor: `name` in the root's `directory`. Enough of the format for
+    that and no more - the image's hash is what vouches for the bytes."""
+    sector = 2048
+
+    def records(extent: int, size: int):
+        data = image[extent * sector : extent * sector + size]
+        at = 0
+        while at < len(data):
+            length = data[at]
+            if length == 0:  # the rest of this sector is padding
+                at = (at // sector + 1) * sector
+                continue
+            record = data[at : at + length]
+            where, how_long = struct.unpack_from("<I", record, 2)[0], struct.unpack_from("<I", record, 10)[0]
+            yield record[33 : 33 + record[32]].decode("ascii", "replace"), where, how_long
+            at += length
+
+    primary = image[16 * sector : 17 * sector]
+    if primary[0] != 1 or primary[1:6] != b"CD001":
+        return None
+    root = primary[156:190]
+    listing = records(struct.unpack_from("<I", root, 2)[0], struct.unpack_from("<I", root, 10)[0])
+    inside = next(((where, size) for entry, where, size in listing if entry == directory), None)
+    if inside is None:
+        return None
+    found = next(((where, size) for entry, where, size in records(*inside) if entry == name), None)
+    if found is None:
+        return None
+    return image[found[0] * sector : found[0] * sector + found[1]]
+
+
 def fetch_file(item: dict, check_only: bool) -> list[str]:
     path = VENDOR / item["name"]
     if not path.exists():
@@ -122,8 +167,22 @@ def fetch_file(item: dict, check_only: bool) -> list[str]:
             return [f"{item['name']} is not downloaded"]
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(download(item["url"]))
-    if sha256(path.read_bytes()) != item["sha256"]:
+    data = path.read_bytes()
+    if sha256(data) != item["sha256"]:
         return [f"{item['name']} does not match its pinned sha256"]
+    # What is taken out of an image is named here, as with the packages.
+    for (directory, name), target in item.get("iso_members", {}).items():
+        member = iso_file(data, directory, name)
+        if member is None:
+            return [f"{item['name']}: no {directory}/{name} in the image"]
+        (VENDOR / target).write_bytes(member)
+    if "tar_members" in item:
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
+            for member, target in item["tar_members"].items():
+                source = tar.extractfile(member)
+                if source is None:
+                    return [f"{item['name']}: no {member} in the archive"]
+                (VENDOR / target).write_bytes(source.read())
     return []
 
 

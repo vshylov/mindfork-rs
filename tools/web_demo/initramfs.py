@@ -2,13 +2,16 @@
 """Write the web demo guest's initramfs: everything the machine runs.
 
 docs/research/web-demo.md, stage 2. The guest is a kernel and this archive -
-no distribution is installed in it. The archive holds a static shell, the
-application with the libraries it loads, a certificate bundle, and an ``/init``
-that starts ``mindfork demo`` on the machine's terminal and nothing else.
+no distribution is installed in it. The archive holds a shell with the C
+library it is linked against, the application with the libraries it loads, and
+an ``/init`` that starts ``mindfork demo`` on the machine's terminal and
+nothing else.
 
   python tools/web_demo/initramfs.py --out <file.cpio.gz> --binary <mindfork> \\
-      --busybox <busybox.static> --ca-bundle <ca-certificates.crt> \\
-      --libs <dir> [--libs <dir>...] [--tty ttyS0]
+      --busybox <busybox> --musl <ld-musl-i386.so.1> --libs <dir> [--libs <dir>...]
+
+``--ca-bundle`` adds a certificate bundle, for a build of the application older
+than the one that starts without (docs/research/web-demo.md §12.5, F8).
 
 The archive is a gzip-compressed ``newc`` cpio, written here byte by byte: the
 one device node an initramfs needs can then be recorded without root, and the
@@ -91,17 +94,21 @@ class Cpio:
         return self.out.getvalue()
 
 
-def build(binary: Path, busybox: Path, ca_bundle: Path, lib_dirs: list[Path], tty: str) -> bytes:
+def build(binary: Path, busybox: Path, musl: Path, lib_dirs: list[Path], ca_bundle: Path | None = None) -> bytes:
     machine = json.loads((HERE / "machine.json").read_text(encoding="utf-8"))
     archive = Cpio()
-    for directory in ("bin", "dev", "proc", "sys", "tmp", "root", "etc", "etc/ssl", "etc/ssl/certs", "opt", HOME.lstrip("/")):
+    for directory in ("bin", "lib", "dev", "proc", "sys", "tmp", "root", "opt", HOME.lstrip("/")):
         archive.directory(directory)
     # The kernel opens /dev/console for process 1 before /init can mount /dev.
     archive.char_device("dev/console", 5, 1)
-    init = INIT.format(tty=tty, rows=machine["rows"], cols=machine["cols"], mark=START_MARK, home=HOME)
+    init = INIT.format(tty=machine["tty"], rows=machine["rows"], cols=machine["cols"], mark=START_MARK, home=HOME)
     archive.file("init", init.encode(), executable=True)
     archive.file("bin/busybox", busybox.read_bytes(), executable=True)
-    archive.file("etc/ssl/certs/ca-certificates.crt", ca_bundle.read_bytes())
+    archive.file("lib/ld-musl-i386.so.1", musl.read_bytes(), executable=True)
+    if ca_bundle is not None:
+        for directory in ("etc", "etc/ssl", "etc/ssl/certs"):
+            archive.directory(directory)
+        archive.file("etc/ssl/certs/ca-certificates.crt", ca_bundle.read_bytes())
     for lib in LIBS:
         found = next((d / lib for d in lib_dirs if (d / lib).exists()), None)
         if found is None:
@@ -119,14 +126,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--binary", required=True, type=Path, help="the 32-bit x86 release binary")
-    parser.add_argument("--busybox", required=True, type=Path, help="a statically linked 32-bit BusyBox")
-    parser.add_argument("--ca-bundle", required=True, type=Path, help="a PEM bundle of CA certificates")
+    parser.add_argument("--busybox", required=True, type=Path, help="a 32-bit BusyBox linked against musl")
+    parser.add_argument("--musl", required=True, type=Path, help="musl's ld-musl-i386.so.1, which BusyBox loads")
     parser.add_argument("--libs", required=True, action="append", type=Path,
                         help="a directory holding the binary's 32-bit shared libraries; repeatable")
-    parser.add_argument("--tty", default="ttyS0", help="the guest's terminal device (default: ttyS0)")
+    parser.add_argument("--ca-bundle", type=Path, help="a PEM bundle of CA certificates, for a build that cannot start without one")
     args = parser.parse_args()
 
-    data = build(args.binary, args.busybox, args.ca_bundle, args.libs, args.tty)
+    data = build(args.binary, args.busybox, args.musl, args.libs, args.ca_bundle)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_bytes(data)
     print(f"{args.out}: {len(data)} B")

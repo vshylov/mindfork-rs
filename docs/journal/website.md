@@ -10,7 +10,7 @@ the reasoning behind the site, not its current shape. For the current shape
 read the research/design doc above; for the traps that recur across areas
 read [lessons.md](../lessons.md).
 
-## Entries (31)
+## Entries (32)
 
 - Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 - Post-M9: website — S2 infra: one CloudFormation stack, mindfork.io live (done)
@@ -43,6 +43,7 @@ read [lessons.md](../lessons.md).
 - Post-M9: website — the essay on what replaced code ownership (done)
 - Post-M9: website — the article on Fabula, the story engine that lost to one writer (done)
 - Post-M9: website — an interactive demo in the browser: research and the v86 probe (done)
+- Post-M9: website — the web demo's guest from pinned images, and a terminal the size of the window (done)
 
 ### Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 
@@ -1638,3 +1639,40 @@ both on `main` at `88e5ce29`, the merge of the pull request.
   error. `fetch.py --check`, `ruff`, `shellcheck`, `cyrillic_scan.py`, `link_check.py`,
   `doc_index_check.py` and `layer_check.py` pass. No code of the app changed, so no live
   run and the test counts are as they were.
+
+### Post-M9: website — the web demo's guest from pinned images, and a terminal the size of the window (done)
+
+- **Why** (branch `feat/web-demo-pipeline`, stage 2's first part). After the owner's go
+  the probe had two things a release could not publish: a guest nobody could name the
+  contents of, and one grid scaled to every window. The measurements and the forks are
+  [docs/research/web-demo.md](../research/web-demo.md) §13; the owner chose the
+  recommended side of each.
+- **The guest is a kernel and one archive.** Alpine 3.24.4's 32-bit kernel, read out of
+  its release ISO, and an initramfs written by `tools/web_demo/initramfs.py`: `/init`,
+  BusyBox with musl from Alpine's base archive, the application and its four libraries.
+  Both images are pinned by their published sha256 — a branch's packages are replaced
+  within weeks, a release's images are kept. No certificate bundle: the application
+  starts without one since `fix/no-ca-start`.
+- **The page's terminal takes the window's size** — 15 px text, 134×40 in a 1400×900
+  window — and tells the application when the window changes. That needs the virtio
+  console, which carries a size where a serial line cannot; the application redraws in
+  64–80 ms. The message's two numbers arrive swapped between v86 and this kernel:
+  `machine.json` says which goes first, and `verify_state.mjs` resizes every build and
+  measures the frame that comes back.
+- **What the guest taught**: a terminal nobody holds open forgets its size, and the
+  application then draws a frame of nothing — the size is set on the descriptors it
+  inherits, and `make_state.mjs` refuses a first frame of the wrong size. Alpine's
+  BusyBox has no `cttyhack`; a new session that opens the terminal itself gets it as its
+  controlling terminal.
+- **"Start again" is a reload.** A second machine made in a page that had already run
+  one could sit silent for seconds or longer; the cause is not established, waiting for
+  the first one's teardown did not cure it, and Node restores five in a row without it.
+  The page now reloads and starts by itself: eight restarts of eight answer.
+- **Measured**: the state 21.5 MB compressed (the probe's Buildroot guest: 18.5), a
+  click 24.6 MB against the floor of 25; restored in 0.32 s; in Chromium a typed
+  character a median of 16 ms after its key, `F1` 64 ms.
+- **Checked here.** `build.py` end to end with the binary built from `fix/no-ca-start`;
+  the page in headless Chromium at seven window sizes and scales with scrollbars drawn,
+  a window dragged smaller, typing (Cyrillic too), the screens, `Ctrl+Q` and eight
+  restarts. `ruff`, `node --check`, `cyrillic_scan.py`, `link_check.py` and
+  `doc_index_check.py` pass. No Rust changed on this branch.

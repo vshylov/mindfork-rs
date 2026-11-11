@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Build the web demo probe's page into ``target/web-demo/site/``.
+"""Build the web demo into ``target/web-demo/site/``.
 
-docs/research/web-demo.md, stage 1: a local page for the owner's go/no-go.
-Nothing here is deployed and nothing is part of a release.
+docs/research/web-demo.md, stages 1 and 2. Nothing here is deployed.
 
   python tools/web_demo/build.py --binary <32-bit mindfork> --libs <dir> [--libs <dir>...]
   python -m http.server --directory target/web-demo/site 8765
 
 The steps: the pinned third-party pieces are fetched and checked (fetch.py);
-the guest is booted under Node with the binary in it and saved once the demo
-has drawn its first frame (make_state.mjs); that state is restored in a fresh
-emulator and typed into (verify_state.mjs); and the page is put together from
-``page/``, the state, the emulator, the terminal and the site's own typeface.
+the guest's initramfs is written with the binary in it (initramfs.py); the
+guest is booted under Node and saved once the demo has drawn its first frame
+(make_state.mjs); that state is restored in a fresh emulator, typed into and
+resized (verify_state.mjs); and the page is put together from ``page/``, the
+state, the emulator, the terminal and the site's own typeface.
 
 It needs ``node`` (20 or newer; ``--node`` or $NODE names another) and the
 ``zstd`` command.
@@ -33,6 +33,7 @@ ROOT = HERE.parents[1]
 WORK = ROOT / "target" / "web-demo"
 VENDOR = WORK / "vendor"
 STATE = WORK / "state"
+GUEST = WORK / "guest"
 SITE = WORK / "site"
 
 # What the page loads from ``vendor/``.
@@ -72,6 +73,9 @@ def main() -> int:
     parser.add_argument("--binary", type=Path, help="the 32-bit x86 release binary")
     parser.add_argument("--libs", action="append", type=Path,
                         help="a directory holding the binary's 32-bit shared libraries; repeatable")
+    parser.add_argument("--ca-bundle", type=Path,
+                        help="a certificate bundle for the guest: only for a build of the application "
+                             "that cannot start without one")
     parser.add_argument("--page-only", action="store_true",
                         help="put the page together again from the state already built")
     parser.add_argument("--node", default=os.environ.get("NODE", "node"), help="the Node binary (default: node)")
@@ -89,7 +93,12 @@ def main() -> int:
             if shutil.which(tool) is None:
                 raise SystemExit(f"error: {tool} is not on the PATH")
         run([sys.executable, str(HERE / "fetch.py")])
-        run([args.node, str(HERE / "make_state.mjs"), str(STATE), str(args.binary), *[str(d) for d in args.libs]])
+        initramfs = GUEST / "initramfs.cpio.gz"
+        run([sys.executable, str(HERE / "initramfs.py"), "--out", str(initramfs), "--binary", str(args.binary),
+             "--busybox", str(VENDOR / "busybox"), "--musl", str(VENDOR / "ld-musl-i386.so.1"),
+             *[part for d in args.libs for part in ("--libs", str(d))],
+             *(["--ca-bundle", str(args.ca_bundle)] if args.ca_bundle else [])])
+        run([args.node, str(HERE / "make_state.mjs"), str(STATE), str(initramfs)])
         # `--ultra -22` is a megabyte smaller than `-19` on this state, and the
         # emulator's own decoder reads it.
         run(["zstd", "-q", "-f", "--ultra", "-22", str(STATE / "state.bin"), "-o", str(state)])

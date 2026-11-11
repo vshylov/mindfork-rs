@@ -25,9 +25,9 @@
   <section id="start" class="start">
     <button id="start-button" type="button">Start the demo</button>
     <p class="size">Downloads about @DOWNLOAD_MB@&nbsp;MB once. It needs a keyboard and a desktop-sized window: the
-      interface is drawn at @COLS@&nbsp;×&nbsp;@ROWS@ characters, as large as the window allows.</p>
+      terminal takes the size of yours.</p>
     <p id="narrow" class="warn" hidden>This window is smaller than the interface needs, or this device has no keyboard.
-      The demo will start, but its text will be small: it is made for a desktop browser.</p>
+      The demo will start, but it is made for a desktop browser.</p>
   </section>
 
   <section id="stage" class="stage" hidden data-cols="@COLS@" data-rows="@ROWS@"
@@ -80,13 +80,17 @@
         <a href="https://github.com/copy/v86/blob/master/bios/COPYING.LESSER">LGPL-3.0</a>; source:
         <a href="https://git.seabios.org/cgit/seabios.git/tag/?h=rel-1.16.2">rel-1.16.2</a>, built by
         <a href="https://github.com/copy/v86/blob/master/bios/fetch-and-build-seabios.sh">v86's script</a>.</li>
-      <li>The <a href="https://kernel.org/">Linux kernel</a> 6.8.12 —
-        <a href="https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/tree/COPYING?h=v6.8.12">GPL-2.0</a>;
-        source: <a href="https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.8.12.tar.xz">linux-6.8.12.tar.xz</a>.
-        It is the kernel of the <a href="https://copy.sh/v86/?profile=buildroot">Buildroot image</a> published by
-        v86's author, built with <a href="https://buildroot.org/">Buildroot</a> (GPL-2.0-or-later).</li>
-      <li><a href="https://busybox.net/">BusyBox</a> (GPL-2.0) and
-        <a href="https://uclibc-ng.org/">uClibc-ng</a> 1.0.45 (LGPL-2.1), from the same image.</li>
+      <li>The <a href="https://kernel.org/">Linux kernel</a> 6.18.60 —
+        <a href="https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/tree/COPYING?h=v6.18.60">GPL-2.0</a>;
+        Alpine Linux 3.24's <a href="https://pkgs.alpinelinux.org/package/v3.24/main/x86/linux-virt"><code>linux-virt</code></a>
+        build, unmodified, out of its release image; source:
+        <a href="https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.18.60.tar.xz">linux-6.18.60.tar.xz</a> and
+        <a href="https://gitlab.alpinelinux.org/alpine/aports/-/tree/3.24-stable/main/linux-lts">Alpine's build files</a>.</li>
+      <li><a href="https://busybox.net/">BusyBox</a> 1.37.0 (GPL-2.0) and the
+        <a href="https://musl.libc.org/">musl</a> C library (MIT), unmodified, from
+        <a href="https://alpinelinux.org/downloads/">Alpine Linux 3.24.4's</a> base image; sources:
+        Alpine's <a href="https://gitlab.alpinelinux.org/alpine/aports/-/tree/3.24-stable/main/busybox"><code>busybox</code></a>
+        and <a href="https://gitlab.alpinelinux.org/alpine/aports/-/tree/3.24-stable/main/musl"><code>musl</code></a> packages.</li>
       <li>The <a href="https://sourceware.org/glibc/">GNU C Library</a> 2.39 (LGPL-2.1-or-later), the GCC runtime
         library <code>libgcc_s</code> (GPL-3.0-or-later with the GCC Runtime Library Exception) and the
         <a href="https://www.alsa-project.org/">ALSA library</a> 1.2.11 (LGPL-2.1-or-later), unmodified, from

@@ -1,6 +1,6 @@
-// The web demo probe's page (docs/research/web-demo.md, stage 1): a saved
-// machine with `mindfork demo` already running is restored into an x86
-// emulator in this tab, and its serial line is joined to a terminal.
+// The web demo's page (docs/research/web-demo.md): a saved machine with
+// `mindfork demo` already running is restored into an x86 emulator in this
+// tab, and its console is joined to a terminal the size of the window.
 //
 // Nothing heavy is loaded before Start is pressed: the emulator, the terminal
 // and the machine's state are fetched on the click.
@@ -19,11 +19,10 @@
     const ended = $("ended");
     const terminalBox = $("terminal");
 
-    // The grid the application was started at, and what a click downloads:
-    // written into the page when it is built, so the window can take its size
-    // and the progress its scale before anything has been fetched.
-    const COLS = Number(stage.dataset.cols);
-    const ROWS = Number(stage.dataset.rows);
+    // The grid the application was saved at, and what a click downloads:
+    // written into the page when it is built, so the progress has its scale
+    // before anything has been fetched.
+    const SAVED = { cols: Number(stage.dataset.cols), rows: Number(stage.dataset.rows) };
     const ALL_BYTES = Number(stage.dataset.bytes);
     const MACHINE_BYTES = Number(stage.dataset.machineBytes);
 
@@ -31,27 +30,37 @@
     // the window's title bar and padding, and the status line under it.
     const CHROME_HEIGHT = 96;
     const CHROME_WIDTH = 30;
-    // The terminal box's padding, as demo.css sets it, and the smallest font.
+    // The terminal box's padding, as demo.css sets it.
     const PADDING = 6;
-    const MIN_FONT = 6;
-    const MAX_FONT = 18;
+    // The text is this size wherever the window gives a grid of at least
+    // SMALLEST at it, and smaller only where it does not; LARGEST is where a
+    // very large window stops adding cells.
+    const FONT = 15;
+    const MIN_FONT = 8;
+    const SMALLEST = { cols: 80, rows: 24 };
+    const LARGEST = { cols: 200, rows: 60 };
     // The application leaves the alternate screen when it quits.
     const LEAVES_ALT_SCREEN = "\x1b[?1049l";
+    // Set for the reload that "Start again" is: the page that comes back
+    // starts the demo without waiting for a click.
+    const AUTOSTART = "mindfork-demo-autostart";
     const FACE = '"JetBrains Mono"';
 
-    // What the probe measures, readable from the console and by a test.
+    // What the page measures, readable from the console and by a test.
     // `keys`: for each key pressed, when it was pressed and how many
     // milliseconds later each piece of the answer had been handed to the
     // terminal - which paints it on the browser's next frame.
-    const stats = { clickedAt: null, readyAt: null, firstFrameAt: null, downloaded: 0, fontSize: null, keys: [] };
+    const stats = { clickedAt: null, readyAt: null, firstFrameAt: null, downloaded: 0, grid: null, keys: [] };
     window.__demo = { stats };
 
     let term = null;
     let emulator = null;
+    let machine = null;
     let parts = null;
+    let grid = null;
 
-    // Below this the grid still fits, at a font size under ten pixels.
-    if (window.innerWidth < 900 || window.innerHeight < 680 || window.matchMedia("(pointer: coarse)").matches) {
+    // Below this the smallest grid needs smaller text than MIN_FONT.
+    if (window.innerWidth < 760 || window.innerHeight < 460 || window.matchMedia("(pointer: coarse)").matches) {
         $("narrow").hidden = false;
     }
 
@@ -95,77 +104,68 @@
                 loadScript("vendor/xterm.js"),
                 loadStyle("vendor/xterm.css"),
                 loadScript("vendor/libv86.js"),
-            ]).then(([machine, primer]) => ({ machine, primer: new Uint8Array(primer) }));
+            ]).then(([machineJson, primer]) => ({ machine: machineJson, primer: new Uint8Array(primer) }));
         }
         return parts;
     }
 
-    // The grid's size in pixels at a font size, worked out the way the
-    // terminal does it: the face's advance and line box measured on a canvas
-    // at that very size - where a browser may round them - and the line box
-    // rounded up to whole device pixels.
+    // A cell at a font size, worked out the way the terminal does it: the
+    // face's advance and line box measured on a canvas at that very size -
+    // where a browser may round them - and the line box rounded up to whole
+    // device pixels.
     const ruler = document.createElement("canvas").getContext("2d");
-    function gridAt(size) {
+    function cellAt(size) {
         ruler.font = size + "px " + FACE + ", monospace";
         const metrics = ruler.measureText("W");
         const lineBox = metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent || size * 1.32;
         const dpr = window.devicePixelRatio || 1;
-        return {
-            width: Math.round(metrics.width * COLS),
-            height: Math.round((Math.ceil(lineBox * dpr) * ROWS) / dpr),
-        };
+        return { width: metrics.width, height: Math.ceil(lineBox * dpr) / dpr };
     }
 
-    // The room the grid has: the page's width and the window's height, less
-    // what the page keeps around it.
-    function room() {
-        return {
-            width: Math.min(document.querySelector("main").clientWidth, window.innerWidth) - CHROME_WIDTH,
-            height: window.innerHeight - CHROME_HEIGHT,
-        };
-    }
-
-    // The largest whole font size at which the whole grid fits the window:
-    // its width, and its height too - the input box is the grid's last rows.
-    function fontSize() {
-        const { width, height } = room();
-        for (let size = MAX_FONT; size > MIN_FONT; size -= 1) {
-            const grid = gridAt(size);
-            if (grid.width <= width && grid.height <= height) return size;
+    // The grid for this window: as many cells as fit at FONT, and smaller text
+    // only where even the smallest grid would not fit.
+    function layout() {
+        const width = Math.min(document.querySelector("main").clientWidth, window.innerWidth) - CHROME_WIDTH;
+        const height = window.innerHeight - CHROME_HEIGHT;
+        for (let size = FONT; ; size -= 1) {
+            const cell = cellAt(size);
+            const cols = Math.min(LARGEST.cols, Math.floor(width / cell.width));
+            const rows = Math.min(LARGEST.rows, Math.floor(height / cell.height));
+            if ((cols >= SMALLEST.cols && rows >= SMALLEST.rows) || size === MIN_FONT) {
+                return { size, cols: Math.max(cols, 20), rows: Math.max(rows, 6), cell };
+            }
         }
-        return MIN_FONT;
     }
 
     // The window takes the grid's size whether or not a terminal is in it:
     // while the demo loads, and after it has ended.
-    function sizeWindow() {
-        stats.fontSize = fontSize();
-        const grid = gridAt(stats.fontSize);
-        setBox(grid.width, grid.height);
-        if (term) {
-            term.options.fontSize = stats.fontSize;
-            requestAnimationFrame(fitTerminal);
-        }
-    }
-
     function setBox(width, height) {
         terminalBox.style.width = width + 2 * PADDING + "px";
         terminalBox.style.height = height + 2 * PADDING + "px";
     }
 
-    // Should the terminal's own grid come out other than `gridAt` worked out,
-    // the window takes the real one, and the font steps down while it overflows.
-    function fitTerminal() {
-        const screen = term && terminalBox.querySelector(".xterm-screen");
-        if (!screen) return;
-        const { width, height } = room();
-        if (stats.fontSize > MIN_FONT && (screen.offsetWidth > width || screen.offsetHeight > height)) {
-            stats.fontSize -= 1;
-            term.options.fontSize = stats.fontSize;
-            requestAnimationFrame(fitTerminal);
-            return;
+    function sizeWindow() {
+        grid = layout();
+        stats.grid = { size: grid.size, cols: grid.cols, rows: grid.rows };
+        setBox(Math.round(grid.cell.width * grid.cols), Math.round(grid.cell.height * grid.rows));
+    }
+
+    // The terminal and the application both take the window's grid. The
+    // message's two numbers go in the order the machine's kernel reads them
+    // (machine.json, and docs/research/web-demo.md §13.2).
+    function applyGrid() {
+        if (!term || !emulator) return;
+        term.options.fontSize = grid.size;
+        if (term.cols !== grid.cols || term.rows !== grid.rows) {
+            term.resize(grid.cols, grid.rows);
+            emulator.bus.send("virtio-console0-resize", machine.resize_sends.map((name) => grid[name]));
         }
-        setBox(screen.offsetWidth, screen.offsetHeight);
+        requestAnimationFrame(() => {
+            // Should the terminal's own grid come out other than worked out
+            // above, the window takes the real one.
+            const screen = terminalBox.querySelector(".xterm-screen");
+            if (screen) setBox(screen.offsetWidth, screen.offsetHeight);
+        });
     }
 
     function megabytes(bytes) {
@@ -179,11 +179,12 @@
     }
 
     function makeTerminal() {
+        // At the size the application was saved at: the primer is that frame.
         const t = new window.Terminal({
-            cols: COLS,
-            rows: ROWS,
+            cols: SAVED.cols,
+            rows: SAVED.rows,
             fontFamily: FACE + ', ui-monospace, "DejaVu Sans Mono", Menlo, Consolas, monospace',
-            fontSize: stats.fontSize,
+            fontSize: grid.size,
             lineHeight: 1,
             scrollback: 0,
             cursorBlink: false,
@@ -219,7 +220,6 @@
         stage.hidden = false;
         stage.scrollIntoView({ block: "start" });
 
-        let machine;
         let primer;
         try {
             ({ machine, primer } = await loadParts());
@@ -228,7 +228,7 @@
             startButton.disabled = false;
             return;
         }
-        if (machine.cols !== COLS || machine.rows !== ROWS) {
+        if (machine.cols !== SAVED.cols || machine.rows !== SAVED.rows) {
             loadingText.textContent = "The demo could not be loaded: the page and the machine disagree on the grid.";
             return;
         }
@@ -238,17 +238,12 @@
         showProgress(before);
 
         // What the machine writes before the terminal has been shown the
-        // primer waits here; afterwards a slice of emulation ends in one write.
+        // primer waits here.
         let pending = [];
         let primed = false;
-        let scheduled = false;
         let tail = "";
         let key = null;
-        const flush = () => {
-            scheduled = false;
-            if (!primed || pending.length === 0) return;
-            const chunk = new Uint8Array(pending);
-            pending = [];
+        const write = (chunk) => {
             const answered = key;
             term.write(chunk, () => {
                 if (answered) answered.written.push(performance.now() - answered.at);
@@ -256,12 +251,12 @@
         };
 
         const fetched = {};
-        emulator = new window.V86({
+        const running = new window.V86({
             wasm_path: "vendor/v86.wasm",
             memory_size: machine.memory_size,
             vga_memory_size: machine.vga_memory_size,
             cmdline: machine.cmdline,
-            filesystem: {},
+            virtio_console: true,
             bios: { url: "vendor/seabios.bin" },
             vga_bios: { url: "vendor/vgabios.bin" },
             initial_state: { url: "state.bin.zst" },
@@ -270,26 +265,28 @@
             disable_mouse: true,
             disable_speaker: true,
         });
-        window.__demo.emulator = emulator;
+        emulator = running;
+        window.__demo.emulator = running;
+        const send = (bytes) => running.bus.send("virtio-console0-input-bytes", bytes);
 
-        emulator.add_listener("download-progress", (e) => {
+        running.add_listener("download-progress", (e) => {
             fetched[e.file_name] = e.loaded;
             if (!primed) showProgress(before + Object.values(fetched).reduce((a, b) => a + b, 0));
         });
-        emulator.add_listener("serial0-output-byte", (byte) => {
-            pending.push(byte);
-            tail = (tail + String.fromCharCode(byte)).slice(-LEAVES_ALT_SCREEN.length);
-            if (tail === LEAVES_ALT_SCREEN) finish();
-            if (!scheduled) {
-                scheduled = true;
-                queueMicrotask(flush);
-            }
+        running.add_listener("virtio-console0-output-bytes", (bytes) => {
+            // The emulator reuses its buffer: the terminal gets a copy.
+            const chunk = new Uint8Array(bytes);
+            tail = (tail + String.fromCharCode.apply(null, chunk.subarray(-LEAVES_ALT_SCREEN.length))).slice(
+                -LEAVES_ALT_SCREEN.length,
+            );
+            if (primed) write(chunk);
+            else pending.push(chunk);
+            if (tail === LEAVES_ALT_SCREEN) finish(running);
         });
-        emulator.add_listener("emulator-ready", () => {
+        running.add_listener("emulator-ready", () => {
             stats.readyAt = performance.now();
             term = makeTerminal();
             window.__demo.term = term;
-            requestAnimationFrame(fitTerminal);
             // The application drew this frame before the machine was saved and
             // will now send only what changes. The terminal answers the
             // queries inside it; nothing is listening to the answers yet, which
@@ -300,12 +297,13 @@
                 term.onData((data) => {
                     key = { at: performance.now(), written: [] };
                     stats.keys.push(key);
-                    emulator.serial_send_bytes(0, new TextEncoder().encode(data));
+                    send(new TextEncoder().encode(data));
                 });
-                term.onBinary((data) => {
-                    emulator.serial_send_bytes(0, Uint8Array.from(data, (c) => c.charCodeAt(0)));
-                });
-                flush();
+                term.onBinary((data) => send(Uint8Array.from(data, (c) => c.charCodeAt(0))));
+                pending.forEach(write);
+                pending = [];
+                // And now the window's own grid: the application redraws for it.
+                applyGrid();
                 loading.hidden = true;
                 status.textContent =
                     "Running. Ready " + ((stats.firstFrameAt - stats.clickedAt) / 1000).toFixed(1) + " s after the click.";
@@ -316,12 +314,11 @@
     }
 
     // The application quit: the machine has nothing more to show.
-    function finish() {
-        const done = emulator;
+    function finish(done) {
+        if (emulator !== done) return;
         emulator = null;
-        if (!done) return;
-        setTimeout(() => {
-            done.destroy();
+        setTimeout(async () => {
+            await done.destroy();
             // A terminal keeps its listeners; a fresh one is made for the next run.
             if (term) term.dispose();
             term = null;
@@ -334,12 +331,40 @@
         }, 150);
     }
 
+    // A window being dragged fires many times a second; the application is
+    // told once it has stopped.
+    let resizing = null;
     window.addEventListener("resize", () => {
-        if (!stage.hidden) sizeWindow();
+        if (stage.hidden) return;
+        clearTimeout(resizing);
+        resizing = setTimeout(() => {
+            sizeWindow();
+            applyGrid();
+        }, 150);
     });
     startButton.addEventListener("click", () => {
         $("start").hidden = true;
         start();
     });
-    againButton.addEventListener("click", start);
+    // A second machine in a page that has already run one can sit silent for
+    // seconds before it answers (docs/research/web-demo.md §13.4), so the next
+    // demo gets a page of its own: a reload, with everything it needs already
+    // in the browser's cache.
+    againButton.addEventListener("click", () => {
+        try {
+            sessionStorage.setItem(AUTOSTART, "1");
+        } catch (error) {
+            // No storage: the reloaded page shows Start, one click away.
+        }
+        location.reload();
+    });
+    try {
+        if (sessionStorage.getItem(AUTOSTART)) {
+            sessionStorage.removeItem(AUTOSTART);
+            $("start").hidden = true;
+            start();
+        }
+    } catch (error) {
+        // No storage: nothing to resume.
+    }
 })();
