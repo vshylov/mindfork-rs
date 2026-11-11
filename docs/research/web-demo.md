@@ -1094,3 +1094,9 @@ cells").
 **Left**: the owner's look at the type on their own screen; Firefox and Safari
 on the site's page; the application's light theme; a Russian page.
 
+**Live since 0.26.0** (2026-11-11). The first release to carry the asset was
+published that day, and the site's deploy took the demo from it; `/try/` runs
+it. The release's own account — a draft that first came out without the demo,
+Canonical's network being down, and the three sources the pinned packages have
+since — is in [the journal](../journal/release.md), "Release 0.26.0".
+
