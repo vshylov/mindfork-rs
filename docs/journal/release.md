@@ -6205,3 +6205,101 @@ guard's, the site gate's and the AUR renderer's self-tests clean.
   adds no code. `cargo fmt --check` and `clippy -D warnings` clean. Not run here:
   `cargo deny check`, not installed on the droplet — the audit runs on this PR, which
   touches `Cargo.toml` and `Cargo.lock`.
+- **The tag, and a draft without the demo.** The owner merged 935 (`6d448d97`,
+  13:39:02Z) and set `v0.26.0` on it, which was `origin/main`. `release.yml` (run
+  43031427548) ended green in 18 min 49 s — and **its `web-demo` job had failed**,
+  which the workflow tolerates: the draft was made with fifteen assets, 0.25.0's
+  set of names, and no `mindfork-webdemo.tar`.
+  - *The cause.* `build_i686.sh` fetched ALSA's two i386 packages from Launchpad
+    and nowhere else. curl sat on the first for 13 min 43 s — no time limit was
+    set, and three retries were — and ended with exit 6: the name did not resolve.
+    Measured from the droplet over the next twenty minutes: the system resolver
+    answered `SERVFAIL` for `launchpad.net`, `launchpadlibrarian.net` and
+    `archive.ubuntu.com`; Canonical's three name servers timed out; and
+    `launchpad.net` by an address still in a public resolver's cache timed out
+    too. Canonical's network was down, not this repository's pipeline.
+  - *What a publication would have done*: the crate uploaded, which cannot be
+    undone, and the site deployed with a post about a demo that `/try/` did not
+    have. The owner was told not to publish before anything else was done.
+  - *The fifteen assets, checked as §6 step 5 asks.* All fourteen files match
+    `sha256sums.txt`; the notes are the `[0.26.0]` section line for line, with the
+    workflow's footer. The Linux archive: 49 entries, 0.25.0's list; `mindfork
+    --version` says `mindfork 0.26.0`; its `PRIVACY.md` is effective 2026-11-11 and
+    names `/try/`. The Windows `mindfork.exe` is a PE32+ for x86-64 (48 entries);
+    the macOS `mindfork` a Mach-O for arm64, mode 0755 (49 entries); both carry the
+    new policy. The `.deb` is `mindfork-rs 0.26.0-1 amd64` and its binary says
+    0.26.0; the Arch package's `.PKGINFO` says `0.26.0-1 x86_64`. `install.sh` is
+    the tag's file, byte for byte, with the Arch fix. Attestations verify for the
+    three archives, the installer and `install.sh` — built by `release.yml` at
+    `refs/tags/v0.26.0`, commit `6d448d97` — and a scratch file exits 1.
+  - *The animation.* The reels played here from the tag and drawn here are the
+    release's, pixel for pixel, in all 266 frames; 691 bars, none with a line, GIF
+    and WebP alike.
+  - *The released binary*: a backup it makes records `settings 7, profiles 1,
+    chat 8, db 1, story 0`; `mindfork demo` in a pseudo-terminal of 116×44, read
+    back with `pyte`, draws the demo chat, `F1` opens "About · mindfork v0.26.0",
+    `Ctrl+Q` ends it.
+- **The fix: three places to fetch a pinned package from** (branch
+  `fix/web-demo-package-sources`). The two files, with the pinned hashes, were on
+  kernel.org's, MIT's and Princeton's mirrors and on Azure's all through the
+  outage. `build_i686.sh` now tries Launchpad, then `mirrors.edge.kernel.org`,
+  then `mirrors.mit.edu`; each answer is checked against the pin, each source given
+  one try and a minute at most, a wrong file passed over like a missing one. Run alone
+  during the outage, the script's own function took both packages from kernel.org
+  in 5 s each; with a hash no file has, it passed over all three, exited 1 and left
+  nothing behind. `web-demo.yml` runs the release's steps on the fix's pull request
+  (lessons §10).
+- **The outage reached the runners while the fix was on its pull request.** At
+  13:42Z the release's jobs still had their package lists — `apt-get download`
+  answered from Azure's mirror in the same second the Launchpad fetch began to hang.
+  By 14:12Z, on the fix's pull request (936), `apt-get update` itself could not
+  resolve `azure.archive.ubuntu.com` — a name in Canonical's zone — and every Linux
+  job that installs a package timed out at its five minutes: the lint job, the Linux
+  tests, the coverage job, `web-demo.yml`. So for the length of the outage no Linux
+  job of this repository can pass, a re-run of the release's failed job would stop
+  one step earlier than it did, and a new tag would lose its Linux build, which is a
+  gate. The fix removes the Launchpad dependency; the archive's is every job's and is
+  not this change's to remove. **0.26.0 waits for Canonical**: then the incomplete
+  draft is deleted and the failed jobs of run 43031427548 are run again — the tag
+  stays where it is — or, if Launchpad is the last to return, the fix is merged and
+  the tag moved to it.
+- **Canonical came back in pieces, and the tag did not have to move.** The owner's
+  word was to delete the incomplete draft and run the failed jobs again; the draft
+  went at 14:33Z, the tag stayed, and the jobs waited.
+  - The names resolved again by 17:27Z and the archive answered; CI's Linux jobs,
+    run again on the fix's pull request, had passed by 17:24Z. Launchpad itself still hung until
+    about 17:48Z — which is the case the re-run could not survive, since the tag's
+    script has Launchpad alone and no time limit, and a second failure would have
+    made a second draft without the demo. So the release's jobs were not re-run
+    while it hung; the fix's own `web-demo.yml` was, and passed in 13 min with both
+    packages *"not from launchpad.net"*, *"from mirrors.edge.kernel.org"* — the
+    release's steps, whole, with Launchpad down.
+  - Once Launchpad had answered seven requests running — three of them the
+    packages themselves, checked against their hashes —
+    `gh run rerun 43031427548 --failed` (17:49:37Z): the `web-demo` job in
+    12 min 21 s, the release job after it in 27 s. One draft, **sixteen assets**.
+- **The second draft, checked.**
+  - All fifteen files match `sha256sums.txt`; the notes are the first draft's byte
+    for byte. Twelve of the first draft's fourteen files are the same bytes. The
+    three archives are not — the release job packs them, and their members are
+    dated 18:02 where they were 14:00 — and unpacked they are the first draft's file
+    for file, 43 files each, the Linux binary the same hash. So what was checked in
+    the first draft stands.
+  - Attestations verify for the demo, the three archives, the installer and
+    `install.sh`; the demo's says `release.yml@refs/tags/v0.26.0`, commit
+    `6d448d97`.
+  - **The demo down the site's own road, by hand.** `site_webdemo.fetched()` — the
+    deploy's function, which downloads the asset and verifies its attestation —
+    took it from the draft; `place()` put it under `webdemo/v0.26.0/`: format 2,
+    application 0.26.0, the tag's commit, 12 pieces, 33 files, 24.73 MB on a press
+    of Start. The site built from `main` around it (Zola 0.23.6): `/try/` with the
+    demo, the home page's link, the post. In headless Chromium: the first frame
+    1.07 s after the click, the WebGL renderer, a grid of 115 × 41, `F1` opening
+    "About · mindfork v0.26.0", a message sent, 22 requests all to the page's own
+    origin, 11 pieces in the licence list, no page error. What this does not
+    exercise is the deploy job's own token and the listing of published releases:
+    a draft is not listed.
+  - **The archive by itself**, as §6 step 5 asks: unpacked into an empty directory
+    and served, **Start** pressed — the same, at 120 × 45.
+  - The same road was walked first with the asset `web-demo.yml` built on the fix's
+    pull request, with the same result.

@@ -4995,7 +4995,8 @@ Principles:
   and every redistributed piece — name, version, licence, licence texts, where
   its exact source is — read out of the files themselves (`manifest.py`).
   Every third-party piece is pinned by a hash (`fetch.py`, and two packages in
-  `build_i686.sh`); no tool takes a path (`paths.py`). **Not a gate**, like the
+  `build_i686.sh`, taken from Launchpad or a mirror of the archive, whichever
+  answers with the pinned file); no tool takes a path (`paths.py`). **Not a gate**, like the
   animation. `web-demo.yml` runs the job's steps on any pull request that
   changes `tools/web_demo/**` and keeps the asset for a week.
 - **The demo's page, mindfork.io/try/** (docs/research/web-demo.md §14): the

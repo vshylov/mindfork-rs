@@ -789,7 +789,12 @@ built what nobody can build at a desk. So `build_i686.sh` has the sysroot road
 only, and the runner takes it. ALSA's two i386 packages, which apt cannot fetch
 without that second architecture, came over plain HTTP at whatever version was
 installed; they are now **pinned by sha256 and fetched from Launchpad over
-HTTPS**, which keeps every published build for good.
+HTTPS**, which keeps every published build for good. *Since the release of
+0.26.0:* Launchpad is the first of three sources, the other two mirrors of the
+archive on other networks (kernel.org, MIT) — that release's job failed in this
+step, Canonical's network being down, and its first draft had no demo
+([journal](../journal/release.md), "Release 0.26.0"). The hash is the pin; the
+source is whichever answers with that file.
 
 **No tool takes a path.** The first pull requests failed the quality gate: every
 `--binary`, `--libs` and `--out` was an unvalidated path reaching the file system
