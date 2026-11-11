@@ -21,7 +21,11 @@ split by subsystem.
   page restores in a tab: unpack it into an empty folder, serve the folder
   (`python -m http.server --directory <folder>`), open it and press **Start**. It is
   a demo of the interface with scripted replies, not a session with a real model.
-  The page for it on mindfork.io is still to come.
+- **The interface in a browser tab: [mindfork.io/try/](https://mindfork.io/try/).**
+  The site runs that demo — the program itself in an emulated PC, with scripted
+  replies and no model behind it; nothing to install, nothing you type leaving the
+  tab. It appears with the first release that carries the demo; until then the
+  page says it is on its way.
 
 ### Fixed
 

@@ -1,0 +1,59 @@
+// The /try/ page (docs/research/web-demo.md §14): the demo in a browser tab.
+// The demo's own parts are styled by the stylesheet that travels with it
+// (`wd-`, a release asset); what is here is the page around them.
+
+// The terminal draws italics; no other page of the site does.
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/fonts/JetBrainsMono-Italic.woff2") format("woff2");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+.try {
+  padding: 52px 0 28px;
+  h1 {
+    margin-top: 0;
+  }
+}
+// What the owner asked the page to say before anything else on it.
+.try-notice {
+  margin: 22px 0 0;
+  padding: 12px 16px;
+  border-left: 3px solid var(--accent);
+  background: var(--bg-2);
+  font-size: 15.5px;
+}
+// The terminal's window is as wide as the site's own column - the header's,
+// the home page's - and no wider: the prose above and below it is set in the
+// narrow one. Its height is the browser window's.
+.try-stage {
+  margin-top: 28px;
+  margin-bottom: 8px;
+}
+// Before the demo starts, its button stands in the column the page is set
+// in; only the terminal's window, once it is there, is wider.
+.try-stage .wd-start {
+  max-width: 732px; // `.wrap.narrow`'s 780px less its padding
+  margin-left: auto;
+  margin-right: auto;
+}
+// What the demo's script leaves free at the top of the screen when it sizes
+// and scrolls to its window: the header that stays there (61 px, measured)
+// and a breath under it.
+.wd-root {
+  --wd-top: 72px;
+}
+.try-absent {
+  margin: 28px 0 0;
+  color: var(--muted);
+}
+.try-pieces {
+  padding-left: 20px;
+  li {
+    margin: 6px 0;
+    color: var(--muted);
+    font-size: 14.5px;
+  }
+}

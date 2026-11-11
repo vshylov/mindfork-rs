@@ -1,0 +1,37 @@
+<!-- The markup demo.js drives (docs/research/web-demo.md §14.1): the same
+     fragment in the asset's own page and in the site's. What is not `wd-` is
+     borrowed from the site's stylesheet: the terminal window and the buttons. -->
+<div id="wd-root" class="wd-root" data-cols="@COLS@" data-rows="@ROWS@"
+     data-bytes="@DOWNLOAD_BYTES@" data-machine-bytes="@MACHINE_BYTES@">
+  <div id="wd-start" class="wd-start">
+    <button id="wd-start-button" class="btn btn-primary" type="button">Start the demo</button>
+    <p class="wd-note">Downloads about @DOWNLOAD_MB@&nbsp;MB once. It needs a keyboard and a desktop-sized window: the
+      terminal takes the size of yours.</p>
+    <p id="wd-narrow" class="wd-note wd-warn" hidden>This window is smaller than the interface needs, or this device
+      has no keyboard. The demo will start, but it is made for a desktop browser.</p>
+  </div>
+  <div id="wd-stage" class="wd-stage" hidden>
+    <div class="term wd-window">
+      <div class="term-bar"><span class="term-title">mindfork demo</span><span class="term-controls" aria-hidden="true">─ □ ✕</span></div>
+      <div class="wd-body">
+        <div id="wd-terminal" class="wd-grid"></div>
+        <div id="wd-loading" class="wd-cover" hidden>
+          <p id="wd-loading-text">Loading the demo…</p>
+          <progress id="wd-loading-bar" max="1" value="0"></progress>
+        </div>
+        <div id="wd-ended" class="wd-cover" hidden>
+          <p>The demo has ended.</p>
+          <button id="wd-again-button" class="btn btn-primary" type="button">Start again</button>
+        </div>
+      </div>
+    </div>
+    <output id="wd-status" class="wd-status"></output>
+    <div id="wd-keys" class="wd-keys" hidden>
+      <p>Click the terminal, then type; a question is already waiting in the input box, and <kbd>Enter</kbd> sends it.
+        <kbd>F1</kbd> help and every command · <kbd>Esc</kbd> the chat list ·
+        <kbd>Ctrl+P</kbd> settings · <kbd>F3</kbd> the assistant's self-model · <kbd>Ctrl+Q</kbd> or <code>/exit</code> quit.</p>
+      <p>Your browser keeps <kbd>Ctrl+N</kbd>, <kbd>Ctrl+T</kbd> and <kbd>Ctrl+W</kbd> for itself. Type
+        <code>/new</code>, <code>/thoughts</code> and <code>/mouse</code> instead: every key has a typed command.</p>
+    </div>
+  </div>
+</div>

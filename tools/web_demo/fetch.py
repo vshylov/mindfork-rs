@@ -32,6 +32,11 @@ ALPINE = "https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/x86"
 # The musl release Alpine's image carries; its COPYRIGHT is fetched below.
 MUSL = "1.2.6"
 
+# Where every npm package keeps its licence, and what it says of itself - its
+# name, version and licence, which the manifest reads (manifest.py).
+NPM_LICENCE = "package/LICENSE"
+NPM_RECORD = "package/package.json"
+
 # An npm package: its registry tarball, the registry's own integrity value
 # (sha512, base64), and the members taken out of it.
 PACKAGES = [
@@ -43,9 +48,9 @@ PACKAGES = [
             "package/build/libv86.js": "libv86.js",
             "package/build/libv86.mjs": "libv86.mjs",
             "package/build/v86.wasm": "v86.wasm",
-            "package/LICENSE": "LICENSE.v86",
+            NPM_LICENCE: "LICENSE.v86",
             # What the package says of itself: the manifest's version and licence.
-            "package/package.json": "v86.package.json",
+            NPM_RECORD: "v86.package.json",
         },
     },
     {
@@ -55,8 +60,23 @@ PACKAGES = [
         "members": {
             "package/lib/xterm.js": "xterm.js",
             "package/css/xterm.css": "xterm.css",
-            "package/LICENSE": "LICENSE.xterm",
-            "package/package.json": "xterm.package.json",
+            NPM_LICENCE: "LICENSE.xterm",
+            NPM_RECORD: "xterm.package.json",
+        },
+    },
+    # The terminal's WebGL renderer, the release made with the terminal's own.
+    # It draws box-drawing and block characters itself, on the cell grid; the
+    # default renderer sets them as the typeface's glyphs, which at a display
+    # scale of 100% or 125% leave gaps between rows and teeth where a table's
+    # lines meet (docs/research/web-demo.md §14.7).
+    {
+        "name": "@xterm/addon-webgl 0.19.0",
+        "url": "https://registry.npmjs.org/@xterm/addon-webgl/-/addon-webgl-0.19.0.tgz",
+        "sha512": "b3fMOsyLVuCeNJWxolACEUED0vm7qC0cy4wRvf3oURSzDTYVQiGPhTnhWZwIHdvC48Y+oLhvYXnY4XDXPoJo6A==",
+        "members": {
+            "package/lib/addon-webgl.js": "xterm-webgl.js",
+            NPM_LICENCE: "LICENSE.xterm-webgl",
+            NPM_RECORD: "xterm-webgl.package.json",
         },
     },
 ]

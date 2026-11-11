@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -39,9 +40,18 @@ PRIMER_NAME = "primer.bin"
 MACHINE_NAME = "machine.json"
 MANIFEST_NAME = "manifest.json"
 PAGE_NAME = "index.html"
+# What a page that shows the demo takes from the asset (research §14.1): the
+# markup the script drives, the script, and the styles of the demo's own parts.
+FRAGMENT_NAME = "stage.html"
+SCRIPT_NAME = "demo.js"
+STYLE_NAME = "demo.css"
+# The asset's own page around that fragment, and what only it needs.
+STANDALONE_STYLE = "standalone.css"
+SITE_SASS = ROOT / "site" / "sass"
 # What the page loads from ``vendor/``, and the site's own faces it draws with.
-VENDOR_FILES = ["libv86.js", "v86.wasm", "seabios.bin", "vgabios.bin", "xterm.js", "xterm.css"]
+VENDOR_FILES = ["libv86.js", "v86.wasm", "seabios.bin", "vgabios.bin", "xterm.js", "xterm-webgl.js", "xterm.css"]
 FONTS = ["JetBrainsMono-Regular.woff2", "JetBrainsMono-Bold.woff2", "JetBrainsMono-Italic.woff2", "OFL.txt"]
+STANDALONE = [PAGE_NAME, STANDALONE_STYLE, *(f"fonts/{name}" for name in FONTS)]
 # What a press of Start downloads: everything but the page itself and its faces.
 ON_START = [*(f"vendor/{name}" for name in VENDOR_FILES), STATE_NAME, PRIMER_NAME, MACHINE_NAME]
 # The part of it the emulator fetches itself, and reports the progress of.
@@ -78,7 +88,7 @@ def assemble(texts: dict[str, bytes]) -> None:
         shutil.copyfile(VENDOR / name, SITE / "vendor" / name)
     for name in FONTS:
         shutil.copyfile(ROOT / "site" / "static" / "fonts" / name, SITE / "fonts" / name)
-    for name in ("demo.css", "demo.js"):
+    for name in (STYLE_NAME, STANDALONE_STYLE, SCRIPT_NAME):
         shutil.copyfile(HERE / "page" / name, SITE / name)
     shutil.copyfile(HERE / MACHINE_NAME, SITE / MACHINE_NAME)
     for name in (STATE_NAME, PRIMER_NAME):
@@ -93,25 +103,67 @@ def size_of(names: list[str]) -> int:
     return sum((SITE / name).stat().st_size for name in names)
 
 
+def filled(name: str, replacements: dict[str, str]) -> str:
+    """A file of ``page/`` with its marks replaced; every mark has to be there."""
+    text = (HERE / "page" / name).read_text(encoding="utf-8")
+    for mark, value in replacements.items():
+        if mark not in text:
+            raise SystemExit(f"error: page/{name} has no {mark}")
+        text = text.replace(mark, value)
+    return text
+
+
+def borrowed() -> list[str]:
+    """What the fragment and its stylesheet take from the site's stylesheet:
+    every class of the markup and every variable of the styles that is not the
+    demo's own (`wd-`). The contract of research §14.1, read from the files."""
+    markup = (HERE / "page" / FRAGMENT_NAME).read_text(encoding="utf-8")
+    styles = (HERE / "page" / STYLE_NAME).read_text(encoding="utf-8")
+    classes = {name for group in re.findall(r'class="([^"]*)"', markup) for name in group.split()}
+    variables = set(re.findall(r"var\((--[\w-]+)", styles))
+    return sorted(f".{name}" for name in classes if not name.startswith("wd-")) + sorted(
+        name for name in variables if not name.startswith("--wd-")
+    )
+
+
+def check_contract() -> None:
+    """Every borrowed name is one the site's Sass defines - and one the asset's
+    own page defines, which stands in for the site there. A name the site has
+    renamed stops the build here, not a visitor's page."""
+    site = "\n".join(path.read_text(encoding="utf-8") for path in sorted(SITE_SASS.glob("*.scss")))
+    alone = (HERE / "page" / STANDALONE_STYLE).read_text(encoding="utf-8")
+    for name in borrowed():
+        defined = re.compile(rf"{re.escape(name)}\s*:" if name.startswith("--") else rf"{re.escape(name)}\b[^{{;]*{{")
+        for where, text in (("site/sass", site), (f"page/{STANDALONE_STYLE}", alone)):
+            if not defined.search(text):
+                raise SystemExit(f"error: the demo's fragment borrows {name}, which {where} does not define")
+
+
 def write_page(pieces: list[manifest.Piece]) -> None:
-    """``page/index.html`` with this build's numbers and this build's pieces."""
-    page = (HERE / "page" / PAGE_NAME).read_text(encoding="utf-8")
+    """The fragment with this build's numbers, and the asset's own page around
+    it with this build's pieces."""
     machine = json.loads((HERE / MACHINE_NAME).read_text(encoding="utf-8"))
     on_start = size_of(ON_START)
-    replacements = {
-        "@VERSION@": manifest.cargo_field("version"),
-        "@COLS@": str(machine["cols"]),
-        "@ROWS@": str(machine["rows"]),
-        "@DOWNLOAD_MB@": f"{on_start / 1e6:.0f}",
-        "@DOWNLOAD_BYTES@": str(on_start),
-        "@MACHINE_BYTES@": str(size_of(BY_EMULATOR)),
-        "@PAGE_PIECES@": manifest.list_html(pieces, manifest.PAGE),
-        "@MACHINE_PIECES@": manifest.list_html(pieces, manifest.MACHINE),
-    }
-    for mark, value in replacements.items():
-        if mark not in page:
-            raise SystemExit(f"error: page/{PAGE_NAME} has no {mark}")
-        page = page.replace(mark, value)
+    fragment = filled(
+        FRAGMENT_NAME,
+        {
+            "@COLS@": str(machine["cols"]),
+            "@ROWS@": str(machine["rows"]),
+            "@DOWNLOAD_MB@": f"{on_start / 1e6:.0f}",
+            "@DOWNLOAD_BYTES@": str(on_start),
+            "@MACHINE_BYTES@": str(size_of(BY_EMULATOR)),
+        },
+    )
+    (SITE / FRAGMENT_NAME).write_text(fragment, encoding="utf-8")
+    page = filled(
+        PAGE_NAME,
+        {
+            "@STAGE@": fragment,
+            "@VERSION@": manifest.cargo_field("version"),
+            "@PAGE_PIECES@": manifest.list_html(pieces, manifest.PAGE, manifest.STANDALONE),
+            "@MACHINE_PIECES@": manifest.list_html(pieces, manifest.MACHINE),
+        },
+    )
     (SITE / PAGE_NAME).write_text(page, encoding="utf-8")
 
 
@@ -122,7 +174,8 @@ def write_manifest(pieces: list[manifest.Piece]) -> dict:
         if path.is_file():
             data = path.read_bytes()
             files[path.relative_to(SITE).as_posix()] = {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
-    document = manifest.document(pieces, files, ON_START, BY_EMULATOR)
+    page = {"fragment": FRAGMENT_NAME, "script": SCRIPT_NAME, "stylesheet": STYLE_NAME, "standalone": STANDALONE}
+    document = manifest.document(pieces, files, ON_START, BY_EMULATOR, page)
     (SITE / MANIFEST_NAME).write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
     return document
 
@@ -173,6 +226,7 @@ def main() -> int:
         raise SystemExit("error: --page-only needs a state built by an earlier run")
 
     WORK.mkdir(parents=True, exist_ok=True)
+    check_contract()
     pieces = manifest.collect()
     assemble(manifest.texts(pieces))
     write_page(pieces)

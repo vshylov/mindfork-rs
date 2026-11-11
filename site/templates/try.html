@@ -1,0 +1,76 @@
+{# The demo in a browser tab (docs/research/web-demo.md §14): the release's own
+   binary, running `mindfork demo` inside an x86 emulator.
+
+   The page is the site's; the demo is a release asset. The deploy puts the
+   newest release's under static/webdemo/<tag>/ and writes webdemo.json at the
+   site's root (tools/site_webdemo.py); a build without one - a pull request's, or any
+   before the first release that carries the asset - says the demo is on its
+   way. What comes from the asset: the markup its script drives (one fragment),
+   the script, the styles of the demo's own parts, and the manifest the licence
+   list is rendered from. The window and the buttons in that fragment are this
+   site's own `.term` and `.btn`. #}
+{% extends "base.html" %}
+
+{% block title %}<title>{{ page.title }} — mindfork</title>{% endblock %}
+{% block desc %}<meta name="description" content="{{ page.description }}">{% endblock %}
+{% block og %}
+<meta property="og:type" content="website">
+<meta property="og:title" content="{{ page.title }} — mindfork">
+<meta property="og:description" content="{{ page.description }}">
+{% endblock og %}
+
+{% block content %}
+{%- set demo = load_data(path="webdemo.json", format="json", required=false) -%}
+<article class="try">
+  <div class="wrap narrow">
+    <p class="prompt-line mono"><span class="ps1">$</span>mindfork demo<span class="cursor" aria-hidden="true"></span></p>
+    <h1>{{ page.title }}</h1>
+    <p class="lede">The program's own interface, running in this tab with scripted replies. Nothing to install.</p>
+    <p class="try-notice"><strong>This is a demo of the program's interface, not a session with a real model.</strong>
+      A scripted engine answers with a few fixed replies, whatever you ask. Everything around them is the program
+      itself: its screens, keys, commands, streaming and settings.</p>
+  </div>
+  {%- if demo %}
+  {%- set base = "webdemo/" ~ demo.dir ~ "/" %}
+  {%- set manifest = load_data(path="static/" ~ base ~ "manifest.json", format="json") %}
+  <link rel="stylesheet" href="{{ get_url(path=base ~ demo.stylesheet) }}">
+  <div class="wrap try-stage">
+    {{ load_data(path="static/" ~ base ~ demo.fragment, format="plain") | safe }}
+  </div>
+  <script type="module" src="{{ get_url(path=base ~ demo.script) }}"></script>
+  {%- else %}
+  <div class="wrap narrow">
+    <p class="try-absent">The demo arrives with the next release. Until then, the
+      <a href="{{ get_url(path='/') }}">home page</a> plays a recording of the same interface, and
+      <code>mindfork demo</code> runs it on your own machine a minute after you
+      <a href="{{ get_url(path='@/install.md') }}">install it</a>.</p>
+  </div>
+  {%- endif %}
+  <div class="wrap narrow">
+    <div class="prose">
+      <h2>{% if demo %}What is running here{% else %}What the demo is{% endif %}</h2>
+      {{ page.content | safe }}
+      {%- if demo %}
+      <h2>Licences</h2>
+      <p>The demo runs and hands you other people's work, each piece under its own licence. This list is written
+        by the release's build, out of the very files it packs
+        (<a href="{{ get_url(path=base ~ 'manifest.json') }}">manifest.json</a>): what each piece is, the text of its
+        licence, and where the source of exactly this build of it is. This is mindfork
+        {{ manifest.application }}.</p>
+      {%- for part in [["page", "On this page"], ["machine", "Inside the machine"]] %}
+      <h3>{{ part[1] }}</h3>
+      <ul class="try-pieces">
+        {%- for piece in manifest.pieces %}{% if piece.part == part[0] %}
+        <li><a href="{{ piece.homepage }}">{{ piece.name }}</a>{% if piece.version %} {{ piece.version }}{% endif %},
+          {{ piece.role }}. {{ piece.licence }}:
+          {% for text in piece.texts %}<a href="{{ get_url(path=base ~ text) }}">{{ text | replace(from="licences/", to="") }}</a>{% if not loop.last %}, {% endif %}{% endfor %}.
+          {%- if piece.package %} Unmodified, from {{ piece.package }}.{% endif %}
+          {%- if piece.sources %} Source: {% for item in piece.sources %}<a href="{{ item.url }}">{{ item.what }}</a>{% if not loop.last %}; {% endif %}{% endfor %}.{% endif %}</li>
+        {%- endif %}{% endfor %}
+      </ul>
+      {%- endfor %}
+      {%- endif %}
+    </div>
+  </div>
+</article>
+{% endblock %}
