@@ -14,6 +14,17 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The demo's companion is English in the settings too.** `mindfork demo` showed
+  Russian as the *Framework language* of a profile whose system message, notes and
+  self-model are English; it now names the language the profile is in.
+- **mindfork starts on a system with no CA certificates.** In a minimal container
+  with no certificate bundle the app — `mindfork demo` included — ended at start
+  with a panic about a TLS client. It now starts: a local server over plain HTTP
+  works as before, and an HTTPS request fails when it is made, with a certificate
+  error.
+
 ## [0.25.0] — 2026-11-09
 
 **Faster backups, and pictures pasted by name.** A backup and a restore now use every

@@ -329,11 +329,11 @@ impl CatalogueRequest {
 /// unit tests pin against the bodies measured in §2 of the research, so the
 /// shapes are covered without a network.
 pub async fn fetch(req: &CatalogueRequest) -> Result<Vec<CatalogModel>, CatalogueError> {
-    let http = reqwest::Client::builder()
-        .connect_timeout(super::http::CONNECT_TIMEOUT)
-        .timeout(TOTAL_TIMEOUT)
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new());
+    let http = crate::shared::net::build_client(|builder| {
+        builder
+            .connect_timeout(super::http::CONNECT_TIMEOUT)
+            .timeout(TOTAL_TIMEOUT)
+    });
     let url = req.url();
     let mut rb = http.get(&url);
     rb = match (req.shape, req.key.as_deref()) {

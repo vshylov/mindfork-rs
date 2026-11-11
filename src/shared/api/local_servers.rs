@@ -139,18 +139,14 @@ pub struct LocalOffer {
 /// hangs costs three seconds, not a start-up. What does not answer, or answers
 /// in a shape that is not its own, is left out.
 pub async fn find() -> Vec<Found> {
-    let http = match reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(1))
-        .timeout(Duration::from_secs(3))
-        .no_proxy()
-        .build()
-    {
-        Ok(http) => http,
-        Err(err) => {
-            tracing::warn!(error = %err, "no client to look for local servers with");
-            return Vec::new();
-        }
-    };
+    // Plain HTTP to this machine: a system with no certificates has local
+    // servers to find all the same (`shared::net::build_client`).
+    let http = crate::shared::net::build_client(|builder| {
+        builder
+            .connect_timeout(Duration::from_secs(1))
+            .timeout(Duration::from_secs(3))
+            .no_proxy()
+    });
     find_at(
         &http,
         &format!("http://127.0.0.1:{OLLAMA_PORT}"),

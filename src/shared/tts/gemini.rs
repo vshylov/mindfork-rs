@@ -49,7 +49,7 @@ impl GeminiTts {
         instructions: Option<String>,
     ) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: crate::shared::net::plain_client(),
             base_url: base_url.trim_end_matches('/').to_string(),
             api_key,
             // The model name may arrive with a `models/` prefix — the path

@@ -194,6 +194,12 @@ pub fn profile_id() -> Uuid {
 pub fn profile() -> Profile {
     let mut p = Profile::new("Gaia", "You are Gaia — a thoughtful local companion.");
     p.id = profile_id();
+    // The showcase is English throughout — the system message, the notes, the
+    // self-model — and a profile's language is the language of its memory
+    // (axis A, docs/history/i18n.md). `Profile::new` leaves the default, which
+    // is what a `profiles.json` older than the field reads as: Russian. The
+    // settings then named Russian as the framework language of an English persona.
+    p.language = Lang::En;
     p.enabled_tools = default_tool_ids();
     p.greeting = Some(
         "Hi! You're in the **mindfork demo** — I'm a scripted engine, not a \
@@ -880,6 +886,23 @@ mod tests {
         }
         assert_eq!(at.logs, at.data.join("logs"));
         assert_eq!(at.storage, DataLocation::System);
+    }
+
+    /// The demo's profile is in the language its content is written in: the
+    /// seeded note's tool result is the English one, and so is everything the
+    /// profile remembers. Left at `Profile::new`'s default it read as Russian
+    /// in the settings, over an English system message.
+    #[test]
+    fn the_demo_profile_is_in_the_showcases_language() {
+        let p = profile();
+        assert_eq!(p.language, Lang::En);
+        let card = &showcase_messages()[3].tool_calls[0];
+        assert_eq!(card.result, Some(note_save_result(p.language)));
+        assert_ne!(
+            Profile::new("x", "y").language,
+            Lang::En,
+            "the control: a new profile's default is not what the demo needs"
+        );
     }
 
     /// The fixture is frozen: same ids, same timestamps, same text on every

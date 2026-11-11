@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (87)
+## Entries (88)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -99,6 +99,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the screenshots' search icon on Linux — DejaVu Sans Mono as a fallback (done)
 - Release 0.24.0 (prepared)
 - Release 0.25.0 (prepared)
+- Post-M9: the demo's profile is in the language of its content (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -5991,3 +5992,25 @@ self-test), `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check`,
 `claude_md_chart --check`, `wizard_rtf --check`, `site_legal_pages --check`,
 `site_llms_txt --check`, `indexnow --check`, `actions_pin_check`, and the release
 guard's, the site gate's and the AUR renderer's self-tests clean.
+
+### Post-M9: the demo's profile is in the language of its content (done)
+
+- **Why** (branch `fix/demo-profile-language`). The owner, trying the web demo's probe
+  (branch `spike/web-demo-v86`), opened Settings → Profiles and read Russian as the
+  *Framework language*, over an English system message. It is the fixture's defect, not
+  the page's: `mindfork demo` says the same in any terminal.
+- **The cause.** A profile's `language` is the language of its memory — the scaffold the
+  model reads, axis A of [docs/history/i18n.md](../history/i18n.md) — and its `Default`
+  is Russian on purpose: that is what a `profiles.json` older than the field holds.
+  `Profile::new` leaves the default, the settings' "new profile" path overrides it, and
+  `features::demo::profile()` did not. The showcase is English throughout, and the
+  profile is locked to its language once it has data, so the demo could not even be
+  corrected from its own settings.
+- **The fix** is one line in the fixture, `p.language = Lang::En`, and a test that holds
+  it to the content: the profile's language is the one the seeded `note_save` card's
+  result was produced in, with a control arm that a new profile's default is not it.
+- **Nothing drawn changed**: the committed stills and the reel's frames pass their
+  drift gates as they were — none of them shows the Profiles section.
+- **Tests**: 4791 unit tests green (+1), 310 `#[ignore]`. A pure fixture change: no live
+  run needed.
+

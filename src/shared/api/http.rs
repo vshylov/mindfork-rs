@@ -27,13 +27,7 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The `reqwest::Client` every engine client uses.
 pub fn engine_client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .connect_timeout(CONNECT_TIMEOUT)
-        .build()
-        // The builder only fails when the TLS backend cannot be initialised, and
-        // `Client::new()` panics on exactly that — so this is the previous
-        // behaviour rather than a silent downgrade.
-        .unwrap_or_else(|_| reqwest::Client::new())
+    crate::shared::net::build_client(|builder| builder.connect_timeout(CONNECT_TIMEOUT))
 }
 
 /// Sends a request while honouring `cancel`.

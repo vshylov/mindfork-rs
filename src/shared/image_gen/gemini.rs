@@ -42,7 +42,7 @@ pub struct GeminiImages {
 impl GeminiImages {
     pub fn new(cfg: ImageGenConfig) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: crate::shared::net::plain_client(),
             cfg: ImageGenConfig {
                 // The name may arrive with a `models/` prefix — the path carries it.
                 model: cfg.model.trim().trim_start_matches("models/").to_string(),

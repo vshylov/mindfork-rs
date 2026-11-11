@@ -41,7 +41,7 @@ impl GeminiVideo {
     pub fn new(cfg: VideoConfig) -> Self {
         Self {
             muted_level: OnceLock::new(),
-            http: reqwest::Client::new(),
+            http: crate::shared::net::plain_client(),
             cfg: VideoConfig {
                 base_url: cfg.base_url.trim_end_matches('/').to_string(),
                 // The name may arrive with a `models/` prefix — the path carries it.
