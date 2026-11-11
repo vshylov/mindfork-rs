@@ -272,10 +272,73 @@ jobs:
             target/reel/*.webp
           if-no-files-found: error
 
+  # The demo that runs in a browser tab (docs/research/web-demo.md §13): this
+  # tag's own binary, built for 32-bit x86, booted in the emulator the page
+  # uses and saved with `mindfork demo` on its first frame; that state restored
+  # and used; and the page with everything it loads - the emulator, the
+  # terminal, the state, the manifest of every redistributed piece with its
+  # licence text - packed as one asset, `mindfork-webdemo.tar`. The checksums
+  # and the attestation below cover it, and the site's deploy will take it from
+  # the newest published release that carries one, as it takes the animation.
+  #
+  # Not a gate, for the animation's reason: a release without a fresh demo is
+  # still a release, and the site keeps the previous one. What this job does is
+  # tried on a pull request whenever the demo's tools change (web-demo.yml, the
+  # same steps), so what can fail here is this tag's binary in the machine, not
+  # the pipeline.
+  web-demo:
+    name: Demo for the browser
+    needs: guard
+    # 24.04, not the build's 22.04: the machine carries its own C library, so
+    # the runner's age buys nothing, and build_i686.sh's packages are 24.04's.
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    # A release build with LTO from a cold cache - 5 min 10 s on a 4-core
+    # machine, measured - then about a minute for the guest, its state and
+    # its check. No cache: a tag's cache is readable by no later tag.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Install the toolchain (from rust-toolchain.toml)
+        run: rustup show
+      # The emulator runs under Node to boot the guest and save it. A Node of
+      # its own, not the runner's: the one the state was measured with.
+      - name: Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: "22"
+      # `apt-get download` - how build_i686.sh fetches the 32-bit libraries,
+      # without installing anything - asks for the versions these lists name.
+      - name: Package lists
+        timeout-minutes: 5
+        run: sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+      - name: The 32-bit build
+        run: tools/web_demo/build_i686.sh
+      # The program's own notices travel with it into the machine, as they do
+      # into every archive: the same two steps as the `build` job's. One graph
+      # serves both - i686 and x86_64 Linux resolve to the same packages.
+      - name: Install cargo-about
+        uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2  # v2.90.2
+        with:
+          tool: cargo-about
+      - name: Third-party notices
+        timeout-minutes: 10
+        run: cargo about generate about.hbs -o THIRD-PARTY-NOTICES.md
+      # The guest booted and saved, the state restored and used, the manifest,
+      # the page, the asset. `--release`: refuse to pack without the notices.
+      - name: The machine, its state and the page
+        run: python3 tools/web_demo/build.py --release
+      - name: Upload the demo
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: web-demo
+          path: target/web-demo/mindfork-webdemo.tar
+          if-no-files-found: error
+
   release:
     name: Publish the release
-    needs: [guard, build, linux-packages, windows-installer, demo-reel]
-    # Every job but the demo must have succeeded; the demo may have failed
+    needs: [guard, build, linux-packages, windows-installer, demo-reel, web-demo]
+    # Every job but the two demos must have succeeded; a demo may have failed
     # (`continue-on-error` above) and the release still goes out without it.
     # Spelled out rather than left to how a tolerated failure reads in `needs`.
     if: >-
@@ -381,6 +444,14 @@ jobs:
             cp artifacts/demo-reel/* dist/
           else
             echo "::warning::No animated demo in this release - the site keeps the previous one"
+          fi
+
+          # The demo for the browser, when the web-demo job built it (not a
+          # gate either). Before the checksums, for the same reason.
+          if [ -f artifacts/web-demo/mindfork-webdemo.tar ]; then
+            cp artifacts/web-demo/mindfork-webdemo.tar dist/
+          else
+            echo "::warning::No web demo in this release - the site keeps the previous one"
           fi
 
           # Checksums (over all artifacts: archives + packages + the installer).

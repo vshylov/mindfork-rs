@@ -44,7 +44,7 @@
         <button id="again-button" type="button">Start again</button>
       </div>
     </div>
-    <p id="status" class="status" role="status"></p>
+    <output id="status" class="status"></output>
     <div id="keys" class="keys" hidden>
       <p>Click the terminal, then type; a question is already waiting in the input box, and <kbd>Enter</kbd> sends it.
         <kbd>F1</kbd> help and every command · <kbd>Esc</kbd> the chat list ·
@@ -67,45 +67,19 @@
 
   <section class="licences">
     <h2>Licences</h2>
-    <p>mindfork is <a href="https://github.com/vshylov/mindfork-rs/blob/main/LICENSE">MIT</a>; what it is built
-      from is listed in its
-      <a href="https://github.com/vshylov/mindfork-rs/blob/main/THIRD-PARTY-NOTICES.md">third-party notices</a>.
-      This page also runs and redistributes the following, each under its own licence:</p>
+    <p>The demo runs and hands you other people's work, each piece under its own licence. This list is written by
+      the build, out of the very files it packs (<a href="manifest.json">manifest.json</a>): what each piece is, the
+      text of its licence, and where the source of exactly this build of it is.</p>
+    <h3>On this page</h3>
     <ul>
-      <li><a href="https://github.com/copy/v86">v86</a> @V86_VERSION@, the x86 emulator —
-        <a href="vendor/LICENSE.v86">BSD-2-Clause</a>.</li>
-      <li><a href="https://github.com/xtermjs/xterm.js">xterm.js</a> @XTERM_VERSION@, the terminal —
-        <a href="vendor/LICENSE.xterm">MIT</a>.</li>
-      <li><a href="https://www.seabios.org/">SeaBIOS</a> 1.16.2 and its VGA BIOS —
-        <a href="https://github.com/copy/v86/blob/master/bios/COPYING.LESSER">LGPL-3.0</a>; source:
-        <a href="https://git.seabios.org/cgit/seabios.git/tag/?h=rel-1.16.2">rel-1.16.2</a>, built by
-        <a href="https://github.com/copy/v86/blob/master/bios/fetch-and-build-seabios.sh">v86's script</a>.</li>
-      <li>The <a href="https://kernel.org/">Linux kernel</a> 6.18.60 —
-        <a href="https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/tree/COPYING?h=v6.18.60">GPL-2.0</a>;
-        Alpine Linux 3.24's <a href="https://pkgs.alpinelinux.org/package/v3.24/main/x86/linux-virt"><code>linux-virt</code></a>
-        build, unmodified, out of its release image; source:
-        <a href="https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.18.60.tar.xz">linux-6.18.60.tar.xz</a> and
-        <a href="https://gitlab.alpinelinux.org/alpine/aports/-/tree/3.24-stable/main/linux-lts">Alpine's build files</a>.</li>
-      <li><a href="https://busybox.net/">BusyBox</a> 1.37.0 (GPL-2.0) and the
-        <a href="https://musl.libc.org/">musl</a> C library (MIT), unmodified, from
-        <a href="https://alpinelinux.org/downloads/">Alpine Linux 3.24.4's</a> base image; sources:
-        Alpine's <a href="https://gitlab.alpinelinux.org/alpine/aports/-/tree/3.24-stable/main/busybox"><code>busybox</code></a>
-        and <a href="https://gitlab.alpinelinux.org/alpine/aports/-/tree/3.24-stable/main/musl"><code>musl</code></a> packages.</li>
-      <li>The <a href="https://sourceware.org/glibc/">GNU C Library</a> 2.39 (LGPL-2.1-or-later), the GCC runtime
-        library <code>libgcc_s</code> (GPL-3.0-or-later with the GCC Runtime Library Exception) and the
-        <a href="https://www.alsa-project.org/">ALSA library</a> 1.2.11 (LGPL-2.1-or-later), unmodified, from
-        Ubuntu 24.04's packages
-        <a href="https://packages.ubuntu.com/noble/libc6-i386"><code>libc6-i386</code></a>,
-        <a href="https://packages.ubuntu.com/noble/lib32gcc-s1"><code>lib32gcc-s1</code></a> and
-        <a href="https://packages.ubuntu.com/noble/libasound2t64"><code>libasound2t64</code></a>; their sources are
-        the <a href="https://packages.ubuntu.com/source/noble/glibc">glibc</a>,
-        <a href="https://packages.ubuntu.com/source/noble/gcc-14">gcc-14</a> and
-        <a href="https://packages.ubuntu.com/source/noble/alsa-lib">alsa-lib</a> source packages.</li>
-      <li><a href="https://www.jetbrains.com/lp/mono/">JetBrains Mono</a>, the typeface —
-        <a href="fonts/OFL.txt">SIL Open Font License 1.1</a>.</li>
+@PAGE_PIECES@
+    </ul>
+    <h3>Inside the machine</h3>
+    <ul>
+@MACHINE_PIECES@
     </ul>
   </section>
 </main>
-<script src="demo.js"></script>
+<script type="module" src="demo.js"></script>
 </body>
 </html>

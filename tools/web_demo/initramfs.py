@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
 """Write the web demo guest's initramfs: everything the machine runs.
 
-docs/research/web-demo.md, stage 2. The guest is a kernel and this archive -
-no distribution is installed in it. The archive holds a shell with the C
-library it is linked against, the application with the libraries it loads, and
-an ``/init`` that starts ``mindfork demo`` on the machine's terminal and
-nothing else.
+docs/research/web-demo.md §13. The guest is a kernel and this archive - no
+distribution is installed in it. The archive holds a shell with the C library
+it is linked against, the application with the libraries it loads, and an
+``/init`` that starts ``mindfork demo`` on the machine's terminal and nothing
+else. No certificate bundle: the application starts without one
+(``shared::net::build_client``).
 
-  python tools/web_demo/initramfs.py --out <file.cpio.gz> --binary <mindfork> \\
-      --busybox <busybox> --musl <ld-musl-i386.so.1> --libs <dir> [--libs <dir>...]
-
-``--ca-bundle`` adds a certificate bundle, for a build of the application older
-than the one that starts without (docs/research/web-demo.md §12.5, F8).
+A module of build.py, with no command line of its own: what goes in comes from
+the fixed places of paths.py.
 
 The archive is a gzip-compressed ``newc`` cpio, written here byte by byte: the
 one device node an initramfs needs can then be recorded without root, and the
@@ -20,15 +18,14 @@ same inputs give the same archive.
 
 from __future__ import annotations
 
-import argparse
 import gzip
 import io
 import json
 import stat
-import sys
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+from paths import BINARY, HERE, INITRAMFS, LIB_DIRS, VENDOR
+
 # What the binary is linked against, and the loader that starts it.
 LIBS = ["ld-linux.so.2", "libc.so.6", "libm.so.6", "libgcc_s.so.1", "libasound.so.2"]
 HOME = "/opt/mindfork"
@@ -94,27 +91,29 @@ class Cpio:
         return self.out.getvalue()
 
 
-def build(binary: Path, busybox: Path, musl: Path, lib_dirs: list[Path], ca_bundle: Path | None = None) -> bytes:
+def library(name: str) -> Path:
+    """One of ``LIBS``, where the sysroot has it."""
+    for directory in LIB_DIRS:
+        if (directory / name).exists():
+            return directory / name
+    raise SystemExit(f"error: no {name} in the sysroot - run tools/web_demo/build_i686.sh")
+
+
+def build() -> bytes:
     machine = json.loads((HERE / "machine.json").read_text(encoding="utf-8"))
+    home = HOME.lstrip("/")
     archive = Cpio()
-    for directory in ("bin", "lib", "dev", "proc", "sys", "tmp", "root", "opt", HOME.lstrip("/")):
+    for directory in ("bin", "lib", "dev", "proc", "sys", "tmp", "root", "opt", home):
         archive.directory(directory)
     # The kernel opens /dev/console for process 1 before /init can mount /dev.
     archive.char_device("dev/console", 5, 1)
     init = INIT.format(tty=machine["tty"], rows=machine["rows"], cols=machine["cols"], mark=START_MARK, home=HOME)
     archive.file("init", init.encode(), executable=True)
-    archive.file("bin/busybox", busybox.read_bytes(), executable=True)
-    archive.file("lib/ld-musl-i386.so.1", musl.read_bytes(), executable=True)
-    if ca_bundle is not None:
-        for directory in ("etc", "etc/ssl", "etc/ssl/certs"):
-            archive.directory(directory)
-        archive.file("etc/ssl/certs/ca-certificates.crt", ca_bundle.read_bytes())
+    archive.file("bin/busybox", (VENDOR / "busybox").read_bytes(), executable=True)
+    archive.file("lib/ld-musl-i386.so.1", (VENDOR / "ld-musl-i386.so.1").read_bytes(), executable=True)
     for lib in LIBS:
-        found = next((d / lib for d in lib_dirs if (d / lib).exists()), None)
-        if found is None:
-            raise SystemExit(f"error: no {lib} in {', '.join(str(d) for d in lib_dirs)}")
-        archive.file(f"{HOME.lstrip('/')}/{lib}", found.read_bytes(), executable=True)
-    archive.file(f"{HOME.lstrip('/')}/mindfork", binary.read_bytes(), executable=True)
+        archive.file(f"{home}/{lib}", library(lib).read_bytes(), executable=True)
+    archive.file(f"{home}/mindfork", BINARY.read_bytes(), executable=True)
     # mtime=0: the same inputs give the same bytes.
     packed = io.BytesIO()
     with gzip.GzipFile(fileobj=packed, mode="wb", compresslevel=6, mtime=0) as stream:
@@ -122,23 +121,10 @@ def build(binary: Path, busybox: Path, musl: Path, lib_dirs: list[Path], ca_bund
     return packed.getvalue()
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--out", required=True, type=Path)
-    parser.add_argument("--binary", required=True, type=Path, help="the 32-bit x86 release binary")
-    parser.add_argument("--busybox", required=True, type=Path, help="a 32-bit BusyBox linked against musl")
-    parser.add_argument("--musl", required=True, type=Path, help="musl's ld-musl-i386.so.1, which BusyBox loads")
-    parser.add_argument("--libs", required=True, action="append", type=Path,
-                        help="a directory holding the binary's 32-bit shared libraries; repeatable")
-    parser.add_argument("--ca-bundle", type=Path, help="a PEM bundle of CA certificates, for a build that cannot start without one")
-    args = parser.parse_args()
-
-    data = build(args.binary, args.busybox, args.musl, args.libs, args.ca_bundle)
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_bytes(data)
-    print(f"{args.out}: {len(data)} B")
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+def write() -> Path:
+    """Writes the archive to its place and gives that place."""
+    data = build()
+    INITRAMFS.parent.mkdir(parents=True, exist_ok=True)
+    INITRAMFS.write_bytes(data)
+    print(f"{INITRAMFS.name}: {len(data)} B")
+    return INITRAMFS

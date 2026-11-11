@@ -1,5 +1,5 @@
 // A v86 guest under Node, driven over its console: what the web demo's
-// scripts share (docs/research/web-demo.md, stages 1 and 2).
+// scripts share (docs/research/web-demo.md §12-§13).
 //
 // The options a machine is created with are part of its saved state: a state
 // restores only into a machine made with the same memory sizes and devices,
@@ -11,7 +11,12 @@ import url from "node:url";
 
 const here = url.fileURLToPath(new URL(".", import.meta.url));
 export const ROOT = path.resolve(here, "..", "..");
-export const VENDOR = path.join(ROOT, "target", "web-demo", "vendor");
+// The build's fixed places (paths.py names the same ones).
+const WORK = path.join(ROOT, "target", "web-demo");
+export const VENDOR = path.join(WORK, "vendor");
+export const INITRD = path.join(WORK, "guest", "initramfs.cpio.gz");
+export const STATE_DIR = path.join(WORK, "state");
+export const SAVED_STATE = path.join(STATE_DIR, "state.bin.zst");
 export const MACHINE = JSON.parse(fs.readFileSync(path.join(here, "machine.json"), "utf8"));
 
 // The size of the terminal the application is started at.
@@ -127,10 +132,55 @@ export async function boot({ state = null, initrd = null, log = null } = {}) {
             if (got.length === 0) return { first: null, burst: null, last: null, bytes };
             let burstEnd = got[0][0];
             for (let i = 1; i < got.length && got[i][0] - got[i - 1][0] < gap; i += 1) burstEnd = got[i][0];
-            return { first: got[0][0] - start, burst: burstEnd - start, last: got[got.length - 1][0] - start, bytes };
+            return { first: got[0][0] - start, burst: burstEnd - start, last: got.at(-1)[0] - start, bytes };
         },
     };
     return guest;
+}
+
+const ESC = "\x1b";
+const BEL = "\x07";
+
+// A control sequence whose parameters start at `from`: where it ends, and -
+// for a cursor position - the cell it names.
+function controlSequence(text, from) {
+    let end = from;
+    while (end < text.length && (text[end] < "@" || text[end] > "~")) end += 1;
+    const final = text[end];
+    if (final !== "H" && final !== "f") return { end };
+    const [row, col] = text.slice(from, end).split(";");
+    return { end, cell: { row: Number(row || 1), col: Number(col || 1) } };
+}
+
+// An operating system command that starts before `from`: where its
+// terminator - a bell, or an escape and a backslash - ends.
+function commandEnd(text, from) {
+    const bell = text.indexOf(BEL, from);
+    const terminator = text.indexOf(ESC + "\\", from);
+    if (terminator !== -1 && (bell === -1 || terminator < bell)) return terminator + 1;
+    return bell === -1 ? text.length : bell;
+}
+
+// The escape sequence at `at`: its last character's place, and a cell if it
+// moves the cursor to one.
+function escapeAt(text, at) {
+    const kind = text[at + 1];
+    if (kind === "[") return controlSequence(text, at + 2);
+    if (kind === "]") return { end: commandEnd(text, at + 2) };
+    return { end: at + 1 };
+}
+
+// A character that is not part of an escape sequence, put at the cursor.
+function put(ch, cursor, size) {
+    if (ch === "\r") {
+        cursor.col = 1;
+    } else if (ch === "\n") {
+        cursor.row += 1;
+    } else if (ch >= " ") {
+        size.cols = Math.max(size.cols, cursor.col);
+        size.rows = Math.max(size.rows, cursor.row);
+        cursor.col += 1;
+    }
 }
 
 /// The size of the frame a burst of terminal output draws: the last column and
@@ -139,43 +189,28 @@ export async function boot({ state = null, initrd = null, log = null } = {}) {
 /// what the application's frames are made of.
 export function frameSize(bytes) {
     const text = Buffer.from(bytes).toString("utf8");
-    let row = 1;
-    let col = 1;
-    let cols = 0;
-    let rows = 0;
-    for (let i = 0; i < text.length; i += 1) {
-        const ch = text[i];
-        if (ch === "\x1b") {
-            if (text[i + 1] === "[") {
-                let end = i + 2;
-                while (end < text.length && !/[@-~]/.test(text[end])) end += 1;
-                const args = text.slice(i + 2, end);
-                if (text[end] === "H" || text[end] === "f") {
-                    const [r, c] = args.split(";");
-                    row = Number(r || 1);
-                    col = Number(c || 1);
-                }
-                i = end;
-            } else if (text[i + 1] === "]") {
-                let end = i + 2;
-                while (end < text.length && text[end] !== "\x07" && !(text[end] === "\x1b" && text[end + 1] === "\\")) end += 1;
-                i = text[end] === "\x07" ? end : end + 1;
-            } else {
-                i += 1;
-            }
-        } else if (ch === "\r") {
-            col = 1;
-        } else if (ch === "\n") {
-            row += 1;
-        } else if (ch >= " ") {
-            // A surrogate pair is one character and one cell here.
-            if (ch >= "\ud800" && ch <= "\udbff") i += 1;
-            cols = Math.max(cols, col);
-            rows = Math.max(rows, row);
-            col += 1;
+    const cursor = { row: 1, col: 1 };
+    const size = { cols: 0, rows: 0 };
+    let at = 0;
+    while (at < text.length) {
+        if (text[at] === ESC) {
+            const sequence = escapeAt(text, at);
+            if (sequence.cell) Object.assign(cursor, sequence.cell);
+            at = sequence.end + 1;
+        } else {
+            // A whole character, even one that takes two units of the string.
+            const ch = String.fromCodePoint(text.codePointAt(at));
+            put(ch, cursor, size);
+            at += ch.length;
         }
     }
-    return { cols, rows };
+    return size;
+}
+
+/// Does `act` to each item, one after another: a key is pressed only when the
+/// one before it has been answered.
+export function inTurn(items, act) {
+    return items.reduce((before, item) => before.then(() => act(item)), Promise.resolve());
 }
 
 /// The keys the probe presses, the same in every measurement: typing, a sent
@@ -196,13 +231,15 @@ export const BEATS = [
     ["Esc", "\x1b", 700],
 ];
 
-export async function pressBeats(guest, rounds = 3) {
+export function pressBeats(guest, rounds = 3) {
     const f = (n) => (n === null ? "-" : n.toFixed(0)).padStart(6);
-    for (let round = 1; round <= rounds; round += 1) {
+    const press = async ([name, keys, quiet]) => {
+        const t = await guest.trace(() => guest.send(keys), quiet);
+        console.log(`${name.padEnd(30)} first ${f(t.first)}  burst ${f(t.burst)}  last ${f(t.last)} ms  ${String(t.bytes.length).padStart(6)} B`);
+    };
+    const numbers = Array.from({ length: rounds }, (_, index) => index + 1);
+    return inTurn(numbers, (round) => {
         console.log(`--- round ${round}: ms from the key to the first byte, the end of the first burst, the last byte`);
-        for (const [name, keys, quiet] of BEATS) {
-            const t = await guest.trace(() => guest.send(keys), quiet);
-            console.log(`${name.padEnd(30)} first ${f(t.first)}  burst ${f(t.burst)}  last ${f(t.last)} ms  ${String(t.bytes.length).padStart(6)} B`);
-        }
-    }
+        return inTurn(BEATS, press);
+    });
 }

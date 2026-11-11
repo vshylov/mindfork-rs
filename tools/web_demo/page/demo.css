@@ -1,10 +1,13 @@
-/* The web demo probe's page (docs/research/web-demo.md, stage 1). The brand's
-   palette and typeface, as on mindfork.io; dark only - a terminal window. */
-@font-face { font-family: "JetBrains Mono"; font-weight: 400; font-style: normal; font-display: block;
+/* The web demo's page as it stands alone (docs/research/web-demo.md §12-§13):
+   the brand's palette and typeface, dark only - a terminal window. On
+   mindfork.io the page is the site's own, in the site's styles (stage 3).
+   `font-display: swap`: nothing is measured or drawn in these faces before
+   the script has waited for them. */
+@font-face { font-family: "JetBrains Mono"; font-weight: 400; font-style: normal; font-display: swap;
   src: url("fonts/JetBrainsMono-Regular.woff2") format("woff2"); }
-@font-face { font-family: "JetBrains Mono"; font-weight: 700; font-style: normal; font-display: block;
+@font-face { font-family: "JetBrains Mono"; font-weight: 700; font-style: normal; font-display: swap;
   src: url("fonts/JetBrainsMono-Bold.woff2") format("woff2"); }
-@font-face { font-family: "JetBrains Mono"; font-weight: 400; font-style: italic; font-display: block;
+@font-face { font-family: "JetBrains Mono"; font-weight: 400; font-style: italic; font-display: swap;
   src: url("fonts/JetBrainsMono-Italic.woff2") format("woff2"); }
 
 :root {
@@ -58,8 +61,9 @@ button:disabled { opacity: .55; cursor: default; }
 .grid { padding: 6px; overflow: hidden; }
 /* The terminal keeps no scrollback here, and its viewport's own scrollbar -
    a classic one wherever scrollbars are not overlays - sat under the grid's
-   last column. */
-.grid .xterm-viewport { overflow-y: hidden !important; }
+   last column. By the box's id: the terminal's stylesheet is loaded after this
+   one and says `scroll` with two classes, which the id outweighs. */
+#terminal .xterm .xterm-viewport { overflow-y: hidden; }
 /* What lies over the terminal's place: the loading notice, and the end. */
 .cover { position: absolute; inset: 31px 0 0; display: flex; flex-direction: column; align-items: center;
   justify-content: center; gap: 12px; background: var(--bg); font: 14px/1.5 var(--mono); color: var(--muted); }
@@ -70,9 +74,10 @@ progress { width: min(320px, 60%); height: 6px; appearance: none; border: 0; bac
 progress::-webkit-progress-bar { background: var(--line); }
 progress::-webkit-progress-value { background: var(--accent); }
 progress::-moz-progress-bar { background: var(--accent); }
-.status { margin: 10px 0 0; font: 13px/1.5 var(--mono); color: var(--muted); min-height: 1.5em; }
+.status { display: block; margin: 10px 0 0; font: 13px/1.5 var(--mono); color: var(--muted); min-height: 1.5em; }
 .keys { color: var(--muted); font-size: 14px; }
 .keys p { margin: 6px 0; max-width: 100ch; }
 
-.licences ul { padding-left: 20px; }
+.licences h3 { margin: 18px 0 4px; font: 700 14px/1.3 var(--mono); color: var(--muted); }
+.licences ul { padding-left: 20px; margin-top: 4px; }
 .licences li { margin: 6px 0; color: var(--muted); font-size: 14px; }

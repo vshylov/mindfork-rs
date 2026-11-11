@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Fetch the third-party pieces of the web demo probe, each pinned by a hash.
+"""Fetch the third-party pieces of the web demo, each pinned by a hash.
 
-docs/research/web-demo.md, stage 1. Nothing here is committed: the files land
+docs/research/web-demo.md §12-§13. Nothing here is committed: the files land
 in ``target/web-demo/vendor/`` and are checked every time, so a piece that
 changed upstream stops the build instead of entering it.
 
@@ -23,14 +23,14 @@ import struct
 import sys
 import tarfile
 import urllib.request
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-VENDOR = ROOT / "target" / "web-demo" / "vendor"
+from paths import ROOT, VENDOR
 
 # The commit of copy/v86 the BIOS images are read from.
 V86_COMMIT = "315b2b0b758703ef0e6cc7b4088d6068f83f3c20"
 ALPINE = "https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/x86"
+# The musl release Alpine's image carries; its COPYRIGHT is fetched below.
+MUSL = "1.2.6"
 
 # An npm package: its registry tarball, the registry's own integrity value
 # (sha512, base64), and the members taken out of it.
@@ -44,6 +44,8 @@ PACKAGES = [
             "package/build/libv86.mjs": "libv86.mjs",
             "package/build/v86.wasm": "v86.wasm",
             "package/LICENSE": "LICENSE.v86",
+            # What the package says of itself: the manifest's version and licence.
+            "package/package.json": "v86.package.json",
         },
     },
     {
@@ -54,6 +56,7 @@ PACKAGES = [
             "package/lib/xterm.js": "xterm.js",
             "package/css/xterm.css": "xterm.css",
             "package/LICENSE": "LICENSE.xterm",
+            "package/package.json": "xterm.package.json",
         },
     },
 ]
@@ -85,8 +88,24 @@ FILES = [
         "name": "alpine-minirootfs-3.24.4-x86.tar.gz",
         "url": f"{ALPINE}/alpine-minirootfs-3.24.4-x86.tar.gz",
         "sha256": "df793865bf166c10acaad3a4d5d40498f9ee3f89fa405d39c7f540464fb3b0c1",
-        # The shell /init runs in, and the C library it is linked against.
-        "tar_members": {"./bin/busybox": "busybox", "./lib/ld-musl-i386.so.1": "ld-musl-i386.so.1"},
+        # The shell /init runs in, the C library it is linked against, and the
+        # image's own record of its packages - each one's version, licence and
+        # the commit of Alpine's build files it was made from (manifest.py).
+        "tar_members": {
+            "./bin/busybox": "busybox",
+            "./lib/ld-musl-i386.so.1": "ld-musl-i386.so.1",
+            "./lib/apk/db/installed": "alpine-installed",
+            "./etc/alpine-release": "alpine-release",
+        },
+    },
+    # musl's copyright notice, which its licence requires to travel with the
+    # library; Alpine's image carries the library without it. The version is the
+    # one the image's record names - manifest.py refuses a mismatch.
+    {
+        "name": f"musl-{MUSL}.tar.gz",
+        "url": f"https://musl.libc.org/releases/musl-{MUSL}.tar.gz",
+        "sha256": "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
+        "tar_members": {f"musl-{MUSL}/COPYRIGHT": "COPYRIGHT.musl"},
     },
 ]
 
