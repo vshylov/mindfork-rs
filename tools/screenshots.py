@@ -683,13 +683,14 @@ QUARTERS = {
 }
 
 
-class NoFaces:
-    """Stands where the typefaces go, for cells that must not ask for one: it
-    knows which characters the primary face has - ASCII - and draws none."""
+class NoFaces(Faces):
+    """The typefaces for cells that must not ask for one: no font is looked
+    for, the primary face is said to have ASCII, and none of it can be drawn."""
 
-    primary_cmap = frozenset(range(0x20, 0x7F))
+    def __init__(self) -> None:
+        self.primary_cmap = set(range(0x20, 0x7F))
 
-    def pick(self, text: str, mods: str) -> None:
+    def pick(self, text: str, mods: str) -> tuple[ImageFont.FreeTypeFont, bool]:
         raise AssertionError(f"{text!r} was set from a typeface")
 
 
@@ -721,7 +722,7 @@ def drawn(rows: list[list[dict]]) -> Image.Image:
     img = Image.new("RGB", (width * TEST_CELL.cell_w, len(rows) * TEST_CELL.cell_h), PAPER)
     draw = ImageDraw.Draw(img)
     for y, row in enumerate(rows):
-        draw_row(draw, NoFaces(), row, 0, y * TEST_CELL.cell_h, TEST_CELL, INK, PAPER)  # type: ignore[arg-type]
+        draw_row(draw, NoFaces(), row, 0, y * TEST_CELL.cell_h, TEST_CELL, INK, PAPER)
     return img
 
 
@@ -806,20 +807,23 @@ def self_test() -> list[str]:
             f'<path fill="{hexs(INK)}" d="M1 1H5V33H1Z"/>',
         ],
     )
-    spans = svg_text_spans(frame[0], NoFaces(), TEST_GRID, INK, PAPER)  # type: ignore[arg-type]
+    spans = svg_text_spans(frame[0], NoFaces(), TEST_GRID, INK, PAPER)
     expect("a block element in the text", spans, ['<tspan x="9">a</tspan>'])
     return problems
 
 
-def main() -> int:
-    if sys.argv[1:] == ["--self-test"]:
-        problems = self_test()
-        for problem in problems:
-            print(f"error: {problem}", file=sys.stderr)
-        if not problems:
-            print("clean: every block element is drawn as the part of its cell its name says")
-        return 1 if problems else 0
+def checked() -> int:
+    """Run the self-test and say what it found."""
+    problems = self_test()
+    for problem in problems:
+        print(f"error: {problem}", file=sys.stderr)
+    if problems:
+        return 1
+    print("clean: every block element is drawn as the part of its cell its name says")
+    return 0
 
+
+def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dumps", type=Path, default=DUMPS, help="dump directory or a single .json")
     parser.add_argument("--out", type=Path, default=OUT, help="output directory")
@@ -879,4 +883,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(checked() if sys.argv[1:] == ["--self-test"] else main())
