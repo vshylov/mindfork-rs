@@ -6145,6 +6145,22 @@ guard's, the site gate's and the AUR renderer's self-tests clean.
   it still holds — `/try/` loads its files from the site's own origin, its script
   uses no storage, and the emulated machine has no network device. But §9 does not
   say that one page now runs a program in the visitor's tab. Left to the owner.
+- **Found on the way: `packaging.yml` could not set up its Arch image.** The PR's
+  first run was red in one job of twenty-three, `install.sh (archlinux:latest)`, in
+  the job's own set-up step, before the script under test ran: `pacman -Sy
+  --noconfirm --needed tar gzip curl libcap` ended with *"installing openssl
+  (4.1.0-1) breaks dependency 'libcrypto.so=3-64' required by pacman"* — and by
+  cryptsetup, libarchive, libldap, libngtcp2 and libsasl. The workflow last ran on
+  0.25.0's release PR, two days before, and passed; Arch's repositories have moved
+  to OpenSSL 4 since, and `-Sy` with a package is a partial upgrade: the lists
+  refreshed, curl resolved against the new `openssl`, the image's own packages left
+  on the old one. Both Arch steps of the workflow now run `-Syu` — the image whole,
+  then the package (the package smoke's `alsa-lib` passed only because it pulls no
+  `openssl`). `packaging/aur/check.sh` already did. Nothing of the release is
+  involved: `release.yml` has no Arch container. **`install.sh` itself has the same
+  shape on a user's machine** — `pacman -Sy --needed alsa-lib` when the library is
+  missing — and is left as it is, on the roadmap, a decision about users' systems
+  and not about a CI image (lessons §10).
 - **Tests:** 4796 unit tests green, 310 `#[ignore]` (Linux) — unchanged; the release
   adds no code. `cargo fmt --check` and `clippy -D warnings` clean. Not run here:
   `cargo deny check`, not installed on the droplet — the audit runs on this PR, which

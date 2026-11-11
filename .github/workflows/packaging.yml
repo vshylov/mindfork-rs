@@ -152,8 +152,9 @@ jobs:
           elif command -v pacman >/dev/null 2>&1; then
             # `pacman -U` does NOT pull dependencies from repositories (unlike apt/dnf),
             # so we install the runtime dependencies ourselves: alsa-lib is needed for speech
-            # playback (`/tts`) — the binary links against libasound.
-            pacman -Sy --noconfirm alsa-lib
+            # playback (`/tts`) — the binary links against libasound. `-Syu`, the
+            # whole image first: see the install.sh job's same step.
+            pacman -Syu --noconfirm alsa-lib
             pacman -U --noconfirm ./dist/*.pkg.tar.zst
           else
             echo "no supported package manager"; exit 1
@@ -238,7 +239,12 @@ jobs:
           elif command -v dnf >/dev/null 2>&1; then
             dnf install -y -q tar gzip curl libcap
           elif command -v pacman >/dev/null 2>&1; then
-            pacman -Sy --noconfirm --needed tar gzip curl libcap
+            # `-Syu`, not `-Sy`: Arch has no partial upgrades. With the package
+            # lists refreshed and the image left as built, a package is installed
+            # against libraries newer than the image's — and the day the
+            # repositories moved to OpenSSL 4, curl could not be: its openssl
+            # broke every package of the image still linked to OpenSSL 3.
+            pacman -Syu --noconfirm --needed tar gzip curl libcap
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2

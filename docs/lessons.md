@@ -2913,6 +2913,21 @@ it means the same thing at any hour the smoke runs.
 
 ## 10. CI and infrastructure
 
+**An Arch image is upgraded whole before anything is installed into it.** Two steps
+of `packaging.yml` ran `pacman -Sy --noconfirm <packages>` in `archlinux:latest`:
+refresh the package lists, install what the job needs, leave the image as built.
+It worked for months and failed on the release pull request of 0.26.0, the day
+Arch's repositories moved to OpenSSL 4 — curl's new `openssl` "breaks dependency
+`libcrypto.so=3-64` required by pacman", and by every other package of the image
+still linked to OpenSSL 3. Arch has no partial upgrades: once the lists are
+refreshed, a package is resolved against libraries newer than the installed ones.
+`-Syu` upgrades the image first and is what its own documentation asks for. The
+general shape: **a rolling distribution's image is a snapshot, and the repositories
+it points at are not** — on apt and dnf the lists and the packages move together
+within a release, on Arch they do not. The failure had nothing to do with the pull
+request it appeared on, so read a red job's first error before the diff.
+— *release — release 0.26.0*.
+
 
 **A test file the coverage report does not recognise is production code to the gate.**
 `cargo llvm-cov` leaves out of its report what it takes for a test file by its path — a
