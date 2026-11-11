@@ -821,7 +821,8 @@ restarts of four answering.
 
 **And on a hosted runner** — the pull request's own `Demo for the browser` check,
 the first run of these steps anywhere but the droplet, green at the first
-attempt: the job 10.5 min in all — the sysroot and the 32-bit build 7 min 46 s,
+attempt, and on the two pushes after it (10.5, 9.9 and 12.2 min). In the first:
+the sysroot and the 32-bit build 7 min 46 s,
 the notices 56 s, the guest with its state, check and page 1 min 27 s. First
 frame 13.8 s into the boot, restored in 0.38 s, `130x38 asked, 130x38 drawn,
 88 ms`; the asset 25.4 MB with the application's notices in it. That asset,

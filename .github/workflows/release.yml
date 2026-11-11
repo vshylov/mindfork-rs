@@ -293,10 +293,11 @@ jobs:
     # the runner's age buys nothing, and build_i686.sh's packages are 24.04's.
     runs-on: ubuntu-24.04
     continue-on-error: true
-    # Measured on this runner by web-demo.yml: 10.5 min - the 32-bit release
-    # build from a cold cache 7 min 46 s, the notices 56 s, the guest with
-    # its state, its check and the page 1 min 27 s. No build cache: a tag's
-    # cache is readable by no later tag.
+    # Measured on this runner by web-demo.yml: 9.9 to 12.2 min over three
+    # runs - in the first, the 32-bit release build from a cold cache
+    # 7 min 46 s, the notices 56 s, the guest with its state, its check and
+    # the page 1 min 27 s. No build cache: a tag's cache is readable by no
+    # later tag.
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
