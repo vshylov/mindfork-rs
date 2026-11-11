@@ -20,8 +20,19 @@
     <p class="prompt-line mono"><span class="ps1">$</span>mindfork<span class="cursor" aria-hidden="true"></span></p>
     <div class="hero-cols">
       <div class="hero-copy">
-        <h1>{{ section.extra.hero_title }}</h1>
-        <p class="lede">{{ section.extra.hero_sub }}</p>
+        {#- The headline is its phrases, a line each, and the stylesheet sizes it
+            from the longest one (`--chars`, counted here without the asterisks
+            that mark the accent), so an edit to the words cannot leave a phrase
+            wider than its column. A space stands between the phrases: read
+            aloud or copied, it is one sentence. -#}
+        {%- set_global chars = 1 %}
+        {%- for phrase in section.extra.hero_title %}
+        {%- set n = phrase | replace(from="*", to="") | length %}
+        {%- if n > chars %}{% set_global chars = n %}{% endif %}
+        {%- endfor %}
+        <h1 style="--chars: {{ chars }}">{% for phrase in section.extra.hero_title %}<span>{{ phrase | markdown(inline=true) | safe }}</span>{% if not loop.last %} {% endif %}{% endfor %}</h1>
+        <p class="lede">{{ section.extra.hero_lede }}</p>
+        <p class="lede-more">{{ section.extra.hero_sub }}</p>
         <div class="cta-row">
           <a class="btn btn-primary" href="{{ get_url(path='@/install.md') }}">Install</a>
           <a class="btn" href="{{ config.extra.github }}">Source on GitHub</a>
@@ -32,7 +43,13 @@
             is behind it in the same breath: a reader must not take it for a
             model to talk to in the browser (the owner, §14.6). -#}
         {%- set webdemo = load_data(path="webdemo.json", format="json", required=false) %}
-        <p class="demo-hint"><code>$ mindfork demo</code> — try it in a minute: seeded data, a scripted engine, no model download, nothing written outside a temp folder.{% if webdemo %} Or <a href="{{ get_url(path='@/try.md') }}">see that same demo in this browser</a> — the interface with its scripted replies, not a model.{% endif %} Already running Ollama? <a href="{{ get_url(path='@/install.md') }}#already-running-ollama">Two lines</a>.</p>
+        <ul class="demo-hint">
+          <li><code>$ mindfork demo</code> — try it in a minute: seeded data, a scripted engine, no model download, nothing written outside a temp folder.</li>
+          {%- if webdemo %}
+          <li>Or <a href="{{ get_url(path='@/try.md') }}">see that same demo in this browser</a> — the interface with its scripted replies, not a model.</li>
+          {%- endif %}
+          <li>Already running Ollama? <a href="{{ get_url(path='@/install.md') }}#already-running-ollama">Two lines</a>.</li>
+        </ul>
       </div>
       <aside class="hero-fetch" aria-label="mindfork at a glance">
         <div class="term">
@@ -61,20 +78,31 @@
               {%- set head = "mindfork " ~ config.extra.app_version %}
               <p class="fetch-head"><span class="fetch-name">mindfork</span> {{ config.extra.app_version }}</p>
               <p class="fetch-rule" aria-hidden="true">{% for i in range(end=head | length) %}─{% endfor %}</p>
+              {#- A row is a key and then its values, a line each (`cloud` takes
+                  two). The dots between the items of a value are dimmed, so the
+                  items read first. -#}
+              {%- set sep = ' <span class="sep">·</span> ' %}
+              {%- set rows = [
+                ["engine", "llama.cpp · Ollama · LM Studio", "any OpenAI-compatible API"],
+                ["cloud", "OpenAI · Anthropic · Gemini", "Grok · DeepSeek"],
+                ["gateway", "OpenRouter"],
+                ["memory", "self-model · notes · RAG"],
+                ["tools", "web · python · files · project · MCP"],
+                ["agents", "subagents · background runs"],
+                ["voice", "OpenAI · Gemini · OpenRouter"],
+                ["ui", "ratatui · markdown · mermaid"],
+                ["lang", "English · Russian"],
+                ["data", "portable · encrypted backups"],
+                ["runs on", "Windows · Linux · macOS"],
+                ["license", "MIT · no telemetry"]
+              ] %}
               <dl class="fetch-data">
-                <div><dt>engine</dt><dd>llama.cpp · Ollama · LM Studio</dd><dd>any OpenAI-compatible API</dd></div>
-                <div><dt>cloud</dt><dd>OpenAI · Anthropic · Gemini</dd><dd>Grok · DeepSeek</dd></div>
-                <div><dt>gateway</dt><dd>OpenRouter</dd></div>
-                <div><dt>memory</dt><dd>self-model · notes · RAG</dd></div>
-                <div><dt>tools</dt><dd>web · python · files · project · MCP</dd></div>
-                <div><dt>agents</dt><dd>subagents · background runs</dd></div>
-                <div><dt>voice</dt><dd>OpenAI · Gemini · OpenRouter</dd></div>
-                <div><dt>ui</dt><dd>ratatui · markdown · mermaid</dd></div>
-                <div><dt>lang</dt><dd>English · Russian</dd></div>
-                <div><dt>data</dt><dd>portable · encrypted backups</dd></div>
-                <div><dt>runs on</dt><dd>Windows · Linux · macOS</dd></div>
-                <div><dt>license</dt><dd>MIT · no telemetry</dd></div>
+                {%- for row in rows %}
+                <div>{% for cell in row %}{% if loop.first %}<dt>{{ cell }}</dt>{% else %}<dd>{{ cell | replace(from=" · ", to=sep) | safe }}</dd>{% endif %}{% endfor %}</div>
+                {%- endfor %}
               </dl>
+              {#- neofetch's last line, the palette: the brand's own colours. -#}
+              <p class="fetch-swatches" aria-hidden="true">{% for i in range(end=8) %}<span></span>{% endfor %}</p>
             </div>
           </div>
         </div>

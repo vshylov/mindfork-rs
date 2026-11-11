@@ -92,7 +92,10 @@ h3 {
 }
 // The headline's size, named: the home page's prompt line takes over its top
 // margin (_components.scss, .prompt-line).
-$h1-size: clamp(34px, 6vw, 54px);
+// Its ceiling is named too: the home page sizes its headline from its own
+// column and stops at the same one.
+$h1-max: 54px;
+$h1-size: clamp(34px, 6vw, $h1-max);
 h1 {
   font-size: $h1-size;
   font-weight: 800;
