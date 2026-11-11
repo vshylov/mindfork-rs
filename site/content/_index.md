@@ -1,6 +1,6 @@
 +++
 title = "mindfork — a terminal AI chat with a memory and a self-model"
-description = "A terminal AI chat whose assistant keeps notes about you, a self-model it revisits and a knowledge base over your files — on local models through llama.cpp, Ollama or LM Studio, four cloud providers or an OpenRouter key. One native binary for Windows, Linux and macOS."
+description = "A terminal AI chat whose assistant keeps notes about you, a self-model it revisits and a knowledge base over your files — on local models through llama.cpp, Ollama or LM Studio, five cloud providers or an OpenRouter key. One native binary for Windows, Linux and macOS."
 
 [extra]
 hero_title = "An AI chat with a memory and a self-model"
@@ -15,7 +15,7 @@ title = "Local first"
 desc = "A managed llama-server under the hood — one command downloads the llama.cpp build for your GPU — or the Ollama or LM Studio you already run, found and offered on the first start, or any OpenAI-compatible endpoint you point it at. Your conversations never have to leave your machine."
 
 [[extra.features]]
-title = "Four clouds and a gateway"
+title = "Five clouds and a gateway"
 desc = "OpenAI, Anthropic, Gemini, Grok and DeepSeek as first-class backends, and OpenRouter as a mode of its own — one key for chat, embeddings, speech and YouTube video, in front of every vendor's models, picked from a list that shows each one's context window and price. Switch per profile; API keys are stored with machine-bound encryption."
 
 [[extra.features]]
@@ -36,7 +36,7 @@ desc = "Markdown, syntax highlighting, Mermaid diagrams and LaTeX rendered as te
 
 [[extra.features]]
 title = "Show it a picture"
-desc = "Attach a screenshot, a photo or a diagram to your message — from a file, straight off the clipboard, or by its web address. Works with a local vision model, with all four clouds and through OpenRouter, wherever the model takes images."
+desc = "Attach a screenshot, a photo or a diagram to your message — from a file, straight off the clipboard, or by its web address. Works with a local vision model, with all five clouds and through OpenRouter, wherever the model takes images."
 
 [[extra.features]]
 title = "Find anything you said"

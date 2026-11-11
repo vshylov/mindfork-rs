@@ -1881,10 +1881,14 @@ both on `main` at `88e5ce29`, the merge of the pull request.
   columns' gap 56 → 48), so the headline, the lede and the hint wrap to the same 3, 8
   and 4 lines as before; at 1024 px the same 4, 9 and 5. `scrollWidth` equals the
   viewport at every width; below 1024 px the panel stays hidden.
-- **Not changed, and worth a look**: the features card is titled "Four clouds and a
-  gateway" over five names, the page's description says "four cloud providers", and
-  the images card says "all four clouds" — DeepSeek missed in the same way; left to
-  the owner, since whether DeepSeek takes an image depends on its model.
+- **"Four clouds", three times** — the features card was titled "Four clouds and a
+  gateway" over five names, the page's description said "four cloud providers" and the
+  images card "all four clouds": the DeepSeek copy (#796) changed the lists and not the
+  counts. All three say five now, at the owner's word. The images card stays true as
+  it is worded: `deepseek-flash` takes an image (measured live in the DeepSeek track),
+  `deepseek-v4-pro` does not, and the card already says "wherever the model takes
+  images". Past release posts and the articles' measurements made on four clouds keep
+  their number.
 - No Rust touched: 4796 unit tests, 310 `#[ignore]` unchanged; a live run does not apply
   (static output). Verified in a local build (Zola 0.23.6) in headless Chromium, light
   and dark; `zola check`, `link_check.py`, `doc_index_check.py`, `cyrillic_scan.py`,
