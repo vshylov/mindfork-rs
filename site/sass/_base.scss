@@ -90,8 +90,11 @@ h3 {
   line-height: 1.15;
   letter-spacing: -0.02em;
 }
+// The headline's size, named: the home page's prompt line takes over its top
+// margin (_components.scss, .prompt-line).
+$h1-size: clamp(34px, 6vw, 54px);
 h1 {
-  font-size: clamp(34px, 6vw, 54px);
+  font-size: $h1-size;
   font-weight: 800;
   margin: 0.25em 0 0.4em;
 }
