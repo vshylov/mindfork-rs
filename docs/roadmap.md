@@ -637,17 +637,6 @@ effort tiers and Fabula — have all closed
   fixed. Left: Firefox and Safari on the site's page, the application's light
   theme in the terminal, a Russian page
   ([web-demo.md §12–§14](research/web-demo.md)).
-- **Block glyphs drawn with gaps** — reported by the owner on 2026-11-11: thin
-  breaks between rows in solid bars (`█`, `▌`) in the site's screenshots and
-  animation, and the same in the web demo's terminal at 15 px. Both draw a block
-  element as the typeface's glyph into a cell rounded to whole pixels. Measured
-  in `tools/screenshots.py`'s renderer, which the animation shares: at 16 px,
-  drawn at twice the size, a cell is 43 rows and the glyph inks 42, so the top
-  row of every cell stays the background's. **The web terminal's half is
-  done** — it draws with xterm.js's WebGL renderer, which draws these characters
-  itself ([web-demo.md §14.7](research/web-demo.md)). Left: the screenshots'
-  cell renderer should fill block elements as rectangles of the cell
-  ([web-demo.md §13.5](research/web-demo.md)).
 - **A Russian version of the site** — **deferred**, on F4's own terms
   ([mindfork-io-website.md §8](research/mindfork-io-website.md), S4).
 - **CloudFront's flat-rate plan with WAF** — **deferred** until traffic asks

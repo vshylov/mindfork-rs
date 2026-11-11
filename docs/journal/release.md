@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (88)
+## Entries (89)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -100,6 +100,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Release 0.24.0 (prepared)
 - Release 0.25.0 (prepared)
 - Post-M9: the demo's profile is in the language of its content (done)
+- Post-M9: block elements drawn as parts of their cells — the stills and the animation without lines in their bars (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -6014,3 +6015,72 @@ guard's, the site gate's and the AUR renderer's self-tests clean.
 - **Tests**: 4791 unit tests green (+1), 310 `#[ignore]`. A pure fixture change: no live
   run needed.
 
+### Post-M9: block elements drawn as parts of their cells — the stills and the animation without lines in their bars (done)
+
+- **Why** (branch `fix/screenshot-block-glyphs`). The owner saw thin breaks between
+  the rows of solid bars — the accent bar down a message (`▌`), a scrollbar's thumb
+  (`█`) — in the PNG screenshots and in the animation, the same breaks the web demo's
+  terminal had ([web-demo.md §14.7](../research/web-demo.md)). The roadmap carried the
+  renderer's half.
+- **Measured, three places, one tool** (`tools/screenshots.py`; `tools/demo_reel.py`
+  draws with its cells):
+  - *The raster* (the PNGs, the GIF, the WebP). A cell is the face's metrics rounded
+    to whole pixels — 19 × 43 at the default 16 px drawn twice the size — and the
+    typeface draws `█` to its own line height, 42.24: it inks 42 of the cell's 43
+    rows, the top one left to the background. Every bar had the line: 12 of 12 in the ten stills, a
+    pixel off the bar's colour by up to 112 of 255; 691 of 691 across the three
+    reels' 266 frames. Box-drawing lines do not have it — their glyphs overhang the
+    cell on purpose (`│` inks rows −3 to 46) and overlap.
+  - *The SVG* (the stills mindfork.io inlines). No rounding there — a row is exactly
+    the face's line height — and the bars broke all the same in a browser: every row
+    was a `<text>` of its own, each antialiased by itself, and two half-covered edges
+    that meet between pixels let the canvas through. Headless Chromium at real
+    display scales of 100 %, 125 % and 150 %: 17 of 18 bars seamed in each theme, up
+    to 198 of 255 on the home page's hero at 150 % and 175 on the gallery's
+    half-size pictures at 100 %.
+  - *The SVG's backgrounds* had the second defect too: a `<rect>` per row, so a
+    background over four rows showed three faint lines (3–7 of 255, where the
+    background is some 20 from the canvas).
+- **The fix.** A block element (U+2580–U+259F but the three shades, which are
+  patterns) is not set from the typeface: `BLOCKS` names the parts of the cell each
+  fills, in eighths. The raster fills them as rectangles whose edges fall on the same
+  pixel for the part that ends there and the one that starts (`eighth`). The SVG
+  writes everything of one colour as one `<path>` — backgrounds, then block elements
+  over them — after joining boxes that meet along a whole side (`joined`, across and
+  then down): a bar down thirty rows is one box with no edge inside it, and so is a
+  background over four. To the SVG's text a block element is the space it stands in.
+- **What it does not touch.** Box-drawing characters stay glyphs: measured
+  continuous. The shades stay glyphs: the application draws none. The paint order of
+  the SVG changed with the paths — all backgrounds, then all text, where it was row
+  by row — and the browser's pictures differ from the old ones in the block cells and
+  the cells with a background only (plus 24–30 px of antialiasing in the chat list's
+  placeholder, whose run no longer starts with the cursor bar).
+- **Verified.**
+  - Stills: 12 bars, 0 with a line. The PNGs are Windows renders, so only the pixels
+    the change moved were carried into them (lessons §1): they differ from the
+    committed ones inside the block cells only, and from this machine's render in the
+    fallback icons only.
+  - Animation, played again with the current code and drawn before and after: 691
+    bars in 266 frames, 0 with a line, GIF and WebP alike; nothing moved outside the
+    block cells; the WebPs are 7–9 KB smaller; 20 s to draw, as before.
+  - SVG, the site built twice with only the stills differing, both themes, three
+    display scales: 0 bars and 0 backgrounds with a line (a bar's edge column reads
+    1–3 of 255 off where the border's glyph shares the pixel).
+  - Not seen: any browser but Chromium on Linux, and the owner's screen.
+- **A wrong first reading, corrected.** The SVG was first called clean from one pixel
+  column of one bar at two scales. Every column of every bar at three scales, and the
+  gallery's reduced pictures, found it broken (lessons §3).
+- **The guard.** `tools/screenshots.py --self-test`, needing Pillow and no font: each
+  block element's parts against its Unicode name; a column of full blocks, of left
+  halves and a row of lower halves inked to the pixel; pairs of parts that fill a
+  cell between them with no pixel shared; a hidden and a reversed block; boxes joined
+  across, down and around a corner; a frame's fills as paths; a block element absent
+  from the text. Controls red: a block one pixel row short of its cell (seven arms),
+  the full block missing from the table, boxes left unjoined. `media-tools.yml` runs
+  it on pull requests that touch the media tools, with the hash-pinned packages the
+  release draws with — `ci.yml`'s lint job has no Pillow.
+- **When it shows.** The README's stills and the site's (a push that touches
+  `assets/**` deploys the site) with the merge; the animation with the next release,
+  whose `demo-reel` job draws it.
+- **Tests**: no Rust changed — the unit tests and the dumps' drift gate are where they
+  were. A pure tooling change: no live run needed.

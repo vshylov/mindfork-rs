@@ -1081,7 +1081,10 @@ pixels. A browser started at that scale (`--force-device-scale-factor`) answers
 both truthfully. Recorded in docs/lessons.md.
 
 The same gaps in the site's screenshots and animation are another renderer's
-(`tools/screenshots.py`) and stay on the roadmap.
+(`tools/screenshots.py`) and stay on the roadmap. *Done since:* that renderer
+fills block elements as parts of their cells, in the raster and in the SVG
+([journal](../journal/release.md), "block elements drawn as parts of their
+cells").
 
 **Left**: the owner's look at the type on their own screen; Firefox and Safari
 on the site's page; the application's light theme; a Russian page.

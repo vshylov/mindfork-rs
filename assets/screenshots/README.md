@@ -13,7 +13,10 @@ as the app evolves. The pipeline is described in
    **PNG** for the README (GitHub cannot load fonts into an embedded SVG) and
    **SVG** for mindfork.io, which inlines them and serves the webfont the
    `@font-face` reference names (JetBrains Mono with symbol-font fallbacks;
-   `pip install pillow fonttools`).
+   `pip install pillow fonttools`). Block elements — the accent bar, a
+   scrollbar's thumb — are filled as parts of their cells and not set from the
+   typeface, in both: rows of glyphs do not meet, and a bar showed a line of the
+   background between every two (`python tools/screenshots.py --self-test`).
 
 A drift gate (`app::demo_shots::tests::committed_dumps_match_the_code`) fails
 the ordinary test suite when the committed dumps stop matching what the

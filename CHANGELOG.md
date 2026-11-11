@@ -32,6 +32,10 @@ split by subsystem.
 - **The demo's companion is English in the settings too.** `mindfork demo` showed
   Russian as the *Framework language* of a profile whose system message, notes and
   self-model are English; it now names the language the profile is in.
+- **The screenshots and the animation: solid bars without lines across them.** The
+  accent bar down a message and a scrollbar's thumb showed a thin line of the
+  background between every two rows — in the README's pictures, on mindfork.io and
+  in each release's animated demo. They are drawn whole now.
 - **mindfork starts on a system with no CA certificates.** In a minimal container
   with no certificate bundle the app — `mindfork demo` included — ended at start
   with a panic about a TLS client. It now starts: a local server over plain HTTP

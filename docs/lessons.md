@@ -753,6 +753,19 @@ row too: the second one lands on what the first one left.
 
 ## 3. Measure; do not assume
 
+**One pixel column at two scales is a sample, not a measurement.** Asked whether the
+site's SVG stills had the same breaks in their bars as the PNGs, the first check
+read one pixel column down one bar at 100 % and 125 %, found it one colour, and
+called the SVG clean. Every column of every bar, at 150 % too and in the gallery's
+half-size pictures, found 17 bars of 18 broken — by up to 198 of 255, plainly
+visible. Where a seam falls depends on where a row's edge lands between pixels,
+which changes with the scale, the picture's size on the page and its offset;
+one column at one size hits it or not by luck. **A "no defect" needs the whole
+region, at every size the thing is shown at** — and the check that says it should
+first be shown to find the defect somewhere: a seam detector that has never
+reported a seam is not yet one.
+— *release — block elements drawn as parts of their cells*.
+
 **An emulated display scale is not a display scale.** To look at a page at 125%
 the headless browser was given Playwright's `device_scale_factor` — the developer
 tools' emulation. `devicePixelRatio` reads 1.25 under it, and the screenshots come
@@ -1607,6 +1620,21 @@ Wayland desktop.
 open*.
 
 ## 5. Terminal and ratatui rendering
+
+**A bar is one shape, not a row of glyphs per line: shapes antialiased apart do not
+meet.** Three renderers of this project's terminal pictures drew `█` and `▌` as the
+typeface's glyph, cell by cell, and all three showed a line of the background between
+the rows of a bar: the web demo's terminal (xterm.js's default renderer), the raster
+of the screenshots and the animation, and the SVG stills. The causes differ — a cell
+rounded to whole pixels that the glyph is a fraction short of; rows drawn as separate
+text, each edge antialiased by itself, so two half-covered edges that meet between
+pixels let the canvas through — and the fix is the same: a block element is a part of
+its cell, filled as geometry, and what meets is drawn as one shape (xterm.js's WebGL
+renderer does this itself; the raster fills rectangles on shared pixel edges; the SVG
+joins the boxes and writes one `<path>` per colour). The same holds for a background
+over several rows: a `<rect>` per row has the seam. Box-drawing lines get away with
+glyphs because theirs overhang the cell and overlap.
+— *release — block elements drawn as parts of their cells*.
 
 **A state that a key can put the user into needs a key that takes them out — check a
 "keys are off" rule against the keys that *open* things.** The "window too small" notice

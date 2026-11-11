@@ -6,13 +6,14 @@
 #chat-list-light-en text{font:16px 'JetBrains Mono',monospace;fill:#1e2024}#chat-list-light-en .b{font-weight:700}#chat-list-light-en .i{font-style:italic}#chat-list-light-en .u{text-decoration:underline}#chat-list-light-en .st{text-decoration:line-through}#chat-list-light-en .u.st{text-decoration:underline line-through}
 </style>
 <rect width="100%" height="100%" fill="#fafafc"/>
+<path fill="#dee0e4" d="M19.6 94.48H1114V115.6H19.6ZM38.8 664.72H115.6V685.84H38.8ZM38.8 643.6H240.4V664.72H38.8ZM336.4 643.6H403.6V664.72H336.4ZM336.4 664.72H413.2V685.84H336.4ZM499.6 664.72H538V685.84H499.6ZM499.6 685.84H547.6V706.96H499.6ZM499.6 643.6H576.4V664.72H499.6ZM749.2 643.6H787.6V664.72H749.2ZM749.2 664.72H797.2V685.84H749.2ZM749.2 685.84H826V706.96H749.2ZM902.8 664.72H941.2V685.84H902.8ZM902.8 685.84H950.8V706.96H902.8ZM902.8 643.6H979.6V664.72H902.8ZM1075.6 52.24H1104.4V73.36H1075.6Z"/>
+<path fill="#5f646c" d="M48.4 52.24H49.6V73.36H48.4Z"/>
+<path fill="#007400" d="M19.6 94.48H24.4V115.6H19.6Z"/>
 <text xml:space="preserve" y="26.32"><tspan x="10" fill="#787c82">╭</tspan><tspan x="34" text-anchor="middle">▤</tspan><tspan x="48.4" textLength="57.6">Chats </tspan><tspan x="106" textLength="883.2" fill="#787c82">────────────────────────────────────────────────────────────────────────────────────────────</tspan><tspan x="998.8" textLength="115.2" fill="#5f646c">dialogs: 21 </tspan><tspan x="1114" fill="#787c82">╮</tspan></text>
 <text xml:space="preserve" y="47.44"><tspan x="10" textLength="1113.6" fill="#787c82">│╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮│</tspan></text>
-<rect x="1075.6" y="52.24" width="28.8" height="21.12" fill="#dee0e4"/>
-<text xml:space="preserve" y="68.56"><tspan x="10" textLength="19.2" fill="#787c82">││</tspan><tspan x="34" text-anchor="middle" fill="#5f646c">⌕</tspan><tspan x="48.4" textLength="134.4" fill="#5f646c">▏Search chats…</tspan><tspan x="1008.4" textLength="57.6" fill="#5f646c">titles</tspan><tspan x="1085.2" textLength="19.2" fill="#4a4e54">/ </tspan><tspan x="1104.4" textLength="19.2" fill="#787c82">││</tspan></text>
+<text xml:space="preserve" y="68.56"><tspan x="10" textLength="19.2" fill="#787c82">││</tspan><tspan x="34" text-anchor="middle" fill="#5f646c">⌕</tspan><tspan x="58" textLength="124.8" fill="#5f646c">Search chats…</tspan><tspan x="1008.4" textLength="57.6" fill="#5f646c">titles</tspan><tspan x="1085.2" textLength="19.2" fill="#4a4e54">/ </tspan><tspan x="1104.4" textLength="19.2" fill="#787c82">││</tspan></text>
 <text xml:space="preserve" y="89.68"><tspan x="10" textLength="1113.6" fill="#787c82">│╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯│</tspan></text>
-<rect x="19.6" y="94.48" width="1094.4" height="21.12" fill="#dee0e4"/>
-<text xml:space="preserve" y="110.8"><tspan x="10" fill="#787c82">│</tspan><tspan x="19.6" textLength="38.4" fill="#007400">▌ ● </tspan><tspan x="58" textLength="211.2" class="b">Gemma 4 on a 12 GB GPU</tspan><tspan x="1056.4" textLength="48" fill="#5f646c">4 msg</tspan><tspan x="1114" fill="#787c82">│</tspan></text>
+<text xml:space="preserve" y="110.8"><tspan x="10" fill="#787c82">│</tspan><tspan x="38.8" textLength="19.2" fill="#007400">● </tspan><tspan x="58" textLength="211.2" class="b">Gemma 4 on a 12 GB GPU</tspan><tspan x="1056.4" textLength="48" fill="#5f646c">4 msg</tspan><tspan x="1114" fill="#787c82">│</tspan></text>
 <text xml:space="preserve" y="131.92"><tspan x="10" fill="#787c82">│</tspan><tspan x="38.8" textLength="19.2" fill="#bec1c6">● </tspan><tspan x="58" textLength="988.8">Why is prompt eval slow on long chats?                                                                 </tspan><tspan x="1046.8" textLength="57.6" fill="#5f646c">14 msg</tspan><tspan x="1114" fill="#787c82">│</tspan></text>
 <text xml:space="preserve" y="153.04"><tspan x="10" fill="#787c82">│</tspan><tspan x="38.8" textLength="19.2" fill="#bec1c6">● </tspan><tspan x="58" textLength="988.8">Grammar-constrained JSON output                                                                        </tspan><tspan x="1046.8" textLength="57.6" fill="#5f646c">13 msg</tspan><tspan x="1114" fill="#787c82">│</tspan></text>
 <text xml:space="preserve" y="174.16"><tspan x="10" fill="#787c82">│</tspan><tspan x="38.8" textLength="19.2" fill="#bec1c6">● </tspan><tspan x="58" textLength="988.8">Sampler settings for livelier replies                                                                  </tspan><tspan x="1046.8" textLength="57.6" fill="#5f646c">18 msg</tspan><tspan x="1114" fill="#787c82">│</tspan></text>
@@ -38,20 +39,7 @@
 <text xml:space="preserve" y="596.56"><tspan x="10" fill="#787c82">│</tspan><tspan x="1114" fill="#787c82">│</tspan></text>
 <text xml:space="preserve" y="617.68"><tspan x="10" fill="#787c82">│</tspan><tspan x="1114" fill="#787c82">│</tspan></text>
 <text xml:space="preserve" y="638.8"><tspan x="10" textLength="1113.6" fill="#787c82">╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯</tspan></text>
-<rect x="38.8" y="643.6" width="201.6" height="21.12" fill="#dee0e4"/>
-<rect x="336.4" y="643.6" width="67.2" height="21.12" fill="#dee0e4"/>
-<rect x="499.6" y="643.6" width="76.8" height="21.12" fill="#dee0e4"/>
-<rect x="749.2" y="643.6" width="38.4" height="21.12" fill="#dee0e4"/>
-<rect x="902.8" y="643.6" width="76.8" height="21.12" fill="#dee0e4"/>
 <text xml:space="preserve" y="659.92"><tspan x="48.4" textLength="192" fill="#4a4e54">↑↓ PgUp/Dn Home/End </tspan><tspan x="250" textLength="57.6" fill="#5f646c">select</tspan><tspan x="346" textLength="57.6" fill="#4a4e54">Enter </tspan><tspan x="413.2" textLength="38.4" fill="#5f646c">open</tspan><tspan x="509.2" textLength="67.2" fill="#4a4e54">Ctrl+F </tspan><tspan x="586" textLength="134.4" fill="#5f646c">search: titles</tspan><tspan x="758.8" textLength="28.8" fill="#4a4e54">F2 </tspan><tspan x="797.2" textLength="57.6" fill="#5f646c">rename</tspan><tspan x="912.4" textLength="67.2" fill="#4a4e54">Ctrl+R </tspan><tspan x="989.2" textLength="86.4" fill="#5f646c">auto-name</tspan></text>
-<rect x="38.8" y="664.72" width="76.8" height="21.12" fill="#dee0e4"/>
-<rect x="336.4" y="664.72" width="76.8" height="21.12" fill="#dee0e4"/>
-<rect x="499.6" y="664.72" width="38.4" height="21.12" fill="#dee0e4"/>
-<rect x="749.2" y="664.72" width="48" height="21.12" fill="#dee0e4"/>
-<rect x="902.8" y="664.72" width="38.4" height="21.12" fill="#dee0e4"/>
 <text xml:space="preserve" y="681.04"><tspan x="48.4" textLength="67.2" fill="#4a4e54">Ctrl+N </tspan><tspan x="125.2" textLength="28.8" fill="#5f646c">new</tspan><tspan x="346" textLength="67.2" fill="#4a4e54">Ctrl+D </tspan><tspan x="422.8" textLength="48" fill="#5f646c">clone</tspan><tspan x="509.2" textLength="28.8" fill="#4a4e54">F5 </tspan><tspan x="547.6" textLength="86.4" fill="#5f646c">clipboard</tspan><tspan x="758.8" textLength="38.4" fill="#b22222">Del </tspan><tspan x="806.8" textLength="57.6" fill="#5f646c">delete</tspan><tspan x="912.4" textLength="28.8" fill="#4a4e54">F1 </tspan><tspan x="950.8" textLength="38.4" fill="#5f646c">help</tspan></text>
-<rect x="499.6" y="685.84" width="48" height="21.12" fill="#dee0e4"/>
-<rect x="749.2" y="685.84" width="76.8" height="21.12" fill="#dee0e4"/>
-<rect x="902.8" y="685.84" width="48" height="21.12" fill="#dee0e4"/>
 <text xml:space="preserve" y="702.16"><tspan x="509.2" textLength="38.4" fill="#4a4e54">Esc </tspan><tspan x="557.2" textLength="38.4" fill="#5f646c">back</tspan><tspan x="758.8" textLength="67.2" fill="#4a4e54">Ctrl+Q </tspan><tspan x="835.6" textLength="38.4" fill="#5f646c">quit</tspan><tspan x="912.4" textLength="38.4" fill="#4a4e54">Tab </tspan><tspan x="960.4" textLength="163.2" fill="#5f646c">sort: by modified</tspan></text>
 </svg>
