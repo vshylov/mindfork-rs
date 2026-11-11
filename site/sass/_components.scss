@@ -5,7 +5,10 @@
 .prompt-line {
   font-size: 15px;
   color: var(--fg-strong);
-  margin: 0 0 6px;
+  // The headline's top margin (0.25em) moved here, the space between the two
+  // unchanged: the line stands above both columns, which then start at the
+  // headline's top.
+  margin: 0 0 calc(0.25 * #{$h1-size});
 }
 .ps1 {
   color: var(--accent);
@@ -33,6 +36,7 @@
 }
 .hero h1 {
   max-width: 800px;
+  margin-top: 0;
 }
 .lede {
   font-size: 19px;
@@ -75,43 +79,63 @@
 // Hero fetch panel — a neofetch-style "at a glance" card that fills the
 // hero's right column on wide screens. Pure HTML/CSS (no JS); the art
 // mirrors the brand icon's topology: accent trunk, two --branch merges.
+// Its top meets the headline's and it runs about as far down as the buttons;
+// centred against the copy it left a void above and below.
 .hero-cols {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 56px;
-  align-items: center;
+  gap: 48px;
+  align-items: start;
 }
 .fetch-body {
   display: flex;
   align-items: center;
   gap: 24px;
-  padding: 22px 24px;
+  padding: 26px 24px;
   font-family: var(--font-mono);
 }
 .fetch-art {
   margin: 0;
   // line-height 1: box-drawing glyphs must touch vertically or the
   // trunk/branches render with gaps between rows.
-  font: 700 20px/1 var(--font-mono);
+  font: 700 24px/1 var(--font-mono);
   color: var(--accent);
   .b {
     color: var(--branch);
   }
 }
+.fetch-info {
+  font-size: 13.5px;
+  line-height: 2;
+}
+.fetch-head,
+.fetch-rule {
+  margin: 0;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.fetch-name {
+  color: var(--accent);
+  font-weight: 700;
+}
+.fetch-rule {
+  margin-bottom: 4px;
+}
 .fetch-data {
   margin: 0;
-  font-size: 13px;
-  line-height: 1.8;
+  // A row is a key and one or more values, each value a line of its own
+  // under the first (`cloud` takes two).
   > div {
-    display: flex;
+    display: grid;
+    grid-template-columns: 7ch auto;
+    column-gap: 2ch;
   }
   dt {
-    flex: none;
-    width: 7ch;
     color: var(--muted);
   }
   dd {
-    margin: 0 0 0 2ch;
+    grid-column: 2;
+    margin: 0;
     color: var(--fg);
     white-space: nowrap;
   }

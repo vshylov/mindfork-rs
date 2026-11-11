@@ -10,7 +10,7 @@ the reasoning behind the site, not its current shape. For the current shape
 read the research/design doc above; for the traps that recur across areas
 read [lessons.md](../lessons.md).
 
-## Entries (34)
+## Entries (35)
 
 - Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 - Post-M9: website — S2 infra: one CloudFormation stack, mindfork.io live (done)
@@ -46,6 +46,7 @@ read [lessons.md](../lessons.md).
 - Post-M9: website — the web demo's guest from pinned images, and a terminal the size of the window (done)
 - Post-M9: website — the web demo's manifest, its asset, and the release's job (done)
 - Post-M9: website — the web demo's rehearsal, and its page at `/try/` (done)
+- Post-M9: website — the hero's panel: DeepSeek, and no void around it (done)
 
 ### Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 
@@ -1847,3 +1848,44 @@ both on `main` at `88e5ce29`, the merge of the pull request.
   a file its manifest lies about, a name that climbs out, an asset without its script
   and a manifest of another format refused, with nothing left behind; that the format
   read is the one `manifest.py` writes. No Rust changed: 4796 unit tests, 310 `#[ignore]`.
+
+### Post-M9: website — the hero's panel: DeepSeek, and no void around it (done)
+
+- **What the owner saw** (a screenshot at their 125% display scale): the "at a glance"
+  panel had no DeepSeek, three weeks after DeepSeek became a mode of its own (0.21.0),
+  though the hero's own sentence names it; and the panel floated in its column with a void above
+  and below. Measured at 1104 CSS px (their 1380 device pixels): the copy 699 px tall,
+  the panel 268 px, centred against it — 215 px of nothing on each side.
+- **The panel is a fuller neofetch** (branch `fix/site-glance-panel`): a head line,
+  `mindfork 0.26.0`, from `config.extra.app_version` — the one the release PR bumps and
+  the structured data already reads — with a rule as long as it; then the rows. `cloud`
+  gains DeepSeek and `engine` LM Studio, each on a second line under the first value
+  (a row is one `dt` and one or more `dd`, a grid of two columns), so the panel grows
+  down and not across. Four rows are new — `agents`, `voice`, `lang`, `data` — and each
+  restates a card of the features section, as every row already did (It can delegate;
+  It can read replies aloud; A real TUI; Private by construction).
+- **The emblem is the icon's own grid**: twelve rows, one per unit of the 16-unit icon
+  (trunk y 2–14, the right branch merging at y 5–7, the left leaving at y 7 and merging
+  at y 10–12), drawn in heavy box-drawing lines with square corners (`┃ ━ ┣ ┫ ┛ ┗`) as
+  the icon's pixels are; the light, rounded set read as a thin sketch beside the taller
+  list. At 2× the joins meet with no gap (line-height 1 still).
+- **The panel's top meets the headline's**: the `$ mindfork` line moved out of the grid
+  to stand above both columns, the columns align to the start, and the headline's top
+  margin moved to that line — `calc(0.25 * $h1-size)`, the h1's size now a Sass variable
+  in `_base.scss` — so the space between the two is what the collapsed margins made it
+  before, at every width. Measured: at 375 and 768 px the prompt, headline, lede and hint
+  sit on exactly the pixels they did.
+- **Measured at 1104, 1280 and 1920 px**: the panel 167–692 px, the headline's top at 167
+  and the buttons' bottom at 700 — nothing above it, 8 px short of the buttons below.
+  The copy column kept its width (500 px against 502: the panel's sides 24 px, the
+  columns' gap 56 → 48), so the headline, the lede and the hint wrap to the same 3, 8
+  and 4 lines as before; at 1024 px the same 4, 9 and 5. `scrollWidth` equals the
+  viewport at every width; below 1024 px the panel stays hidden.
+- **Not changed, and worth a look**: the features card is titled "Four clouds and a
+  gateway" over five names, the page's description says "four cloud providers", and
+  the images card says "all four clouds" — DeepSeek missed in the same way; left to
+  the owner, since whether DeepSeek takes an image depends on its model.
+- No Rust touched: 4796 unit tests, 310 `#[ignore]` unchanged; a live run does not apply
+  (static output). Verified in a local build (Zola 0.23.6) in headless Chromium, light
+  and dark; `zola check`, `link_check.py`, `doc_index_check.py`, `cyrillic_scan.py`,
+  `site_llms_txt.py --check` clean.

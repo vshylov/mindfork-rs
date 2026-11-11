@@ -14,47 +14,72 @@
 
 {% block content %}
 <section class="hero">
-  <div class="wrap hero-cols">
-    <div class="hero-copy">
-      <p class="prompt-line mono"><span class="ps1">$</span>mindfork<span class="cursor" aria-hidden="true"></span></p>
-      <h1>{{ section.extra.hero_title }}</h1>
-      <p class="lede">{{ section.extra.hero_sub }}</p>
-      <div class="cta-row">
-        <a class="btn btn-primary" href="{{ get_url(path='@/install.md') }}">Install</a>
-        <a class="btn" href="{{ config.extra.github }}">Source on GitHub</a>
-      </div>
-      {#- The link to the demo in a browser tab is drawn only when the build has
-          one - the deploy fetches it from the newest release that carries it
-          (tools/site_webdemo.py, docs/research/web-demo.md §14.3). It says what
-          is behind it in the same breath: a reader must not take it for a
-          model to talk to in the browser (the owner, §14.6). -#}
-      {%- set webdemo = load_data(path="webdemo.json", format="json", required=false) %}
-      <p class="demo-hint"><code>$ mindfork demo</code> — try it in a minute: seeded data, a scripted engine, no model download, nothing written outside a temp folder.{% if webdemo %} Or <a href="{{ get_url(path='@/try.md') }}">see that same demo in this browser</a> — the interface with its scripted replies, not a model.{% endif %} Already running Ollama? <a href="{{ get_url(path='@/install.md') }}#already-running-ollama">Two lines</a>.</p>
-    </div>
-    <aside class="hero-fetch" aria-label="mindfork at a glance">
-      <div class="term">
-        <div class="term-bar"><span class="term-title">mindfork — at a glance</span><span class="term-controls" aria-hidden="true">─ □ ✕</span></div>
-        <div class="fetch-body">
-          <pre class="fetch-art" aria-hidden="true">  │ <span class="b">│</span>
-  ├<span class="b">─╯</span>
-  │
-<span class="b">│</span> │
-<span class="b">╰─</span>┤
-  │
-  │</pre>
-          <dl class="fetch-data">
-            <div><dt>engine</dt><dd>llama.cpp · Ollama · any OpenAI API</dd></div>
-            <div><dt>cloud</dt><dd>OpenAI · Anthropic · Gemini · Grok</dd></div>
-            <div><dt>gateway</dt><dd>OpenRouter</dd></div>
-            <div><dt>memory</dt><dd>self-model · notes · RAG</dd></div>
-            <div><dt>tools</dt><dd>web · python · files · project · MCP</dd></div>
-            <div><dt>ui</dt><dd>ratatui · markdown · mermaid</dd></div>
-            <div><dt>runs on</dt><dd>Windows · Linux · macOS</dd></div>
-            <div><dt>license</dt><dd>MIT · no telemetry</dd></div>
-          </dl>
+  <div class="wrap">
+    {#- The prompt line stands above the two columns, so the panel's top meets
+        the headline's (.hero-cols aligns to the start). -#}
+    <p class="prompt-line mono"><span class="ps1">$</span>mindfork<span class="cursor" aria-hidden="true"></span></p>
+    <div class="hero-cols">
+      <div class="hero-copy">
+        <h1>{{ section.extra.hero_title }}</h1>
+        <p class="lede">{{ section.extra.hero_sub }}</p>
+        <div class="cta-row">
+          <a class="btn btn-primary" href="{{ get_url(path='@/install.md') }}">Install</a>
+          <a class="btn" href="{{ config.extra.github }}">Source on GitHub</a>
         </div>
+        {#- The link to the demo in a browser tab is drawn only when the build has
+            one - the deploy fetches it from the newest release that carries it
+            (tools/site_webdemo.py, docs/research/web-demo.md §14.3). It says what
+            is behind it in the same breath: a reader must not take it for a
+            model to talk to in the browser (the owner, §14.6). -#}
+        {%- set webdemo = load_data(path="webdemo.json", format="json", required=false) %}
+        <p class="demo-hint"><code>$ mindfork demo</code> — try it in a minute: seeded data, a scripted engine, no model download, nothing written outside a temp folder.{% if webdemo %} Or <a href="{{ get_url(path='@/try.md') }}">see that same demo in this browser</a> — the interface with its scripted replies, not a model.{% endif %} Already running Ollama? <a href="{{ get_url(path='@/install.md') }}#already-running-ollama">Two lines</a>.</p>
       </div>
-    </aside>
+      <aside class="hero-fetch" aria-label="mindfork at a glance">
+        <div class="term">
+          <div class="term-bar"><span class="term-title">mindfork — at a glance</span><span class="term-controls" aria-hidden="true">─ □ ✕</span></div>
+          <div class="fetch-body">
+            {#- The art is the brand icon drawn on its own grid, one row per unit:
+                the trunk twelve rows, the right branch merging at the fifth, the
+                left one leaving at the sixth and merging at the tenth. Heavy lines
+                with square corners, as the icon's pixels are. -#}
+            <pre class="fetch-art" aria-hidden="true">  ┃ <span class="b">┃</span>
+  ┃ <span class="b">┃</span>
+  ┃ <span class="b">┃</span>
+  ┃ <span class="b">┃</span>
+  ┣<span class="b">━┛</span>
+<span class="b">┃</span> ┃
+<span class="b">┃</span> ┃
+<span class="b">┃</span> ┃
+<span class="b">┃</span> ┃
+<span class="b">┗━</span>┫
+  ┃
+  ┃</pre>
+            <div class="fetch-info">
+              {#- neofetch's `user@host` line and its rule: the name and the version
+                  the release PR bumps (config.extra.app_version), the rule as long
+                  as the line above it. -#}
+              {%- set head = "mindfork " ~ config.extra.app_version %}
+              <p class="fetch-head"><span class="fetch-name">mindfork</span> {{ config.extra.app_version }}</p>
+              <p class="fetch-rule" aria-hidden="true">{% for i in range(end=head | length) %}─{% endfor %}</p>
+              <dl class="fetch-data">
+                <div><dt>engine</dt><dd>llama.cpp · Ollama · LM Studio</dd><dd>any OpenAI-compatible API</dd></div>
+                <div><dt>cloud</dt><dd>OpenAI · Anthropic · Gemini</dd><dd>Grok · DeepSeek</dd></div>
+                <div><dt>gateway</dt><dd>OpenRouter</dd></div>
+                <div><dt>memory</dt><dd>self-model · notes · RAG</dd></div>
+                <div><dt>tools</dt><dd>web · python · files · project · MCP</dd></div>
+                <div><dt>agents</dt><dd>subagents · background runs</dd></div>
+                <div><dt>voice</dt><dd>OpenAI · Gemini · OpenRouter</dd></div>
+                <div><dt>ui</dt><dd>ratatui · markdown · mermaid</dd></div>
+                <div><dt>lang</dt><dd>English · Russian</dd></div>
+                <div><dt>data</dt><dd>portable · encrypted backups</dd></div>
+                <div><dt>runs on</dt><dd>Windows · Linux · macOS</dd></div>
+                <div><dt>license</dt><dd>MIT · no telemetry</dd></div>
+              </dl>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </div>
   </div>
 </section>
 
