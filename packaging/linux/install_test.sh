@@ -242,6 +242,65 @@ code=$?
 check "an install that fails does not stop the hand-over" 0 $code
 echo "$out" | grep -q "could not install it" && echo "$out" | grep -q "apt-get install -y libgomp1"
 check "…it says so and names the line to run" 0 $?
+
+# The same on Arch, where the package manager must not be asked to refresh its
+# lists: `pacman -Sy <package>` is a partial upgrade, which Arch does not
+# support and which broke this repository's own CI image the day the
+# repositories moved to OpenSSL 4. The script takes the first manager it finds,
+# so the others are taken off the PATH rather than shadowed: a directory of
+# links to everything on it but them, with a stub `pacman` in front.
+echo "== OpenMP on Arch"
+FARM="$WORK/farm"
+ARCH="$WORK/arch"
+mkdir -p "$FARM" "$ARCH"
+old_ifs="$IFS"
+IFS=:
+for d in $PATH; do
+    # The first directory to name a command keeps it, as on the PATH itself.
+    [ -d "$d" ] && ln -s "$d"/* "$FARM/" 2>/dev/null
+done
+IFS="$old_ifs"
+rm -f "$FARM/apt-get" "$FARM/dnf" "$FARM/zypper" "$FARM/pacman" "$FARM/sudo" "$FARM/ldconfig"
+cp "$STUBS/ldconfig" "$STUBS/sudo" "$ARCH/"
+cat >"$ARCH/pacman" <<EOF
+#!/bin/sh
+echo "\$*" >>"$STATE/pacman.log"
+[ -e "$STATE/pacman-fails" ] && exit 1
+case "\$*" in *gcc-libs*) : >"$STATE/gomp" ;; esac
+exit 0
+EOF
+chmod 0755 "$ARCH/pacman"
+arch_fresh() { rm -f "$STATE/gomp" "$STATE/pacman.log" "$STATE/pacman-fails"; }
+arch_omp() { PATH="$ARCH:$FARM" sh "$S" --from "$WORK/rel" --dir "$WORK/opt-arch" --no-link "$@" 2>&1; }
+
+arch_fresh
+out="$(arch_omp -- setup --llama cuda-12)"
+code=$?
+echo "$out" | sed 's/^/     | /'
+check "missing, and the hand-over installs llama.cpp" 0 $code
+grep -qx -- "-S --noconfirm --needed gcc-libs" "$STATE/pacman.log"
+check "…pacman installs gcc-libs from the lists the system has" 0 $?
+grep -q -- "-S[a-z]*y" "$STATE/pacman.log"
+check "control arm: it is never asked to refresh them (-Sy)" 1 $?
+echo "$out" | grep -q "^ARGC:3$"
+check "…and the hand-over goes on" 0 $?
+
+arch_fresh
+: >"$STATE/pacman-fails"
+out="$(arch_omp -- setup --llama cuda-12)"
+code=$?
+check "an install that fails does not stop the hand-over" 0 $code
+echo "$out" | grep -q "could not install it" && echo "$out" | grep -q "pacman -Syu gcc-libs"
+check "…it says so, and the line to run upgrades the system first" 0 $?
+
+arch_fresh
+out="$(arch_omp --no-deps -- setup --llama cuda-12)"
+code=$?
+check "--no-deps: no install, and the hand-over goes on" 0 $code
+if [ -e "$STATE/pacman.log" ]; then pacman_asked=0; else pacman_asked=1; fi
+check "…pacman is not asked" 1 "$pacman_asked"
+echo "$out" | grep -q "pacman -Syu gcc-libs"
+check "…and the line to run is printed" 0 $?
 fi
 
 # Which build a machine gets is the machine's: stubs of `uname` and `sysctl`

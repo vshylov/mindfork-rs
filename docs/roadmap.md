@@ -616,15 +616,6 @@ effort tiers and Fabula — have all closed
   restoring a stranger's backup restores its MCP commands; MCP stdout lines read
   unbounded; the site's CSP header and the Download button's contrast;
   `generation.rs`'s size as a contributor barrier.
-- **`install.sh` on Arch installs onto a system it has not upgraded** — found on
-  2026-11-11, when the same shape broke `packaging.yml` (release 0.26.0's
-  entry in [the journal](journal/release.md)). When ALSA's or OpenMP's library
-  is missing, the script runs `pacman -Sy --needed alsa-lib` (or `gcc-libs`):
-  the package lists refreshed, one package installed, the rest left — what Arch
-  calls a partial upgrade and does not support. It only happens when the library
-  is absent, which a desktop install rarely is. To decide: `pacman -S` without
-  the refresh (and a hint to upgrade when that fails), or no install at all on
-  Arch, only the hint.
 
 ### Website
 

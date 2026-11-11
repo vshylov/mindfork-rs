@@ -45,6 +45,12 @@ in your data moves to a new format.
   accent bar down a message and a scrollbar's thumb showed a thin line of the
   background between every two rows — in the README's pictures, on mindfork.io and
   in each release's animated demo. They are drawn whole now.
+- **`install.sh` on Arch no longer installs onto a system it has not upgraded.** When
+  ALSA's or OpenMP's library was missing, the script refreshed pacman's package lists
+  and installed that one package — a partial upgrade, which Arch does not support and
+  which can break what is installed on the day a library moves on. It now installs
+  from the lists the system already has, and when that fails names the line that
+  upgrades the system and installs the package: `sudo pacman -Syu alsa-lib`.
 - **mindfork starts on a system with no CA certificates.** In a minimal container
   with no certificate bundle the app — `mindfork demo` included — ended at start
   with a panic about a TLS client. It now starts: a local server over plain HTTP
