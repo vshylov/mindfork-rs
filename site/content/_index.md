@@ -3,8 +3,14 @@ title = "mindfork — a terminal AI chat with a memory and a self-model"
 description = "A terminal AI chat whose assistant keeps notes about you, a self-model it revisits and a knowledge base over your files — on local models through llama.cpp, Ollama or LM Studio, five cloud providers or an OpenRouter key. One native binary for Windows, Linux and macOS."
 
 [extra]
-hero_title = "An AI chat with a memory and a self-model"
-hero_sub = "The assistant keeps notes about you, a model of itself that it revisits, and a knowledge base over your files. Run a local Gemma or Qwen through llama.cpp, Ollama or LM Studio — or bring OpenAI, Anthropic, Gemini, Grok, DeepSeek or an OpenRouter key. Real tools behind switches you set; one fast native binary for Windows, Linux and macOS."
+# The headline, a phrase to a line: the page breaks it where the sense does and
+# sizes it from the longest phrase, so it stays on these lines at every width.
+# A word between asterisks takes the accent.
+hero_title = ["An AI chat with", "a *memory* and", "a *self-model*"]
+# The lede in two voices: what no other chat does, then what it runs on. The
+# two together are the paragraph /llms.txt opens with (tools/site_llms_txt.py).
+hero_lede = "The assistant keeps notes about you, a model of itself that it revisits, and a knowledge base over your files."
+hero_sub = "Run a local Gemma or Qwen through llama.cpp, Ollama or LM Studio — or bring OpenAI, Anthropic, Gemini, Grok, DeepSeek or an OpenRouter key. Real tools behind switches you set; one fast native binary for Windows, Linux and macOS."
 
 [[extra.features]]
 title = "Memory that persists"

@@ -15,21 +15,38 @@
   --accent-link: #a84e22;
   --branch: #5c6370;
   --shadow: 0 12px 32px rgba(24, 24, 27, 0.1);
+  --panel-shadow: 0 1px 2px rgba(24, 24, 27, 0.06),
+    0 18px 44px -12px rgba(24, 24, 27, 0.18);
+  --grid-dot: #d0d0d6;
+  --glow: #{rgba(#c25a27, 0.26)};
+  --glow-branch: #{rgba(#5c6370, 0.2)};
 }
 
-:root {
-  --bg: #09090b;
-  --bg-2: #101013;
+// What is drawn on a terminal window that stays dark whatever the page's
+// theme — the hero's panel. The dark palette's own values, in one place.
+@mixin dark-term-vars {
   --term-bg: #0c0c0e;
   --term-bar: #131318;
   --fg: #d4d4d8;
   --fg-strong: #fafafa;
   --muted: #9d9da8;
   --line: #232329;
-  --accent: #c25a27;
   --accent-link: #e0783f;
+}
+
+:root {
+  --bg: #09090b;
+  --bg-2: #101013;
+  @include dark-term-vars;
+  --accent: #c25a27;
   --branch: #5c6370;
   --shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+  // The hero's panel and what stands behind it (_components.scss): its own
+  // shadow, the dots of the grid, the halo in the emblem's two tones.
+  --panel-shadow: var(--shadow);
+  --grid-dot: #33333b;
+  --glow: #{rgba(#c25a27, 0.38)};
+  --glow-branch: #{rgba(#5c6370, 0.42)};
 }
 
 :root[data-theme="light"] {

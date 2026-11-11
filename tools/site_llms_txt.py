@@ -173,8 +173,11 @@ def render(root: Path) -> str:
     install = front_matter(root / "site" / "content" / "install.md")
 
     out = [f"# {conf('title')}", "", f"> {conf('description')}", ""]
-    if home.get("hero_sub"):
-        out += [home["hero_sub"], ""]
+    # The home page's lede is set in two voices, a field each; here it is the
+    # one paragraph they make.
+    lede = " ".join(home[key] for key in ("hero_lede", "hero_sub") if home.get(key))
+    if lede:
+        out += [lede, ""]
 
     out += [
         "## Start here",
@@ -216,7 +219,8 @@ def self_test() -> int:
             encoding="utf-8",
         )
         (content / INDEX_FILE).write_text(
-            '+++\ntitle = "t"\n\n[extra]\nhero_sub = "the lede"\n+++\n', encoding="utf-8")
+            '+++\ntitle = "t"\n\n[extra]\nhero_title = ["a *b*", "c"]\n'
+            'hero_lede = "the lede"\nhero_sub = "and the rest"\n+++\n', encoding="utf-8")
         (content / "install.md").write_text(
             '+++\ntitle = "Install"\ndescription = "how to get it"\n+++\n', encoding="utf-8")
         for name in OPTIONAL:
@@ -239,7 +243,10 @@ def self_test() -> int:
         checks = [
             ("H1 first", text.startswith("# proj\n")),
             ("summary blockquote", "\n> a summary\n" in text),
-            ("lede", "\nthe lede\n" in text),
+            # The two voices of the home page's lede, one paragraph; the
+            # headline's array beside them is a shape this tool does not read.
+            ("lede", "\nthe lede and the rest\n" in text),
+            ("headline left out", "a *b*" not in text),
             ("weight order", text.index("First") < text.index("Second")),
             ("newest post first", text.index("](https://example.test/blog/new/")
              < text.index("](https://example.test/blog/old/")),

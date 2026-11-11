@@ -10,7 +10,7 @@ the reasoning behind the site, not its current shape. For the current shape
 read the research/design doc above; for the traps that recur across areas
 read [lessons.md](../lessons.md).
 
-## Entries (35)
+## Entries (36)
 
 - Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 - Post-M9: website — S2 infra: one CloudFormation stack, mindfork.io live (done)
@@ -47,6 +47,7 @@ read [lessons.md](../lessons.md).
 - Post-M9: website — the web demo's manifest, its asset, and the release's job (done)
 - Post-M9: website — the web demo's rehearsal, and its page at `/try/` (done)
 - Post-M9: website — the hero's panel: DeepSeek, and no void around it (done)
+- Post-M9: website — the hero: a headline in three phrases, a lede in two voices, a dark panel (done)
 
 ### Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 
@@ -1893,3 +1894,74 @@ both on `main` at `88e5ce29`, the merge of the pull request.
   (static output). Verified in a local build (Zola 0.23.6) in headless Chromium, light
   and dark; `zola check`, `link_check.py`, `doc_index_check.py`, `cyrillic_scan.py`,
   `site_llms_txt.py --check` clean.
+
+### Post-M9: website — the hero: a headline in three phrases, a lede in two voices, a dark panel (done)
+
+- **What the owner asked** (2026-11-11, a screenshot of the hero at their 125% scale):
+  to make this part of the page more beautiful. Nothing was wrong in it; it was flat —
+  a headline that broke as "An AI chat with / a memory and a / self-model", eight
+  grey lines of lede in one voice, a white panel on a near-white page with a thin
+  emblem and twelve rows in one colour. Two variants were drawn on a copy of the site
+  and shown with the page as it was: a page of pictures that flip in place, and three
+  local builds. **The owner's decision, 2026-11-11: the variant whose panel is a dark
+  terminal in both themes, as it was shown** (branch `feat/site-hero-polish`). The
+  words of the page did not change.
+- **The headline is its phrases, a line each.** `hero_title` is an array — "An AI chat
+  with", "a \*memory\* and", "a \*self-model\*" — so the two things the assistant has
+  stand one under the other, and a word between asterisks takes the accent
+  (`markdown(inline=true)`, an `<em>`). Each phrase is a block with a space after it:
+  read aloud or copied, the headline is one sentence. Its size comes from its own
+  column — `clamp(28px, 100cqw / (0.6 × chars), 54px)`, the copy column a size
+  container and `--chars` the longest phrase, counted by the template — so an edit to
+  the words cannot leave a phrase wider than its column. Measured at 320, 375, 414,
+  600, 768, 1023, 1024, 1104, 1280 and 1920 px, both themes: three lines, every phrase
+  on one. On `main` the headline was four lines at 1024 px. A browser without
+  container units drops the declaration and keeps the site's h1 size.
+- **A size computed with no room wrapped anyway.** The first formula gave 45.9 px at
+  1024 px: fifteen characters of 0.58em are 399 px, the column 406 — and the phrase
+  broke. Headless Chromium on Linux rounds a glyph's advance to a whole pixel, 27.6
+  to 28, and fifteen of them are 406.2. A character is therefore counted as 0.6em,
+  3% more than it is, which is more than the rounding costs at any size above 25 px.
+- **The lede in two voices.** What the assistant keeps is `hero_lede`, in the text's
+  colour; what it runs on stays `hero_sub`, smaller and muted — the panel beside it
+  says that part again. `/llms.txt` opens with the two as one paragraph
+  (`tools/site_llms_txt.py`): the generated file is byte for byte what it was, and
+  the tool's self-test covers the join and the array beside it, a shape its reader
+  skips.
+- **The panel.** Dark in both themes: the dark palette's terminal values are one
+  mixin (`dark-term-vars`, `_palette.scss`) that `:root` and the panel both include,
+  so there is one copy of them. The emblem is 30 px a row (24 before), as tall as the
+  rows beside it; the keys are in the accent, as neofetch prints them; the dots
+  between the items of a value are dimmed; the last line is the palette. The rows are
+  data in the template — Tera 2 takes arrays of two dimensions at most and has no
+  `slice` filter, so a row is its key and then its values, and the first cell is the
+  key. Behind the panel, a halo in the emblem's two tones and a grid of dots that
+  fades out before the copy: both are pseudo-elements of the panel's column, not of
+  the hero — on the hero the grid's centre sat some 270 px right of the panel's at
+  1920 px — so they go when the panel goes, below 1024 px. What they reach past the page's
+  edge is cut (`overflow-x: clip`): `scrollWidth` equals the viewport from 375 px up.
+- **It prints itself once**: the trunk grows from the root in 0.9 s, the rows
+  arrive in order, the palette last at 1.1 s; CSS only. Under `prefers-reduced-motion: reduce` there is no
+  animation and the panel is there at once (measured: `animation-name: none`,
+  opacity 1).
+- **The hint is three lines** — the demo, the demo in a browser tab, Ollama — a list
+  with a rule on its left, in the words it had, the sentence that says the browser
+  demo is not a model among them. The hero's buttons carry a shadow and rise a pixel
+  under the pointer.
+- **What did not change, measured.** The copy of the site had restyled `.lede`,
+  `.btn` and the light theme's `--shadow` where it found them, and those are the lede
+  of four other templates, the button of `/try/` and the shadow of every screenshot.
+  The branch scopes each to the hero. Two comparisons in headless Chromium: the hero
+  against the pictures the owner approved, light and dark at 1104 px and 125% — no
+  pixel differs by more than 3 levels of 255; and seven other pages (the blog, the
+  articles' list, an article, install, `/try/`, privacy, the 404) in both themes at
+  375 and 1280 px, with the home page below the hero — not one pixel differs from
+  `main`.
+- **Measured at 1104 px**: the panel 522 px wide (504) and 553 tall (525), the copy
+  column 482 (500); the copy 673 px tall (662). Seen only in headless Chromium on
+  Linux and, as the copy's build, in the owner's browser on Windows.
+- **Found, not touched**: below 364 px the home page scrolls sideways, on `main` as
+  on the branch — the gallery's grid has a 340 px minimum column (`.shot-grid`).
+- No Rust touched: 4796 unit tests, 310 `#[ignore]` unchanged; a live run does not
+  apply (static output). `zola check`, `link_check.py`, `doc_index_check.py`,
+  `cyrillic_scan.py`, `site_llms_txt.py --check` and `--self-test` clean.

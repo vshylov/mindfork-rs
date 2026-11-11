@@ -1,6 +1,11 @@
 // Hero
 .hero {
   padding: 68px 0 6px;
+  // The panel's halo and grid are drawn behind it, in the hero's own stacking
+  // context, and reach past the column: what leaves the page sideways is cut.
+  position: relative;
+  isolation: isolate;
+  overflow-x: clip;
 }
 .prompt-line {
   font-size: 15px;
@@ -34,12 +39,43 @@
     animation: none;
   }
 }
+// The headline is its phrases, a line each (index.html) — on a wide single
+// column too, where two of them would fit on one — and its size comes from its
+// own column: a character of this face is 0.6em wide less the tracking, so the
+// column over 0.6em a character of the longest phrase (`--chars`, counted by
+// the template) keeps every phrase on its line at any width, with room for
+// the advances a renderer rounds to whole pixels. A browser without container
+// units keeps the site's h1 size.
+.hero-copy {
+  container-type: inline-size;
+}
 .hero h1 {
-  max-width: 800px;
   margin-top: 0;
+  font-size: clamp(28px, calc(100cqw / (0.6 * var(--chars, 15))), #{$h1-max});
+  span {
+    display: block;
+  }
+  // The two things the assistant has, in the accent.
+  em {
+    font-style: normal;
+    color: var(--accent);
+  }
 }
 .lede {
   font-size: 19px;
+  color: var(--muted);
+  max-width: 690px;
+  margin: 0;
+}
+// The home page's lede is set in two voices: what the assistant keeps, in the
+// text's own colour, then what it runs on, smaller and muted — the panel
+// beside it says that part again.
+.hero .lede {
+  color: var(--fg);
+  margin-bottom: 14px;
+}
+.lede-more {
+  font-size: 15.5px;
   color: var(--muted);
   max-width: 690px;
   margin: 0;
@@ -70,16 +106,38 @@
     filter: brightness(1.08);
   }
 }
+// The hero's own buttons carry a little weight: a lit top edge and a shadow in
+// its colour under the primary one, and both rise a pixel under the pointer.
+.cta-row .btn-primary {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 6px 18px -6px #{rgba(#c25a27, 0.7)};
+}
+@media (prefers-reduced-motion: no-preference) {
+  .cta-row .btn {
+    transition: transform 0.12s ease, border-color 0.12s ease;
+    &:hover {
+      transform: translateY(-1px);
+    }
+  }
+}
+// What to do next, a line each: the demo, the demo in a browser tab, Ollama.
 .demo-hint {
+  list-style: none;
+  max-width: 690px;
+  margin: 22px 0 0;
+  padding: 2px 0 2px 16px;
+  border-left: 2px solid var(--line);
   color: var(--muted);
   font-size: 14.5px;
-  max-width: 690px;
+  li + li {
+    margin-top: 6px;
+  }
 }
 
 // Hero fetch panel — a neofetch-style "at a glance" card that fills the
 // hero's right column on wide screens. Pure HTML/CSS (no JS); the art
 // mirrors the brand icon's topology: accent trunk, two --branch merges.
-// Its top meets the headline's and it runs about as far down as the buttons;
+// Its top meets the headline's and it runs a little past the buttons;
 // centred against the copy it left a void above and below.
 .hero-cols {
   display: grid;
@@ -87,18 +145,55 @@
   gap: 48px;
   align-items: start;
 }
+// Behind the panel: a halo in the emblem's two tones, the accent low on the
+// right and the branch high on the left, and the character grid of a
+// terminal, which fades out before it reaches the copy. Both belong to the
+// panel, so they stay behind it at every width and go when it goes.
+.hero-fetch {
+  position: relative;
+  &::before,
+  &::after {
+    content: "";
+    position: absolute;
+    pointer-events: none;
+  }
+  &::before {
+    inset: -36px -44px -56px -36px;
+    z-index: -1;
+    background: radial-gradient(ellipse 52% 46% at 74% 84%, var(--glow), transparent 72%),
+      radial-gradient(ellipse 46% 42% at 16% 12%, var(--glow-branch), transparent 72%);
+    filter: blur(28px);
+  }
+  &::after {
+    inset: -96px -150px -80px -120px;
+    z-index: -2;
+    background-image: radial-gradient(circle, var(--grid-dot) 1px, transparent 1.4px);
+    background-size: 22px 22px;
+    -webkit-mask-image: radial-gradient(ellipse closest-side, #000 35%, transparent 100%);
+    mask-image: radial-gradient(ellipse closest-side, #000 35%, transparent 100%);
+  }
+  // The panel is a dark terminal in both themes (the owner's choice,
+  // 2026-11-11): on the light page it is the one dark thing, and the eye
+  // goes to it. Its shadow stays the page's.
+  .term {
+    @include dark-term-vars;
+    color: var(--fg);
+    box-shadow: var(--panel-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  }
+}
 .fetch-body {
   display: flex;
   align-items: center;
-  gap: 24px;
+  gap: 22px;
   padding: 26px 24px;
   font-family: var(--font-mono);
 }
 .fetch-art {
   margin: 0;
   // line-height 1: box-drawing glyphs must touch vertically or the
-  // trunk/branches render with gaps between rows.
-  font: 700 24px/1 var(--font-mono);
+  // trunk/branches render with gaps between rows. Twelve rows of 30px: the
+  // emblem stands as tall as the rows beside it.
+  font: 700 30px/1 var(--font-mono);
   color: var(--accent);
   .b {
     color: var(--branch);
@@ -130,14 +225,96 @@
     grid-template-columns: 7ch auto;
     column-gap: 2ch;
   }
+  // The keys in the accent, as neofetch prints them.
   dt {
-    color: var(--muted);
+    color: var(--accent-link);
   }
   dd {
     grid-column: 2;
     margin: 0;
     color: var(--fg);
     white-space: nowrap;
+  }
+  .sep {
+    color: var(--muted);
+    opacity: 0.7;
+  }
+}
+// neofetch's last line, the palette: the text's greys, the branch, the accent.
+.fetch-swatches {
+  display: flex;
+  margin: 14px 0 0;
+  span {
+    width: 26px;
+    height: 14px;
+  }
+  span:nth-child(1) {
+    background: var(--fg-strong);
+  }
+  span:nth-child(2) {
+    background: var(--fg);
+  }
+  span:nth-child(3) {
+    background: var(--muted);
+  }
+  span:nth-child(4) {
+    background: var(--branch);
+  }
+  span:nth-child(5) {
+    background: var(--line);
+  }
+  span:nth-child(6) {
+    background: var(--accent-link);
+  }
+  span:nth-child(7) {
+    background: var(--accent);
+  }
+  span:nth-child(8) {
+    background: color-mix(in srgb, var(--accent) 55%, var(--term-bg));
+  }
+}
+// The panel prints itself once: the trunk grows from the root and the rows
+// arrive in order, a little over a second in all. Nothing moves for a reader
+// who asked for less motion, and with no animation at all the panel is simply
+// there.
+@media (prefers-reduced-motion: no-preference) {
+  .fetch-art {
+    animation: fetch-grow 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+  .fetch-head,
+  .fetch-rule,
+  .fetch-data > div,
+  .fetch-swatches {
+    animation: fetch-row 0.4s ease-out both;
+  }
+  .fetch-rule {
+    animation-delay: 0.04s;
+  }
+  @for $i from 1 through 12 {
+    .fetch-data > div:nth-child(#{$i}) {
+      animation-delay: #{0.08 + $i * 0.045}s;
+    }
+  }
+  .fetch-swatches {
+    animation-delay: 0.72s;
+  }
+}
+@keyframes fetch-grow {
+  from {
+    clip-path: inset(100% 0 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+@keyframes fetch-row {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
   }
 }
 @media (max-width: 1023px) {

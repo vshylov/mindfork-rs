@@ -1376,6 +1376,19 @@ quarter of memory) was kept by halving the size it admits. Measure the peak of a
 "holds it in memory" design on the real binary before writing down its cost.
 — *a big database compacted in memory for its backup*.
 
+**A look approved on one page is two comparisons, not one.** The home page's new
+hero was tried on a copy of the site, where the quickest stylesheet restyled what
+it found: `.lede`, `.btn` and the light theme's `--shadow`. The owner looked at the
+home page and approved it — and the same three are the lede of four other
+templates, the button of `/try/` and the shadow of every screenshot on the site,
+which nobody had looked at. The branch scoped each to the hero, and it took two
+measurements to say so: the hero against the approved picture (no pixel off by
+more than 3 levels of 255), and every other page, with the home page below the
+hero, against `main` (not one). **A shared class is a change to every page that
+uses it: prove the page matches the picture, and that no other page moved.**
+— *website — the hero: a headline in three phrases, a lede in two voices, a dark
+panel*.
+
 ## 4. The recurring defect class: a message must close the door
 
 **Never let a message describe a situation without saying what is and is not possible
