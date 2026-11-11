@@ -6249,3 +6249,17 @@ guard's, the site gate's and the AUR renderer's self-tests clean.
   in 5 s each; with a hash no file has, it passed over all three, exited 1 and left
   nothing behind. `web-demo.yml` runs the release's steps on the fix's pull request
   (lessons §10).
+- **The outage reached the runners while the fix was on its pull request.** At
+  13:42Z the release's jobs still had their package lists — `apt-get download`
+  answered from Azure's mirror in the same second the Launchpad fetch began to hang.
+  By 14:12Z, on the fix's pull request (936), `apt-get update` itself could not
+  resolve `azure.archive.ubuntu.com` — a name in Canonical's zone — and every Linux
+  job that installs a package timed out at its five minutes: the lint job, the Linux
+  tests, the coverage job, `web-demo.yml`. So for the length of the outage no Linux
+  job of this repository can pass, a re-run of the release's failed job would stop
+  one step earlier than it did, and a new tag would lose its Linux build, which is a
+  gate. The fix removes the Launchpad dependency; the archive's is every job's and is
+  not this change's to remove. **0.26.0 waits for Canonical**: then the incomplete
+  draft is deleted and the failed jobs of run 43031427548 are run again — the tag
+  stays where it is — or, if Launchpad is the last to return, the fix is merged and
+  the tag moved to it.
