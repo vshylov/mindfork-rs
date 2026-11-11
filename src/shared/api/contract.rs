@@ -687,10 +687,13 @@ pub trait EngineBackend: Send + Sync {
     /// vLLM/LM Studio user running a vision model.
     ///
     /// [`super::openai::OpenAiClient`] overrides it with llama.cpp's `/props`
-    /// (`modalities.vision`), which is the same fetch `context_budget` already makes; the
-    /// cloud backends answer [`VisionSupport::Supported`] statically, since every
-    /// current-generation model on all four providers takes images and a legacy text-only
-    /// model produces a clear provider error on send. A model-name allowlist is
+    /// (`modalities.vision`), which is the same fetch `context_budget` already makes, and
+    /// then with the model's catalogue entry — OpenRouter's, and DeepSeek's own list,
+    /// which answer both ways; xAI's entry does not say, so Grok stays `Unknown`
+    /// (docs/research/effort-tiers.md §9.4). The OpenAI, Anthropic and Gemini backends
+    /// answer [`VisionSupport::Supported`] statically, since every current-generation
+    /// model on those three takes images and a legacy text-only model produces a clear
+    /// provider error on send. A model-name allowlist is
     /// deliberately not used — it goes stale and then lies, the trap
     /// docs/research/grok-xai-provider.md recorded for reasoning detection.
     async fn vision(&self) -> VisionSupport {

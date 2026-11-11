@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (112)
+## Entries (113)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -124,6 +124,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a tool's picture re-homed on every OpenAI-compatible endpoint (done)
 - Post-M9: thinking off reaches Claude (done)
 - Post-M9: an HTTP client on a system with no certificates (done)
+- Post-M9: the guide counts five clouds, and says how each answers about images (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -7383,3 +7384,31 @@ off.
   `SSL_CERT_FILE=/dev/null mindfork demo` panicked before the fix and draws its first
   frame after it, with the one warning in its log.
 
+### Post-M9: the guide counts five clouds, and says how each answers about images (done)
+
+- **Found while fixing the home page's count** (`fix/site-glance-panel`, the owner's
+  word to fix this in a PR of its own): two passages of `docs/install.md` still spoke
+  of four clouds, and one of them was wrong for two of the five, not only in its number.
+- **Whether an image is accepted** (§3, "How the app knows whether images are
+  accepted") said the four cloud providers answer "supported" outright. Three do —
+  OpenAI, Anthropic and Gemini answer statically. **Grok never did**: xAI is served by
+  `OpenAiClient`, whose `vision()` reads llama.cpp's `/props` and then the model's
+  catalogue entry, and the entry it reads from xAI (`/v1/models/{name}`) carries no
+  modalities, so the answer is `Unknown` — the attach allowed, with the one-time note
+  (recorded in docs/research/effort-tiers.md §9.4, "found beside it"). **DeepSeek answers
+  per model** from its own list: `deepseek-flash` yes, `deepseek-v4-pro` no, and there
+  the attach is refused with the note that names a model or provider choice. The
+  passage now says all three ways, and "any cloud" in its list of servers that report
+  no `modalities` became "a cloud's own endpoint under `external`", which is what it meant.
+- **The OpenRouter section** said the gateway sits on Assistant, Impersonation and
+  Embeddings "next to `managed`, `external` and the four clouds". The three tabs take
+  one list, `ServerMode::ALL` — eight modes, the five clouds among them — so the count
+  is five, with the reminder from a few paragraphs up that Anthropic, xAI and DeepSeek
+  offer no embeddings. Speech's list (`TtsMode::ALL`: OpenAI, Gemini, the gateway,
+  `external`) was right as it was.
+- **The trait's doc comment** (`EngineBackend::vision`, `shared/api/contract.rs`) said
+  the same thing as the guide — "the cloud backends answer `Supported` statically …
+  on all four providers" — and now says what the code does: the static answer from the
+  three, the catalogue for DeepSeek and the gateway, `Unknown` for Grok. No code changed.
+- Not touched: the release posts and the articles whose measurements were made on four
+  clouds, which keep their number; `CHANGELOG.md`, since nothing the app does changed.

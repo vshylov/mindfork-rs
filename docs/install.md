@@ -966,13 +966,18 @@ matching model names: `llama-server` reports `modalities` on its `/props` endpoi
 (`{"vision": true, "video": true, "audio": false}`) — the same request that already
 supplies the context window. `vision: true` → images are accepted, `false` → the
 attach is refused with a message pointing at the `--mmproj` field. A server that
-reports no `modalities` at all (vLLM, LM Studio, a proxy, any cloud) is treated as
-"cannot say" and the attach is allowed: a send-time provider error is a better
-outcome than refusing a setup that works. The four cloud providers answer
-"supported" outright — every current-generation model on them takes images. In
-the `openrouter` mode the answer is the model's own entry in the gateway's
-catalogue, in both directions: an entry that lists image input attaches
-silently, one that does not refuses the attach.
+reports no `modalities` at all (vLLM, LM Studio, a proxy, a cloud's own endpoint
+under `external`) is treated as "cannot say" and the attach is allowed: a
+send-time provider error is a better outcome than refusing a setup that works.
+The five cloud modes answer in three ways. OpenAI, Anthropic and Gemini say
+"supported" outright — every current-generation model on them takes images.
+Grok is a "cannot say": the entry the app reads for a model from xAI
+(`/v1/models/{name}`) does not list what it takes, and every language model xAI
+lists today takes images. DeepSeek answers per model, from its own model list:
+`deepseek-flash` takes images, `deepseek-v4-pro` does not, and there the attach
+is refused. In the `openrouter` mode the answer is the model's own entry in the
+gateway's catalogue, in both directions: an entry that lists image input
+attaches silently, one that does not refuses the attach.
 
 Example of a manual launch (external):
 
@@ -1171,7 +1176,8 @@ Two differences from a cloud key:
 OpenRouter is one account and one key in front of several hundred models from
 many vendors. It is a mode of its own on all four tabs of the section: on
 **Assistant**, **Impersonation** and **Embeddings** next to `managed`,
-`external` and the four clouds, and on **Speech** next to `openai`, `gemini` and
+`external` and the five clouds (of which Anthropic, xAI and DeepSeek offer no
+embeddings, above), and on **Speech** next to `openai`, `gemini` and
 `external` (§4.3) — so a local server and the gateway each keep their settings
 and switching between them retypes nothing. The video tool reaches it too, by a
 **Provider** row of its own in Settings → Tools (§4.4), so the one key serves
