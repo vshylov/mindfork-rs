@@ -11,7 +11,7 @@ const $ = (id) => document.getElementById(id);
 const startButton = $("start-button");
 const againButton = $("again-button");
 const stage = $("stage");
-const status = $("status");
+const statusLine = $("status");
 const keys = $("keys");
 const loading = $("loading");
 const loadingText = $("loading-text");
@@ -226,7 +226,7 @@ async function start() {
     $("start").hidden = true;
     startButton.disabled = true;
     againButton.disabled = true;
-    status.textContent = "";
+    statusLine.textContent = "";
     keys.hidden = true;
 
     await loadFaces();
@@ -330,7 +330,7 @@ function onPrimed(session) {
     // And now the window's own grid: the application redraws for it.
     applyGrid();
     loading.hidden = true;
-    status.textContent = "Running. Ready " + ((stats.firstFrameAt - stats.clickedAt) / 1000).toFixed(1) + " s after the click.";
+    statusLine.textContent = "Running. Ready " + ((stats.firstFrameAt - stats.clickedAt) / 1000).toFixed(1) + " s after the click.";
     keys.hidden = false;
     term.focus();
 }
@@ -351,7 +351,7 @@ async function end(done) {
     terminalBox.textContent = "";
     ended.hidden = false;
     againButton.disabled = false;
-    status.textContent = "";
+    statusLine.textContent = "";
     againButton.focus();
 }
 
@@ -376,7 +376,13 @@ againButton.addEventListener("click", () => {
     remember(true);
     location.reload();
 });
-if (remember(false)) start().catch(failed);
+if (remember(false)) {
+    try {
+        await start();
+    } catch (error) {
+        failed(error);
+    }
+}
 
 // Sets, or reads and clears, the note that the next page starts by itself.
 function remember(set) {

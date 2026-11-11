@@ -55,7 +55,10 @@ make_sysroot() {
         local pin deb sum
         for pin in "${alsa_debs[@]}"; do
             read -r deb sum <<<"$pin"
-            curl -sfL --retry 3 -o "$deb" "https://launchpad.net/ubuntu/+archive/primary/+files/$deb"
+            # Launchpad answers with a redirect to its file store: HTTPS there
+            # too, or nothing is fetched.
+            curl -sfL --proto '=https' --proto-redir '=https' --tlsv1.2 --retry 3 -o "$deb" \
+                "https://launchpad.net/ubuntu/+archive/primary/+files/$deb"
             echo "$sum  $deb" | sha256sum --check --quiet -
         done
         for deb in *.deb; do dpkg-deb -x "$deb" ..; done

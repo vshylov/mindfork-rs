@@ -51,7 +51,8 @@ async function save(primer) {
 let failed = false;
 try {
     const primer = await firstFrame();
-    await (process.env.MEASURE === "1" ? pressBeats(g) : save(primer));
+    if (process.env.MEASURE === "1") await pressBeats(g);
+    else await save(primer);
 } catch (error) {
     console.error("FAILED:", error.message);
     failed = true;

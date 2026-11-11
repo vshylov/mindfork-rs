@@ -162,7 +162,8 @@ def deb_fields(control: str) -> dict[str, str]:
     """A distribution package's name, version and source out of its control
     fields. ``Source`` is absent where it is the package's own name, and carries
     a version in brackets where the source's differs from the package's."""
-    fields = dict(line.split(": ", 1) for line in control.splitlines() if ": " in line)
+    pairs = (line.split(": ", 1) for line in control.splitlines() if ": " in line)
+    fields = {key: value for key, value in pairs}
     package, version = fields["Package"], fields["Version"]
     name, _, rest = fields.get("Source", package).partition(" ")
     return {"package": package, "version": version, "source": name, "source_version": rest.strip("()") or version}
@@ -208,10 +209,10 @@ def commit() -> str:
 # --- the pieces ------------------------------------------------------------
 
 
-def repository_url(repository: object) -> str:
+def repository_url(repository: dict[str, str] | str) -> str:
     """Where an npm package says its code lives, as a link: the field is a URL,
     an object holding one, or the ``github:owner/name`` shorthand."""
-    url = repository["url"] if isinstance(repository, dict) else str(repository)
+    url = repository if isinstance(repository, str) else repository["url"]
     url = url.removeprefix("git+").removesuffix(".git")
     return url.replace("github:", "https://github.com/", 1) if url.startswith("github:") else url
 

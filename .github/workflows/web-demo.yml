@@ -29,7 +29,7 @@ jobs:
   build:
     name: Demo for the browser (the release's steps)
     runs-on: ubuntu-24.04
-    # release.yml's budget for the same steps.
+    # Measured: 10.5 min. release.yml's budget for the same steps.
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
