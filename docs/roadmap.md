@@ -631,11 +631,11 @@ effort tiers and Fabula — have all closed
   as one asset, `mindfork-webdemo.tar` — its steps tried on pull requests by
   `web-demo.yml`; rehearsed on `v0.25.0-rc1`, **GO**. Stage 3 is built: the
   page at `/try/` in the site's own templates and styles, the deploy taking the
-  asset from the newest release that carries one. **The demo goes live with the
-  first release published after stage 3 merges** (the owner's decision); until
-  then `/try/` says so. The owner's run in Chrome is done and what it found is
-  fixed. Left: Firefox and Safari on the site's page, the application's light
-  theme in the terminal, a Russian page
+  asset from the newest release that carries one. **Live since 0.26.0**
+  (2026-11-11): [mindfork.io/try/](https://mindfork.io/try/) runs that release's
+  demo. The owner's run in Chrome is done and what it found is fixed. Left:
+  Firefox and Safari on the site's page, the application's light theme in the
+  terminal, a Russian page
   ([web-demo.md §12–§14](research/web-demo.md)).
 - **A Russian version of the site** — **deferred**, on F4's own terms
   ([mindfork-io-website.md §8](research/mindfork-io-website.md), S4).

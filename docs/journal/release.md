@@ -6303,3 +6303,35 @@ guard's, the site gate's and the AUR renderer's self-tests clean.
     and served, **Start** pressed — the same, at 120 × 45.
   - The same road was walked first with the asset `web-demo.yml` built on the fix's
     pull request, with the same result.
+- **Published, and the site took the demo.** The owner merged the fix (936,
+  `bae0646a`, 18:55:27Z) and published the draft at 18:56:41Z: not a prerelease,
+  sixteen assets, `releases/latest` resolving to `v0.26.0`.
+  - **crates.io**: `crates-io.yml` (run 43082528192) green in 2 min 51 s; the
+    registry's newest and newest stable version is 0.26.0.
+  - **The AUR**: `aur.yml` (run 43082528170) green in 1 min 15 s; the package it
+    built on Arch says `installed: mindfork 0.26.0`.
+  - **The site**: `site.yml` ran when `crates.io` completed (run 43082969010,
+    45 seconds). The gate found the release; the deploy's two fetches — the
+    animation, and **the web demo, for the first time from a published release** —
+    its build, the five passes of the sync and the invalidation were all green.
+    That is the road no check before the publication could walk: the job's own
+    token, the list of published releases, the attestation verified there.
+  - **From outside**, a minute later:
+    - the home page says `"softwareVersion": "0.26.0"`, plays the release's
+      animation — `mindfork-demo-dark-en.webp`, its light twin and the GIF the
+      README shows are the release's files byte for byte, so the bars are whole
+      there now — and carries the link "see that same demo in this browser";
+    - the post answers 200 at `/blog/mindfork-0-26-0/` and is in `/llms.txt` and
+      the sitemap; the privacy page is effective 2026-11-11;
+    - `/try/` holds the demo, its files under `/webdemo/v0.26.0/` with
+      `Cache-Control: public, max-age=31536000, immutable`, its manifest saying
+      format 2, application 0.26.0, commit `6d448d97`;
+    - **in a browser** (headless Chromium, the WebGL renderer): **Start**, the
+      first frame 2.4 s after the click with 24.73 MB downloaded, a grid of
+      115 × 41, `F1` opening "About · mindfork v0.26.0", a message sent; 22
+      requests, every one to `mindfork.io`; no WebSocket; no cookie, nothing in
+      local or session storage, no IndexedDB database, no cache, no service worker
+      — what the privacy policy's new paragraph says, measured on the live page.
+  - Not seen: any browser but Chromium on Linux; the owner's screen.
+- **The web demo track is closed by this release**: the page that said the demo was
+  on its way now runs it ([web-demo.md §14](../research/web-demo.md)).

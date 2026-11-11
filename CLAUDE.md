@@ -202,7 +202,7 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
-- **The demo in a browser tab — three stages** (2026-11-11): the release's binary built
+- **The demo in a browser tab — live since 0.26.0** (2026-11-11): the release's binary built
   for 32-bit x86 and saved, running `mindfork demo`, in the v86 emulator a page restores
   it into; every piece pinned, the redistributed ones in a manifest read from the files;
   `release.yml` packs `mindfork-webdemo.tar` (not a gate; `web-demo.yml` tries it on pull
