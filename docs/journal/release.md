@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (89)
+## Entries (90)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -101,6 +101,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Release 0.25.0 (prepared)
 - Post-M9: the demo's profile is in the language of its content (done)
 - Post-M9: block elements drawn as parts of their cells — the stills and the animation without lines in their bars (done)
+- Release 0.26.0 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -6084,3 +6085,67 @@ guard's, the site gate's and the AUR renderer's self-tests clean.
   whose `demo-reel` job draws it.
 - **Tests**: no Rust changed — the unit tests and the dumps' drift gate are where they
   were. A pure tooling change: no live run needed.
+
+### Release 0.26.0 (prepared)
+
+- **A release PR** per [AGENTS.md §6](../../AGENTS.md), branch `chore/release-0.26.0`:
+  - `Cargo.toml` `0.25.0 → 0.26.0` (+ one line of `Cargo.lock`), and the site's
+    `app_version`;
+  - `CHANGELOG.md`: `[Unreleased]` → `[0.26.0] — 2026-11-11` under a lead paragraph,
+    "The interface in a browser tab"; the `/try/` item says this is the release that
+    carries the demo, where it said "the first release that carries it"; a **Data**
+    section, measured (below); a fresh `[Unreleased]`, and the comparison links;
+  - CLAUDE.md's status heading;
+  - the release's post, and `/llms.txt` regenerated from it.
+
+  Since `v0.25.0`, the pull requests with behaviour:
+  - the web demo track: its research and probe (926), the pipeline — the guest from
+    pinned images, the manifest, the asset, the release's `web-demo` job (930) — and
+    the page at `/try/` with the deploy that brings the asset (933)
+    ([docs/research/web-demo.md](../research/web-demo.md),
+    [website.md](website.md));
+  - 928, the demo's profile in the language of its content;
+  - 929, an HTTP client that builds on a system with no certificates — found by the
+    web demo's guest, which has none;
+  - 934, block elements drawn as parts of their cells: the stills now, the animation
+    with this release.
+
+  The rest is 0.25.0's published record (925).
+- **A MINOR**: a track, §6's rule for `0.x`. **No schema constant moved** — the manifest
+  of a backup this build made of an imported root says `settings 7, profiles 1,
+  chat 8, db 1, story 0`, the numbers 0.25.0's entry records.
+- **The `Data` rubric, by measurement.** Three commits touch `src/` since `v0.25.0`:
+  the demo fixture's `p.language = Lang::En` (an existing value, in data `mindfork
+  demo` seeds in a temporary folder), and `shared/net.rs` with its callers. None is
+  under `src/entities` or `src/shared/storage`, and `stored_enums_tests.rs` is as
+  tagged: no new value of a stored type, so there was no file for the previous
+  release's binary to be run on. The section says the one thing: no data upgrade.
+- **No rehearsal now — one was run for this pipeline.** `release.yml` and
+  `packaging/` are byte for byte what `v0.25.0-rc1` rehearsed (GO,
+  [web-demo.md §13.6](../research/web-demo.md)). What the workflow *runs* changed
+  after it, and each ran where it changed: `tools/web_demo/**` through
+  `web-demo.yml` on 933's head (the release's own steps, 12 min, green);
+  `tools/screenshots.py` drew the three reels here, and its self-test passed on the
+  release's Python 3.13 with the pinned wheels (`media-tools.yml`).
+  `release_guard.py --tag v0.26.0` accepts the tag and cuts 40 lines of notes.
+- **What runs for the first time with this release: the site taking a web demo from a
+  published release.** `tools/site_webdemo.py` lists the releases, downloads the
+  asset, verifies its attestation under the deploy job's own token, and places it.
+  Until now that road met a real release twice — none with the asset, and rc1's,
+  passed over as format 1. A refusal there fails the deploy, and the post waits with
+  it: nothing half-published, but nothing published either. So the draft's asset is to
+  be taken down the same road by hand before the publication — downloaded, its
+  attestation verified, placed, the site built around it — and the deploy watched
+  after.
+- **The site, built here** (Zola 0.23.6, with the local build's demo): 48 pages, the
+  post at `/blog/mindfork-0-26-0/` linking `/try/`, `"softwareVersion": "0.26.0"` on
+  the home and install pages, the post in the sitemap and the feed.
+- **The privacy policy is not touched**, and that is a choice to confirm: §9 says the
+  site is static, with no analytics, cookies, forms or third-party embeds, and all of
+  it still holds — `/try/` loads its files from the site's own origin, its script
+  uses no storage, and the emulated machine has no network device. But §9 does not
+  say that one page now runs a program in the visitor's tab. Left to the owner.
+- **Tests:** 4796 unit tests green, 310 `#[ignore]` (Linux) — unchanged; the release
+  adds no code. `cargo fmt --check` and `clippy -D warnings` clean. Not run here:
+  `cargo deny check`, not installed on the droplet — the audit runs on this PR, which
+  touches `Cargo.toml` and `Cargo.lock`.

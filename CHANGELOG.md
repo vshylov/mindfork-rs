@@ -14,6 +14,15 @@ split by subsystem.
 
 ## [Unreleased]
 
+## [0.26.0] — 2026-11-11
+
+**The interface in a browser tab.** [mindfork.io/try/](https://mindfork.io/try/) runs
+`mindfork demo` — the program itself, in an emulated PC, with scripted replies and no
+model behind it — so the interface can be tried with nothing installed; the same demo
+is one of this release's files. The app now starts on a system with no certificate
+bundle, and the screenshots and the animation lost the lines across their bars. Nothing
+in your data moves to a new format.
+
 ### Added
 
 - **A release carries a demo for the browser.** `mindfork-webdemo.tar` is that
@@ -24,8 +33,8 @@ split by subsystem.
 - **The interface in a browser tab: [mindfork.io/try/](https://mindfork.io/try/).**
   The site runs that demo — the program itself in an emulated PC, with scripted
   replies and no model behind it; nothing to install, nothing you type leaving the
-  tab. It appears with the first release that carries the demo; until then the
-  page says it is on its way.
+  tab. This is the first release that carries the demo: the page shows it once the
+  release is published, and said it was on its way until then.
 
 ### Fixed
 
@@ -41,6 +50,12 @@ split by subsystem.
   with a panic about a TLS client. It now starts: a local server over plain HTTP
   works as before, and an HTTPS request fails when it is made, with a certificate
   error.
+
+### Data
+
+- **No data upgrade.** No stored file changes shape: the settings stay at schema 7 and
+  the chats at 8, nothing is migrated at the first start, and going back to 0.25.0
+  needs no backup restored.
 
 ## [0.25.0] — 2026-11-09
 
@@ -4023,7 +4038,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.25.0...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.26.0...HEAD
+[0.26.0]: https://github.com/vshylov/mindfork-rs/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/vshylov/mindfork-rs/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/vshylov/mindfork-rs/compare/v0.23.1...v0.24.0
 [0.23.1]: https://github.com/vshylov/mindfork-rs/compare/v0.23.0...v0.23.1
