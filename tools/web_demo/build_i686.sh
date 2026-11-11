@@ -54,20 +54,20 @@ alsa_sources=(
 # answers with something else (a moved page, a newer build under the old name)
 # is passed over like one that is down.
 fetch_pinned() { # file name, its sha256
-    local source
+    local name="$1" sha256="$2" source
     for source in "${alsa_sources[@]}"; do
         # HTTPS at every hop: Launchpad answers with a redirect to its file
         # store, and a mirror may answer with one to another.
         if curl -sfL --proto '=https' --proto-redir '=https' --tlsv1.2 \
-            --connect-timeout 15 --max-time 60 -o "$1" "$source/$1" &&
-            echo "$2  $1" | sha256sum --check --quiet - >/dev/null 2>&1; then
-            echo "$1: from ${source#https://}"
+            --connect-timeout 15 --max-time 60 -o "$name" "$source/$name" &&
+            echo "$sha256  $name" | sha256sum --check --quiet - >/dev/null 2>&1; then
+            echo "$name: from ${source#https://}"
             return 0
         fi
-        echo "$1: not from ${source#https://}" >&2
-        rm -f -- "$1"
+        echo "$name: not from ${source#https://}" >&2
+        rm -f -- "$name"
     done
-    echo "error: $1 is at none of the sources" >&2
+    echo "error: $name is at none of the sources" >&2
     return 1
 }
 
