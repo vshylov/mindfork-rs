@@ -6263,3 +6263,42 @@ guard's, the site gate's and the AUR renderer's self-tests clean.
   draft is deleted and the failed jobs of run 43031427548 are run again — the tag
   stays where it is — or, if Launchpad is the last to return, the fix is merged and
   the tag moved to it.
+- **Canonical came back in pieces, and the tag did not have to move.** The owner's
+  word was to delete the incomplete draft and run the failed jobs again; the draft
+  went at 14:33Z, the tag stayed, and the jobs waited.
+  - The names resolved again by 17:27Z and the archive answered; CI's Linux jobs
+    passed on the fix's pull request from 17:17Z. Launchpad itself still hung until
+    about 17:48Z — which is the case the re-run could not survive, since the tag's
+    script has Launchpad alone and no time limit, and a second failure would have
+    made a second draft without the demo. So the release's jobs were not re-run
+    while it hung; the fix's own `web-demo.yml` was, and passed in 13 min with both
+    packages *"not from launchpad.net"*, *"from mirrors.edge.kernel.org"* — the
+    release's steps, whole, with Launchpad down.
+  - Once Launchpad had served both packages with their hashes seven times running,
+    `gh run rerun 43031427548 --failed` (17:49:37Z): the `web-demo` job in
+    12 min 21 s, the release job after it in 27 s. One draft, **sixteen assets**.
+- **The second draft, checked.**
+  - All fifteen files match `sha256sums.txt`; the notes are the first draft's byte
+    for byte. Twelve of the first draft's fourteen files are the same bytes. The
+    three archives are not — the release job packs them, and their members are
+    dated 18:02 where they were 14:00 — and unpacked they are the first draft's file
+    for file, 43 files each, the Linux binary the same hash. So what was checked in
+    the first draft stands.
+  - Attestations verify for the demo, the three archives, the installer and
+    `install.sh`; the demo's says `release.yml@refs/tags/v0.26.0`, commit
+    `6d448d97`.
+  - **The demo down the site's own road, by hand.** `site_webdemo.fetched()` — the
+    deploy's function, which downloads the asset and verifies its attestation —
+    took it from the draft; `place()` put it under `webdemo/v0.26.0/`: format 2,
+    application 0.26.0, the tag's commit, 12 pieces, 33 files, 24.73 MB on a press
+    of Start. The site built from `main` around it (Zola 0.23.6): `/try/` with the
+    demo, the home page's link, the post. In headless Chromium: the first frame
+    1.07 s after the click, the WebGL renderer, a grid of 115 × 41, `F1` opening
+    "About · mindfork v0.26.0", a message sent, 22 requests all to the page's own
+    origin, 11 pieces in the licence list, no page error. What this does not
+    exercise is the deploy job's own token and the listing of published releases:
+    a draft is not listed.
+  - **The archive by itself**, as §6 step 5 asks: unpacked into an empty directory
+    and served, **Start** pressed — the same, at 120 × 45.
+  - The same road was walked first with the asset `web-demo.yml` built on the fix's
+    pull request, with the same result.
