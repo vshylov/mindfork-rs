@@ -14,6 +14,11 @@
 
 .prose {
   font-size: 17px;
+  // A word with nowhere to break — a path, an address, a setting's dotted
+  // name in `code` — breaks where the line ends rather than widening the page
+  // on a phone. A word that fits is never broken, and a table's columns are
+  // measured as before: this value does not count toward their minimum width.
+  overflow-wrap: break-word;
 
   p,
   li {
@@ -61,6 +66,12 @@
     border-collapse: collapse;
     width: 100%;
     font-size: 15px;
+  }
+  // A table wider than the column scrolls inside its own box, never the page
+  // (the `scroll_tables` component puts every table of a page in one). One
+  // that fits is drawn as it was.
+  .table-scroll {
+    overflow-x: auto;
   }
   th,
   td {

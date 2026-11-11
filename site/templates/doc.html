@@ -26,7 +26,7 @@
   <div class="wrap narrow">
     <h1 class="post-h1">{{ page.title }}</h1>
     <div class="prose">
-      {{ page.content | safe }}
+      {% <scroll_tables> %}{{ page.content | safe }}{% </scroll_tables> %}
     </div>
   </div>
 </article>
