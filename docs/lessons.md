@@ -274,6 +274,18 @@ crate's source for `cfg(feature = "…")` and `cfg(not(feature = "…"))` on the
 the project actually calls.
 — *a fetched page is read in its own encoding*.
 
+**Before a browser check, confirm the server answering is yours.** `python3 -m
+http.server <port> &` on a port another process holds prints `Address already in use`
+to the log nobody reads and exits, and the browser keeps getting answers from the
+process that holds it. The release 0.26.1 draft's web demo, checked that way on port
+8765, said `mindfork v0.25.0` and a build date two days old: a preview server left
+running since 2026-11-10 was serving the repository's own old build from
+`target/web-demo/site`, while the draft's state held 0.26.1. Time went into an
+emulator that was not at fault. Pick a port `ss -ltn` shows free, and before the browser
+starts, `curl` a file only the thing under test has — the asset's `manifest.json` names
+its application and commit.
+— *release 0.26.1, the draft*.
+
 ## 2. Testing discipline
 
 **Mutation-test every load-bearing line, and read a surviving mutation twice.** A
