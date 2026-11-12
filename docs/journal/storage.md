@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (36)
+## Entries (37)
 
 - Post-M9: persisting the input-box draft in the chat file (done)
 - Post-M9: persisting deleted exchanges in the chat file (`Ctrl+E`/`Ctrl+R`) (done)
@@ -48,6 +48,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a big database's restore without a needless VACUUM; optimized debug builds (done)
 - Post-M9: a big database compacted in memory for its backup (done)
 - Post-M9: a big entry compressed on many threads, its AE-2 written here (done)
+- Post-M9: a cargo install keeps its data in the user folder (done)
 
 ### Post-M9: persisting the input-box draft in the chat file (done)
 - **Unsaved input-box text is stored on the chat and restored on
@@ -2033,4 +2034,65 @@ the owner's decision of 2026-11-09; the research's last stage.
   never chunking fails the pool test and the predicate's.
 
 **Gates**: 4790 unit tests green, 310 `#[ignore]` (Linux); clippy `-D warnings`, fmt,
+`cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.
+
+### Post-M9: a cargo install keeps its data in the user folder (done)
+- **The report** (the owner, 2026-11-12, Windows): `cargo install mindfork` kept the
+  data in `C:\Users\…\.cargo\bin\data`, among the toolchain's executables, and the
+  About tab said *Data (portable)*. The default layout is portable and `cargo install`
+  copies only the executable, so no `defaults.json` can arrive with it; since 0.11
+  install.md and the site had told the reader to write one by hand. `cargo uninstall`
+  then leaves the folder behind in `~/.cargo/bin`.
+- **How a cargo install is recognised.** cargo keeps a record in the install root,
+  beside `bin/`: `.crates2.json`, `{"installs":{"<pkg> <ver> (<source>)":{"bins":[…],…}}}`,
+  for crates.io, `--git`, `--path` and `--root` alike (cargo-binstall writes it too).
+  Measured with cargo 1.96 by a scratch `cargo install --path . --root`. The names carry
+  the platform's suffix — cargo's `exe_names` appends `EXE_SUFFIX` and `uninstall`
+  matches with it (read in `src/ops/common_for_install_and_uninstall.rs`) — so on
+  Windows the record lists `mindfork.exe`; Windows compares without case.
+- **`Defaults::for_binary`** (`shared/paths.rs`), the order: a marker beside the binary
+  decides whenever there is one, an empty one included; else a `data/` beside the binary
+  → portable; else the record lists this binary and it is in `<root>/bin` → `system`;
+  else portable. Anything unexpected — no record, an unreadable or unparsable one, the
+  binary not listed (an archive unpacked into `~/.cargo/bin` by hand), not in `bin/` —
+  answers portable, which is what every earlier version did. `exe_location` now returns
+  the real file's name with its directory; the record is read only when no marker and no
+  `data/` are there, so the `--help` peek still touches nothing.
+- **Rejected: deciding at build time.** cargo tells a build script nothing about being
+  run by `cargo install`. A crates.io build could be told by its manifest lying under
+  `registry/src`, which misses `--git` and `--path`; the temporary target directory is
+  not a contract.
+- **The fork — the owner's decision (2026-11-12): an existing `data/` beside the binary
+  stays in use**, so that the change breaks no install. Every cargo install up to
+  0.26.0 made one, and a start that looked elsewhere would open an empty app over the
+  user's chats. Moving it at the first start was the other option and was rejected: a
+  `llama setup --set-binary` path in the settings points into it, a rename fails across
+  volumes, and it must not run beside another instance. Anything at `<exe_dir>/data`
+  counts, and so does a path that cannot be checked (`try_exists` failing). install.md §1
+  says how to move it by hand, with the commands for the three systems.
+- **Unchanged**: a dev build (`target/debug/` is in no record), the portable archives,
+  the packages and the installer (they write a marker), an explicit `{"mode":"portable"}`
+  — the way to keep a cargo install's data beside it.
+- **Docs**: install.md §1 and §2.1, spec §5.2 and §12.1, architecture §7, CHANGELOG.
+  **The site's install page waits for the release**: it describes the released version
+  (0.18.1's rule), and its *From crates.io* paragraph — write `defaults.json` by hand —
+  changes in the release PR. The README says "beside the binary for the portable
+  build", which stays true.
+- **Live — GO** (Linux, the branch installed by `cargo install --locked --path . --debug
+  --root <scratch>`, `XDG_DATA_HOME` in the scratch directory; `mindfork stats` prints the
+  data root and creates nothing): a fresh install → `$XDG_DATA_HOME/mindfork-rs`, and
+  `bin/` still holds only the binary; a `data/` made beside it → that `data/`; a
+  `{"mode":"portable"}` marker → `bin/data`; the record moved away → `bin/data`; back →
+  the OS folder; started through a symlink to the installed binary → the OS folder. The
+  owner's Windows is the one platform the droplet cannot run: the suffix and the case
+  are covered by reading cargo's source and by a test, not by a Windows install.
+- **Tests** (+7): a binary the record lists → `system`, language still the locale's;
+  with a `data/` beside it → portable; a marker decides over the record, an empty one
+  too; a record that lists another binary, one that does not parse, a binary outside
+  `bin/` → portable; a name differing only in case matches on Windows only. The marker
+  tests now go through `for_binary`, and the symlink test checks the real file's name.
+  **Mutation-tested**: without the `data/` guard, and without the `bin/` check, one test
+  each fails.
+
+**Gates**: 4803 unit tests green, 310 `#[ignore]` (Linux); clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.

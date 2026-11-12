@@ -14,6 +14,18 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Changed
+
+- **`cargo install mindfork` keeps the data in your user folder.** A fresh cargo
+  install used to make its data folder beside the binary, in `~/.cargo/bin/data`, among
+  the toolchain's programs, where `cargo uninstall` left it behind. It now uses the
+  same folder as the packages and the installer: `%APPDATA%\mindfork-rs\data` on
+  Windows, `~/.local/share/mindfork-rs` on Linux, `~/Library/Application
+  Support/mindfork-rs` on a Mac. **A data folder already beside the binary stays in
+  use** — nothing moves by itself; to move it, close mindfork and move the folder
+  there ([install.md](docs/install.md) §1). A `defaults.json` beside the binary still
+  decides, and `{"mode":"portable"}` in it keeps the data beside the binary.
+
 ## [0.26.0] — 2026-11-11
 
 **The interface in a browser tab.** [mindfork.io/try/](https://mindfork.io/try/) runs
