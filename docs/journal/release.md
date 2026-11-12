@@ -6412,3 +6412,62 @@ guard's, the site gate's and the AUR renderer's self-tests clean.
   the post heads the blog's index, its link to `install/#from-crates-io` lands on the
   section's anchor, and the home page's and install page's structured data say
   `0.26.1`.
+- **The draft, checked before anyone else could see it** (§6 step 5).
+  - The owner merged 944 and set `v0.26.1` on the merge commit `839d2f7d`, which was
+    `origin/main`.
+  - `release.yml` (run 43310776799) was green in all nine jobs in **18 min 04 s**
+    (21:29:40 → 21:47:44Z). Windows took the longest at 16 min 25 s, then the demo for
+    the browser 12 min 39 s, Linux 11 min 57 s, macOS 7 min 38 s and the animation
+    3 min 22 s. **Both non-gate jobs succeeded**, so nothing is missing from the draft.
+  - It left a draft that was not a prerelease, with sixteen assets — 0.26.0's set. All
+    fifteen files listed in `sha256sums.txt` match it; the notes are the `[0.26.1]`
+    section line for line (32 lines), with the workflow's footer below.
+  - **`install.sh` and the six animation files are 0.26.0's byte for byte** — nothing
+    the reel shows moved.
+  - **The archives.** Windows: 48 entries, macOS: 49, Linux: 49 — each 0.26.0's list of
+    names; `PRIVACY.md` effective 2026-11-12 in all three. The Linux `mindfork` says
+    `mindfork 0.26.1`; `mindfork.exe` holds the string `0.26.1` and no `0.26.0` (not
+    run: no Windows here); the macOS `mindfork` is a 64-bit Mach-O for arm64, mode 0755
+    (not run). The deb, rpm and pkg.tar.zst say `0.26.1-1`.
+  - **Attestations** verify for the three archives, the installer, `install.sh` and
+    `mindfork-webdemo.tar`; a scratch file exits 1.
+  - **The release's subject on the released binary**: the Linux archive's `mindfork`
+    in a scratch install root holding cargo's record, `XDG_DATA_HOME` in the scratch
+    directory, `stats` reading the root — fresh → `$XDG_DATA_HOME/mindfork-rs`; a `data/`
+    beside it → that `data/`; the archive as unpacked, in no record → its own `data/`.
+  - **The demo for the browser**: its manifest says format 2, application 0.26.1, commit
+    `839d2f7d`. Served on a free port and **Start** pressed in headless Chromium: the
+    first frame 0.49 s after the click, the WebGL renderer, 120 × 45, 24.74 MB
+    downloaded (the job said 24.7 MB); `F1` → "About · mindfork v0.26.1", the About
+    tab's version 0.26.1 and build date 2026-11-12; a message sent with a person's
+    pauses got the scripted reply; 18 requests, all to the page's own origin; no page
+    error. Typed with no pause, `Enter` arrived inside the same burst and was a line
+    break — the paste rule (`PASTE_GAP`, 20 ms), not a defect.
+  - **A false alarm on the way, and its lesson** (docs/lessons.md §1): the first
+    browser runs went to port 8765, where a preview server left since 2026-11-10 holds
+    the repository's old `target/web-demo/site`; the new server's bind failed into a log,
+    and the old build answered — `v0.25.0`, built 2026-11-10, for the 0.26.0 asset too.
+    The draft's state, decompressed, names 0.26.1 only; the native binary's `demo` in a
+    pty at 120 × 45 matched the web screen in every row but the version. Re-run on port
+    8790 with the served `manifest.json` checked first: the results above.
+  - Not checked: the TUI on a copy of real data (no real data here), the Windows and
+    macOS binaries run.
+- **Published, and what followed** (the owner, 22:22:51Z).
+  - `crates-io.yml` (run 43319348401) published the crate in 3 min 01 s: crates.io's
+    newest version is 0.26.1.
+  - `aur.yml` (run 43319348356) built, installed and ran `mindfork-rs-bin` 0.26.1 on
+    Arch and stopped before the push, `AUR_SSH_PRIVATE_KEY` not being set — as with
+    0.26.0.
+  - `site.yml` ran from `crates-io.yml`'s completion (run 43319837194, 22:25:58Z): the
+    gate saw the release out and the deploy went, 3 min 46 s after the publication.
+    Measured on mindfork.io: the post answers 200 and heads the blog, and is in
+    `/llms.txt` and the sitemap; the home and install pages say `"softwareVersion":
+    "0.26.1"`; the install page carries the new *From crates.io* paragraph; the privacy
+    page is effective 2026-11-12 with the `cargo install` sentence; `/try/` takes its
+    files from `/webdemo/v0.26.1/` (`Cache-Control: public, max-age=31536000,
+    immutable`, the state the draft's size to the byte, the manifest naming
+    `839d2f7d`). Driven in headless Chromium: 115 × 41 in the site's column, the first
+    frame 2.17 s after the click, "About · mindfork v0.26.1", build date 2026-11-12, a
+    message answered, 22 requests all to mindfork.io — 0.26.0's count — no page error.
+  - Scoop and the Homebrew tap still named 0.26.0 twelve minutes after the publication;
+    they pick a release up within four and six hours.
