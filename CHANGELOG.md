@@ -26,6 +26,11 @@ split by subsystem.
   there ([install.md](docs/install.md) §1). A `defaults.json` beside the binary still
   decides, and `{"mode":"portable"}` in it keeps the data beside the binary.
 
+### Fixed
+
+- **`cargo install mindfork` with a Rust newer than 1.96 builds without a warning.**
+  It printed one deprecation warning for mindfork's own code; nothing else changed.
+
 ## [0.26.0] — 2026-11-11
 
 **The interface in a browser tab.** [mindfork.io/try/](https://mindfork.io/try/) runs

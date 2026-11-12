@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (90)
+## Entries (91)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -102,6 +102,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the demo's profile is in the language of its content (done)
 - Post-M9: block elements drawn as parts of their cells — the stills and the animation without lines in their bars (done)
 - Release 0.26.0 (prepared)
+- Post-M9: a crates.io build with a newer Rust without a deprecation warning (done)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -6335,3 +6336,26 @@ guard's, the site gate's and the AUR renderer's self-tests clean.
   - Not seen: any browser but Chromium on Linux; the owner's screen.
 - **The web demo track is closed by this release**: the page that said the demo was
   on its way now runs it ([web-demo.md §14](../research/web-demo.md)).
+
+### Post-M9: a crates.io build with a newer Rust without a deprecation warning (done)
+- **The report** (the owner, 2026-11-12, Windows): `cargo install --git … --branch
+  fix/cargo-install-data-dir mindfork` printed one warning for the crate —
+  `AtomicU32::fetch_update` is deprecated, "renamed to `try_update` for consistency"
+  — in `BackgroundSlots::release` (`app/orchestrator/generation.rs`).
+- **Why no gate saw it**: CI, the release and `crates-io.yml` build with the pinned
+  1.96.0 (`rust-toolchain.toml`, release-engineering F4), where `fetch_update` is not
+  deprecated yet: `rustc 1.96.0 -D warnings` compiles it. But `cargo install` — from
+  crates.io or `--git` — builds with the **user's** default toolchain: rustup picks it
+  by the directory cargo runs in, and the pin inside the crate's source is not read. So
+  a user on a newer stable sees warnings the pin hides; this is the one a newer
+  toolchain raised in the crate.
+- **The fix**: `try_update`, the same signature and semantics. It is stable on 1.96
+  already — measured, `rustc +1.96.0 --edition 2024 -D warnings` compiles both and
+  warns on neither — so the crate's `rust-version = "1.96"` holds.
+- **No CI job on the newest stable — the owner's decision (2026-11-12).** Such a job
+  would catch the next deprecation before a user does, at a build per run for warnings
+  that break nothing; the owner builds the app locally on a current toolchain from time
+  to time and catches them there, as this one was caught.
+- **Tests**: unchanged — the decrement is covered by the story tests that see the
+  slots return to 0 (`tests/story.rs`). **Gates** (rebased onto the cargo-install fix):
+  4803 unit tests green, 310 `#[ignore]` (Linux); clippy `-D warnings`, fmt clean.
