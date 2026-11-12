@@ -1,6 +1,6 @@
 # Privacy policy
 
-Effective **2026-11-11**. It covers three things that are easy to confuse: the
+Effective **2026-11-12**. It covers three things that are easy to confuse: the
 **mindfork application**, the website **mindfork.io**, and the project's
 presence on **GitHub**. They have very different answers, so they are kept
 apart below.
@@ -41,7 +41,9 @@ see §9 and §10, where both are deliberately kept as thin as they can be.
 The app is **portable by design**: its data lives in a `data/` directory next to
 the executable, not in a hidden per-user location, unless a `defaults.json` next
 to the binary selects a system location or another path
-([docs/install.md](docs/install.md)). In a development build that is
+([docs/install.md](docs/install.md)). A copy installed with `cargo install` uses
+the system location, unless a `data/` directory is already beside it. In a
+development build that is
 `target/debug/data/`. So everything the app knows is in one place you can open,
 copy, back up and delete. On Linux that directory is made readable **to your user
 alone** (`0700`) every time the app starts, and the files it writes are `0600`:

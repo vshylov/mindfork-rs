@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (91)
+## Entries (92)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -103,6 +103,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: block elements drawn as parts of their cells — the stills and the animation without lines in their bars (done)
 - Release 0.26.0 (prepared)
 - Post-M9: a crates.io build with a newer Rust without a deprecation warning (done)
+- Release 0.26.1 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -6359,3 +6360,55 @@ guard's, the site gate's and the AUR renderer's self-tests clean.
 - **Tests**: unchanged — the decrement is covered by the story tests that see the
   slots return to 0 (`tests/story.rs`). **Gates** (rebased onto the cargo-install fix):
   4803 unit tests green, 310 `#[ignore]` (Linux); clippy `-D warnings`, fmt clean.
+
+### Release 0.26.1 (prepared)
+
+- **A release PR** per [AGENTS.md §6](../../AGENTS.md), branch `chore/release-0.26.1`:
+  - `Cargo.toml` `0.26.0 → 0.26.1` (+ one line of `Cargo.lock`), and the site's
+    `app_version`;
+  - `CHANGELOG.md`: `[Unreleased]` → `[0.26.1] — 2026-11-12` under a lead paragraph,
+    "A cargo install keeps its data in your user folder", a **Data** section (below), a
+    fresh `[Unreleased]`, and the comparison links;
+  - CLAUDE.md's status heading;
+  - the site's install page, *From crates.io*: the paragraph that told the reader to
+    write `defaults.json` by hand described 0.26.0 and waited for this release (the
+    storage entry "a cargo install keeps its data in the user folder"); it now names
+    the user folder, says an older folder stays in use, and gives the move for the
+    three systems;
+  - the privacy policy (below);
+  - the release's post, and `/llms.txt` regenerated from it.
+
+  Since `v0.26.0`: two pull requests with behaviour, 942 (a cargo install's data in
+  the user folder, docs/journal/storage.md) and 943 (`try_update`, the entry above),
+  both asked for by the owner; the rest is the site (938, 940, 941), docs (937, 939)
+  and the web demo's package fetch (936). `src/shared/api/contract.rs` changed in a
+  doc comment only.
+- **A PATCH**: fixes only, §6's rule for `0.x`. No schema constant moved.
+- **The `Data` rubric, by measurement.** `git diff v0.26.0 -- src/shared/storage
+  src/shared/config.rs src/entities src/features/data_migration.rs
+  src/features/backup.rs` is empty: no new value of a stored type, settings 7,
+  profiles 1, chats 8, database 1. What this release changes is where a fresh cargo
+  install's root is, so the way back was measured with **the published 0.26.0** — its
+  Linux archive, matching `sha256sums.txt` — in a scratch install root holding a copy of
+  cargo's `.crates2.json`, `XDG_DATA_HOME` in the scratch directory, `mindfork stats`
+  reading the root: 0.26.0 with no marker → `bin/data`, the empty start the CHANGELOG
+  warns of; with `{ "mode": "system" }` beside it → `$XDG_DATA_HOME/mindfork-rs`, the
+  folder this version's build used on the same root with no marker. The CHANGELOG's
+  second `Data` item says so.
+- **Found on the way: the privacy policy said the data is beside the binary unless a
+  `defaults.json` says otherwise** (§2), which a cargo install of this version
+  contradicts. One sentence in §2, the effective date `2026-11-11 → 2026-11-12`, and the
+  same in the Russian translation; `site_legal_pages.py` and `wizard_rtf.py`
+  regenerated the site's page and the installer's two privacy RTFs, both `--check`ed.
+  Nothing the app sends changed, so §13 asks for no CHANGELOG line.
+- **No rehearsal.** `git diff v0.26.0 -- .github packaging tools` holds the web demo's
+  package fetch (936: `tools/web_demo/build_i686.sh`, tried by `web-demo.yml` on its pull
+  request; the job is not a gate), the `llms.txt` generator (940) and, from this PR, the
+  two regenerated RTFs, which `packaging.yml` compiles into the installer here.
+  `release_guard.py --tag v0.26.1` accepts the tag, its notes the `[0.26.1]` section (32
+  lines). `cargo deny` is not installed on the droplet; `audit.yml` runs it on this PR, which
+  touches `Cargo.toml`.
+- **The site**: `zola check --skip-external-links` and `zola build` (0.23.6) are clean;
+  the post heads the blog's index, its link to `install/#from-crates-io` lands on the
+  section's anchor, and the home page's and install page's structured data say
+  `0.26.1`.

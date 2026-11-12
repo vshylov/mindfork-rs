@@ -14,6 +14,14 @@ split by subsystem.
 
 ## [Unreleased]
 
+## [0.26.1] — 2026-11-12
+
+**A cargo install keeps its data in your user folder.** `cargo install mindfork` now
+puts a new data folder where the packages and the installer do, not among the
+toolchain's programs in `~/.cargo/bin`; a folder already there stays in use. A build
+with a Rust newer than 1.96 no longer prints a warning. Nothing in your data moves to
+a new format.
+
 ### Changed
 
 - **`cargo install mindfork` keeps the data in your user folder.** A fresh cargo
@@ -30,6 +38,16 @@ split by subsystem.
 
 - **`cargo install mindfork` with a Rust newer than 1.96 builds without a warning.**
   It printed one deprecation warning for mindfork's own code; nothing else changed.
+
+### Data
+
+- **No data upgrade.** No stored file changes shape: the settings stay at schema 7 and
+  the chats at 8, nothing is migrated at the first start, and going back to 0.26.0
+  needs no backup restored.
+- **Going back to 0.26.0 on a cargo install whose data is in the user folder**: 0.26.0
+  looks for it beside the binary and would start empty. A `defaults.json` beside the
+  binary holding `{ "mode": "system" }` points 0.26.0 at the same folder — checked with
+  the published 0.26.0.
 
 ## [0.26.0] — 2026-11-11
 
@@ -4061,7 +4079,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.26.0...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.26.1...HEAD
+[0.26.1]: https://github.com/vshylov/mindfork-rs/compare/v0.26.0...v0.26.1
 [0.26.0]: https://github.com/vshylov/mindfork-rs/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/vshylov/mindfork-rs/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/vshylov/mindfork-rs/compare/v0.23.1...v0.24.0
