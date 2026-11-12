@@ -146,26 +146,31 @@ sudo apt install libasound2-dev pkg-config     # Debian, Ubuntu
 sudo dnf install alsa-lib-devel pkgconf        # Fedora, RHEL
 ```
 
-Two things differ from the downloads above, because `cargo install` keeps only
-the executable:
+The data folder is in your user folder, as with the packages and the installer:
+`~/.local/share/mindfork-rs` on Linux, `%APPDATA%\mindfork-rs\data` on Windows,
+`~/Library/Application Support/mindfork-rs` on a Mac. One thing differs from the
+downloads above, because `cargo install` keeps only the executable: **no spellcheck
+dictionaries.** The archives, packages and installer carry them; a cargo install
+starts with spellcheck off. Hunspell `.aff`/`.dic` pairs dropped into the data
+folder's `dictionaries/` turn it on.
 
-- **No spellcheck dictionaries.** The archives, packages and installer carry them;
-  a cargo install starts with spellcheck off. Hunspell `.aff`/`.dic` pairs dropped
-  into the data folder's `dictionaries/` turn it on.
-- **The data folder sits next to the binary** — `~/.cargo/bin/data/`, since the
-  default layout is portable. To keep it in your user folder instead
-  (`~/.local/share/mindfork-rs` on Linux, `%APPDATA%\mindfork-rs\data` on Windows),
-  put a `defaults.json` beside the binary before the first run:
+**A cargo install of 0.26.0 or older** kept its data beside the binary, in
+`~/.cargo/bin/data/`. While that folder is there, it stays in use. To move it, close
+mindfork and move the folder itself — the target must not exist yet:
 
 ```bash
-echo '{ "mode": "system" }' > ~/.cargo/bin/defaults.json      # Linux
+mv ~/.cargo/bin/data ~/.local/share/mindfork-rs                     # Linux
+mv ~/.cargo/bin/data ~/Library/Application\ Support/mindfork-rs     # macOS
 ```
 
 ```powershell
-# Windows. Not `>`: Windows PowerShell writes UTF-16 with it, which the app refuses.
-$file = "$env:USERPROFILE\.cargo\bin\defaults.json"
-Set-Content $file '{ "mode": "system" }' -Encoding ascii
+# Windows
+New-Item -ItemType Directory "$env:APPDATA\mindfork-rs" -Force | Out-Null
+Move-Item "$env:USERPROFILE\.cargo\bin\data" "$env:APPDATA\mindfork-rs\data"
 ```
+
+A llama.cpp build installed with `mindfork llama setup --set-binary` is named in the
+settings by its full path: run that line again after the move.
 
 The downloads also carry every licence text and stay the recommended way in; this
 route is for a machine that has Rust on it anyway.
