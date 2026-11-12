@@ -4260,7 +4260,7 @@ impl BackgroundSlots {
         use std::sync::atomic::Ordering::SeqCst;
         let _ = self
             .out
-            .fetch_update(SeqCst, SeqCst, |n| Some(n.saturating_sub(1)));
+            .try_update(SeqCst, SeqCst, |n| Some(n.saturating_sub(1)));
     }
 }
 
