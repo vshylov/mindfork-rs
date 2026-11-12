@@ -226,16 +226,40 @@ upgrades to the newest release.
 The same prerequisites as "Building from source" below — **Rust 1.96 or newer**
 (the crate's `rust-version`; an older cargo refuses before compiling anything),
 and on Linux the ALSA headers plus `pkg-config`, which `alsa-sys` finds them
-with. Two consequences are worth knowing before choosing this way in, because
-`cargo install` keeps **only the executable**:
+with. Worth knowing before choosing this way in, because `cargo install` keeps
+**only the executable**:
 
 - **no spellcheck dictionaries.** They are copied next to the binary at build
   time (§4), and that copy is not what gets installed — so spellcheck starts
   off. Dropping the Hunspell pairs into the data directory's `dictionaries/`
   turns it on.
-- **the data directory lands next to the installed binary** —
-  `~/.cargo/bin/data/` — because the default layout is portable (§2). A
-  `defaults.json` beside the binary moves it (§2.1).
+- **the data directory is in your user folder**, as for the packages and the
+  installer: `%APPDATA%\mindfork-rs\data` on Windows, `~/.local/share/mindfork-rs`
+  on Linux, `~/Library/Application Support/mindfork-rs` on a Mac (§2.1). The app
+  knows it was installed by cargo from the record cargo keeps beside its `bin/`
+  (`~/.cargo/.crates2.json`, which lists the binary), since no `defaults.json` can
+  arrive with the executable. A `defaults.json` beside the binary still decides;
+  `{"mode":"portable"}` in it keeps the data in `~/.cargo/bin/data/`.
+- **an older cargo install's data stays where it is.** Up to 0.26.0 a cargo install
+  kept its data beside the binary, in `~/.cargo/bin/data/`. While that folder exists
+  it is used, so an upgrade never opens an empty app over your chats. To move it,
+  close mindfork and move the folder itself, renamed — the target must not exist
+  yet (if it does, it holds another install's data: decide which to keep first):
+
+  ```bash
+  mv ~/.cargo/bin/data ~/.local/share/mindfork-rs                          # Linux
+  mv ~/.cargo/bin/data ~/Library/Application\ Support/mindfork-rs          # macOS
+  ```
+
+  ```powershell
+  # Windows
+  New-Item -ItemType Directory "$env:APPDATA\mindfork-rs" -Force | Out-Null
+  Move-Item "$env:USERPROFILE\.cargo\bin\data" "$env:APPDATA\mindfork-rs\data"
+  ```
+
+  A llama.cpp build installed with `mindfork llama setup --set-binary` is named in
+  the settings by its full path, so run that line again after the move. `F1` →
+  **About** → *Locations* shows which folder a start used.
 
 The prebuilt archives, the Linux packages and the Windows installer carry the
 dictionaries and every licence text and are the recommended way in; this one is
@@ -344,6 +368,10 @@ executable** (the file itself always lives next to the binary, **not** inside
 - No file, or an empty one → **portable** mode + language from the OS locale. For
   backward compatibility, the old **`location.json`** file (storage mode only) is
   also read if `defaults.json` is absent.
+- **One exception to "no file → portable": a binary `cargo install` put in place**
+  (§1) — one listed in the `.crates2.json` cargo keeps beside its `bin/` — uses the
+  `system` folder, unless a `data/` is already beside it, which stays in use. An
+  empty `defaults.json` is a file, so it keeps such a binary portable too.
 - The file is read with a UTF-8 BOM too. A corrupted JSON file is a startup error
   (so a typo in the path doesn't silently leave you working with an empty data set
   in the wrong place).

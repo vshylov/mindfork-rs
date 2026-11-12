@@ -6,9 +6,12 @@
 //! directory **and** set the agent-scaffold language for new profiles
 //! (`default_language`, axis A — docs/history/i18n.md; an installer will fill
 //! it in from the user's choice at install time). For backward compatibility
-//! the old `location.json` marker (storage mode only) is also read. See spec
-//! §5.2 (data location) and §12.1.
+//! the old `location.json` marker (storage mode only) is also read. A binary
+//! `cargo install` put in place has no marker and is started in the standard
+//! OS folder instead, unless a `data/` is already beside it
+//! ([`Defaults::for_binary`]). See spec §5.2 (data location) and §12.1.
 
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -34,7 +37,9 @@ pub const DICTIONARIES_README: &str = "README.txt";
 /// Storage mode for user data, set by the `defaults.json` defaults file next
 /// to the executable (the `mode` field, plus `path` for `path`). No/empty
 /// marker → [`DataLocation::Portable`] (backward compatibility: existing
-/// installs keep data next to the binary).
+/// installs keep data next to the binary) — or [`DataLocation::System`] for a
+/// binary cargo installed, when nothing is beside it yet
+/// ([`Defaults::for_binary`]).
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "lowercase")]
 pub enum DataLocation {
@@ -110,36 +115,131 @@ fn strip_bom(bytes: &[u8]) -> &[u8] {
 }
 
 impl Defaults {
-    /// Reads installation defaults next to the binary: `defaults.json` first,
-    /// falling back to the legacy `location.json` (storage mode only; language
-    /// = `None`) if absent. Neither present/an empty file → defaults. A
+    /// The installation defaults of the binary named `exe_name` in `exe_dir`.
+    ///
+    /// A marker beside it decides whenever there is one ([`Defaults::read_marker`]),
+    /// an empty one included. Without one the data root is portable — as it has
+    /// always been — with one exception: a binary **cargo installed**
+    /// ([`installed_by_cargo`]) gets the standard OS folder, as the packages and
+    /// the installer give it. `cargo install` puts only the executable in
+    /// `~/.cargo/bin`, so no marker can arrive with it, and a portable root there
+    /// is a `data/` among the toolchain's binaries that `cargo uninstall` leaves
+    /// behind.
+    ///
+    /// **Unless a `data/` is already beside the binary** — every cargo install
+    /// before this one made it there, and a start that looked elsewhere would
+    /// show an empty app over the user's chats. So it stays in use until the
+    /// user moves it (docs/install.md §1); anything at that path counts, and so
+    /// does a path that cannot be checked — the cost of keeping the old root is
+    /// a folder in the wrong place, the cost of leaving it is the data.
+    pub fn for_binary(exe_dir: &Path, exe_name: &OsStr) -> Result<Self> {
+        if let Some(defaults) = Self::read_marker(exe_dir)? {
+            return Ok(defaults);
+        }
+        let portable_root_exists =
+            !matches!(exe_dir.join(PORTABLE_DATA_SUBDIR).try_exists(), Ok(false));
+        let location = if !portable_root_exists && installed_by_cargo(exe_dir, exe_name) {
+            DataLocation::System
+        } else {
+            DataLocation::Portable
+        };
+        Ok(Self {
+            location,
+            default_language: None,
+        })
+    }
+
+    /// Reads the marker next to the binary: `defaults.json` first, falling back
+    /// to the legacy `location.json` (storage mode only; language = `None`) if
+    /// absent. Neither present → `None`; an empty file → the defaults. A
     /// corrupt JSON is an **error** (not a silent fallback), so a typo doesn't
     /// quietly redirect to the wrong empty dataset. A leading UTF-8 BOM is
     /// dropped ([`strip_bom`]).
-    pub fn read(exe_dir: &Path) -> Result<Self> {
+    fn read_marker(exe_dir: &Path) -> Result<Option<Self>> {
         let primary = exe_dir.join(DEFAULTS_MARKER);
         let marker = if primary.exists() {
             primary
         } else {
             exe_dir.join(LEGACY_LOCATION_MARKER)
         };
-        // English contexts: `Defaults::read` is called from `Paths::resolve`
-        // before the CLI language is known (docs/history/i18n-cli.md §7 — the
-        // "before the language is known" boundary).
+        // English contexts: the marker is read from `Paths::resolve` before the
+        // CLI language is known (docs/history/i18n-cli.md §7 — the "before the
+        // language is known" boundary).
         match std::fs::read(&marker) {
             Ok(bytes) => {
                 let bytes = strip_bom(&bytes);
                 if bytes.iter().all(u8::is_ascii_whitespace) {
-                    Ok(Self::default())
+                    Ok(Some(Self::default()))
                 } else {
                     serde_json::from_slice(bytes)
+                        .map(Some)
                         .with_context(|| format!("parsing defaults file {}", marker.display()))
                 }
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e).with_context(|| format!("reading defaults file {}", marker.display())),
         }
     }
+}
+
+/// The record cargo keeps in an install root, beside its `bin/`: every package
+/// `cargo install` put there (crates.io, `--git`, `--path`; cargo-binstall
+/// writes it too), with the file names of the binaries it installed.
+const CARGO_INSTALL_RECORD: &str = ".crates2.json";
+
+/// The part of [`CARGO_INSTALL_RECORD`] read here; cargo's other fields are
+/// ignored. Measured with cargo 1.96: `{"installs":{"<pkg> <ver> (<source>)":
+/// {"bins":["<name>"],…}}}`.
+#[derive(Deserialize)]
+struct CargoInstalls {
+    #[serde(default)]
+    installs: std::collections::HashMap<String, CargoInstall>,
+}
+
+#[derive(Deserialize)]
+struct CargoInstall {
+    #[serde(default)]
+    bins: Vec<String>,
+}
+
+/// Whether cargo installed the binary `exe_name` in `exe_dir`: the directory is
+/// an install root's `bin/` and the root's [`CARGO_INSTALL_RECORD`] lists the
+/// file. The names there carry the platform's suffix — cargo's `exe_names`
+/// appends `EXE_SUFFIX`, so `mindfork.exe` on Windows — and Windows compares
+/// them without case, as its file system does.
+///
+/// Anything unexpected answers `false` — a missing or unreadable record, one
+/// that does not parse, a binary it does not list (an archive unpacked into
+/// `~/.cargo/bin` by hand is not cargo's) — and `false` is the portable root
+/// every version before this one used.
+fn installed_by_cargo(exe_dir: &Path, exe_name: &OsStr) -> bool {
+    let same = |a: &str, b: &str| {
+        if cfg!(windows) {
+            a.eq_ignore_ascii_case(b)
+        } else {
+            a == b
+        }
+    };
+    let (Some(dir_name), Some(root), Some(exe_name)) = (
+        exe_dir.file_name().and_then(OsStr::to_str),
+        exe_dir.parent(),
+        exe_name.to_str(),
+    ) else {
+        return false;
+    };
+    if !same(dir_name, "bin") {
+        return false;
+    }
+    let Ok(bytes) = std::fs::read(root.join(CARGO_INSTALL_RECORD)) else {
+        return false;
+    };
+    serde_json::from_slice::<CargoInstalls>(&bytes).is_ok_and(|record| {
+        record
+            .installs
+            .values()
+            .flat_map(|install| &install.bins)
+            .any(|bin| same(bin, exe_name))
+    })
 }
 
 /// A set of paths to application data, computed from the root directory.
@@ -184,7 +284,8 @@ pub struct Locations {
 
 impl Paths {
     /// Computes the data root and defaults from the `defaults.json` file next
-    /// to the binary (fallback — the legacy `location.json`) **without
+    /// to the binary (fallback — the legacy `location.json`; neither — portable,
+    /// or the OS folder for a cargo install, [`Defaults::for_binary`]) **without
     /// creating directories** — for the CLI's early "peek" phase, where the
     /// language/root must be known before parsing arguments, but `--help`
     /// mustn't touch disk (docs/history/i18n-cli.md §3.2). Scaffold/interface
@@ -193,9 +294,9 @@ impl Paths {
     /// directories is separate — [`Paths::ensure_dirs`].
     pub fn resolve() -> Result<Self> {
         let exe = std::env::current_exe().context("cannot resolve current executable path")?;
-        let exe_dir = exe_dir_of(exe)?;
+        let (exe_dir, exe_name) = exe_location(exe)?;
 
-        let defaults = Defaults::read(&exe_dir)?;
+        let defaults = Defaults::for_binary(&exe_dir, &exe_name)?;
         let root = defaults.location.root_dir(&exe_dir)?;
         let mut paths = Self::with_root(root);
         paths.default_language = defaults
@@ -532,7 +633,8 @@ impl Paths {
     }
 }
 
-/// The directory the binary really lives in, for the path `current_exe` gave.
+/// The directory the binary really lives in, and its file name, for the path
+/// `current_exe` gave.
 ///
 /// On Linux that path is `/proc/self/exe` — already the symlink's target. On
 /// macOS it is the path the binary was **started by**, so through
@@ -540,14 +642,18 @@ impl Paths {
 /// `defaults.json` and the dictionaries were looked for beside the link
 /// (measured, docs/research/macos.md §4.3). Resolved on every unix; not on
 /// Windows, where `canonicalize` returns a `\\?\` verbatim path and
-/// `current_exe` already names the file itself.
-fn exe_dir_of(exe: PathBuf) -> Result<PathBuf> {
+/// `current_exe` already names the file itself. The name is the real file's
+/// too: it is what cargo's install record lists ([`installed_by_cargo`]).
+fn exe_location(exe: PathBuf) -> Result<(PathBuf, OsString)> {
     #[cfg(unix)]
     let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
-    Ok(exe
+    let dir = exe
         .parent()
-        .context("cannot determine executable directory")?
-        .to_path_buf())
+        .context("cannot determine executable directory")?;
+    let name = exe
+        .file_name()
+        .context("cannot determine executable name")?;
+    Ok((dir.to_path_buf(), name.to_os_string()))
 }
 
 #[cfg(test)]
@@ -669,10 +775,117 @@ mod tests {
         assert_eq!(p.locales_dir().parent(), Some(p.root()));
     }
 
+    /// The installed file's name: what cargo's record lists for it.
+    const EXE: &str = if cfg!(windows) {
+        "mindfork.exe"
+    } else {
+        "mindfork"
+    };
+
+    /// What a binary named [`EXE`] in `dir` starts with.
+    fn read(dir: &Path) -> Result<Defaults> {
+        Defaults::for_binary(dir, OsStr::new(EXE))
+    }
+
+    /// An install root as `cargo install --root <root>` leaves it: the binary in
+    /// `bin/` and the record beside `bin/`, listing `bins` (the shape measured
+    /// with cargo 1.96, `CargoInstalls`). Returns `bin/`.
+    fn cargo_root(dir: &tempfile::TempDir, bins: &[&str]) -> PathBuf {
+        let bin = dir.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join(EXE), b"").unwrap();
+        let record = serde_json::json!({ "installs": {
+            "mindfork 0.26.0 (registry+https://github.com/rust-lang/crates.io-index)": {
+                "version_req": null, "bins": bins, "features": [], "all_features": false,
+                "no_default_features": false, "profile": "release",
+            },
+            "ripgrep 15.1.0 (registry+https://github.com/rust-lang/crates.io-index)": {
+                "bins": [if cfg!(windows) { "rg.exe" } else { "rg" }],
+            },
+        }});
+        std::fs::write(
+            dir.path().join(CARGO_INSTALL_RECORD),
+            serde_json::to_vec(&record).unwrap(),
+        )
+        .unwrap();
+        bin
+    }
+
+    #[test]
+    fn a_binary_cargo_installed_keeps_its_data_in_the_os_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = cargo_root(&dir, &[EXE]);
+        let d = read(&bin).unwrap();
+        assert_eq!(d.location, DataLocation::System);
+        // The language is still the OS locale's, as for any install with no marker.
+        assert_eq!(d.default_language, None);
+    }
+
+    /// Every cargo install before this one made `~/.cargo/bin/data`; a start
+    /// that moved to the OS folder would show an empty app over those chats.
+    #[test]
+    fn a_cargo_install_with_data_beside_it_keeps_using_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = cargo_root(&dir, &[EXE]);
+        std::fs::create_dir_all(bin.join(PORTABLE_DATA_SUBDIR)).unwrap();
+        assert_eq!(read(&bin).unwrap().location, DataLocation::Portable);
+    }
+
+    /// The marker decides over the record, `portable` included — the way to keep
+    /// a cargo install's data beside it.
+    #[test]
+    fn a_marker_beside_a_cargo_install_decides() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = cargo_root(&dir, &[EXE]);
+        std::fs::write(bin.join(DEFAULTS_MARKER), r#"{"mode":"portable"}"#).unwrap();
+        assert_eq!(read(&bin).unwrap().location, DataLocation::Portable);
+        // An empty one is a marker too: the defaults, which are portable.
+        std::fs::write(bin.join(DEFAULTS_MARKER), "").unwrap();
+        assert_eq!(read(&bin).unwrap().location, DataLocation::Portable);
+    }
+
+    /// A record that does not list this binary — another crate's, or an archive
+    /// unpacked into `~/.cargo/bin` by hand — is not a cargo install of it.
+    #[test]
+    fn a_binary_the_record_does_not_list_is_portable() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = cargo_root(&dir, &["mindfork-other"]);
+        assert_eq!(read(&bin).unwrap().location, DataLocation::Portable);
+    }
+
+    #[test]
+    fn a_record_that_does_not_parse_is_portable() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = cargo_root(&dir, &[EXE]);
+        std::fs::write(dir.path().join(CARGO_INSTALL_RECORD), "{ not json").unwrap();
+        assert_eq!(read(&bin).unwrap().location, DataLocation::Portable);
+    }
+
+    /// cargo installs into `<root>/bin` only; a binary elsewhere in a directory
+    /// that holds a record is not one of its installs.
+    #[test]
+    fn a_binary_outside_bin_is_portable() {
+        let dir = tempfile::tempdir().unwrap();
+        cargo_root(&dir, &[EXE]);
+        let tools = dir.path().join("tools");
+        std::fs::create_dir_all(&tools).unwrap();
+        std::fs::write(tools.join(EXE), b"").unwrap();
+        assert_eq!(read(&tools).unwrap().location, DataLocation::Portable);
+    }
+
+    /// The record's names are compared as the file system compares them:
+    /// without case on Windows, exactly elsewhere.
+    #[test]
+    fn a_name_differing_only_in_case_matches_on_windows_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = cargo_root(&dir, &[&EXE.to_uppercase()]);
+        assert_eq!(installed_by_cargo(&bin, OsStr::new(EXE)), cfg!(windows));
+    }
+
     #[test]
     fn missing_marker_is_portable() {
         let dir = tempfile::tempdir().unwrap();
-        let loc = Defaults::read(dir.path()).unwrap().location;
+        let loc = read(dir.path()).unwrap().location;
         assert_eq!(loc, DataLocation::Portable);
         // Portable mode: root = the `data/` subdirectory next to the binary.
         assert_eq!(
@@ -685,10 +898,7 @@ mod tests {
     fn whitespace_marker_is_portable() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join(DEFAULTS_MARKER), "  \n\t").unwrap();
-        assert_eq!(
-            Defaults::read(dir.path()).unwrap().location,
-            DataLocation::Portable
-        );
+        assert_eq!(read(dir.path()).unwrap().location, DataLocation::Portable);
     }
 
     #[test]
@@ -705,7 +915,7 @@ mod tests {
         ] {
             let dir = tempfile::tempdir().unwrap();
             std::fs::write(dir.path().join(DEFAULTS_MARKER), json).unwrap();
-            assert_eq!(Defaults::read(dir.path()).unwrap().location, expect);
+            assert_eq!(read(dir.path()).unwrap().location, expect);
         }
     }
 
@@ -731,7 +941,7 @@ mod tests {
     fn corrupted_marker_errors() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join(DEFAULTS_MARKER), "{ not valid json").unwrap();
-        assert!(Defaults::read(dir.path()).is_err());
+        assert!(read(dir.path()).is_err());
     }
 
     #[test]
@@ -751,7 +961,7 @@ mod tests {
             r#"{"mode":"path","path":"D:\\data","default_language":"en"}"#,
         )
         .unwrap();
-        let d = Defaults::read(dir.path()).unwrap();
+        let d = read(dir.path()).unwrap();
         assert_eq!(
             d.location,
             DataLocation::Path {
@@ -765,7 +975,7 @@ mod tests {
     fn defaults_missing_has_no_explicit_language() {
         // No file → defaults: portable + language unset (detected from the OS locale).
         let dir = tempfile::tempdir().unwrap();
-        let d = Defaults::read(dir.path()).unwrap();
+        let d = read(dir.path()).unwrap();
         assert_eq!(d, Defaults::default());
         assert_eq!(d.location, DataLocation::Portable);
         assert_eq!(d.default_language, None);
@@ -776,7 +986,7 @@ mod tests {
         // A package writes only the mode (installers.md §4.3) → language None → detected from the locale.
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join(DEFAULTS_MARKER), r#"{"mode":"system"}"#).unwrap();
-        let d = Defaults::read(dir.path()).unwrap();
+        let d = read(dir.path()).unwrap();
         assert_eq!(d.location, DataLocation::System);
         assert_eq!(d.default_language, None);
     }
@@ -790,7 +1000,7 @@ mod tests {
             r#"{"mode":"system"}"#,
         )
         .unwrap();
-        let d = Defaults::read(dir.path()).unwrap();
+        let d = read(dir.path()).unwrap();
         assert_eq!(d.location, DataLocation::System);
         assert_eq!(d.default_language, None);
     }
@@ -808,7 +1018,7 @@ mod tests {
             r#"{"mode":"system"}"#,
         )
         .unwrap();
-        let d = Defaults::read(dir.path()).unwrap();
+        let d = read(dir.path()).unwrap();
         assert_eq!(d.location, DataLocation::Portable);
         assert_eq!(d.default_language, Some(Lang::En));
     }
@@ -820,7 +1030,7 @@ mod tests {
         let mut bytes = vec![0xEF, 0xBB, 0xBF];
         bytes.extend_from_slice(br#"{"mode":"system","default_language":"en"}"#);
         std::fs::write(dir.path().join(DEFAULTS_MARKER), bytes).unwrap();
-        let d = Defaults::read(dir.path()).unwrap();
+        let d = read(dir.path()).unwrap();
         assert_eq!(d.location, DataLocation::System);
         assert_eq!(d.default_language, Some(Lang::En));
     }
@@ -829,7 +1039,7 @@ mod tests {
     fn defaults_corrupted_errors() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join(DEFAULTS_MARKER), "{ bad json").unwrap();
-        assert!(Defaults::read(dir.path()).is_err());
+        assert!(read(dir.path()).is_err());
     }
 
     #[test]
@@ -866,8 +1076,9 @@ mod tests {
         std::fs::write(real.join("mindfork"), b"").unwrap();
         std::os::unix::fs::symlink(real.join("mindfork"), links.join("mindfork")).unwrap();
 
-        let got = exe_dir_of(links.join("mindfork")).unwrap();
+        let (got, name) = exe_location(links.join("mindfork")).unwrap();
         assert_eq!(got, std::fs::canonicalize(&real).unwrap());
+        assert_eq!(name, "mindfork");
     }
 
     #[cfg(unix)]

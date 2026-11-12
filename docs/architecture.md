@@ -4886,7 +4886,9 @@ Principles:
   standard OS folder (the `directories` crate) or a custom directory, and
   sets the scaffold language for new profiles (axis A —
   docs/history/i18n.md); no file → portable mode + `ru` (the old
-  `location.json` is read for backward compatibility). **Backups**
+  `location.json` is read for backward compatibility) — except a binary cargo
+  installed (`Defaults::for_binary`: the install root's `.crates2.json` lists it
+  and no `data/` is beside it yet), which gets the `system` folder. **Backups**
   (`features/backup.rs`): a zip with configurable compression (the `TOP_DIRS`
   chats/dictionaries/locales/themes/files/workspace/stories + data.db/profiles/settings/personal
   + `*.bak` + `fs_root` if it's inside the root — one constant for both packing
