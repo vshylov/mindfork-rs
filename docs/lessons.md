@@ -1389,6 +1389,18 @@ uses it: prove the page matches the picture, and that no other page moved.**
 — *website — the hero: a headline in three phrases, a lede in two voices, a dark
 panel*.
 
+**A comparison against `main` says nothing changed, not that `main` is right.**
+The check of the hero's pull request photographed seven other pages on both builds
+and reported "0 pixels differ" for each. One of those lines read
+`privacy (544, 44522)` — a page 544 px wide in a 375 px window — and it was read
+as a pass, because both builds had it. The same run had printed `scrollWidth 364`
+at 320 px and marked it a failure of the branch, until `main` turned out to have
+it too. Measured on its own, the site scrolled sideways on 14 of 156
+page-and-width pairs. **A regression check answers one question; when its output
+holds a number that would be a defect on its own, that is a second finding, not a
+match.**
+— *website — a phone no longer scrolls a page sideways*.
+
 ## 4. The recurring defect class: a message must close the door
 
 **Never let a message describe a situation without saying what is and is not possible

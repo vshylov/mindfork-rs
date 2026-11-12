@@ -49,7 +49,7 @@
   <div class="wrap narrow">
     <div class="prose">
       <h2>{% if demo %}What is running here{% else %}What the demo is{% endif %}</h2>
-      {{ page.content | safe }}
+      {% <scroll_tables> %}{{ page.content | safe }}{% </scroll_tables> %}
       {%- if demo %}
       <h2>Licences</h2>
       <p>The demo runs and hands you other people's work, each piece under its own licence. This list is written

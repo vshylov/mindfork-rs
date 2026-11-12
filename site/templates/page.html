@@ -78,7 +78,7 @@
     {% if page.date %}{% set published = page.date %}{% else %}{% set published = page.extra.published | default(value="") %}{% endif %}
     <p class="post-meta mono">{% if published %}<time datetime="{{ published }}">{{ published }}</time> · {% endif %}{% if page.updated and page.updated != published %}updated <time datetime="{{ page.updated }}">{{ page.updated }}</time> · {% endif %}{{ page.reading_time }} min read</p>
     <div class="prose">
-      {{ page.content | safe }}
+      {% <scroll_tables> %}{{ page.content | safe }}{% </scroll_tables> %}
     </div>
   </div>
 </article>

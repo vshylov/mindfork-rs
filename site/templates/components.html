@@ -20,3 +20,13 @@
   <figcaption>{{ body | trim }}</figcaption>
 </figure>
 {%- endcomponent screenshot %}
+
+{#- A page's rendered content, each table in a box of its own that scrolls
+    sideways (`.table-scroll`, _prose.scss): a table wider than a phone must
+    not widen the page, and Zola's Markdown gives a table no wrapper. The
+    opening tag is matched with or without attributes, so a table written by
+    hand in a page is wrapped as one from Markdown is:
+      {% <scroll_tables> %}{{ page.content | safe }}{% </scroll_tables> %} -#}
+{% component scroll_tables() -%}
+{{ body | regex_replace(pattern="<table([ ][^>]*)?>", rep='<div class="table-scroll"><table$1>') | replace(from="</table>", to="</table></div>") | safe }}
+{%- endcomponent scroll_tables %}

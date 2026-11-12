@@ -335,7 +335,9 @@
 }
 .shot-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  // A window is at least 340px wide, or as wide as the column when a phone
+  // has less: a bare 340px minimum widened the page below 364px.
+  grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr));
   gap: 26px;
   align-items: start; // windows take their natural height, no stretched voids
 }

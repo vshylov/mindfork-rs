@@ -10,7 +10,7 @@ the reasoning behind the site, not its current shape. For the current shape
 read the research/design doc above; for the traps that recur across areas
 read [lessons.md](../lessons.md).
 
-## Entries (36)
+## Entries (37)
 
 - Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 - Post-M9: website — S2 infra: one CloudFormation stack, mindfork.io live (done)
@@ -48,6 +48,7 @@ read [lessons.md](../lessons.md).
 - Post-M9: website — the web demo's rehearsal, and its page at `/try/` (done)
 - Post-M9: website — the hero's panel: DeepSeek, and no void around it (done)
 - Post-M9: website — the hero: a headline in three phrases, a lede in two voices, a dark panel (done)
+- Post-M9: website — a phone no longer scrolls a page sideways (done)
 
 ### Post-M9: website — research + S1 scaffold (Zola, terminal-styled) (done)
 
@@ -1965,3 +1966,60 @@ both on `main` at `88e5ce29`, the merge of the pull request.
 - No Rust touched: 4796 unit tests, 310 `#[ignore]` unchanged; a live run does not
   apply (static output). `zola check`, `link_check.py`, `doc_index_check.py`,
   `cyrillic_scan.py`, `site_llms_txt.py --check` and `--self-test` clean.
+
+### Post-M9: website — a phone no longer scrolls a page sideways (done)
+
+- **Where it came from** (branch `fix/site-narrow-sideways-scroll`). The hero's check
+  found the home page 364 px wide in a 320 px window, on `main` as on its branch, and
+  the owner asked for it to be fixed in a pull request of its own. Measured before
+  anything was changed — every page of the sitemap and the 404, 52 in all, at 320,
+  360 and 375 px, `scrollWidth` against the window, with each `<details>` opened: 14
+  of the 156 scrolled sideways, and the gallery was the least of it.
+  - **The home page**, below 364 px: the gallery's grid had a 340 px minimum column
+    (`.shot-grid`). At 375 px nothing scrolled, but the windows stood 13 px past
+    their column, into the right gutter.
+  - **`/privacy/`, at every phone width, 544 px wide**: its table is 520 px at its
+    narrowest, and Zola's Markdown gives a table no box to scroll in. Under it, a
+    host name in `code` in a list reached 408 px.
+  - **The 0.15.0 post, 404 px wide at 375**: the address inside the install command,
+    a word with nowhere to break. Six more posts at 320 px, each on a setting's
+    dotted name, an address or a command in `code`, one on a table.
+- **Three rules.** The gallery's column is `minmax(min(340px, 100%), 1fr)`. Every
+  table of a page stands in a `.table-scroll` box that scrolls sideways — the
+  `scroll_tables` component, which the three templates that print a page's content
+  pass it through — so a table that fits is drawn as it was and one that does not
+  scrolls alone. And `.prose` has `overflow-wrap: break-word`: a word with nowhere
+  to break breaks where the line ends.
+- **Measured after**: the same 52 pages at 320, 360, 375, 414 and 768 px, details
+  opened — none scrolls sideways. At 1280 px every page is pixel for pixel what it
+  is on `main`. The built HTML of all 53 files is `main`'s but for the wrappers:
+  six tables, six boxes opened, six closed.
+- **What it costs, said plainly.** What stuck a few pixels into the gutter without
+  scrolling anything is held to its column too, and not always well. Of the 104
+  page-and-width pairs at 320 and 375 px, six that never scrolled changed. Four by
+  the text rule: at 375 px a full stop begins a line after
+  `interface.code_block_background` in the 0.18.3 post and
+  `https://api.deepseek.com/v1` ends as `…/v` and `1` in the 0.20.0 post; at 320 px
+  `OLLAMA_CONTEXT_LENGTH=16384` loses its last digit to the next line (0.16.0) and
+  a path on the install page breaks inside a word, not at its hyphen. One by the
+  table's box: a table 4 px wider than its column (0.11.2 at 320 px) is cut at the
+  column's edge until it is scrolled. One is the gallery at 375 px, back in its
+  column. And the install command in the 0.15.0 post takes five lines with
+  fragments in them, where it ran 29 px past the screen. No rule in CSS gives a
+  word "a gutter's worth" before it breaks: the width a line wraps at and the
+  width a word is broken at are the same number.
+- **Rejected.** `display: block` on the table itself — it scrolls, but a table that
+  fits no longer spans its column, and some screen readers stop announcing it as a
+  table. `overflow-wrap: anywhere` — it counts toward a table's minimum width, so
+  the columns shrink by breaking words in the middle instead of the table
+  scrolling. The break allowed only inside `code` — the near fit becomes
+  `…backgroun` and `d.`, worse than a full stop on its own. A zero-width space in
+  the source — it travels with a copied command and breaks it.
+- **Tera 2, for the next template**: `regex_replace` exists; a string literal takes
+  no backslash escapes, so the pattern spells a space as `[ ]`; an array literal has
+  two dimensions at most; a component takes its content as `body` and has no
+  self-closing form.
+- No Rust touched: 4796 unit tests, 310 `#[ignore]` unchanged; a live run does not
+  apply (static output). Headless Chromium on Linux only. `zola check`,
+  `link_check.py`, `doc_index_check.py`, `cyrillic_scan.py`,
+  `site_llms_txt.py --check` clean.
