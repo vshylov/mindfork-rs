@@ -76,6 +76,11 @@ pub enum UiCommand {
     /// `N`th — a character card's alternate greetings (spec §10), offered
     /// while the chat holds nothing else.
     Greeting,
+    /// The open chat's own system message (spec §10): bare, it offers the
+    /// current text for editing (the `/rename` pattern); `reset` copies the
+    /// profile's again, `clear` removes it, anything else replaces it
+    /// (`features::profile_command::chat_system_edit` reads the argument).
+    System,
     /// The open chat's profile's messenger bridge (spec §11.13): its state,
     /// a pairing code (`pair`), or the account forgotten (`unpair`).
     Bridge,
@@ -207,6 +212,7 @@ pub const COMMANDS: &[Spec] = &[
     row(&["/takeback"], UiCommand::Takeback, Arity::None, "/takeback", "ui.help.cmd_takeback"),
     row(&["/impersonate"], UiCommand::Impersonate, Arity::Optional, "ui.help.k.impersonate", "ui.help.cmd_impersonate"),
     row(&["/greeting"], UiCommand::Greeting, Arity::Optional, "ui.help.k.greeting", "ui.help.cmd_greeting"),
+    row(&["/system"], UiCommand::System, Arity::Optional, "ui.help.k.system", "ui.help.cmd_system"),
     row(&["/bridge"], UiCommand::Bridge, Arity::Subcommand(&["pair", "unpair"]), "ui.help.k.bridge", "ui.help.cmd_bridge"),
     row(&["/stop"], UiCommand::Stop, Arity::None, "/stop", "ui.help.cmd_stop"),
     // Finding things.
@@ -453,11 +459,33 @@ mod tests {
     fn the_argument_is_the_whole_remainder() {
         for text in [
             "/rename  a long title, with punctuation  ",
+            "/system  a long title, with punctuation",
             "/search  a long title, with punctuation",
             "/impersonate  a long title, with punctuation",
         ] {
             let parsed = parse(text, ru()).expect("recognized").expect("parsed");
             assert_eq!(parsed.argument, "a long title, with punctuation");
+        }
+    }
+
+    /// `/system`'s text is a document, not a title: the blank lines and line
+    /// breaks inside it survive, only the edges are trimmed — and a text that
+    /// starts on the line after the word is still its argument.
+    #[test]
+    fn a_system_text_keeps_its_line_breaks() {
+        for (text, expected) in [
+            (
+                "/system Ты — Гея.\n\nОтвечай кратко.\n",
+                "Ты — Гея.\n\nОтвечай кратко.",
+            ),
+            (
+                "/system\nYou are Gaia.\n- Be brief.",
+                "You are Gaia.\n- Be brief.",
+            ),
+        ] {
+            let parsed = parse(text, ru()).expect("recognized").expect("parsed");
+            assert_eq!(parsed.command, UiCommand::System);
+            assert_eq!(parsed.argument, expected, "input {text:?}");
         }
     }
 
@@ -477,6 +505,8 @@ mod tests {
             "/self-model",
             "/newest",
             "/findings",
+            "/systems",
+            "/system-message",
             // Prose, including the words themselves — ordinary things to say to
             // a model.
             "help",

@@ -2132,16 +2132,22 @@ impl SettingsScreen {
                     loc.t("ui.settings.group.persona"),
                     vec![
                         lang_row,
+                        // Both texts are copied into a chat when it is created
+                        // (spec §10), and neither row said so: an edit here
+                        // that seemed to do nothing in the open, already begun
+                        // conversation read as a broken system message.
                         row(
                             FieldId::PSystem,
                             loc.t("ui.settings.field.system_message"),
                             FieldKind::Text(p.default_system_message.clone()),
-                        ),
+                        )
+                        .describe(loc.t("ui.settings.desc.system_message")),
                         row(
                             FieldId::PGreeting,
                             loc.t("ui.settings.field.greeting"),
                             FieldKind::Text(p.greeting.clone().unwrap_or_default()),
-                        ),
+                        )
+                        .describe(loc.t("ui.settings.desc.greeting")),
                         row(
                             FieldId::PUserName,
                             loc.t("ui.settings.field.user_name"),

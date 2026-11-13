@@ -13,7 +13,7 @@
 //! §4.3 and spec §11.7.
 
 use super::*;
-use crate::features::profile_command::TextEdit;
+use crate::features::profile_command::{ChatSystemEdit, TextEdit};
 use crate::features::profiles::ProfileEdit;
 use crate::features::ui_command::{self, UiCommand};
 
@@ -150,6 +150,7 @@ impl ChatScreen {
             UiCommand::Continue => self.typed_continue(alias),
             UiCommand::Impersonate => self.typed_impersonate(argument, alias),
             UiCommand::Greeting => self.typed_greeting(&argument),
+            UiCommand::System => self.typed_system(&argument, alias),
             UiCommand::Bridge => self.typed_bridge(&argument),
             UiCommand::Stop => self.typed_stop(),
             // Finding things.
@@ -480,6 +481,29 @@ impl ChatScreen {
         // No ceiling: a title is cut by the surface drawing it, in columns
         // and with a marker (`shared::title::sanitize_title`, spec §11.2).
         Some(ChatIntent::RenameChat { id, title })
+    }
+
+    /// `/system [text|reset|clear]` — the open chat's **own** system message,
+    /// the copy it took from its profile when it was created (spec §10). The
+    /// orchestrator owns the chat and answers every form: bare comes back as
+    /// an editable command line (`RestoreInput` — the `/rename` pattern, with
+    /// a text this screen does not hold), the rest as a note. The screen
+    /// answers what it can see: no chat open (a sub-agent transcript has no
+    /// system message of its own to edit), and a turn running — its next
+    /// round would read the text mid-change, and the model's own
+    /// `set_system_message` lands at the round's end.
+    fn typed_system(&mut self, argument: &str, alias: &'static str) -> Option<ChatIntent> {
+        let open = self
+            .active_chat
+            .is_some_and(|id| self.chats.iter().any(|c| c.id == id));
+        if !open {
+            return self.note("ui.cmd.no_chat");
+        }
+        let edit = crate::features::profile_command::chat_system_edit(argument);
+        if self.generating && edit != ChatSystemEdit::Show {
+            return self.busy_note(alias);
+        }
+        Some(ChatIntent::ChatSystem(edit))
     }
 
     /// `/autotitle` — the chat list's `Ctrl+R` for the open conversation: ask

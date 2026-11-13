@@ -831,6 +831,7 @@ pub(super) fn dispatch(
         ChatIntent::DeleteProfile(id) => AppCommand::DeleteProfile(id),
         ChatIntent::ForkProfile { name } => AppCommand::ForkProfile { name },
         ChatIntent::Greeting { pick } => AppCommand::SwapGreeting { pick },
+        ChatIntent::ChatSystem(edit) => AppCommand::ChatSystem(edit),
         ChatIntent::Bridge(action) => AppCommand::Bridge(action),
         // Stage 3: the text subcommands (`/profile system|greeting`,
         // `/impersonation …`) commit through the same two commands the settings

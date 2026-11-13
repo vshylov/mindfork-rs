@@ -14,6 +14,22 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Added
+
+- **`/system` edits the open conversation's own system message.** Bare, it puts the
+  text into the input box for editing; `/system <text>` replaces it, `/system reset`
+  takes the profile's current one, `/system clear` removes it. The profile is left as
+  it is.
+
+### Fixed
+
+- **A persona written into the settings now reaches the chat you go back to.** A
+  conversation keeps its own copy of the profile's system message, and an edit
+  reached only conversations created after it — so the chat a first start opens,
+  still empty, answered by the default text and ignored the persona. A conversation
+  you have not written in yet now takes the edit; one already under way keeps its
+  text, and the settings row and `/profile system` say so, naming `/system reset`.
+
 ## [0.26.1] — 2026-11-12
 
 **A cargo install keeps its data in your user folder.** `cargo install mindfork` now

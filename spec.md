@@ -2836,7 +2836,7 @@ A concept carried over in full from attempt #1 (section 10 of its specification)
 - **Unique `Profile.id: Uuid`**; a chat is tied to a profile (`Chat.profile_id`).
 - **Data isolation**: notes and RAG are separate per profile (`WHERE profile_id = ?`).
 - **Creating a chat from a profile**: `default_system_message → Chat.system_message`, `character_names`, `greeting` (as the assistant's first message), and `default_sampling` are copied over.
-- **Editing a profile** doesn't affect already-created chats (they have their own copy of `system_message`). **Exception — role names** (`character_names`): they're display-only, so they're resolved from the profile at render time (the chat's copy is kept but not used) and a rename applies to existing chats immediately.
+- **Editing a profile** doesn't affect chats already **begun** (they have their own copy of `system_message`): a chat with conversation content keeps the text it was created with, and **`/system [text|reset|clear]`** ([11.7](#117-keybindings-preliminary)) is its route — bare, the copy comes back as an editable command line; a text replaces it, `reset` takes the profile's again, `clear` removes it; the profile is never touched. A **pristine** chat (`Chat::is_pristine`, the first-launch default one included) still holding the profile's **previous** text takes the new one, as if created now (`follow_profile_system_message`): that is the chat a person goes back to after writing a persona in the settings, and until 0.26.2 its first reply followed the default it was created with. A pristine chat whose copy differs from the old text — `/system` set it — keeps it. The settings row says all this in its description. **Exception — role names** (`character_names`): they're display-only, so they're resolved from the profile at render time (the chat's copy is kept but not used) and a rename applies to existing chats immediately.
 - **Deleting a profile** is soft (`is_hidden`), cascading to hide its chats and exclude its notes/RAG.
 - **Forking a profile** (`/profile fork [name]`, the open chat's profile) makes a new one with every setting and the whole memory, and none of the chats — below.
 - **A profile from a character card** (`mindfork import <card>`) — the community's persona format, read as a new profile — below.
@@ -2851,7 +2851,7 @@ A profile holds: a unique identifier, a system message, and an **optional greeti
 
 **Role names** (`Profile.character_names`, settings → "Profiles" → the "Persona" group): what the interlocutors are called in this profile's chats — the feed's headers (in caps: `GAIA` instead of `YOU`) and the labels of the `F5` conversation export (`Gaia:` instead of `User:`). Both fields are **empty by default** — then each surface uses the interface language's own label, so the chat follows axis B until the user overrides it. The names are resolved at render time from the profile (see the exception above), so they can be changed at any point, including for old chats. Whitespace-only counts as unset. Legacy seed values (the pre-i18n Russian placeholders, and the `You`/`Assistant` they were migrated to) were never displayed and are cleared once at startup so the labels don't get stuck in a foreign language.
 
-**Scaffold language** (`Profile.language: Lang`, i18n Tier 1, [docs/history/i18n.md](docs/history/i18n.md)): the language of background-task prompts, the "self-model" scaffold, and tool results — text that the **model** reads (axis A). This is **not** the language the model answers in (that's set by the system message) and **not** the interface language (axis B, separate). Chosen before the first conversation and then **locked** as soon as the profile has data: visible chats with **conversation content** (messages, deleted-exchange tombstones or a compaction summary — `Chat::is_pristine`), a non-empty self-model, or notes — so that the entire profile's memory stays in one language; the gate is authoritatively checked by the orchestrator (`profile_has_data`), and the UI renders the "Scaffold language" field as locked. A **pristine** chat — the first-launch default one included — binds nothing: everything language-bearing it carries is a re-derivable localized default, so a fresh install's language stays editable. A switch re-derives the untouched defaults — a profile name/system message still byte-equal to the old locale's `defaults.*` (`reseed_language_defaults`), and every pristine chat's default title plus its system-message/role-name copies, as if created now (`rederive_pristine_chats`); user-edited text never matches the old default byte-for-byte and is left alone, and a manually renamed title is kept. Resolution — `profile.language` at request time; scaffold text is fetched through `shared/i18n` from the built-in `locales/<lang>.json` bundle, with external `data/locales/*.json` layered on top at startup (Tier 3 — overriding built-in text and adding new languages with no rebuild, [docs/history/i18n-external-locales.md](docs/history/i18n-external-locales.md)). Tiers 1–2 translated the hot core and all 35 tools; `Lang` is `Ru`/`En`/`Ext(code)`.
+**Scaffold language** (`Profile.language: Lang`, i18n Tier 1, [docs/history/i18n.md](docs/history/i18n.md)): the language of background-task prompts, the "self-model" scaffold, and tool results — text that the **model** reads (axis A). This is **not** the language the model answers in (that's set by the system message) and **not** the interface language (axis B, separate). Chosen before the first conversation and then **locked** as soon as the profile has data: visible chats with **conversation content** (messages, deleted-exchange tombstones or a compaction summary — `Chat::is_pristine`), a non-empty self-model, or notes — so that the entire profile's memory stays in one language; the gate is authoritatively checked by the orchestrator (`profile_has_data`), and the UI renders the "Scaffold language" field as locked. A **pristine** chat — the first-launch default one included — binds nothing: everything language-bearing it carries is a re-derivable localized default, so a fresh install's language stays editable. A switch re-derives the untouched defaults — a profile name/system message still byte-equal to the old locale's `defaults.*` (`reseed_language_defaults`), and every pristine chat's default title plus its role-name copies, as if created now (`rederive_pristine_chats`) — its system-message copy follows the profile's by the editing rule above, when it still holds the old text; user-edited text never matches the old default byte-for-byte and is left alone, and a manually renamed title is kept. Resolution — `profile.language` at request time; scaffold text is fetched through `shared/i18n` from the built-in `locales/<lang>.json` bundle, with external `data/locales/*.json` layered on top at startup (Tier 3 — overriding built-in text and adding new languages with no rebuild, [docs/history/i18n-external-locales.md](docs/history/i18n-external-locales.md)). Tiers 1–2 translated the hot core and all 35 tools; `Lang` is `Ru`/`En`/`Ext(code)`.
 
 ---
 
@@ -4937,10 +4937,10 @@ crossterm sees them — VS Code's integrated terminal claims `Ctrl+P`, `Ctrl+E`,
 the last of which **closes the tab the session runs in**. Typing survives every
 host, so the interface is fully operable by commands plus the safe key subset
 (printable characters, `Enter`, `Esc`, `Backspace`/`Delete`, `Tab`, the arrows,
-`Home`/`End`, `PageUp`/`PageDown`, `Shift`+arrows). Twenty-eight commands:
+`Home`/`End`, `PageUp`/`PageDown`, `Shift`+arrows). Twenty-nine commands:
 `/settings` `/local` `/self` `/chats` `/changes` `/tasks [stop <kind>|all]` `/notes` `/help` · `/new [profile]`
 `/rename [title]` `/autotitle` `/clone` `/copy` `/regen`·`/retry` `/continue`
-`/takeback` `/impersonate [text]` `/greeting [N]` `/bridge [pair|unpair]` `/stop` · `/find [text]` `/search <text>`
+`/takeback` `/impersonate [text]` `/greeting [N]` `/system [text|reset|clear]` `/bridge [pair|unpair]` `/stop` · `/find [text]` `/search <text>`
 `/links` · `/thoughts` `/toolcalls` `/subagents [expand|collapse|stop [n]]` `/mouse`
 `/emoji`.
 Load-bearing properties:
@@ -5027,7 +5027,10 @@ The stage's own decisions:
   choice's "not set" option.
 - **The notes state each edit's scope honestly**: the profile's system
   message and greeting are copied into a chat at creation, so those two say
-  "applies to new conversations"; a persona edit is resolved live at `Ctrl+U`
+  which conversations take the edit — new ones, and for the system message
+  the profile's chats not yet begun ([§10](#10-ai-companion-profiles)) — and
+  the system message's names `/system reset` for one already under way; a
+  persona edit is resolved live at `Ctrl+U`
   time, so its note says the *next* impersonation writes as it.
 - **The commands commit through the settings screen's own paths** —
   `UpdateProfile` for the profile fields and the persona link,
@@ -5043,6 +5046,19 @@ The stage's own decisions:
   **not** link what it created (fork F4 — several assistant profiles can
   share one persona); the note names `/impersonation use <name>` as the next
   step.
+
+**`/system [text|reset|clear]` — the open chat's own system message**
+([§10](#10-ai-companion-profiles)). A registry row with one free-text argument
+(`features::profile_command::chat_system_edit` reads it: `reset` and `clear`
+reserved only as the whole argument, newlines kept). The orchestrator owns the
+chat and answers every form — bare with a `RestoreInput` of `/system <text>`
+(the screen does not hold the text), an empty one with the syntax that sets
+it, an edit with a note saying what the next reply reads — and leaves
+`modified_at` alone: the text is not conversation content. The screen refuses
+an edit while a turn runs (its next round would read the text mid-change, and
+the model's own `set_system_message` lands at the round's end); showing is
+allowed. Added in 0.26.2 with the pristine-chat rule, after a persona written
+into the settings was ignored by the open chat.
 
 **`/export [md|json] [path]` writes the conversation to a file**
 (`features/export_command.rs`, `chat_export::to_import_json`;

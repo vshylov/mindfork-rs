@@ -154,6 +154,14 @@ profile at a time.
 `/profile delete` and `/profile system` do the same by typing. Deleting always
 asks first.
 
+**A conversation keeps its own copy of the system message**, taken when it is
+created. Editing the profile's system message reaches new conversations, and the
+ones you have not written in yet — the one a first start opens included. A
+conversation already under way keeps the text it started with: **`/system`** in it
+shows that text for editing, `/system reset` replaces it with the profile's current
+one, `/system <text>` with a text of its own, and `/system clear` removes it. The
+profile itself is not changed by `/system`.
+
 **`/profile fork [name]`** copies the open chat's profile into a new one — every
 setting, and its whole memory: the notes, the knowledge base, the self-model with
 its history — but none of its chats. From then on the two are separate: hand the
@@ -949,6 +957,7 @@ the keys for itself:
 | `/continue` | — | resume the last interrupted reply from where it stopped — local and external engines, Gemini, and Claude up to the 4.5 generation; DeepSeek in the `deepseek` mode, in a conversation without tool calls; through OpenRouter or another gateway, only Gemini models and Claude up to 4.5 |
 | `/impersonate [text]` | `Ctrl+U` | the model writes your next message, continuing the text you give it |
 | `/greeting [N]` | — | in a chat that holds only its greeting: the profile's next greeting, or the `N`th — a character card's other openings |
+| `/system [text\|reset\|clear]` | — | this chat's own system message: show it for editing, replace it, take the profile's again, or remove it |
 | `/bridge [pair\|unpair]` | — | this profile's Telegram bridge: what it is doing / a code to pair your account / forget the account |
 | `/stop` | `Esc` | cancel the running generation |
 | `/find [text]` · `/search <text>` | `Ctrl+F` · `Ctrl+G` | find in this conversation / find messages across every chat |

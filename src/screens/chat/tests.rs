@@ -5455,6 +5455,56 @@ mod stage3_commands {
         type_str(&mut c.s, "/impersonations list");
         assert!(!c.s.input_is_command());
     }
+
+    /// `/system` edits the open chat's own system message (spec §10): every
+    /// form becomes the orchestrator's intent — the screen does not hold the
+    /// text — and the box is left empty for the answer to land in.
+    #[test]
+    fn system_command_edits_the_open_chat() {
+        use crate::features::profile_command::ChatSystemEdit;
+        for (line, expected) in [
+            ("/system", ChatSystemEdit::Show),
+            ("/system reset", ChatSystemEdit::Reset),
+            ("/system CLEAR", ChatSystemEdit::Clear),
+            (
+                "/system Ты — Гея.\nОтвечай кратко.",
+                ChatSystemEdit::Set("Ты — Гея.\nОтвечай кратко.".into()),
+            ),
+        ] {
+            let mut c = staffed();
+            assert_eq!(
+                c.run(line),
+                Some(ChatIntent::ChatSystem(expected)),
+                "{line}"
+            );
+            assert!(c.s.input.is_empty(), "{line} left text in the box");
+        }
+    }
+
+    /// The refusals the screen can see end with a route: no chat open, and a
+    /// turn running — where showing the text is still allowed, since it
+    /// changes nothing.
+    #[test]
+    fn system_command_refuses_without_a_chat_and_mid_turn() {
+        use crate::features::profile_command::ChatSystemEdit;
+        let mut c = Cmd::bare();
+        assert_eq!(c.run("/system Текст"), None);
+        assert!(c.last_note().contains("/new"), "{}", c.last_note());
+
+        let mut c = staffed();
+        c.s.generating = true;
+        assert_eq!(c.run("/system Текст"), None);
+        let note = c.last_note();
+        assert!(
+            note.contains("/system"),
+            "the typed command is named: {note}"
+        );
+        assert_eq!(
+            c.run("/system"),
+            Some(ChatIntent::ChatSystem(ChatSystemEdit::Show)),
+            "showing reads only, so a running turn does not stop it"
+        );
+    }
 }
 
 /// `/subagents` (spec §11.2): the chat list's `Ctrl+O` for the open chat —

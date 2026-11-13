@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (75)
+## Entries (76)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -87,6 +87,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: no cursor blinks through the help (done)
 - Post-M9: the About tab says where everything is (done)
 - Post-M9: the notes screen, `/notes` (done)
+- Post-M9: a persona written into the settings reaches the open chat; `/system` (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -3992,3 +3993,74 @@ UI change otherwise — no engine, memory or tool path is touched.
   list, an opened note, the search, the tags editor, the question and F1, all as
   drawn. **4160 tests green, 285 `#[ignore]`**; fmt, clippy and the repository gates
   clean.
+
+### Post-M9: a persona written into the settings reaches the open chat; `/system` (done)
+
+**The report** (the owner, 2026-11-13, on 0.26.1 from `cargo install`): a sarcastic
+persona written into *Settings → Profiles → System message* was ignored — the model
+answered a friendly greeting in kind, on OpenRouter and on a managed server alike,
+regeneration after regeneration, while the same model with the same text in another
+program answered in the persona's voice. The model's own thinking quoted *"Answer
+clearly and to the point in the user's language"* — the default text, not the
+persona.
+
+**Cause, read from the owner's data and log.** A chat holds its own copy of the
+system message, taken at creation (spec §10 — on purpose: the assistant can change
+it with `set_system_message`). The first launch (20:18:49Z) created the default
+chat with the default text; the persona was written into the profile afterwards;
+the first message (23:01Z) went into that same chat, whose copy was still the
+default. `handle_update_profile` re-copied a pristine chat's system message only on
+a *scaffold-language* switch (`rederive_pristine_chats`), never on an edit of the
+text itself; the settings row had no description, and only `/profile system`'s note
+said "applies to new conversations". Nothing in the interface could show or change
+a begun chat's copy — only the model's own tool could.
+
+**What changed** (the owner chose the fix and `/system` together, 2026-11-13):
+- **A pristine chat follows the edit** — `follow_profile_system_message`, run by
+  every profile edit: a chat of the profile with no conversation content
+  (`Chat::is_pristine`) whose copy is still the profile's *previous* text takes the
+  new one. A copy that differs — set with `/system` — is the person's and stays; a
+  begun chat keeps its copy as before. It is also now the system-message half of a
+  language switch (the re-seeded default moves the profile's text, and this follows
+  it), so `rederive_pristine_chats` no longer overwrites the copy unconditionally.
+- **`/system [text|reset|clear]`** — a registry row (one free-text argument;
+  `profile_command::chat_system_edit` reserves `reset` and `clear` only as the
+  whole argument, keeps newlines). `AppCommand::ChatSystem` → the orchestrator,
+  which owns the text: bare answers with a `RestoreInput` of `/system <text>` (the
+  screen does not hold it), an empty one with the syntax that sets it; `reset` says
+  so when the chat already has the profile's text. `modified_at` is left alone. The
+  screen refuses an edit while a turn runs, not a look. `works_on_the_open_chat`:
+  an edit yes, a look no.
+- **The scope is said where the text is edited**: descriptions on the profile's
+  *System message* and *Greeting* rows (both are copied at creation), and
+  `/profile system`'s set/clear notes now name the chats not yet begun and
+  `/system reset`/`/system clear` for one under way. The system message's
+  description was cut to two sentences after the first draft pushed the panel's
+  value preview to two lines — `long_value_preview_ends_with_an_ellipsis_only_when_cut`
+  now finds the preview's last line above the description, which comes after it.
+
+**Not done:** a pristine chat does not gain a greeting set after it was created —
+`/greeting` places one there (a chat with nothing in it counts), and the greeting's
+new description says existing conversations keep their opening.
+
+**Tests.** `a_pristine_chat_follows_a_profile_system_message_edit` (pristine
+follows twice; begun, `/system`-set and another profile's chat stay),
+`chat_system_command_edits_the_chat_not_the_profile` (every form and its answer),
+`the_first_request_after_a_persona_edit_carries_the_persona` (the reported flow on
+what reaches a capturing engine: fresh install → edit → first request; then a begun
+chat ignores the next edit until `/system reset`), the parser and screen arms. A
+mutant with the follow-up call removed fails three of them, the language-switch test
+among them. **4809 tests green, 317 `#[ignore]`**; fmt, clippy and the repository
+gates clean.
+
+**Live run — GO.** The owner's own model file (`Ateron_Gemma-4-MoonGem-31B-Q4_0`,
+`llama-server` b12211, `-c 16384 --jinja`, external mode), driven in a real
+console by `tools/console_probe.py` on a fresh data root per arm: the persona set
+with `/profile system` in the first-launch chat, then *"Hi Assistant! I'm pleased to
+meet you! My name is Alex."* **Control, the released 0.26.1:** the chat file's copy
+stayed the default and the reply was *"It's a pleasure to meet you too, Alex! How
+can I help you today?"* — the report, reproduced. **The branch:** *"Thrilling.
+Another "Alex" to add to the archive of interchangeable humans…"*; a polite persona
+then written into the profile left the begun chat sarcastic (*"It's four,
+obviously…"*), `/system reset` took it (*"Splendid! Three plus three equals
+six…"*), and a bare `/system` put the chat's text into the input box.

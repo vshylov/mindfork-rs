@@ -4318,6 +4318,18 @@ regenerate's re-activation, clone's copy, new-chat's switch — never sees the
 spent command the loop's own top-of-iteration flush would have delivered one
 step late.
 
+`/system [text|reset|clear]` (0.26.2, spec §10, §11.7) is a registry row whose one
+free-text argument is read by `profile_command::chat_system_edit` into
+`ChatSystemEdit` (`TextEdit`'s three plus `Reset`), carried by
+`ChatIntent::ChatSystem` → `AppCommand::ChatSystem` to
+`Orchestrator::handle_chat_system`. The orchestrator owns the text, so even the
+bare form is answered there — a `RestoreInput` of `/system <text>`, the `/rename`
+pattern with a value the screen never held. Beside it,
+`handle_update_profile` runs `follow_profile_system_message` on every edit: a
+pristine chat whose copy is still the profile's previous text takes the new one
+(the language switch's re-derivation keeps the title and role names, and leaves
+the system message to this rule).
+
 **A subagent transcript as a chat of the list** (spec §9.3.2, §11.2,
 docs/research/subagent-chats.md §3.7–§3.8). `ChatSummary.children` carries the
 transcripts' cards, built by `Chat::summary()` from the records; the list widget

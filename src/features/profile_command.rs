@@ -51,6 +51,38 @@ pub(crate) fn text_edit(raw: &str) -> TextEdit {
     }
 }
 
+/// What `/system` does to the open chat's **own** system message (spec §10) —
+/// the copy a chat takes when it is created, which a profile edit no longer
+/// reaches once the conversation has begun. [`TextEdit`]'s three, plus
+/// `Reset`: the profile's current text copied in again. The command itself is
+/// a row of [`super::ui_command`]'s registry (one free-text argument); this is
+/// how the runner reads that argument.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChatSystemEdit {
+    /// Bare `/system`: hand the chat's current text back for editing.
+    Show,
+    /// The reserved word `clear`: the chat sends no system message.
+    Clear,
+    /// The reserved word `reset`: the chat takes its profile's text again.
+    Reset,
+    /// Replace the chat's text with this one (internal newlines preserved).
+    Set(String),
+}
+
+/// Classifies `/system`'s raw argument: `reset` is reserved beside
+/// [`text_edit`]'s `clear`, and only as the whole argument — "reset the tone"
+/// is a system message like any other.
+pub(crate) fn chat_system_edit(raw: &str) -> ChatSystemEdit {
+    if raw.eq_ignore_ascii_case("reset") {
+        return ChatSystemEdit::Reset;
+    }
+    match text_edit(raw) {
+        TextEdit::Show => ChatSystemEdit::Show,
+        TextEdit::Clear => ChatSystemEdit::Clear,
+        TextEdit::Set(text) => ChatSystemEdit::Set(text),
+    }
+}
+
 /// Normalizes a name-shaped argument: whitespace runs collapse to single
 /// spaces (a name has no meaningful newlines), surrounding quotes come off,
 /// and an empty result reads as "no argument".
@@ -101,7 +133,9 @@ pub enum ProfileCommand {
     /// name, which the orchestrator derives from the profile's.
     Fork { name: Option<String> },
     /// The active chat's profile's system message (`/profile system [text|clear]`).
-    /// Applies to new conversations — a chat snapshots it at creation (spec §5.1).
+    /// Applies to new conversations and to the profile's chats not yet begun —
+    /// a chat snapshots it at creation (spec §10); `/system` edits a begun
+    /// chat's own copy.
     System(TextEdit),
     /// The active chat's profile's greeting (`/profile greeting [text|clear]`).
     /// Applies to new conversations — the greeting is inserted at creation.
@@ -254,6 +288,30 @@ mod tests {
                 "clear the air".into()
             ))))
         );
+    }
+
+    /// `/system`'s argument: bare shows, `clear` and `reset` are reserved in
+    /// any case but only as the whole argument, anything else is the new text
+    /// with its newlines.
+    #[test]
+    fn a_chat_system_argument_is_classified() {
+        for (raw, expected) in [
+            ("", ChatSystemEdit::Show),
+            ("clear", ChatSystemEdit::Clear),
+            ("CLEAR", ChatSystemEdit::Clear),
+            ("reset", ChatSystemEdit::Reset),
+            ("Reset", ChatSystemEdit::Reset),
+            (
+                "reset the tone",
+                ChatSystemEdit::Set("reset the tone".into()),
+            ),
+            (
+                "Ты — Гея.\nОтвечай кратко.",
+                ChatSystemEdit::Set("Ты — Гея.\nОтвечай кратко.".into()),
+            ),
+        ] {
+            assert_eq!(chat_system_edit(raw), expected, "argument {raw:?}");
+        }
     }
 
     #[test]

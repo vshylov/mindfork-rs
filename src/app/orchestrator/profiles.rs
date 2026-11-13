@@ -251,8 +251,9 @@ impl Orchestrator {
         }
     }
 
-    /// Applies profile edits (doesn't touch already-created chats — they have their own
-    /// copies, spec §10). Saves and re-emits the profile list/settings.
+    /// Applies profile edits. A chat holds its own copy of the system message
+    /// (spec §10): a begun chat keeps it, a pristine one still holding the old
+    /// text follows the edit. Saves and re-emits the profile list/settings.
     pub(super) fn handle_update_profile(&mut self, id: Uuid, mut edit: ProfileEdit) {
         // A profile's voice may be what a spoken reply failed on (spec §11.9).
         self.auto_speech_failed = false;
@@ -284,6 +285,9 @@ impl Orchestrator {
         let Some(profile) = self.profiles.iter_mut().find(|p| p.id == id) else {
             return;
         };
+        // The text the profile's untouched chats still hold — what an edit,
+        // or a language switch re-seeding the default, moves them off.
+        let old_system = profile.default_system_message.clone();
         if !crate::features::profiles::apply_edit(profile, edit) {
             let _ = self.evt_tx.send(AppEvent::Error(
                 self.ui_locale().t("ui.err.profile_name_empty").into(),
@@ -307,6 +311,7 @@ impl Orchestrator {
         if let Some(old) = old_lang {
             self.rederive_pristine_chats(&profile, old);
         }
+        self.follow_profile_system_message(&profile, &old_system);
         self.emit_profile_list();
         self.emit_settings();
         // Role names live on the profile and are resolved at render time — refresh
@@ -320,13 +325,44 @@ impl Orchestrator {
         self.refresh_bridges();
     }
 
+    /// Carries a changed profile system message into the profile's chats not
+    /// yet begun (spec §10): a pristine chat holding the profile's previous
+    /// text takes the new one, as if it were created now. That is the chat a
+    /// first launch opens, and the one a person goes back to after writing a
+    /// persona in the settings — before this, it kept the text it was created
+    /// with and its first reply ignored the persona.
+    ///
+    /// A chat with conversation content keeps its copy (`/system` edits it);
+    /// so does a pristine chat whose copy differs from the old text — `/system`
+    /// set it, and the person's own text outranks the profile's. This is also
+    /// the system-message half of a language switch: re-seeding the default
+    /// moves the profile's text, and this follows it.
+    fn follow_profile_system_message(&mut self, profile: &Profile, old: &str) {
+        if profile.default_system_message == old {
+            return;
+        }
+        let mut dirty: Vec<Uuid> = Vec::new();
+        for chat in self
+            .chats
+            .iter_mut()
+            .filter(|c| c.profile_id == profile.id && c.is_pristine() && c.system_message == old)
+        {
+            chat.system_message = profile.default_system_message.clone();
+            dirty.push(chat.id);
+        }
+        for id in dirty {
+            self.mark_dirty(id);
+        }
+    }
+
     /// Re-derives the localized defaults of the profile's pristine chats after
     /// a scaffold-language switch (axis A, spec §10): an untouched default
-    /// title follows the new locale, and the system message / role names are
-    /// re-copied from the updated profile — as if the chat were created now.
-    /// Nothing else is touched (draft, attachments, workspace, sampling stay
-    /// the user's). Chats with conversation content never get here — they lock
-    /// the language (`profile_has_data`); a manually renamed title is kept.
+    /// title follows the new locale, and the role names are re-copied from the
+    /// updated profile — as if the chat were created now (the system message
+    /// follows in [`Self::follow_profile_system_message`], which every edit
+    /// runs). Nothing else is touched (draft, attachments, workspace, sampling
+    /// stay the user's). Chats with conversation content never get here — they
+    /// lock the language (`profile_has_data`); a manually renamed title is kept.
     fn rederive_pristine_chats(&mut self, profile: &Profile, old_lang: crate::shared::i18n::Lang) {
         let old_title = crate::shared::i18n::locale(old_lang).t("defaults.chat_title");
         let new_title = crate::shared::i18n::locale(profile.language).t("defaults.chat_title");
@@ -341,7 +377,6 @@ impl Orchestrator {
                 chat.title = new_title.to_string();
                 renamed.push((chat.id, chat.title.clone()));
             }
-            chat.system_message = profile.default_system_message.clone();
             chat.character_names = profile.character_names.clone();
             dirty.push(chat.id);
         }

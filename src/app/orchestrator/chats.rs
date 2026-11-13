@@ -10,6 +10,7 @@ use uuid::Uuid;
 use crate::app::events::{AppEvent, FeedFocus};
 use crate::entities::chat::FeedView;
 use crate::features::export_command::ExportFormat;
+use crate::features::profile_command::ChatSystemEdit;
 
 use super::Orchestrator;
 
@@ -189,6 +190,54 @@ impl Orchestrator {
                 ("count", &count.to_string()),
             ],
         )));
+    }
+
+    /// `/system [text|reset|clear]` (spec §10): the active chat's **own**
+    /// system message — the copy it took from its profile at creation, which a
+    /// profile edit reaches only while the chat is not yet begun
+    /// (`follow_profile_system_message`). Bare hands the text back as an
+    /// editable command line; the rest replace it, and the note says what the
+    /// next reply reads. The profile is never touched — `/profile system` is
+    /// its route — and `modified_at` neither: the text is not conversation
+    /// content, so the chat keeps its place in the list.
+    pub(super) fn handle_chat_system(&mut self, edit: ChatSystemEdit) {
+        let loc = self.ui_locale();
+        let notice = |key: &str| AppEvent::Notice(loc.t(key).to_string());
+        let Some(active) = self.active_id else {
+            return;
+        };
+        let Some(chat) = self.chats.iter().find(|c| c.id == active) else {
+            return;
+        };
+        let (text, key) = match edit {
+            ChatSystemEdit::Show => {
+                let event = if chat.system_message.trim().is_empty() {
+                    notice("ui.system.empty")
+                } else {
+                    AppEvent::RestoreInput(format!("/system {}", chat.system_message))
+                };
+                let _ = self.evt_tx.send(event);
+                return;
+            }
+            ChatSystemEdit::Set(text) => (text, "ui.system.set"),
+            ChatSystemEdit::Clear => (String::new(), "ui.system.cleared"),
+            ChatSystemEdit::Reset => {
+                let Some(profile) = self.profiles.iter().find(|p| p.id == chat.profile_id) else {
+                    return;
+                };
+                if profile.default_system_message == chat.system_message {
+                    let _ = self.evt_tx.send(notice("ui.system.already_profile"));
+                    return;
+                }
+                (profile.default_system_message.clone(), "ui.system.reset")
+            }
+        };
+        let Some(chat) = self.chat_mut(active) else {
+            return;
+        };
+        chat.system_message = text;
+        self.mark_dirty(active);
+        let _ = self.evt_tx.send(notice(key));
     }
 
     pub(super) fn handle_switch(&mut self, id: Uuid) {

@@ -1107,6 +1107,7 @@ impl Orchestrator {
             AppCommand::DeleteProfile(id) => self.handle_delete_profile(id),
             AppCommand::ForkProfile { name } => self.handle_fork_profile(name),
             AppCommand::SwapGreeting { pick } => self.handle_swap_greeting(pick),
+            AppCommand::ChatSystem(edit) => self.handle_chat_system(edit),
             AppCommand::UpdateConfig(config) => self.handle_update_config(*config),
             AppCommand::UpdateProfile { id, edit } => self.handle_update_profile(id, *edit),
             AppCommand::RagAdd { path, recursive } => self.handle_rag_add(path, recursive),
