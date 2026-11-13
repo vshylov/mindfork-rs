@@ -2228,6 +2228,14 @@ open — which works on Linux and fails on Windows, leaving the scratch behind e
 when something has already gone wrong. Declare the handle first, and say why beside it.
 — *a big entry compressed on many threads* (`chunked::Assembly`).
 
+**A probe that waits for a word on the screen also finds the word you typed.** A release
+check sent a question ending "…then end with the word FINISHED" and waited for
+`FINISHED`; the question's own echo in the feed matched at once, and the `Esc` that
+followed cancelled the reply it meant to wait for. Wait for a state the app draws
+rather than for text the probe put there — the generating status gone, in the
+interface's language (`ui.status.generating` as the locale words it). — *release
+0.26.3*.
+
 ## 7. i18n, gates and localization
 
 **Never build a bundle key with `format!`.** A key assembled from a prefix is
