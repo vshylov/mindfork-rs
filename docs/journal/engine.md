@@ -7465,3 +7465,11 @@ off.
   `gemini-4-hydrogen`: the bar read 0, 1, **0**, 1, 16, 17, 55 … 280 — down after the
   first report — and the reasoning climbed 226 → 907 → … → 3631, the running totals
   summed, above the reply it is part of.
+- **Merged** — PR 950, by the owner, 2026-11-13 16:12:16Z, merge commit `6e5d7e3e`.
+  - CI was green in all nine checks. Tests took 4 min 19 s on Ubuntu, 3 min 29 s on
+    macOS and 7 min 03 s on Windows; the Windows-only clippy took 5 min 03 s and the
+    lints 1 min 57 s.
+  - SonarCloud's gate passed: no new issues, no hotspots, 92.3% of the new code
+    covered, 0.0% duplicated.
+  - **Not released yet**: the fix waits in `CHANGELOG.md`'s `[Unreleased]` beside
+    949's help line, and `v0.26.2` is still the newest release.
