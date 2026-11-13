@@ -65,6 +65,7 @@ pub(crate) static HELP_SECTION: HelpSection = HelpSection {
         ("Ctrl+C", "ui.help.copy"),
         ("Ctrl+X", "ui.help.cut"),
         ("Ctrl+V", "ui.help.paste"),
+        (keys::IMAGE_PASTE_CHORD, "ui.help.paste_image"),
         ("Esc", "ui.help.esc"),
         ("Ctrl+N", "ui.help.new_chat"),
         ("F2", "ui.help.rename_chat"),

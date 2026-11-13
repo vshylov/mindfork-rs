@@ -1244,7 +1244,9 @@ src/
    │                       makes Office open a call's workbook or document in
    │                       Protected View (a CSV only if Excel's text-file setting is on)
    ├─ keys.rs              layout-independent Ctrl shortcuts (`hotkey_char`: Windows
-   │                       keyboard-layout resolution → JCUKEN table → pass-through)
+   │                       keyboard-layout resolution → JCUKEN table → pass-through);
+   │                       the image paste's `Alt+V` (`is_image_paste_chord`), read
+   │                       by the chat and by `mindfork keys`
    ├─ server.rs            ServerStatus (server status for the UI)
    ├─ session_budget.rs    `SessionBudget` — the app's request streams: the permit
    │                       count of `sessions` and, over a shared KV pool, a token

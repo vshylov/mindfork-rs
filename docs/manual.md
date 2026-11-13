@@ -457,8 +457,10 @@ in that same folder and appear in `/file list` beside the ones you attached.
 ### Images
 
 `/image attach <path|url>` stages a picture for your **next** message;
-`/image paste` takes the one on the clipboard, which is what a screenshot needs
-(`Ctrl+V` does the same where the terminal forwards it). Picture files you copied
+`/image paste` takes the one on the clipboard, which is what a screenshot needs;
+`Alt+V` does the same in every terminal, Windows Terminal included, and `Ctrl+V`
+where the terminal forwards it — Windows Terminal keeps `Ctrl+V` for its own text
+paste, which finds nothing in a picture. Picture files you copied
 in a file manager are pasted the same way and keep their own names. `/image list`
 shows what is staged, `/image remove` unstages.
 
@@ -867,6 +869,7 @@ things on different screens. The highlights:
 | `Ctrl+T` / `Ctrl+O` | collapse/expand "thoughts" / tool calls; `Ctrl+O` in the chat list — fold/unfold the selected chat's subagent transcripts |
 | `Shift+←/→/↑/↓`, `Ctrl+A` | select text / select all |
 | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | copy / cut / paste |
+| `Alt+V` | paste the clipboard's image (`/image paste`) — where the terminal keeps `Ctrl+V`, as Windows Terminal does |
 | `Ctrl+K` | clear the input (`Ctrl+Z` brings it back) |
 | `Ctrl+Z` / `Ctrl+Y` | undo / redo in the input box |
 | `Ctrl+B` | emoji picker |

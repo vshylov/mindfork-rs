@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (41)
+## Entries (42)
 
 - Post-M9: fast multiline clipboard paste (done)
 - Post-M9: `↑/↓` navigation by visual row of a wrapped line (done)
@@ -53,6 +53,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a name for a pasted image (done)
 - Post-M9: the clipboard on Wayland, read directly (done)
 - Post-M9: the clipboard on GNOME and KDE, and a paste refused for a clipboard that will not open (done)
+- Post-M9: `Alt+V` — the image paste by key where the terminal keeps `Ctrl+V` (done)
 
 ### Post-M9: fast multiline clipboard paste (done)
 - **Symptom**: a large clipboard paste lagged in Windows Terminal, and a line break
@@ -2289,3 +2290,54 @@ Wherever the clipboard opened — KWin and mutter with XWayland, KWin without �
 round trips ran and the refusal kept the old words; mutter 51.1 and 46.2 with no
 XWayland gave `NoBridge`; no display at all gave `NoDisplay`; a stale `WAYLAND_DISPLAY`
 and mutter's XWayland without `XAUTHORITY` gave arboard's words.
+
+### Post-M9: `Alt+V` — the image paste by key where the terminal keeps `Ctrl+V` (done)
+
+**What.** The owner reported on 2026-11-13 that pasting a picture did nothing on
+Windows: a picture copied in Paint.NET, then a screenshot (PrintScreen, a region
+selected), and `Ctrl+V` in the input box each time. `Alt+V` now stages the clipboard's
+image in every terminal.
+
+**Measured, before any code.** The clipboard held `PNG`, `CF_DIBV5`, `Bitmap` and
+`CF_DIB`, and no text. The read-only `clipboard_refusal_in_this_session` read it through
+arboard as 1407×232, so the reader was fine and `/image paste` worked. Windows Terminal
+1.25.2733 had `ctrl+v` bound to its own `paste` (the owner's `settings.json`, and the
+defaults besides). It looks for text, finds none in a picture, and sends the app
+nothing. This is the gap the entry *pasting an image from the clipboard* above already
+recorded. The fix it chose was a command, which a person has to know about, and the
+key everyone presses did nothing at all. Claude Code and Cursor's CLI hit the same wall
+on Windows, and Alt+V is the convention there. Windows Terminal's `defaults.json`
+binds no `alt+<letter>`.
+
+**Key decisions** (by the agent, on the owner's go-ahead for the change).
+
+- **`Alt+V` is `/image paste`, not a second `Ctrl+V`.** It stages a picture or picture
+  files, and with neither it refuses in the command's words, naming `/image attach`. It
+  never pastes text. Someone who presses the image key over text learns why nothing was
+  staged, where a text paste would hide the mistake. `Ctrl+V` keeps its text fallback.
+- **One predicate, two readers.** `shared::keys::is_image_paste_chord` is asked by
+  the chat screen and by `mindfork keys`, so the echo cannot name a chord the chat does
+  not take. It reads the physical key, as every `Ctrl` shortcut does (`Alt+м` on the
+  Russian layout). It refuses anything with `Ctrl`, because `Ctrl+Alt` on Windows is
+  AltGr, which types text.
+- **The draft is left alone.** A picture is staged *for* the message being written, so
+  the chord neither types `v` (an `Alt`+letter never did) nor clears the box, unlike the
+  typed command.
+- **The help names both keys.** The `Ctrl+V` row now says it pastes an image when
+  there is one, which it has done since the clipboard-image entry while its row still
+  said "paste text".
+
+**Tests.** Unit: the chord (with and without `Shift`; not `Ctrl+V`, `Ctrl+Alt+V`, a
+bare `v` or `Alt` on another letter), the chat screen (`Alt+V` gives the command's
+intent and keeps the draft), and `mindfork keys` naming it: **4815 green, 318
+`#[ignore]`**. **Live — GO** (Windows 11, the Windows console, `tools/console_probe.py
+--scenario image-paste`, new). With a 64×32 picture on the real clipboard, `Alt+V`
+attached `clipboard.png` (64×32, ~6 tok) and the draft stayed `look`. With text on the
+clipboard, `Alt+V` refused and named `/image attach`, and an injected `Ctrl+V` pasted
+the text. The scenario keeps what the person had copied and puts it back: the owner's
+1407×232 screenshot came back, as a bitmap. **Control arm, red:** the same scenario on
+a build without the chat screen's arm failed both `Alt+V` checks. `--scenario keys`
+echoes `Alt+'v'` as `the shortcut Alt+V`. The probe injects into a console, which
+tests the app but not which chords the terminal lets through. The owner closed that
+gap on 2026-11-13: in **Windows Terminal** itself, `Alt+V` staged the clipboard's
+picture, both with *Name pasted images* on (the chat's model named it) and with it off.

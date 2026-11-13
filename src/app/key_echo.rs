@@ -323,7 +323,8 @@ fn modifier_names(modifiers: KeyModifiers) -> Vec<&'static str> {
 
 /// What the chat's input box does with a key, in the order the chat screen
 /// asks (`screens::chat::input`): the line break first, then `Enter`, a
-/// `Ctrl` shortcut by its physical letter, and the box itself.
+/// `Ctrl` shortcut by its physical letter, the image paste's `Alt+V`, and the
+/// box itself.
 fn key_outcome(key: &KeyEvent, loc: &Locale, newline_key: NewlineKey) -> String {
     let mut field = sample_box();
     if keys::is_line_break(key, newline_key) {
@@ -339,6 +340,9 @@ fn key_outcome(key: &KeyEvent, loc: &Locale, newline_key: NewlineKey) -> String 
     {
         let chord = format!("Ctrl+{}", physical.to_ascii_uppercase());
         return loc.tf("cli.keys.shortcut", &[("chord", &chord)]);
+    }
+    if keys::is_image_paste_chord(key) {
+        return loc.tf("cli.keys.shortcut", &[("chord", keys::IMAGE_PASTE_CHORD)]);
     }
     match field.on_key(*key) {
         KeyOutcome::Ignored => loc.t("cli.keys.ignored").to_string(),
@@ -552,6 +556,12 @@ mod tests {
         assert_eq!(
             outcome(KeyCode::F(1), KeyModifiers::NONE),
             "the input box does nothing with it"
+        );
+        // The one `Alt`+letter the chat takes: the image paste, for a terminal that
+        // keeps `Ctrl+V` — `mindfork keys` is where a person checks it arrives.
+        assert_eq!(
+            outcome(KeyCode::Char('v'), KeyModifiers::ALT),
+            "the shortcut Alt+V"
         );
     }
 

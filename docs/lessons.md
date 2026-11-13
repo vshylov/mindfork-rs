@@ -1973,6 +1973,16 @@ anything that takes text. On unix the terminal composes AltGr and the character 
 bare. `tools/console_probe.py --scenario altgr` injects it as the console reports it.
 — *AltGr text on Windows is typed*.
 
+**When the terminal keeps a key, a command is not enough — give the action a second
+key.** Windows Terminal binds `Ctrl+V` to its own paste. That paste finds no text in a
+picture and sends the app nothing, so the image paste had `/image paste` for this from
+the start. The owner still pressed `Ctrl+V`, twice, and reported it as broken: people
+reach for the key they know, not for the help. Where a terminal keeps a chord, add one
+it lets through (`Alt+V`; Windows Terminal's defaults bind no `alt+<letter>`). Keep the
+command for terminals that keep that one too. `mindfork keys` shows whether a key
+arrives at all.
+— *`Alt+V` — the image paste by key where the terminal keeps `Ctrl+V`*.
+
 **A hidden console cannot be resized under a running app, but it can be started at a
 size.** From a process attached to it, `SetConsoleWindowInfo` returns success and changes
 nothing, and `SetConsoleScreenBufferSize` fails with error 87 — hidden, or minimized and
