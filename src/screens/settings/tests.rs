@@ -2836,13 +2836,35 @@ fn long_value_preview_ends_with_an_ellipsis_only_when_cut() {
     goto_section(&mut s, Section::Profiles);
     goto_field(&mut s, FieldId::PSystem);
     let rows = panel_rows(&mut s, 116, 30);
-    let last = rows
+    // The preview comes first and the field's description after it — the
+    // hint has first claim on the panel — so the preview's last line is the
+    // one before the description starts, and the description is whole.
+    let desc = crate::shared::i18n::locale(AppConfig::default().interface.language)
+        .t("ui.settings.desc.system_message");
+    let opening: String = desc.chars().take(24).collect();
+    let desc_at = rows
+        .iter()
+        .position(|r| r.starts_with(&opening))
+        .unwrap_or_else(|| panic!("the description is in the panel: {rows:?}"));
+    let last = rows[..desc_at]
         .iter()
         .rfind(|r| !r.is_empty())
         .expect("the preview is in the panel");
     assert!(
         last.ends_with('…'),
-        "no cut marker on the last line: {last:?}"
+        "no cut marker on the preview's last line: {last:?}"
+    );
+    let tail: String = desc
+        .chars()
+        .rev()
+        .take(12)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    assert!(
+        rows.iter().any(|r| r.ends_with(&tail)),
+        "the description is not cut: {rows:?}"
     );
 
     // The control arm: a value long enough to be previewed (> 32 columns) but

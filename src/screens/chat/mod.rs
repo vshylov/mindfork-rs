@@ -343,6 +343,11 @@ pub enum ChatIntent {
     Greeting {
         pick: Option<usize>,
     },
+    /// The open chat's own system message (`/system [text|reset|clear]`,
+    /// spec §10): shown for editing, replaced, retaken from the profile, or
+    /// removed. The profile's text is not touched — `/profile system` is its
+    /// route.
+    ChatSystem(crate::features::profile_command::ChatSystemEdit),
     /// The open chat's profile's messenger bridge (`/bridge [pair|unpair]`,
     /// spec §11.13).
     Bridge(crate::features::bridge::BridgeAction),

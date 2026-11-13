@@ -586,3 +586,220 @@ fn fork_without_an_open_chat_says_so() {
         .any(|e| matches!(e, AppEvent::Notice(text) if text.contains("no profile to fork")));
     assert!(said);
 }
+
+/// The reported defect (spec §10): a fresh install opens a pristine chat, the
+/// person writes a persona into the profile's system message, goes back to
+/// that chat — and its first reply follows the text the chat was created with.
+/// A pristine chat still holding the profile's old text now takes the new one;
+/// a begun chat keeps its copy, and so does a pristine one the person set with
+/// `/system`; another profile's chat is not this profile's business.
+#[test]
+fn a_pristine_chat_follows_a_profile_system_message_edit() {
+    let (_d, mut orch) = bare_orch();
+    let profile = Profile::new("P", "You are a helpful assistant.");
+    let other = Profile::new("Q", "You are a helpful assistant.");
+    let pid = profile.id;
+    let pristine = Chat::from_profile(&profile, "new");
+    let mut begun = Chat::from_profile(&profile, "begun");
+    begun.push_message(Message::user("hi"));
+    let mut own = Chat::from_profile(&profile, "own");
+    own.system_message = "Mine.".into();
+    let foreign = Chat::from_profile(&other, "foreign");
+    let ids = [pristine.id, begun.id, own.id, foreign.id];
+    orch.profiles.extend([profile, other]);
+    orch.chats.extend([pristine, begun, own, foreign]);
+
+    orch.handle_update_profile(
+        pid,
+        ProfileEdit {
+            system_message: Some("You are sarcastic.".into()),
+            ..Default::default()
+        },
+    );
+
+    let text = |orch: &Orchestrator, id: Uuid| {
+        orch.chats
+            .iter()
+            .find(|c| c.id == id)
+            .map(|c| c.system_message.clone())
+            .unwrap()
+    };
+    assert_eq!(
+        text(&orch, ids[0]),
+        "You are sarcastic.",
+        "the pristine chat follows"
+    );
+    assert_eq!(
+        text(&orch, ids[1]),
+        "You are a helpful assistant.",
+        "a begun conversation keeps its copy"
+    );
+    assert_eq!(
+        text(&orch, ids[2]),
+        "Mine.",
+        "a text set with /system outranks the profile's"
+    );
+    assert_eq!(
+        text(&orch, ids[3]),
+        "You are a helpful assistant.",
+        "another profile's chat is untouched"
+    );
+
+    // A second edit: the pristine chat holds the previous text, so it follows
+    // again — it is "as if created now" every time, not once.
+    orch.handle_update_profile(
+        pid,
+        ProfileEdit {
+            system_message: Some("You are terse.".into()),
+            ..Default::default()
+        },
+    );
+    assert_eq!(text(&orch, ids[0]), "You are terse.");
+    assert_eq!(text(&orch, ids[2]), "Mine.");
+}
+
+/// `/system [text|reset|clear]` (spec §10) on the active chat: bare hands the
+/// text back as a command line, an edit replaces the chat's copy and says so,
+/// `reset` takes the profile's again — or says it already has it — and the
+/// profile itself is never touched.
+#[test]
+fn chat_system_command_edits_the_chat_not_the_profile() {
+    use crate::features::profile_command::ChatSystemEdit;
+    let (_d, mut orch, mut rx) = bare_orch_rx();
+    orch.config.interface.language = crate::shared::i18n::Lang::En;
+    let profile = Profile::new("P", "You are sarcastic.");
+    let mut chat = Chat::from_profile(&profile, "chat");
+    chat.system_message = "You are a helpful assistant.".into();
+    chat.push_message(Message::user("hi"));
+    let (pid, cid) = (profile.id, chat.id);
+    orch.profiles.push(profile);
+    orch.chats.push(chat);
+    orch.activate(cid);
+    while rx.try_recv().is_ok() {}
+
+    let mut answer = |orch: &mut Orchestrator, edit: ChatSystemEdit| {
+        orch.handle_chat_system(edit);
+        let mut last = None;
+        while let Ok(ev) = rx.try_recv() {
+            match ev {
+                AppEvent::Notice(text) => last = Some(format!("notice: {text}")),
+                AppEvent::RestoreInput(text) => last = Some(format!("input: {text}")),
+                _ => {}
+            }
+        }
+        last.expect("every form answers")
+    };
+    let text = |orch: &Orchestrator| orch.chats[0].system_message.clone();
+
+    assert_eq!(
+        answer(&mut orch, ChatSystemEdit::Show),
+        "input: /system You are a helpful assistant."
+    );
+    let reset = answer(&mut orch, ChatSystemEdit::Reset);
+    assert!(reset.starts_with("notice: "), "{reset}");
+    assert_eq!(text(&orch), "You are sarcastic.");
+    let again = answer(&mut orch, ChatSystemEdit::Reset);
+    assert!(again.contains("already"), "{again}");
+
+    let set = answer(
+        &mut orch,
+        ChatSystemEdit::Set("Line one.\nLine two.".into()),
+    );
+    assert!(
+        set.contains("/profile system"),
+        "names the profile's route: {set}"
+    );
+    assert_eq!(text(&orch), "Line one.\nLine two.");
+
+    let cleared = answer(&mut orch, ChatSystemEdit::Clear);
+    assert!(
+        cleared.contains("/system reset"),
+        "names the way back: {cleared}"
+    );
+    assert_eq!(text(&orch), "");
+    let empty = answer(&mut orch, ChatSystemEdit::Show);
+    assert!(
+        empty.starts_with("notice: ") && empty.contains("/system"),
+        "{empty}"
+    );
+
+    assert_eq!(
+        orch.profiles
+            .iter()
+            .find(|p| p.id == pid)
+            .unwrap()
+            .default_system_message,
+        "You are sarcastic.",
+        "the profile is never touched"
+    );
+}
+
+/// The reported flow end to end, on what reaches the engine: a fresh install's
+/// first chat, the persona written into the profile, the first message — the
+/// request carries the persona, not the text the chat was created with. Then
+/// the conversation is under way: a second profile edit leaves it alone until
+/// `/system reset` takes the profile's text into it.
+#[tokio::test]
+async fn the_first_request_after_a_persona_edit_carries_the_persona() {
+    use crate::features::profile_command::ChatSystemEdit;
+    let backend = CapturingBackend::new();
+    let (_dir, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(Some(backend.clone()), no_auto_cfg());
+    let profile_id = match wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::ProfileList(p) if p.len() == 1),
+    )
+    .await
+    .unwrap()
+    {
+        AppEvent::ProfileList(profiles) => profiles[0].id,
+        _ => unreachable!(),
+    };
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    let edit = |text: &str| AppCommand::UpdateProfile {
+        id: profile_id,
+        edit: Box::new(ProfileEdit {
+            system_message: Some(text.into()),
+            ..Default::default()
+        }),
+    };
+    let turn = |text: &str| AppCommand::SendMessage(text.into());
+
+    cmd_tx.send(edit("You are sarcastic and brief.")).unwrap();
+    cmd_tx.send(turn("Hi! My name is Alex.")).unwrap();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+        .await
+        .unwrap();
+    let system = backend.last_request().system.unwrap_or_default();
+    assert!(
+        system.starts_with("You are sarcastic and brief."),
+        "the first request must carry the persona: {system}"
+    );
+
+    // Begun: the profile's next edit is for new conversations…
+    cmd_tx.send(edit("You are terse.")).unwrap();
+    cmd_tx.send(turn("And now?")).unwrap();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+        .await
+        .unwrap();
+    let system = backend.last_request().system.unwrap_or_default();
+    assert!(
+        system.starts_with("You are sarcastic and brief."),
+        "{system}"
+    );
+
+    // …until `/system reset` takes it into this one.
+    cmd_tx
+        .send(AppCommand::ChatSystem(ChatSystemEdit::Reset))
+        .unwrap();
+    cmd_tx.send(turn("And now?")).unwrap();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+        .await
+        .unwrap();
+    let system = backend.last_request().system.unwrap_or_default();
+    assert!(system.starts_with("You are terse."), "{system}");
+
+    drop(cmd_tx);
+    handle.await.unwrap();
+}

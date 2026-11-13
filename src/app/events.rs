@@ -170,6 +170,12 @@ pub enum AppCommand {
     /// its `n`th, 1-based (`/greeting [N]`, spec §10) — only while the chat
     /// holds nothing but a greeting.
     SwapGreeting { pick: Option<usize> },
+    /// The active chat's own system message (`/system [text|reset|clear]`,
+    /// spec §10) — the copy it took from its profile at creation. `Show` is
+    /// answered with a `RestoreInput` holding `/system <text>` (or a notice
+    /// when there is none), every edit with a notice; the profile is left as
+    /// it is.
+    ChatSystem(crate::features::profile_command::ChatSystemEdit),
     /// Replace the whole config (settings screen). The orchestrator saves it,
     /// restarts the server/registry if needed, and re-emits it. See spec §11.6.
     /// `Box` — `AppConfig` is large, don't bloat the enum.
@@ -409,6 +415,11 @@ impl AppCommand {
                 crate::features::project_command::SlotAction::Show
             ),
             AppCommand::RevertWorkspaceFile { .. } => true,
+            // Replacing the chat's own system message changes what it stores
+            // and what its next reply reads; asking to see it only reads.
+            AppCommand::ChatSystem(edit) => {
+                *edit != crate::features::profile_command::ChatSystemEdit::Show
+            }
 
             // Reading the conversation out to a file changes nothing in it —
             // the same side as `CopyChat`.
