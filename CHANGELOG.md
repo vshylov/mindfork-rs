@@ -14,6 +14,14 @@ split by subsystem.
 
 ## [Unreleased]
 
+## [0.26.2] — 2026-11-13
+
+**A persona written into the settings reaches the chat you go back to.** The chat the
+first start opens kept the default system message after you wrote a persona into the
+profile, so its replies ignored it. A conversation you have not written in yet now
+takes the profile's new text, and `/system` shows or changes the system message of one
+already under way. Nothing in your data moves to a new format.
+
 ### Added
 
 - **`/system` edits the open conversation's own system message.** Bare, it puts the
@@ -29,6 +37,13 @@ split by subsystem.
   still empty, answered by the default text and ignored the persona. A conversation
   you have not written in yet now takes the edit; one already under way keeps its
   text, and the settings row and `/profile system` say so, naming `/system reset`.
+
+### Data
+
+- **No data upgrade.** No stored file changes shape: the settings stay at schema 7 and
+  the chats at 8, nothing is migrated at the first start, and going back to 0.26.1
+  needs no backup restored — checked with the published 0.26.1 on data this version
+  wrote, a conversation whose system message `/system clear` emptied included.
 
 ## [0.26.1] — 2026-11-12
 
@@ -4095,7 +4110,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.26.1...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.26.2...HEAD
+[0.26.2]: https://github.com/vshylov/mindfork-rs/compare/v0.26.1...v0.26.2
 [0.26.1]: https://github.com/vshylov/mindfork-rs/compare/v0.26.0...v0.26.1
 [0.26.0]: https://github.com/vshylov/mindfork-rs/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/vshylov/mindfork-rs/compare/v0.24.0...v0.25.0
