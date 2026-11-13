@@ -245,6 +245,10 @@ SETTINGS_FILE = "settings.json"
 # the `altgr` scenario presses each more than once.
 CLEAR_KEY = "ctrl+k"
 RUBLE_KEY = "altgr+8"
+# The image paste's chord, and the text paste — the `image-paste` scenario
+# presses both, and `keys` asks about the first.
+IMAGE_PASTE_KEY = "alt+v"
+TEXT_PASTE_KEY = "ctrl+v"
 # The schema the scenarios write their settings at: the app's own
 # `SETTINGS_SCHEMA`. A file below it is migrated at the start — with a
 # pre-migration backup no scenario asked for — and one above it is refused.
@@ -429,8 +433,8 @@ KEYS = {
     "alt+x": (0x58, "x", LEFT_ALT_PRESSED),
     # The image paste's chord, and the text paste `Ctrl+V` — which a console app
     # gets only injected: Windows Terminal keeps the real key for itself.
-    "alt+v": (0x56, "v", LEFT_ALT_PRESSED),
-    "ctrl+v": (0x56, "\x16", LEFT_CTRL_PRESSED),
+    IMAGE_PASTE_KEY: (0x56, "v", LEFT_ALT_PRESSED),
+    TEXT_PASTE_KEY: (0x56, "\x16", LEFT_CTRL_PRESSED),
 }
 
 # Settings opens on the first section; "Interface" is the eighth.
@@ -1618,7 +1622,7 @@ def scenario_keys(exe: Path, report: Report) -> None:
         ("enter", "Enter", "sends the message"),
         ("x", "'x'", "one two x|three"),
         ("alt+x", "Alt+'x'", "the input box does nothing with it"),
-        ("alt+v", "Alt+'v'", "the shortcut Alt+V"),
+        (IMAGE_PASTE_KEY, "Alt+'v'", "the shortcut Alt+V"),
     ]
     with tempfile.TemporaryDirectory(prefix="mindfork-probe-") as scratch:
         root = Path(scratch)
@@ -1749,7 +1753,7 @@ def scenario_image_paste(exe: Path, report: Report) -> None:
             try:
                 press(CLEAR_KEY)
                 type_text("look")
-                press("alt+v", SETTLE_REPAINT)
+                press(IMAGE_PASTE_KEY, SETTLE_REPAINT)
                 rows = wait_for_text(PASTED_SIZE, 10)
                 note = next(
                     (line.strip() for line in text_of(rows).split("\n") if PASTED_SIZE in line),
@@ -1765,7 +1769,7 @@ def scenario_image_paste(exe: Path, report: Report) -> None:
                 # The control arm: text on the clipboard. Alt+V is `/image paste`, so
                 # it refuses and names the route around the clipboard; Ctrl+V pastes.
                 clipboard(f"{CLIP}::SetText('{PASTED_TEXT}')")
-                press("alt+v", SETTLE_REPAINT)
+                press(IMAGE_PASTE_KEY, SETTLE_REPAINT)
                 rows = wait_for_text(NO_PICTURE_ROUTE, 10)
                 refusal = next(
                     (
@@ -1781,7 +1785,7 @@ def scenario_image_paste(exe: Path, report: Report) -> None:
                 report.check(
                     PASTED_TEXT not in row, f"control arm: Alt+V pasted no text ({row!r})"
                 )
-                press("ctrl+v", SETTLE_REPAINT)
+                press(TEXT_PASTE_KEY, SETTLE_REPAINT)
                 row = input_row(read_screen()).strip()
                 print(f"    after Ctrl+V: {row!r}")
                 report.check(PASTED_TEXT in row, "Ctrl+V over text still pastes the text")
