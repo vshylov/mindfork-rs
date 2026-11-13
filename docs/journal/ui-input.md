@@ -2337,7 +2337,7 @@ clipboard, `Alt+V` refused and named `/image attach`, and an injected `Ctrl+V` p
 the text. The scenario keeps what the person had copied and puts it back: the owner's
 1407×232 screenshot came back, as a bitmap. **Control arm, red:** the same scenario on
 a build without the chat screen's arm failed both `Alt+V` checks. `--scenario keys`
-echoes `Alt+'v'` as `the shortcut Alt+V`. **Not measured here:** the key pressed in
-Windows Terminal itself. The probe injects into a console, which tests the app but not
-which chords the terminal lets through. That rests on its `defaults.json` and on the
-CLIs above, and is left for the owner's check.
+echoes `Alt+'v'` as `the shortcut Alt+V`. The probe injects into a console, which
+tests the app but not which chords the terminal lets through. The owner closed that
+gap on 2026-11-13: in **Windows Terminal** itself, `Alt+V` staged the clipboard's
+picture, both with *Name pasted images* on (the chat's model named it) and with it off.
