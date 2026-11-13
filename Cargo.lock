@@ -2146,7 +2146,7 @@ dependencies = [
 
 [[package]]
 name = "mindfork"
-version = "0.26.1"
+version = "0.26.2"
 dependencies = [
  "aes 0.9.3",
  "ansi-to-tui",

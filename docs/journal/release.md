@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (92)
+## Entries (93)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -104,6 +104,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Release 0.26.0 (prepared)
 - Post-M9: a crates.io build with a newer Rust without a deprecation warning (done)
 - Release 0.26.1 (prepared)
+- Release 0.26.2 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -6471,3 +6472,37 @@ guard's, the site gate's and the AUR renderer's self-tests clean.
     message answered, 22 requests all to mindfork.io — 0.26.0's count — no page error.
   - Scoop and the Homebrew tap still named 0.26.0 twelve minutes after the publication;
     they pick a release up within four and six hours.
+
+### Release 0.26.2 (prepared)
+
+- **A release PR** per [AGENTS.md §6](../../AGENTS.md), branch `chore/release-0.26.2`,
+  asked for by the owner right after merging 946:
+  - `Cargo.toml` `0.26.1 → 0.26.2` (+ one line of `Cargo.lock`), and the site's
+    `app_version`;
+  - `CHANGELOG.md`: `[Unreleased]` → `[0.26.2] — 2026-11-13` under a lead paragraph,
+    "A persona written into the settings reaches the chat you go back to", a **Data**
+    section (below), a fresh `[Unreleased]`, and the comparison links;
+  - CLAUDE.md's status heading;
+  - the release's post, and `/llms.txt` regenerated from it.
+
+  Since `v0.26.1`: one pull request with behaviour, 946 (a pristine chat follows the
+  profile's system message, and `/system`; docs/journal/ui-screens.md), reported and
+  approved by the owner; the rest is 945, the journal of 0.26.1's publication.
+- **A PATCH, as the owner named it.** 946 adds a command, which §6 would count toward a
+  MINOR; `/system` is the fix's own route — without it a conversation already under way
+  had no way to the persona — and the owner asked for 0.26.2. No schema constant moved.
+- **The `Data` rubric, by measurement.** `git diff v0.26.1 -- src/shared/storage
+  src/shared/config.rs src/entities src/features/data_migration.rs
+  src/features/backup.rs` is empty: no new value of a stored type, settings 7,
+  profiles 1, chats 8, database 1. What 946 writes is an existing string —
+  `Chat.system_message`, which a profile edit or `/system` now changes, and which
+  `/system clear` empties. Measured with **the published 0.26.1** (the cargo-installed
+  binary, `mindfork --version` 0.26.1) on a copy of the data root the branch's build
+  wrote in 946's live run, plus a second chat whose system message was emptied as
+  `/system clear` leaves it: `mindfork stats` read 1 profile, 2 chats, 12 messages, exit
+  0 — nothing skipped. The CHANGELOG's `Data` item says so.
+- **No rehearsal.** `git diff v0.26.1 -- .github packaging tools` is empty.
+  `release_guard.py --tag v0.26.2` accepts the tag, its notes the `[0.26.2]` section (28
+  lines); its and `site_release_gate.py`'s self-tests clean.
+- **The site**: `zola check --skip-external-links` and `zola build` (0.23.6) are clean,
+  50 pages; `site_llms_txt.py --check` matches.
