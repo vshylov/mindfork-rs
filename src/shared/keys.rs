@@ -217,6 +217,23 @@ pub fn is_slash_key(c: char) -> bool {
     c == '/' || c == '.'
 }
 
+/// The chat's image-paste chord, as the help and `mindfork keys` name it.
+pub const IMAGE_PASTE_CHORD: &str = "Alt+V";
+
+/// Whether `key` is [`IMAGE_PASTE_CHORD`] — `/image paste` by key (spec §9.10).
+///
+/// It exists for the terminals that keep `Ctrl+V`: Windows Terminal binds it to
+/// its own paste, which finds no text in a picture and so sends the app nothing
+/// at all. `Alt+V` it lets through, as does the Windows console and every unix
+/// terminal (`ESC v`). Read by the physical key, as every shortcut is, so it
+/// works under a Cyrillic layout too; `Shift` may ride along. Never with
+/// `Ctrl`: on Windows that is AltGr, which types text.
+pub fn is_image_paste_chord(key: &KeyEvent) -> bool {
+    key.modifiers.contains(KeyModifiers::ALT)
+        && !key.modifiers.contains(KeyModifiers::CONTROL)
+        && hotkey_char(key) == Some('v')
+}
+
 // --------------------------------------------------------------------------
 // What the terminal can say about `Enter` (spec §11.5)
 // --------------------------------------------------------------------------
@@ -812,6 +829,36 @@ mod tests {
         // tier answers: a Cyrillic letter resolves to *some* Latin key.
         let resolved = hotkey_char(&ctrl('д')).expect("a character key");
         assert!(resolved.is_ascii_lowercase(), "unexpected {resolved:?}");
+    }
+
+    /// `Alt+V` is the image paste with or without `Shift`; `Ctrl+V` is not (it is
+    /// the text-falling-back paste, matched as a `Ctrl` shortcut), nor `Ctrl+Alt+V`
+    /// (AltGr on Windows), nor a bare `v`, nor `Alt` on another letter.
+    #[test]
+    fn the_image_paste_chord_is_alt_v_alone() {
+        let key = |c, m| KeyEvent::new(KeyCode::Char(c), m);
+        assert!(is_image_paste_chord(&key('v', KeyModifiers::ALT)));
+        assert!(is_image_paste_chord(&key(
+            'V',
+            KeyModifiers::ALT | KeyModifiers::SHIFT
+        )));
+        for other in [
+            key('v', KeyModifiers::CONTROL),
+            key('v', KeyModifiers::CONTROL | KeyModifiers::ALT),
+            key('v', KeyModifiers::NONE),
+            key('b', KeyModifiers::ALT),
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT),
+        ] {
+            assert!(!is_image_paste_chord(&other), "{other:?}");
+        }
+        // A non-Latin layout reaches it through the same resolver every shortcut
+        // uses — whatever this machine's tier answers for the character.
+        let cyrillic = key('м', KeyModifiers::ALT);
+        assert_eq!(
+            is_image_paste_chord(&cyrillic),
+            hotkey_char(&cyrillic) == Some('v')
+        );
+        assert_eq!(physical_char('м'), 'v', "the JCUKEN key under V");
     }
 
     #[test]

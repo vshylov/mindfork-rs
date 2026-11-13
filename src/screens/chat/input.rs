@@ -31,6 +31,16 @@ impl ChatScreen {
         {
             return handled;
         }
+        // `Alt+V` — `/image paste` by key, for the terminals that keep `Ctrl+V`
+        // (Windows Terminal; spec §9.10). It is the command exactly: a picture or
+        // picture files, and a refusal that says why when there are none — never
+        // text, which is what `Ctrl+V` is for.
+        if keys::is_image_paste_chord(&key) {
+            return Some(ChatIntent::PasteImage {
+                text_fallback: false,
+                name: None,
+            });
+        }
         self.handle_plain_key(key)
     }
 
@@ -141,7 +151,7 @@ impl ChatScreen {
             // text — which is what the help overlay has always advertised this key for.
             // Reaching the app at all is up to the terminal: Windows Terminal binds
             // Ctrl+V to its own paste and never forwards it, which is exactly why
-            // `/image paste` exists as well (spec §9.10).
+            // `/image paste` and its chord `Alt+V` exist as well (spec §9.10).
             'v' => Some(Some(ChatIntent::PasteImage {
                 text_fallback: true,
                 name: None,

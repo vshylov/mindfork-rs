@@ -2708,6 +2708,36 @@ fn both_paste_routes_produce_an_intent_and_differ_only_in_the_text_fallback() {
     );
 }
 
+/// `Alt+V` is `/image paste` by key — the route for a terminal that keeps `Ctrl+V`
+/// (Windows Terminal): the same intent as the typed command, never a text paste, and
+/// it leaves what is being written alone, since a picture is staged *for* that message.
+#[test]
+fn alt_v_is_the_image_paste_command_by_key_and_keeps_the_draft() {
+    let mut s = ChatScreen::new();
+    s.set_server_status(ready_statuses());
+    type_str(&mut s, "look at this");
+    for modifiers in [KeyModifiers::ALT, KeyModifiers::ALT | KeyModifiers::SHIFT] {
+        let c = if modifiers.contains(KeyModifiers::SHIFT) {
+            'V'
+        } else {
+            'v'
+        };
+        assert_eq!(
+            s.handle_key(KeyEvent::new(KeyCode::Char(c), modifiers)),
+            Some(ChatIntent::PasteImage {
+                text_fallback: false,
+                name: None,
+            }),
+            "{modifiers:?}"
+        );
+    }
+    assert_eq!(
+        s.input.text(),
+        "look at this",
+        "nothing typed, nothing cleared"
+    );
+}
+
 /// `/image paste` is a command like the others, so the input box must highlight it and
 /// skip spellcheck on it — otherwise it reads as a misspelled sentence while being typed.
 #[test]

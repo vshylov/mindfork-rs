@@ -99,8 +99,15 @@ Scenarios (`--scenario`):
   header names the console and its line break, each chord injected is echoed
   with what the input box does with it — a move by a word apart from a move by
   a character, three line breaks, `Enter` sending, a letter typed, `Alt`+letter
-  not — `Ctrl+W` switches the mouse both ways, `Ctrl+Q` ends it with code 0,
-  and the file holds the same lines.
+  not, except `Alt+V`, the image paste — `Ctrl+W` switches the mouse both ways,
+  `Ctrl+Q` ends it with code 0, and the file holds the same lines.
+
+* `image-paste` — `mindfork demo` with a picture on the **system clipboard**
+  (spec §9.10): `Alt+V` attaches it, by its synthetic name and its size, and
+  leaves the draft alone. The control arm puts text there: `Alt+V` refuses and
+  names `/image attach`, `Ctrl+V` pastes the text. What the person had copied —
+  a picture or text — is kept first and put back at the end (a picture comes
+  back as a bitmap, without the PNG beside it).
 
 * `ollama` — a copy of the binary in a scratch directory, set up by the
   README's Ollama recipe (`mindfork setup --set …`, word for word), against a
@@ -161,6 +168,7 @@ Usage:
     python tools/console_probe.py --scenario small-window
     python tools/console_probe.py --scenario altgr
     python tools/console_probe.py --scenario keys
+    python tools/console_probe.py --scenario image-paste
     python tools/console_probe.py --scenario ollama
     python tools/console_probe.py --exe target/release/mindfork.exe
 
@@ -419,6 +427,10 @@ KEYS = {
     "ctrl+w": (0x57, "\x17", LEFT_CTRL_PRESSED),
     "x": (0x58, "x", 0),
     "alt+x": (0x58, "x", LEFT_ALT_PRESSED),
+    # The image paste's chord, and the text paste `Ctrl+V` — which a console app
+    # gets only injected: Windows Terminal keeps the real key for itself.
+    "alt+v": (0x56, "v", LEFT_ALT_PRESSED),
+    "ctrl+v": (0x56, "\x16", LEFT_CTRL_PRESSED),
 }
 
 # Settings opens on the first section; "Interface" is the eighth.
@@ -1606,6 +1618,7 @@ def scenario_keys(exe: Path, report: Report) -> None:
         ("enter", "Enter", "sends the message"),
         ("x", "'x'", "one two x|three"),
         ("alt+x", "Alt+'x'", "the input box does nothing with it"),
+        ("alt+v", "Alt+'v'", "the shortcut Alt+V"),
     ]
     with tempfile.TemporaryDirectory(prefix="mindfork-probe-") as scratch:
         root = Path(scratch)
@@ -1654,6 +1667,130 @@ def scenario_keys(exe: Path, report: Report) -> None:
             "the file holds every echoed line",
         )
         report.check("\u2192 quits" in saved, "the file ends with the quit")
+
+
+def clipboard(script: str) -> str:
+    """Runs `script` against the system clipboard through .NET's, in a Windows
+    PowerShell of its own (the clipboard wants a single-threaded apartment), and
+    returns what it printed. .NET hands its data to the system on the way out,
+    so what a script puts there outlives it."""
+    done = subprocess.run(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-STA",
+            "-Command",
+            "Add-Type -AssemblyName System.Windows.Forms, System.Drawing; " + script,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if done.returncode != 0:
+        raise RuntimeError(f"the clipboard script failed: {done.stderr.strip()}")
+    return done.stdout.strip()
+
+
+CLIP = "[Windows.Forms.Clipboard]"
+# The picture the scenario pastes: a gradient, so it is not one flat colour.
+PASTED_PICTURE = (64, 32)
+# The text of its control arm.
+PASTED_TEXT = "text off the clipboard"
+# What the attached note names, in either language: the synthetic name and the size.
+PASTED_NAME = "clipboard"
+PASTED_SIZE = f"{PASTED_PICTURE[0]}×{PASTED_PICTURE[1]}"
+# What the refusal of a paste with no picture names, in either language: the
+# route that does not involve the clipboard.
+NO_PICTURE_ROUTE = "/image attach <"
+
+
+def save_clipboard(scratch: Path) -> str:
+    """Keeps what the person had copied — a picture or text — to put back after:
+    the scenario has to replace it. Returns what was kept."""
+    picture, text = scratch / "kept.png", scratch / "kept.txt"
+    return clipboard(
+        f"if ({CLIP}::ContainsImage()) {{ {CLIP}::GetImage().Save('{picture}',"
+        " [Drawing.Imaging.ImageFormat]::Png); 'picture' }"
+        f" elseif ({CLIP}::ContainsText()) {{ [IO.File]::WriteAllText('{text}',"
+        f" {CLIP}::GetText()); 'text' }} else {{ 'nothing' }}"
+    )
+
+
+def restore_clipboard(scratch: Path, kept: str) -> None:
+    if kept == "picture":
+        clipboard(f"{CLIP}::SetImage([Drawing.Image]::FromFile('{scratch / 'kept.png'}'))")
+    elif kept == "text":
+        clipboard(f"{CLIP}::SetText([IO.File]::ReadAllText('{scratch / 'kept.txt'}'))")
+    else:
+        clipboard(f"{CLIP}::Clear()")
+
+
+def put_picture_on_clipboard() -> None:
+    width, height = PASTED_PICTURE
+    clipboard(
+        f"$b = New-Object Drawing.Bitmap {width},{height};"
+        f" for ($x = 0; $x -lt {width}; $x++) {{ for ($y = 0; $y -lt {height}; $y++) {{"
+        " $b.SetPixel($x, $y, [Drawing.Color]::FromArgb(255, ($x * 4) % 256, ($y * 8) % 256, 128)) } };"
+        f" {CLIP}::SetImage($b)"
+    )
+
+
+def scenario_image_paste(exe: Path, report: Report) -> None:
+    """`Alt+V` stages the clipboard's picture — the key a person presses where
+    Windows Terminal keeps `Ctrl+V` (spec §9.10). What the person had copied is
+    kept and put back at the end."""
+    with tempfile.TemporaryDirectory(prefix="mindfork-probe-") as scratch:
+        root = Path(scratch)
+        kept = save_clipboard(root)
+        print(f"    the clipboard held: {kept} (put back at the end)")
+        try:
+            put_picture_on_clipboard()
+            session = Session(exe, ["demo"])
+            try:
+                press(CLEAR_KEY)
+                type_text("look")
+                press("alt+v", SETTLE_REPAINT)
+                rows = wait_for_text(PASTED_SIZE, 10)
+                note = next(
+                    (line.strip() for line in text_of(rows).split("\n") if PASTED_SIZE in line),
+                    "",
+                )
+                print(f"    after Alt+V: {note!r}")
+                report.check(
+                    PASTED_NAME in note and PASTED_SIZE in note,
+                    "Alt+V attached the clipboard's picture by its synthetic name and size",
+                )
+                row = input_row(rows).strip()
+                report.check(row == "look", f"the draft is left alone ({row!r})")
+                # The control arm: text on the clipboard. Alt+V is `/image paste`, so
+                # it refuses and names the route around the clipboard; Ctrl+V pastes.
+                clipboard(f"{CLIP}::SetText('{PASTED_TEXT}')")
+                press("alt+v", SETTLE_REPAINT)
+                rows = wait_for_text(NO_PICTURE_ROUTE, 10)
+                refusal = next(
+                    (
+                        line.strip()
+                        for line in text_of(rows).split("\n")
+                        if NO_PICTURE_ROUTE in line
+                    ),
+                    "",
+                )
+                print(f"    Alt+V over text: {refusal!r}")
+                report.check(bool(refusal), "control arm: Alt+V over text refuses and says why")
+                row = input_row(rows).strip()
+                report.check(
+                    PASTED_TEXT not in row, f"control arm: Alt+V pasted no text ({row!r})"
+                )
+                press("ctrl+v", SETTLE_REPAINT)
+                row = input_row(read_screen()).strip()
+                print(f"    after Ctrl+V: {row!r}")
+                report.check(PASTED_TEXT in row, "Ctrl+V over text still pastes the text")
+            finally:
+                code = session.close()
+            report.check(code == 0, f"the app {ended(code)}")
+        finally:
+            restore_clipboard(root, kept)
+            print(f"    the clipboard is back: {save_clipboard(root)}")
 
 
 def scenario_small_window(exe: Path, report: Report) -> None:
@@ -2138,6 +2275,7 @@ def scenario_first_run_none(exe: Path, report: Report) -> None:
 SCENARIOS = {
     "altgr": scenario_altgr,
     "keys": scenario_keys,
+    "image-paste": scenario_image_paste,
     "ollama": scenario_ollama,
     "ollama-cut": scenario_ollama_cut,
     "lmstudio": scenario_lmstudio,

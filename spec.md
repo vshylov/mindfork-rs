@@ -1819,7 +1819,12 @@ append-only shape keeps the prefix cache intact across an image turn
   in every terminal, and is what the help overlay names; `Ctrl+V` is a
   convenience where the terminal forwards it. When it does and the clipboard
   holds no image, it pastes **text**, which is what the overlay has always
-  promised that key does.
+  promised that key does. **`Alt+V`** is the command by key, for the terminals
+  that keep `Ctrl+V`: Windows Terminal lets it through, as do the Windows console
+  and every unix terminal (`ESC v`). It is `/image paste` exactly — a picture or
+  picture files, a refusal that says why when there are none, never text — and
+  it is read by the physical key, so a Cyrillic layout's `Alt+м` is the same
+  chord (`shared::keys::is_image_paste_chord`).
   The clipboard is read by `runtime`, not by the orchestrator — a UI-layer side
   effect, like `Ctrl+C` copying — so the orchestrator is handed pixels rather
   than a request to go and look. arboard normalizes each platform's storage
@@ -4734,7 +4739,8 @@ docs/history/external-api-key.md.
 | `Ctrl+A` | select all text in the input box |
 | `Ctrl+C` | copy the selection to the clipboard (no-op without a selection) |
 | `Ctrl+X` | cut the selection to the clipboard |
-| `Ctrl+V` | paste from the clipboard (as one chunk, multiline, without sending) |
+| `Ctrl+V` | paste from the clipboard (as one chunk, multiline, without sending); an image on the clipboard is staged instead (§9.10) |
+| `Alt+V` | stage the clipboard's image — `/image paste` by key, for terminals that keep `Ctrl+V` for their own paste (Windows Terminal; §9.10) |
 | `Esc` | go back: the chat-list overlay (the same key closes it) — or **the search results**, if the chat was opened from a hit (§11.2.1), or **the conversation a `chat://` reference was followed from** (§11.3); the status bar's hint says which · cancel generation |
 | `Ctrl+Q` / `F10` | quit the application (also from the chat-list overlay) |
 | `/exit` / `/quit` | quit the application by typed command — the route no terminal can intercept (see below) |

@@ -14,6 +14,13 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Added
+
+- **`Alt+V` pastes the clipboard's image.** Windows Terminal keeps `Ctrl+V` for its
+  own text paste, so a screenshot or a picture copied in an editor never reached the
+  app and the key did nothing. `Alt+V` does what `/image paste` does, in every
+  terminal and under any keyboard layout.
+
 ### Fixed
 
 - **The help's line for `/profile system` says which conversations take the edit.** It
