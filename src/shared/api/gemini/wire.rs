@@ -559,6 +559,11 @@ pub struct FunctionCall {
 /// `thoughtsTokenCount`, and a cache miss no `cachedContentTokenCount`
 /// (measured 2026-10-17, docs/research/cached-tokens.md §3.1) — so an absent
 /// count is `0` here, never "unknown".
+///
+/// A stream carries one on **every chunk**, each a running total of the reply
+/// so far; `candidatesTokenCount` leaves the thoughts out and is absent while
+/// the model thinks (measured 2026-11-13 on `gemini-4-hydrogen`: thoughts 181,
+/// 825, 1036 with no candidates, then candidates 7 … 105 beside 1036).
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageMetadata {
@@ -575,11 +580,16 @@ pub struct UsageMetadata {
 impl UsageMetadata {
     /// The domain's counter. `promptTokenCount` already counts the cached
     /// part (9825 with 7782 cached); the cache read is always known —
-    /// `Some(0)` on a miss — and there is no write figure.
+    /// `Some(0)` on a miss — and there is no write figure. The reply is the
+    /// candidates **and** the thoughts, as the contract has it (reasoning is
+    /// part of `completion_tokens` on every wire) and as Gemini bills it —
+    /// `totalTokenCount` is the prompt plus both.
     pub fn token_usage(&self) -> crate::shared::api::contract::TokenUsage {
         crate::shared::api::contract::TokenUsage {
             prompt_tokens: self.prompt_token_count,
-            completion_tokens: self.candidates_token_count,
+            completion_tokens: self
+                .candidates_token_count
+                .saturating_add(self.thoughts_token_count),
             reasoning_tokens: self.thoughts_token_count,
             prefill: None,
             cached_tokens: Some(self.cached_content_token_count),
@@ -1202,7 +1212,17 @@ mod cache_figure_tests {
             r#"{"cacheTokensDetails":[{"modality":"TEXT","tokenCount":7782}],"cachedContentTokenCount":7782,"candidatesTokenCount":2,"promptTokenCount":9825,"promptTokensDetails":[{"modality":"TEXT","tokenCount":9825}],"serviceTier":"standard","thoughtsTokenCount":25,"totalTokenCount":9852}"#,
         );
         assert_eq!((u.prompt_tokens, u.cached_tokens), (9825, Some(7782)));
-        assert_eq!((u.completion_tokens, u.reasoning_tokens), (2, 25));
+        // The reply counts its thoughts: 2 + 25, and 9825 + 27 is the total.
+        assert_eq!((u.completion_tokens, u.reasoning_tokens), (27, 25));
+    }
+
+    /// A chunk that is all thoughts has no `candidatesTokenCount`: the reply
+    /// so far is the thoughts alone, not zero (the stream measured 2026-11-13,
+    /// whose first chunk this is).
+    #[test]
+    fn a_thinking_chunk_counts_its_thoughts_as_the_reply() {
+        let u = usage(r#"{"promptTokenCount":24,"totalTokenCount":205,"thoughtsTokenCount":181}"#);
+        assert_eq!((u.completion_tokens, u.reasoning_tokens), (181, 181));
     }
 
     /// A miss leaves the key out — Gemini omits a zero, as it omits

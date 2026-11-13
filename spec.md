@@ -2910,6 +2910,11 @@ Two main screens + overlays (modals):
   **estimate** (the "UTF-8 bytes / 4" heuristic over the system message, the messages and the tool schemas as the wire sends them — a fresh chat reads about 4600, not 85, until the server says 4358; [docs/research/roll-usage-calibration.md](docs/research/roll-usage-calibration.md) §3.1), marked with `~`; the exact `prompt_tokens`
   replaces it. The response counter accumulates across agentic-loop rounds. An external server
   without `usage` support keeps the estimate + the approximation (graceful degradation).
+  Gemini sends `usage` on **every chunk**, each a running total of the reply so far: each one
+  replaces the round's count — the deltas after it add to it until the next — and never
+  corrects it twice, so the figure climbs and ends on the server's. The response counts its
+  thoughts on every wire, as the `(reasoning N)` note says it does: Gemini's
+  `candidatesTokenCount` leaves them out, and its client adds `thoughtsTokenCount` back.
   A protocol detail this depends on: llama.cpp sends the `usage` chunk **after** the one
   carrying `finish_reason` (`choices` empty, then `[DONE]`), so the client holds the reason
   until the stream's own terminator instead of ending on it — otherwise the exact numbers are

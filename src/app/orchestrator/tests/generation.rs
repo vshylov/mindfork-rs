@@ -229,6 +229,155 @@ async fn emits_token_counter_during_generation() {
     handle.await.unwrap();
 }
 
+/// One `usage` report the way a wire hands it over: `completion` reply tokens
+/// (reasoning included), `reasoning` of them thoughts.
+fn usage_report(completion: u32, reasoning: u32) -> ChatChunk {
+    ChatChunk::Usage(crate::shared::api::contract::TokenUsage {
+        prompt_tokens: 100,
+        completion_tokens: completion,
+        reasoning_tokens: reasoning,
+        prefill: None,
+        cached_tokens: Some(0),
+        cache_write_tokens: None,
+    })
+}
+
+/// Sends `text` and returns every `TokenUsage` of the turn as the bar
+/// receives it — `(completion, reasoning)` — to the turn's end.
+async fn turn_counter_figures(
+    cmd_tx: &UnboundedSender<AppCommand>,
+    evt_rx: &mut UnboundedReceiver<AppEvent>,
+    text: &str,
+) -> Vec<(u64, Option<u32>)> {
+    wait_for_bounded(evt_rx, "the chat", |e| {
+        matches!(e, AppEvent::ChatActivated { .. })
+    })
+    .await;
+    cmd_tx.send(AppCommand::SendMessage(text.into())).unwrap();
+    let mut figures = Vec::new();
+    loop {
+        match wait_for_bounded(evt_rx, "the turn's end", |e| {
+            matches!(e, AppEvent::TokenUsage { .. } | AppEvent::Finished { .. })
+        })
+        .await
+        {
+            AppEvent::TokenUsage {
+                completion,
+                reasoning,
+                ..
+            } => figures.push((completion, reasoning)),
+            _ => return figures,
+        }
+    }
+}
+
+/// The last reasoning figure a turn's counter carried.
+fn last_reasoning(figures: &[(u64, Option<u32>)]) -> Option<u32> {
+    figures.iter().rev().find_map(|(_, r)| *r)
+}
+
+/// Gemini reports `usage` on **every chunk**, each a running total (the stream
+/// measured 2026-11-13 on `gemini-4-hydrogen`, its reply counting its thoughts
+/// as the wire now reads it). Each report replaces the round's count: the bar
+/// climbs through the reports and ends on the last one, and the reasoning is
+/// the last running total — not the sum of all of them.
+#[tokio::test]
+async fn a_usage_on_every_chunk_replaces_the_rounds_count() {
+    let backend = Arc::new(MockBackend::scripted(vec![
+        ChatChunk::Thoughts("Primes below sixty".into()),
+        usage_report(181, 181),
+        ChatChunk::Thoughts(": 2, 3, 5, 7 …".into()),
+        usage_report(825, 825),
+        ChatChunk::Text("There are".into()),
+        usage_report(1043, 1036),
+        ChatChunk::Text(" seventeen.".into()),
+        usage_report(1141, 1036),
+        ChatChunk::Finished(FinishReason::Stop),
+    ])) as Arc<dyn EngineBackend>;
+    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(Some(backend));
+    let figures = turn_counter_figures(&cmd_tx, &mut evt_rx, "primes?").await;
+    let completions: Vec<u64> = figures.iter().map(|(c, _)| *c).collect();
+    assert_eq!(
+        completions,
+        [0, 1, 181, 182, 825, 826, 1043, 1044, 1141],
+        "a delta adds one, a report replaces the round's count: {figures:?}"
+    );
+    assert_eq!(last_reasoning(&figures), Some(1036), "{figures:?}");
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+}
+
+/// The crash of 2026-11-13: reports below the delta count, on every chunk
+/// (Gemini's reply count left the thoughts out, so it read `0` while the
+/// deltas were thoughts). The old correction took the gap away once per
+/// report and wrapped the turn's counter to `u64::MAX`, which the bar's sum
+/// overflowed on. Whatever a wire reports, the counter stays within what was
+/// streamed and reported.
+#[tokio::test]
+async fn reports_below_the_delta_count_never_wrap_the_counter() {
+    let backend = Arc::new(MockBackend::scripted(vec![
+        ChatChunk::Thoughts("a".into()),
+        usage_report(0, 3),
+        ChatChunk::Thoughts("b".into()),
+        usage_report(0, 6),
+        ChatChunk::Text("x".into()),
+        usage_report(1, 6),
+        ChatChunk::Finished(FinishReason::Stop),
+    ])) as Arc<dyn EngineBackend>;
+    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(Some(backend));
+    let figures = turn_counter_figures(&cmd_tx, &mut evt_rx, "hi").await;
+    assert!(
+        figures.iter().all(|(c, _)| *c <= 1),
+        "never above one delta or the last report: {figures:?}"
+    );
+    assert_eq!(figures.last().map(|(c, _)| *c), Some(1), "{figures:?}");
+    assert_eq!(last_reasoning(&figures), Some(6), "{figures:?}");
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+}
+
+/// The turn's total is every round's share summed: a round of tool calls
+/// keeps its exact count while the next round reports on every chunk, and
+/// the reasoning adds the rounds' last running totals.
+#[tokio::test]
+async fn rounds_reporting_on_every_chunk_sum_into_the_turn() {
+    use crate::shared::api::contract::ToolCallDelta;
+    let backend = Arc::new(MockBackend::sequence(vec![
+        vec![
+            ChatChunk::Text("Saving".into()),
+            ChatChunk::Text(" it.".into()),
+            ChatChunk::ToolCall(ToolCallDelta {
+                thought_signature: None,
+                index: 0,
+                id: Some("c1".into()),
+                name: Some("note_save".into()),
+                arguments: "{\"content\":\"likes tea\"}".into(),
+            }),
+            usage_report(5, 2),
+            ChatChunk::Finished(FinishReason::ToolCalls),
+        ],
+        vec![
+            ChatChunk::Thoughts("saved".into()),
+            usage_report(3, 3),
+            ChatChunk::Thoughts(", now answer".into()),
+            usage_report(7, 7),
+            ChatChunk::Text("Saved.".into()),
+            usage_report(9, 7),
+            ChatChunk::Finished(FinishReason::Stop),
+        ],
+    ])) as Arc<dyn EngineBackend>;
+    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(Some(backend));
+    let figures = turn_counter_figures(&cmd_tx, &mut evt_rx, "remember tea").await;
+    assert_eq!(
+        figures.last().map(|(c, _)| *c),
+        Some(5 + 9),
+        "round one's 5 and round two's last report, 9: {figures:?}"
+    );
+    assert_eq!(last_reasoning(&figures), Some(2 + 7), "{figures:?}");
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+}
+
 #[tokio::test]
 async fn regenerate_replaces_last_assistant_message() {
     // Two different replies in turn: the original turn gives the first, regeneration gives the second.

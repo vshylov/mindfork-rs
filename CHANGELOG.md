@@ -19,6 +19,11 @@ split by subsystem.
 - **The help's line for `/profile system` says which conversations take the edit.** It
   said "applies to new conversations"; since 0.26.2 the ones not yet begun take it too,
   and it now names `/system` for a conversation already under way.
+- **The token counter on a Gemini turn that thinks.** A development build crashed as
+  soon as Gemini's thoughts came in more than one piece, and a release build showed a
+  wrong count of the reply and a reasoning note several times too large. The counter
+  now climbs with the reply, counts the thoughts as part of it, and shows the turn's
+  real figures when it ends.
 
 ## [0.26.2] — 2026-11-13
 

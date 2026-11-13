@@ -1413,6 +1413,18 @@ holds a number that would be a defect on its own, that is a second finding, not 
 match.**
 — *website — a phone no longer scrolls a page sideways*.
 
+**A provider's report is not "once, at the end" until the wire says so — and an
+atomic counter will not tell you it went below zero.** The turn's token counter
+corrected itself by `exact − streamed` on every `usage` report, written for wires
+that send one at the end. Gemini sends one on every chunk, a running total, so the
+gap was taken away once per chunk; the `AtomicU64` wrapped (`fetch_sub` wraps even
+in a debug build, where a plain `-` would have panicked at the cause) and the
+panic came two layers later, in a widget's `+`. A release build showed a plausible
+number for two months. **Make a report replace what its earlier ones set rather
+than adjust by a gap, and keep a shared counter's arithmetic to amounts its writer
+put in.** — *engine — the token counter on a wire that reports usage on every
+chunk*.
+
 ## 4. The recurring defect class: a message must close the door
 
 **Never let a message describe a situation without saying what is and is not possible
