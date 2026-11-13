@@ -1403,7 +1403,7 @@
   "ui.help.cmd_profile_new": "create a profile — its persona is written in settings (Ctrl+N there)",
   "ui.help.cmd_profile_fork": "a copy of the open chat's profile — its settings, notes, knowledge base and self-model with its history, not its chats; the two diverge from there",
   "ui.help.cmd_profile_delete": "delete a profile and hide its chats — asks first (Ctrl+D there)",
-  "ui.help.cmd_profile_system": "the companion's system message — applies to new conversations; bare — edit the current one, clear removes it",
+  "ui.help.cmd_profile_system": "the companion's system message — new conversations and the ones not yet begun take it (/system for one under way); bare — edit the current one, clear removes it",
   "ui.help.cmd_profile_greeting": "the assistant's greeting in new chats; bare — edit the current one, clear removes it",
   "ui.help.cmd_imp_list": "the impersonation profiles (the open chat's is marked)",
   "ui.help.cmd_imp_new": "create an impersonation profile — a user persona (Ctrl+N in settings)",

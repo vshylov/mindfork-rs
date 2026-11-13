@@ -14,6 +14,12 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The help's line for `/profile system` says which conversations take the edit.** It
+  said "applies to new conversations"; since 0.26.2 the ones not yet begun take it too,
+  and it now names `/system` for a conversation already under way.
+
 ## [0.26.2] — 2026-11-13
 
 **A persona written into the settings reaches the chat you go back to.** The chat the

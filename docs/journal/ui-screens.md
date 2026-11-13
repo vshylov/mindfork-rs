@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (76)
+## Entries (77)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -88,6 +88,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the About tab says where everything is (done)
 - Post-M9: the notes screen, `/notes` (done)
 - Post-M9: a persona written into the settings reaches the open chat; `/system` (done)
+- Post-M9: the help's `/profile system` line names the chats not yet begun (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -4064,3 +4065,16 @@ Another "Alex" to add to the archive of interchangeable humans…"*; a polite pe
 then written into the profile left the begun chat sarcastic (*"It's four,
 obviously…"*), `/system reset` took it (*"Splendid! Three plus three equals
 six…"*), and a bare `/system` put the chat's text into the input box.
+
+### Post-M9: the help's `/profile system` line names the chats not yet begun (done)
+
+Found while checking the release 0.26.2 draft (docs/journal/release.md): 946 taught the
+settings row and `/profile system`'s notes which conversations take a profile's system
+message, and missed the third place that states it — the help's Commands tab, whose line
+still said "applies to new conversations". True, and short of the rule since 946: the
+profile's chats not yet begun take the edit too, and a conversation under way has
+`/system`. `ui.help.cmd_profile_system` now says both, in `en` and `ru`. The greeting's
+line ("in new chats") stays — a greeting does not reach a chat already created.
+
+A text change in two locale bundles: no live run needed. The help's own gates (every row's
+key present in every bundle, no unsubstituted placeholder) run in the suite.
