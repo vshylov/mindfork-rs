@@ -14,6 +14,14 @@ split by subsystem.
 
 ## [Unreleased]
 
+## [0.26.3] — 2026-11-13
+
+**A picture pasted in Windows Terminal, and a token counter that holds on Gemini.**
+Windows Terminal keeps `Ctrl+V` for its own text paste, so a copied picture never
+reached the app; `Alt+V` now pastes it, in every terminal. A Gemini turn that thinks
+no longer misstates its tokens, nor crashes a development build. Nothing in your data
+moves to a new format.
+
 ### Added
 
 - **`Alt+V` pastes the clipboard's image.** Windows Terminal keeps `Ctrl+V` for its
@@ -31,6 +39,13 @@ split by subsystem.
   wrong count of the reply and a reasoning note several times too large. The counter
   now climbs with the reply, counts the thoughts as part of it, and shows the turn's
   real figures when it ends.
+
+### Data
+
+- **No data upgrade.** No stored file changes shape: the settings stay at schema 7 and
+  the chats at 8, nothing is migrated at the first start, and going back to 0.26.2
+  needs no backup restored — checked with 0.26.2 built from its tag on data this
+  version wrote, a Gemini conversation and a picture pasted with `Alt+V` included.
 
 ## [0.26.2] — 2026-11-13
 
@@ -4128,7 +4143,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.26.2...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.26.3...HEAD
+[0.26.3]: https://github.com/vshylov/mindfork-rs/compare/v0.26.2...v0.26.3
 [0.26.2]: https://github.com/vshylov/mindfork-rs/compare/v0.26.1...v0.26.2
 [0.26.1]: https://github.com/vshylov/mindfork-rs/compare/v0.26.0...v0.26.1
 [0.26.0]: https://github.com/vshylov/mindfork-rs/compare/v0.25.0...v0.26.0

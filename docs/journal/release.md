@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (93)
+## Entries (94)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -105,6 +105,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: a crates.io build with a newer Rust without a deprecation warning (done)
 - Release 0.26.1 (prepared)
 - Release 0.26.2 (prepared)
+- Release 0.26.3 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -6562,3 +6563,59 @@ guard's, the site gate's and the AUR renderer's self-tests clean.
     no console error.
   - Scoop and the Homebrew tap still named 0.26.1 five minutes after the publication;
     they pick a release up within four and six hours.
+
+### Release 0.26.3 (prepared)
+
+- **A release PR** per [AGENTS.md §6](../../AGENTS.md), branch `chore/release-0.26.3`,
+  asked for by the owner after merging 952:
+  - `Cargo.toml` `0.26.2 → 0.26.3` (+ one line of `Cargo.lock`), and the site's
+    `app_version`;
+  - `CHANGELOG.md`: `[Unreleased]` → `[0.26.3] — 2026-11-13` under a lead paragraph,
+    "A picture pasted in Windows Terminal, and a token counter that holds on Gemini",
+    a **Data** section (below), a fresh `[Unreleased]`, and the comparison links;
+  - CLAUDE.md's status heading;
+  - the release's post, and `/llms.txt` regenerated from it.
+
+  Since `v0.26.2`, three pull requests with behaviour:
+  - 949: the help's line for `/profile system` names the chats not yet begun;
+  - 950: the token counter on a wire that reports usage on every chunk
+    (docs/journal/engine.md);
+  - 952: `Alt+V` pastes the clipboard's image where the terminal keeps `Ctrl+V`
+    (docs/journal/ui-input.md).
+
+  The rest is journal: 948, the publication of 0.26.2, and 951 and 953, the merges of
+  950 and 952.
+- **A PATCH, as the owner named it.** 952 adds a key, which §6 would count toward a
+  MINOR. The key is the fix for a paste that did nothing in Windows Terminal, and the
+  owner asked for 0.26.3, as 0.26.2 did for `/system`. No schema constant moved.
+- **The `Data` rubric, by measurement.**
+  - `git diff v0.26.2 -- src/shared/storage src/shared/config.rs src/entities
+    src/features/data_migration.rs src/features/backup.rs` is empty. There is no new
+    value of a stored type: settings 7, profiles 1, chats 8, database 1.
+  - 950 changes a figure no file holds: a message stores `finish`, `mode`, `model` and
+    `sampling`, and no token count.
+  - 952 stages a picture the way `/image paste` does.
+  - **Measured** with 0.26.2 built from its tag (a worktree at `v0.26.2`, a target
+    directory of its own; no published binary is installed here).
+  - The data came from this branch's build, driven by `tools/console_probe.py`'s
+    helpers in a data root of its own: Gemini mode, `gemini-4-hydrogen`, thinking on.
+    `Alt+V` staged a 64×32 picture off the real clipboard ("attached clipboard.png —
+    346 B"), and the turn was sent. The reply described the gradient; the counter read
+    `tokens: 4671 (reasoning 158 · cache 0%)` and the debug build did not panic.
+    The chat file holds the picture in the user message's `images` and the thoughts in
+    the reply.
+  - `mindfork stats` from 0.26.2 and 0.26.3 printed the same: 1 profile, 1 chat,
+    2 messages, 1 image, fingerprint `fa8cd4addd8f4111`, exit 0 — nothing skipped.
+  - 0.26.2's TUI started on that root: it showed the chat with its reply, `● chat`,
+    and exited 0.
+  - The person's clipboard was saved before the run and put back after it.
+- **No rehearsal.** `git diff v0.26.2 -- .github packaging` is empty. In `tools/`,
+  only `console_probe.py` changed (952's `image-paste` scenario), and the release
+  pipeline does not run it. `release_guard.py --tag v0.26.3` accepts the tag, and its
+  notes are the `[0.26.3]` section (30 lines). Its self-tests and
+  `site_release_gate.py`'s are clean.
+- **The site**: `zola check --skip-external-links` and `zola build` (0.23.6) are clean.
+  - The post heads the blog, ahead of 0.26.2's of the same date. Zola breaks the tie
+    in its favour, as it did for 0.14.1 and 0.17.0.
+  - The home and install pages say `"softwareVersion": "0.26.3"`.
+  - The post is in the sitemap, and `site_llms_txt.py --check` matches.
