@@ -6506,3 +6506,59 @@ guard's, the site gate's and the AUR renderer's self-tests clean.
   lines); its and `site_release_gate.py`'s self-tests clean.
 - **The site**: `zola check --skip-external-links` and `zola build` (0.23.6) are clean,
   50 pages; `site_llms_txt.py --check` matches.
+- **The draft, checked before anyone else could see it** (§6 step 5).
+  - The owner merged 947 and set `v0.26.2` on the merge commit `eee53063`, which was
+    `origin/main`.
+  - `release.yml` (run 43349906633) was green in all nine jobs in **13 min 03 s**
+    (02:07:43 → 02:20:46Z). The demo for the browser took the longest at 12 min 10 s,
+    then macOS 11 min 45 s, Windows 11 min 08 s, Linux 9 min 50 s and the animation
+    5 min 42 s. **Both non-gate jobs succeeded**, so nothing is missing from the draft.
+  - It left a draft that was not a prerelease, with sixteen assets — 0.26.1's set. All
+    fifteen files listed in `sha256sums.txt` match it; the notes are the `[0.26.2]`
+    section, with the workflow's footer below.
+  - **`install.sh` and the six animation files are 0.26.1's byte for byte** (their
+    lines of the two `sha256sums.txt` are equal) — nothing the reel shows moved.
+  - **The archives.** Windows: 48 entries, macOS: 49, Linux: 49 — 0.26.1's counts;
+    `PRIVACY.md` still effective 2026-11-12.
+  - **Attestations** verify for the three archives, the installer, `install.sh` and
+    `mindfork-webdemo.tar`; a scratch file exits 1.
+  - **The Windows binary on a copy of the owner's real data — run for the first time**
+    (0.26.1's check had no real data and no Windows). The archive unpacked into an empty
+    directory, the owner's data root copied beside it without its 1.5 GB `sandbox/`:
+    managed mode, the owner's own `Ateron_Gemma-4-MoonGem-31B-Q4_0`, driven by
+    `tools/console_probe.py`. `mindfork --version` and `F1` said 0.26.2; the managed
+    server came up; in the very chat the defect was reported from, a bare `/system` put
+    its default copy in the box, `/system reset` took the profile's persona, and the next
+    reply was in the persona's voice. The probe's tree left no `llama-server` running.
+  - **The demo for the browser**: its manifest says format 2, application 0.26.2, commit
+    `eee53063`. Served on port 18791, free by `netstat`, and the served `manifest.json`
+    `curl`ed before the browser opened (0.26.1's lesson). **Start** in the app's browser
+    pane: ready 1.1 s after the click; `F1` → "About · mindfork v0.26.2", and the
+    Commands tab lists `/system [text|reset|clear]`; 18 requests, all to the page's own
+    origin; no console error.
+  - **Found on the way.** `tar -xf C:/…` in Git Bash took the drive letter for a remote
+    host (`Cannot connect to C: resolve failed`); the archive was unpacked with Python's
+    `tarfile` (`filter='data'`) instead — docs/lessons.md §6. And the help's line for
+    `/profile system` still says "applies to new conversations", true but short of what
+    946 made it: the profile's chats not yet begun take it too. One string per locale,
+    left for the next code change.
+  - Not checked: the Linux and macOS binaries run (no such host here), the packages
+    installed (`packaging.yml` installs them on its pull requests), a message sent in the
+    web demo.
+- **Published, and what followed** (the owner, 02:30:13Z).
+  - `crates-io.yml` (run 43352614761) published the crate in 3 min 16 s: crates.io's
+    newest version is 0.26.2.
+  - `aur.yml` (run 43352614925) built, linted, installed and ran `mindfork-rs-bin`
+    0.26.2 on Arch and stopped before the push, `AUR_SSH_PRIVATE_KEY` not being set — as
+    with 0.26.1.
+  - `site.yml` ran from `crates-io.yml`'s completion (run 43353010247, 02:33:35Z): the
+    gate saw the release out and the deploy went, **4 min 00 s after the publication**.
+    Measured on mindfork.io: the post answers 200 and heads the blog, and is in
+    `/llms.txt` and the sitemap; the home and install pages say `"softwareVersion":
+    "0.26.2"`; `/try/` takes its files from `/webdemo/v0.26.2/` (`Cache-Control: public,
+    max-age=31536000, immutable`, the state the draft's size to the byte — 21 454 988 —
+    the manifest naming `eee53063`). In the app's browser pane: ready 5.0 s after the
+    click, "About · mindfork v0.26.2", 22 requests all to mindfork.io — 0.26.1's count —
+    no console error.
+  - Scoop and the Homebrew tap still named 0.26.1 five minutes after the publication;
+    they pick a release up within four and six hours.
