@@ -2001,6 +2001,14 @@ with a control arm that shows a plain `tar -x` failing there. More generally: a
 --cap-drop` is one flag away from the pod's.
 — *`install.sh` on the first real pod, 2026-09-22*.
 
+**GNU tar reads a Windows drive letter as a host.** In Git Bash, `tar -xf
+C:/Users/…/archive.tar` stops with `Cannot connect to C: resolve failed`: an archive
+name holding a colon is `host:path`, a remote archive over `rsh`. The absolute paths a
+Windows session hands around all have one. Pass `--force-local`, `cd` to the archive and
+name it relatively, or unpack with Python's `tarfile` (`extractall(…, filter='data')`,
+which also refuses an entry that climbs out of the target).
+— *release 0.26.2, the draft*.
+
 **`Path` only knows the host's separators, and this app's data crosses hosts.**
 `Path::file_name()` on a `C:\Projects\app` string returns the **whole string** on
 Linux — there is no `\` separator there — so a label derived that way came out as
