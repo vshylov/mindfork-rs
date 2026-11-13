@@ -2310,14 +2310,89 @@ struct TurnShared {
     background: Arc<BackgroundSlots>,
 }
 
-/// The turn-wide token totals ([`TurnShared::counters`]): every loop adds its
-/// streamed deltas as they arrive and corrects to the server's exact `usage`
-/// at the round's end, so the bar's number grows monotonically whichever loop
-/// produced the token.
+/// The turn-wide token totals ([`TurnShared::counters`]): the sum of every
+/// round's [`RoundShare`] — each loop adds its streamed deltas as they arrive
+/// and moves its share to the server's exact `usage` whenever one arrives, so
+/// the bar's number is one figure whichever loop produced the token.
 #[derive(Default)]
 struct TurnCounters {
     tokens: std::sync::atomic::AtomicU64,
     reasoning: std::sync::atomic::AtomicU32,
+}
+
+/// One round's share of the [`TurnCounters`]: what the round has put into them
+/// so far, moved to its new figure by the difference.
+///
+/// A wire can report `usage` on **every chunk**: Gemini does, with cumulative
+/// figures (measured 2026-11-13 on `gemini-4-hydrogen`: thoughts 181 → 825 →
+/// 1036, the reply's count absent while it thinks). So a report *replaces* the
+/// round's figures rather than correcting by its gap from the delta count —
+/// that correction, applied once per chunk, took the gap away again and again
+/// and wrapped the turn's `AtomicU64` below zero (the bar's sum then overflowed:
+/// a panic in a debug build), and the reasoning summed every chunk's running
+/// total. A round only ever takes back what it put in, so the shared total
+/// cannot wrap whatever other loops do meanwhile.
+#[derive(Debug, Default)]
+struct RoundShare {
+    /// Reply tokens this round has added to `TurnCounters::tokens`.
+    tokens: u64,
+    /// Reasoning tokens this round has added to `TurnCounters::reasoning`.
+    reasoning: u32,
+    /// The latest exact reply count from `usage`, `None` before the first.
+    exact: Option<u64>,
+    /// Deltas streamed since `exact` (all of them before it), one token each.
+    since_exact: u64,
+}
+
+impl RoundShare {
+    /// The round's own reply count now: the latest exact figure plus the
+    /// deltas that came after it — the delta count before any figure.
+    fn count(&self) -> u64 {
+        self.exact.unwrap_or(0) + self.since_exact
+    }
+
+    /// What the round reports as its size once it ends: the server's figure
+    /// when one came, the delta count otherwise.
+    fn reported(&self) -> u64 {
+        self.exact.unwrap_or(self.since_exact)
+    }
+
+    /// A text or thoughts delta arrived — about one token.
+    fn delta(&mut self, counters: &TurnCounters) {
+        self.since_exact += 1;
+        self.sync_tokens(counters);
+    }
+
+    /// The server's figures for the round so far: they replace the round's
+    /// reply count and its reasoning.
+    fn usage(&mut self, counters: &TurnCounters, completion: u64, reasoning: u32) {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.exact = Some(completion);
+        self.since_exact = 0;
+        self.sync_tokens(counters);
+        if reasoning >= self.reasoning {
+            counters
+                .reasoning
+                .fetch_add(reasoning - self.reasoning, Relaxed);
+        } else {
+            counters
+                .reasoning
+                .fetch_sub(self.reasoning - reasoning, Relaxed);
+        }
+        self.reasoning = reasoning;
+    }
+
+    /// Moves the round's part of the turn's reply count to [`Self::count`].
+    fn sync_tokens(&mut self, counters: &TurnCounters) {
+        use std::sync::atomic::Ordering::Relaxed;
+        let target = self.count();
+        if target >= self.tokens {
+            counters.tokens.fetch_add(target - self.tokens, Relaxed);
+        } else {
+            counters.tokens.fetch_sub(self.tokens - target, Relaxed);
+        }
+        self.tokens = target;
+    }
 }
 
 /// One round's token report from [`stream_round`] to its [`RoundSink`]: the
@@ -6052,18 +6127,17 @@ async fn stream_round(
     let mut thinking = ThinkingAccumulator::default();
     let mut acc = ToolCallAccumulator::default();
     let mut reason = FinishReason::Stop;
-    // Live count: the number of reply deltas (≈ tokens). If it arrives, the exact
-    // value from the server's `usage` replaces the approximation.
-    let mut streamed: u64 = 0;
-    let mut usage_tokens: Option<u64> = None;
+    // Live count: the number of reply deltas (≈ tokens); each exact `usage`
+    // replaces the approximation, and the round's reasoning with it (`0` — the
+    // provider doesn't separate them). Kept as the round's share of the turn's
+    // counters, which a report may come for on every chunk (`RoundShare`).
+    let mut share = RoundShare::default();
     // The exact prompt size, when the server reports one. Deliberately without an
     // estimate fallback — see `RoundOutput::prompt_tokens`.
     let mut usage_prompt: Option<u32> = None;
     // The engine's own clock over the prompt (llama.cpp's `timings`), for
     // the slow-prefill note (docs/research/slow-prefill-detection.md §3.1).
     let mut usage_prefill: Option<crate::shared::api::contract::Prefill> = None;
-    // The round's reasoning tokens (from `usage`; `0` — the provider doesn't separate them).
-    let mut round_reasoning: u32 = 0;
     // Who served the round, and for how much — a gateway's own two facts.
     let mut round_served: Option<crate::shared::api::contract::Served> = None;
     // The round's cache figures (read, written) — for the log line at its end.
@@ -6071,14 +6145,14 @@ async fn stream_round(
 
     // The reply counter: `context: None` leaves the prior conversation estimate
     // untouched (emitted by start_generation); the exact `context` only comes from the server's usage.
-    // Each delta is counted into the turn's total as it arrives; the exact
-    // `usage` corrects the total at the end (see the `Usage` arm).
-    let emit_completion = |streamed: u64| {
+    // Each delta is counted into the turn's total as it arrives; an exact
+    // `usage` replaces the round's part of it (see the `Usage` arm).
+    let emit_completion = |share: &mut RoundShare| {
         use std::sync::atomic::Ordering::Relaxed;
-        counters.tokens.fetch_add(1, Relaxed);
+        share.delta(counters);
         sink.tokens(TokenReport {
             turn_completion: counters.tokens.load(Relaxed),
-            own_completion: own_base_tokens + streamed,
+            own_completion: own_base_tokens + share.count(),
             turn_reasoning: None,
             own_reasoning: None,
             context: None,
@@ -6096,18 +6170,16 @@ async fn stream_round(
                         // prefill: the withheld bytes are already on screen and
                         // in the seed message (research §4d).
                         let visible = strip_echo(echo.as_mut(), t);
-                        streamed += 1;
-                        emit_completion(streamed);
+                        emit_completion(&mut share);
                         relay_text(visible, &mut text, sink, id);
                     }
                     ChatChunk::Thoughts(t) => {
                         thoughts.push_str(&t);
-                        streamed += 1;
                         sink.send(AppEvent::Thoughts {
                             generation_id: id,
                             text: t,
                         });
-                        emit_completion(streamed);
+                        emit_completion(&mut share);
                     }
                     // A reference to the reasoning (Anthropic signature / OpenAI
                     // reasoning item) — not shown in the UI, accumulated for resending
@@ -6119,26 +6191,17 @@ async fn stream_round(
                         // The exact count from the server: both the reply and the
                         // conversation (prompt) — replaces the delta-based approximation
                         // and the conversation estimate. Reasoning tokens ("thoughts") —
-                        // cumulative across rounds (base + current).
+                        // cumulative across rounds (base + current). A report on
+                        // every chunk (Gemini) is a running total, so each one
+                        // replaces the round's share rather than adding to it.
                         use std::sync::atomic::Ordering::Relaxed;
-                        let exact = u.completion_tokens as u64;
-                        usage_tokens = Some(exact);
                         usage_prompt = Some(u.prompt_tokens);
                         usage_prefill = u.prefill.or(usage_prefill);
-                        round_reasoning = u.reasoning_tokens;
                         usage_cache = (u.cached_tokens, u.cache_write_tokens);
-                        // Correct the turn's total from the delta count to the
-                        // server's figure — the two differ by whatever a delta
-                        // carried that was not exactly one token.
-                        if exact >= streamed {
-                            counters.tokens.fetch_add(exact - streamed, Relaxed);
-                        } else {
-                            counters.tokens.fetch_sub(streamed - exact, Relaxed);
-                        }
-                        counters.reasoning.fetch_add(u.reasoning_tokens, Relaxed);
+                        share.usage(counters, u64::from(u.completion_tokens), u.reasoning_tokens);
                         sink.tokens(TokenReport {
                             turn_completion: counters.tokens.load(Relaxed),
-                            own_completion: own_base_tokens + exact,
+                            own_completion: own_base_tokens + share.count(),
                             turn_reasoning: Some(counters.reasoning.load(Relaxed)),
                             own_reasoning: Some(own_base_reasoning + u.reasoning_tokens),
                             context: Some(u.prompt_tokens as u64),
@@ -6228,10 +6291,10 @@ async fn stream_round(
         thinking: thinking.finish(),
         calls: acc.finish(),
         reason,
-        tokens: usage_tokens.unwrap_or(streamed),
+        tokens: share.reported(),
         prompt_tokens: usage_prompt,
         prefill: usage_prefill,
-        reasoning_tokens: round_reasoning,
+        reasoning_tokens: share.reasoning,
         served: round_served,
     }
 }

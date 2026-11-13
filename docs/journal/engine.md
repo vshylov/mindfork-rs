@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (113)
+## Entries (114)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -125,6 +125,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: thinking off reaches Claude (done)
 - Post-M9: an HTTP client on a system with no certificates (done)
 - Post-M9: the guide counts five clouds, and says how each answers about images (done)
+- Post-M9: the token counter on a wire that reports usage on every chunk (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -7412,3 +7413,55 @@ off.
   three, the catalogue for DeepSeek and the gateway, `Unknown` for Grok. No code changed.
 - Not touched: the release posts and the articles whose measurements were made on four
   clouds, which keep their number; `CHANGELOG.md`, since nothing the app does changed.
+
+### Post-M9: the token counter on a wire that reports usage on every chunk (done)
+
+- **Why** (branch `fix/gemini-usage-every-chunk`). The owner's debug build, on Gemini
+  (`gemini-4-hydrogen`, thinking on), panicked at `widgets/token_counter.rs:78` —
+  `attempt to add with overflow` in `context + tokens`. The sum was not the defect: the
+  turn's reply count arrived as `u64::MAX`.
+- **The cause.** `stream_round` counted every text or thoughts delta into the turn's
+  `TurnCounters::tokens` (an `AtomicU64`) and, on a `ChatChunk::Usage`, corrected it by
+  the gap `exact − streamed`, where `streamed` is every delta of the round. That holds
+  for a wire that reports once, at the end. **Gemini reports on every chunk** —
+  measured on the wire today: each chunk's `usageMetadata` a running total, thoughts
+  181 → 825 → 1036 with no `candidatesTokenCount` at all while the model thinks, then
+  candidates 7 … 105 beside 1036. Each report took the whole gap away again, so a
+  reply whose thoughts came in two chunks subtracted more than the round had added;
+  an atomic's `fetch_sub` wraps instead of panicking, and the panic surfaced only in
+  the widget's plain `+`. A release build wraps there too and showed `context − 2`,
+  a plausible number — which is why this lived since 2026-09-04. The reasoning was
+  `fetch_add`ed per report as well: the running totals summed, several times the real
+  figure in the `(reasoning N)` note.
+- **A second defect under it**: Gemini's client set `completion_tokens` to
+  `candidatesTokenCount`, which leaves the thoughts out, while the contract
+  (`TokenUsage::reasoning_tokens`, "already included in `completion_tokens`") and every
+  other wire count them in — and Gemini bills them as output, `totalTokenCount` being
+  the prompt plus both. Fixing only this would have made it worse: the control run
+  below shows the old correction then climbing to 3184 for a 1141-token reply.
+- **The fix.** `RoundShare` (in `generation.rs`, beside `TurnCounters`) is the round's
+  share of the turn's counters: a delta adds one, a report *replaces* the round's count
+  (`exact` + the deltas after it) and its reasoning, and the shared atomics move by the
+  difference. A round only ever takes back what it put in, so the total cannot wrap
+  whatever other loops do; `RoundOutput` reads its size and reasoning from the same
+  share. `UsageMetadata::token_usage` now reports `candidates + thoughts`. Readers of
+  `completion_tokens` that see Gemini's figure grow by the thoughts — the next turn's
+  prompt estimate for the compaction trigger, a tool loop's floor, Fabula's output
+  tokens, the stored reply size — as they already did on OpenAI and Anthropic.
+- **Tests**: +4 unit — the measured stream's shape (the bar reads 0, 1, 181, 182, 825,
+  826, 1043, 1044, 1141 and the reasoning 1036, not the sum); reports below the delta
+  count on every chunk never wrap (the old code gave `18446744073709551615`); two rounds,
+  the second reporting per chunk, sum to 5 + 9 with reasoning 2 + 7 (the old code: 21
+  and 19); a thinking chunk on the wire counts its thoughts as the reply. **Control
+  red**: the three orchestrator tests fail on the old `stream_round` with the figures
+  quoted. +1 `#[ignore]` smoke, `token_counter_gemini_thinking_e2e_live`, beside the
+  cache-share smokes whose harness it uses: a real thinking turn through the production
+  supervisor, the counter never going down, the reasoning part of the reply.
+  4813 unit tests green, 318 `#[ignore]`.
+- **Smoke — GO, control red** (2026-11-13, Gemini API, `token_counter_gemini_thinking_e2e_live`):
+  `gemini-3.8-flash` — the bar climbed 0, 1, 126, 127, 665 … 755 and ended at 755 with
+  reasoning 665; `gemini-4-hydrogen` (the owner's model) — 0, 1, 224 … 705, reasoning
+  607. The control, the same smoke on the old `stream_round` and wire, on
+  `gemini-4-hydrogen`: the bar read 0, 1, **0**, 1, 16, 17, 55 … 280 — down after the
+  first report — and the reasoning climbed 226 → 907 → … → 3631, the running totals
+  summed, above the reply it is part of.

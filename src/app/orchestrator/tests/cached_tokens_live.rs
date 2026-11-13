@@ -20,6 +20,10 @@
 //! a hit is the provider's routing and best effort, so the arm asserts only that
 //! the figure was parsed, and logs it (lessons §2: a provider's optional output
 //! cannot be an assertion).
+//!
+//! The same harness runs the counter itself on a thinking turn of a wire that
+//! reports `usage` on every chunk ([`token_counter_gemini_thinking_e2e_live`]):
+//! the turn that panicked a debug build on 2026-11-13.
 
 use super::*;
 use crate::app::supervisor::LlamaSupervisor;
@@ -178,6 +182,26 @@ impl Live {
                     cached,
                     ..
                 } => figures.push(Figure { context, cached }),
+                AppEvent::Error(said) => panic!("the turn failed: {said}"),
+                AppEvent::Finished { .. } => return figures,
+                _ => {}
+            }
+        }
+    }
+
+    /// One turn to its end: every counter the bar received, as
+    /// `(completion, reasoning)`, in order.
+    async fn turn_counter(&mut self, text: &str) -> Vec<(u64, Option<u32>)> {
+        self.phase = "a turn to finish";
+        self.cmd.send(AppCommand::SendMessage(text.into())).unwrap();
+        let mut figures = Vec::new();
+        loop {
+            match self.next().await {
+                AppEvent::TokenUsage {
+                    completion,
+                    reasoning,
+                    ..
+                } => figures.push((completion, reasoning)),
                 AppEvent::Error(said) => panic!("the turn failed: {said}"),
                 AppEvent::Finished { .. } => return figures,
                 _ => {}
@@ -379,6 +403,56 @@ async fn cached_tokens_gemini_e2e_live() {
         return;
     };
     cloud_arm("gemini", config).await;
+}
+
+/// The counter on a Gemini turn that thinks. Gemini reports `usage` on every
+/// chunk, a running total each time, its reply count without the thoughts and
+/// absent while the model thinks; the counter corrected by each report's gap
+/// from the delta count, so a reply whose thoughts came in two chunks wrapped
+/// it to `u64::MAX` and the bar's sum panicked a debug build (2026-11-13).
+/// What the bar must read instead: a figure that only climbs (each report is a
+/// running total), ends at the turn's reply, and whose reasoning is part of it.
+///
+/// `MINDFORK_GEMINI_KEY=… [MINDFORK_COUNTER_E2E_GEMINI_MODEL=…] cargo test
+/// token_counter_gemini_thinking_e2e_live -- --ignored --nocapture`
+#[tokio::test]
+#[ignore = "requires MINDFORK_GEMINI_KEY"]
+async fn token_counter_gemini_thinking_e2e_live() {
+    let Some(mut config) = cloud_config(
+        ServerMode::Gemini,
+        "MINDFORK_GEMINI_KEY",
+        "MINDFORK_COUNTER_E2E_GEMINI_MODEL",
+        "gemini-3.8-flash",
+    ) else {
+        return;
+    };
+    config.default_sampling.thinking = Some(true);
+    let mut live = Live::start(config);
+    live.fresh_chat("You are a careful assistant.".into()).await;
+    let figures = live
+        .turn_counter(
+            "How many prime numbers are there between 1 and 60? Think it through, \
+             then answer in two sentences.",
+        )
+        .await;
+    live.stop().await;
+    eprintln!("gemini counter (completion, reasoning): {figures:?}");
+    let reasoning = figures.iter().rev().find_map(|(_, r)| *r).unwrap_or(0);
+    // The arm means something only on a turn that thought — said, not passed.
+    assert!(
+        reasoning > 0,
+        "the model reported no thoughts, so the arm proves nothing: {figures:?}"
+    );
+    let completions: Vec<u64> = figures.iter().map(|(c, _)| *c).collect();
+    assert!(
+        completions.windows(2).all(|w| w[0] <= w[1]),
+        "the counter went down — a report was taken as a correction: {completions:?}"
+    );
+    let last = *completions.last().unwrap();
+    assert!(
+        u64::from(reasoning) <= last,
+        "the reasoning ({reasoning}) is part of the reply ({last}): {figures:?}"
+    );
 }
 
 /// The OpenRouter mode.
