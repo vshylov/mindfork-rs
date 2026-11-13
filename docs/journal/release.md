@@ -6619,3 +6619,69 @@ guard's, the site gate's and the AUR renderer's self-tests clean.
     in its favour, as it did for 0.14.1 and 0.17.0.
   - The home and install pages say `"softwareVersion": "0.26.3"`.
   - The post is in the sitemap, and `site_llms_txt.py --check` matches.
+- **The draft, checked before anyone else could see it** (§6 step 5).
+  - The owner merged 954 and set `v0.26.3` on the merge commit `c80cb619`, which was
+    `origin/main`.
+  - `release.yml` (run 43480815717) was green in all nine jobs in **17 min 45 s**
+    (18:15:16 → 18:33:01Z). macOS took the longest at 16 min 26 s, then Windows
+    13 min 22 s, Linux 11 min 16 s, the demo for the browser 10 min 15 s and the
+    animation 3 min 36 s. **Both non-gate jobs succeeded**, so nothing is missing from
+    the draft.
+  - It left a draft that was not a prerelease, with sixteen assets — 0.26.2's set. All
+    fifteen files listed in `sha256sums.txt` match it; the notes are the `[0.26.3]`
+    section (30 lines), with the workflow's footer below.
+  - **`install.sh` and the six animation files are 0.26.2's byte for byte** (their
+    lines of the two `sha256sums.txt` are equal) — nothing the reel shows moved.
+  - **The archives.** Windows: 48 entries, macOS: 49, Linux: 49 — 0.26.2's counts;
+    `PRIVACY.md` still effective 2026-11-12.
+  - **Attestations** verify for the three archives, the installer, `install.sh` and
+    `mindfork-webdemo.tar`; a scratch file exits 1.
+  - **The Windows binary on a copy of the owner's data.** The owner's standard data
+    folder (`%APPDATA%\mindfork-rs\data`), which 0.26.2's check copied, is no longer on
+    this machine, and no published binary is installed. So the copy was of the dev data
+    root `target/debug/data`, where the reported crash happened, without `sandbox/`,
+    `cuda-cache/`, `dictionaries/`, `locales/` and `logs/`.
+    - The archive was unpacked into an empty directory with the copy beside it, and
+      driven by `tools/console_probe.py`'s helpers at 160×50.
+    - `mindfork --version` said 0.26.3. The interface came up in Russian, the owner's
+      locale, on `gemini-4-hydrogen` (key by `api_key_env`, `GEMINI_API_KEY`), with
+      the chat and embedder chips ready.
+    - In the pristine chat it opens on, `Alt+V` staged a 64×32 picture off the real
+      clipboard. A thinking Gemini turn about it finished, and the counter read
+      14509 tokens with a reasoning note of 637 and cache 0% (in the Russian locale's
+      words) — the reasoning part of the reply, not several times above it.
+    - `F1` opened About on mindfork v0.26.3 (its Russian title), and the app exited 0.
+    - The person's clipboard was saved first and put back. No `mindfork` or
+      `llama-server` was left running.
+  - **The demo for the browser**: its manifest says format 2, application 0.26.3, commit
+    `c80cb619`. Served on port 18793, free by `netstat`, and the served `manifest.json`
+    `curl`ed before the browser opened. **Start** in the app's browser pane: ready 1.0 s
+    after the click; `F1` → "About · mindfork v0.26.3"; 17 requests, all to the page's
+    own origin; no console error.
+  - **Found on the way.** In the release PR's `Data` measurement, the probe's first wait
+    for the reply's end looked for a word that the typed question itself contained. It
+    returned at once, and the next `Esc` cancelled the turn. Both runs since wait for the
+    generating status to be gone, in the interface's own language — here the owner's
+    Russian (docs/lessons.md §6).
+  - Not checked: the Linux and macOS binaries run (no such host here), the packages
+    installed (`packaging.yml` installs them on its pull requests), a message sent in the
+    web demo.
+- **Published, and what followed** (the owner, 18:54:41Z).
+  - `crates-io.yml` (run 43487160936) published the crate in 3 min 12 s: crates.io's
+    newest version is 0.26.3.
+  - `aur.yml` (run 43487160992) built, linted, installed and ran `mindfork-rs-bin`
+    0.26.3 on Arch in 40 s and stopped before the push, `AUR_SSH_PRIVATE_KEY` not being
+    set — as with 0.26.2.
+  - `site.yml` ran from `crates-io.yml`'s completion (run 43487664623, 18:58:00Z): the
+    gate saw the release out and the deploy went, **4 min 23 s after the publication**.
+    - Measured on mindfork.io: the post answers 200 and heads the blog, ahead of 0.26.2's
+      of the same date, and is in `/llms.txt` and the sitemap.
+    - The home and install pages say `"softwareVersion": "0.26.3"`.
+    - `/try/` takes its files from `/webdemo/v0.26.3/` (`Cache-Control: public,
+      max-age=31536000, immutable`). The state is the draft's size to the byte —
+      `state.bin.zst` 21 458 907, `v86.wasm` 2 007 347 — and the manifest names
+      `c80cb619`.
+    - In the app's browser pane: ready 5.0 s after the click, "About · mindfork
+      v0.26.3", 21 requests all to mindfork.io, no console error.
+  - Scoop and the Homebrew tap still named 0.26.2 five minutes after the publication;
+    they pick a release up within four and six hours.
