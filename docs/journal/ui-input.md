@@ -2341,3 +2341,13 @@ echoes `Alt+'v'` as `the shortcut Alt+V`. The probe injects into a console, whic
 tests the app but not which chords the terminal lets through. The owner closed that
 gap on 2026-11-13: in **Windows Terminal** itself, `Alt+V` staged the clipboard's
 picture, both with *Name pasted images* on (the chat's model named it) and with it off.
+
+- **Merged** — PR 952, by the owner, 2026-11-13 17:38:21Z, merge commit `131bf8ac`.
+  - CI was green in all nine checks. Tests took 3 min 50 s on Ubuntu, 5 min 17 s on
+    macOS and 5 min 06 s on Windows; the Windows-only clippy took 5 min 21 s and the
+    lints 1 min 33 s.
+  - SonarCloud's gate passed: no new issues, no hotspots, 100.0% of the new code
+    covered, 0.0% duplicated. The first analysis had raised one S1192, a chord spelt
+    four times in the probe, and `e4eb8aba` named it once.
+  - **Not released yet**: `Alt+V` waits in `CHANGELOG.md`'s `[Unreleased]` beside 949's
+    help line and 950's token counter, and `v0.26.2` is still the newest release.
