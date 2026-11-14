@@ -1,7 +1,7 @@
 # Plan: where a fact about the person goes — notes or observations
 
-> Status: **stage 1 done — GO (2026-11-14, §5.4); stage 2 next**, once the F4
-> sub-question is decided. Forks F1–F5 decided by the user on 2026-11-14 (§4).
+> Status: **stage 1 done — GO (2026-11-14, §5.4); stage 2 next.** Forks F1–F5
+> and the F4 merge sub-question decided by the user on 2026-11-14 (§4).
 > The document stays in `docs/` until the track is done, then moves to
 > `docs/history/`.
 
@@ -111,12 +111,13 @@ them invisible without `notes_in_prompt`. *Decided: (a).*
 observations at ≥ 0.70, marked as observations, and `add_insight`'s lists notes;
 the hint says that the same fact belongs in a note.*
 
-Open sub-question for stage 2 (decided before it starts): `note_merge` gives the
-merged note the **union** of its sources' tags and `note_supersede` the old note's
-tags, so merging an observation into a note yields an **observation**. Options:
-(i) a merge that includes a regular note yields a regular note — facts are the
-person's, so a mixed merge is a fact; (ii) the hint names `note_revise` of the
-note plus `note_supersede` of the observation instead of a merge. *Leaning (i).*
+The sub-question for stage 2: `note_merge` gives the merged note the **union** of
+its sources' tags and `note_supersede` the old note's tags, so merging an
+observation into a note yields an **observation**. Options: (i) a merge that
+includes a regular note yields a regular note — facts are the person's, so a mixed
+merge is a fact; (ii) the hint names `note_revise` of the note plus
+`note_supersede` of the observation instead of a merge. *User's decision
+(2026-11-14): (i).*
 
 **F5. Facts already filed as observations.** *Decided: (a) leave them.* No tool
 changes a note's kind; a one-off move script for one profile, or teaching
@@ -232,8 +233,9 @@ stage 1:
    there, tags), `add_insight` (narrowed to the companion itself; a fact "belongs
    in a note") and `update_user_model`, and the reflection rubric, say the same;
    both bundles. Measured in §5.4.
-2. **Gates across kinds (F4)**, after the F4 sub-question is decided — the write
-   gates' `keep` filter widened and the item marked by kind; the merge rule.
+2. **Gates across kinds (F4)** — the write gates' `keep` filter widened and the
+   item marked by kind; the merge rule (i): a merge that includes a regular note
+   yields a regular note (`@self` dropped from the union).
 
 Out of scope: moving existing observations (F5); `notes_in_prompt` defaults (F3b);
 the `update_user_model` lists' abuse as a fact store beyond what the rule's

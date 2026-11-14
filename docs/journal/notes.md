@@ -446,5 +446,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   conclusions 3 of 9 times against 4 of 9 before — one line of one conversation;
   it states the later two in the reply without writing them, before and after
   alike.
-- **Left for stage 2**: the write gates across kinds (F4), after its sub-question
-  (`note_merge` unions tags, so a merge with an observation yields an observation).
+- **Left for stage 2**: the write gates across kinds (F4). Its sub-question —
+  `note_merge` unions tags, so a merge with an observation yields an observation —
+  user's decision 2026-11-14: a merge that includes a regular note yields a regular
+  note.
