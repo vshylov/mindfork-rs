@@ -1,9 +1,11 @@
 # Research: mouse capture always on, and a text selection of the app's own
 
 **Status:** research and a pty probe (2026-11-14). **Forks decided by the owner
-the same day** (§6): F1 with the legacy terminal mode, F2, F4, F5, F7, F8 and F10
-as recommended; F3 and F6 the other way; F9 a third way — a resize keeps the
-selection. Nothing is built; stage 1 is next.
+the same day** (§6), in two rounds: F1 with the legacy terminal mode, F2, F4,
+F5, F7, F8, F9 and F10 as recommended; F3 and F6 the other way — the right
+button does nothing, `Esc` keeps its meaning, the feed takes no selection while
+the assistant answers, and a copy never ends a selection. Nothing is built;
+stage 1 is next.
 
 The ask (the owner, 2026-11-14): look into dropping the mouse's two modes —
 *select* and *scroll* — altogether. Keep the terminal's mouse capture on all the
@@ -63,11 +65,11 @@ feed's click map); [docs/history/osc52-clipboard.md](../history/osc52-clipboard.
   lands while a reply streams splits the reply (docs/lessons.md §5).
 - **The design (§5).** Capture in button-and-drag mode only, no motion reports;
   one selection on the screen at a time, owned by the feed or by a field; the
-  feed's anchored to the content — (block, logical line, character) — so it
-  survives a resize, and drawn over the frame the way the click map is read off
-  it. `Ctrl+C` copies, the outcome on a status-bar chip rather than in the feed;
-  a double click takes a word, a triple a line; a drag past the edge scrolls; the
-  right button and `Esc` stay out of it. `Ctrl+W`, its status-bar light and
+  feed's anchored to (block, row, column), drawn over the frame the way the click
+  map is read off it, and not offered while the assistant answers. `Ctrl+C`
+  copies and never ends a selection, the outcome on a status-bar chip rather than
+  in the feed; a double click takes a word, a triple a line; a drag past the edge
+  scrolls; the right button and `Esc` stay out of it. `Ctrl+W`, its status-bar light and
   `/mouse` are removed; a setting on the settings screen, and the legacy terminal
   mode by itself, keep the terminal's mouse where it is needed.
 - **Stages (§7):** the input path first (it fixes today's scroll mode too), then
@@ -385,10 +387,18 @@ Each is a test or a live-check line of §7.
 
 - At most one selection exists, owned by the feed or by a field; starting one
   ends the other, and `Ctrl+C` copies whichever exists.
-- **What ends a feed selection** (F6): a click in the feed outside it; any move of
-  the input box's cursor — typing, the arrows, a click in the field; a reply
-  streaming into a selected block. Not `Esc`, which keeps its meanings, and not
-  a copy. A field's selection keeps its own rules.
+- **What ends a selection** (F6) is what ends one in a text field of a GUI: a
+  move of the cursor or typed text — in the feed's case the input box's cursor,
+  the arrows, a click in the field — and, for the feed, a click in it outside the
+  selection. Not `Esc`, which keeps its meanings, and **never a copy**, in the
+  feed or in a field (F2; today a field's `Ctrl+C` ends its selection — that
+  changes).
+- **No feed selection while the assistant answers** (F6): a selection standing
+  when a reply starts is dropped, and until the reply ends a drag in the feed
+  selects nothing. The feed scrolls itself then, and markdown re-forms the text
+  as it is written — both would move what a selection points at. A click on a
+  `chat://` address still follows it, the wheel still scrolls, and the input
+  box's selection works as ever.
 - **The mouse grammar** (the left button):
   - *press* — remembers the point and the panel under it (the feed's rows, a
     field's text, or neither); nothing changes yet;
@@ -411,28 +421,17 @@ Each is a test or a live-check line of §7.
 
 ### 5.4 The feed's selection
 
-- **Coordinates:** (block, logical line, character). A block is one message's
-  cached rows; a logical line is a line before the feed's wrap — a paragraph, a
-  code line, a list item, a heading; the character is an index into it. The row
-  facts below map a row to its logical line and the characters it shows, so a
-  point on screen becomes an anchor and an anchor becomes a cell.
-- **A resize keeps the selection** (F9). The block is rebuilt at the new width and
-  each end is found again: in the same logical line when its text — trailing
-  padding aside — is unchanged, otherwise in the nearest line of that block with
-  the same text (a table above it, laid out anew, changed the count). An end
-  inside content the width itself lays out — a table, a diagram, and until stage
-  2b a quote or a gutter block — cannot be found again, and the selection is
-  dropped rather than guessed. An index past a line's new end is clamped to it.
-- **What drops it otherwise.** Earlier blocks do not move while a reply streams
-  below or a message is appended, so those keep it. A reply streaming into a
-  selected block drops it (F6), as does a regenerate or take-back that removes
-  one. `Ctrl+T`/`Ctrl+O` and the theme drop it (F9), and so does every other
-  `CacheKey` change but the width — the language, role names, the jump marker,
-  the address book, the compaction boundary, the feed's render settings: each is
-  a deliberate act, and none is worth a re-anchoring path of its own.
-- **Row facts kept beside each cached block's rows**: the rail's width, whether
-  the row is a soft wrap, and the logical line it belongs to with the characters
-  it shows; made in `build_message_block`'s wrap loop, for the separator and for
+- **Coordinates:** (block, row within the block, column). A block is one
+  message's cached rows, so the rows of earlier blocks do not move when a message
+  or a note is appended below — those keep the selection.
+- **What drops it** (F9): every `CacheKey` change, since each one invalidates
+  every row — a resize, the theme, `Ctrl+T`/`Ctrl+O`, the language, role names,
+  the jump marker, the address book, the compaction boundary, the feed's render
+  settings; a regenerate or take-back that removes a selected block; and a reply
+  starting (F6).
+- **Row facts kept beside each cached block's rows**: the rail's width and whether
+  the row is a soft wrap; made in `build_message_block`'s wrap loop, for the
+  separator and for
   the compaction divider, carried through `render`'s second wrap (identity today;
   a piece it ever splits off is marked soft). The prefix of a pre-wrapped row
   (§2.4) is the same kind of fact, made by `push_gutter_lines`, `push_wrapped`
@@ -453,7 +452,8 @@ Each is a test or a live-check line of §7.
   conversation stays `F5`/`/copy` (F4).
 - **Autoscroll:** a drag held above or below the feed's rows scrolls it a row per
   tick (50 ms), the selection following the edge row; the loop's tick drives it,
-  as it drives the spinner.
+  as it drives the spinner. A reply never runs meanwhile (§5.3), so the only
+  scrolling is the drag's own.
 - **The search highlight** keeps working underneath: the selection is painted
   last, and stepping between matches only scrolls, so the selection stays. A jump
   from the search screen moves the marker — a `CacheKey` change — and drops it
@@ -471,9 +471,10 @@ Each is a test or a live-check line of §7.
 
 ### 5.6 Copy
 
-- `Ctrl+C` copies the selection (F2). A feed selection stays after it (F6); a
-  field's ends, as it does today. There is no copy on release and none by the
-  right button (F3).
+- `Ctrl+C` copies the selection (F2) and **leaves it in place**, in the feed and
+  in every field — a GUI field's behaviour; the field's `Ctrl+C` stops ending its
+  selection. `Ctrl+X` still removes what it cut. There is no copy on release and
+  none by the right button (F3).
 - What is copied is what is drawn (F4); a copy in markdown is not wanted at all —
   the conversation's source is `F5` / `/copy`, and a partial markup copy raises
   questions with no good answer (a bold word selected by half, part of a
@@ -520,7 +521,9 @@ lives on the settings screen; the status-bar light and `/mouse` go with
 **F2 — when the copy happens.** (a) on `Ctrl+C`; (b) on release, automatically;
 (c) (a) with (b) as an opt-in. *Decided: (a), `Ctrl+C`* — the field's key, and
 the one Windows Terminal passes through when it has no selection of its own
-(§4.2).
+(§4.2). *Second round:* a copy never ends a selection, anywhere — the behaviour
+of a text field in a GUI; the input box's `Ctrl+C`, which ends its selection
+today, changes with it.
 
 **F3 — the right and the middle button.** (a) the right copies a selection;
 (b) both do nothing; (c) the right copies or pastes. *Decided: (b), against the
@@ -539,9 +542,11 @@ line, in the feed and in the fields.
 
 **F6 — `Esc` while there is a selection.** (a) `Esc` ends it first; (b) `Esc`
 unchanged. *Decided: (b), against the recommendation.* A selection ends by a
-click on a part of the text that is not selected, or by a move of the input
-box's cursor; and — the owner's addition — a feed selection ends when a reply
-streams into it. A copy does not end it.
+click on a part of the text that is not selected, or by a move of the cursor or
+typed text; a copy does not end it. *Second round, the owner's addition:* when
+the assistant starts answering, a feed selection is dropped, and **no feed
+selection can be made until the answer ends** — the feed scrolls itself then,
+and markdown re-forms the text as it is written, both sources of defects.
 
 **F7 — capture while the track is in progress.** *Decided: (b)* — on where the
 screen in front answers the mouse, off elsewhere until stage 3.
@@ -550,11 +555,12 @@ screen in front answers the mouse, off elsewhere until stage 3.
 drag in between.
 
 **F9 — a feed selection across changes to the feed.** (a) dropped by every
-rewrap; (b) anchored to the content, surviving one. *Decided: between them.*
-`Ctrl+T`/`Ctrl+O` drop it, and so does a theme change, so that nothing
-unexpected can come of it; **a resize does not**. That needs (b)'s anchor
-(§5.4), used for the width alone; every other `CacheKey` change drops the
-selection, by the theme's reasoning.
+rewrap; (b) anchored to the content, surviving one. *Decided: (a).* The first
+round kept a selection across a resize, which needs (b)'s anchor and its
+re-finding after the rewrap — with the limit that an end inside a table or a
+diagram, laid out anew at the new width, cannot be found again. *Second round:*
+not worth the code for now; a resize drops the selection like `Ctrl+T`/`Ctrl+O`
+and the theme.
 
 **F10 — where a copy's outcome is said.** *Decided: (a), a chip in the status
 bar* — with one more reason of the owner's: a note in the feed scrolls the feed.
@@ -576,24 +582,26 @@ A better place may come later, the frame of an element on screen for instance.
   Then §5.1 (`feat/mouse-capture-setting`): the setting on the settings screen —
   defaulting to `terminal` for now, so a release between stages changes nothing —
   the legacy terminal mode's veto, the button-and-drag capture, capture following
-  the screen (F7), the link on the release (F8), the copy chip (F10). Tests:
-  §5.2's; the mode command's bytes; capture on only for `app` with the legacy mode
-  off, and only where the screen answers the mouse; a click and a drag told apart
-  on an address.
+  the screen (F7), the link on the release (F8), the copy chip (F10), the field's
+  `Ctrl+C` keeping its selection (F2). Tests: §5.2's; the mode command's bytes;
+  capture on only for `app` with the legacy mode off, and only where the screen
+  answers the mouse; a click and a drag told apart on an address; a field's
+  selection intact after `Ctrl+C`.
 - **Stage 2 — the feed's selection** (`feat/feed-selection`). §5.3–§5.6: the row
-  facts, the anchor and its re-finding after a resize, the selection and its
-  grammar, the highlight, the text, the multi-click, the autoscroll; the box's
-  clamped drag and its multi-click; then §5.7 — the toggle removed, the default
-  flipped to `app`. Tests on `TestBackend`: a drag over a wrapped paragraph copies
-  one line; over a code block — no padding and no rail; over a table; a wide
-  glyph at either end; the highlight's cells in both colour modes; a selection
-  kept across a resize in prose and in code, and dropped when an end lies in a
-  table; dropped by `Ctrl+T`/`Ctrl+O` and a theme change; kept while a reply
-  streams below it, dropped when one streams into it; ended by a click outside
-  it and by a move of the input box's cursor, kept by a click inside it, by `Esc`
-  and by a copy; the right button doing nothing; an address followed on the
-  release and selected by a drag; which selection `Ctrl+C` takes. And the failures of
-  §4.5 as tests: a selection grown by autoscroll copies every row it covers
+  facts, the selection and its grammar, the highlight, the text, the
+  multi-click, the autoscroll; the box's clamped drag and its multi-click; then
+  §5.7 — the toggle removed, the default flipped to `app`. Tests on
+  `TestBackend`: a drag over a wrapped paragraph copies one line; over a code
+  block — no padding and no rail; over a table; a wide glyph at either end; the
+  highlight's cells in both colour modes; a selection dropped by a resize,
+  `Ctrl+T`/`Ctrl+O` and a theme change, kept when a message is appended below;
+  dropped when a reply starts, and no selection made while it streams — a drag
+  selects nothing, a link click still follows, the wheel still scrolls; ended by
+  a click outside it, by a cursor move and by typing, kept by a click inside it,
+  by `Esc` and by a copy; the right button doing nothing; an address followed on
+  the release and selected by a drag; which selection `Ctrl+C` takes. And the
+  failures of §4.5 as tests: a selection grown by autoscroll copies every row it
+  covers
   (Claude Code #83961); a drag past the edge scrolls (opencode #61053); a copy
   runs once per gesture, never per report (opencode #51056); an OSC 52 send is
   told as sent, not copied (opencode #59664). **No live run in the AGENTS.md §3
@@ -626,10 +634,6 @@ A better place may come later, the frame of an element on screen for instance.
 - **The highlight over a wide glyph** may be painted on one half where a terminal
   does not paint a wide glyph's trailing cell itself — the known limitation of
   spec §11.3; cosmetic.
-- **Re-finding a selection after a resize** is the one mechanism the decisions
-  add (F9), and a wrong match would select text the user did not choose. It
-  matches by text and drops the selection when unsure; the resize cases of §7 are
-  its tests.
 - **A frame per drag report.** Every frame clones every cached row
   (`build_lines`, :1187); a long chat in a debug build can take longer than the
   gap between two reports. After §5.2 the reports that pile up meanwhile are one
