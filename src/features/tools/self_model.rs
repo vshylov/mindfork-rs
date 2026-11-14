@@ -50,15 +50,51 @@ pub fn policy_core(loc: &Locale) -> &str {
     loc.t("selfmodel.policy_core")
 }
 
+/// Which note tools a turn offers — what the maintenance protocol may route to
+/// (docs/memory-routing.md F2, F3).
+///
+/// [`policy_core`] only says what an observation is *not* (a fact about the
+/// interlocutor): it is also the background reflection's and self-consolidation's
+/// rules, and neither offers `note_save`. The route itself — "facts go to
+/// `note_save`", "look them up with `note_recall`" — is added to the turn's
+/// protocol only when the turn offers that tool: naming a tool the model does not
+/// have sends it to a dead end (docs/lessons.md §4).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct NoteRoutes {
+    /// `note_save` is offered — facts about the interlocutor are routed to it.
+    pub save: bool,
+    /// `note_recall` is offered — the model is told to look facts up before
+    /// answering about the interlocutor's life.
+    pub recall: bool,
+}
+
+impl NoteRoutes {
+    /// The routes a request's tool schemas offer.
+    pub fn offered(tools: &[crate::shared::api::ToolSchema]) -> Self {
+        let has = |id: &str| tools.iter().any(|t| t.name == id);
+        Self {
+            save: has(notes::NOTE_SAVE_ID),
+            recall: has(notes::NOTE_RECALL_ID),
+        }
+    }
+}
+
 /// A persona-neutral "model maintenance protocol" — [`policy_core`] framed as "you
-/// manage this model yourself". Mixed into the turn's system prompt on top of any
-/// profile persona (see `orchestrator::generation::inject_self_model`), making use
-/// of SelfModel tools predictable regardless of persona.
-pub fn maintenance_protocol(loc: &Locale) -> String {
-    loc.tf(
-        "selfmodel.maintenance_wrapper",
-        &[("core", policy_core(loc))],
-    )
+/// manage this model yourself", plus the note routes the turn offers
+/// ([`NoteRoutes`]). Mixed into the turn's system prompt on top of any profile
+/// persona (see `orchestrator::generation::inject_self_model`), making use of
+/// SelfModel tools predictable regardless of persona.
+pub fn maintenance_protocol(loc: &Locale, routes: NoteRoutes) -> String {
+    let mut core = policy_core(loc).to_string();
+    if routes.save {
+        core.push(' ');
+        core.push_str(loc.t("selfmodel.policy_notes"));
+    }
+    if routes.recall {
+        core.push(' ');
+        core.push_str(loc.t("selfmodel.policy_recall"));
+    }
+    loc.tf("selfmodel.maintenance_wrapper", &[("core", &core)])
 }
 
 /// Loads the profile's model from storage (or an empty one, if it hasn't been
@@ -924,7 +960,7 @@ mod tests {
 
     #[test]
     fn maintenance_protocol_wraps_policy_core() {
-        let p = maintenance_protocol(ru());
+        let p = maintenance_protocol(ru(), NoteRoutes::default());
         // The "you manage this yourself" wrapper + the whole POLICY_CORE (with the
         // key anti-flattery phrase).
         assert!(p.contains("Ты сам ведёшь эту «модель себя»"));
@@ -936,9 +972,13 @@ mod tests {
     /// same language on every built-in language; the `{core}` placeholder is substituted.
     #[test]
     fn maintenance_protocol_localized_for_all_langs() {
+        let all = NoteRoutes {
+            save: true,
+            recall: true,
+        };
         for &lang in crate::shared::i18n::Lang::ALL {
             let l = crate::shared::i18n::locale(lang);
-            let p = maintenance_protocol(l);
+            let p = maintenance_protocol(l, all);
             assert!(
                 p.contains(policy_core(l)),
                 "{lang:?}: policy_core not embedded"
@@ -948,6 +988,73 @@ mod tests {
                 "{lang:?}: placeholder not substituted"
             );
         }
+    }
+
+    /// docs/memory-routing.md F2: `policy_core` is also the background
+    /// reflection's and self-consolidation's rules, and neither offers
+    /// `note_save` — so it must not route anything there, in any language; it
+    /// only says what an observation is not.
+    #[test]
+    fn policy_core_names_no_note_route() {
+        for &lang in crate::shared::i18n::Lang::ALL {
+            let core = policy_core(crate::shared::i18n::locale(lang));
+            for tool in [notes::NOTE_SAVE_ID, notes::NOTE_RECALL_ID] {
+                assert!(!core.contains(tool), "{lang:?}: policy_core names {tool}");
+            }
+        }
+    }
+
+    /// Each note route enters the turn's protocol only when the turn offers its
+    /// tool — and then names it, in every language.
+    #[test]
+    fn maintenance_protocol_names_only_the_offered_note_routes() {
+        for &lang in crate::shared::i18n::Lang::ALL {
+            let l = crate::shared::i18n::locale(lang);
+            let names = |routes: NoteRoutes| {
+                let p = maintenance_protocol(l, routes);
+                (
+                    p.contains(notes::NOTE_SAVE_ID),
+                    p.contains(notes::NOTE_RECALL_ID),
+                )
+            };
+            assert_eq!(names(NoteRoutes::default()), (false, false), "{lang:?}");
+            let save = NoteRoutes {
+                save: true,
+                recall: false,
+            };
+            assert_eq!(names(save), (true, false), "{lang:?}");
+            let recall = NoteRoutes {
+                save: false,
+                recall: true,
+            };
+            assert_eq!(names(recall), (false, true), "{lang:?}");
+        }
+    }
+
+    #[test]
+    fn note_routes_are_read_from_the_offered_schemas() {
+        let schema = |name: &str| crate::shared::api::ToolSchema {
+            name: name.into(),
+            description: String::new(),
+            parameters: serde_json::json!({}),
+        };
+        assert_eq!(NoteRoutes::offered(&[]), NoteRoutes::default());
+        let tools = [schema("add_insight"), schema("note_save")];
+        assert_eq!(
+            NoteRoutes::offered(&tools),
+            NoteRoutes {
+                save: true,
+                recall: false
+            }
+        );
+        let tools = [schema("note_recall"), schema("note_save")];
+        assert_eq!(
+            NoteRoutes::offered(&tools),
+            NoteRoutes {
+                save: true,
+                recall: true
+            }
+        );
     }
 
     #[test]

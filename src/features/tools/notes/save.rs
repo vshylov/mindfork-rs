@@ -11,7 +11,7 @@ pub struct NoteSave;
 #[async_trait::async_trait]
 impl Tool for NoteSave {
     fn id(&self) -> ToolId {
-        "note_save".into()
+        NOTE_SAVE_ID.into()
     }
     fn group(&self) -> crate::features::tools::meta::ToolGroup {
         crate::features::tools::meta::ToolGroup::Memory

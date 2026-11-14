@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (9)
+## Entries (10)
 
 - Post-M9: notes connectivity — MVP probe (Tier 1, done)
 - Post-M9: notes connectivity — Tier 2 (graph + revision history, done)
@@ -21,6 +21,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the companion's notes and earlier conversations in the prompt (done)
 - Post-M9: the write gates get a threshold (done)
 - Post-M9: where a fact about the person goes — design and baseline probe (done)
+- Post-M9: where a fact about the person goes — stage 1, the wording (done)
 
 ### Post-M9: notes connectivity — MVP probe (Tier 1, done)
 - **A shift of memory from accumulation to integration** per the plan
@@ -406,3 +407,44 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   catches. Gemma also files facts as interlocutor "interests" (9/18 fact turns).
   GO needs ≥ 80% on both arms with own conclusions no worse (§5.2).
 - Unit tests 4837 green, 322 `#[ignore]`.
+
+### Post-M9: where a fact about the person goes — stage 1, the wording (done)
+- **What changed** ([docs/memory-routing.md](../memory-routing.md) §6, stage 1; forks
+  F1–F3 as the user decided them). The rule is one test question — "would this
+  still be true if I did not exist?" — yes: a note; no: an observation.
+  `selfmodel.policy_core` now says an observation is memory about the companion
+  itself and a fact about the interlocutor is not one "even when you learned it as
+  news" (the event framing is what sent the move to observations), and narrows the
+  interlocutor lists to short, stable dispositions ("not places, dates, plans or
+  events"). Descriptions: `note_save` widened (what goes there, tags), `add_insight`
+  narrowed to the companion itself ("it belongs in a note"), `update_user_model`
+  narrowed like the protocol; the reflection rubric's interlocutor line too. Both
+  bundles.
+- **Key decision — the route is conditional, the rule is not.** `policy_core` is
+  also the background reflection's and self-consolidation's rules, and neither
+  offers `note_save`; naming it there would send the model to a tool it does not
+  have (docs/lessons.md §4). So `policy_core` names no note tool (a test pins it in
+  every language), and the route is two new sentences —
+  `selfmodel.policy_notes` (facts → `note_save`, with tags) and
+  `selfmodel.policy_recall` (look facts up with `note_recall`) — appended to the
+  **turn's** protocol by `maintenance_protocol(loc, NoteRoutes)` only for the tools
+  the request actually offers (`NoteRoutes::offered(&request.tools)`, read in the
+  generation task right before `inject_self_model`). A profile that switched the
+  note tools off gets the rule without the route. `notes::NOTE_SAVE_ID` is new.
+- **Tests.** `policy_core` names no note route (every language); the protocol names
+  only the offered routes (every language); routes read from schemas; an
+  orchestrator test over a capturing engine — the request with `note_save` and
+  `note_recall` carries both sentences, the one without carries neither but keeps
+  the protocol. Twelve `inject_self_model` call sites take the routes. Unit tests
+  4841 green, 322 `#[ignore]`.
+- **Smoke — GO** (the routing probe, three conversations per arm, the same cloud
+  arms as the baseline): facts kept out of observations **Gemma 4 31B 2/18 →
+  18/18, `gemini-4-hydrogen` 13/18 → 18/18**; own conclusions stay in the
+  self-model (3/3, 9/9); facts written 18/18 on both. Fact turns that also wrote
+  `update_user_model` fell 9 → 3 and 5 → 3, the rest being the person's profession
+  and hobby — what the lists are for. All 41 notes tagged. Gemma recorded its own
+  conclusions 3 of 9 times against 4 of 9 before — one line of one conversation;
+  it states the later two in the reply without writing them, before and after
+  alike.
+- **Left for stage 2**: the write gates across kinds (F4), after its sub-question
+  (`note_merge` unions tags, so a merge with an observation yields an observation).

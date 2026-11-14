@@ -311,9 +311,9 @@ effort tiers and Fabula — have all closed
 - **Where a fact about the person goes — notes or observations** — an open track,
   forks decided 2026-11-14. On a live profile 7 of 10 facts about the person were
   written with `add_insight`: the self-model's maintenance protocol routes facts
-  there and never names `note_save`. Stage 1 — the wording (protocol, both
-  descriptions, the reflection rubric), measured by the routing probe against its
-  baseline; stage 2 — the write gates across kinds. Plan and baseline —
+  there and never names `note_save`. **Stage 1 done** (the wording; facts kept out
+  of observations 2/18 → 18/18 on Gemma 4 31B, 13/18 → 18/18 on Gemini); stage 2 —
+  the write gates across kinds, after its merge sub-question. Plan and measurements —
   [memory-routing.md](memory-routing.md).
 - **vec0 for notes and observations as their count grows** — **deferred**
   (premature optimization, decision 2026-07). Cosine is brute-force in Rust

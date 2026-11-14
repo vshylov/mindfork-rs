@@ -1,9 +1,9 @@
 # Plan: where a fact about the person goes — notes or observations
 
-> Status: **design + baseline probe done; stage 1 next.** Forks F1–F5 decided by
-> the user on 2026-11-14 (§4). The probe's baseline is measured (§5.3); its
-> after-arm runs with stage 1. The document stays in `docs/` until the track is
-> done, then moves to `docs/history/`.
+> Status: **stage 1 done — GO (2026-11-14, §5.4); stage 2 next**, once the F4
+> sub-question is decided. Forks F1–F5 decided by the user on 2026-11-14 (§4).
+> The document stays in `docs/` until the track is done, then moves to
+> `docs/history/`.
 
 ## 1. Task nerve
 
@@ -191,11 +191,47 @@ Three conversations per arm, eighteen fact lines and nine own lines each:
 
 Against §5.2 the baseline is far from GO on Gemma and short of it on Gemini.
 
+### 5.4. After stage 1 (2026-11-14) — GO
+
+The same probe, the same arms, three conversations each, after the wording of §6
+stage 1:
+
+| Arm | Facts written | **Facts kept out of observations** | Own written | Own in the self-model | Fact turns also writing `update_user_model` | Live notes per run (regular, observations) |
+|---|---|---|---|---|---|---|
+| Gemma 4 31B (OpenRouter) | 18/18 | **18/18 (100%)** — was 2/18 | 3/9 — was 4/9 | 3/3 | 3/18 — was 9/18 | (7, 1), (6, 1), (7, 1) |
+| `gemini-4-hydrogen` (Gemini) | 18/18 | **18/18 (100%)** — was 13/18 | 9/9 — was 8/9 | 9/9 | 3/18 — was 5/18 | (7, 3), (7, 3), (7, 3) |
+
+- **Every criterion of §5.2 holds on both arms**: facts kept out of observations
+  100% (≥ 80%), own conclusions in the self-model 100% as before, facts written
+  18/18 as before.
+- **The interlocutor model stopped taking facts.** What remains is line 3 only —
+  the person's profession and hobby, as traits and interests ("an experienced Java
+  developer", "board game design"), which is what the lists are for. Places, the
+  daughter, the server and the plan no longer appear there.
+- **Every note is tagged** (41 `note_save` calls across both arms).
+- Gemini now looks facts up before writing (`note_recall` on lines 9–10 in one
+  conversation) and links the plan to the game note (`note_link`).
+- **Gemma's own conclusions recorded: 3 of 9, against 4 of 9 before** — one line
+  in one conversation (line 11 of baseline run 3). It records its first conclusion
+  (line 4) every time and states the other two in the reply without writing them,
+  before and after alike — the weakness §5.3 named, not one this wording made.
+
 ## 6. Stages
 
-1. **The wording (F1–F3)** — `selfmodel.policy_core`, the `note_save` and
-   `add_insight` descriptions, the reflection rubric; both bundles; the probe's
-   after-arm on the same two models; journal entry with both tables.
+1. **The wording (F1–F3)** — **done**. `selfmodel.policy_core` now says what an
+   observation is (memory about the companion itself) and is not (a fact about the
+   interlocutor, even learned as news), and narrows the interlocutor lists to
+   short, stable dispositions; it names no note tool, since it is also the
+   background reflection's and self-consolidation's rules and neither offers
+   `note_save`. The route is two new sentences, `selfmodel.policy_notes` (facts →
+   `note_save`, with tags) and `selfmodel.policy_recall` (look them up with
+   `note_recall`), appended to the **turn's** protocol only for the tools the
+   request offers (`NoteRoutes::offered(&request.tools)` →
+   `maintenance_protocol(loc, routes)`) — a rule naming an absent tool is a dead
+   end (docs/lessons.md §4). The descriptions of `note_save` (widened: what goes
+   there, tags), `add_insight` (narrowed to the companion itself; a fact "belongs
+   in a note") and `update_user_model`, and the reflection rubric, say the same;
+   both bundles. Measured in §5.4.
 2. **Gates across kinds (F4)**, after the F4 sub-question is decided — the write
    gates' `keep` filter widened and the item marked by kind; the merge rule.
 

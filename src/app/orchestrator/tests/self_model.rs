@@ -31,6 +31,7 @@ fn inject_self_model_respects_flag_and_emptiness() {
             now,
             &[],
             ObservationPick::Nearest,
+            crate::features::tools::self_model::NoteRoutes::default(),
             crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
         ),
         Some("S".into())
@@ -45,6 +46,7 @@ fn inject_self_model_respects_flag_and_emptiness() {
         now,
         &[],
         ObservationPick::Nearest,
+        crate::features::tools::self_model::NoteRoutes::default(),
         crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru),
     )
     .unwrap();
@@ -62,6 +64,7 @@ fn inject_self_model_respects_flag_and_emptiness() {
             now,
             &[],
             ObservationPick::Nearest,
+            crate::features::tools::self_model::NoteRoutes::default(),
             crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
         ),
         Some("S".into())
@@ -77,6 +80,7 @@ fn inject_self_model_respects_flag_and_emptiness() {
         now,
         &obs,
         ObservationPick::Nearest,
+        crate::features::tools::self_model::NoteRoutes::default(),
         crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru),
     )
     .unwrap();
@@ -94,6 +98,7 @@ fn inject_self_model_respects_flag_and_emptiness() {
             now,
             &[],
             ObservationPick::Nearest,
+            crate::features::tools::self_model::NoteRoutes::default(),
             crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru)
         ),
         None
@@ -108,6 +113,7 @@ fn inject_self_model_respects_flag_and_emptiness() {
         now,
         &[],
         ObservationPick::Nearest,
+        crate::features::tools::self_model::NoteRoutes::default(),
         crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru),
     )
     .unwrap();
@@ -123,6 +129,7 @@ fn inject_self_model_respects_flag_and_emptiness() {
         now,
         &[],
         ObservationPick::Nearest,
+        crate::features::tools::self_model::NoteRoutes::default(),
         crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru),
     )
     .unwrap();
@@ -138,6 +145,7 @@ fn inject_self_model_respects_flag_and_emptiness() {
         now,
         &[],
         ObservationPick::Nearest,
+        crate::features::tools::self_model::NoteRoutes::default(),
         crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru),
     )
     .unwrap();
@@ -173,6 +181,7 @@ fn inject_self_model_appends_summary_hint_when_bloated() {
         now,
         &[],
         ObservationPick::Nearest,
+        crate::features::tools::self_model::NoteRoutes::default(),
         crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru),
     )
     .unwrap();
@@ -187,6 +196,7 @@ fn inject_self_model_appends_summary_hint_when_bloated() {
         now,
         &[],
         ObservationPick::Nearest,
+        crate::features::tools::self_model::NoteRoutes::default(),
         crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru),
     )
     .unwrap();
@@ -361,6 +371,7 @@ async fn a_follow_up_on_another_subject_leaves_the_system_prompt_as_it_was() {
             now,
             &recent,
             pick,
+            crate::features::tools::self_model::NoteRoutes::default(),
             loc,
         )
         .expect("a block with an observation")
@@ -478,6 +489,7 @@ async fn an_opening_under_the_floor_takes_the_latest_observations() {
             chrono::Utc::now(),
             &recent,
             pick,
+            crate::features::tools::self_model::NoteRoutes::default(),
             loc,
         )
         .unwrap();
@@ -785,4 +797,70 @@ fn history_request_answers_versions_titles_and_models() {
     assert_eq!(view.chat_titles.len(), 1);
     assert_eq!(view.chat_titles[&chat_id], "Chess openings");
     assert_eq!(view.llm.len(), 1);
+}
+
+/// docs/memory-routing.md F2/F3: the turn's maintenance protocol routes facts to
+/// `note_save` and names `note_recall` only when the request the engine is
+/// handed offers them — read from the request, so a profile that switched the
+/// note tools off is never sent to a tool it does not have.
+#[tokio::test]
+async fn the_protocol_names_note_routes_only_when_the_turn_offers_them() {
+    use crate::features::tools::{notes, self_model as sm};
+    let backend = CapturingBackend::new();
+    let (_dir, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(Some(backend.clone()), no_auto_cfg());
+    let profile = match wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::ProfileList(v) if !v.is_empty()),
+    )
+    .await
+    .unwrap()
+    {
+        AppEvent::ProfileList(v) => v[0].id,
+        _ => unreachable!(),
+    };
+    let mut system_with = async |tools: &[&str]| {
+        cmd_tx
+            .send(AppCommand::UpdateProfile {
+                id: profile,
+                edit: Box::new(ProfileEdit {
+                    enabled_tools: Some(tools.iter().map(|t| (*t).into()).collect()),
+                    ..Default::default()
+                }),
+            })
+            .unwrap();
+        cmd_tx
+            .send(AppCommand::SendMessage("привет".into()))
+            .unwrap();
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+            .await
+            .unwrap();
+        backend.last_request().system.expect("a system prompt")
+    };
+    // Either bundle: the profile's scaffold language is the app's default here.
+    let has = |system: &str, key: &str| {
+        crate::shared::i18n::Lang::ALL
+            .iter()
+            .any(|l| system.contains(crate::shared::i18n::locale(*l).t(key)))
+    };
+    let self_model = [sm::GET_SELF_MODEL_ID, sm::ADD_INSIGHT_ID];
+
+    let all: Vec<&str> = self_model
+        .iter()
+        .copied()
+        .chain([notes::NOTE_SAVE_ID, notes::NOTE_RECALL_ID])
+        .collect();
+    let system = system_with(&all).await;
+    assert!(has(&system, "selfmodel.policy_notes"), "{system}");
+    assert!(has(&system, "selfmodel.policy_recall"), "{system}");
+
+    let system = system_with(&self_model).await;
+    assert!(
+        has(&system, "selfmodel.policy_core"),
+        "the protocol itself stays: {system}"
+    );
+    assert!(!system.contains(notes::NOTE_SAVE_ID), "{system}");
+    assert!(!system.contains(notes::NOTE_RECALL_ID), "{system}");
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
 }

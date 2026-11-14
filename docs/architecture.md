@@ -3797,7 +3797,7 @@ the profile's persona** (a kind, self-aware one — overuses it and flatters;
 an "experimental AI" one — underuses it without reminders). Two levers
 decouple behavior from the persona:
 
-1. **A persona-neutral "maintenance protocol"** (`self_model::maintenance_protocol()`)
+1. **A persona-neutral "maintenance protocol"** (`self_model::maintenance_protocol(loc, routes)`)
    is mixed into the system prompt **on top of** the profile's persona: when
    to record changes, "the fleeting goes into observations", and the key
    **"accuracy matters more than agreeableness"** (a direct counter-measure
@@ -3828,6 +3828,20 @@ graph, relevance-based injection — material is retrievable by topic, and the
 description doesn't bloat). This fixed the root cause of the bloat: a
 durable insight used to legitimately settle as a paragraph in `summary`,
 following the letter of the old rule.
+
+**The subject axis** ([memory-routing.md](memory-routing.md)): an observation
+is memory about the companion **itself**; a fact about the interlocutor or
+their world — what would still be true if the companion did not exist — is a
+**note**, even when it arrives as news. The old wording ("event-driven
+conclusions, even if stable → `add_insight`", the interlocutor in
+`add_insight`'s description, `note_save` named nowhere) sent most such facts
+to observations: 7 of 10 on a live profile, 16 of 18 for Gemma 4 31B in the
+routing probe. `POLICY_CORE` now says only what an observation is not, since
+it is also the background passes' rules and they do not offer `note_save`;
+the route (`selfmodel.policy_notes` → `note_save`, `selfmodel.policy_recall`
+→ `note_recall`) is appended to the turn's protocol by
+`maintenance_protocol(loc, NoteRoutes)` only for the tools the request offers
+(`NoteRoutes::offered(&request.tools)`).
 
 ### 9.6 Auto-reflection (a background mini agentic loop)
 

@@ -2108,6 +2108,9 @@ fn spawn_generation(spawn: GenSpawn) {
                 &self_model_params,
             )
             .await;
+            // The note routes the protocol names are the ones this request
+            // offers (docs/memory-routing.md F2).
+            let routes = crate::features::tools::self_model::NoteRoutes::offered(&request.tools);
             request.system = inject_self_model(
                 request.system.take(),
                 self_model.as_ref(),
@@ -2117,6 +2120,7 @@ fn spawn_generation(spawn: GenSpawn) {
                 chrono::Utc::now(),
                 &recent,
                 pick,
+                routes,
                 ctx.loc,
             );
         }
@@ -6500,6 +6504,7 @@ pub(super) fn inject_self_model(
     now: chrono::DateTime<chrono::Utc>,
     recent: &[crate::entities::self_model::NarrativeSegment],
     pick: crate::entities::self_model::ObservationPick,
+    routes: crate::features::tools::self_model::NoteRoutes,
     loc: &crate::shared::i18n::Locale,
 ) -> Option<String> {
     if !enabled {
@@ -6533,7 +6538,7 @@ pub(super) fn inject_self_model(
         // The maintenance protocol is assembled from the shared POLICY_CORE (stage 6) — the same
         // rules as the background auto-reflection.
         parts.push(crate::features::tools::self_model::maintenance_protocol(
-            loc,
+            loc, routes,
         ));
         // A data-aware note: if the self-description has grown past its target —
         // a concrete hint to shorten it (the static protocol becomes specific once
