@@ -173,7 +173,7 @@
   "notes.self_overview.contradicts": "contradicts links among observations: {n}",
   "notes.self_overview.dangling": "Observations without links (candidates to link): {n}",
   "notes.self_overview.summary_obs": "Self-description (summary) paragraphs matching observations (extract the matching content into an observation, or stitch the description with the observation):",
-  "tool.note_save.desc": "Save a note — memory about the interlocutor and their world for future conversations: what would still be true if you did not exist — their projects and works, plans and dates, places, family, setup, views; your reading of their work belongs here too. Give it a few topic tags: note_recall finds a note by its words and its tags.",
+  "tool.note_save.desc": "Save a note — memory about the interlocutor and their world for future conversations: what would still be true if you did not exist — their projects and works, plans and dates, places, family, setup, views; your reading of their work belongs here too. Write it as a standalone statement that names who it is about — by name when you know it («Anna moved to Porto», not «Moved to Porto»): it will be read later without this conversation around it. Give it a few topic tags: note_recall finds a note by its words and its tags.",
   "tool.note_save.param.content": "Note text",
   "tool.note_save.result.saved": "Note saved (id={id}).",
   "tool.note_save.gate.similar": "Similar notes (a possible duplicate or conflict). The new one is already saved: if it repeats or replaces one of these, merge the two with note_merge (both ids) — rewriting the old one would leave both:",

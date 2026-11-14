@@ -28,6 +28,9 @@ split by subsystem.
   When a note is saved, observations holding the same fact are now listed beside the
   similar notes, and merging an observation into a note gives a note — before, a merge
   turned the note into an observation. A merge of observations stays an observation.
+  Notes are written as statements that name who they are about ("Anna moved to Porto",
+  not "Moved to Porto"), so a restated fact is recognised and the note still makes
+  sense when read later.
 
 ### Fixed
 

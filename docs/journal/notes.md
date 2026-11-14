@@ -484,12 +484,16 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   asserted that every `note_save` lists the observation and failed on Gemma; it now
   records each note's cosine and asserts only that a note at or above the threshold
   lists it — which held in every run.
-- **The threshold, lowered to 0.68.** Both recorded misses on Gemma were notes
-  written without naming the person ("Moved from Lisbon to Porto…", 0.690–0.697
-  against the observation; "Alex moved…" scores 0.80). Asking `note_save` to name
-  the person, or moving the threshold: *user's decision (2026-11-14), 0.68* —
-  catching a restatement is the gate's job, not a phrasing rule. Re-measured on
-  Gemma: listed and merged **6 of 6**, two of them nameless notes at 0.681 and
-  0.689; the calibration smoke still puts neighbouring topics at 0.483–0.598. The
-  price, measured on the live profile: 9 of 15 notes have a neighbour at or above
-  0.68, against 2 at 0.70; the margin above a nameless restatement is thin (0.681).
+- **A note names the person; the threshold stays 0.70.** Both recorded misses on
+  Gemma were notes written without naming the person ("Moved from Lisbon to
+  Porto…", 0.690–0.697 against the observation; "Alex moved…" scores 0.80). The
+  threshold was lowered to 0.68 first and caught them — by 0.001 (0.681), leaving
+  the nameless note as poor a memory as before, and giving 9 of the live profile's
+  15 notes a same-topic neighbour against 2. *User's decision (2026-11-14)*: fix the
+  note — `note_save`'s description asks for "a standalone statement that names who
+  it is about — by name when you know it" — keep 0.70, and lower it only if a
+  measurement asks. Re-measured at 0.70: cross-kind Gemma 6/6 and Gemini 3/3 named,
+  listed, merged, a note only, Gemma's notes now at 0.800–0.876; the routing probe
+  kept every written fact out of observations (18/18, 17/17) with every fact note
+  naming the person (20/20, 22/22), and Gemma recorded its own conclusions 6 of 9
+  times (3–4 before). Nothing asks for 0.68.

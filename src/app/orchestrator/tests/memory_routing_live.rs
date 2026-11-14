@@ -354,6 +354,20 @@ async fn measure(arm: &str, config: AppConfig) {
         share(own_kept, own.len())
     );
     eprintln!("  live notes per run (regular, observations): {stored:?}");
+    let fact_notes: Vec<&str> = records
+        .iter()
+        .filter(|r| r.kind == Kind::Fact)
+        .flat_map(|r| &r.calls)
+        .filter(|(name, _)| name == "note_save")
+        .map(|(_, args)| args.as_str())
+        .collect();
+    eprintln!(
+        "  fact notes naming the person: {}",
+        share(
+            fact_notes.iter().filter(|a| names_the_person(a)).count(),
+            fact_notes.len()
+        )
+    );
 
     if let Some(out) = std::env::var_os("MINDFORK_ROUTING_OUT") {
         let mut path = std::path::PathBuf::from(out);
@@ -472,6 +486,17 @@ impl CrossRun {
     fn fact_is_a_note_only(&self) -> bool {
         self.notes_with_fact > 0 && self.observations_with_fact == 0
     }
+
+    /// Every note saved names the person (`note_save`'s description asks for it,
+    /// docs/memory-routing.md §5.5).
+    fn notes_name_the_person(&self) -> bool {
+        !self.saves.is_empty() && self.saves.iter().all(|(c, _, _)| names_the_person(c))
+    }
+}
+
+/// Whether a note's text (or a call's arguments) names the scripted person.
+fn names_the_person(text: &str) -> bool {
+    text.contains("Алекс")
 }
 
 async fn cross_kind_run(arm: &str, run_no: usize, config: AppConfig) -> CrossRun {
@@ -568,9 +593,10 @@ async fn measure_cross(arm: &str, config: AppConfig) {
     }
     let count = |f: fn(&CrossRun) -> bool| all.iter().filter(|r| f(r)).count();
     eprintln!(
-        "\n{arm} cross-kind: {runs} run(s); note_save called {}; the gate listed the \
-         observation {}; merged it {}; the fact a note only {}",
+        "\n{arm} cross-kind: {runs} run(s); note_save called {}; its notes name the \
+         person {}; the gate listed the observation {}; merged it {}; the fact a note only {}",
         count(|r| r.saved),
+        count(CrossRun::notes_name_the_person),
         count(|r| r.gate_listed_it),
         count(|r| r.merged_it),
         count(CrossRun::fact_is_a_note_only),

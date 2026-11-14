@@ -1,11 +1,9 @@
 # Plan: where a fact about the person goes — notes or observations
 
 > Status: **stages 1 and 2 done (2026-11-14, §5.4, §5.5) — the track is complete.**
-> Forks F1–F5, the F4 merge sub-question and the write-gate threshold (lowered to
-> 0.68, §5.5) decided by the user on 2026-11-14. The plan moves to `docs/history/`
-> in a docs branch.
-> The document stays in `docs/` until the track is done, then moves to
-> `docs/history/`.
+> Forks F1–F5, the F4 merge sub-question and how a nameless note is caught (the
+> note names the person; the threshold stays 0.70 — §5.5) decided by the user on
+> 2026-11-14. The plan moves to `docs/history/` in a docs branch.
 
 ## 1. Task nerve
 
@@ -110,8 +108,8 @@ them invisible without `notes_in_prompt`. *Decided: (a).*
   changes defaults and the prompt's size for every such profile.
 
 **F4. Write gates across kinds.** *Decided: yes — `note_save`'s gate also lists
-observations at the write gates' threshold (0.70, lowered to 0.68 in §5.5), listed
-apart, and `add_insight`'s lists notes;
+observations at the write gates' threshold (0.70), listed apart, and
+`add_insight`'s lists notes;
 the hint says that the same fact belongs in a note.*
 
 The sub-question for stage 2: `note_merge` gives the merged note the **union** of
@@ -250,19 +248,38 @@ Q8_0 (`MINDFORK_EMBED_URL`) — the gate cannot run without one.
   against the observation, against 0.799–0.808 for the same sentence beginning
   "Alex moved…". The gate is right by its threshold; the note is the weak part — a
   memory with no subject.
-- **The threshold.** Two ways to catch those: the `note_save` description asking
-  for a standalone statement that names the person, or the threshold at 0.68
-  (catches 0.69 at the price of more same-topic items: 9 of 15 notes on the live
-  profile have a neighbour at or above it, against 2 at 0.70). *User's decision
-  (2026-11-14): 0.68* — catching a restatement is the gate's job, done
-  automatically, not a rule for how notes are to be phrased.
-- **Re-measured at 0.68** (Gemma 4 31B, six conversations): the gate listed the
-  observation and the model merged it into a note **6 of 6**, the fact a note only
-  6 of 6 — two of those notes did not name the person (cosine **0.681** and
-  0.689), the case that went unseen at 0.70. The calibration smoke still separates:
-  restatements 0.889–0.904, conflicts 0.799–0.871, neighbouring topics 0.483–0.598,
-  all below 0.68. The margin above a nameless restatement is thin (0.681 against
-  0.68): a model phrasing notes more loosely still could fall under it.
+- **Two ways to catch those**, both automatic: `note_save`'s description asking
+  for a standalone statement that names who the note is about, or the threshold at
+  0.68 (catches 0.69 at the price of more same-topic items: 9 of 15 notes on the
+  live profile have a neighbour at or above it, against 2 at 0.70).
+- **Tried first: 0.68.** Gemma, six conversations: the gate listed the observation
+  and the model merged it into a note 6 of 6 — two of those notes were nameless,
+  caught at **0.681** and 0.689: a margin of 0.001 over the threshold, and the
+  nameless note itself left as poor a memory as before.
+- ***User's decision (2026-11-14): the note names the person; the threshold stays
+  at 0.70*** — fix the note, not the gate, and lower the threshold only if a
+  measurement still asks for it. `note_save`'s description now asks for "a
+  standalone statement that names who it is about — by name when you know it
+  («Anna moved to Porto», not «Moved to Porto»): it will be read later without this
+  conversation around it" (a neutral name, so the example does not hand the probe
+  its person's).
+- **Re-measured at 0.70 with the naming** (both arms; the cross-kind probe now also
+  counts notes that name the person):
+
+  | Probe | Arm | Runs | Notes naming the person | Gate listed it | Merged into a note | Fact a note only |
+  |---|---|---|---|---|---|---|
+  | cross-kind | Gemma 4 31B | 6 | 6 | 6 | 6 | 6 |
+  | cross-kind | `gemini-4-hydrogen` | 3 | 3 | 3 | 3 | 3 |
+
+  Gemma's notes now score **0.800–0.876** against the observation — a margin of
+  0.10 over 0.70, where 0.68 caught a nameless one by 0.001. The routing probe of
+  §5.1 on the new wording, three conversations per arm: facts kept out of
+  observations **18/18** (Gemma) and **17/17** (Gemini; one line — the view of
+  time — went unrecorded, so facts written 17/18); own conclusions in the
+  self-model 6/6 and 8/8 (Gemma now records 6 of 9, against 3–4 of 9 before);
+  **fact notes naming the person 20/20 and 22/22**. The calibration smoke at 0.70
+  is unchanged (neighbouring topics 0.483–0.598). 0.70 holds; no measurement asks
+  for 0.68.
 
 ## 6. Stages
 
