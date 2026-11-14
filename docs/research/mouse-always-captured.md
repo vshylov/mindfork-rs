@@ -4,8 +4,9 @@
 the same day** (§6), in two rounds: F1 with the legacy terminal mode, F2, F4,
 F5, F7, F8, F9 and F10 as recommended; F3 and F6 the other way — the right
 button does nothing, `Esc` keeps its meaning, the feed takes no selection while
-the assistant answers, and a copy never ends a selection. Nothing is built;
-stage 1 is next.
+the assistant answers, and a copy never ends a selection. **Stage 1's input
+path (§5.2) is built** (`fix/mouse-input-path`, 2026-11-14; §3's probe re-run in
+[docs/journal/ui-input.md](../journal/ui-input.md)); the capture setting is next.
 
 The ask (the owner, 2026-11-14): look into dropping the mouse's two modes —
 *select* and *scroll* — altogether. Keep the terminal's mouse capture on all the

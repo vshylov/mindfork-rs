@@ -9,65 +9,278 @@ fn key(code: KeyCode) -> Event {
     Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
 }
 
-/// [`read_batch_from`] against a script: the events `read` hands out in turn,
-/// the answers `poll` gives in turn — and the waits it was asked for.
-fn read_scripted(events: Vec<Event>, answers: Vec<bool>) -> (Vec<Event>, Vec<Duration>) {
-    let mut events = std::collections::VecDeque::from(events);
-    let mut answers = std::collections::VecDeque::from(answers);
-    let mut waits = Vec::new();
-    let batch = read_batch_from(
-        || Ok(events.pop_front().expect("read past the script")),
-        |wait| {
-            waits.push(wait);
-            Ok(answers.pop_front().expect("polled past the script"))
-        },
+/// A terminal on a virtual clock, for [`read_batch_from`]: each event arrives
+/// at its offset from the start. `poll` answers whether the next one arrives
+/// within the wait, moving the clock to it — or past the whole wait; `read`
+/// hands the next one out, waiting for it. The waits `poll` was asked for are
+/// kept.
+struct Wire {
+    start: Instant,
+    clock: Duration,
+    events: std::collections::VecDeque<(Duration, Event)>,
+    waits: Vec<Duration>,
+}
+
+impl Wire {
+    fn new(events: Vec<(u64, Event)>) -> Self {
+        Self {
+            start: Instant::now(),
+            clock: Duration::ZERO,
+            events: events
+                .into_iter()
+                .map(|(ms, event)| (Duration::from_millis(ms), event))
+                .collect(),
+            waits: Vec::new(),
+        }
+    }
+
+    /// Every batch the wire yields, each with the time it was handed out.
+    fn batches(mut self) -> Vec<(Duration, Vec<Event>)> {
+        let mut out = Vec::new();
+        while !self.events.is_empty() {
+            let batch = read_batch_from(&mut self).unwrap();
+            out.push((self.clock, batch));
+        }
+        out
+    }
+}
+
+impl EventSource for Wire {
+    fn read(&mut self) -> Result<Event> {
+        let (at, event) = self.events.pop_front().expect("read past the script");
+        self.clock = self.clock.max(at);
+        Ok(event)
+    }
+
+    fn poll(&mut self, wait: Duration) -> Result<bool> {
+        self.waits.push(wait);
+        match self.events.front() {
+            Some((at, _)) if *at <= self.clock + wait => {
+                self.clock = self.clock.max(*at);
+                Ok(true)
+            }
+            _ => {
+                self.clock += wait;
+                Ok(false)
+            }
+        }
+    }
+
+    fn now(&self) -> Instant {
+        self.start + self.clock
+    }
+}
+
+/// The terminal's own source, where a test can reach it: its clock is the
+/// process's monotonic one, and a poll with no wait answers at once — with a
+/// terminal or none (CI has none, and the answer is then an error) — so the
+/// drain's `poll(ZERO)` can never stall a tick.
+#[test]
+fn the_terminals_source_keeps_the_clock_and_never_waits_on_a_zero_poll() {
+    let before = Instant::now();
+    let now = TerminalEvents.now();
+    assert!(before <= now && now <= Instant::now());
+    let started = Instant::now();
+    let _ = TerminalEvents.poll(Duration::ZERO);
+    assert!(started.elapsed() < Duration::from_secs(1));
+}
+
+fn mouse(kind: MouseEventKind, column: u16) -> Event {
+    Event::Mouse(ratatui::crossterm::event::MouseEvent {
+        kind,
+        column,
+        row: 5,
+        modifiers: KeyModifiers::NONE,
+    })
+}
+
+fn drag(column: u16) -> Event {
+    mouse(
+        MouseEventKind::Drag(ratatui::crossterm::event::MouseButton::Left),
+        column,
     )
-    .unwrap();
-    (batch, waits)
 }
 
 /// One key with nothing behind it is a batch of one, and no tail is chased.
 #[test]
 fn a_lone_key_is_a_batch_of_one() {
-    let (batch, waits) = read_scripted(vec![key(KeyCode::Char('a'))], vec![false]);
-    assert_eq!(batch, vec![key(KeyCode::Char('a'))]);
-    assert_eq!(waits, vec![Duration::ZERO]);
+    let mut wire = Wire::new(vec![(0, key(KeyCode::Char('a')))]);
+    assert_eq!(
+        read_batch_from(&mut wire).unwrap(),
+        vec![key(KeyCode::Char('a'))]
+    );
+    assert_eq!(wire.waits, vec![Duration::ZERO]);
 }
 
-/// A burst — two keys in one drain — has its tail chased with `PASTE_GAP`,
-/// so a paste split across console chunks is still one batch; a key's
-/// release is dropped on the way.
+/// A burst — two keys in one drain — has its tail chased until no key has
+/// arrived for `PASTE_GAP`, so a paste split across console chunks is still
+/// one batch; a key's release is dropped on the way, and keeps the chase alive.
 #[test]
 fn a_burst_has_its_tail_chased_and_releases_dropped() {
-    let mut released = KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE);
+    let mut released = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE);
     released.kind = KeyEventKind::Release;
-    let (batch, waits) = read_scripted(
-        vec![
-            key(KeyCode::Char('a')),
-            Event::Key(released),
-            key(KeyCode::Char('b')),
-            key(KeyCode::Char('c')),
-        ],
-        vec![true, true, false, true, false],
-    );
+    let batches = Wire::new(vec![
+        (0, key(KeyCode::Char('a'))),
+        (0, key(KeyCode::Char('b'))),
+        // The next console chunk, 15 ms on.
+        (15, key(KeyCode::Char('c'))),
+        (30, Event::Key(released)),
+        (45, key(KeyCode::Enter)),
+        (60, key(KeyCode::Char('d'))),
+    ])
+    .batches();
     assert_eq!(
-        batch,
-        vec![
+        batches,
+        vec![(
+            // The last key at 60 ms, and a gap with none.
+            Duration::from_millis(60) + PASTE_GAP,
+            vec![
+                key(KeyCode::Char('a')),
+                key(KeyCode::Char('b')),
+                key(KeyCode::Char('c')),
+                key(KeyCode::Enter),
+                key(KeyCode::Char('d')),
+            ]
+        )]
+    );
+}
+
+/// The regression of docs/research/mouse-always-captured.md §3: two drag
+/// reports per read, 16 ms apart, for 800 ms. Counted as a paste's burst, the
+/// pair started a chase the stream kept alive to its end — one batch, one
+/// frame, after the pointer rested. Now each read is a batch of its own,
+/// handed out the moment it arrived.
+#[test]
+fn two_reports_per_read_are_a_batch_each() {
+    let mut events = Vec::new();
+    for step in 0..=50u16 {
+        let at = u64::from(step) * 16;
+        events.push((at, drag(step)));
+        events.push((at, drag(step + 100)));
+    }
+    let batches = Wire::new(events).batches();
+    assert_eq!(batches.len(), 51);
+    for (step, (at, batch)) in (0u16..).zip(&batches) {
+        assert_eq!(*at, Duration::from_millis(u64::from(step) * 16));
+        assert_eq!(batch, &vec![drag(step), drag(step + 100)]);
+    }
+}
+
+/// A key typed while the reports stream is handed out with the read it came
+/// in — not ~0.65 s later, at the stream's end (§3's measured delay).
+#[test]
+fn a_key_typed_during_a_stream_of_reports_is_not_held() {
+    let mut events = Vec::new();
+    for step in 0..=50u16 {
+        let at = u64::from(step) * 16;
+        events.push((at, drag(step)));
+        if step == 10 {
+            events.push((at, key(KeyCode::Char('a'))));
+        }
+        events.push((at, drag(step + 100)));
+    }
+    let batches = Wire::new(events).batches();
+    let (at, batch) = batches
+        .iter()
+        .find(|(_, batch)| batch.contains(&key(KeyCode::Char('a'))))
+        .expect("the key was read");
+    assert_eq!(*at, Duration::from_millis(160));
+    assert_eq!(batch, &vec![drag(10), key(KeyCode::Char('a')), drag(110)]);
+}
+
+/// A real paste's chase collects the reports that arrive meanwhile, but they
+/// do not keep it alive: it ends a `PASTE_GAP` after the last key, though the
+/// reports go on every 8 ms for most of a second.
+#[test]
+fn reports_do_not_keep_a_pastes_chase_alive() {
+    let mut events = vec![(0, key(KeyCode::Char('a'))), (0, key(KeyCode::Char('b')))];
+    for step in 1..=100u16 {
+        events.push((u64::from(step) * 8, drag(step)));
+    }
+    let batches = Wire::new(events).batches();
+    let (at, first) = &batches[0];
+    assert_eq!(*at, PASTE_GAP);
+    assert_eq!(
+        first,
+        &vec![
             key(KeyCode::Char('a')),
             key(KeyCode::Char('b')),
-            key(KeyCode::Char('c'))
+            drag(1),
+            drag(2),
         ]
     );
+    // The rest of the stream is a report a batch, each at its own time.
+    assert_eq!(batches.len(), 1 + 98);
+    assert!(batches[1..].iter().all(|(_, batch)| batch.len() == 1));
+}
+
+/// A movement with no button held never reaches the batch — nothing answers a
+/// hover, and each one was a frame; a drag, a press and the wheel do.
+#[test]
+fn a_movement_with_no_button_is_dropped() {
+    let left = ratatui::crossterm::event::MouseButton::Left;
+    let batches = Wire::new(vec![
+        (0, mouse(MouseEventKind::Moved, 1)),
+        (0, mouse(MouseEventKind::Moved, 2)),
+        (8, mouse(MouseEventKind::Down(left), 2)),
+        (16, drag(3)),
+        (24, mouse(MouseEventKind::Up(left), 3)),
+        (32, mouse(MouseEventKind::ScrollDown, 3)),
+    ])
+    .batches();
+    let kept: Vec<Event> = batches.into_iter().flat_map(|(_, batch)| batch).collect();
     assert_eq!(
-        waits,
+        kept,
         vec![
-            Duration::ZERO,
-            Duration::ZERO,
-            Duration::ZERO,
-            PASTE_GAP,
-            PASTE_GAP
+            mouse(MouseEventKind::Down(left), 2),
+            drag(3),
+            mouse(MouseEventKind::Up(left), 3),
+            mouse(MouseEventKind::ScrollDown, 3),
         ]
     );
+}
+
+/// A tick whose events were all dropped — movements, a key's release — draws
+/// no frame: it would only move the cursor, whose blink Windows Terminal
+/// restarts on every move (spec §4.4.1). A tick with a kept event does.
+#[test]
+fn a_tick_of_dropped_events_marks_nothing_dirty() {
+    let mut screen = ChatScreen::new();
+    let mut active = ActiveScreen::Chat;
+    let mut help = HelpOverlay::new(crate::features::demo::locations());
+    let mut back = None;
+    let mut clip = None;
+    let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut released = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE);
+    released.kind = KeyEventKind::Release;
+    let mut tick = |wire: &mut Wire| {
+        let mut dirty = false;
+        let quit = handle_input_tick(
+            wire,
+            &mut screen,
+            &mut active,
+            &mut help,
+            &mut back,
+            &cmd_tx,
+            &mut clip,
+            &mut dirty,
+            None,
+        )
+        .unwrap();
+        assert!(!quit);
+        dirty
+    };
+    let mut idle = Wire::new(vec![
+        (0, mouse(MouseEventKind::Moved, 1)),
+        (0, Event::Key(released)),
+        (8, mouse(MouseEventKind::Moved, 2)),
+    ]);
+    assert!(!tick(&mut idle), "a hover and a release draw nothing");
+    assert!(!tick(&mut idle));
+    let mut wheel = Wire::new(vec![(0, mouse(MouseEventKind::ScrollUp, 1))]);
+    assert!(tick(&mut wheel), "the wheel is a frame");
+    let mut quiet = Wire::new(vec![]);
+    assert!(!tick(&mut quiet), "a tick with no event at all");
 }
 
 #[cfg(windows)]

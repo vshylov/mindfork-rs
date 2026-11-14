@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (42)
+## Entries (43)
 
 - Post-M9: fast multiline clipboard paste (done)
 - Post-M9: `↑/↓` navigation by visual row of a wrapped line (done)
@@ -54,6 +54,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the clipboard on Wayland, read directly (done)
 - Post-M9: the clipboard on GNOME and KDE, and a paste refused for a clipboard that will not open (done)
 - Post-M9: `Alt+V` — the image paste by key where the terminal keeps `Ctrl+V` (done)
+- Post-M9: the input reader under a stream of mouse reports (done)
 
 ### Post-M9: fast multiline clipboard paste (done)
 - **Symptom**: a large clipboard paste lagged in Windows Terminal, and a line break
@@ -2351,3 +2352,60 @@ picture, both with *Name pasted images* on (the chat's model named it) and with 
     four times in the probe, and `e4eb8aba` named it once.
   - **Not released yet**: `Alt+V` waits in `CHANGELOG.md`'s `[Unreleased]` beside 949's
     help line and 950's token counter, and `v0.26.2` is still the newest release.
+
+### Post-M9: the input reader under a stream of mouse reports (done)
+
+**What.** Stage 1's first half of the mouse track
+([docs/research/mouse-always-captured.md](../research/mouse-always-captured.md) §5.2),
+a fix that stands alone and needs no fork: it repairs today's scroll mode (`Ctrl+W`)
+and is the ground permanent capture will stand on. The research measured both defects
+in a pty on 2026-11-14 (§3): two mouse reports reaching one read — a slow frame, or
+packets bunched on an SSH link — took the drain for a Windows paste, whose tail-chase
+the pointer's stream kept going until it rested (no frame meanwhile, a typed key drawn
+~0.65 s late); and every movement with no button held was a frame that changed nothing.
+
+**Key decisions** (§5.2, decided with the research).
+- **The paste detector counts keys only.** A drain is a paste candidate when it holds
+  two key presses (`PASTE_BURST`); the chase ends once no key — press or release, since a
+  Windows paste arrives as down/up pairs — has come for `PASTE_GAP` = 20 ms. Mouse
+  reports arriving meanwhile are collected and never keep it alive. The chase used to be
+  `while poll(PASTE_GAP)`, a gap between *any* two events; it is now a deadline from the
+  last key, so the reader needs a clock.
+- **`read_batch_from` reads an `EventSource`** — `read`, `poll`, `now` — instead of
+  two closures: crossterm's reader in the app (`TerminalEvents`), and in the tests a
+  `Wire` that hands out scripted events on a virtual clock, so an 800 ms stream is a
+  test that takes no time. `handle_input_tick` takes the source too.
+- **`MouseEventKind::Moved` is dropped in `collect_press`**, beside key releases.
+  Nothing in the app answers a hover, and the Windows console reports every movement
+  whatever mode is asked for (§4.6). A movement with a button held is a `Drag` and stays.
+- **A tick whose batch ends up empty draws no frame** — the change-driven loop's rule
+  (spec §4.4.1) applied to what is left after the drop, not to what the terminal sent.
+- `mindfork keys` reads through the same `read_batch`, so it shows no movement either:
+  it shows what the app receives.
+
+**Measured, after** — the research's probe (`mindfork demo` in a pty, 120×36, capture
+on by `Ctrl+W`, SGR reports at a fixed interval, frames counted by their
+`ESC[?2026h`), the before in §3's table:
+
+| Stream | Reports per read | Before | After |
+|---|---|---|---|
+| left drag, 100, every 8 ms | 1 | 100 frames | 100 frames |
+| plain motion, 100, every 8 ms | 1 | 100 frames | **0** |
+| wheel, 60, every 10 ms | 1 | 60 frames | 60 frames |
+| left drag, 50 pairs, every 16 ms | 2 | **0** during, 1 after | **50** during |
+| plain motion, 50 pairs | 2 | 0 during, 1 after | 0 |
+| wheel, 30 pairs, every 20 ms | 2 | 0 during, 1 after | **30** during |
+| plain motion pairs, `a` typed at 160 ms | 2 | `a` drawn ~0.65 s late | first frame **0 ms** after the key, three runs — the same as `a` alone |
+
+**Tests.** Unit, on the `Wire`: two reports per read for 800 ms are 51 batches, each
+handed out the moment it arrived (the regression of §3); a key typed into that stream is
+in the batch of its own read, at 160 ms; a real paste's chase ends `PASTE_GAP` after its
+last key though reports go on every 8 ms; a paste in console chunks with a release
+between them is one batch; a movement with no button never reaches a batch while a
+press, a drag, a release of the button and the wheel do; a tick of dropped events marks
+nothing dirty, a tick with the wheel does; the terminal's own source keeps the process
+clock and answers a zero-wait poll at once, with a terminal or none. **Control arm,
+red:** with the old rule (the drain's every event counted, the chase renewed by any
+event) the three stream tests fail. **4851 green, 317 `#[ignore]`** on Linux (this
+change adds no `#[ignore]`). No live run in the AGENTS.md §3 sense — no engine, memory
+or tool path; the pty probe above is the live check of the reader.

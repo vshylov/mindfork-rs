@@ -3,9 +3,10 @@
 
 use super::*;
 
-/// The "burst" threshold for events in a single drain, at which we suspect a paste and
-/// chase its tail (see `run_loop`). A human doesn't type that many keys in one
-/// zero-timeout drain — several events at once mean a paste.
+/// The "burst" threshold for key presses in a single drain, at which we suspect a paste
+/// and chase its tail (see [`read_batch_from`]). A human doesn't type that many keys in
+/// one zero-timeout drain — several keys at once mean a paste. Only keys count: two
+/// mouse reports in one drain are a pointer moving, not a paste.
 pub(super) const PASTE_BURST: usize = 2;
 
 /// The pause detector for the end of a paste. On Windows a large paste arrives in
@@ -13,7 +14,8 @@ pub(super) const PASTE_BURST: usize = 2;
 /// iterations — at a chunk boundary a character run would break, and a lone `Enter`
 /// at the boundary would slip through as a send. While events keep arriving with a gap
 /// smaller than this threshold, we treat them as one paste; real human typing has
-/// pauses much larger than that (>100ms reaction time).
+/// pauses much larger than that (>100ms reaction time). The gap is measured between
+/// keys: mouse reports arriving meanwhile do not keep a paste alive.
 pub(super) const PASTE_GAP: Duration = Duration::from_millis(20);
 
 /// Reconciles a paste reconstructed from key events against the clipboard and, if it's
@@ -73,15 +75,22 @@ pub(super) fn paste_projection_matches(clipboard: &str, reconstructed: &str) -> 
     !reconstructed.is_empty() && normalize(&projected) == normalize(reconstructed)
 }
 
-/// Puts an event into the batch, dropping "release"/repeat key events: the app
-/// ignores them anyway (`handle_key` only takes `Press`), and during paste coalescing
-/// they would break the character run between keypresses (on Windows a paste arrives as
-/// down/up pairs). Mouse/resize/`Paste` are passed through as is.
+/// Puts an event into the batch, dropping what nothing in the app answers:
+///
+/// * "release"/repeat key events — `handle_key` only takes `Press`, and during paste
+///   coalescing they would break the character run between keypresses (on Windows a
+///   paste arrives as down/up pairs);
+/// * a pointer's movement with **no button held** (`MouseEventKind::Moved`) — nothing
+///   answers a hover, and the Windows console reports every movement whatever mode the
+///   app asks for (docs/research/mouse-always-captured.md §4.6), each a frame for
+///   nothing. A movement with a button held is a `Drag` and is kept.
+///
+/// Other mouse events, resize and `Paste` are passed through as is.
 pub(super) fn collect_press(batch: &mut Vec<Event>, ev: Event) {
-    if let Event::Key(k) = &ev
-        && k.kind != KeyEventKind::Press
-    {
-        return;
+    match &ev {
+        Event::Key(k) if k.kind != KeyEventKind::Press => return,
+        Event::Mouse(m) if m.kind == MouseEventKind::Moved => return,
+        _ => {}
     }
     batch.push(ev);
 }
