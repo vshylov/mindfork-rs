@@ -10,13 +10,13 @@
 use std::io::stdout;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, channel};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
 use ratatui::backend::Backend;
 use ratatui::crossterm::event::{
     self, DisableBracketedPaste, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent,
-    KeyEventKind, KeyModifiers,
+    KeyEventKind, KeyModifiers, MouseEventKind,
 };
 #[cfg(unix)]
 use ratatui::crossterm::event::{
@@ -659,6 +659,7 @@ fn run_loop(
             dirty = false;
         }
         if handle_input_tick(
+            &mut TerminalEvents,
             &mut screen,
             &mut active,
             &mut help,
@@ -1144,18 +1145,19 @@ fn compose_frame(
     None
 }
 
-/// One input tick: polls the terminal for [`TICK`], collects the available
-/// events into a batch (chasing a paste's tail — see the comments inside) and
-/// processes it. Sets `dirty` when any terminal event arrived; returns `true`
+/// One input tick: polls `source` for [`TICK`], collects the available
+/// events into a batch (chasing a paste's tail — see [`read_batch_from`]) and
+/// processes it. Sets `dirty` when the batch holds an event; returns `true`
 /// if quitting was requested.
 ///
 /// `placeholder` — the frame on screen is the "window too small" placeholder
 /// ([`Drawn::placeholder`]): the batch is then read for the keys it names and
 /// for nothing else ([`route_batch`]).
 // The loop's state, one borrow each — the same set `process_input_batch`
-// takes, plus the two flags the tick itself reads and writes.
+// takes, plus the source and the two flags the tick itself reads and writes.
 #[allow(clippy::too_many_arguments)]
 fn handle_input_tick(
+    source: &mut impl EventSource,
     screen: &mut ChatScreen,
     active: &mut ActiveScreen,
     help: &mut HelpOverlay,
@@ -1165,12 +1167,19 @@ fn handle_input_tick(
     dirty: &mut bool,
     placeholder: Option<WayOut>,
 ) -> Result<bool> {
-    if !event::poll(TICK)? {
+    if !source.poll(TICK)? {
         return Ok(false);
     }
-    // Any terminal event (input, scroll, resize) may change the view.
+    let batch = read_batch_from(source)?;
+    // Any event left in the batch (input, scroll, resize) may change the view.
+    // One that was not kept — a key's release, a pointer moved with no button
+    // held ([`collect_press`]) — changes nothing, and a frame for it would
+    // only move the cursor: Windows Terminal restarts its blink on every move,
+    // and the Windows console reports every movement (spec §4.4.1).
+    if batch.is_empty() {
+        return Ok(false);
+    }
     *dirty = true;
-    let batch = read_batch()?;
     Ok(route_batch(
         placeholder,
         batch,
@@ -1190,31 +1199,81 @@ fn handle_input_tick(
 /// paste arrives as a batch of regular key events (there's no Event::Paste
 /// there — see `run`). Without batching this is a repaint per character
 /// (laggy), and an Enter inside the text = a send. We coalesce the batch in
-/// `process_input_batch` ([`chunk_batch`]). Only presses are kept
-/// ([`collect_press`]).
+/// `process_input_batch` ([`chunk_batch`]). Key presses are kept, releases
+/// and a pointer's movement with no button held are not ([`collect_press`]).
 pub(crate) fn read_batch() -> Result<Vec<Event>> {
-    read_batch_from(|| Ok(event::read()?), |wait| Ok(event::poll(wait)?))
+    read_batch_from(&mut TerminalEvents)
 }
 
-/// [`read_batch`] over any source: `read` waits for the next event, `poll`
-/// says whether one arrives within the wait it is given.
-fn read_batch_from(
-    mut read: impl FnMut() -> Result<Event>,
-    mut poll: impl FnMut(Duration) -> Result<bool>,
-) -> Result<Vec<Event>> {
-    let mut batch = Vec::new();
-    collect_press(&mut batch, read()?);
-    while poll(Duration::ZERO)? {
-        collect_press(&mut batch, read()?);
+/// Where a batch of input is read from: the terminal ([`TerminalEvents`]), or
+/// a test's script on a clock of its own.
+trait EventSource {
+    /// Waits for the next event.
+    fn read(&mut self) -> Result<Event>;
+    /// Whether an event arrives within `wait`.
+    fn poll(&mut self, wait: Duration) -> Result<bool>;
+    /// The clock a paste's gap is measured on ([`PASTE_GAP`]).
+    fn now(&self) -> Instant;
+}
+
+/// The terminal, through crossterm's reader.
+struct TerminalEvents;
+
+impl EventSource for TerminalEvents {
+    fn read(&mut self) -> Result<Event> {
+        Ok(event::read()?)
     }
-    // Looks like a paste (a burst of events in one drain) — we chase its tail
-    // with a short pause-detector (`PASTE_GAP`), so a large paste made of
-    // several console chunks gets collected into ONE batch. Otherwise a chunk
-    // boundary breaks the run and a lone `Enter` slips through as a send
-    // (Windows).
-    if batch.len() >= PASTE_BURST {
-        while poll(PASTE_GAP)? {
-            collect_press(&mut batch, read()?);
+
+    fn poll(&mut self, wait: Duration) -> Result<bool> {
+        Ok(event::poll(wait)?)
+    }
+
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
+}
+
+/// [`read_batch`] over any source.
+///
+/// Drains what is available, then — when the drain looks like a paste, two key
+/// presses or more ([`PASTE_BURST`]) — chases its tail: a large paste on
+/// Windows arrives in several console chunks, and a chunk boundary would break
+/// the run, a lone `Enter` slipping through as a send. The chase ends once no
+/// key has arrived for [`PASTE_GAP`].
+///
+/// **Only keys count**: the drain's key presses, and in the chase any key
+/// event — a release too, since on Windows a paste arrives as down/up pairs and
+/// either half says it is still arriving. A paste is keys; a stream of mouse
+/// reports is not one. When
+/// two reports reached one drain — a frame slower than the gap between them,
+/// or packets bunched up on an SSH link — counting them took the drain for a
+/// paste, and the pointer's stream, far under 20 ms apart, kept the chase
+/// going until the pointer rested: no frame meanwhile, and a key typed in it
+/// drawn ~0.65 s late (measured, docs/research/mouse-always-captured.md §3).
+/// Reports arriving during a real paste's chase are collected, but never keep
+/// it alive.
+fn read_batch_from(source: &mut impl EventSource) -> Result<Vec<Event>> {
+    let mut batch = Vec::new();
+    collect_press(&mut batch, source.read()?);
+    while source.poll(Duration::ZERO)? {
+        collect_press(&mut batch, source.read()?);
+    }
+    let keys = batch
+        .iter()
+        .filter(|event| matches!(event, Event::Key(_)))
+        .count();
+    if keys >= PASTE_BURST {
+        let mut last_key = source.now();
+        loop {
+            let left = PASTE_GAP.saturating_sub(source.now().duration_since(last_key));
+            if left.is_zero() || !source.poll(left)? {
+                break;
+            }
+            let event = source.read()?;
+            if matches!(event, Event::Key(_)) {
+                last_key = source.now();
+            }
+            collect_press(&mut batch, event);
         }
     }
     Ok(batch)

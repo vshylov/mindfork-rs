@@ -1583,7 +1583,13 @@ rounded down (docs/research/cached-tokens.md §4.4).
   character-by-character `KeyEvent`s (crossterm's bracketed paste only works on
   unix); `process_input_batch` coalesces a run of text keys (≥2) into
   `Chunk::Paste`, fixing both the slowdown and a spurious send on `Enter` inside a
-  paste.
+  paste. `read_batch_from` (`app/runtime/mod.rs`, over an `EventSource` a test
+  scripts on a clock of its own) gathers the batch: a drain holding two **key
+  presses** or more is taken for a paste and its tail chased until no key has come
+  for `PASTE_GAP` = 20 ms. Only keys count, in the drain and in the chase — a
+  stream of mouse reports once kept a chase going until the pointer rested
+  (docs/research/mouse-always-captured.md §3). `collect_press` drops key releases
+  and `MouseEventKind::Moved`; a tick whose batch ends up empty draws no frame.
 
 ---
 

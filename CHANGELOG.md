@@ -14,6 +14,15 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The screen no longer freezes while the mouse moves in scroll mode (`Ctrl+W`).**
+  When the terminal delivered two mouse reports at once — common over SSH, or in a long
+  chat — the app took them for the start of a paste and waited for the mouse to stop:
+  a wheel spin or a drag drew nothing until then, and a key typed meanwhile appeared
+  about half a second late. Moving the mouse without a button pressed no longer redraws
+  the screen at all.
+
 ## [0.26.4] — 2026-11-14
 
 **What the companion learns about you goes into its notes, and a search no longer comes
