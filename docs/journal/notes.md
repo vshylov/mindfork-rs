@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (8)
+## Entries (10)
 
 - Post-M9: notes connectivity — MVP probe (Tier 1, done)
 - Post-M9: notes connectivity — Tier 2 (graph + revision history, done)
@@ -20,6 +20,8 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: linking the memory organs — Tier 3, Path 3 (RAG ↔ notes) (done)
 - Post-M9: the companion's notes and earlier conversations in the prompt (done)
 - Post-M9: the write gates get a threshold (done)
+- Post-M9: where a fact about the person goes — design and baseline probe (done)
+- Post-M9: where a fact about the person goes — stage 1, the wording (done)
 
 ### Post-M9: notes connectivity — MVP probe (Tier 1, done)
 - **A shift of memory from accumulation to integration** per the plan
@@ -373,3 +375,78 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   observation left); `self_model_gate_e2e_live` (ru) — the model found the earlier
   observation itself and rewrote it (`note_revise`) without calling `add_insight`, so
   that run did not reach the gate. Unit tests 4835 green, 320 `#[ignore]`.
+
+### Post-M9: where a fact about the person goes — design and baseline probe (done)
+- **Found in the same live conversation** as the write-gate threshold: of the live
+  profile's 10 facts about the person, 7 had been written with `add_insight` — as
+  `@self` observations, which `note_recall` hides by default and which take the
+  self-model block's room. The cause is the text, not the model: the self-model's
+  maintenance protocol (`selfmodel.policy_core`, in every turn's prompt) routes
+  "event-driven conclusions, even if stable" to `add_insight` and never names
+  `note_save`; `add_insight`'s description includes "the interlocutor"; notes come
+  back into the prompt only with `notes_in_prompt` (off by default), observations
+  always. The architecture means the opposite (`narrative-as-notes.md`, the
+  reflection rubric's "find the fact via `note_recall`").
+- **Design** — [docs/memory-routing.md](../memory-routing.md): the four memories and
+  their readers, the diagnosis, forks F1–F5 **decided by the user on 2026-11-14**
+  (route by subject with one test question, "would this still be true if I did not
+  exist?"; state it in the protocol, both descriptions and the reflection rubric;
+  the protocol names `note_recall` for facts; write gates across kinds; existing
+  observations left alone), a sub-question for stage 2 (`note_merge` unions tags, so
+  merging an observation into a note yields an observation), and the go/no-go.
+- **The instrument**: `tests/memory_routing_live.rs` — twelve scripted lines (six
+  facts, three invitations to the companion's own conclusion, three of small talk)
+  through the app's request path against a cloud arm; each turn's writes sorted by
+  the line's kind; JSON out. Opt-in (`MINDFORK_ROUTING=1`), each arm skipped without
+  its key. Cloud rather than the local RTX 4090 for the volume (the user's call):
+  Gemma 4 31B through OpenRouter, `gemini-4-hydrogen` through the Gemini API. Two
+  unit tests pin the verdicts.
+- **Baseline** (three conversations per arm): facts kept out of observations —
+  **Gemma 4 31B 2/18, `gemini-4-hydrogen` 13/18**; Gemini's misroutes are the move
+  told as an event and the person's view, the two classes the protocol's wording
+  catches. Gemma also files facts as interlocutor "interests" (9/18 fact turns).
+  GO needs ≥ 80% on both arms with own conclusions no worse (§5.2).
+- Unit tests 4837 green, 322 `#[ignore]`.
+
+### Post-M9: where a fact about the person goes — stage 1, the wording (done)
+- **What changed** ([docs/memory-routing.md](../memory-routing.md) §6, stage 1; forks
+  F1–F3 as the user decided them). The rule is one test question — "would this
+  still be true if I did not exist?" — yes: a note; no: an observation.
+  `selfmodel.policy_core` now says an observation is memory about the companion
+  itself and a fact about the interlocutor is not one "even when you learned it as
+  news" (the event framing is what sent the move to observations), and narrows the
+  interlocutor lists to short, stable dispositions ("not places, dates, plans or
+  events"). Descriptions: `note_save` widened (what goes there, tags), `add_insight`
+  narrowed to the companion itself ("it belongs in a note"), `update_user_model`
+  narrowed like the protocol; the reflection rubric's interlocutor line too. Both
+  bundles.
+- **Key decision — the route is conditional, the rule is not.** `policy_core` is
+  also the background reflection's and self-consolidation's rules, and neither
+  offers `note_save`; naming it there would send the model to a tool it does not
+  have (docs/lessons.md §4). So `policy_core` names no note tool (a test pins it in
+  every language), and the route is two new sentences —
+  `selfmodel.policy_notes` (facts → `note_save`, with tags) and
+  `selfmodel.policy_recall` (look facts up with `note_recall`) — appended to the
+  **turn's** protocol by `maintenance_protocol(loc, NoteRoutes)` only for the tools
+  the request actually offers (`NoteRoutes::offered(&request.tools)`, read in the
+  generation task right before `inject_self_model`). A profile that switched the
+  note tools off gets the rule without the route. `notes::NOTE_SAVE_ID` is new.
+- **Tests.** `policy_core` names no note route (every language); the protocol names
+  only the offered routes (every language); routes read from schemas; an
+  orchestrator test over a capturing engine — the request with `note_save` and
+  `note_recall` carries both sentences, the one without carries neither but keeps
+  the protocol. Twelve `inject_self_model` call sites take the routes. Unit tests
+  4841 green, 322 `#[ignore]`.
+- **Smoke — GO** (the routing probe, three conversations per arm, the same cloud
+  arms as the baseline): facts kept out of observations **Gemma 4 31B 2/18 →
+  18/18, `gemini-4-hydrogen` 13/18 → 18/18**; own conclusions stay in the
+  self-model (3/3, 9/9); facts written 18/18 on both. Fact turns that also wrote
+  `update_user_model` fell 9 → 3 and 5 → 3, the rest being the person's profession
+  and hobby — what the lists are for. All 41 notes tagged. Gemma recorded its own
+  conclusions 3 of 9 times against 4 of 9 before — one line of one conversation;
+  it states the later two in the reply without writing them, before and after
+  alike.
+- **Left for stage 2**: the write gates across kinds (F4). Its sub-question —
+  `note_merge` unions tags, so a merge with an observation yields an observation —
+  user's decision 2026-11-14: a merge that includes a regular note yields a regular
+  note.

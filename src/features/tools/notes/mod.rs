@@ -9,6 +9,10 @@ use crate::entities::profile::ToolId;
 
 use super::{Tool, ToolContext, ToolOutcome};
 
+/// Name of the note-saving tool (the self-model's maintenance protocol routes
+/// facts about the interlocutor to it when the turn offers it —
+/// docs/memory-routing.md F2).
+pub const NOTE_SAVE_ID: &str = "note_save";
 /// Name of the note-recall tool (reflection needs it for cross-organ links,
 /// Tier 3 — ids of user notes).
 pub const NOTE_RECALL_ID: &str = "note_recall";

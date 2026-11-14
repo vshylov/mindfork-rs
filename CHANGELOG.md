@@ -14,6 +14,17 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Changed
+
+- **The companion files what it learns about you as notes, not as its own observations.**
+  With the self-model tools on, a fact about you — a move, your work, a plan, a view —
+  mostly went into the companion's observations about itself, where note search does
+  not look by default and where it crowded out the companion's own history. Its rules
+  now ask one question — would this still be true if the companion did not exist? — and
+  send such facts to tagged notes, and observations keep what it understood about
+  itself. Measured on two models: facts kept out of observations went from 2 and 13 of
+  18 to 18 of 18. Notes saved earlier stay where they are.
+
 ### Fixed
 
 - **A saved note or observation no longer lists unrelated ones as "a possible
