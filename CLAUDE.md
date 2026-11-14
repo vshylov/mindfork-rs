@@ -202,6 +202,13 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **Where a fact about the person goes — track complete** (2026-11-14, a design and
+  two stages): facts about the person are notes, not observations; the protocol's
+  route to the note tools only where a turn offers them; write gates across kinds, a
+  merge with a note a note, notes naming the person. Facts kept out of observations
+  2/18 → 18/18 (Gemma 4 31B), 13/18 → 18/18 (Gemini), live **GO**
+  ([docs/history/memory-routing.md](docs/history/memory-routing.md),
+  [docs/journal/notes.md](docs/journal/notes.md)).
 - **The demo in a browser tab — live since 0.26.0** (2026-11-11): the release's binary built
   for 32-bit x86 and saved, running `mindfork demo`, in the v86 emulator a page restores
   it into; every piece pinned, the redistributed ones in a manifest read from the files;
@@ -388,14 +395,6 @@ being recent is dropped, not shortened.
   the child, a refused launch said in llama.cpp's words. Live **GO**
   ([docs/research/managed-extra-args.md](docs/research/managed-extra-args.md),
   spec §3.4, [docs/journal/engine.md](docs/journal/engine.md)).
-- **`mindfork stats` — which copy of the data is the newest, and what the other
-  one holds** (both stages). A read-only summary of the live data or of a backup
-  archive, encrypted ones included: nothing is created, migrated or unpacked.
-  `--compare` takes a `--json` snapshot or an archive of the other copy and compares
-  chats **by the ids of their messages**, so a chat continued on two machines reads as
-  *diverged*, never as "newer there"; equal fingerprints mean an identical comparison.
-  Live **GO**, both stages ([docs/history/data-stats.md](docs/history/data-stats.md), spec §12.4,
-  [docs/journal/storage.md](docs/journal/storage.md)).
 - **A headless launch (no TTY) exits with code 2** and a one-line reason — the
   TUI cannot be run from an agent's shell; how it *looks* needs a real terminal
   and a person. What a console *holds* can be measured on Windows:

@@ -51,7 +51,7 @@ pub fn policy_core(loc: &Locale) -> &str {
 }
 
 /// Which note tools a turn offers — what the maintenance protocol may route to
-/// (docs/memory-routing.md F2, F3).
+/// (docs/history/memory-routing.md F2, F3).
 ///
 /// [`policy_core`] only says what an observation is *not* (a fact about the
 /// interlocutor): it is also the background reflection's and self-consolidation's
@@ -388,7 +388,7 @@ impl Tool for AddInsight {
         // The gate (Tier 1's core hypothesis): similar existing observations. It runs
         // after the write, so its hint says the repeat is already recorded and is merged
         // (note_merge) — rewriting the old one beside it would leave both. Since stage 2
-        // of docs/memory-routing.md it also lists notes: an observation that only
+        // of docs/history/memory-routing.md it also lists notes: an observation that only
         // restates a note's fact about the interlocutor belongs in that note (F4).
         msg.push_str(&notes::observation_gate(ctx, &text, id).await.render(
             ctx.loc,
@@ -989,7 +989,7 @@ mod tests {
         }
     }
 
-    /// docs/memory-routing.md F2: `policy_core` is also the background
+    /// docs/history/memory-routing.md F2: `policy_core` is also the background
     /// reflection's and self-consolidation's rules, and neither offers
     /// `note_save` — so it must not route anything there, in any language; it
     /// only says what an observation is not.

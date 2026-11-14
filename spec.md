@@ -6255,7 +6255,7 @@ The SelfModel tool group (optional: **not** in `default_tool_ids`, present in
 | `update_user_model` | The companion's traits/interests/relationship dynamic — short, stable dispositions and lasting interests, not places, dates, plans or events |
 | `add_insight` | Record an observation into the narrative — memory about the companion itself: what it understood, how it changed, contradictions it noticed (as prose), episodes between the two; a fact about the interlocutor is not one, even learned as news (it is a note); notes at or above the same threshold are listed apart — an observation that only restates one is merged into it, an own conclusion about it is kept and linked; observations at or above the write-gate similarity (the `note_save` gate's threshold) are shown after the write, with the hint to merge a repeat (`note_merge`) |
 
-**Where a fact about the interlocutor goes** ([docs/memory-routing.md](docs/memory-routing.md)).
+**Where a fact about the interlocutor goes** ([docs/history/memory-routing.md](docs/history/memory-routing.md)).
 Observations are the companion's memory about itself; a fact about the person or their world —
 one that would still be true if the companion did not exist — is a note. The maintenance protocol
 (`selfmodel.policy_core`, in the turn's prompt and in the background reflection and

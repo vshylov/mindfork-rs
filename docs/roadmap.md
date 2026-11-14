@@ -308,15 +308,6 @@ effort tiers and Fabula — have all closed
 
 ### Memory, notes and RAG
 
-- **Where a fact about the person goes — notes or observations** — an open track,
-  forks decided 2026-11-14. On a live profile 7 of 10 facts about the person were
-  written with `add_insight`: the self-model's maintenance protocol routes facts
-  there and never names `note_save`. **Stages 1 and 2 done** (the wording; facts kept
-  out of observations 2/18 → 18/18 on Gemma 4 31B, 13/18 → 18/18 on Gemini; the write
-  gates across kinds, a merge with a note being a note, notes that name the person
-  so a restatement is caught at 0.70). Track complete. Plan and
-  measurements —
-  [memory-routing.md](memory-routing.md).
 - **vec0 for notes and observations as their count grows** — **deferred**
   (premature optimization, decision 2026-07). Cosine is brute-force in Rust
   (`db::cosine`, `note_search_semantic`); for tens to hundreds of notes that is
@@ -764,6 +755,17 @@ An index, newest first — one line per track, with the release that shipped it
 and where its story is told. What a track left open is a bullet above, under
 its area.
 
+- **Where a fact about the person goes — notes or observations** — unreleased
+  (2026-11-14), a design, a probe and two stages. On a live profile 7 of 10 facts
+  about the person had been written as the companion's own observations: the
+  self-model's protocol routed them there and never named `note_save`. One test
+  question now decides — would it still be true if the companion did not exist? —
+  with the route to the note tools added only when a turn offers them; the write
+  gates look across kinds, a merge with a note is a note, and notes name the person.
+  Facts kept out of observations 2/18 → 18/18 (Gemma 4 31B), 13/18 → 18/18
+  (Gemini); live GO on both through the cloud. Facts filed as observations before it
+  stay where they are, by decision ([memory-routing.md](history/memory-routing.md),
+  [notes.md](journal/notes.md)).
 - **A name for a pasted image** — unreleased (2026-11-08), research and two pull
   requests. A picture file copied in a file manager is pasted, and over SSH the
   refusal names the distance; with Settings → Images → *Name pasted images* on (off

@@ -1,4 +1,4 @@
-//! The memory-routing probe (docs/memory-routing.md §5): where a model files what
+//! The memory-routing probe (docs/history/memory-routing.md §5): where a model files what
 //! it learns in a conversation — a fact about the person (a note, `note_save`; a
 //! stable trait may go to `update_user_model`), or its own conclusion (an
 //! observation, `add_insight`; a change of its self-description goes to
@@ -295,7 +295,7 @@ fn share(part: usize, whole: usize) -> String {
 }
 
 /// Runs an arm and prints its table: per kind, where the lines went, and the
-/// probe's two numbers (docs/memory-routing.md §5): facts kept out of the
+/// probe's two numbers (docs/history/memory-routing.md §5): facts kept out of the
 /// observations, and own conclusions kept in the self-model.
 async fn measure(arm: &str, config: AppConfig) {
     let runs: usize = std::env::var("MINDFORK_ROUTING_RUNS")
@@ -450,7 +450,7 @@ async fn memory_routing_gemini_live() {
     measure("gemini", config).await;
 }
 
-// ---------- stage 2: the write gates across kinds (docs/memory-routing.md F4) ----------
+// ---------- stage 2: the write gates across kinds (docs/history/memory-routing.md F4) ----------
 
 /// The fact a profile from before stage 1 holds as an observation, and the line
 /// that brings it up again, with a new detail worth a note.
@@ -488,7 +488,7 @@ impl CrossRun {
     }
 
     /// Every note saved names the person (`note_save`'s description asks for it,
-    /// docs/memory-routing.md §5.5).
+    /// docs/history/memory-routing.md §5.5).
     fn notes_name_the_person(&self) -> bool {
         !self.saves.is_empty() && self.saves.iter().all(|(c, _, _)| names_the_person(c))
     }

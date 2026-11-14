@@ -799,7 +799,7 @@ fn history_request_answers_versions_titles_and_models() {
     assert_eq!(view.llm.len(), 1);
 }
 
-/// docs/memory-routing.md F2/F3: the turn's maintenance protocol routes facts to
+/// docs/history/memory-routing.md F2/F3: the turn's maintenance protocol routes facts to
 /// `note_save` and names `note_recall` only when the request the engine is
 /// handed offers them — read from the request, so a profile that switched the
 /// note tools off is never sent to a tool it does not have.
