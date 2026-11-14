@@ -1,7 +1,9 @@
 # Research: mouse capture always on, and a text selection of the app's own
 
-**Status:** research and a pty probe (2026-11-14). The forks in §6 wait for the
-owner's decision; nothing is built.
+**Status:** research and a pty probe (2026-11-14). **Forks decided by the owner
+the same day** (§6): F1 with the legacy terminal mode, F2, F4, F5, F7, F8 and F10
+as recommended; F3 and F6 the other way; F9 a third way — a resize keeps the
+selection. Nothing is built; stage 1 is next.
 
 The ask (the owner, 2026-11-14): look into dropping the mouse's two modes —
 *select* and *scroll* — altogether. Keep the terminal's mouse capture on all the
@@ -61,11 +63,13 @@ feed's click map); [docs/history/osc52-clipboard.md](../history/osc52-clipboard.
   lands while a reply streams splits the reply (docs/lessons.md §5).
 - **The design (§5).** Capture in button-and-drag mode only, no motion reports;
   one selection on the screen at a time, owned by the feed or by a field; the
-  feed's anchored to (block, row, column) and drawn over the frame the way the
-  click map is read off it; `Ctrl+C` copies, the outcome on a status-bar chip
-  rather than in the feed; a double click takes a word, a triple a line; a drag
-  past the edge scrolls. `Ctrl+W`, its status-bar light and `/mouse` are removed;
-  a setting keeps the terminal's mouse for a terminal with no way around capture.
+  feed's anchored to the content — (block, logical line, character) — so it
+  survives a resize, and drawn over the frame the way the click map is read off
+  it. `Ctrl+C` copies, the outcome on a status-bar chip rather than in the feed;
+  a double click takes a word, a triple a line; a drag past the edge scrolls; the
+  right button and `Esc` stay out of it. `Ctrl+W`, its status-bar light and
+  `/mouse` are removed; a setting on the settings screen, and the legacy terminal
+  mode by itself, keep the terminal's mouse where it is needed.
 - **Stages (§7):** the input path first (it fixes today's scroll mode too), then
   the feed's selection with the default flipped — the bulk of the work, in
   `widgets/message_feed.rs` and the chat screen — then the other screens' fields
@@ -345,7 +349,8 @@ Each is a test or a live-check line of §7.
 
 ### 5.1 The terminal's modes
 
-- **On from the start**, when the setting says so (F1), as **button and drag
+- **On from the start** — unless the setting says `terminal` or the legacy
+  terminal mode (`interface.terminal_compat`) is on (F1) — as **button and drag
   reports in SGR only**: `?1000h ?1002h ?1006h`. Not crossterm's
   `EnableMouseCapture`, which adds `?1003h` (every movement) and the legacy
   `?1015h`. A command of our own in `shared`, built and written the way
@@ -378,41 +383,60 @@ Each is a test or a live-check line of §7.
 
 ### 5.3 One selection on the screen
 
-- At most one selection exists, owned by the feed or by a field. Starting one
-  ends the other; `Ctrl+C` copies whichever exists; an edit in the input box ends
-  the feed's.
+- At most one selection exists, owned by the feed or by a field; starting one
+  ends the other, and `Ctrl+C` copies whichever exists.
+- **What ends a feed selection** (F6): a click in the feed outside it; any move of
+  the input box's cursor — typing, the arrows, a click in the field; a reply
+  streaming into a selected block. Not `Esc`, which keeps its meanings, and not
+  a copy. A field's selection keeps its own rules.
 - **The mouse grammar** (the left button):
   - *press* — remembers the point and the panel under it (the feed's rows, a
-    field's text, or neither) and ends the current selection;
-  - *drag* — a selection from the press to the pointer, **confined to the panel
-    the press was in** (the property tmux and Zellij keep with panes): past the
-    panel's edge the pointer is clamped to it, and the feed scrolls (§5.4);
+    field's text, or neither); nothing changes yet;
+  - *drag* — a new selection from the press to the pointer, replacing the
+    current one, **confined to the panel the press was in** (the property tmux and
+    Zellij keep with panes): past the panel's edge the pointer is clamped to it,
+    and the feed scrolls (§5.4);
   - *release without a drag* (a click) — follows the `chat://` address under it
-    or places the field's cursor. The link moves from the press to the release
-    (F8): that is what lets a drag that starts on an address select it;
+    (F8: on the release, so that a drag which starts on an address selects it);
+    otherwise a click in the feed outside the selection ends it, one inside
+    keeps it, and in a field the click places the cursor;
   - a second or third press on the same cell within 500 ms — the word, then the
     line (F5; Codex counts 400 ms).
 - **The wheel** scrolls the panel under the pointer (the feed; later a field
   taller than its box, and the lists of stage 3); during a drag the selection
   follows.
-- **The right button** copies the selection when there is one (F3); otherwise,
-  and the middle button always, nothing.
+- **The right and the middle button do nothing** (F3): in a terminal in a browser
+  tab the right one opens the browser's context menu, and an action of the app's
+  on top of it would be a second answer to one click.
 
 ### 5.4 The feed's selection
 
-- **Coordinates:** (block, row within the block, column). A block is one message's
-  cached rows, so the rows of earlier blocks do not move while a reply streams
-  below or a message is appended; a regenerate or take-back that drops a selected
-  block drops the selection. A cache reset — width, palette, the collapse state
-  (`Ctrl+T`/`Ctrl+O`), language, role names, the jump marker, the address book,
-  the compaction boundary (`CacheKey`) — invalidates every row, so it drops the
-  selection too, as does a new fingerprint on a selected block (F9).
-- **Row facts kept beside each cached block's rows**: the rail's width and whether
-  the row is a soft wrap; made in `build_message_block`'s wrap loop, for the
-  separator and for the compaction divider, carried through `render`'s second
-  wrap (identity today; a piece it ever splits off is marked soft). The prefix of
-  a pre-wrapped row (§2.4) is the same kind of fact, made by `push_gutter_lines`,
-  `push_wrapped` and the quote's `wrap_hanging` — stage 2b.
+- **Coordinates:** (block, logical line, character). A block is one message's
+  cached rows; a logical line is a line before the feed's wrap — a paragraph, a
+  code line, a list item, a heading; the character is an index into it. The row
+  facts below map a row to its logical line and the characters it shows, so a
+  point on screen becomes an anchor and an anchor becomes a cell.
+- **A resize keeps the selection** (F9). The block is rebuilt at the new width and
+  each end is found again: in the same logical line when its text — trailing
+  padding aside — is unchanged, otherwise in the nearest line of that block with
+  the same text (a table above it, laid out anew, changed the count). An end
+  inside content the width itself lays out — a table, a diagram, and until stage
+  2b a quote or a gutter block — cannot be found again, and the selection is
+  dropped rather than guessed. An index past a line's new end is clamped to it.
+- **What drops it otherwise.** Earlier blocks do not move while a reply streams
+  below or a message is appended, so those keep it. A reply streaming into a
+  selected block drops it (F6), as does a regenerate or take-back that removes
+  one. `Ctrl+T`/`Ctrl+O` and the theme drop it (F9), and so does every other
+  `CacheKey` change but the width — the language, role names, the jump marker,
+  the address book, the compaction boundary, the feed's render settings: each is
+  a deliberate act, and none is worth a re-anchoring path of its own.
+- **Row facts kept beside each cached block's rows**: the rail's width, whether
+  the row is a soft wrap, and the logical line it belongs to with the characters
+  it shows; made in `build_message_block`'s wrap loop, for the separator and for
+  the compaction divider, carried through `render`'s second wrap (identity today;
+  a piece it ever splits off is marked soft). The prefix of a pre-wrapped row
+  (§2.4) is the same kind of fact, made by `push_gutter_lines`, `push_wrapped`
+  and the quote's `wrap_hanging` — stage 2b.
 - **The highlight** is painted over the frame after the `Paragraph`: the visible
   part of the selection gets `Palette::selection`, the field's own style — the
   selection backdrop, or in the monochrome mode the mark `strip_styles` keeps as
@@ -447,13 +471,18 @@ Each is a test or a live-check line of §7.
 
 ### 5.6 Copy
 
-- `Ctrl+C` with a selection copies it, then the selection ends (the field's rule
-  today). The right button does the same (F3). Copy-on-release is an opt-in at
-  most (F2).
+- `Ctrl+C` copies the selection (F2). A feed selection stays after it (F6); a
+  field's ends, as it does today. There is no copy on release and none by the
+  right button (F3).
+- What is copied is what is drawn (F4); a copy in markdown is not wanted at all —
+  the conversation's source is `F5` / `/copy`, and a partial markup copy raises
+  questions with no good answer (a bold word selected by half, part of a
+  diagram).
 - **The outcome goes to a chip in the status bar**, for a few seconds, never to
-  the feed: copied here, sent to your terminal (OSC 52), too large or failed in
-  the error colour. The input box's copy moves there as well — the same wording
-  `CopyReport::message` gives today, on a surface that cannot split a reply.
+  the feed (F10): copied here, sent to your terminal (OSC 52), too large or failed
+  in the error colour. The input box's copy moves there as well — the same
+  wording `CopyReport::message` gives today, on a surface that neither splits a
+  reply nor scrolls the feed.
 
 ### 5.7 What goes away
 
@@ -467,126 +496,69 @@ Each is a test or a live-check line of §7.
   most terminals, `Option` in iTerm2, `Fn` in Terminal.app (§4.1) — named in the
   help overlay and the manual, with Windows Terminal's two catches: `Shift`+right
   click pastes, and copies the terminal's own selection as one line
-  (`Ctrl+Shift+C` keeps its lines). And a setting, `interface.mouse` = `app` |
-  `terminal` (F1): `terminal` is today's select mode without a way to leave it —
-  for conhost, which has no modifier at all, VS Code on macOS, which has none by
-  default, a screen reader, or a terminal whose mouse reporting misbehaves.
+  (`Ctrl+Shift+C` keeps its lines). And a setting on the settings screen,
+  *Interface* — `app` | `terminal`, `app` by default (F1) — where `terminal` is
+  today's select mode without a way to leave it: for VS Code on macOS, which has
+  no modifier by default, a screen reader, or a terminal whose mouse reporting
+  misbehaves. **The legacy terminal mode turns capture off by itself**: conhost,
+  the terminal it exists for, has no modifier around capture at all (§4.1).
+  Capture is on when the setting says `app` and the legacy mode is off.
 
 ## 6. Forks
 
-Each with its options and a recommendation; none decided yet.
+**Decided by the owner, 2026-11-14.** Each fork keeps its options; the decision
+follows them, with the owner's reason where it went another way than the
+recommendation.
 
-**F1 — what replaces the toggle.**
-- (a) Capture always on, with no switch anywhere; the terminal's own selection
-  only through its modifier.
-- (b) **Always on by default, and a setting `interface.mouse` = `app` |
-  `terminal`** under *Interface*; `terminal` is today's select mode, for good.
-  `Ctrl+W`, its light and `/mouse` go.
-- (c) As (b), with `Ctrl+W` / `/mouse` kept as a switch for the session.
+**F1 — what replaces the toggle.** (a) capture always on, no switch anywhere;
+(b) always on, a setting `app` | `terminal`, `Ctrl+W` / its light / `/mouse`
+removed; (c) as (b), with `Ctrl+W` / `/mouse` kept for the session.
+*Decided: (b), and the legacy terminal mode turns capture off.* The setting
+lives on the settings screen; the status-bar light and `/mouse` go with
+`Ctrl+W`.
 
-*Recommendation (b):* no mode in daily use, which is the ask, and a way out
-where the terminal offers no modifier — conhost, VS Code on macOS by default
-(§4.1) — without a rebuild. Claude Code and Codex both kept an opt-out of this
-kind (§4.5).
+**F2 — when the copy happens.** (a) on `Ctrl+C`; (b) on release, automatically;
+(c) (a) with (b) as an opt-in. *Decided: (a), `Ctrl+C`* — the field's key, and
+the one Windows Terminal passes through when it has no selection of its own
+(§4.2).
 
-**F2 — when the copy happens.**
-- (a) **On `Ctrl+C`** (and the right button, F3); the selection stays until a
-  click, an edit, `Esc` or the copy itself.
-- (b) On release, automatically — the X11 habit, tmux's and Zellij's default —
-  with `Ctrl+C` as well.
-- (c) (a) by default, (b) as an opt-in setting.
+**F3 — the right and the middle button.** (a) the right copies a selection;
+(b) both do nothing; (c) the right copies or pastes. *Decided: (b), against the
+recommendation:* the app is also used from a terminal in a browser tab, where
+the right button opens the browser's context menu.
 
-*Recommendation (a):* it is what `Ctrl+C` already does in the field, Windows
-Terminal's own default (`copyOnSelect` off), and the answer Codex reaches for
-Windows Terminal, whose copy key reaches the app when the terminal has no
-selection (§4.2). (c) only if the owner wants the X11 habit — and then the copy
-runs once, on the release: opencode's copy-on-select froze its interface during
-a drag (#51056). A setting is also a row of the hint panel's height on every tab
-(lessons §5).
+**F4 — what a copy holds.** (a) what is drawn, without the chrome; (b) the
+markdown source for whole messages; (c) markdown rebuilt for any selection from
+source positions (Codex's high end, §4.5). *Decided: (a); markdown is not wanted
+at all,* not just later: the conversation's source is already `F5` / `/copy`,
+and a partial copy in markdown has no good answer for a bold word selected by
+half or for part of a Mermaid diagram.
 
-**F3 — the right and the middle button.**
-- (a) **The right button copies the selection when there is one, otherwise does
-  nothing**; the middle does nothing. Pasting stays the terminal's paste key.
-- (b) Both do nothing.
-- (c) The right button copies or pastes, Windows Terminal's rule, the paste read
-  from the local clipboard; over SSH the app cannot reach the clipboard of the
-  machine the terminal runs on (Windows Terminal drops OSC 52 reads, §4.4), so
-  there it could only refuse.
+**F5 — double and triple click.** *Decided: (a)* — a word, then the logical
+line, in the feed and in the fields.
 
-*Recommendation (a):* in Windows Terminal `Shift`+right-click still pastes
-(§4.2), so nothing that works today is lost there; Codex's right button copies
-too.
+**F6 — `Esc` while there is a selection.** (a) `Esc` ends it first; (b) `Esc`
+unchanged. *Decided: (b), against the recommendation.* A selection ends by a
+click on a part of the text that is not selected, or by a move of the input
+box's cursor; and — the owner's addition — a feed selection ends when a reply
+streams into it. A copy does not end it.
 
-**F4 — what a copy holds.**
-- (a) **What is drawn:** the rendered text without the chrome, soft wraps joined,
-  trailing padding trimmed.
-- (b) The markdown source when the selection covers whole messages, (a)
-  otherwise.
-- (c) Markdown rebuilt for any selection from source positions the renderer
-  keeps — Codex's high end (§4.5): balanced markup around a partial selection, a
-  code block's fences, a table's pipes. The markdown writer already reads
-  pulldown-cmark's offset iterator (the mermaid fence check), so positions exist
-  where spans are made; carrying them through the writer, the wrap and the cache
-  is a track of its own.
+**F7 — capture while the track is in progress.** *Decided: (b)* — on where the
+screen in front answers the mouse, off elsewhere until stage 3.
 
-*Recommendation (a):* it is what the eye selected, and what the trackers of §4.5
-complain about — the wrap's newlines, padding, a gutter — is exactly what (a)
-leaves out; the source of a conversation is `F5` / `/copy`. (b) can follow if a
-whole message's source is wanted (the roadmap's per-message copy), (c) if
-markup in a partial copy is.
+**F8 — a click on a `chat://` address.** *Decided: (a)* — on the release, with no
+drag in between.
 
-**F5 — double and triple click.**
-- (a) **A double click takes a word, a triple the logical line** — a paragraph, a
-  code line, a table row — in the feed and in the fields.
-- (b) Drag only.
+**F9 — a feed selection across changes to the feed.** (a) dropped by every
+rewrap; (b) anchored to the content, surviving one. *Decided: between them.*
+`Ctrl+T`/`Ctrl+O` drop it, and so does a theme change, so that nothing
+unexpected can come of it; **a resize does not**. That needs (b)'s anchor
+(§5.4), used for the width alone; every other `CacheKey` change drops the
+selection, by the theme's reasoning.
 
-*Recommendation (a):* every terminal user expects it, and it is cheap: the
-field's word and line boundaries exist, the feed's fall out of the row facts.
-
-**F6 — `Esc` while there is a selection.**
-- (a) **`Esc` ends the selection first** — one press — and does what it does
-  today when there is none; while a turn runs, `Esc` cancels the turn as always
-  and leaves the selection alone.
-- (b) `Esc` unchanged; a selection ends by a click, an edit or a copy.
-
-*Recommendation (a):* "`Esc` closes the innermost thing" is the rule the overlays
-already follow, and a turn's cancel keeps first place while a turn runs because
-it is the urgent one.
-
-**F7 — capture while the track is in progress.**
-- (a) On everywhere from stage 1; the screens without a selection of their own
-  rely on the terminal's modifier until stage 3.
-- (b) **On where the screen in front answers the mouse** — the chat from stage 1
-  — and off elsewhere until their stage.
-
-*Recommendation (b):* no screen loses the terminal's selection before it has one
-of its own. The cost is the status quo: the wheel does nothing in the lists
-until stage 3.
-
-**F8 — a click on a `chat://` address.**
-- (a) **On the release, with no drag in between** — a press that becomes a drag
-  selects instead.
-- (b) On the press, as today: an address can never start a selection.
-
-*Recommendation (a).*
-
-**F9 — a feed selection across changes to the feed.**
-- (a) **Dropped by a rewrap** — a resize, `Ctrl+T`/`Ctrl+O`, the theme, the
-  language: every `CacheKey` change — and by a change to a selected block; kept
-  while content arrives below.
-- (b) Anchored to (block, logical line, character), surviving a rewrap.
-
-*Recommendation (a):* a rewrap is rare and deliberate; (b) is a second
-coordinate system to keep honest for it.
-
-**F10 — where a copy's outcome is said.**
-- (a) **A chip in the status bar for a few seconds**, every outcome, the field's
-  copy included.
-- (b) As today — silent locally, a feed note for OSC 52, a text too large or a
-  failure — held back while a turn runs.
-
-*Recommendation (a):* a note per copy is noise once copying from the feed is
-routine, and a note during a reply splits the reply (lessons §5).
+**F10 — where a copy's outcome is said.** *Decided: (a), a chip in the status
+bar* — with one more reason of the owner's: a note in the feed scrolls the feed.
+A better place may come later, the frame of an element on screen for instance.
 
 ## 7. Stages, tests, the live check
 
@@ -601,20 +573,26 @@ routine, and a note during a reply splits the reply (lessons §5).
   way.
 - **Stage 1 — the input path and the modes.** §5.2 alone first
   (`fix/mouse-input-path`): it repairs today's scroll mode and needs no fork.
-  Then §5.1 (`feat/mouse-capture-setting`): the setting — defaulting to
-  `terminal` for now, so a release between stages changes nothing — the
-  button-and-drag capture, capture following the screen (F7), the link on the
-  release (F8), the copy chip (F10). Tests: §5.2's; the mode command's bytes; the
-  per-screen rule; a click and a drag told apart on an address.
+  Then §5.1 (`feat/mouse-capture-setting`): the setting on the settings screen —
+  defaulting to `terminal` for now, so a release between stages changes nothing —
+  the legacy terminal mode's veto, the button-and-drag capture, capture following
+  the screen (F7), the link on the release (F8), the copy chip (F10). Tests:
+  §5.2's; the mode command's bytes; capture on only for `app` with the legacy mode
+  off, and only where the screen answers the mouse; a click and a drag told apart
+  on an address.
 - **Stage 2 — the feed's selection** (`feat/feed-selection`). §5.3–§5.6: the row
-  facts, the selection and its grammar, the highlight, the text, the multi-click,
-  the autoscroll, `Esc`, the right button; the box's clamped drag and its
-  multi-click; then §5.7 — the toggle removed, the default flipped to `app`.
-  Tests on `TestBackend`: a drag over a wrapped paragraph copies one line; over a
-  code block — no padding and no rail; over a table; a wide glyph at either end;
-  the highlight's cells in both colour modes; a selection that survives a reply
-  streaming below it and one a resize drops; an address followed on the release
-  and selected by a drag; which selection `Ctrl+C` takes. And the failures of
+  facts, the anchor and its re-finding after a resize, the selection and its
+  grammar, the highlight, the text, the multi-click, the autoscroll; the box's
+  clamped drag and its multi-click; then §5.7 — the toggle removed, the default
+  flipped to `app`. Tests on `TestBackend`: a drag over a wrapped paragraph copies
+  one line; over a code block — no padding and no rail; over a table; a wide
+  glyph at either end; the highlight's cells in both colour modes; a selection
+  kept across a resize in prose and in code, and dropped when an end lies in a
+  table; dropped by `Ctrl+T`/`Ctrl+O` and a theme change; kept while a reply
+  streams below it, dropped when one streams into it; ended by a click outside
+  it and by a move of the input box's cursor, kept by a click inside it, by `Esc`
+  and by a copy; the right button doing nothing; an address followed on the
+  release and selected by a drag; which selection `Ctrl+C` takes. And the failures of
   §4.5 as tests: a selection grown by autoscroll copies every row it covers
   (Claude Code #83961); a drag past the edge scrolls (opencode #61053); a copy
   runs once per gesture, never per report (opencode #51056); an OSC 52 send is
@@ -637,15 +615,21 @@ routine, and a note during a reply splits the reply (lessons §5).
 
 ## 8. Risks and open questions
 
-- **A terminal with no way around capture** loses its own selection inside the
-  app: conhost always, VS Code on macOS by default (§4.1). The setting of F1 is
-  the answer; until stage 3, F7 keeps the other screens' selection the
-  terminal's.
+- **A terminal with no way around capture** would lose its own selection inside
+  the app: conhost always, VS Code on macOS by default (§4.1). For conhost the
+  legacy terminal mode turns capture off (F1) — so a conhost user without that
+  mode on gets the app's selection and no terminal one, and the setting's hint
+  says which switch to reach for; VS Code on macOS has the setting. Until stage 3,
+  F7 keeps the other screens' selection the terminal's.
 - **A terminal whose reports misbehave** (wrong coordinates, no SGR): the same
   setting; crossterm parses the normal, SGR and rxvt encodings.
 - **The highlight over a wide glyph** may be painted on one half where a terminal
   does not paint a wide glyph's trailing cell itself — the known limitation of
   spec §11.3; cosmetic.
+- **Re-finding a selection after a resize** is the one mechanism the decisions
+  add (F9), and a wrong match would select text the user did not choose. It
+  matches by text and drops the selection when unsure; the resize cases of §7 are
+  its tests.
 - **A frame per drag report.** Every frame clones every cached row
   (`build_lines`, :1187); a long chat in a debug build can take longer than the
   gap between two reports. After §5.2 the reports that pile up meanwhile are one
@@ -667,6 +651,7 @@ routine, and a note during a reply splits the reply (lessons §5).
   select, yank — the route without a mouse; a later idea.
 - A rectangular selection, a selection across panels, drag-and-drop, a context
   menu, hover effects (no `?1003h`, on purpose).
+- A copy as markdown — not wanted (F4), not merely deferred.
 - Per-message actions by click — copy one message's source, fold one block. The
   roadmap's *per-message collapse, select and copy* keeps those two; this track
   gives it the selection.
