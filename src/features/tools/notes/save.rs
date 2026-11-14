@@ -70,30 +70,55 @@ impl Tool for NoteSave {
             // Pull in embeddings for "old" notes with no vectors, so they
             // participate in the gate (and subsequent semantic search).
             ensure_note_vectors(&ctx.storage, ctx.embedder.as_ref(), ctx.profile_id).await;
-            if let Ok(hits) = ctx
-                .storage
-                .db()
-                .note_search_semantic(ctx.profile_id, &emb, 4)
-            {
-                let similar: Vec<Note> = hits
-                    .into_iter()
-                    .map(|(n, _)| n)
-                    // Exclude the just-created note and self-notes (@self) — a
-                    // regular save shouldn't run into "self-model" observations.
-                    .filter(|n| n.id != id && !is_self_note(n))
-                    .take(3)
-                    .collect();
-                if !similar.is_empty() {
-                    out.push('\n');
-                    out.push_str(ctx.loc.t("tool.note_save.gate.similar"));
-                    for n in similar {
-                        out.push_str(&format!("\n- (id={}) {}", n.id, n.content));
-                    }
+            // Self-notes (@self) are excluded — a regular save shouldn't run into
+            // "self-model" observations.
+            let similar = gate_neighbours(ctx, &emb, id, |n| !is_self_note(n));
+            if !similar.is_empty() {
+                out.push('\n');
+                out.push_str(ctx.loc.t("tool.note_save.gate.similar"));
+                for n in similar {
+                    out.push_str(&format!("\n- (id={}) {}", n.id, n.content));
                 }
             }
         }
         Ok(ToolOutcome::text(out).wrote())
     }
+}
+
+/// The write gates' list: stored notes at or above [`WRITE_GATE_SIMILARITY`] to
+/// `emb`, nearest first, at most [`WRITE_GATE_CAP`] — minus `exclude` (the note just
+/// written) and whatever `keep` refuses. Empty when the search fails: the note is
+/// written either way, the gate is advice.
+///
+/// The threshold is applied **before** the kind filter, over every live note: the
+/// search scores them all anyway, and a fixed short candidate list let the other
+/// kind crowd a real neighbour out — `note_save` took the nearest four and then
+/// dropped the @self ones, so on a profile where most notes are observations a
+/// duplicate in fifth place was never shown.
+fn gate_neighbours(
+    ctx: &ToolContext,
+    emb: &[f32],
+    exclude: Uuid,
+    keep: impl Fn(&Note) -> bool,
+) -> Vec<Note> {
+    let threshold = ctx
+        .storage
+        .db()
+        .similarity_scale()
+        .map(WRITE_GATE_SIMILARITY);
+    let Ok(hits) = ctx
+        .storage
+        .db()
+        .note_search_semantic(ctx.profile_id, emb, usize::MAX)
+    else {
+        return Vec::new();
+    };
+    hits.into_iter()
+        .take_while(|(_, score)| *score >= threshold)
+        .map(|(n, _)| n)
+        .filter(|n| n.id != exclude && keep(n))
+        .take(WRITE_GATE_CAP)
+        .collect()
 }
 
 /// Creates a note (insert + best-effort embedding) and returns its id. Used by
@@ -122,9 +147,10 @@ pub(crate) async fn create_note(
 }
 
 /// Semantically close self-notes to `content` — the `add_insight` tool's gate:
-/// pulls in self-note vectors (backfill), embeds the query, searches among
-/// self-notes, excludes `exclude`. Empty if the embedder is unavailable (graceful
-/// degradation) — a direct mirror of the `note_save` gate, but over "about self" memory.
+/// pulls in self-note vectors (backfill), embeds the query, keeps the self-notes at
+/// or above [`WRITE_GATE_SIMILARITY`] ([`gate_neighbours`]), excludes `exclude`.
+/// Empty if the embedder is unavailable (graceful degradation) or nothing is that
+/// close — a direct mirror of the `note_save` gate, but over "about self" memory.
 pub(crate) async fn self_note_similar(
     ctx: &ToolContext,
     content: &str,
@@ -144,18 +170,7 @@ pub(crate) async fn self_note_similar(
     let Some(emb) = vecs.into_iter().next() else {
         return Vec::new();
     };
-    let Ok(hits) = ctx
-        .storage
-        .db()
-        .note_search_semantic(ctx.profile_id, &emb, 8)
-    else {
-        return Vec::new();
-    };
-    hits.into_iter()
-        .map(|(n, _)| n)
-        .filter(|n| n.id != exclude && is_self_note(n))
-        .take(3)
-        .collect()
+    gate_neighbours(ctx, &emb, exclude, is_self_note)
 }
 
 /// Pulls in embeddings for profile notes that don't have them yet (created before

@@ -28,7 +28,10 @@
 use anyhow::Result;
 
 use crate::entities::profile::ToolId;
-use crate::features::chat_search::{SNIPPET_BUDGET_CHARS, build_snippet, to_fts_query};
+use crate::features::chat_search::{
+    QueryWords, Relaxed, SNIPPET_BUDGET_CHARS, build_word_snippet, relax_query,
+};
+use crate::features::compaction::HistoryView;
 use crate::shared::i18n::Locale;
 use crate::shared::storage::cache::IndexScope;
 
@@ -161,18 +164,36 @@ impl Tool for HistorySearch {
         // Raw input must never reach `MATCH`: `C++`, `cost-benefit` and `50%` are
         // all FTS5 syntax errors on ordinary text. The escaper lives in one place
         // (`features::chat_search`) precisely so a second one cannot drift from
-        // it. `None` — every token was below the trigram floor.
-        let Some(fts) = to_fts_query(query) else {
+        // it. Empty — every token was a single character.
+        let words = QueryWords::parse(query);
+        if words.is_empty() {
             return Ok(ToolOutcome::text(
                 ctx.loc.t("tool.history_search.too_short"),
             ));
-        };
-        let hits = match ctx
-            .storage
-            .cache()
-            .matching_messages_in_chat(&fts, IndexScope::Chat(ctx.chat_id))
-        {
-            Ok(hits) => hits,
+        }
+        let relaxed = relax_query(
+            &words,
+            |w| Ok(Some(folded_hits(ctx, view, w)?).filter(|f| !f.is_empty())),
+            |w| Ok(folded_hits(ctx, view, &QueryWords::only(w))?.len()),
+        );
+        let (found, words, dropped) = match relaxed {
+            Ok(Relaxed::Found {
+                result,
+                words,
+                dropped,
+            }) => (result, words, dropped),
+            Ok(Relaxed::Apart { counts, missing }) => {
+                return Ok(ToolOutcome::text(super::chats::apart(
+                    ctx.loc,
+                    "tool.history_search.apart",
+                    "tool.history_search.apart_missing",
+                    &counts,
+                    &missing,
+                )));
+            }
+            Ok(Relaxed::Nothing) => {
+                return Ok(ToolOutcome::text(ctx.loc.t("tool.history_search.empty")));
+            }
             // The index is disposable and self-healing (deleting `cache.db` is a
             // supported repair), so a failure here degrades to the guaranteed
             // path rather than failing the turn — the `attachment_search` rule.
@@ -184,39 +205,29 @@ impl Tool for HistorySearch {
             }
         };
 
-        let page_tokens = ctx.history_page_tokens;
-        // Only matches inside the compressed range: the verbatim tail is already
-        // in the prompt, and a hit there would spend the answer on text the model
-        // is holding. The index returns hits in an arbitrary order, so they are
-        // put back into conversation order — the order the model reads in.
-        let mut found: Vec<(usize, usize, &str)> = hits
-            .into_iter()
-            .filter_map(|id| {
-                let order = view.order_of(id)?;
-                let (page, block) = view.locate(page_tokens, id)?;
-                Some((order, page, block))
-            })
-            .collect();
-        found.sort_by_key(|(order, _, _)| *order);
-        found.dedup_by_key(|(order, _, _)| *order);
-        if found.is_empty() {
-            return Ok(ToolOutcome::text(ctx.loc.t("tool.history_search.empty")));
-        }
         let shown = found.len().min(k);
-        let mut out = ctx.loc.tf(
+        let mut out = String::new();
+        if !dropped.is_empty() {
+            out.push_str(&ctx.loc.tf(
+                "tool.history_search.dropped",
+                &[("words", &super::quoted_words(ctx.loc, &dropped))],
+            ));
+            out.push('\n');
+        }
+        out.push_str(&ctx.loc.tf(
             "tool.history_search.header",
             &[
                 ("n", &shown.to_string()),
                 ("total", &found.len().to_string()),
             ],
-        );
+        ));
         // Numbered, each on its own line, separated by a blank one — a snippet is
         // routinely multi-line, and without that ten of them run together into one
         // wall of text (learned on `attachment_search`, live). Each hit names its
         // **page**: that is what makes the pair compose — search says where to
         // look, `history_read` guarantees everything can be read.
         for (i, (_, page, block)) in found.iter().take(k).enumerate() {
-            let snippet = build_snippet(block, query, SNIPPET_CHARS);
+            let snippet = build_word_snippet(block, &words, SNIPPET_CHARS);
             out.push_str("\n\n");
             out.push_str(&ctx.loc.tf(
                 "tool.history_search.hit",
@@ -229,6 +240,49 @@ impl Tool for HistorySearch {
         out.push_str(ctx.loc.t("tool.history_search.hint"));
         Ok(ToolOutcome::text(out))
     }
+}
+
+/// The folded-away messages `words` matches, as `(order, page, block)` in
+/// conversation order — the order the model reads in.
+///
+/// Only matches inside the compressed range: the verbatim tail is already in the
+/// prompt, and a hit there would spend the answer on text the model is holding.
+/// Long words go to the index (whose hits come in an arbitrary order and are put
+/// back in order here), and its hits are then checked for the short words as
+/// whole words; a query of short words only walks the range's blocks, which the
+/// index cannot answer.
+fn folded_hits<'v>(
+    ctx: &ToolContext,
+    view: &'v HistoryView,
+    words: &QueryWords,
+) -> Result<Vec<(usize, usize, &'v str)>> {
+    let page_tokens = ctx.history_page_tokens;
+    let mut found: Vec<(usize, usize, &str)> = match words.fts() {
+        Some(fts) => ctx
+            .storage
+            .cache()
+            .matching_messages_in_chat(&fts, IndexScope::Chat(ctx.chat_id))?
+            .into_iter()
+            .filter_map(|id| {
+                let order = view.order_of(id)?;
+                let (page, block) = view.locate(page_tokens, id)?;
+                Some((order, page, block))
+            })
+            .filter(|(_, _, block)| words.short_words_match(block))
+            .collect(),
+        None => view
+            .blocks()
+            .enumerate()
+            .filter(|(_, (_, block))| words.short_words_match(block))
+            .filter_map(|(order, (id, _))| {
+                let (page, block) = view.locate(page_tokens, id)?;
+                Some((order, page, block))
+            })
+            .collect(),
+    };
+    found.sort_by_key(|(order, _, _)| *order);
+    found.dedup_by_key(|(order, _, _)| *order);
+    Ok(found)
 }
 
 #[cfg(test)]
@@ -450,12 +504,17 @@ mod tests {
     async fn a_short_or_missing_query_is_answered_usefully() {
         let msgs = conversation();
         let (_d, ctx) = ctx_with(&msgs, 4);
-        // Below the trigram floor: no token survives, so the index cannot be asked.
+        // Single characters only: nothing survives, so nothing can be asked.
         let out = HistorySearch
-            .invoke(&ctx, serde_json::json!({ "query": "по" }))
+            .invoke(&ctx, serde_json::json!({ "query": "и -" }))
             .await
             .unwrap()
             .result;
+        assert_eq!(
+            out,
+            locale(Lang::Ru).t("tool.history_search.too_short"),
+            "{out}"
+        );
         assert!(out.contains("history_read"), "{out}");
 
         assert!(
@@ -473,6 +532,58 @@ mod tests {
             .unwrap()
             .result;
         assert!(out.contains("history_read"), "{out}");
+    }
+
+    /// A two-character word is beneath the index, so the folded range's blocks
+    /// are walked for it — as a whole word, and only inside the range.
+    #[tokio::test]
+    async fn a_two_character_word_is_found_as_a_whole_word_in_the_folded_range() {
+        let msgs = vec![
+            Message::user("по линии истории"),
+            Message::assistant("тезис SP сформулирован"),
+            Message::user("ещё SP, но уже в хвосте"),
+        ];
+        let (_d, ctx) = ctx_with(&msgs, 2);
+        let search = |q: &'static str| {
+            let ctx = &ctx;
+            async move {
+                HistorySearch
+                    .invoke(ctx, serde_json::json!({ "query": q }))
+                    .await
+                    .unwrap()
+                    .result
+            }
+        };
+        let out = search("SP").await;
+        assert!(out.contains("тезис SP"), "{out}");
+        assert!(
+            !out.contains("в хвосте"),
+            "the tail must not surface: {out}"
+        );
+        let out = search("ии").await;
+        assert_eq!(
+            out,
+            locale(Lang::Ru).t("tool.history_search.empty"),
+            "the abbreviation as a word's ending is not the word: {out}"
+        );
+        // Mixed: the index answers the long word, the hit is checked for "SP".
+        let out = search("SP тезис").await;
+        assert!(out.contains("тезис SP"), "{out}");
+    }
+
+    /// A word found nowhere in the folded range is dropped and named, and the
+    /// rest answered — not "nothing matches".
+    #[tokio::test]
+    async fn a_word_found_nowhere_is_dropped_and_named() {
+        let msgs = conversation();
+        let (_d, ctx) = ctx_with(&msgs, 4);
+        let out = HistorySearch
+            .invoke(&ctx, serde_json::json!({ "query": "ZARYA-8823 черепаха" }))
+            .await
+            .unwrap()
+            .result;
+        assert!(out.lines().next().unwrap().contains("«черепаха»"), "{out}");
+        assert!(out.contains("ZARYA-8823"), "{out}");
     }
 
     /// FTS5 reads punctuation as syntax; raw input reaching `MATCH` is a SQL

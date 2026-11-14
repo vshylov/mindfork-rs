@@ -527,6 +527,67 @@ impl CacheDb {
         Ok(n as usize)
     }
 
+    /// Messages **within the given chats** whose text contains any of `needles`
+    /// (case-sensitive `instr`) and passes `keep` — a linear scan rather than an
+    /// index query, for the words the trigram tokenizer cannot hold (shorter than
+    /// three characters, spec §9.11). The caller passes every casing it wants
+    /// found as a needle, and decides in `keep` what really counts as a match
+    /// (a whole word); this layer only narrows the rows. Returns the first
+    /// `limit` kept hits in [`Self::search_messages`]'s order and how many were
+    /// kept in all — one pass, so the honest total costs nothing extra. A text
+    /// that fails `keep` is dropped as it is read, so a common needle never holds
+    /// the scope's whole text in memory at once.
+    ///
+    /// Empty `needles` or `chat_ids` return nothing without touching SQL.
+    pub fn scan_messages_in(
+        &self,
+        needles: &[String],
+        chat_ids: &[Uuid],
+        limit: usize,
+        keep: impl Fn(&str) -> bool,
+    ) -> Result<(Vec<MessageHit>, usize)> {
+        if needles.is_empty() || chat_ids.is_empty() {
+            return Ok((Vec::new(), 0));
+        }
+        let any_needle = vec!["instr(m.text, ?) > 0"; needles.len()].join(" OR ");
+        let scope = vec!["?"; chat_ids.len()].join(", ");
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT m.chat_id, m.sub_id, m.message_id, m.role, m.ts, m.text
+             FROM messages m
+             WHERE {SCOPE_ID} IN ({scope}) AND ({any_needle})
+             ORDER BY m.chat_id, m.sub_id, m.id"
+        ))?;
+        let params: Vec<rusqlite::types::Value> = chat_ids
+            .iter()
+            .map(|id| id.to_string().into())
+            .chain(needles.iter().map(|n| n.clone().into()))
+            .collect();
+        let mut rows = stmt
+            .query(rusqlite::params_from_iter(params.iter()))
+            .context("scanning messages for a short word")?;
+        let mut hits = Vec::new();
+        let mut total = 0usize;
+        while let Some(r) = rows.next().context("scanning messages for a short word")? {
+            let text: String = r.get(5)?;
+            if !keep(&text) {
+                continue;
+            }
+            total += 1;
+            if hits.len() < limit {
+                hits.push(MessageHit {
+                    chat_id: parse_uuid(r.get::<_, String>(0)?),
+                    sub_id: r.get::<_, Option<String>>(1)?.map(parse_uuid),
+                    message_id: parse_uuid(r.get::<_, String>(2)?),
+                    role: r.get(3)?,
+                    ts: r.get(4)?,
+                    text,
+                });
+            }
+        }
+        Ok((hits, total))
+    }
+
     /// Number of indexed messages. Test-only for now — nothing in the app reads
     /// it, and gating it (rather than allowing dead code) keeps the module
     /// honest about what is actually wired. Lift the gate if a diagnostic ever
@@ -851,6 +912,46 @@ mod tests {
                 .unwrap(),
             3
         );
+    }
+
+    #[test]
+    fn scan_finds_short_words_the_index_cannot_within_the_scope() {
+        // Two characters are beneath the trigram tokenizer: MATCH finds nothing.
+        let db = cache();
+        let (mine, foreign) = (Uuid::new_v4(), Uuid::new_v4());
+        db.index_chat(
+            mine,
+            1,
+            1,
+            &[msg("тезис SP из новеллы"), msg("sp в нижнем"), msg("SPA")],
+        )
+        .unwrap();
+        db.index_chat(foreign, 1, 1, &[msg("SP тоже здесь")])
+            .unwrap();
+        assert!(
+            db.search_messages_in("\"SP\"", &[mine], 10)
+                .unwrap()
+                .is_empty(),
+            "the premise: the index cannot answer a two-character word"
+        );
+
+        // Every casing as a needle; `keep` decides what counts (here: not "SPA").
+        let needles: Vec<String> = ["SP", "Sp", "sP", "sp"].map(String::from).to_vec();
+        let keep = |t: &str| !t.contains("SPA");
+        let (hits, total) = db.scan_messages_in(&needles, &[mine], 10, keep).unwrap();
+        assert_eq!(total, 2);
+        assert_eq!(hits.len(), 2);
+        assert!(hits.iter().all(|h| h.chat_id == mine), "scope holds");
+
+        // The limit bounds the hits, not the honest total.
+        let (hits, total) = db.scan_messages_in(&needles, &[mine], 1, keep).unwrap();
+        assert_eq!((hits.len(), total), (1, 2));
+        // A limit of zero is a count.
+        let (hits, total) = db.scan_messages_in(&needles, &[mine], 0, keep).unwrap();
+        assert_eq!((hits.len(), total), (0, 2));
+
+        assert_eq!(db.scan_messages_in(&[], &[mine], 10, keep).unwrap().1, 0);
+        assert_eq!(db.scan_messages_in(&needles, &[], 10, keep).unwrap().1, 0);
     }
 
     #[test]

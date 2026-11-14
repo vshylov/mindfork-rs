@@ -50,14 +50,209 @@ const BOUNDARY_SLACK_DIV: usize = 4;
 /// Returns `None` when the input cannot produce a usable query — the caller
 /// treats that exactly like an empty query (show everything unfiltered).
 pub fn to_fts_query(input: &str) -> Option<String> {
-    let query = input
-        .split_whitespace()
-        // Count characters, not bytes: a 3-character Cyrillic token is 6 bytes.
-        .filter(|t| t.chars().count() >= MIN_TOKEN_CHARS)
-        .map(|t| format!("\"{}\"", t.replace('"', "\"\"")))
-        .collect::<Vec<_>>()
-        .join(" ");
-    (!query.is_empty()).then_some(query)
+    QueryWords::parse(input).fts()
+}
+
+/// Shortest word the **model's** searches (`chat_search`, `history_search`)
+/// still answer. A word of [`MIN_WORD_CHARS`]..[`MIN_TOKEN_CHARS`] characters —
+/// `AI`, `SP`, `C#`, the Russian abbreviation for AI — is beneath the trigram
+/// index, so it is matched in Rust, and as a **whole word**: as a substring that
+/// Russian abbreviation is also a common case ending, so it would match nearly
+/// every Russian message (spec §9.11). Single characters
+/// stay ignored — they are prepositions and initials far more often than terms.
+pub const MIN_WORD_CHARS: usize = 2;
+
+/// One word of a tool's search query.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueryWord {
+    /// As typed.
+    pub text: String,
+    /// Shorter than [`MIN_TOKEN_CHARS`]: matched as a whole word by
+    /// [`has_whole_word`], never by the index.
+    pub short: bool,
+}
+
+/// A tool's search query, split by what can answer each word: the trigram index
+/// (three characters or more, a case-insensitive substring) or a whole-word
+/// check in Rust (two characters). Every word must occur in one message —
+/// implicit AND, as in [`to_fts_query`], which is this type's long half.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct QueryWords(Vec<QueryWord>);
+
+impl QueryWords {
+    /// Whitespace-separated words; characters counted, not bytes (a
+    /// 3-character Cyrillic word is 6 bytes). A two-character token with no
+    /// letter or digit in it (`--`, `?!`) is dropped like a single character.
+    pub fn parse(input: &str) -> Self {
+        Self(
+            input
+                .split_whitespace()
+                .filter_map(|t| {
+                    let n = t.chars().count();
+                    let short = n < MIN_TOKEN_CHARS;
+                    let keep =
+                        !short || (n >= MIN_WORD_CHARS && t.chars().any(char::is_alphanumeric));
+                    keep.then(|| QueryWord {
+                        text: t.to_string(),
+                        short,
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, QueryWord> {
+        self.0.iter()
+    }
+
+    /// A query of this one word — what a per-word count runs.
+    pub fn only(word: &QueryWord) -> Self {
+        Self(vec![word.clone()])
+    }
+
+    /// The safe FTS5 `MATCH` for the long words (each quoted, inner quotes
+    /// doubled — see the module doc); `None` when there are none.
+    pub fn fts(&self) -> Option<String> {
+        let query = self
+            .0
+            .iter()
+            .filter(|w| !w.short)
+            .map(|w| format!("\"{}\"", w.text.replace('"', "\"\"")))
+            .collect::<Vec<_>>()
+            .join(" ");
+        (!query.is_empty()).then_some(query)
+    }
+
+    /// Whether any word is short — i.e. whether a hit of the index still has to
+    /// pass [`Self::short_words_match`].
+    pub fn has_short(&self) -> bool {
+        self.0.iter().any(|w| w.short)
+    }
+
+    /// Does `text` hold every short word as a whole word? `true` when there are
+    /// none.
+    pub fn short_words_match(&self, text: &str) -> bool {
+        self.0
+            .iter()
+            .filter(|w| w.short)
+            .all(|w| has_whole_word(text, &w.text))
+    }
+
+    /// Case variants of the first short word, for a database prefilter that can
+    /// only compare case-sensitively (`instr`); empty when there is no short
+    /// word. A short word is at most two characters, so at most four variants.
+    pub fn scan_needles(&self) -> Vec<String> {
+        let Some(word) = self.0.iter().find(|w| w.short) else {
+            return Vec::new();
+        };
+        let mut out: Vec<String> = vec![String::new()];
+        for c in word.text.chars() {
+            let cases: Vec<String> = [
+                c.to_lowercase().collect::<String>(),
+                c.to_uppercase().collect::<String>(),
+            ]
+            .into_iter()
+            .collect();
+            out = out
+                .iter()
+                .flat_map(|prefix| cases.iter().map(move |c| format!("{prefix}{c}")))
+                .collect();
+        }
+        out.sort();
+        out.dedup();
+        out
+    }
+}
+
+/// Does `text` contain `word` as a whole word — case-insensitively, bounded on
+/// each side by the text's edge or a character that is not a letter or digit?
+/// `AI` in `AI-agent` and `(SP)` counts; `ai` in `email` does not.
+pub fn has_whole_word(text: &str, word: &str) -> bool {
+    let token: Vec<char> = word.chars().map(fold_char).collect();
+    let folded: Vec<char> = text.chars().map(fold_char).collect();
+    !find_matches_of(&folded, std::slice::from_ref(&token), true).is_empty()
+}
+
+/// What a relaxed search ([`relax_query`]) came to.
+#[derive(Debug)]
+pub enum Relaxed<R> {
+    /// Hits for `words`. `dropped` — query words that match nothing in scope
+    /// and were left out to get them; empty when the query matched as asked.
+    Found {
+        result: R,
+        words: QueryWords,
+        dropped: Vec<String>,
+    },
+    /// Every word in `counts` occurs somewhere, but no message holds them all;
+    /// `missing` occur nowhere. Counts are messages per word.
+    Apart {
+        counts: Vec<(String, usize)>,
+        missing: Vec<String>,
+    },
+    /// No word of the query matches anything.
+    Nothing,
+}
+
+/// Runs `search` over `words`, and when that finds nothing and the query has
+/// more than one word, finds out why instead of answering "nothing".
+///
+/// Every word must occur in one message, so a single word absent from the scope
+/// zeroes the whole query: a live `chat_search` for a two-word title plus a
+/// philosophical term answered nothing while the title's words matched 35 and 40
+/// messages — the term occurred in no other conversation, and the model had to
+/// guess which word to drop. Here each word is counted (`count`); words with no
+/// match are dropped and the rest searched again, and the result names what was
+/// dropped. When every word matches somewhere but never together, the counts
+/// are the answer: they say which word to search by.
+pub fn relax_query<R>(
+    words: &QueryWords,
+    mut search: impl FnMut(&QueryWords) -> anyhow::Result<Option<R>>,
+    mut count: impl FnMut(&QueryWord) -> anyhow::Result<usize>,
+) -> anyhow::Result<Relaxed<R>> {
+    if let Some(result) = search(words)? {
+        return Ok(Relaxed::Found {
+            result,
+            words: words.clone(),
+            dropped: Vec::new(),
+        });
+    }
+    if words.len() < 2 {
+        return Ok(Relaxed::Nothing);
+    }
+    let mut present = Vec::new();
+    let mut counts = Vec::new();
+    let mut missing = Vec::new();
+    for word in words.iter() {
+        match count(word)? {
+            0 => missing.push(word.text.clone()),
+            n => {
+                present.push(word.clone());
+                counts.push((word.text.clone(), n));
+            }
+        }
+    }
+    if present.is_empty() {
+        return Ok(Relaxed::Nothing);
+    }
+    if !missing.is_empty() {
+        let rest = QueryWords(present);
+        if let Some(result) = search(&rest)? {
+            return Ok(Relaxed::Found {
+                result,
+                words: rest,
+                dropped: missing,
+            });
+        }
+    }
+    Ok(Relaxed::Apart { counts, missing })
 }
 
 /// A message-level hit's excerpt, with the positions of the matched tokens
@@ -137,12 +332,43 @@ pub struct SearchGroup {
 /// and nudged onto word boundaries where that costs little, with `…` marking
 /// each end that was cut.
 pub fn build_snippet(text: &str, query: &str, budget_chars: usize) -> Snippet {
+    snippet_with(text, budget_chars, |folded| {
+        find_matches(folded, &query_tokens(query))
+    })
+}
+
+/// [`build_snippet`] for a tool's [`QueryWords`]: the long words matched as
+/// substrings, the short ones as whole words — the same split that found the
+/// hit, so the window centres on what actually matched.
+pub fn build_word_snippet(text: &str, words: &QueryWords, budget_chars: usize) -> Snippet {
+    let fold = |short: bool| -> Vec<Vec<char>> {
+        words
+            .iter()
+            .filter(|w| w.short == short)
+            .map(|w| w.text.chars().map(fold_char).collect())
+            .collect()
+    };
+    let (long, short) = (fold(false), fold(true));
+    snippet_with(text, budget_chars, |folded| {
+        let mut all = find_matches_of(folded, &long, false);
+        all.extend(find_matches_of(folded, &short, true));
+        merge_ranges(all)
+    })
+}
+
+/// The snippet builder's body: `matcher` turns the case-folded text into sorted,
+/// merged char ranges of the matches.
+fn snippet_with(
+    text: &str,
+    budget_chars: usize,
+    matcher: impl FnOnce(&[char]) -> Vec<Range<usize>>,
+) -> Snippet {
     let chars: Vec<char> = text.chars().collect();
     if budget_chars == 0 || chars.is_empty() {
         return Snippet::default();
     }
     let folded: Vec<char> = chars.iter().map(|c| fold_char(*c)).collect();
-    let hits = find_matches(&folded, &query_tokens(query));
+    let hits = matcher(&folded);
 
     let (start, end) = snap_to_words(
         &chars,
@@ -238,6 +464,13 @@ fn fold_char(c: char) -> char {
 /// merged (so two tokens matching the same run yield one highlight, not nested
 /// ones).
 fn find_matches(folded: &[char], tokens: &[Vec<char>]) -> Vec<Range<usize>> {
+    find_matches_of(folded, tokens, false)
+}
+
+/// [`find_matches`], optionally as **whole words**: an occurrence counts only
+/// when the characters either side of it (if any) are not letters or digits.
+fn find_matches_of(folded: &[char], tokens: &[Vec<char>], whole: bool) -> Vec<Range<usize>> {
+    let boundary = |i: Option<&char>| i.is_none_or(|c| !c.is_alphanumeric());
     let mut found: Vec<Range<usize>> = Vec::new();
     for token in tokens {
         if token.is_empty() || token.len() > folded.len() {
@@ -245,14 +478,24 @@ fn find_matches(folded: &[char], tokens: &[Vec<char>]) -> Vec<Range<usize>> {
         }
         let mut i = 0;
         while i + token.len() <= folded.len() {
-            if folded[i..i + token.len()] == token[..] {
-                found.push(i..i + token.len());
-                i += token.len();
+            let end = i + token.len();
+            let at_word = !whole
+                || (boundary(i.checked_sub(1).and_then(|p| folded.get(p)))
+                    && boundary(folded.get(end)));
+            if folded[i..end] == token[..] && at_word {
+                found.push(i..end);
+                i = end;
             } else {
                 i += 1;
             }
         }
     }
+    merge_ranges(found)
+}
+
+/// Sorts ranges and merges overlapping ones (two tokens matching the same run
+/// yield one highlight, not nested ones).
+fn merge_ranges(mut found: Vec<Range<usize>>) -> Vec<Range<usize>> {
     found.sort_by_key(|r| (r.start, r.end));
     let mut merged: Vec<Range<usize>> = Vec::new();
     for r in found {
@@ -615,5 +858,189 @@ mod tests {
             );
         }
         assert!(match_ranges("", "текст").is_empty());
+    }
+
+    // ---- QueryWords: the model's searches ----
+
+    fn words_of(q: &QueryWords) -> Vec<(&str, bool)> {
+        q.iter().map(|w| (w.text.as_str(), w.short)).collect()
+    }
+
+    #[test]
+    fn query_words_keep_two_character_words_as_short_and_drop_single_ones() {
+        let q = QueryWords::parse("ИИ и солипсизм C# -- a SP");
+        assert_eq!(
+            words_of(&q),
+            vec![
+                ("ИИ", true),
+                ("солипсизм", false),
+                ("C#", true),
+                ("SP", true)
+            ]
+        );
+        // The index half is exactly what `to_fts_query` hands the UI search.
+        assert_eq!(q.fts().unwrap(), "\"солипсизм\"");
+        assert!(q.has_short());
+        // Only short words: nothing for the index, but still a query.
+        let q = QueryWords::parse("ИИ SP");
+        assert_eq!(q.fts(), None);
+        assert!(!q.is_empty());
+        assert!(QueryWords::parse("a - и").is_empty());
+    }
+
+    #[test]
+    fn whole_word_matches_respect_word_boundaries_and_case() {
+        assert!(has_whole_word("Это ИИ-агент", "ии"));
+        assert!(has_whole_word("тезис (SP) из главы 3", "SP"));
+        assert!(has_whole_word("SP", "sp"));
+        assert!(has_whole_word("пишу на C#.", "c#"));
+        // Inside a longer word it is not the word.
+        assert!(!has_whole_word("по линии истории", "ии"));
+        assert!(!has_whole_word("a SPA day", "SP"));
+        assert!(!has_whole_word("", "ИИ"));
+    }
+
+    #[test]
+    fn short_words_must_all_occur_as_whole_words() {
+        let q = QueryWords::parse("ИИ SP новелла");
+        assert!(q.short_words_match("ИИ и SP"));
+        assert!(!q.short_words_match("ИИ и SPA"));
+        // The long word is the index's business, not this check's.
+        assert!(q.short_words_match("SP, ИИ"));
+        assert!(QueryWords::parse("новелла").short_words_match("что угодно"));
+    }
+
+    #[test]
+    fn scan_needles_cover_every_casing_of_the_first_short_word() {
+        let needles = |s: &str| QueryWords::parse(s).scan_needles();
+        assert_eq!(needles("Sp"), vec!["SP", "Sp", "sP", "sp"]);
+        assert_eq!(needles("новелла ИИ"), vec!["ИИ", "Ии", "иИ", "ии"]);
+        // A character with no case yields one variant, not duplicates.
+        assert_eq!(needles("c#"), vec!["C#", "c#"]);
+        assert!(needles("новелла").is_empty());
+    }
+
+    #[test]
+    fn word_snippet_centres_on_a_whole_short_word_not_inside_a_longer_one() {
+        let text = format!(
+            "{} линии {} ИИ {}",
+            "а ".repeat(60),
+            "б ".repeat(60),
+            "в ".repeat(60)
+        );
+        let s = build_word_snippet(&text, &QueryWords::parse("ИИ"), 40);
+        assert_eq!(highlighted(&s), vec!["ИИ"], "{s:?}");
+        // The plain snippet ignores a two-character word altogether.
+        assert!(build_snippet(&text, "ИИ", 40).matches.is_empty());
+    }
+
+    // ---- relax_query ----
+
+    /// A toy index: each message is a list of words; a query matches a message
+    /// holding every word. Returns the matching messages, `None` for none.
+    fn toy_search<'a>(
+        messages: &'a [&'a [&'a str]],
+        calls: &'a std::cell::Cell<usize>,
+    ) -> impl FnMut(&QueryWords) -> anyhow::Result<Option<Vec<usize>>> + 'a {
+        move |q| {
+            calls.set(calls.get() + 1);
+            let hits: Vec<usize> = (0..messages.len())
+                .filter(|&i| q.iter().all(|w| messages[i].contains(&w.text.as_str())))
+                .collect();
+            Ok((!hits.is_empty()).then_some(hits))
+        }
+    }
+
+    fn toy_count<'a>(
+        messages: &'a [&'a [&'a str]],
+    ) -> impl FnMut(&QueryWord) -> anyhow::Result<usize> + 'a {
+        move |w| {
+            Ok(messages
+                .iter()
+                .filter(|m| m.contains(&w.text.as_str()))
+                .count())
+        }
+    }
+
+    const CORPUS: &[&[&str]] = &[
+        &["Хрустальный", "Маяк", "Хайдеггер"],
+        &["Хрустальный", "Маяк"],
+        &["Гуссерль"],
+    ];
+
+    #[test]
+    fn relax_answers_a_matching_query_as_asked() {
+        let calls = std::cell::Cell::new(0);
+        let q = QueryWords::parse("Хрустальный Маяк");
+        let r = relax_query(&q, toy_search(CORPUS, &calls), toy_count(CORPUS)).unwrap();
+        match r {
+            Relaxed::Found {
+                result, dropped, ..
+            } => {
+                assert_eq!(result, vec![0, 1]);
+                assert!(dropped.is_empty());
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(calls.get(), 1, "no second search when the first one hits");
+    }
+
+    #[test]
+    fn relax_drops_a_word_found_nowhere_and_names_it() {
+        // The live case: the third word occurs in no other conversation.
+        let calls = std::cell::Cell::new(0);
+        let q = QueryWords::parse("Хрустальный Маяк солипсизм");
+        let r = relax_query(&q, toy_search(CORPUS, &calls), toy_count(CORPUS)).unwrap();
+        match r {
+            Relaxed::Found {
+                result,
+                words,
+                dropped,
+            } => {
+                assert_eq!(result, vec![0, 1]);
+                assert_eq!(dropped, vec!["солипсизм"]);
+                assert_eq!(
+                    words_of(&words),
+                    vec![("Хрустальный", false), ("Маяк", false)]
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn relax_reports_words_that_never_meet_with_their_counts() {
+        let calls = std::cell::Cell::new(0);
+        let q = QueryWords::parse("Хрустальный Гуссерль солипсизм");
+        let r = relax_query(&q, toy_search(CORPUS, &calls), toy_count(CORPUS)).unwrap();
+        match r {
+            Relaxed::Apart { counts, missing } => {
+                assert_eq!(
+                    counts,
+                    vec![("Хрустальный".to_string(), 2), ("Гуссерль".to_string(), 1)]
+                );
+                assert_eq!(missing, vec!["солипсизм"]);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn relax_says_nothing_when_no_word_matches_or_there_is_one_word() {
+        let calls = std::cell::Cell::new(0);
+        let q = QueryWords::parse("солипсизм эпохе");
+        let r = relax_query(&q, toy_search(CORPUS, &calls), toy_count(CORPUS)).unwrap();
+        assert!(matches!(r, Relaxed::Nothing), "{r:?}");
+
+        // One word: nothing to drop, so nothing is counted.
+        let mut counted = 0;
+        let q = QueryWords::parse("солипсизм");
+        let r = relax_query(&q, toy_search(CORPUS, &calls), |_: &QueryWord| {
+            counted += 1;
+            Ok(0)
+        })
+        .unwrap();
+        assert!(matches!(r, Relaxed::Nothing), "{r:?}");
+        assert_eq!(counted, 0);
     }
 }

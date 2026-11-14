@@ -551,7 +551,7 @@ The whole conversation is sent on every request, so a long chat eventually stops
 - **The roll** is one independent single-turn request (no history, no tools, reasoning muted — the `title.rs` shape), fed a digest of the newly-covered range **including tool activity**: tool results are persisted in history, replayed on every turn and invisible in the feed, so they are the largest hidden cost in a long chat. Rolling (`summarize(previous + next chunk)`) is not merely cheaper than re-summarizing everything — it is the only shape that always fits, since the summarizer has the same context limit as the chat that overflowed.
 - **The length limit lives in the prompt, in words**, with `max_tokens` only as a safety net far above it. Measured: a bare token cap does not shorten a summary, it truncates one mid-sentence, and given room the summary **grows with every roll** — a stated limit plus an instruction to drop what later parts superseded fixes both.
 - **The block** is prepended to `system` right after the persona, ordered by volatility (persona → summary → attachments → self-model). Its header is in the **profile** language (axis A), marks the content as DATA rather than instructions, and **names the two read-back tools below** — a block that describes a situation without saying what is possible is what sends a model improvising.
-- **What the summary dropped is still reachable.** A summary is lossy by construction, so two tools page back into the folded range: **`history_read`** walks it page by page (`compaction.page_tokens`), numbered from 1 with the total stated, so the model can walk `1..M` and *know* it read everything; **`history_search`** finds where to look and returns fragments with their page numbers, so the pair composes — search says *where*, reading guarantees *everything*. Search runs over the full-text index the application already keeps (`cache.db`, [§5.2](#52-data-storage)), not over embeddings: an embedding server is separate and routinely unconfigured (ADR 0002), while the local user with a small window is exactly who compression exists for — and a trigram index matches substrings, so `8823` finds `ZARYA-8823`, identifiers being the first thing a summary loses. Both reach **only this conversation's own older messages**, which the user is looking at in the feed, so neither is gated; they are offered to the model **only while a folded range exists**, which is the same condition that puts the block in the prompt. The block names them only when the turn really offers them — a profile can switch the two tools off, and naming a tool the model does not have is a dead end rather than a hint.
+- **What the summary dropped is still reachable.** A summary is lossy by construction, so two tools page back into the folded range: **`history_read`** walks it page by page (`compaction.page_tokens`), numbered from 1 with the total stated, so the model can walk `1..M` and *know* it read everything; **`history_search`** finds where to look and returns fragments with their page numbers, so the pair composes — search says *where*, reading guarantees *everything*. Search runs over the full-text index the application already keeps (`cache.db`, [§5.2](#52-data-storage)), not over embeddings: an embedding server is separate and routinely unconfigured (ADR 0002), while the local user with a small window is exactly who compression exists for — and a trigram index matches substrings, so `8823` finds `ZARYA-8823`, identifiers being the first thing a summary loses. The query's words follow `chat_search`'s rules ([§9.11](#911-cross-chat-search-chat_search-and-chat_read)): all of them in one message, a two-character word as a whole word (walked over the folded range's blocks when no long word narrows it), a word found nowhere in the range dropped and named, words that never meet answered with their counts. Both reach **only this conversation's own older messages**, which the user is looking at in the feed, so neither is gated; they are offered to the model **only while a folded range exists**, which is the same condition that puts the block in the prompt. The block names them only when the turn really offers them — a profile can switch the two tools off, and naming a tool the model does not have is a dead end rather than a hint.
 - **The trigger** — a compaction starts by itself once the next turn's prompt would reach `compaction.threshold_pct` (default 75%) of the resolved context window; `/compact` runs one on demand at any time. The remaining quarter is the headroom that lets the user keep typing while the background roll works, and it doubles as the reply reserve — there is deliberately no second knob for that. `0%` means "manual only".
 - **The roll streams on the budget's silent lane** ([6.3](#63-client-side-agentic-loop)): one of the app's own requests at a time, priced like a turn's round and waiting for room beside an open reply or run rather than overfilling the pool with it — the roll is the one silent request sized by the conversation, and it fires exactly when the conversation is at its largest (measured: [docs/research/silent-tasks-budget.md](docs/research/silent-tasks-budget.md) §3.1). At a landing it is asked for right after the title and **ahead** of the reflection and consolidation loops, since the lane runs its queue in the order asked and the roll is the one task that protects the next turn. A turn that does not fit beside the roll's stream displaces it ([6.3](#63-client-side-agentic-loop)): the roll is made again from the same plan after the turn, and the fragment its first stream left is never stored as the summary. A roll **stopped** from the tasks screen ([11.10](#1110-the-tasks-screen-f7)) lands as cancelled: the `/compact` the user typed is answered with one notice, an automatic roll says nothing and is planned again at the next landing if the conversation is still over the threshold. At a **quit** the roll is heard like the loops ([17.6](#176-auto-reflection-background)): one still streaming lands cancelled at once, and one that had just finished — its summary unread when the quit came — is applied before the exit flush rather than dropped ([docs/research/quit-settle-roll-and-cap.md](docs/research/quit-settle-roll-and-cap.md)). The roll's prompt is also the session's **coldest** — the summarizer's own system prompt, a digest that never repeats — so its stream's `timings` ride its result (`CompactResult.prefill`) and are offered to the slow-prefill rule of [3.4](#34-managing-the-server-lifecycle) after the roll's own landing, whatever the landing made of the text; a stream that ended short carries none, and the rule's one note per server session decides ([docs/research/roll-timings.md](docs/research/roll-timings.md)).
 - **Which token number** — the **exact** `usage.prompt_tokens` the server reported for the turn's last round, plus what was generated on top of it, and nothing else. The client-side byte estimate is not a fallback here: its error **changes sign** by content type (it overestimates Russian prose by 68% while *under*estimating code by 20% and JSON tool results by 7%), i.e. it is unsafe exactly on the tool-heavy chats that overflow first. A provider that reports no usage therefore leaves the automatic trigger inactive rather than acting on a guess.
@@ -803,7 +803,7 @@ Semantics and signatures — as in attempt #1 (section 9.3 of its specification)
 |---|---|---|
 | `rag_search` | `{ query, top_k? }` | Embed the query → kNN in `rag_documents` (sqlite-vec, filtered by `profile_id`) → top-N fragments with sources. Refuses over a knowledge base another embedding model indexed, asked before **and after** the query is embedded ([9.3.4](#934-changing-the-embedding-model)). |
 | `rag_add` | `{ text, source? }` | Chunking → embedding → written to `rag_documents` (`profile_id`). Returns the number of chunks. Every chunk of the text goes to the embedder in one call, which sends it in requests of at most 64 (the embedding lifecycle, below). |
-| `note_save` | `{ content, tags? }` | Written to `notes` (`profile_id`). Returns the id, and up to three similar notes when there are any — the note is already written, so the hint says a repeat is merged with the one it repeats (`note_merge`, both ids). |
+| `note_save` | `{ content, tags? }` | Written to `notes` (`profile_id`). Returns the id, and up to three notes at or above the write-gate similarity (`0.70` in the bge-m3 scale, mapped per model, [§9.3.4](#934-changing-the-embedding-model)) when there are any — the note is already written, so the hint says a repeat is merged with the one it repeats (`note_merge`, both ids). Below the threshold the gate says nothing: a nearest note that is merely on a neighbouring topic is not shown. |
 | `note_recall` | `{ query?, tags?, limit? }` | Search notes (text/tags; optionally semantic), filtered by `profile_id`. |
 | `python_exec` | `{ code }` | Executes Python in an isolated Wasmer/WASIX sandbox (by default) or a local interpreter — see [13.2](#132-python-execution). Returns stdout/stderr/error. Behind a global switch (disabled by default). |
 | `web_search` | `{ query, max_results? }` | Searches DuckDuckGo (our own `reqwest` client) + extracts readable page content. Behind the `web_enabled` global switch (**off** by default, like Python and file access). See [9.3.1](#931-the-web-tool-our-own-implementation). |
@@ -1002,7 +1002,8 @@ banner as `/rag add`, and can be cancelled.
 enough on their own, because the gates that decide when two pieces of memory
 mean the same thing — the duplicate-pair threshold of the consolidation
 overviews (`0.85`), the related-trait gate of `update_user_model` (`0.72`,
-[§17.3](#173-tools)) and the summary↔observation overlap (`0.62`) — are absolute
+[§17.3](#173-tools)), the summary↔observation overlap (`0.62`) and the write
+gates of `note_save`/`add_insight` (`0.70`, [§9.3](#93-tool-roster)) — are absolute
 cosines derived from live runs against bge-m3, i.e. positions inside *that*
 model's distribution. Cosine distributions differ sharply: measured on a fixed
 probe corpus, `multilingual-e5-large-instruct`'s usable range between
@@ -2097,11 +2098,20 @@ this in another chat"). Design and the decided forks —
 [docs/research/cross-chat-search-tool.md](docs/research/cross-chat-search-tool.md).
 
 - **`chat_search { query, top_k? }`** runs the escaped query (the single
-  `to_fts_query` escaper, §11.2.1) over the full-text index the application
+  escaper, `QueryWords::fts`, §11.2.1) over the full-text index the application
   already keeps (`cache.db`, §5.2), scoped **in SQL** to the profile's other
   chats (`CacheDb::search_messages_in`) — the index itself is profile-blind,
   and a post-filtered global `LIMIT` could be starved by another profile's
-  rows. Hits come back grouped by conversation (the UI's "group, don't rank"
+  rows. **Every word must occur in one message.** A word of three characters
+  or more matches as a case-insensitive substring (the trigram index); a
+  **two-character word** (`AI`, `SP`, `C#`) is beneath that index and matches
+  only as a **whole word**, checked in Rust — on the index's hits when the
+  query also has a long word, otherwise by a scan of the scope's messages
+  (`CacheDb::scan_messages_in`); single characters are ignored. When a query
+  of several words finds nothing, each word is counted: words found nowhere are
+  **dropped and named** at the head of the answer and the rest searched again;
+  when every word occurs but never in one message, the answer is the per-word
+  message counts (`features::chat_search::relax_query`). Hits come back grouped by conversation (the UI's "group, don't rank"
   decision), newest conversation first and hits in timestamp order; each hit
   carries a 480-character snippet, its role and date, and the **page** of
   that conversation's transcript, and each conversation is addressed by its
@@ -2151,8 +2161,8 @@ this in another chat"). Design and the decided forks —
   bounds the loop, as everywhere else).
 - **Degradation** follows the read-back pair: a profile with no other chats
   answers "nothing here" (as distinct from "no hits"); an unavailable index
-  degrades to a normal answer naming the route that still works; a
-  sub-trigram query, a bad page and an ambiguous reference each state what to
+  degrades to a normal answer naming the route that still works; a query of
+  single characters, a bad page and an ambiguous reference each state what to
   do next.
 
 ---
@@ -6243,7 +6253,7 @@ The SelfModel tool group (optional: **not** in `default_tool_ids`, present in
 | `reflect` | Return the current model + a self-reflection rubric (no write; an "entry point") |
 | `update_self_model` | The self-description + goals (add/complete/abandon) |
 | `update_user_model` | The companion's traits/interests/relationship dynamic |
-| `add_insight` | Record an observation/insight (including a contradiction as prose) into the narrative; similar observations are shown after the write, with the hint to merge a repeat (`note_merge`) |
+| `add_insight` | Record an observation/insight (including a contradiction as prose) into the narrative; observations at or above the write-gate similarity (the `note_save` gate's threshold) are shown after the write, with the hint to merge a repeat (`note_merge`) |
 
 **A departure from the tool contract ([§9.2](#92-the-tool-contract)):** SelfModel
 is per-profile data in SQLite, so the mutator tools **write directly**
