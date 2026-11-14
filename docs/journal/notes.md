@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (8)
+## Entries (9)
 
 - Post-M9: notes connectivity — MVP probe (Tier 1, done)
 - Post-M9: notes connectivity — Tier 2 (graph + revision history, done)
@@ -20,6 +20,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: linking the memory organs — Tier 3, Path 3 (RAG ↔ notes) (done)
 - Post-M9: the companion's notes and earlier conversations in the prompt (done)
 - Post-M9: the write gates get a threshold (done)
+- Post-M9: where a fact about the person goes — design and baseline probe (done)
 
 ### Post-M9: notes connectivity — MVP probe (Tier 1, done)
 - **A shift of memory from accumulation to integration** per the plan
@@ -373,3 +374,35 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   observation left); `self_model_gate_e2e_live` (ru) — the model found the earlier
   observation itself and rewrote it (`note_revise`) without calling `add_insight`, so
   that run did not reach the gate. Unit tests 4835 green, 320 `#[ignore]`.
+
+### Post-M9: where a fact about the person goes — design and baseline probe (done)
+- **Found in the same live conversation** as the write-gate threshold: of the live
+  profile's 10 facts about the person, 7 had been written with `add_insight` — as
+  `@self` observations, which `note_recall` hides by default and which take the
+  self-model block's room. The cause is the text, not the model: the self-model's
+  maintenance protocol (`selfmodel.policy_core`, in every turn's prompt) routes
+  "event-driven conclusions, even if stable" to `add_insight` and never names
+  `note_save`; `add_insight`'s description includes "the interlocutor"; notes come
+  back into the prompt only with `notes_in_prompt` (off by default), observations
+  always. The architecture means the opposite (`narrative-as-notes.md`, the
+  reflection rubric's "find the fact via `note_recall`").
+- **Design** — [docs/memory-routing.md](../memory-routing.md): the four memories and
+  their readers, the diagnosis, forks F1–F5 **decided by the user on 2026-11-14**
+  (route by subject with one test question, "would this still be true if I did not
+  exist?"; state it in the protocol, both descriptions and the reflection rubric;
+  the protocol names `note_recall` for facts; write gates across kinds; existing
+  observations left alone), a sub-question for stage 2 (`note_merge` unions tags, so
+  merging an observation into a note yields an observation), and the go/no-go.
+- **The instrument**: `tests/memory_routing_live.rs` — twelve scripted lines (six
+  facts, three invitations to the companion's own conclusion, three of small talk)
+  through the app's request path against a cloud arm; each turn's writes sorted by
+  the line's kind; JSON out. Opt-in (`MINDFORK_ROUTING=1`), each arm skipped without
+  its key. Cloud rather than the local RTX 4090 for the volume (the user's call):
+  Gemma 4 31B through OpenRouter, `gemini-4-hydrogen` through the Gemini API. Two
+  unit tests pin the verdicts.
+- **Baseline** (three conversations per arm): facts kept out of observations —
+  **Gemma 4 31B 2/18, `gemini-4-hydrogen` 13/18**; Gemini's misroutes are the move
+  told as an event and the person's view, the two classes the protocol's wording
+  catches. Gemma also files facts as interlocutor "interests" (9/18 fact turns).
+  GO needs ≥ 80% on both arms with own conclusions no worse (§5.2).
+- Unit tests 4837 green, 322 `#[ignore]`.

@@ -736,6 +736,7 @@ mod live;
 mod llm_history;
 mod local_servers;
 mod mcp;
+mod memory_routing_live;
 mod model_name;
 mod notes_view;
 mod parallel;
