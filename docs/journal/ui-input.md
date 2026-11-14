@@ -2416,9 +2416,9 @@ or tool path; the pty probe above is the live check of the reader.
 **What.** Stage 1's second half of the mouse track
 ([docs/research/mouse-always-captured.md](../research/mouse-always-captured.md) §5.1,
 §5.6; forks decided by the owner on 2026-11-14). Its sibling, the input path (§5.2), has
-an entry of its own, *the input reader under a stream of mouse reports*. Nothing changes for a user who touches no setting except the copy's
-feedback and `Ctrl+C`: the default stays `terminal` until stage 2 brings the feed its
-selection.
+an entry of its own, *the input reader under a stream of mouse reports*. Nothing changes
+for a user who touches no setting except the copy's feedback and `Ctrl+C`: the default
+stays `terminal` until stage 2 brings the feed its selection.
 
 **Key decisions.**
 - **`interface.mouse` = `app` | `terminal`** (F1), read leniently like every setting
@@ -2440,8 +2440,7 @@ selection.
 - **Buttons and drags in SGR only** — `shared::mouse::EnableMouseReports`,
   `?1000h ?1002h ?1006h` — not crossterm's `EnableMouseCapture` with `?1003h` and
   `?1015h`. On Windows the command delegates to crossterm's console mode; no console mode
-  gives buttons alone, so the reader's drop of movement (the sibling's entry) does the
-  rest.
+  gives buttons alone, so the reader's drop of movement (the entry above) does the rest.
   `mindfork keys` asks for the same, so it echoes what the chat receives.
 - **A `chat://` address is followed on the release** (F8) of a click — a press and a
   release with no drag between them (`MousePress { dragged }`). A drag that starts on an
@@ -2477,7 +2476,8 @@ chip's clock, and no note in the feed; the chip as the pill's last chip, muted o
 error colour; the chip's wording in every locale against the note's verdicts. The "no
 command is a silent no-op" gate counts `/mouse`'s flip as visible. The request's bytes
 are checked on unix only: on Windows it is the console's input mode, and the first CI
-run failed there on exactly that. **4858 green, 317 `#[ignore]`** on Linux. No live run
-in the AGENTS.md §3 sense (no engine, memory or tool path). How it feels in Windows
-Terminal over SSH and natively — the setting, `Shift` for the terminal's selection, the
-chip — is the owner's check (P0 of the research).
+run failed there on exactly that. **4864 green, 317 `#[ignore]`** on Linux, with the
+input path's tests merged in. No live run in the AGENTS.md §3 sense (no engine, memory
+or tool path). How it feels in Windows Terminal over SSH and natively — the setting,
+`Shift` for the terminal's selection, the chip — is the owner's check (P0 of the
+research).
