@@ -369,7 +369,10 @@ effort tiers and Fabula — have all closed
   ("account for the mouse toggle `Ctrl+W`"). Collapsing is done for the *whole
   feed* (`Ctrl+T` thoughts, `Ctrl+O` tool calls, stored per chat, spec §11.3),
   and `F5`/`/copy` take the whole conversation; folding or copying one
-  particular message or block needs block selection first.
+  particular message or block needs block selection first. The selection half
+  is **researched** with mouse capture made permanent and the `Ctrl+W` toggle
+  removed ([mouse-always-captured.md](research/mouse-always-captured.md),
+  forks open).
 - **Horizontal scroll for wide tables** — **idea**, instead of the clip with
   `…`; groundwork from [ADR 0003](decisions/0003-own-markdown-renderer.md).
 - **Mermaid — whitelist expansion** — **deferred**. flowchart and sequence
