@@ -313,8 +313,9 @@ effort tiers and Fabula — have all closed
   written with `add_insight`: the self-model's maintenance protocol routes facts
   there and never names `note_save`. **Stages 1 and 2 done** (the wording; facts kept
   out of observations 2/18 → 18/18 on Gemma 4 31B, 13/18 → 18/18 on Gemini; the write
-  gates across kinds, a merge with a note being a note). Open: notes written without
-  naming the person land just under the gate's threshold. Plan and measurements —
+  gates across kinds, a merge with a note being a note, the gate at 0.68 so a
+  restatement that does not name the person is caught). Track complete. Plan and
+  measurements —
   [memory-routing.md](memory-routing.md).
 - **vec0 for notes and observations as their count grows** — **deferred**
   (premature optimization, decision 2026-07). Cosine is brute-force in Rust

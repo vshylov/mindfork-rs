@@ -49,14 +49,20 @@ const CONSOLIDATE_SIMILARITY: f32 = 0.85;
 /// (docs/journal/notes.md, *the write gates get a threshold*): restated notes and
 /// observations 0.80–0.92; conflicting updates of one fact 0.64–0.87, most ≥ 0.72;
 /// unrelated or merely same-topic pairs 0.37–0.63, and the 105 live pairs of that
-/// profile (none a duplicate) top out at 0.727. 0.70 clears all the noise with a
-/// margin and keeps every repeat. It is lower than [`CONSOLIDATE_SIMILARITY`] on
-/// purpose: a gate item costs one line of the result, a missed conflict leaves two
+/// profile (none a duplicate) top out at 0.727. It was set at 0.70 then; it is
+/// **0.68** since the gates look across kinds (docs/memory-routing.md §5.5, the
+/// user's decision of 2026-11-14): a fact restated in a note that does not name
+/// the person ("Moved from Lisbon to Porto…") scores 0.690–0.697 against the
+/// observation holding it ("Alex moved…"), and catching that is the gate's job, not
+/// the person's. 0.68 still clears the measured noise by 0.05; the price is more
+/// same-topic items (on that profile 9 of 15 notes have a neighbour at or above
+/// it, against 2 at 0.70). It is lower than [`CONSOLIDATE_SIMILARITY`] on purpose:
+/// a gate item costs one line of the result, a missed conflict leaves two
 /// contradicting memories.
 ///
 /// A position in the reference (bge-m3) scale, read through
 /// [`crate::shared::embed_calibration::SimilarityScale`] like the others.
-pub(crate) const WRITE_GATE_SIMILARITY: f32 = 0.70;
+pub(crate) const WRITE_GATE_SIMILARITY: f32 = 0.68;
 /// How many notes a write gate shows at most.
 const WRITE_GATE_CAP: usize = 3;
 /// Max number of items to show in each section of the consolidation overview.

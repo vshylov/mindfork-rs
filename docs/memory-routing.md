@@ -1,9 +1,9 @@
 # Plan: where a fact about the person goes — notes or observations
 
-> Status: **stages 1 and 2 done (2026-11-14, §5.4, §5.5).** Forks F1–F5 and the
-> F4 merge sub-question decided by the user on 2026-11-14 (§4). One finding of
-> stage 2 is open (§5.5): a note written without naming the person lands just
-> under the write gate's threshold.
+> Status: **stages 1 and 2 done (2026-11-14, §5.4, §5.5) — the track is complete.**
+> Forks F1–F5, the F4 merge sub-question and the write-gate threshold (lowered to
+> 0.68, §5.5) decided by the user on 2026-11-14. The plan moves to `docs/history/`
+> in a docs branch.
 > The document stays in `docs/` until the track is done, then moves to
 > `docs/history/`.
 
@@ -110,7 +110,8 @@ them invisible without `notes_in_prompt`. *Decided: (a).*
   changes defaults and the prompt's size for every such profile.
 
 **F4. Write gates across kinds.** *Decided: yes — `note_save`'s gate also lists
-observations at ≥ 0.70, marked as observations, and `add_insight`'s lists notes;
+observations at the write gates' threshold (0.70, lowered to 0.68 in §5.5), listed
+apart, and `add_insight`'s lists notes;
 the hint says that the same fact belongs in a note.*
 
 The sub-question for stage 2: `note_merge` gives the merged note the **union** of
@@ -249,11 +250,19 @@ Q8_0 (`MINDFORK_EMBED_URL`) — the gate cannot run without one.
   against the observation, against 0.799–0.808 for the same sentence beginning
   "Alex moved…". The gate is right by its threshold; the note is the weak part — a
   memory with no subject.
-- **Open**: either the `note_save` description asks for a standalone statement
-  that names the person (better notes everywhere, no threshold change), or the
-  threshold moves to 0.68 (catches 0.69 at the price of more same-topic items:
-  9 of 15 notes on the live profile would have a neighbour above it, against 2).
-  *Leaning: the description.* Not decided.
+- **The threshold.** Two ways to catch those: the `note_save` description asking
+  for a standalone statement that names the person, or the threshold at 0.68
+  (catches 0.69 at the price of more same-topic items: 9 of 15 notes on the live
+  profile have a neighbour at or above it, against 2 at 0.70). *User's decision
+  (2026-11-14): 0.68* — catching a restatement is the gate's job, done
+  automatically, not a rule for how notes are to be phrased.
+- **Re-measured at 0.68** (Gemma 4 31B, six conversations): the gate listed the
+  observation and the model merged it into a note **6 of 6**, the fact a note only
+  6 of 6 — two of those notes did not name the person (cosine **0.681** and
+  0.689), the case that went unseen at 0.70. The calibration smoke still separates:
+  restatements 0.889–0.904, conflicts 0.799–0.871, neighbouring topics 0.483–0.598,
+  all below 0.68. The margin above a nameless restatement is thin (0.681 against
+  0.68): a model phrasing notes more loosely still could fall under it.
 
 ## 6. Stages
 

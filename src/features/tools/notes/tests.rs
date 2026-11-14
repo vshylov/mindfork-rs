@@ -689,18 +689,20 @@ async fn note_save_gate_is_silent_when_nothing_is_close() {
 
 #[tokio::test]
 async fn note_save_gate_shows_only_notes_at_or_above_its_threshold() {
+    // 0.69 is where a restatement that does not name the person landed live
+    // (docs/memory-routing.md §5.5) — what the 0.68 threshold exists to catch.
     let profile = Uuid::new_v4();
     let (_d, storage, ctx) = ctx_with_storage(profile);
     let v = passage_vec(&ctx, "zzzz").await;
-    note_at(&storage, profile, "NEAR-0.72", vec![], &v, 0.72);
-    note_at(&storage, profile, "FAR-0.68", vec![], &v, 0.68);
+    note_at(&storage, profile, "NEAR-0.69", vec![], &v, 0.69);
+    note_at(&storage, profile, "FAR-0.66", vec![], &v, 0.66);
     let out = NoteSave
         .invoke(&ctx, serde_json::json!({"content": "zzzz"}))
         .await
         .unwrap();
     assert!(out.result.contains("Похожие заметки"), "{}", out.result);
-    assert!(out.result.contains("NEAR-0.72"), "{}", out.result);
-    assert!(!out.result.contains("FAR-0.68"), "{}", out.result);
+    assert!(out.result.contains("NEAR-0.69"), "{}", out.result);
+    assert!(!out.result.contains("FAR-0.66"), "{}", out.result);
 }
 
 #[tokio::test]
@@ -847,7 +849,7 @@ async fn a_merge_of_observations_stays_an_observation() {
 #[tokio::test]
 async fn write_gate_follows_the_calibrated_scale() {
     // WRITE_GATE_SIMILARITY is a position in bge-m3's scale: on
-    // multilingual-e5-large-instruct 0.70 maps to ~0.90, so a note at 0.85 is no
+    // multilingual-e5-large-instruct 0.68 maps to ~0.89, so a note at 0.85 is no
     // longer shown there, while one at 0.95 still is.
     // Probed through `observation_gate`, which writes nothing, so every probe
     // compares against the same stored set; `note_save` shares the selection.
@@ -862,10 +864,10 @@ async fn write_gate_follows_the_calibrated_scale() {
             .same
             .is_empty()
     };
-    assert!(shown().await, "uncalibrated: 0.85 clears 0.70");
+    assert!(shown().await, "uncalibrated: 0.85 clears 0.68");
 
     calibrate_e5(&storage);
-    assert!(!shown().await, "calibrated: 0.85 is below the mapped ~0.90");
+    assert!(!shown().await, "calibrated: 0.85 is below the mapped ~0.89");
     storage
         .db()
         .note_vector_upsert(note.id, profile, &at_cosine(&v, 0.95))

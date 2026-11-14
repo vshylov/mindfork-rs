@@ -484,8 +484,12 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   asserted that every `note_save` lists the observation and failed on Gemma; it now
   records each note's cosine and asserts only that a note at or above the threshold
   lists it — which held in every run.
-- **Found, not decided**: both recorded misses on Gemma are notes written without
-  naming the person ("Moved from Lisbon to Porto…", 0.690–0.697 against the
-  observation; "Alex moved…" scores 0.80). Either `note_save`'s description asks for
-  a standalone statement naming the person, or the threshold moves to 0.68; the plan
-  leans to the description (§5.5).
+- **The threshold, lowered to 0.68.** Both recorded misses on Gemma were notes
+  written without naming the person ("Moved from Lisbon to Porto…", 0.690–0.697
+  against the observation; "Alex moved…" scores 0.80). Asking `note_save` to name
+  the person, or moving the threshold: *user's decision (2026-11-14), 0.68* —
+  catching a restatement is the gate's job, not a phrasing rule. Re-measured on
+  Gemma: listed and merged **6 of 6**, two of them nameless notes at 0.681 and
+  0.689; the calibration smoke still puts neighbouring topics at 0.483–0.598. The
+  price, measured on the live profile: 9 of 15 notes have a neighbour at or above
+  0.68, against 2 at 0.70; the margin above a nameless restatement is thin (0.681).
