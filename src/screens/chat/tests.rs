@@ -1597,23 +1597,24 @@ fn ctrl_c_copies_selection_ctrl_x_cuts() {
         s.input
             .on_key(KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT)); // select "hello"
     }
-    // Ctrl+C → an intent to write the selection to the clipboard; the selection clears, the text is intact.
+    // Ctrl+C → an intent to write the selection to the clipboard; the selection
+    // stays, as in a GUI field (research F2), and the text is intact.
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
         Some(ChatIntent::CopyToClipboard("hello".into()))
     );
-    assert!(!s.input.has_selection());
+    assert_eq!(s.input.selected_text().as_deref(), Some("hello"));
     assert_eq!(s.input.text(), "hello world");
-    // Select the next 5 characters (" worl") and cut them — the text shrinks.
+    // Grow it by the next 5 characters (" worl") and cut — the text shrinks.
     for _ in 0..5 {
         s.input
             .on_key(KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT));
     }
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL)),
-        Some(ChatIntent::CopyToClipboard(" worl".into()))
+        Some(ChatIntent::CopyToClipboard("hello worl".into()))
     );
-    assert_eq!(s.input.text(), "hellod");
+    assert_eq!(s.input.text(), "d");
 }
 
 /// `?` is a character, not a hotkey — on an empty box as much as on a full
@@ -1876,23 +1877,112 @@ fn activating_a_chat_applies_its_stored_collapse_state() {
 }
 
 #[test]
-fn ctrl_w_toggles_mouse_capture_intent() {
+fn ctrl_w_toggles_mouse_capture_for_the_session() {
     let mut s = ChatScreen::new();
-    // Capture is off by default → the first press turns it on (true).
-    assert_eq!(
-        s.handle_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)),
-        Some(ChatIntent::SetMouseCapture(true))
-    );
-    // The second one — turns it off (false).
-    assert_eq!(
-        s.handle_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)),
-        Some(ChatIntent::SetMouseCapture(false))
-    );
+    let ctrl_w = KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL);
+    // Capture is off until a setting says otherwise → the first press turns it
+    // on. The key asks the orchestrator nothing: the runtime reads the flag.
+    assert!(!s.mouse_capture());
+    assert_eq!(s.handle_key(ctrl_w), None);
+    assert!(s.mouse_capture());
+    // The second one — turns it off.
+    assert_eq!(s.handle_key(ctrl_w), None);
+    assert!(!s.mouse_capture());
     // Also works under a Cyrillic layout: Ctrl+ц (physical W).
-    assert_eq!(
-        s.handle_key(KeyEvent::new(KeyCode::Char('ц'), KeyModifiers::CONTROL)),
-        Some(ChatIntent::SetMouseCapture(true))
+    s.handle_key(KeyEvent::new(KeyCode::Char('ц'), KeyModifiers::CONTROL));
+    assert!(s.mouse_capture());
+}
+
+/// The setting (`interface.mouse`) decides where the session's flag starts;
+/// `Ctrl+W` flips it, and a later snapshot that leaves the setting's verdict
+/// as it was — a save of another field — keeps the flip. A change of the
+/// verdict (the setting, or the legacy terminal mode's veto) resets it.
+#[test]
+fn the_mouse_setting_seeds_the_session_and_ctrl_w_survives_other_saves() {
+    use crate::shared::config::{AppConfig, MouseMode};
+    let mut s = ChatScreen::new();
+    let snapshot = |s: &mut ChatScreen, mouse, terminal_compat, spell| {
+        let mut config = AppConfig::default();
+        config.interface.mouse = mouse;
+        config.interface.terminal_compat = terminal_compat;
+        config.interface.spellcheck_enabled = spell;
+        s.set_settings(config, vec![], vec![], Default::default(), vec![]);
+    };
+    snapshot(&mut s, MouseMode::App, false, true);
+    assert!(s.mouse_capture(), "app: the chat holds the mouse");
+    s.handle_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL));
+    assert!(!s.mouse_capture(), "Ctrl+W hands it back for the session");
+    snapshot(&mut s, MouseMode::App, false, false);
+    assert!(!s.mouse_capture(), "another field saved: the flip stands");
+    snapshot(&mut s, MouseMode::App, true, false);
+    assert!(
+        !s.mouse_capture(),
+        "the legacy terminal mode vetoes capture"
     );
+    snapshot(&mut s, MouseMode::App, false, false);
+    assert!(s.mouse_capture(), "the veto lifted: the setting again");
+    snapshot(&mut s, MouseMode::Terminal, false, false);
+    assert!(!s.mouse_capture(), "terminal: no capture");
+}
+
+/// A copy's selection stays selected (research F2): `Ctrl+C` hands out the
+/// text and leaves the anchor where it was; `Ctrl+X` still removes what it cut.
+#[test]
+fn ctrl_c_keeps_the_fields_selection() {
+    let mut s = ChatScreen::new();
+    s.input.insert_str("hello world");
+    s.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL));
+    let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+    assert_eq!(
+        s.handle_key(ctrl_c),
+        Some(ChatIntent::CopyToClipboard("hello world".into()))
+    );
+    assert_eq!(s.input.selected_text().as_deref(), Some("hello world"));
+    // Copied twice — the same text twice: nothing about the field changed.
+    assert_eq!(
+        s.handle_key(ctrl_c),
+        Some(ChatIntent::CopyToClipboard("hello world".into()))
+    );
+    // A move of the cursor ends it, as in any field.
+    s.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+    assert!(!s.input.has_selection());
+    assert_eq!(s.handle_key(ctrl_c), None);
+    // And the cut still cuts.
+    s.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL));
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL)),
+        Some(ChatIntent::CopyToClipboard("hello world".into()))
+    );
+    assert_eq!(s.input.text(), "");
+}
+
+/// A copy's outcome stays on the status bar for `COPY_CHIP_FOR` and goes on
+/// the first tick past it — a frame then, none before; a newer outcome
+/// replaces the one showing, its own clock with it.
+#[test]
+fn a_copys_outcome_leaves_the_status_bar_when_its_time_is_up() {
+    use std::time::{Duration, Instant};
+    let mut s = ChatScreen::new();
+    let t0 = Instant::now();
+    assert_eq!(s.copy_outcome(), None);
+    assert!(!s.expire_copy_chip(t0), "nothing showing, nothing to draw");
+    s.show_copy_outcome_at("copied".into(), false, t0);
+    assert_eq!(s.copy_outcome(), Some(("copied", false)));
+    let later = t0 + Duration::from_secs(3);
+    assert!(!s.expire_copy_chip(later));
+    s.show_copy_outcome_at("not copied: no X11".into(), true, later);
+    assert!(
+        !s.expire_copy_chip(t0 + COPY_CHIP_FOR),
+        "the newer one's clock"
+    );
+    assert_eq!(s.copy_outcome(), Some(("not copied: no X11", true)));
+    assert!(s.expire_copy_chip(later + COPY_CHIP_FOR));
+    assert_eq!(s.copy_outcome(), None);
+    assert!(
+        !s.expire_copy_chip(later + COPY_CHIP_FOR),
+        "gone once, drawn once"
+    );
+    assert!(s.feed.is_empty(), "never a note in the feed");
 }
 
 #[test]
@@ -4034,11 +4124,28 @@ fn switching_chats_closes_the_picker() {
     assert!(s.chat_links.is_none());
 }
 
-/// Stage 2 (spec §11.3): a left click on a drawn `chat://` address follows it,
-/// and a click a column past it is ordinary feed again.
+/// A left click as the terminal reports it: the press, then the release at
+/// the same cell. The press answers nothing — a click is known only on the
+/// release (research F8) — and the release's answer is returned.
+fn click(s: &mut ChatScreen, column: u16, row: u16) -> Option<ChatIntent> {
+    use ratatui::crossterm::event::MouseButton;
+    assert_eq!(
+        s.handle_mouse(mouse_at(
+            MouseEventKind::Down(MouseButton::Left),
+            column,
+            row
+        )),
+        None,
+        "a press follows nothing"
+    );
+    s.handle_mouse(mouse_at(MouseEventKind::Up(MouseButton::Left), column, row))
+}
+
+/// Stage 2 (spec §11.3): a left click on a drawn `chat://` address follows it
+/// — on the release (research F8) — and a click a column past it is ordinary
+/// feed again.
 #[test]
 fn a_click_on_a_chat_reference_opens_that_conversation() {
-    use ratatui::crossterm::event::MouseButton;
     let (here, other) = (gen_id(), gen_id());
     let mut s = screen_citing(here, &[other], &[other]);
     draw(&mut s);
@@ -4048,21 +4155,70 @@ fn a_click_on_a_chat_reference_opens_that_conversation() {
         .expect("the address is drawn");
 
     assert_eq!(
-        s.handle_mouse(mouse_at(
-            MouseEventKind::Down(MouseButton::Left),
-            at.0,
-            at.1
-        )),
+        click(&mut s, at.0, at.1),
         Some(ChatIntent::OpenChatLink(other))
     );
     assert_eq!(
-        s.handle_mouse(mouse_at(
-            MouseEventKind::Down(MouseButton::Left),
-            at.2,
-            at.1
-        )),
+        click(&mut s, at.2, at.1),
         None,
         "the cell past the address is not the address"
+    );
+}
+
+/// A drag that starts on an address is not a click: its release follows
+/// nothing, so that once the feed has a selection the drag can select the
+/// address instead (research F8). Nor does a release with no press before it
+/// — the press landed while the terminal still had the mouse.
+#[test]
+fn a_drag_from_a_chat_reference_does_not_follow_it() {
+    use ratatui::crossterm::event::MouseButton;
+    let (here, other) = (gen_id(), gen_id());
+    let mut s = screen_citing(here, &[other], &[other]);
+    draw(&mut s);
+    let at = s
+        .feed_view
+        .link_hit_for_test(0)
+        .expect("the address is drawn");
+    let left = MouseButton::Left;
+
+    assert_eq!(
+        s.handle_mouse(mouse_at(MouseEventKind::Down(left), at.0, at.1)),
+        None
+    );
+    assert_eq!(
+        s.handle_mouse(mouse_at(MouseEventKind::Drag(left), at.0 + 1, at.1)),
+        None
+    );
+    assert_eq!(
+        s.handle_mouse(mouse_at(MouseEventKind::Drag(left), at.0, at.1)),
+        None,
+        "back on the cell it started from"
+    );
+    assert_eq!(
+        s.handle_mouse(mouse_at(MouseEventKind::Up(left), at.0, at.1)),
+        None,
+        "the end of a drag is not a click"
+    );
+    assert_eq!(
+        s.handle_mouse(mouse_at(MouseEventKind::Up(left), at.0, at.1)),
+        None,
+        "a release with no press of its own"
+    );
+    // The right and the middle button do nothing (research F3).
+    for button in [MouseButton::Right, MouseButton::Middle] {
+        assert_eq!(
+            s.handle_mouse(mouse_at(MouseEventKind::Down(button), at.0, at.1)),
+            None
+        );
+        assert_eq!(
+            s.handle_mouse(mouse_at(MouseEventKind::Up(button), at.0, at.1)),
+            None
+        );
+    }
+    // And a click after all that still follows it.
+    assert_eq!(
+        click(&mut s, at.0, at.1),
+        Some(ChatIntent::OpenChatLink(other))
     );
 }
 
@@ -4070,7 +4226,6 @@ fn a_click_on_a_chat_reference_opens_that_conversation() {
 /// switching — the same rule (and wording) the picker follows.
 #[test]
 fn clicking_a_reference_to_the_open_chat_says_so() {
-    use ratatui::crossterm::event::MouseButton;
     let here = gen_id();
     let mut s = screen_citing(here, &[], &[here]);
     draw(&mut s);
@@ -4079,14 +4234,7 @@ fn clicking_a_reference_to_the_open_chat_says_so() {
         .link_hit_for_test(0)
         .expect("the address is drawn");
 
-    assert_eq!(
-        s.handle_mouse(mouse_at(
-            MouseEventKind::Down(MouseButton::Left),
-            at.0,
-            at.1
-        )),
-        None
-    );
+    assert_eq!(click(&mut s, at.0, at.1), None);
     assert!(
         s.feed
             .iter()
@@ -4100,7 +4248,6 @@ fn clicking_a_reference_to_the_open_chat_says_so() {
 /// reference picker is now one of them.
 #[test]
 fn a_click_is_ignored_while_the_picker_is_open() {
-    use ratatui::crossterm::event::MouseButton;
     let (here, other) = (gen_id(), gen_id());
     let mut s = screen_citing(here, &[other], &[other]);
     draw(&mut s);
@@ -4111,14 +4258,7 @@ fn a_click_is_ignored_while_the_picker_is_open() {
     s.handle_key(ctrl('l'));
     assert!(s.chat_links.is_some());
 
-    assert_eq!(
-        s.handle_mouse(mouse_at(
-            MouseEventKind::Down(MouseButton::Left),
-            at.0,
-            at.1
-        )),
-        None
-    );
+    assert_eq!(click(&mut s, at.0, at.1), None);
 }
 
 // ---------- typed routes for the chords (docs/history/command-only-control.md) ----------
@@ -4546,7 +4686,10 @@ fn no_command_is_a_silent_no_op() {
             || c.s.profile_overlay.is_some()
             || c.s.chat_links.is_some()
             || !c.last_note().is_empty()
-            || !c.s.input.is_empty();
+            || !c.s.input.is_empty()
+            // `/mouse` flips the session's capture, which the runtime applies
+            // and the status bar names — no intent of its own any more.
+            || c.s.mouse_capture();
         assert!(
             intent.is_some() || visible,
             "{:?} ({line}) did nothing at all",

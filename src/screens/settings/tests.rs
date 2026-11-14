@@ -1100,6 +1100,53 @@ fn interface_has_the_code_block_background_choice() {
     );
 }
 
+/// `interface.mouse` (spec §11.3): a row in the "Interface" section,
+/// `terminal` by default while the track is in progress, cycling to `app` and
+/// back; under the legacy terminal mode `app` says the mode keeps the mouse
+/// with the terminal, and the choice is kept (research F1).
+#[test]
+fn interface_has_the_mouse_choice() {
+    use crate::shared::config::MouseMode;
+    let mut s = screen();
+    let label = |s: &SettingsScreen| match s
+        .interface_fields()
+        .into_iter()
+        .find(|r| r.id == FieldId::IMouse)
+        .expect("the mouse row")
+        .kind
+    {
+        FieldKind::Choice(label) => label,
+        _ => panic!("the mouse row is a choice"),
+    };
+    assert_eq!(label(&s), "терминал");
+    assert!(field_desc(&s, FieldId::IMouse).is_some());
+    assert_eq!(s.config.interface.mouse, MouseMode::Terminal);
+    let mut seen = vec![s.config.interface.mouse];
+    for _ in 0..MouseMode::ALL.len() {
+        match s.cycle_field(FieldId::IMouse, 1) {
+            Some(SettingsIntent::SaveConfig(c)) => seen.push(c.interface.mouse),
+            other => panic!("expected SaveConfig, got {other:?}"),
+        }
+    }
+    assert_eq!(
+        seen,
+        vec![MouseMode::Terminal, MouseMode::App, MouseMode::Terminal],
+        "the cycle must return to where it started"
+    );
+    s.cycle_field(FieldId::IMouse, 1);
+    assert_eq!(label(&s), "приложение");
+    s.toggle_field(FieldId::ICompat);
+    assert_eq!(
+        label(&s),
+        "приложение (выключено в режиме старого терминала)"
+    );
+    assert_eq!(
+        s.config.interface.mouse,
+        MouseMode::App,
+        "the choice is kept"
+    );
+}
+
 /// `interface.newline_key` (spec §11.5): a row in the "Interface" section,
 /// `auto` by default and labelled with the chord it stands for, cycling
 /// through every key and back.

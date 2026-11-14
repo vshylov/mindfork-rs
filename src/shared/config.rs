@@ -2036,6 +2036,72 @@ where
         }))
 }
 
+/// Who answers the mouse inside the window (`interface.mouse`, spec §11.3,
+/// docs/research/mouse-always-captured.md §5.1).
+///
+/// Read leniently ([`lenient_mouse_mode`]), like [`CodeBlockBackground`]: a
+/// value a newer version adds reads here as the default instead of failing the
+/// whole `settings.json` (docs/lessons.md §8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MouseMode {
+    /// The app: the terminal's mouse capture is on while the chat is in front
+    /// — the wheel scrolls the feed, a drag in the input box selects, a click
+    /// on a `chat://` address follows it. The terminal's own selection is
+    /// behind its modifier (`Shift` in most terminals).
+    App,
+    /// The terminal (the default while the track is in progress, so a release
+    /// between its stages changes nothing): no capture, the terminal's own
+    /// selection; `Ctrl+W` hands the mouse to the app for the session.
+    #[default]
+    Terminal,
+}
+
+impl MouseMode {
+    /// Every value, in the order the settings row cycles through them.
+    pub const ALL: [MouseMode; 2] = [MouseMode::App, MouseMode::Terminal];
+
+    /// The name a value has in `settings.json`.
+    pub fn name(self) -> &'static str {
+        match self {
+            MouseMode::App => "app",
+            MouseMode::Terminal => "terminal",
+        }
+    }
+
+    /// The value by its `settings.json` name; `None` for one this binary does
+    /// not know.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.name() == name)
+    }
+
+    /// The next value in [`Self::ALL`], in direction `dir`, wrapping.
+    pub fn cycle(self, dir: i32) -> Self {
+        let n = Self::ALL.len() as i32;
+        let at = Self::ALL.iter().position(|m| *m == self).unwrap_or(0) as i32;
+        Self::ALL[(at + dir).rem_euclid(n) as usize]
+    }
+}
+
+/// Reads `interface.mouse`: a value's name. Anything else — a name a later
+/// version added, a typo, a non-string — is the default, with a line in the log.
+fn lenient_mouse_mode<'de, D>(de: D) -> Result<MouseMode, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = serde_json::Value::deserialize(de)?;
+    Ok(raw
+        .as_str()
+        .and_then(MouseMode::from_name)
+        .unwrap_or_else(|| {
+            tracing::warn!(
+                value = %raw,
+                "interface.mouse is not a mode this version knows — using the default"
+            );
+            MouseMode::default()
+        }))
+}
+
 /// The key that breaks the line in a multi-line field — the chat's input box,
 /// the settings' and the self-model's editors, a note's text
 /// (`interface.newline_key`, spec §11.5).
@@ -2191,6 +2257,11 @@ pub struct InterfaceSettings {
     /// dimming popup backgrounds by color instead of `DIM`. Off by default.
     /// See spec §11.6 and [`crate::shared::theme::GlyphSet`].
     pub terminal_compat: bool,
+    /// Who answers the mouse inside the window — the app or the terminal
+    /// (spec §11.3). Read through [`Self::mouse_captured`], which also applies
+    /// the legacy terminal mode's veto. See [`MouseMode`].
+    #[serde(deserialize_with = "lenient_mouse_mode")]
+    pub mouse: MouseMode,
     /// Horizontal separators between Markdown-table rows in the feed
     /// (`├───┼───┤`, a "grid" look). Off by default (a compact look — a separator
     /// only below the header); enabling it gives a "grid" look. See spec §11.4.
@@ -2270,6 +2341,15 @@ impl InterfaceSettings {
         self.input_max_rows.clamp(1, INPUT_MAX_ROWS_LIMIT)
     }
 
+    /// Whether the app takes the mouse: [`MouseMode::App`] chosen, and the
+    /// legacy terminal mode off. That mode keeps the mouse with the terminal by
+    /// itself — conhost, the terminal it exists for, has no modifier that gets
+    /// its own selection back from an app holding the mouse
+    /// (docs/research/mouse-always-captured.md §4.1, F1).
+    pub fn mouse_captured(&self) -> bool {
+        self.mouse == MouseMode::App && !self.terminal_compat
+    }
+
     /// The colour mode in effect: the chosen one, or the environment's
     /// ([`ThemeMode::environment_default`]).
     pub fn mode(&self) -> ThemeMode {
@@ -2306,6 +2386,7 @@ impl Default for InterfaceSettings {
             selected_dictionaries: Vec::new(),
             confirm_destructive_keys: false,
             terminal_compat: false,
+            mouse: MouseMode::default(),
             table_row_separators: false,
             render_mermaid: true,
             code_block_background: CodeBlockBackground::default(),
@@ -4301,6 +4382,7 @@ mod tests {
                 selected_dictionaries: vec!["en_US".into(), "ru_RU".into()],
                 confirm_destructive_keys: true,
                 terminal_compat: true,
+                mouse: MouseMode::App,
                 table_row_separators: true,
                 render_mermaid: false,
                 code_block_background: CodeBlockBackground::Normal,
@@ -4459,6 +4541,50 @@ mod tests {
             serde_json::to_value(&chosen).unwrap()["code_block_background"],
             "inverted"
         );
+    }
+
+    /// The mouse stays the terminal's unless chosen (the track's default
+    /// until its feed selection lands), an old file reads as that, a value
+    /// round-trips by its name, and one a newer version adds reads as the
+    /// default without costing the rest of the file (lessons §8).
+    #[test]
+    fn the_mouse_is_the_terminals_unless_chosen() {
+        assert_eq!(InterfaceSettings::default().mouse, MouseMode::Terminal);
+        let old: AppConfig = serde_json::from_str(r#"{"interface":{"theme":"dark"}}"#).unwrap();
+        assert_eq!(old.interface.mouse, MouseMode::Terminal);
+        let chosen = InterfaceSettings {
+            mouse: MouseMode::App,
+            ..InterfaceSettings::default()
+        };
+        let written = serde_json::to_value(&chosen).unwrap();
+        assert_eq!(written["mouse"], "app");
+        let back: InterfaceSettings = serde_json::from_value(written).unwrap();
+        assert_eq!(back.mouse, MouseMode::App);
+        let newer: AppConfig =
+            serde_json::from_str(r#"{"interface":{"mouse":"hover","terminal_compat":true}}"#)
+                .unwrap();
+        assert_eq!(newer.interface.mouse, MouseMode::Terminal);
+        assert!(
+            newer.interface.terminal_compat,
+            "the rest of the file holds"
+        );
+        assert_eq!(MouseMode::App.cycle(1), MouseMode::Terminal);
+        assert_eq!(MouseMode::App.cycle(-1), MouseMode::Terminal);
+    }
+
+    /// The app takes the mouse only when chosen and the legacy terminal mode is
+    /// off: conhost has no modifier around capture (research §4.1, F1).
+    #[test]
+    fn the_legacy_terminal_mode_keeps_the_mouse_with_the_terminal() {
+        let at = |mouse, terminal_compat| InterfaceSettings {
+            mouse,
+            terminal_compat,
+            ..InterfaceSettings::default()
+        };
+        assert!(at(MouseMode::App, false).mouse_captured());
+        assert!(!at(MouseMode::App, true).mouse_captured());
+        assert!(!at(MouseMode::Terminal, false).mouse_captured());
+        assert!(!at(MouseMode::Terminal, true).mouse_captured());
     }
 
     /// The reason the background is parsed leniently: a value a newer version

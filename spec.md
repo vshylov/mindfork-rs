@@ -3685,7 +3685,7 @@ this?"*; this screen answers *"where exactly, and take me there."*
   the pill a short window moves it to ([11.1.1](#1111-small-windows)) cannot word
   one turn two ways.
 - Contextual message actions: copy thoughts/message/the whole chat; **edit in place** (both user and assistant — a direct requirement); regenerate; delete last.
-- **Scrolling**: `PageUp`/`PageDown` (by `PAGE_SCROLL` lines) and the **mouse wheel** (by `WHEEL_SCROLL` lines), with automatic "tail-following" when scrolled to the bottom. Terminal mouse capture is a **toggle**, `Ctrl+W` (off by default, so native text selection with the mouse works; when captured, the wheel goes to the application, and selection stays available with `Shift`). The wheel and selection share one terminal mouse-reporting mechanism, so "wheel only" can't be enabled separately. The current mode is shown in the status bar.
+- **Scrolling**: `PageUp`/`PageDown` (by `PAGE_SCROLL` lines) and the **mouse wheel** (by `WHEEL_SCROLL` lines), with automatic "tail-following" when scrolled to the bottom. Terminal mouse capture is decided by a **setting**, `interface.mouse` (Settings → Interface → Behavior, *Mouse*): `terminal` (the default while the track of [docs/research/mouse-always-captured.md](docs/research/mouse-always-captured.md) is in progress) leaves the mouse with the terminal and its native selection; `app` captures it, and the terminal's own selection stays available with its modifier — `Shift` in most terminals, `Option` in iTerm2, `Fn` in Terminal.app. **The legacy terminal mode keeps the mouse with the terminal** whatever the setting says: conhost has no modifier around capture. `Ctrl+W` (and `/mouse`) flips capture **for the session**; a settings snapshot resets the flip only when the setting's verdict changes. Capture **follows the frame in front**: on only while the chat is in front and wants the mouse, off on every other screen, under the help dialog and on the "window too small" notice, so no screen loses the terminal's selection before it has one of its own. What is asked for is **button and drag reports in SGR** (`?1000h ?1002h ?1006h`, `shared::mouse::EnableMouseReports`) — not crossterm's `EnableMouseCapture`, which adds every movement (`?1003h`) and the rxvt encoding; on Windows the console is asked through its input mode, and the movement it reports regardless is dropped by the input reader. The wheel and selection share one terminal mouse-reporting mechanism, so "wheel only" can't be enabled separately. The current mode is shown in the status bar.
 - **Who may scroll to the tail** — split by *who asked*. **User-initiated** actions go
   to the bottom unconditionally: activating a chat (unless a jump was requested),
   sending a message, starting a generation. You did it; you want to see the result.
@@ -3741,11 +3741,14 @@ this?"*; this screen answers *"where exactly, and take me there."*
   its subagent transcripts — is drawn in the link style wherever it appears in the feed — an assistant's answer, a user's
   message, a tool card, "thoughts" — and **`Ctrl+L`** opens a picker of the
   ones this chat holds (newest first, deduplicated, title + date), `Enter`
-  follows the chosen one. **With mouse capture on (`Ctrl+W`), a left click on
-  the address follows it too** — the first thing in the feed that is clickable
-  at all. The key is the route, the click is the convenience: capture is **off
-  by default** because turning it on costs native terminal selection, so a
-  click-only design would be unreachable for most users. Following an address
+  follows the chosen one. **With mouse capture on (the setting, or `Ctrl+W`), a
+  left click on the address follows it too** — the first thing in the feed that
+  is clickable at all. A click is a press and a release with no drag between
+  them, and the address is followed **on the release**, so a drag that starts on
+  one is a drag (it will select, once the feed has a selection of its own). The
+  key is the route, the click is the convenience: capture is **off by default**
+  because turning it on costs native terminal selection, so a click-only design
+  would be unreachable for most users. Following an address
   is an ordinary chat switch — an address names a conversation, not a message —
   and **`Esc` retraces it**, back to the conversation the reference was followed
   from. That is the same one-deep, consumed-on-use back-stack the search screen
@@ -3785,7 +3788,7 @@ this?"*; this screen answers *"where exactly, and take me there."*
     rather than hidden: an address the wrap **split across two rows** is styled
     but not clickable — half an address is not an address — and `Ctrl+L`
     remains the route that always works.
-- **Mouse in the input box** (with `Ctrl+W` capture on): a left click places the cursor, a drag selects text (the cursor snaps to a grapheme-cluster boundary). A click outside the box (in the feed) is a no-op (feed selection is a separate track). See §11.5.
+- **Mouse in the input box** (with capture on — the setting, or `Ctrl+W`): a left click places the cursor, a drag selects text (the cursor snaps to a grapheme-cluster boundary). A click outside the box (in the feed) is a no-op (feed selection is a separate track). See §11.5.
 - **Full redraw for emoji in the feed**: on legacy terminals, lines with emoji leave "hanging" artifacts, so a full per-cell redraw is requested by **two** events — scrolling the feed and **the feed's content changing** (a response streaming, a note added, `Ctrl+T`; flagged by the feed's own mutators — **before** rendering, so the artifact doesn't flash for even one frame: a bad frame can't be hidden behind synchronized output, since conhost ignores mode 2026). The gate is glyphs in the risk group (`is_risky_glyph`: VS16, ZWJ clusters, skin tone, supplementary pictographs, BMP emoji of width 2); CJK is deliberately excluded (terminals render ideographs consistently). **Known limitation**: a wide glyph's background can end up painted only halfway — `ratatui` resets the trailing cell to the default style and doesn't send it in the diff, and the terminal doesn't set the second half's attribute itself; this can only be fixed upstream. The redraw mechanism is `shared/ui.rs::prime_full_redraw` (a marker written into the buffer + `swap_buffers` with no screen output; `terminal.clear()` won't do — its `ESC[2J` causes flicker). The marker is a **space + the `HIDDEN` modifier**, not a placeholder character: a space matches the content of a wide glyph's trailing cell, so `ratatui` won't send it to the terminal. Otherwise their workaround for VS16 kicks in ("send the trailing cell too"), and the `crossterm` backend tracks position by cell number without accounting for glyph width (`x == last.x + 1` → no `MoveTo`) — the trailing cell would print one column to the right and shift the rest of the row (an adjacent wide glyph goes dark, the right border drifts). `HIDDEN` isn't otherwise used in the interface, which is pinned by a test.
 
 #### 11.3.1. In-feed search (`Ctrl+F`)
@@ -4359,7 +4362,9 @@ section and subsection), `Esc` — cancel.
   **which end the self-model screen lists observations from** —
   `self_model_note_order`, newest first by default, [§17.7](#177-ui--the-self-model-screen-f3)),
   *Spelling* (spellcheck on/off, dictionary selection), *Behavior*
-  (**the line-break key** — `newline_key`, auto by default, §11.5; confirming
+  (**the mouse** — `mouse`, `app` | `terminal`, `terminal` by default for now,
+  the legacy terminal mode keeping it with the terminal and the row saying so,
+  §11.3; **the line-break key** — `newline_key`, auto by default, §11.5; confirming
   `Ctrl+R`/`Ctrl+E`; **automatic chat titling** — after the user's
   message / after the assistant's reply (default) / off, §11.2), *Conversation
   copy (F5)* (what's included), *Notifications* (the terminal escape — OSC 777
@@ -4748,7 +4753,7 @@ docs/history/external-api-key.md.
 | `Shift+Enter` / `Alt+Enter` / `Ctrl+J` | line break in the input box (`Alt+Enter` — a fallback for terminals without the kitty protocol; `Ctrl+J`, a line feed, arrives from every terminal and is the one Terminal.app delivers by default); `Ctrl+Enter` too when it is the chosen key (`interface.newline_key`, §11.5), and the footers name the chosen one |
 | `Shift+←/→/↑/↓`, `Shift+Home/End` | select text (`Ctrl+Shift+←/→` — by word) |
 | `Ctrl+A` | select all text in the input box |
-| `Ctrl+C` | copy the selection to the clipboard (no-op without a selection) |
+| `Ctrl+C` | copy the selection to the clipboard, leaving it selected (no-op without a selection) |
 | `Ctrl+X` | cut the selection to the clipboard |
 | `Ctrl+V` | paste from the clipboard (as one chunk, multiline, without sending); an image on the clipboard is staged instead (§9.10) |
 | `Alt+V` | stage the clipboard's image — `/image paste` by key, for terminals that keep `Ctrl+V` for their own paste (Windows Terminal; §9.10) |
@@ -4775,9 +4780,9 @@ docs/history/external-api-key.md.
 | `Ctrl+Home`/`Ctrl+End` | move the cursor to the start/end of the input box's text |
 | `Ctrl+T` | collapse/expand "thoughts" in the feed (per chat, §11.3) |
 | `Ctrl+O` | in a chat: collapse/expand tool calls in the feed — the header stays, the arguments/result fold away (per chat, §11.3); in the chat list: fold/unfold the selected chat's subagent transcripts (per chat, collapsed by default, §11.2 — `/subagents` is the typed route) |
-| `Ctrl+W` | toggle mouse capture: the wheel scrolls the feed ↔ native text selection |
-| click/drag with the mouse in the box | place the cursor / select text (with `Ctrl+W` capture on) |
-| click on a `chat://` reference in the feed | follow it (with `Ctrl+W` capture on; `Ctrl+L` is the route that needs no mouse) |
+| `Ctrl+W` | toggle mouse capture for the session: the wheel scrolls the feed ↔ native text selection (where it starts — the *Mouse* setting) |
+| click/drag with the mouse in the box | place the cursor / select text (with capture on) |
+| click on a `chat://` reference in the feed | follow it, on the release (with capture on; `Ctrl+L` is the route that needs no mouse) |
 | `Ctrl+B` | the emoji picker popup (inserted into the input box at the cursor; remembers the last choice) |
 | `Ctrl+L` | follow a `chat://` reference the assistant wrote: a picker of the conversations this chat links to, `Enter` opens (§11.3) |
 | `PageUp`/`PageDown` / mouse wheel | scroll the feed |
@@ -5148,8 +5153,19 @@ text). What the protocol forces:
   that **JupyterLab does not support it** — it embeds xterm.js without the
   clipboard addon — so the browser-terminal case that first raised this is
   exactly the one it cannot serve.
+- **Where the outcome is said.** On the chat, a **chip at the end of the status
+  bar** for `COPY_CHIP_FOR` = 4 s — `copied`, `sent via OSC 52, unconfirmed —
+  /export`, the two "too big" verdicts and a failure, the last two in the error
+  colour — for a selection's `Ctrl+C`/`Ctrl+X` and a conversation's `F5`/`/copy`
+  alike (`CopyReport::chip`, the note's verdicts in a few words, every dead end
+  still naming `/export`; a failure's cause also goes to the log). Never a note
+  in the feed: a note scrolled the feed, and one pushed while a reply streamed
+  split the reply in two (docs/research/mouse-always-captured.md F10). The chat
+  list keeps the whole sentence on its notice line (`CopyReport::message`).
+  **`Ctrl+C` leaves the selection in place**, as a text field in a GUI does; a
+  move of the cursor or typed text ends it, and `Ctrl+X` removes what it cut.
 
-**Mouse in the input box** (stage D). With mouse capture on (`Ctrl+W`, §11.3), a left
+**Mouse in the input box** (stage D). With mouse capture on (the *Mouse* setting or `Ctrl+W`, §11.3), a left
 click places the cursor in the chat input box, and a drag grows the selection (the cursor
 snaps to a grapheme-cluster boundary, so it doesn't land in the middle of an emoji). The widget
 remembers the area of its last render and inverts the wrap layout

@@ -11,7 +11,7 @@
 
 use super::helpers::*;
 use super::*;
-use crate::shared::config::{CodeBlockBackground, NewlineKey, WebProvider};
+use crate::shared::config::{CodeBlockBackground, MouseMode, NewlineKey, WebProvider};
 
 /// How to read/change a config field's value. `fn` pointers (not closures) — `'static`,
 /// no capturing; routing by mode (external vs cloud) lives **inside** the setter
@@ -259,6 +259,14 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
                     c.interface.code_block_background,
                     |b| code_background_label(b, loc),
                 )
+            },
+        ),
+        IMouse => choice(
+            |c, dir| c.interface.mouse = c.interface.mouse.cycle(dir),
+            |c, loc| {
+                index_menu(&MouseMode::ALL, c.interface.mouse, |m| {
+                    mouse_mode_label(m, c.interface.terminal_compat, loc)
+                })
             },
         ),
         INewlineKey => choice(

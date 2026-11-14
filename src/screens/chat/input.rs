@@ -129,10 +129,13 @@ impl ChatScreen {
             // Copy the selection to the clipboard (Ctrl+C). Writing it is
             // a runtime side effect (`AppCommand` isn't needed — the text
             // is already in the UI). No-op without a selection.
+            //
+            // The selection stays: a copy is not an edit, and a text field in a
+            // GUI keeps what was copied selected (research F2). A move of the
+            // cursor or typed text ends it, as ever.
             'c' => {
                 if self.input.has_selection() {
                     let text = self.input.selected_text().unwrap_or_default();
-                    self.input.clear_selection();
                     return Some(Some(ChatIntent::CopyToClipboard(text)));
                 }
                 Some(None)
@@ -223,11 +226,13 @@ impl ChatScreen {
                 Some(Some(ChatIntent::SetFeedView(self.feed_view.view())))
             }
             // The toggle between wheel scrolling ↔ mouse text selection
-            // (spec §11.3). `Ctrl+M` doesn't work for this: the terminal
-            // reports it as Enter.
+            // (spec §11.3), for the session: the setting `interface.mouse`
+            // decides where it starts. The runtime asks the terminal for what
+            // the flag says before the next frame (`Self::mouse_capture`).
+            // `Ctrl+M` doesn't work for this: the terminal reports it as Enter.
             'w' => {
                 self.mouse_scroll = !self.mouse_scroll;
-                Some(Some(ChatIntent::SetMouseCapture(self.mouse_scroll)))
+                Some(None)
             }
             _ => None,
         }
@@ -682,18 +687,22 @@ impl ChatScreen {
         self.mark_input_changed();
     }
 
-    /// Handles a mouse event (only arrives when mouse capture `Ctrl+W` is
-    /// on): the wheel scrolls the chat feed; a left click on a `chat://`
-    /// reference in the feed follows it (spec §11.3); a left-button click/drag
-    /// in the input box places the cursor / grows the selection (stage D of the
-    /// plan). Works only in the main view — with an overlay/popup/help open
-    /// this is a no-op (scrolling/cursor edits under them would be
-    /// unexpected). A click elsewhere in the feed is still a no-op (feed
-    /// selection is a separate track). See spec §11.3, §11.5.
+    /// Handles a mouse event (only arrives while the app holds the mouse —
+    /// `interface.mouse`, or `Ctrl+W` for the session): the wheel scrolls the
+    /// chat feed; a left-button press/drag in the input box places the cursor /
+    /// grows the selection (stage D of the plan); a left **click** — a release
+    /// with no drag since the press — on a `chat://` reference in the feed
+    /// follows it (spec §11.3). On the release, not the press, so that a drag
+    /// which starts on an address can select it once the feed has a selection
+    /// (docs/research/mouse-always-captured.md F8). Works only in the main
+    /// view — with an overlay/popup/help open this is a no-op
+    /// (scrolling/cursor edits under them would be unexpected). A click
+    /// elsewhere in the feed is still a no-op (feed selection is stage 2 of
+    /// that track). See spec §11.3, §11.5.
     ///
-    /// The reference is tried **before** the input box, and the two cannot
-    /// compete: they own disjoint areas of the screen, and `mouse_press`
-    /// already answers `false` outside its own.
+    /// The reference and the input box cannot compete: they own disjoint
+    /// areas of the screen, and `mouse_press` already answers `false` outside
+    /// its own.
     pub fn handle_mouse(&mut self, mouse: MouseEvent) -> Option<ChatIntent> {
         if self.search.is_some()
             || self.suggest.is_some()
@@ -712,7 +721,18 @@ impl ChatScreen {
             // (during impersonation a preview sits in its place, and the
             // field's `last_area` is stale).
             MouseEventKind::Down(MouseButton::Left) if self.impersonation.is_none() => {
-                if let Some(chat) = self.feed_view.chat_link_at(mouse.column, mouse.row) {
+                self.mouse_press = Some(MousePress { dragged: false });
+                self.input.mouse_press(mouse.column, mouse.row);
+            }
+            MouseEventKind::Drag(MouseButton::Left) if self.impersonation.is_none() => {
+                if let Some(press) = self.mouse_press.as_mut() {
+                    press.dragged = true;
+                }
+                self.input.mouse_drag(mouse.column, mouse.row);
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                let click = self.mouse_press.take().is_some_and(|press| !press.dragged);
+                if click && let Some(chat) = self.feed_view.chat_link_at(mouse.column, mouse.row) {
                     // Clicking the conversation you are already in is not a
                     // switch — the picker's rule, and the same wording.
                     if self.active_chat == Some(chat) {
@@ -721,10 +741,6 @@ impl ChatScreen {
                     }
                     return Some(ChatIntent::OpenChatLink(chat));
                 }
-                self.input.mouse_press(mouse.column, mouse.row);
-            }
-            MouseEventKind::Drag(MouseButton::Left) if self.impersonation.is_none() => {
-                self.input.mouse_drag(mouse.column, mouse.row);
             }
             _ => {}
         }

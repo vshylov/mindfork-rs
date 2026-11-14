@@ -14,6 +14,28 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Added
+
+- **A *Mouse* setting** (Settings → Interface → Behavior): `terminal`, the default,
+  leaves the mouse with your terminal as before; `app` gives it to the app whenever the
+  chat is in front — the wheel scrolls the conversation, a drag in the message box
+  selects, a click follows a `chat://` link — while the terminal's own selection stays a
+  modifier away (`Shift` in most terminals). `Ctrl+W` still switches it for the session.
+  The legacy terminal mode keeps the mouse with the terminal.
+
+### Changed
+
+- **A copy says how it went on the status bar** for a few seconds — copied, sent to your
+  terminal, too big, failed — instead of a line in the conversation, which scrolled it
+  and could split a reply being written. A plain copy now says "copied" too.
+- **`Ctrl+C` leaves the selection in the message box selected**, as text fields usually
+  do; moving the cursor or typing ends it.
+- **A click on a `chat://` link follows it when the button is released**, so a drag that
+  starts on a link no longer opens it.
+- **With the mouse given to the app, only clicks and drags are reported** — no longer
+  every movement of the pointer — and the other screens leave the mouse with the
+  terminal, so text there can be selected as usual.
+
 ### Fixed
 
 - **The screen no longer freezes while the mouse moves in scroll mode (`Ctrl+W`).**

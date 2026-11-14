@@ -23,8 +23,7 @@ use anyhow::{Context, Result};
 #[cfg(unix)]
 use ratatui::crossterm::event::PopKeyboardEnhancementFlags;
 use ratatui::crossterm::event::{
-    DisableBracketedPaste, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent,
-    KeyModifiers, MouseEvent,
+    DisableBracketedPaste, DisableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent,
 };
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{disable_raw_mode, enable_raw_mode};
@@ -33,6 +32,7 @@ use crate::app::runtime::{self, Chunk};
 use crate::shared::config::NewlineKey;
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
+use crate::shared::mouse::EnableMouseReports;
 use crate::widgets::input_box::{InputBox, KeyOutcome};
 
 /// The text every key starts from, and the cursor's column in it — between two
@@ -139,9 +139,11 @@ fn create_record(path: &Path, loc: &Locale) -> Result<File> {
     })
 }
 
+/// Capture on asks for what the app asks for ([`EnableMouseReports`]), so the
+/// echo shows the reports the chat would receive.
 fn set_mouse_capture(on: bool) -> Result<()> {
     if on {
-        execute!(stdout(), EnableMouseCapture)?;
+        execute!(stdout(), EnableMouseReports)?;
     } else {
         execute!(stdout(), DisableMouseCapture)?;
     }

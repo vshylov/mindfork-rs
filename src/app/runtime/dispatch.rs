@@ -728,12 +728,20 @@ pub(super) fn deliver_clipboard(
     text: &str,
 ) {
     let loc = screen.loc();
-    let (message, failed) = copy_text(clipboard, text, screen.clipboard_osc52()).message(loc);
+    let report = copy_text(clipboard, text, screen.clipboard_osc52());
     match active {
-        ActiveScreen::ChatList(list) if failed => list.set_error(message),
-        ActiveScreen::ChatList(list) => list.set_notice(message),
-        _ if failed => screen.push_error(&message),
-        _ => screen.push_note(&message),
+        // The list's notice line has the room for the whole verdict, advice
+        // included.
+        ActiveScreen::ChatList(list) => match report.message(loc) {
+            (message, true) => list.set_error(message),
+            (message, false) => list.set_notice(message),
+        },
+        // Anywhere else the chat's status bar says it, for a few seconds — not
+        // the feed (research F10; see `CopyReport::chip`).
+        _ => {
+            let (chip, failed) = report.chip(loc);
+            screen.show_copy_outcome(chip, failed);
+        }
     }
 }
 
@@ -991,18 +999,6 @@ pub(super) fn dispatch(
         // the screen opens on the `SelfModelView` event (see `apply_event`).
         ChatIntent::OpenSelfModel => {
             let _ = cmd_tx.send(AppCommand::RequestSelfModel);
-            return false;
-        }
-        // The wheel-scroll toggle: enable/disable terminal mouse capture.
-        // This is a purely terminal side effect (FSD: the screen doesn't know about
-        // the terminal, it just reports the desired state). With capture on, text
-        // selection is available with Shift held.
-        ChatIntent::SetMouseCapture(on) => {
-            let _ = if on {
-                execute!(stdout(), EnableMouseCapture)
-            } else {
-                execute!(stdout(), DisableMouseCapture)
-            };
             return false;
         }
         // The feed's collapse state (`Ctrl+T`/`Ctrl+O`) — stored per chat, so it
