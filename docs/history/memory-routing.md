@@ -3,7 +3,7 @@
 > Status: **stages 1 and 2 done (2026-11-14, §5.4, §5.5) — the track is complete.**
 > Forks F1–F5, the F4 merge sub-question and how a nameless note is caught (the
 > note names the person; the threshold stays 0.70 — §5.5) decided by the user on
-> 2026-11-14. The plan moves to `docs/history/` in a docs branch.
+> 2026-11-14. Moved to `docs/history/` once the track was done.
 
 ## 1. Task nerve
 
@@ -14,7 +14,7 @@ its own tool and its own readers (§2). Two of them are the subject here:
   by topic (`note_recall`, the notes block of the prompt);
 - an **observation** (`add_insight`, a note tagged `@self`) — the companion's
   memory about itself: what it understood, how it changed, what happened between
-  the two ("self over time", [docs/history/narrative-as-notes.md](history/narrative-as-notes.md)).
+  the two ("self over time", [docs/history/narrative-as-notes.md](narrative-as-notes.md)).
 
 **The live finding** (2026-11-13). Asked how the tools feel from the inside, a
 Gemini model on a real profile said the boundary between `note_save` and

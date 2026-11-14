@@ -219,7 +219,7 @@ impl Tool for NoteMerge {
         }
         // The merged note inherits the union of the sources' tags (including @self
         // — merging self-notes stays a self-note, hidden from recall). But a merge
-        // that includes a regular note is a regular note (docs/memory-routing.md F4,
+        // that includes a regular note is a regular note (docs/history/memory-routing.md F4,
         // the user's decision of 2026-11-14): what a note and an observation have in
         // common is a fact about the interlocutor, and that belongs in the notes —
         // a union would have turned the note into an observation instead.

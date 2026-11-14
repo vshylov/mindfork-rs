@@ -376,7 +376,7 @@ async fn self_related_block_surfaces_cross_organ_user_note_marked() {
 
 #[tokio::test]
 async fn save_gate_lists_a_close_observation_apart_from_notes() {
-    // docs/memory-routing.md F4: an observation holding the same fact is what the
+    // docs/history/memory-routing.md F4: an observation holding the same fact is what the
     // note_save gate must now show — under its own lead line (a fact about the
     // interlocutor belongs in the note), never as one of "similar notes".
     let profile = Uuid::new_v4();
@@ -779,7 +779,7 @@ async fn add_insight_gate_lists_a_close_note_with_both_routes() {
 
 #[tokio::test]
 async fn a_merge_that_includes_a_note_is_a_note() {
-    // docs/memory-routing.md F4, the user's decision of 2026-11-14: the union of
+    // docs/history/memory-routing.md F4, the user's decision of 2026-11-14: the union of
     // tags would have turned the note into an observation.
     let profile = Uuid::new_v4();
     let (_d, storage, ctx) = ctx_with_storage(profile);

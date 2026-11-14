@@ -11,7 +11,7 @@ use super::{Tool, ToolContext, ToolOutcome};
 
 /// Name of the note-saving tool (the self-model's maintenance protocol routes
 /// facts about the interlocutor to it when the turn offers it —
-/// docs/memory-routing.md F2).
+/// docs/history/memory-routing.md F2).
 pub const NOTE_SAVE_ID: &str = "note_save";
 /// Name of the note-recall tool (reflection needs it for cross-organ links,
 /// Tier 3 — ids of user notes).
@@ -52,7 +52,7 @@ const CONSOLIDATE_SIMILARITY: f32 = 0.85;
 /// profile (none a duplicate) top out at 0.727. 0.70 clears all the noise with a
 /// margin and keeps every repeat.
 ///
-/// **0.68 was weighed and not taken** (docs/memory-routing.md §5.5, the user's
+/// **0.68 was weighed and not taken** (docs/history/memory-routing.md §5.5, the user's
 /// decision of 2026-11-14): a fact restated in a note that does not name the person
 /// ("Moved from Lisbon to Porto…") scores 0.690–0.697 against the observation
 /// holding it, the same sentence beginning "Alex moved…" 0.80. 0.68 catches the

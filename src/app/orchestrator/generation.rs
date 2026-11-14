@@ -2109,7 +2109,7 @@ fn spawn_generation(spawn: GenSpawn) {
             )
             .await;
             // The note routes the protocol names are the ones this request
-            // offers (docs/memory-routing.md F2).
+            // offers (docs/history/memory-routing.md F2).
             let routes = crate::features::tools::self_model::NoteRoutes::offered(&request.tools);
             request.system = inject_self_model(
                 request.system.take(),

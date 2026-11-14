@@ -71,7 +71,7 @@ impl Tool for NoteSave {
             // participate in the gate (and subsequent semantic search).
             ensure_note_vectors(&ctx.storage, ctx.embedder.as_ref(), ctx.profile_id).await;
             // Notes first; then observations holding the same fact — which, since
-            // stage 1 of docs/memory-routing.md, belongs in this note (F4).
+            // stage 1 of docs/history/memory-routing.md, belongs in this note (F4).
             out.push_str(&gate_neighbours(ctx, &emb, id, false).render(
                 ctx.loc,
                 "tool.note_save.gate.similar",
@@ -86,7 +86,7 @@ impl Tool for NoteSave {
 /// nearest first, split by kind — `same` as the note just written, `other` the
 /// other kind. Each at most [`WRITE_GATE_CAP`].
 ///
-/// The other kind is shown since stage 2 of docs/memory-routing.md (F4): a fact
+/// The other kind is shown since stage 2 of docs/history/memory-routing.md (F4): a fact
 /// about the interlocutor belongs in a note, so the same fact filed once as a note
 /// and once as an observation is exactly what a gate should catch — and until then
 /// each gate looked at its own kind only.

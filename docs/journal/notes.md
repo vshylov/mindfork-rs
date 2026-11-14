@@ -388,7 +388,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   back into the prompt only with `notes_in_prompt` (off by default), observations
   always. The architecture means the opposite (`narrative-as-notes.md`, the
   reflection rubric's "find the fact via `note_recall`").
-- **Design** — [docs/memory-routing.md](../memory-routing.md): the four memories and
+- **Design** — [docs/history/memory-routing.md](../history/memory-routing.md): the four memories and
   their readers, the diagnosis, forks F1–F5 **decided by the user on 2026-11-14**
   (route by subject with one test question, "would this still be true if I did not
   exist?"; state it in the protocol, both descriptions and the reflection rubric;
@@ -410,7 +410,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Unit tests 4837 green, 322 `#[ignore]`.
 
 ### Post-M9: where a fact about the person goes — stage 1, the wording (done)
-- **What changed** ([docs/memory-routing.md](../memory-routing.md) §6, stage 1; forks
+- **What changed** ([docs/history/memory-routing.md](../history/memory-routing.md) §6, stage 1; forks
   F1–F3 as the user decided them). The rule is one test question — "would this
   still be true if I did not exist?" — yes: a note; no: an observation.
   `selfmodel.policy_core` now says an observation is memory about the companion
@@ -453,7 +453,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   note.
 
 ### Post-M9: where a fact about the person goes — stage 2, the gates across kinds (done)
-- **What changed** ([docs/memory-routing.md](../memory-routing.md) §6, stage 2; F4 and
+- **What changed** ([docs/history/memory-routing.md](../history/memory-routing.md) §6, stage 2; F4 and
   its merge rule as the user decided them on 2026-11-14). Since stage 1 a fact about
   the interlocutor belongs in a note, so the same fact filed once as a note and once
   as an observation is exactly what a write gate should catch — and each gate looked
