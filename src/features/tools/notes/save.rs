@@ -70,37 +70,68 @@ impl Tool for NoteSave {
             // Pull in embeddings for "old" notes with no vectors, so they
             // participate in the gate (and subsequent semantic search).
             ensure_note_vectors(&ctx.storage, ctx.embedder.as_ref(), ctx.profile_id).await;
-            // Self-notes (@self) are excluded — a regular save shouldn't run into
-            // "self-model" observations.
-            let similar = gate_neighbours(ctx, &emb, id, |n| !is_self_note(n));
-            if !similar.is_empty() {
-                out.push('\n');
-                out.push_str(ctx.loc.t("tool.note_save.gate.similar"));
-                for n in similar {
-                    out.push_str(&format!("\n- (id={}) {}", n.id, n.content));
-                }
-            }
+            // Notes first; then observations holding the same fact — which, since
+            // stage 1 of docs/memory-routing.md, belongs in this note (F4).
+            out.push_str(&gate_neighbours(ctx, &emb, id, false).render(
+                ctx.loc,
+                "tool.note_save.gate.similar",
+                "tool.note_save.gate.cross",
+            ));
         }
         Ok(ToolOutcome::text(out).wrote())
     }
 }
 
-/// The write gates' list: stored notes at or above [`WRITE_GATE_SIMILARITY`] to
-/// `emb`, nearest first, at most [`WRITE_GATE_CAP`] — minus `exclude` (the note just
-/// written) and whatever `keep` refuses. Empty when the search fails: the note is
-/// written either way, the gate is advice.
+/// What a write gate found: the stored notes at or above [`WRITE_GATE_SIMILARITY`],
+/// nearest first, split by kind — `same` as the note just written, `other` the
+/// other kind. Each at most [`WRITE_GATE_CAP`].
 ///
-/// The threshold is applied **before** the kind filter, over every live note: the
-/// search scores them all anyway, and a fixed short candidate list let the other
-/// kind crowd a real neighbour out — `note_save` took the nearest four and then
-/// dropped the @self ones, so on a profile where most notes are observations a
-/// duplicate in fifth place was never shown.
-fn gate_neighbours(
-    ctx: &ToolContext,
-    emb: &[f32],
-    exclude: Uuid,
-    keep: impl Fn(&Note) -> bool,
-) -> Vec<Note> {
+/// The other kind is shown since stage 2 of docs/memory-routing.md (F4): a fact
+/// about the interlocutor belongs in a note, so the same fact filed once as a note
+/// and once as an observation is exactly what a gate should catch — and until then
+/// each gate looked at its own kind only.
+#[derive(Debug, Default)]
+pub(crate) struct GateHits {
+    pub same: Vec<Note>,
+    pub other: Vec<Note>,
+}
+
+impl GateHits {
+    /// The gate's text, appended to the tool's result: each non-empty list under
+    /// its own lead line (`same_key`, `other_key` — passed whole, the i18n-gate
+    /// rule), the same kind first. Empty when nothing was close.
+    pub(crate) fn render(
+        &self,
+        loc: &crate::shared::i18n::Locale,
+        same_key: &str,
+        other_key: &str,
+    ) -> String {
+        let mut out = String::new();
+        for (key, notes) in [(same_key, &self.same), (other_key, &self.other)] {
+            if notes.is_empty() {
+                continue;
+            }
+            out.push('\n');
+            out.push_str(loc.t(key));
+            for n in notes {
+                out.push_str(&format!("\n- (id={}) {}", n.id, n.content));
+            }
+        }
+        out
+    }
+}
+
+/// The write gates' search: every live note at or above [`WRITE_GATE_SIMILARITY`]
+/// to `emb`, minus `exclude` (the note just written), sorted into [`GateHits`] by
+/// whether its kind matches `observation` (the kind just written). Empty when the
+/// search fails: the note is written either way, the gate is advice.
+///
+/// The threshold is applied over every live note **before** the split, and each
+/// kind is capped on its own: the search scores them all anyway, and a fixed short
+/// candidate list let one kind crowd the other out — `note_save` once took the
+/// nearest four and then dropped the @self ones, so on a profile where most notes
+/// are observations a duplicate in fifth place was never shown.
+fn gate_neighbours(ctx: &ToolContext, emb: &[f32], exclude: Uuid, observation: bool) -> GateHits {
     let threshold = ctx
         .storage
         .db()
@@ -111,14 +142,26 @@ fn gate_neighbours(
         .db()
         .note_search_semantic(ctx.profile_id, emb, usize::MAX)
     else {
-        return Vec::new();
+        return GateHits::default();
     };
-    hits.into_iter()
+    let mut out = GateHits::default();
+    for (n, _) in hits
+        .into_iter()
         .take_while(|(_, score)| *score >= threshold)
-        .map(|(n, _)| n)
-        .filter(|n| n.id != exclude && keep(n))
-        .take(WRITE_GATE_CAP)
-        .collect()
+    {
+        if n.id == exclude {
+            continue;
+        }
+        let list = if is_self_note(&n) == observation {
+            &mut out.same
+        } else {
+            &mut out.other
+        };
+        if list.len() < WRITE_GATE_CAP {
+            list.push(n);
+        }
+    }
+    out
 }
 
 /// Creates a note (insert + best-effort embedding) and returns its id. Used by
@@ -146,31 +189,27 @@ pub(crate) async fn create_note(
     Ok(id)
 }
 
-/// Semantically close self-notes to `content` — the `add_insight` tool's gate:
-/// pulls in self-note vectors (backfill), embeds the query, keeps the self-notes at
-/// or above [`WRITE_GATE_SIMILARITY`] ([`gate_neighbours`]), excludes `exclude`.
-/// Empty if the embedder is unavailable (graceful degradation) or nothing is that
-/// close — a direct mirror of the `note_save` gate, but over "about self" memory.
-pub(crate) async fn self_note_similar(
-    ctx: &ToolContext,
-    content: &str,
-    exclude: Uuid,
-) -> Vec<Note> {
+/// The `add_insight` tool's gate: pulls in note vectors (backfill), embeds the new
+/// observation, and finds what is at or above [`WRITE_GATE_SIMILARITY`]
+/// ([`gate_neighbours`]) — observations as `same`, notes as `other` — excluding
+/// `exclude`. Empty if the embedder is unavailable (graceful degradation) or
+/// nothing is that close — the mirror of the `note_save` gate.
+pub(crate) async fn observation_gate(ctx: &ToolContext, content: &str, exclude: Uuid) -> GateHits {
     ensure_note_vectors(&ctx.storage, ctx.embedder.as_ref(), ctx.profile_id).await;
     // Passage, despite reading like a query: the other side of this comparison
-    // is the stored @self notes, and the `add_insight` gate it feeds is one of
-    // the calibrated thresholds (docs/research/embedding-input-prefixes.md §5.3).
+    // is the stored notes, and the `add_insight` gate it feeds is one of the
+    // calibrated thresholds (docs/research/embedding-input-prefixes.md §5.3).
     let Ok(vecs) = ctx
         .embedder
         .embed(vec![content.to_string()], EmbedRole::Passage)
         .await
     else {
-        return Vec::new();
+        return GateHits::default();
     };
     let Some(emb) = vecs.into_iter().next() else {
-        return Vec::new();
+        return GateHits::default();
     };
-    gate_neighbours(ctx, &emb, exclude, is_self_note)
+    gate_neighbours(ctx, &emb, exclude, true)
 }
 
 /// Pulls in embeddings for profile notes that don't have them yet (created before

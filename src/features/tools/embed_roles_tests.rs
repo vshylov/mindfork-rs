@@ -160,8 +160,8 @@ async fn the_note_save_duplicate_gate_is_symmetric() {
 
 #[tokio::test]
 async fn the_add_insight_gate_probes_with_a_passage_not_a_query() {
-    // `self_note_similar` reads like a query — it takes a text and searches —
-    // but the other side of the comparison is the stored @self notes, and the
+    // `observation_gate` reads like a query — it takes a text and searches —
+    // but the other side of the comparison is the stored notes, and the
     // gate it feeds is one of the calibrated thresholds. A Query role here would
     // silently mis-scale it on any prefixed model.
     let (_d, _s, ctx, rec) = ctx();

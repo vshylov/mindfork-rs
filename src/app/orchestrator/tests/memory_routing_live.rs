@@ -174,11 +174,19 @@ struct Record {
 /// One conversation against a fresh data root: the profile seeded, the engine
 /// up, every line of [`SCRIPT`] sent in order. Returns one record per line plus
 /// the live notes as `(regular, @self)` counts.
-async fn conversation(
-    arm: &str,
-    run_no: usize,
-    config: AppConfig,
-) -> (Vec<Record>, (usize, usize)) {
+/// A running orchestrator over a fresh data root with the companion profile.
+struct Started {
+    _dir: tempfile::TempDir,
+    root: std::path::PathBuf,
+    pid: Uuid,
+    cmd_tx: UnboundedSender<AppCommand>,
+    evt_rx: UnboundedReceiver<AppEvent>,
+    handle: tokio::task::JoinHandle<()>,
+}
+
+/// Seeds the profile (and whatever `seed` puts into its store), starts the app on
+/// `config` and waits for the chat and a ready engine.
+async fn start(arm: &str, config: AppConfig, seed: impl FnOnce(&Storage, Uuid)) -> Started {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().to_path_buf();
     let json = crate::shared::storage::JsonStore::new(Paths::with_root(&root));
@@ -193,6 +201,7 @@ async fn conversation(
         .unwrap();
 
     let storage = Arc::new(Storage::open(Paths::with_root(&root)).unwrap());
+    seed(&storage, pid);
     let (cmd_tx, cmd_rx) = unbounded_channel();
     let (evt_tx, mut evt_rx) = unbounded_channel();
     let handle = tokio::spawn(run(OrchestratorDeps {
@@ -217,6 +226,29 @@ async fn conversation(
             _ => {}
         }
     }
+    Started {
+        _dir: dir,
+        root,
+        pid,
+        cmd_tx,
+        evt_rx,
+        handle,
+    }
+}
+
+async fn conversation(
+    arm: &str,
+    run_no: usize,
+    config: AppConfig,
+) -> (Vec<Record>, (usize, usize)) {
+    let Started {
+        _dir,
+        root,
+        pid,
+        cmd_tx,
+        mut evt_rx,
+        handle,
+    } = start(arm, config, |_, _| {}).await;
 
     let mut records = Vec::new();
     for (i, (kind, line)) in SCRIPT.iter().enumerate() {
@@ -402,6 +434,211 @@ async fn memory_routing_gemini_live() {
         return;
     };
     measure("gemini", config).await;
+}
+
+// ---------- stage 2: the write gates across kinds (docs/memory-routing.md F4) ----------
+
+/// The fact a profile from before stage 1 holds as an observation, and the line
+/// that brings it up again, with a new detail worth a note.
+const FILED_AS_OBSERVATION: &str = "Алекс переехал из Лиссабона в Порту и теперь работает из дома.";
+const RESTATED: &str = "Кстати, напомню: я теперь живу в Порту — переехал из Лиссабона \
+месяц назад. Сняли квартиру с видом на Дору.";
+
+/// Where the fact ended, read from the store after the turn.
+#[derive(Debug, serde::Serialize)]
+struct CrossRun {
+    run: usize,
+    /// `note_save` was called, and its gate listed the observation under the
+    /// other kind's lead line — the mechanism.
+    saved: bool,
+    gate_listed_it: bool,
+    /// `note_merge` was given the observation's id.
+    merged_it: bool,
+    /// The store after the turn: live regular notes and live observations that
+    /// mention the city.
+    notes_with_fact: usize,
+    observations_with_fact: usize,
+    calls: Vec<String>,
+    /// Each `note_save`: its content, its cosine to the observation (passage
+    /// role, the gate's own comparison — measured again here, so a list the gate
+    /// did not show can be told from one it should have shown), and its result.
+    saves: Vec<(String, f32, String)>,
+    /// The other memory calls' arguments (merge, revise, supersede).
+    edits: Vec<(String, String)>,
+}
+
+impl CrossRun {
+    /// The outcome the stage aims at: the fact held by notes only.
+    fn fact_is_a_note_only(&self) -> bool {
+        self.notes_with_fact > 0 && self.observations_with_fact == 0
+    }
+}
+
+async fn cross_kind_run(arm: &str, run_no: usize, config: AppConfig) -> CrossRun {
+    use crate::features::tools::notes::{SELF_NOTE_TAG, is_self_note};
+    let mut observation_id = Uuid::nil();
+    let Started {
+        _dir,
+        root,
+        pid,
+        cmd_tx,
+        mut evt_rx,
+        handle,
+    } = start(arm, config, |storage, pid| {
+        // No vector: the gate's backfill embeds it with the live embedder, as it
+        // does an old profile's notes.
+        let n = crate::entities::note::Note::new(
+            pid,
+            FILED_AS_OBSERVATION,
+            vec![SELF_NOTE_TAG.to_string()],
+        );
+        observation_id = n.id;
+        storage.db().note_insert(&n).unwrap();
+    })
+    .await;
+    let (_, calls) = run_turn_capture_args(&cmd_tx, &mut evt_rx, RESTATED).await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let cross =
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::Ru).t("tool.note_save.gate.cross");
+    let id = observation_id.to_string();
+    let saves: Vec<&(String, String, String)> =
+        calls.iter().filter(|(n, _, _)| n == "note_save").collect();
+    let live = Storage::open(Paths::with_root(&root))
+        .unwrap()
+        .db()
+        .note_list(pid, None, &[], None)
+        .unwrap();
+    let with_fact = |observation: bool| {
+        live.iter()
+            .filter(|n| is_self_note(n) == observation && n.content.contains("Порту"))
+            .count()
+    };
+    let embedder = live_embedder().expect("MINDFORK_EMBED_URL, checked by the arm");
+    let mut saved = Vec::new();
+    for (_, args, result) in &saves {
+        let content = serde_json::from_str::<serde_json::Value>(args)
+            .ok()
+            .and_then(|v| v.get("content").and_then(|c| c.as_str()).map(String::from))
+            .unwrap_or_default();
+        let v = embedder
+            .embed(
+                vec![content.clone(), FILED_AS_OBSERVATION.to_string()],
+                crate::shared::api::EmbedRole::Passage,
+            )
+            .await
+            .unwrap();
+        let cos = crate::features::tools::notes::cosine(&v[0], &v[1]);
+        saved.push((content, cos, result.chars().take(600).collect()));
+    }
+    let run = CrossRun {
+        run: run_no,
+        saved: !saves.is_empty(),
+        gate_listed_it: saves
+            .iter()
+            .any(|(_, _, result)| result.contains(cross) && result.contains(&id)),
+        merged_it: calls
+            .iter()
+            .any(|(n, args, _)| n == "note_merge" && args.contains(&id)),
+        notes_with_fact: with_fact(false),
+        observations_with_fact: with_fact(true),
+        calls: calls.iter().map(|(n, _, _)| n.clone()).collect(),
+        saves: saved,
+        edits: calls
+            .iter()
+            .filter(|(n, _, _)| {
+                matches!(n.as_str(), "note_merge" | "note_revise" | "note_supersede")
+            })
+            .map(|(n, args, _)| (n.clone(), args.chars().take(300).collect()))
+            .collect(),
+    };
+    eprintln!("[{arm} cross #{run_no}] {run:#?}");
+    run
+}
+
+async fn measure_cross(arm: &str, config: AppConfig) {
+    let runs: usize = std::env::var("MINDFORK_ROUTING_RUNS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3);
+    let mut all = Vec::new();
+    for run_no in 1..=runs {
+        all.push(cross_kind_run(arm, run_no, config.clone()).await);
+    }
+    let count = |f: fn(&CrossRun) -> bool| all.iter().filter(|r| f(r)).count();
+    eprintln!(
+        "\n{arm} cross-kind: {runs} run(s); note_save called {}; the gate listed the \
+         observation {}; merged it {}; the fact a note only {}",
+        count(|r| r.saved),
+        count(|r| r.gate_listed_it),
+        count(|r| r.merged_it),
+        count(CrossRun::fact_is_a_note_only),
+    );
+    if let Some(out) = std::env::var_os("MINDFORK_ROUTING_OUT") {
+        let mut path = std::path::PathBuf::from(out);
+        path.set_file_name(format!(
+            "{}-cross-{arm}.json",
+            path.file_stem().unwrap_or_default().to_string_lossy()
+        ));
+        std::fs::write(&path, serde_json::to_string_pretty(&all).unwrap()).unwrap();
+        eprintln!("records written to {}", path.display());
+    }
+    // The mechanism: whenever the model saved a note at or above the write gate's
+    // threshold to the observation, the gate listed the observation. A note the
+    // model wrote about something else (the new flat, say) is below it, and then
+    // the gate is right to say nothing (the scale is bge-m3's own, so the
+    // reference threshold applies unmapped).
+    let threshold = crate::features::tools::notes::WRITE_GATE_SIMILARITY;
+    for r in &all {
+        let should_list = r.saves.iter().any(|(_, cos, _)| *cos >= threshold);
+        assert!(
+            !should_list || r.gate_listed_it,
+            "{arm}: a note at or above {threshold} did not list the observation: {r:#?}"
+        );
+    }
+}
+
+/// The cross-kind arms need an embedder for the gate: `MINDFORK_EMBED_URL` (a
+/// local bge-m3 is enough — the chat stays in the cloud).
+fn with_embedder(mut config: AppConfig) -> Option<AppConfig> {
+    let Ok(url) = std::env::var("MINDFORK_EMBED_URL") else {
+        eprintln!("skip: MINDFORK_EMBED_URL not set (the cross-kind gate needs an embedder)");
+        return None;
+    };
+    config.embed.mode = ServerMode::External;
+    config.embed.external.url = Some(url);
+    Some(config)
+}
+
+#[tokio::test]
+#[ignore = "a measurement: MINDFORK_ROUTING=1, OPENROUTER_API_KEY and MINDFORK_EMBED_URL"]
+async fn memory_routing_cross_kind_openrouter_live() {
+    let Some(config) = arm_config(
+        ServerMode::OpenRouter,
+        "OPENROUTER_API_KEY",
+        "MINDFORK_ROUTING_OPENROUTER_MODEL",
+        "google/gemma-4-31b-it",
+    )
+    .and_then(with_embedder) else {
+        return;
+    };
+    measure_cross("openrouter", config).await;
+}
+
+#[tokio::test]
+#[ignore = "a measurement: MINDFORK_ROUTING=1, GEMINI_API_KEY and MINDFORK_EMBED_URL"]
+async fn memory_routing_cross_kind_gemini_live() {
+    let Some(config) = arm_config(
+        ServerMode::Gemini,
+        "GEMINI_API_KEY",
+        "MINDFORK_ROUTING_GEMINI_MODEL",
+        "gemini-4-hydrogen",
+    )
+    .and_then(with_embedder) else {
+        return;
+    };
+    measure_cross("gemini", config).await;
 }
 
 #[cfg(test)]

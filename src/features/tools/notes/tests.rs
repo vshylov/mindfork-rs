@@ -375,9 +375,10 @@ async fn self_related_block_surfaces_cross_organ_user_note_marked() {
 }
 
 #[tokio::test]
-async fn save_gate_excludes_self_notes() {
-    // The note_save gate doesn't show semantically close self-notes — a regular
-    // save shouldn't run into "self-model" observations.
+async fn save_gate_lists_a_close_observation_apart_from_notes() {
+    // docs/memory-routing.md F4: an observation holding the same fact is what the
+    // note_save gate must now show — under its own lead line (a fact about the
+    // interlocutor belongs in the note), never as one of "similar notes".
     let profile = Uuid::new_v4();
     let (_d, storage, ctx) = ctx_with_storage(profile);
     storage
@@ -392,9 +393,15 @@ async fn save_gate_excludes_self_notes() {
         .invoke(&ctx, serde_json::json!({"content": "aaab"}))
         .await
         .unwrap();
-    // The only close note is self → the "Similar notes" block doesn't appear.
-    assert!(!out.result.contains("Похожие заметки"));
-    assert!(!out.result.contains("aaaa bbbb"));
+    // The only close note is an observation → no "similar notes" list, the
+    // observations' list instead, naming the merge that keeps the fact a note.
+    assert!(!out.result.contains("Похожие заметки"), "{}", out.result);
+    assert!(
+        out.result.contains(ru().t("tool.note_save.gate.cross")),
+        "{}",
+        out.result
+    );
+    assert!(out.result.contains("aaaa bbbb"), "{}", out.result);
 }
 
 #[tokio::test]
@@ -700,7 +707,7 @@ async fn note_save_gate_shows_only_notes_at_or_above_its_threshold() {
 async fn note_save_gate_is_not_crowded_out_by_observations() {
     // The gate used to take the nearest four and only then drop @self ones: on a
     // profile where most notes are observations, a regular duplicate in fifth
-    // place was never shown.
+    // place was never shown. Each kind now has its own list and its own cap.
     let profile = Uuid::new_v4();
     let (_d, storage, ctx) = ctx_with_storage(profile);
     let v = passage_vec(&ctx, "zzzz").await;
@@ -712,15 +719,21 @@ async fn note_save_gate_is_not_crowded_out_by_observations() {
     let out = NoteSave
         .invoke(&ctx, serde_json::json!({"content": "zzzz"}))
         .await
-        .unwrap();
-    assert!(out.result.contains("REGULAR-0.80"), "{}", out.result);
-    assert!(!out.result.contains("OBS-"), "{}", out.result);
+        .unwrap()
+        .result;
+    let notes_at = out.find("Похожие заметки").expect("the notes' list");
+    let obs_at = out
+        .find(ru().t("tool.note_save.gate.cross"))
+        .expect("the observations' list");
+    let regular_at = out.find("REGULAR-0.80").expect("the regular note");
+    assert!(notes_at < regular_at && regular_at < obs_at, "{out}");
+    assert_eq!(out.matches("OBS-").count(), WRITE_GATE_CAP, "{out}");
 }
 
 #[tokio::test]
 async fn add_insight_gate_is_not_crowded_out_by_notes_and_keeps_its_threshold() {
-    // The add_insight side of the same fix: observations only, at or above the
-    // threshold, however many regular notes sit nearer.
+    // The add_insight side: observations in `same`, notes in `other`, each at or
+    // above the threshold and capped on its own, however many notes sit nearer.
     let profile = Uuid::new_v4();
     let (_d, storage, ctx) = ctx_with_storage(profile);
     let v = passage_vec(&ctx, "zzzz").await;
@@ -730,9 +743,105 @@ async fn add_insight_gate_is_not_crowded_out_by_notes_and_keeps_its_threshold() 
     let self_tag = || vec![SELF_NOTE_TAG.to_string()];
     let near = note_at(&storage, profile, "OBS-0.80", self_tag(), &v, 0.80);
     note_at(&storage, profile, "OBS-0.65", self_tag(), &v, 0.65);
-    let similar = self_note_similar(&ctx, "zzzz", Uuid::nil()).await;
-    let ids: Vec<Uuid> = similar.iter().map(|n| n.id).collect();
-    assert_eq!(ids, vec![near.id], "{similar:?}");
+    let hits = observation_gate(&ctx, "zzzz", Uuid::nil()).await;
+    let ids: Vec<Uuid> = hits.same.iter().map(|n| n.id).collect();
+    assert_eq!(ids, vec![near.id], "{hits:?}");
+    assert_eq!(hits.other.len(), WRITE_GATE_CAP, "{hits:?}");
+    assert!(hits.other.iter().all(|n| !is_self_note(n)), "{hits:?}");
+}
+
+#[tokio::test]
+async fn add_insight_gate_lists_a_close_note_with_both_routes() {
+    // F4 from the other side: a note holding the fact the new observation
+    // restates is shown under its own lead line, which names both outcomes — merge
+    // (the fact belongs in the note) or keep both and link (an own conclusion).
+    let profile = Uuid::new_v4();
+    let (_d, storage, ctx) = ctx_with_storage(profile);
+    let v = passage_vec(&ctx, "zzzz").await;
+    note_at(&storage, profile, "NOTE-0.85", vec![], &v, 0.85);
+    let out = crate::features::tools::self_model::AddInsight
+        .invoke(&ctx, serde_json::json!({"text": "zzzz"}))
+        .await
+        .unwrap()
+        .result;
+    let cross = ru().t("tool.add_insight.gate.cross");
+    assert!(out.contains(cross), "{out}");
+    assert!(
+        cross.contains("note_merge") && cross.contains("note_link"),
+        "{cross}"
+    );
+    assert!(out.contains("NOTE-0.85"), "{out}");
+    assert!(
+        !out.contains("Похожие наблюдения ("),
+        "no observation was close: {out}"
+    );
+}
+
+#[tokio::test]
+async fn a_merge_that_includes_a_note_is_a_note() {
+    // docs/memory-routing.md F4, the user's decision of 2026-11-14: the union of
+    // tags would have turned the note into an observation.
+    let profile = Uuid::new_v4();
+    let (_d, storage, ctx) = ctx_with_storage(profile);
+    let note = Note::new(profile, "Алекс переехал в Порту", vec!["переезд".into()]);
+    let observation = Note::new(
+        profile,
+        "Алекс рассказал, что переехал в Порту",
+        vec![SELF_NOTE_TAG.to_string()],
+    );
+    storage.db().note_insert(&note).unwrap();
+    storage.db().note_insert(&observation).unwrap();
+    let out = NoteMerge
+        .invoke(
+            &ctx,
+            serde_json::json!({
+                "ids": [note.id.to_string(), observation.id.to_string()],
+                "content": "Алекс переехал из Лиссабона в Порту",
+            }),
+        )
+        .await
+        .unwrap()
+        .result;
+    assert!(
+        out.contains(ru().t("tool.note_merge.result.as_note")),
+        "{out}"
+    );
+    let live = storage.db().note_list(profile, None, &[], None).unwrap();
+    assert_eq!(live.len(), 1, "{live:?}");
+    assert!(
+        !is_self_note(&live[0]),
+        "the merge must be a note: {live:?}"
+    );
+    assert_eq!(live[0].tags, vec!["переезд".to_string()], "other tags kept");
+}
+
+#[tokio::test]
+async fn a_merge_of_observations_stays_an_observation() {
+    let profile = Uuid::new_v4();
+    let (_d, storage, ctx) = ctx_with_storage(profile);
+    let tag = || vec![SELF_NOTE_TAG.to_string()];
+    let a = Note::new(profile, "я ценю краткость", tag());
+    let b = Note::new(profile, "я стараюсь отвечать коротко", tag());
+    storage.db().note_insert(&a).unwrap();
+    storage.db().note_insert(&b).unwrap();
+    let out = NoteMerge
+        .invoke(
+            &ctx,
+            serde_json::json!({
+                "ids": [a.id.to_string(), b.id.to_string()],
+                "content": "я ценю краткость и стараюсь отвечать коротко",
+            }),
+        )
+        .await
+        .unwrap()
+        .result;
+    assert!(
+        !out.contains(ru().t("tool.note_merge.result.as_note")),
+        "{out}"
+    );
+    let live = storage.db().note_list(profile, None, &[], None).unwrap();
+    assert_eq!(live.len(), 1, "{live:?}");
+    assert!(is_self_note(&live[0]), "{live:?}");
 }
 
 #[tokio::test]
@@ -740,7 +849,7 @@ async fn write_gate_follows_the_calibrated_scale() {
     // WRITE_GATE_SIMILARITY is a position in bge-m3's scale: on
     // multilingual-e5-large-instruct 0.70 maps to ~0.90, so a note at 0.85 is no
     // longer shown there, while one at 0.95 still is.
-    // Probed through `self_note_similar`, which writes nothing, so every probe
+    // Probed through `observation_gate`, which writes nothing, so every probe
     // compares against the same stored set; `note_save` shares the selection.
     let profile = Uuid::new_v4();
     let (_d, storage, ctx) = ctx_with_storage(profile);
@@ -748,8 +857,9 @@ async fn write_gate_follows_the_calibrated_scale() {
     let tags = vec![SELF_NOTE_TAG.to_string()];
     let note = note_at(&storage, profile, "MARKER", tags, &v, 0.85);
     let shown = || async {
-        !self_note_similar(&ctx, "zzzz", Uuid::nil())
+        !observation_gate(&ctx, "zzzz", Uuid::nil())
             .await
+            .same
             .is_empty()
     };
     assert!(shown().await, "uncalibrated: 0.85 clears 0.70");

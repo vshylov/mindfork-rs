@@ -24,6 +24,10 @@ split by subsystem.
   send such facts to tagged notes, and observations keep what it understood about
   itself. Measured on two models: facts kept out of observations went from 2 and 13 of
   18 to 18 of 18. Notes saved earlier stay where they are.
+- **A fact found filed among the companion's observations is folded into its note.**
+  When a note is saved, observations holding the same fact are now listed beside the
+  similar notes, and merging an observation into a note gives a note — before, a merge
+  turned the note into an observation. A merge of observations stays an observation.
 
 ### Fixed
 

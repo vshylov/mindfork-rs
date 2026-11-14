@@ -803,7 +803,7 @@ Semantics and signatures — as in attempt #1 (section 9.3 of its specification)
 |---|---|---|
 | `rag_search` | `{ query, top_k? }` | Embed the query → kNN in `rag_documents` (sqlite-vec, filtered by `profile_id`) → top-N fragments with sources. Refuses over a knowledge base another embedding model indexed, asked before **and after** the query is embedded ([9.3.4](#934-changing-the-embedding-model)). |
 | `rag_add` | `{ text, source? }` | Chunking → embedding → written to `rag_documents` (`profile_id`). Returns the number of chunks. Every chunk of the text goes to the embedder in one call, which sends it in requests of at most 64 (the embedding lifecycle, below). |
-| `note_save` | `{ content, tags? }` | Memory about the interlocutor and their world — what would still be true if the companion did not exist (projects, works, plans, places, family, setup, views; the companion's reading of their work), with topic tags ([§17.3](#173-tools), routing). Written to `notes` (`profile_id`). Returns the id, and up to three notes at or above the write-gate similarity (`0.70` in the bge-m3 scale, mapped per model, [§9.3.4](#934-changing-the-embedding-model)) when there are any — the note is already written, so the hint says a repeat is merged with the one it repeats (`note_merge`, both ids). Below the threshold the gate says nothing: a nearest note that is merely on a neighbouring topic is not shown. |
+| `note_save` | `{ content, tags? }` | Memory about the interlocutor and their world — what would still be true if the companion did not exist (projects, works, plans, places, family, setup, views; the companion's reading of their work), with topic tags ([§17.3](#173-tools), routing). Written to `notes` (`profile_id`). Returns the id, and up to three notes at or above the write-gate similarity (`0.70` in the bge-m3 scale, mapped per model, [§9.3.4](#934-changing-the-embedding-model)) when there are any — the note is already written, so the hint says a repeat is merged with the one it repeats (`note_merge`, both ids). Below the threshold the gate says nothing: a nearest note that is merely on a neighbouring topic is not shown. Observations at or above it are listed too, apart and under their own lead line: one holding the same fact about the interlocutor belongs in the note, and a merge that includes a note is a note ([§17.3](#173-tools), routing). |
 | `note_recall` | `{ query?, tags?, limit? }` | Search notes (text/tags; optionally semantic), filtered by `profile_id`. |
 | `python_exec` | `{ code }` | Executes Python in an isolated Wasmer/WASIX sandbox (by default) or a local interpreter — see [13.2](#132-python-execution). Returns stdout/stderr/error. Behind a global switch (disabled by default). |
 | `web_search` | `{ query, max_results? }` | Searches DuckDuckGo (our own `reqwest` client) + extracts readable page content. Behind the `web_enabled` global switch (**off** by default, like Python and file access). See [9.3.1](#931-the-web-tool-our-own-implementation). |
@@ -6253,7 +6253,7 @@ The SelfModel tool group (optional: **not** in `default_tool_ids`, present in
 | `reflect` | Return the current model + a self-reflection rubric (no write; an "entry point") |
 | `update_self_model` | The self-description + goals (add/complete/abandon) |
 | `update_user_model` | The companion's traits/interests/relationship dynamic — short, stable dispositions and lasting interests, not places, dates, plans or events |
-| `add_insight` | Record an observation into the narrative — memory about the companion itself: what it understood, how it changed, contradictions it noticed (as prose), episodes between the two; a fact about the interlocutor is not one, even learned as news (it is a note); observations at or above the write-gate similarity (the `note_save` gate's threshold) are shown after the write, with the hint to merge a repeat (`note_merge`) |
+| `add_insight` | Record an observation into the narrative — memory about the companion itself: what it understood, how it changed, contradictions it noticed (as prose), episodes between the two; a fact about the interlocutor is not one, even learned as news (it is a note); notes at or above the same threshold are listed apart — an observation that only restates one is merged into it, an own conclusion about it is kept and linked; observations at or above the write-gate similarity (the `note_save` gate's threshold) are shown after the write, with the hint to merge a repeat (`note_merge`) |
 
 **Where a fact about the interlocutor goes** ([docs/memory-routing.md](docs/memory-routing.md)).
 Observations are the companion's memory about itself; a fact about the person or their world —
@@ -6264,6 +6264,11 @@ self-consolidation prompts) says what an observation is not; the route itself �
 (look facts up with `note_recall` before answering about the person's life) — is added to the
 **turn's** protocol only when the request offers that tool (`NoteRoutes::offered`), because the
 background passes do not offer `note_save` and a rule naming an absent tool is a dead end.
+The write gates look across kinds: each lists the other kind's close items apart from its
+own, under a lead line saying where the fact belongs. `note_merge` keeps the union of its
+sources' tags, except that a merge which includes a regular note is a regular note (`@self`
+dropped) — what a note and an observation share is a fact about the interlocutor; a merge
+of observations stays an observation.
 
 **A departure from the tool contract ([§9.2](#92-the-tool-contract)):** SelfModel
 is per-profile data in SQLite, so the mutator tools **write directly**
