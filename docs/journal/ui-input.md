@@ -2403,9 +2403,9 @@ in the batch of its own read, at 160 ms; a real paste's chase ends `PASTE_GAP` a
 last key though reports go on every 8 ms; a paste in console chunks with a release
 between them is one batch; a movement with no button never reaches a batch while a
 press, a drag, a release of the button and the wheel do; a tick of dropped events marks
-nothing dirty, a tick with the wheel does. **Control arm, red:** with the old rule (the
-drain's every event counted, the chase renewed by any event) the three stream tests
-fail; and the terminal's own source keeps the process clock and answers a zero-wait poll
-at once, with a terminal or none. **4851 green, 317 `#[ignore]`** on Linux (this change
-adds no `#[ignore]`). No live run in the AGENTS.md §3 sense — no engine, memory or tool
-path; the pty probe above is the live check of the reader.
+nothing dirty, a tick with the wheel does; the terminal's own source keeps the process
+clock and answers a zero-wait poll at once, with a terminal or none. **Control arm,
+red:** with the old rule (the drain's every event counted, the chase renewed by any
+event) the three stream tests fail. **4851 green, 317 `#[ignore]`** on Linux (this
+change adds no `#[ignore]`). No live run in the AGENTS.md §3 sense — no engine, memory
+or tool path; the pty probe above is the live check of the reader.
