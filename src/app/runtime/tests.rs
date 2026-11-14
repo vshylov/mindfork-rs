@@ -3294,21 +3294,33 @@ fn a_typed_paste_says_when_the_clipboard_would_not_open() {
     }
 }
 
-/// The mouse request's exact bytes, each written once: buttons, drags and SGR
-/// on (`?1003h`, every movement, never), crossterm's five modes off, and
-/// nothing at all while the wish stays what it was.
+/// The mouse is asked for once per change of the wish — off at start, as the
+/// terminal is — never once a tick.
 #[test]
 fn the_mouse_is_asked_for_once_per_change() {
     let mut mouse = MouseCapture::default();
+    assert_eq!(
+        mouse.change(false),
+        None,
+        "off at start, as the terminal is"
+    );
+    assert_eq!(mouse.change(true), Some(true));
+    assert_eq!(mouse.change(true), None, "asked once, not once a tick");
+    assert_eq!(mouse.change(false), Some(false));
+    assert_eq!(mouse.change(false), None);
+}
+
+/// The request's exact bytes each way: buttons, drags and SGR on (`?1003h`,
+/// every movement, never); crossterm's modes off. Unix only — on Windows the
+/// request is the console's input mode, not bytes.
+#[cfg(not(windows))]
+#[test]
+fn the_mouse_request_is_buttons_and_drags_on_and_everything_off() {
     let mut out = Vec::new();
-    mouse.follow(false, &mut out).unwrap();
-    assert!(out.is_empty(), "off at start, as the terminal is");
-    mouse.follow(true, &mut out).unwrap();
+    ask_mouse(true, &mut out).unwrap();
     assert_eq!(out, crate::shared::mouse::MOUSE_REPORTS_ON.as_bytes());
     out.clear();
-    mouse.follow(true, &mut out).unwrap();
-    assert!(out.is_empty(), "asked once, not once a tick");
-    mouse.follow(false, &mut out).unwrap();
+    ask_mouse(false, &mut out).unwrap();
     let off = String::from_utf8(out).unwrap();
     for mode in ["?1006l", "?1002l", "?1000l"] {
         assert!(off.contains(mode), "{off:?} lifts {mode}");

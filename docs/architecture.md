@@ -4297,8 +4297,8 @@ The chat keeps the wish — `ChatScreen::mouse_capture`, seeded from
 `InterfaceSettings::mouse_captured` (the *Mouse* setting, vetoed by the legacy
 terminal mode) and flipped for the session by `Ctrl+W` — and the loop, before
 every frame, asks `mouse_wanted` (the chat in front, no help dialog, no "too small"
-notice) and hands the answer to `MouseCapture::follow`, which writes
-`EnableMouseReports` or `DisableMouseCapture` only when it changed. No intent
+notice) and hands the answer to `MouseCapture::change`; only a change reaches
+`ask_mouse`, which writes `EnableMouseReports` or `DisableMouseCapture`. No intent
 carries capture any more; the screen states a wish and `runtime` executes it.
 
 **Typed routes for the chords** (`features/ui_command.rs` +

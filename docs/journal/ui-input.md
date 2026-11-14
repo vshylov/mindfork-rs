@@ -2432,8 +2432,8 @@ selection.
   changes, so a save of another field keeps a flip. `ChatIntent::SetMouseCapture` is
   gone: the chat states a wish (`mouse_capture`), and the loop asks the terminal.
 - **Capture follows the frame in front** (F7): `mouse_wanted` — the chat in front, no
-  help dialog, no "too small" notice — goes to `MouseCapture::follow` before every
-  frame. It writes only on a change, so a tick costs nothing. The list, settings, the
+  help dialog, no "too small" notice — goes to `MouseCapture::change` before every
+  frame, and only a change reaches `ask_mouse`, so a tick costs nothing. The list, settings, the
   self-model viewer and the rest keep the terminal's own selection until stage 3 gives
   them a mouse. This also changes `Ctrl+W` today: capture used to stay on across
   screens that dropped every report.
@@ -2466,16 +2466,18 @@ anti-aliasing in the `⚙`/`▸` glyphs, which a fallback font draws, and in fra
 dumps did not change. Those other pictures were left as committed.
 
 **Tests.** The setting (default, an old file, the round trip, a newer value read as the
-default without losing the file, the veto); the capture command's bytes; the
-reconciler (asked once per change, the exact bytes each way) and `mouse_wanted` across
-the chat, the list, the help and the notice; the setting seeding the session flag and
-`Ctrl+W` surviving another field's save; the settings row (default, cycle, the veto's
-label, the choice kept); the click on the release, and a drag from an address, a stray
-release and the other buttons following nothing; `Ctrl+C` keeping the selection
+default without losing the file, the veto); the capture command's bytes; the reconciler
+(asked once per change, the exact bytes each way) and `mouse_wanted` across the chat,
+the list, the help and the notice; the setting seeding the session flag and `Ctrl+W`
+surviving another field's save; the settings row (default, cycle, the veto's label, the
+choice kept); the click on the release, and a drag from an address, a stray release and
+the other buttons following nothing; `Ctrl+C` keeping the selection
 (`ctrl_c_copies_selection_ctrl_x_cuts` rewritten for it); the chip's expiry, a newer
 chip's clock, and no note in the feed; the chip as the pill's last chip, muted or in the
-error colour; the chip's wording in every locale against the note's verdicts. The
-"no command is a silent no-op" gate counts `/mouse`'s flip as visible. **4857 green, 317
-`#[ignore]`** on Linux. No live run in the AGENTS.md §3 sense (no engine, memory or tool
-path). How it feels in Windows Terminal over SSH and natively — the setting, `Shift` for
-the terminal's selection, the chip — is the owner's check (P0 of the research).
+error colour; the chip's wording in every locale against the note's verdicts. The "no
+command is a silent no-op" gate counts `/mouse`'s flip as visible. The request's bytes
+are checked on unix only: on Windows it is the console's input mode, and the first CI
+run failed there on exactly that. **4858 green, 317 `#[ignore]`** on Linux. No live run
+in the AGENTS.md §3 sense (no engine, memory or tool path). How it feels in Windows
+Terminal over SSH and natively — the setting, `Shift` for the terminal's selection, the
+chip — is the owner's check (P0 of the research).

@@ -659,10 +659,9 @@ fn run_loop(
         // change that could move it — a key, a screen opened or closed, a
         // settings snapshot — also makes the frame dirty, so the request
         // reaches the terminal before the frame does.
-        let _ = mouse.follow(
-            mouse_wanted(&active, &help, &screen, drawn.placeholder),
-            &mut stdout(),
-        );
+        if let Some(on) = mouse.change(mouse_wanted(&active, &help, &screen, drawn.placeholder)) {
+            let _ = ask_mouse(on, &mut stdout());
+        }
         if dirty {
             draw_frame(
                 terminal,
@@ -1169,21 +1168,27 @@ struct MouseCapture {
 }
 
 impl MouseCapture {
-    /// Asks `out` for `want` — button and drag reports
-    /// ([`EnableMouseReports`]) or none — when it is not what was asked last.
-    fn follow(&mut self, want: bool, out: &mut impl std::io::Write) -> std::io::Result<()> {
-        if want == self.on {
-            return Ok(());
-        }
-        if want {
-            ratatui::crossterm::queue!(out, EnableMouseReports)?;
-        } else {
-            ratatui::crossterm::queue!(out, DisableMouseCapture)?;
-        }
-        out.flush()?;
-        self.on = want;
-        Ok(())
+    /// Records `want`. `Some(want)` when it is not what was asked last — the
+    /// request [`ask_mouse`] then writes; `None` when nothing changed, which
+    /// is every tick but the ones that do.
+    fn change(&mut self, want: bool) -> Option<bool> {
+        (want != self.on).then(|| {
+            self.on = want;
+            want
+        })
     }
+}
+
+/// Asks the terminal for button and drag reports ([`EnableMouseReports`]) or
+/// for none. On unix the request is bytes on `out`; on Windows crossterm asks
+/// the console through its input mode, and `out` is only flushed.
+fn ask_mouse(on: bool, out: &mut impl std::io::Write) -> std::io::Result<()> {
+    if on {
+        ratatui::crossterm::queue!(out, EnableMouseReports)?;
+    } else {
+        ratatui::crossterm::queue!(out, DisableMouseCapture)?;
+    }
+    out.flush()
 }
 
 /// Whether the frame in front wants the terminal's mouse reports
