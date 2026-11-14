@@ -71,6 +71,20 @@ impl EventSource for Wire {
     }
 }
 
+/// The terminal's own source, where a test can reach it: its clock is the
+/// process's monotonic one, and a poll with no wait answers at once — with a
+/// terminal or none (CI has none, and the answer is then an error) — so the
+/// drain's `poll(ZERO)` can never stall a tick.
+#[test]
+fn the_terminals_source_keeps_the_clock_and_never_waits_on_a_zero_poll() {
+    let before = Instant::now();
+    let now = TerminalEvents.now();
+    assert!(before <= now && now <= Instant::now());
+    let started = Instant::now();
+    let _ = TerminalEvents.poll(Duration::ZERO);
+    assert!(started.elapsed() < Duration::from_secs(1));
+}
+
 fn mouse(kind: MouseEventKind, column: u16) -> Event {
     Event::Mouse(ratatui::crossterm::event::MouseEvent {
         kind,

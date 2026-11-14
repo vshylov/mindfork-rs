@@ -2405,6 +2405,7 @@ between them is one batch; a movement with no button never reaches a batch while
 press, a drag, a release of the button and the wheel do; a tick of dropped events marks
 nothing dirty, a tick with the wheel does. **Control arm, red:** with the old rule (the
 drain's every event counted, the chase renewed by any event) the three stream tests
-fail. **4850 green, 317 `#[ignore]`** on Linux (this change adds no `#[ignore]`). No
-live run in the AGENTS.md §3 sense — no engine, memory or tool path; the pty probe above
-is the live check of the reader.
+fail; and the terminal's own source keeps the process clock and answers a zero-wait poll
+at once, with a terminal or none. **4851 green, 317 `#[ignore]`** on Linux (this change
+adds no `#[ignore]`). No live run in the AGENTS.md §3 sense — no engine, memory or tool
+path; the pty probe above is the live check of the reader.
