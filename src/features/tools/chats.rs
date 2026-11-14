@@ -36,7 +36,9 @@ use crate::entities::chat::Chat;
 use crate::entities::message::Message;
 use crate::entities::profile::ToolId;
 use crate::features::chat_links;
-use crate::features::chat_search::{HIT_CAP, SNIPPET_BUDGET_CHARS, build_snippet, to_fts_query};
+use crate::features::chat_search::{
+    HIT_CAP, QueryWord, QueryWords, Relaxed, SNIPPET_BUDGET_CHARS, build_word_snippet, relax_query,
+};
 use crate::features::compaction::HistoryView;
 use crate::shared::i18n::Locale;
 use crate::shared::storage::cache::MessageHit;
@@ -63,6 +65,11 @@ const SNIPPET_CHARS: usize = SNIPPET_BUDGET_CHARS * 3;
 /// SQL-level cap on scanned hits, mirroring the UI's [`HIT_CAP`] reasoning: a
 /// safety valve, with the honest total counted when it bites.
 const SCAN_CAP: usize = HIT_CAP;
+
+/// How many index hits a query with short words reads before checking them for
+/// those words: the check thins the list, so reading only [`SCAN_CAP`] could
+/// leave a real match unread behind 200 that failed it.
+const SHORT_FILTER_CAP: usize = SCAN_CAP * 20;
 
 /// How many candidates an ambiguous `chat_read` reference lists at most.
 const AMBIGUOUS_CAP: usize = 6;
@@ -284,12 +291,34 @@ impl Tool for ChatSearch {
 
         // Raw input must never reach `MATCH` (FTS5 reads it as syntax); the
         // escaper lives in one place — `features::chat_search`.
-        let Some(fts) = to_fts_query(query) else {
+        let words = QueryWords::parse(query);
+        if words.is_empty() {
             return Ok(ToolOutcome::text(ctx.loc.t("tool.chat_search.too_short")));
-        };
+        }
         let ids: Vec<Uuid> = ctx.other_chats.iter().map(|r| r.id).collect();
-        let hits = match ctx.storage.cache().search_messages_in(&fts, &ids, SCAN_CAP) {
-            Ok(hits) => hits,
+        let relaxed = relax_query(
+            &words,
+            |w| find_hits(ctx, w, &ids),
+            |w| count_hits(ctx, w, &ids),
+        );
+        let (hits, total, words, dropped) = match relaxed {
+            Ok(Relaxed::Found {
+                result: (hits, total),
+                words,
+                dropped,
+            }) => (hits, total, words, dropped),
+            Ok(Relaxed::Apart { counts, missing }) => {
+                return Ok(ToolOutcome::text(apart(
+                    ctx.loc,
+                    "tool.chat_search.apart",
+                    "tool.chat_search.apart_missing",
+                    &counts,
+                    &missing,
+                )));
+            }
+            Ok(Relaxed::Nothing) => {
+                return Ok(ToolOutcome::text(ctx.loc.t("tool.chat_search.empty")));
+            }
             // The index is disposable and self-healing; degrade to the routes
             // that still work rather than failing the turn.
             Err(err) => {
@@ -297,30 +326,105 @@ impl Tool for ChatSearch {
                 return Ok(ToolOutcome::text(ctx.loc.t("tool.chat_search.unavailable")));
             }
         };
-        if hits.is_empty() {
-            return Ok(ToolOutcome::text(ctx.loc.t("tool.chat_search.empty")));
+
+        let (body, shown) = render_grouped_hits(ctx, hits, &words, k);
+
+        let mut out = String::new();
+        if !dropped.is_empty() {
+            out.push_str(&ctx.loc.tf(
+                "tool.chat_search.dropped",
+                &[("words", &super::quoted_words(ctx.loc, &dropped))],
+            ));
+            out.push('\n');
         }
-        let total = if hits.len() >= SCAN_CAP {
-            // Only pay for the count when the cap actually bit (the
-            // orchestrator's rule for the UI search).
-            ctx.storage
-                .cache()
-                .count_matching_messages_in(&fts, &ids)
-                .unwrap_or(hits.len())
-        } else {
-            hits.len()
-        };
-
-        let (body, shown) = render_grouped_hits(ctx, hits, query, k);
-
-        let mut out = ctx.loc.tf(
+        out.push_str(&ctx.loc.tf(
             "tool.chat_search.header",
             &[("n", &shown.to_string()), ("total", &total.to_string())],
-        );
+        ));
         out.push_str(&body);
         out.push_str("\n\n");
         out.push_str(ctx.loc.t("tool.chat_search.hint"));
         Ok(ToolOutcome::text(out))
+    }
+}
+
+/// The answer when every word of a query matches somewhere but no message holds
+/// them all ([`Relaxed::Apart`]): the per-word counts — which say what to search
+/// by — and the words found nowhere. Shared with `history_search`, each passing
+/// its own two keys whole (the i18n-gate rule).
+pub(super) fn apart(
+    loc: &Locale,
+    key: &str,
+    missing_key: &str,
+    counts: &[(String, usize)],
+    missing: &[String],
+) -> String {
+    let mut out = loc.tf(key, &[("counts", &super::word_counts(loc, counts))]);
+    if !missing.is_empty() {
+        out.push(' ');
+        out.push_str(&loc.tf(
+            missing_key,
+            &[("words", &super::quoted_words(loc, missing))],
+        ));
+    }
+    out
+}
+
+/// One `chat_search` query over the other conversations: its hits and the
+/// honest total, or `None` when nothing matched (what [`relax_query`] reads).
+///
+/// Three routes, by what the words need ([`QueryWords`]):
+/// - long words only — the index, capped at [`SCAN_CAP`], the total counted
+///   only when the cap bit (the orchestrator's rule for the UI search);
+/// - long and short — the index for the long ones, each hit then checked for
+///   the short ones as whole words; the index is read up to
+///   [`SHORT_FILTER_CAP`], since the check thins it, and the total is what
+///   passed (a floor when even that cap bit — past 4 000 index hits);
+/// - short only — a scan of the scope's messages (no index can answer it).
+fn find_hits(
+    ctx: &ToolContext,
+    words: &QueryWords,
+    ids: &[Uuid],
+) -> Result<Option<(Vec<MessageHit>, usize)>> {
+    let cache = ctx.storage.cache();
+    let (hits, total) = match words.fts() {
+        Some(fts) if words.has_short() => {
+            let mut hits = cache.search_messages_in(&fts, ids, SHORT_FILTER_CAP)?;
+            hits.retain(|h| words.short_words_match(&h.text));
+            let total = hits.len();
+            hits.truncate(SCAN_CAP);
+            (hits, total)
+        }
+        Some(fts) => {
+            let hits = cache.search_messages_in(&fts, ids, SCAN_CAP)?;
+            let total = if hits.len() >= SCAN_CAP {
+                cache
+                    .count_matching_messages_in(&fts, ids)
+                    .unwrap_or(hits.len())
+            } else {
+                hits.len()
+            };
+            (hits, total)
+        }
+        None => cache.scan_messages_in(&words.scan_needles(), ids, SCAN_CAP, |t| {
+            words.short_words_match(t)
+        })?,
+    };
+    Ok((!hits.is_empty()).then_some((hits, total)))
+}
+
+/// How many messages of the other conversations one word matches — what
+/// [`relax_query`] asks to tell a word found nowhere from words that never meet.
+fn count_hits(ctx: &ToolContext, word: &QueryWord, ids: &[Uuid]) -> Result<usize> {
+    let words = QueryWords::only(word);
+    let cache = ctx.storage.cache();
+    match words.fts() {
+        Some(fts) => cache.count_matching_messages_in(&fts, ids),
+        None => Ok(cache
+            .scan_messages_in(&words.scan_needles(), ids, 0, |t| {
+                words.short_words_match(t)
+            })?
+            .1),
     }
 }
 
@@ -337,7 +441,7 @@ impl Tool for ChatSearch {
 fn render_grouped_hits(
     ctx: &ToolContext,
     hits: Vec<MessageHit>,
-    query: &str,
+    query: &QueryWords,
     k: usize,
 ) -> (String, usize) {
     let mut by_chat: std::collections::HashMap<Uuid, Vec<MessageHit>> =
@@ -393,7 +497,7 @@ fn render_grouped_hits(
 fn render_hit(
     ctx: &ToolContext,
     hit: &MessageHit,
-    query: &str,
+    query: &QueryWords,
     n: usize,
     view: Option<&HistoryView>,
 ) -> String {
@@ -418,7 +522,7 @@ fn render_hit(
         ),
     };
     out.push('\n');
-    out.push_str(&build_snippet(&hit.text, query, SNIPPET_CHARS).text);
+    out.push_str(&build_word_snippet(&hit.text, query, SNIPPET_CHARS).text);
     out
 }
 
@@ -854,6 +958,107 @@ mod tests {
         assert_eq!(out, locale(Lang::Ru).t("tool.chat_search.empty"), "{out}");
     }
 
+    /// The live case (2026-11-13): a novel's two-word title plus a philosophical
+    /// term answered "nothing" because the term occurs in no other conversation, while
+    /// the first two matched dozens of messages. The word is dropped, named, and
+    /// the rest answered in the same call.
+    #[tokio::test]
+    async fn a_word_found_nowhere_is_dropped_named_and_the_rest_answered() {
+        let (_d, storage, mut ctx) = ctx_with_refs(vec![]);
+        let (r, _) = seed_chat(
+            &storage,
+            ctx.profile_id,
+            "разбор новеллы",
+            &["приквел Хрустальный Маяк — диалог феноменолога с моделью"],
+        );
+        ctx.other_chats = Arc::from(vec![r]);
+        let out = ChatSearch
+            .invoke(
+                &ctx,
+                serde_json::json!({ "query": "Хрустальный Маяк солипсизм" }),
+            )
+            .await
+            .unwrap()
+            .result;
+        let first = out.lines().next().unwrap();
+        assert!(first.contains("«солипсизм»"), "{out}");
+        assert!(first.contains("исключено из поиска"), "{out}");
+        assert!(out.contains("разбор новеллы"), "{out}");
+        assert!(out.contains("феноменолога"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn words_that_never_meet_are_answered_with_their_counts() {
+        let (_d, storage, mut ctx) = ctx_with_refs(vec![]);
+        let (r, _) = seed_chat(
+            &storage,
+            ctx.profile_id,
+            "философия",
+            &[
+                "спор о Хайдеггере",
+                "ещё о Хайдеггере",
+                "Гуссерль писал об эпохе",
+            ],
+        );
+        ctx.other_chats = Arc::from(vec![r]);
+        let out = ChatSearch
+            .invoke(
+                &ctx,
+                serde_json::json!({ "query": "Хайдеггер Гуссерль солипсизм" }),
+            )
+            .await
+            .unwrap()
+            .result;
+        assert!(out.contains("не встречаются вместе"), "{out}");
+        assert!(out.contains("«Хайдеггер»: 2"), "{out}");
+        assert!(out.contains("«Гуссерль»: 1"), "{out}");
+        assert!(
+            out.contains("Не встречается ни в одном другом разговоре: «солипсизм»"),
+            "{out}"
+        );
+        assert!(
+            out.contains("chat_read"),
+            "the answer names the next step: {out}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_two_character_word_matches_only_as_a_whole_word() {
+        // Beneath the trigram index; found by a scan, as a whole word: the
+        // abbreviation counts in a hyphenated compound, not as a word's ending.
+        let (_d, storage, mut ctx) = ctx_with_refs(vec![]);
+        let (r, _) = seed_chat(
+            &storage,
+            ctx.profile_id,
+            "разное",
+            &[
+                "по линии истории без сокращений",
+                "мой ИИ-агент пишет код",
+                "тезис SP из новеллы",
+            ],
+        );
+        ctx.other_chats = Arc::from(vec![r]);
+        let search = |q: &'static str| {
+            let ctx = &ctx;
+            async move {
+                ChatSearch
+                    .invoke(ctx, serde_json::json!({ "query": q }))
+                    .await
+                    .unwrap()
+                    .result
+            }
+        };
+        let out = search("ИИ").await;
+        assert!(out.contains("ИИ-агент"), "{out}");
+        assert!(!out.contains("линии"), "{out}");
+        // Mixed with a long word: the index answers the long one, the hit is
+        // then checked for the short one.
+        let out = search("SP новеллы").await;
+        assert!(out.contains("тезис SP"), "{out}");
+        let out = search("ИИ новеллы").await;
+        assert!(out.contains("не встречаются вместе"), "{out}");
+    }
+
     /// FTS5 reads punctuation as syntax; the escaped query must reach the
     /// index (`is_ok()` alone would pass on the degrade path — the
     /// `history_search` lesson).
@@ -871,12 +1076,21 @@ mod tests {
                 .result;
             assert_ne!(out, unavailable, "query {q:?} was not escaped: {out}");
         }
+        // Single characters are not searched; a two-character word is (as a
+        // whole word), so a two-letter preposition is a query with no hits here,
+        // not a short one.
+        let out = ChatSearch
+            .invoke(&ctx, serde_json::json!({ "query": "и -" }))
+            .await
+            .unwrap()
+            .result;
+        assert_eq!(out, locale(Lang::Ru).t("tool.chat_search.too_short"));
         let out = ChatSearch
             .invoke(&ctx, serde_json::json!({ "query": "по" }))
             .await
             .unwrap()
             .result;
-        assert_eq!(out, locale(Lang::Ru).t("tool.chat_search.too_short"));
+        assert_eq!(out, locale(Lang::Ru).t("tool.chat_search.empty"));
         assert!(
             ChatSearch
                 .invoke(&ctx, serde_json::json!({ "query": "  " }))

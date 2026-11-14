@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (7)
+## Entries (8)
 
 - Post-M9: notes connectivity — MVP probe (Tier 1, done)
 - Post-M9: notes connectivity — Tier 2 (graph + revision history, done)
@@ -19,6 +19,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: linking the memory organs — Tier 3, Path 2 (output mixing) (done)
 - Post-M9: linking the memory organs — Tier 3, Path 3 (RAG ↔ notes) (done)
 - Post-M9: the companion's notes and earlier conversations in the prompt (done)
+- Post-M9: the write gates get a threshold (done)
 
 ### Post-M9: notes connectivity — MVP probe (Tier 1, done)
 - **A shift of memory from accumulation to integration** per the plan
@@ -328,3 +329,47 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - **Left for later.** C3, the notes screen, is the stage's second pull request. A
   pick on the opening does not follow the conversation (the second-turn case — the
   greeting, then the cat — gained nothing); per-message picks would cost the prefix.
+
+### Post-M9: the write gates get a threshold (done)
+- **Found in a live conversation** (2026-11-13, Gemini on a real profile, bge-m3 as the
+  embedder). Asked how the tools felt from the inside, the model praised `add_insight` for
+  "surfacing similar old entries and reminding about `note_merge`". The transcript said
+  otherwise: each of its three `add_insight` calls listed three "possible duplicates", and
+  none of the nine was one. Measured on the stored vectors they scored **0.46–0.63**. The
+  code had **no threshold at all**: `note_save` and `self_note_similar` took the nearest
+  neighbours (`take(3)`) however far they were, although the Tier 1 plan says "cosine
+  threshold" and embedding-input-prefixes §5.3 counts these sites among the mapped
+  thresholds. Every write carried ~1.3K characters of unrelated notes under a hint to
+  merge them — a gate that cries wolf on every call, so the real duplicate reads as more
+  of the same.
+- **A second defect under the first.** `note_save` asked for the nearest **four** and
+  only then dropped `@self` observations; on that profile 12 of 15 live notes are
+  observations, so a regular duplicate in fifth place was never shown. `add_insight`
+  had the mirror case (eight, then kept only `@self`).
+- **The threshold, measured** (bge-m3 Q8_0, passage role on both sides, the gates' own
+  comparison): restated notes and observations **0.80–0.92**; conflicting updates of one
+  fact **0.64–0.87**, most ≥ 0.72; unrelated or merely same-topic pairs **0.37–0.63**;
+  the profile's 105 live pairs (none a duplicate) top out at **0.727**.
+  **`WRITE_GATE_SIMILARITY = 0.70`**: all the noise falls below it with a 0.07 margin,
+  every restatement clears it, and on that profile 2 of 15 notes have any neighbour above
+  it. It is below the consolidation overview's 0.85 on purpose — a gate item costs one
+  line, a missed conflict leaves two contradicting memories. Read through
+  `SimilarityScale` like the other three (~0.90 on `multilingual-e5-large-instruct`).
+- **Code.** `notes/mod.rs` (`WRITE_GATE_SIMILARITY`, `WRITE_GATE_CAP`),
+  `notes/save.rs` — one `gate_neighbours` for both gates: the threshold over **every**
+  live note first (the search scores them all anyway), then the kind filter, then the cap.
+  Spec §9.3 (the two roster rows) and §9.3.4 (the list of mapped thresholds).
+- **Tests.** Five unit tests with vectors placed at a chosen cosine (`at_cosine`): silent
+  when the nearest is 0.65; 0.72 shown and 0.68 not; a regular note at 0.80 behind five
+  observations at 0.99 is shown (the crowding defect); the `add_insight` mirror (nine
+  notes at 0.99, observations at 0.80 and 0.65 → only 0.80); the gate follows the
+  calibrated scale (0.85 hidden under the e5 calibration, 0.95 shown). A calibration
+  smoke, `write_gate_calibration_e2e_live`, asserts the two hard sides against a real
+  embedder and prints the conflicts.
+- **Smoke — GO** (llama.cpp build 12352, RTX 4090, Gemma 4 12B it Q8_0 + bge-m3 Q8_0):
+  the calibration smoke — restatements 0.889–0.906, conflicts 0.799–0.871 (all shown),
+  neighbouring topics 0.483–0.598; `self_model_gate_en_e2e_live` — the gate showed
+  exactly the one near-duplicate and the model merged the pair (`note_merge`, one
+  observation left); `self_model_gate_e2e_live` (ru) — the model found the earlier
+  observation itself and rewrote it (`note_revise`) without calling `add_insight`, so
+  that run did not reach the gate. Unit tests 4835 green, 320 `#[ignore]`.

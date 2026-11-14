@@ -217,6 +217,15 @@ impl HistoryView {
         None
     }
 
+    /// Every block with its message id, in conversation order (the position is
+    /// [`Self::order_of`]'s) — what `history_search` walks for a word the index
+    /// cannot hold (two characters, spec §9.11).
+    pub fn blocks(&self) -> impl Iterator<Item = (Uuid, &str)> {
+        self.blocks
+            .iter()
+            .map(|(id, range)| (*id, &self.text[range.clone()]))
+    }
+
     /// Conversation order of a message within this range — what search hits are
     /// sorted by, since the index returns them in an arbitrary order.
     pub fn order_of(&self, id: Uuid) -> Option<usize> {

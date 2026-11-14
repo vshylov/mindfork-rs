@@ -582,6 +582,34 @@ pub(crate) fn paged_read_parameters(
 /// An empty query is a usage error rather than an empty result — the tool was
 /// called wrong, and saying so is what lets the next call succeed. `err_key`
 /// names the tool's own message.
+/// Query words as a model reads them back in a search tool's answer: each quoted
+/// the locale's way, comma-separated. Shared by `chat_search` and
+/// `history_search` (a word dropped, a word that never met the others).
+pub(crate) fn quoted_words(loc: &crate::shared::i18n::Locale, words: &[String]) -> String {
+    words
+        .iter()
+        .map(|w| loc.tf("tool.search.word", &[("word", w.as_str())]))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Per-word message counts of a query whose words never met
+/// ([`crate::features::chat_search::Relaxed::Apart`]) — the count after its
+/// label, so it reads right at one (docs/lessons.md §7).
+pub(crate) fn word_counts(loc: &crate::shared::i18n::Locale, counts: &[(String, usize)]) -> String {
+    counts
+        .iter()
+        .map(|(w, n)| {
+            let word = quoted_words(loc, std::slice::from_ref(w));
+            loc.tf(
+                "tool.search.word_count",
+                &[("word", word.as_str()), ("n", &n.to_string())],
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 pub(crate) fn search_args<'a>(
     args: &'a serde_json::Value,
     loc: &crate::shared::i18n::Locale,

@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (104)
+## Entries (105)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -116,6 +116,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: image generation — stage 1, the slot and the tool (done)
 - Post-M9: image generation — stage 2, the phone (done)
 - Post-M9: image generation — stage 3, xAI, the picker and the command (done)
+- Post-M9: a word found nowhere no longer empties a search; two-letter words are searched (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -6714,3 +6715,54 @@ the track is complete. The full record is §14 there, the contract spec §9.15 a
   to change on each model, replies in prose. About $0.48.
 - Unit tests 4467 green, 308 `#[ignore]` (xAI's client, the picker's list, the
   command's smoke).
+
+### Post-M9: a word found nowhere no longer empties a search; two-letter words are searched (done)
+- **Found in a live conversation** (2026-11-13, Gemini on a real profile). The model's
+  first `chat_search` was a title plus a philosophical term and answered "no other
+  conversation contains this". The title's two words matched 35 and 40 messages of other
+  conversations; the term occurred in none. Every word must occur in one message, so one
+  absent word zeroed the query, and the reply did not say which. The model retried with
+  other words — a guessed round trip. Asked afterwards, it also named the second rough
+  edge: words under three characters are ignored, so `AI` or a two-letter abbreviation
+  from the user's story cannot be searched at all. The trigram index cannot hold them
+  (research §5).
+- **Relaxation, not OR.** A query of several words that finds nothing is now explained,
+  in the same call (`features::chat_search::relax_query`): each word is counted; words
+  found nowhere are **dropped and named** at the head of the answer and the rest searched
+  again; when every word occurs but never in one message, the answer is the per-word
+  message counts — they say which word to search by. An OR fallback was rejected: grouped
+  by recency with trigram's weak `bm25`, a common word would bury the rare one.
+- **Two-character words, as whole words.** `QueryWords` splits a query by what can answer
+  each word: three characters or more → the index (unchanged, the same escaper the UI
+  uses — `to_fts_query` is now `QueryWords::parse(..).fts()`); two characters → a
+  whole-word check in Rust, case-insensitive, bounded by a non-alphanumeric character or
+  the edge. Whole-word is not optional: as a substring the Russian two-letter abbreviation
+  for AI is also a common case ending and would match nearly every Russian message. Single
+  characters stay ignored (prepositions and initials far more often than terms). With a
+  long word the index narrows and its hits are checked (read up to 4 000, since the check
+  thins them); with short words only, `CacheDb::scan_messages_in` scans the scope's rows
+  with an `instr` prefilter over every casing and the check as a callback — a text that
+  fails it is dropped as it is read. `history_search` walks the folded range's blocks
+  (`HistoryView::blocks`) instead. The snippet centres on what actually matched
+  (`build_word_snippet`).
+- **Code.** `features/chat_search.rs` (`QueryWords`, `has_whole_word`, `relax_query`,
+  `build_word_snippet`, a whole-word arm in the matcher), `shared/storage/cache`
+  (`scan_messages_in`), `features/tools/chats.rs` (`find_hits`, `count_hits`, `apart`),
+  `features/tools/history.rs` (`folded_hits`), `features/compaction.rs`
+  (`HistoryView::blocks`); `tool.chat_search.*`/`tool.history_search.*` — `dropped`,
+  `apart`, `apart_missing`, the query parameter and `too_short` say the new rules — and
+  `tool.search.word`/`word_count` in both bundles. Spec §9.11 and §6.7.
+- **Tests.** Pure: word split, whole-word boundaries and case, the scan's needles, the
+  relaxation's four outcomes over a toy index, the snippet centring on a whole word. The
+  cache scan: scope, limit vs honest total, the index's blindness to two characters as
+  the premise. The tools: a word found nowhere dropped and named (both tools), words that
+  never meet answered with counts, a two-character word found as a whole word and not
+  inside a longer word, mixed queries; the old "a two-letter preposition is too short" assertions now
+  expect a search. Live: `chat_search_drops_an_absent_word_and_finds_a_short_one_live` dictates
+  a two-letter abbreviation (only a scan can answer it) plus a word found nowhere.
+- **Smoke — GO** (llama.cpp build 12352, RTX 4090, Gemma 4 12B it Q8_0 + bge-m3 Q8_0):
+  the new smoke — one `chat_search`, the absent word named, the message found by the
+  two-letter word, the code read out of that answer; the existing
+  `cross_chat_search_answers_from_another_chat_live` and
+  `history_read_back_answers_what_the_summary_dropped_live` stay green. Unit tests 4835
+  green, 320 `#[ignore]`.

@@ -14,6 +14,22 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A saved note or observation no longer lists unrelated ones as "a possible
+  duplicate".** `note_save` and `add_insight` always showed the three nearest notes,
+  however far: in one conversation every one of nine such items was on a merely
+  neighbouring topic, under a hint to merge them. Now a note is shown only when it is
+  close enough to be a repeat or a conflicting version of the same fact, and a real
+  duplicate is no longer pushed out of the list by notes of the other kind.
+- **Searching other conversations or the folded-away history no longer answers
+  "nothing" because of one word.** Every word has to occur in one message, so a word
+  that appears nowhere emptied the whole result. Such a word is now left out and
+  named, and the rest is searched in the same call; when every word occurs but never
+  together, the answer says how many messages each one has.
+- **Two-letter words are searched** — `AI`, `C#` and the like, as whole words. They
+  used to be ignored, so a query made only of them was refused.
+
 ## [0.26.3] — 2026-11-13
 
 **A picture pasted in Windows Terminal, and a token counter that holds on Gemini.**

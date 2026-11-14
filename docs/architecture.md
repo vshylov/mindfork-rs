@@ -637,7 +637,8 @@ src/
 │  │  │                     full-text index, no embedder — the local 8k user is who
 │  │  │                     compression is for). Offered only while the chat has a
 │  │  │                     folded range, the same condition that puts the summary
-│  │  │                     block in the prompt — spec §6.7
+│  │  │                     block in the prompt — spec §6.7. A two-character
+│  │  │                     word walks the range's blocks (HistoryView::blocks)
 │  │  ├─ chats.rs           chat_search + chat_read over the profile's *other*
 │  │  │                     chats (optional, off by default). ChatRef snapshot +
 │  │  │                     snapshot_other_chats — the one place the scope is
@@ -700,7 +701,11 @@ src/
 │  │                        room by the observations' water-filling
 │  ├─ chat_search.rs        to_fts_query: raw input → a *literal* FTS5 MATCH (every
 │  │                        token quoted, inner quotes doubled; tokens under the
-│  │                        trigram 3-char floor dropped). Pure, tested without a DB
+│  │                        trigram 3-char floor dropped). QueryWords: the model's
+│  │                        searches split by what answers each word — the index
+│  │                        (3+ chars) or a whole-word check (2 chars); relax_query
+│  │                        drops words found nowhere (spec §9.11). Pure, tested
+│  │                        without a DB
 │  ├─ chat_links.rs         the `chat://<id>` address scheme (spec §9.11, §11.3):
 │  │                        the single producer (`uri`/`short_id`) and reader
 │  │                        (`hex_needle`, `resolve_prefix`, `find_refs`) shared by
@@ -3192,7 +3197,7 @@ by `ToolGroup` (`Ord`).
 
 | Group          | Tools                                                          |
 |----------------|-----------------------------------------------------------------|
-| Memory/knowledge  | `note_save` (embeds + a compatibility gate), `note_recall` (semantic search + spreading activation over the graph, falls back to substring match; **hides `@self` self-notes**), `note_revise` (in-place edit), `note_link`/`note_neighbors` (typed link graph), `note_supersede`/`note_merge` (supersession with a scar / merge with link transfer; **inherit tags**, including `@self`), `consolidate_notes` (a consolidation overview), `rag_add`, `rag_search`. Notes connectivity (accumulation → integration) + auto "sleep": see [docs/notes-connectivity.md](history/notes-connectivity.md). Self-model observations are ordinary notes tagged `@self` ([docs/narrative-as-notes.md](history/narrative-as-notes.md), §9) |
+| Memory/knowledge  | `note_save` (embeds + a compatibility gate: notes at or above `WRITE_GATE_SIMILARITY`, 0.70 in the reference scale), `note_recall` (semantic search + spreading activation over the graph, falls back to substring match; **hides `@self` self-notes**), `note_revise` (in-place edit), `note_link`/`note_neighbors` (typed link graph), `note_supersede`/`note_merge` (supersession with a scar / merge with link transfer; **inherit tags**, including `@self`), `consolidate_notes` (a consolidation overview), `rag_add`, `rag_search`. Notes connectivity (accumulation → integration) + auto "sleep": see [docs/notes-connectivity.md](history/notes-connectivity.md). Self-model observations are ordinary notes tagged `@self` ([docs/narrative-as-notes.md](history/narrative-as-notes.md), §9) |
 | Introspection  | `get_sampling`, `set_sampling`, `get_system_message`, `set_system_message`, `get_last_user_message_time`; `get_llm_name`/`get_llm_history` (spec §9.14) — the **language model's** name (from the turn snapshot `ToolContext.model_name`/`engine_mode`, the same single `effective_model_name()` read the header and `MessageMetadata` use) and the profile's dated history of model changes (`data.db` `llm_history`, written by `handle_done` → `record_llm_history` when the pair name+mode differs from the newest record; a history with no records at all is seeded once at bootstrap from the chats' stored metadata — `orchestrator/llm_history.rs`). Named `llm_*` deliberately — the counterpart of the `self_model` family below, never a bare "model" |
 | External       | `web_search` (multi-provider + anti-bot), `fetch_url` (fetch+summarize; a YouTube link → metadata + a pointer to `youtube_watch`), `youtube_watch` (what a video says **and shows** — a slot of its own, Gemini by Google's API or through the OpenRouter gateway, degrades to free metadata; `transcript: true` lands the words as a chat attachment; spec §9.9), `image_generate` (a picture drawn by OpenAI, Gemini or the gateway — a slot of its own, gated by `image_gen.enabled`, the original kept as a `generated` chat file; spec §9.15), `python_exec` (the Wasmer sandbox or a local interpreter; what the code saves to `/w/out` is stored with the chat, and the chat's files a call names in `files` are copied into `/w/in` before it runs, spec §9.7, §13.2) — gated by `web_enabled`/`python_enabled` |
 | Files          | `fs_read`, `fs_write`, `fs_list` — gated by `fs_enabled`, confined to `fs_root` (empty → refused), the app's own directories out of reach (`reach.rs`); `attachment_read` (one page of a file the user attached with `/file attach`) and `attachment_search` (by meaning, over the chat-scoped index) — **not gated and on by default**: unlike `fs_read` they *narrow* access to what the user explicitly attached, reading the stored snapshot/index rather than the disk. See spec §9.7 |
@@ -3719,7 +3724,7 @@ connectivity) and *a current snapshot + a scar in the narrative*.
 | `reflect` | read + rubric | the current model (+ links) + a **self-consolidation overview** (similar pairs / `contradicts` / unlinked, once there are ≥2 observations) + questions (manage goals by `#id`, merge, consolidate observations via note_revise/supersede, **link related observations via note_link**, **has the description grown too large** — event-driven content into observations) |
 | `update_self_model` | description + goals | `summary` — **integrate and shrink** (a snapshot, not a chronicle — §9.1); goals — lifecycle by `#id` (complete/abandon), not just add. **The echo is deltas** (stage 4): a summary size line + added/closed goals with `#id` + a count of folded ones, no full `render_full` |
 | `update_user_model` | interlocutor | lists — **merge** (add_/remove_, dedup); `note` → a **scar** as an @self note; a reminder is issued when removing traits **or replacing a non-empty dynamic** without a `note`; **related-trait gate** (Tier 2/C): a topically close trait already exists → shown, the model decides "a duplicate (merge)" or "a contradiction (add_insight)"; traits embedded on the fly, threshold 0.72 — a position in the reference (bge-m3) scale, read through `Db::similarity_scale()` so it follows the active model (spec §9.3.4) — mirroring the `add_insight` gate. **The echo is deltas** (stage 4): compact final lists + a scar confirmation, no full `render_full` |
-| `add_insight` | observation | `create_note(@self)` + a **gate** (similar observations, shown after the write → the repeat is already recorded, so it is merged with the one it repeats via `note_merge`; rewriting the old one beside it would leave both) |
+| `add_insight` | observation | `create_note(@self)` + a **gate** (observations at or above `WRITE_GATE_SIMILARITY` 0.70 — the `note_save` gate's threshold, in the reference scale — shown after the write → the repeat is already recorded, so it is merged with the one it repeats via `note_merge`; rewriting the old one beside it would leave both) |
 
 Observation notes are consolidated by **note tools** (`note_revise`/
 `note_supersede`/`note_merge` — supersession with a scar); the former

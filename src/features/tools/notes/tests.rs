@@ -622,6 +622,147 @@ async fn summary_obs_overlap_uses_the_calibrated_threshold() {
     assert!(out.contains("MARKER"), "{out}");
 }
 
+// ---------- the write gates (note_save, add_insight) have a threshold ----------
+
+/// What a write gate compares a new note against: its passage-role embedding.
+async fn passage_vec(ctx: &ToolContext, text: &str) -> Vec<f32> {
+    ctx.embedder
+        .embed(vec![text.to_string()], EmbedRole::Passage)
+        .await
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap()
+}
+
+/// A stored note whose vector sits at cosine `cos` to `v` — the similarity is
+/// placed, not hoped for (see [`at_cosine`]).
+fn note_at(
+    storage: &crate::shared::storage::Storage,
+    profile: Uuid,
+    content: &str,
+    tags: Vec<String>,
+    v: &[f32],
+    cos: f32,
+) -> Note {
+    let n = Note::new(profile, content, tags);
+    storage.db().note_insert(&n).unwrap();
+    storage
+        .db()
+        .note_vector_upsert(n.id, profile, &at_cosine(v, cos))
+        .unwrap();
+    n
+}
+
+#[tokio::test]
+async fn note_save_gate_is_silent_when_nothing_is_close() {
+    // The case that motivated the threshold: the nearest notes of a live profile
+    // scored 0.46–0.63 and were all shown as "a possible duplicate". Three
+    // unrelated notes, the nearest at 0.65 — the gate says nothing.
+    let profile = Uuid::new_v4();
+    let (_d, storage, ctx) = ctx_with_storage(profile);
+    let v = passage_vec(&ctx, "zzzz").await;
+    for (i, cos) in [0.65, 0.55, 0.45].into_iter().enumerate() {
+        note_at(
+            &storage,
+            profile,
+            &format!("UNRELATED-{i}"),
+            vec![],
+            &v,
+            cos,
+        );
+    }
+    let out = NoteSave
+        .invoke(&ctx, serde_json::json!({"content": "zzzz"}))
+        .await
+        .unwrap();
+    assert!(!out.result.contains("Похожие заметки"), "{}", out.result);
+    assert!(!out.result.contains("UNRELATED"), "{}", out.result);
+}
+
+#[tokio::test]
+async fn note_save_gate_shows_only_notes_at_or_above_its_threshold() {
+    let profile = Uuid::new_v4();
+    let (_d, storage, ctx) = ctx_with_storage(profile);
+    let v = passage_vec(&ctx, "zzzz").await;
+    note_at(&storage, profile, "NEAR-0.72", vec![], &v, 0.72);
+    note_at(&storage, profile, "FAR-0.68", vec![], &v, 0.68);
+    let out = NoteSave
+        .invoke(&ctx, serde_json::json!({"content": "zzzz"}))
+        .await
+        .unwrap();
+    assert!(out.result.contains("Похожие заметки"), "{}", out.result);
+    assert!(out.result.contains("NEAR-0.72"), "{}", out.result);
+    assert!(!out.result.contains("FAR-0.68"), "{}", out.result);
+}
+
+#[tokio::test]
+async fn note_save_gate_is_not_crowded_out_by_observations() {
+    // The gate used to take the nearest four and only then drop @self ones: on a
+    // profile where most notes are observations, a regular duplicate in fifth
+    // place was never shown.
+    let profile = Uuid::new_v4();
+    let (_d, storage, ctx) = ctx_with_storage(profile);
+    let v = passage_vec(&ctx, "zzzz").await;
+    for i in 0..5 {
+        let tags = vec![SELF_NOTE_TAG.to_string()];
+        note_at(&storage, profile, &format!("OBS-{i}"), tags, &v, 0.99);
+    }
+    note_at(&storage, profile, "REGULAR-0.80", vec![], &v, 0.80);
+    let out = NoteSave
+        .invoke(&ctx, serde_json::json!({"content": "zzzz"}))
+        .await
+        .unwrap();
+    assert!(out.result.contains("REGULAR-0.80"), "{}", out.result);
+    assert!(!out.result.contains("OBS-"), "{}", out.result);
+}
+
+#[tokio::test]
+async fn add_insight_gate_is_not_crowded_out_by_notes_and_keeps_its_threshold() {
+    // The add_insight side of the same fix: observations only, at or above the
+    // threshold, however many regular notes sit nearer.
+    let profile = Uuid::new_v4();
+    let (_d, storage, ctx) = ctx_with_storage(profile);
+    let v = passage_vec(&ctx, "zzzz").await;
+    for i in 0..9 {
+        note_at(&storage, profile, &format!("NOTE-{i}"), vec![], &v, 0.99);
+    }
+    let self_tag = || vec![SELF_NOTE_TAG.to_string()];
+    let near = note_at(&storage, profile, "OBS-0.80", self_tag(), &v, 0.80);
+    note_at(&storage, profile, "OBS-0.65", self_tag(), &v, 0.65);
+    let similar = self_note_similar(&ctx, "zzzz", Uuid::nil()).await;
+    let ids: Vec<Uuid> = similar.iter().map(|n| n.id).collect();
+    assert_eq!(ids, vec![near.id], "{similar:?}");
+}
+
+#[tokio::test]
+async fn write_gate_follows_the_calibrated_scale() {
+    // WRITE_GATE_SIMILARITY is a position in bge-m3's scale: on
+    // multilingual-e5-large-instruct 0.70 maps to ~0.90, so a note at 0.85 is no
+    // longer shown there, while one at 0.95 still is.
+    // Probed through `self_note_similar`, which writes nothing, so every probe
+    // compares against the same stored set; `note_save` shares the selection.
+    let profile = Uuid::new_v4();
+    let (_d, storage, ctx) = ctx_with_storage(profile);
+    let v = passage_vec(&ctx, "zzzz").await;
+    let tags = vec![SELF_NOTE_TAG.to_string()];
+    let note = note_at(&storage, profile, "MARKER", tags, &v, 0.85);
+    let shown = || async {
+        !self_note_similar(&ctx, "zzzz", Uuid::nil())
+            .await
+            .is_empty()
+    };
+    assert!(shown().await, "uncalibrated: 0.85 clears 0.70");
+
+    calibrate_e5(&storage);
+    assert!(!shown().await, "calibrated: 0.85 is below the mapped ~0.90");
+    storage
+        .db()
+        .note_vector_upsert(note.id, profile, &at_cosine(&v, 0.95))
+        .unwrap();
+    assert!(shown().await, "the gate moved, it did not switch off");
+}
+
 #[tokio::test]
 async fn summary_obs_overlap_surfaces_match_not_unrelated() {
     // A2: a self-description (summary) paragraph matching an observation is

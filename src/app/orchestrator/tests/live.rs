@@ -3563,6 +3563,119 @@ async fn summary_obs_calibration_e2e_live() {
     );
 }
 
+/// **Calibration** smoke for `WRITE_GATE_SIMILARITY` — the threshold of the `note_save` and
+/// `add_insight` gates (docs/journal/notes.md, *the write gates get a threshold*). Against a REAL
+/// embedder it embeds three kinds of note pairs and prints their cosines: restatements of one
+/// note (the gate must show them), conflicting updates of one fact (shown when they say the
+/// same thing differently enough — printed, not asserted: the measured spread is 0.64–0.87),
+/// and notes on a neighbouring topic (the gate must stay silent — the noise a live
+/// conversation got under the old top-3 gate scored 0.46–0.63). Asserts the two hard sides.
+/// `#[ignore]`, manual:
+/// `MINDFORK_EMBED_URL=…/v1 cargo test write_gate_calibration_e2e_live -- --ignored --nocapture --test-threads=1`.
+#[tokio::test]
+#[ignore = "requires a running embedding server (MINDFORK_EMBED_URL)"]
+async fn write_gate_calibration_e2e_live() {
+    use crate::features::tools::notes::{WRITE_GATE_SIMILARITY, cosine};
+    let Some(embedder) = live_embedder() else {
+        eprintln!("skip: MINDFORK_EMBED_URL not set");
+        return;
+    };
+    let restated: &[(&str, &str)] = &[
+        (
+            "Пользователь склонен просить краткие ответы.",
+            "Пользователь предпочитает лаконичные, краткие ответы.",
+        ),
+        (
+            "The user tends to ask for concise answers.",
+            "The user prefers brief, concise replies.",
+        ),
+        (
+            "У собеседника 12 лет опыта разработки платёжных систем на Java.",
+            "Собеседник двенадцать лет пишет платёжное ПО на Java.",
+        ),
+        (
+            "Я заметил, что сначала проверяю контекст в заметках, а уже потом отвечаю — так ответы точнее.",
+            "Понял, что мои ответы точнее, когда перед ответом ищу контекст в заметках.",
+        ),
+        (
+            "Insight: discussing gaps in my existence, I was taking an outside view of myself.",
+            "I realized that when I talked about gaps in my existence I was looking at myself from outside.",
+        ),
+    ];
+    let conflicting: &[(&str, &str)] = &[
+        (
+            "Пользователь предпочитает общаться на «ты».",
+            "Пользователь попросил обращаться к нему на «вы».",
+        ),
+        (
+            "The user lives in Lisbon.",
+            "The user has moved from Lisbon to Porto.",
+        ),
+        (
+            "Релиз проекта собеседник планирует на март.",
+            "Собеседник перенёс релиз проекта с марта на июнь.",
+        ),
+    ];
+    let neighbouring: &[(&str, &str)] = &[
+        (
+            "Собеседник пишет научную фантастику о далёком будущем.",
+            "Демо-версия проекта собеседника работает прямо в браузере.",
+        ),
+        (
+            "Собеседник считает прошлое и будущее лишь проекциями настоящего.",
+            "Героиня рассказа собеседника — радикальный скептик в вопросе о других умах.",
+        ),
+        (
+            "Пользователь интересуется архитектурой ИИ-компаньонов с долгой памятью.",
+            "Мы познакомились в день выхода новой версии его приложения.",
+        ),
+    ];
+    let threshold = WRITE_GATE_SIMILARITY;
+    // Passage on both sides, as the gates embed (research §5.3).
+    let cosines = |pairs: &[(&str, &str)]| {
+        let texts: Vec<String> = pairs
+            .iter()
+            .flat_map(|(a, b)| [a.to_string(), b.to_string()])
+            .collect();
+        let embedder = embedder.clone();
+        async move {
+            let v = embedder.embed(texts, EmbedRole::Passage).await.unwrap();
+            v.chunks(2)
+                .map(|p| cosine(&p[0], &p[1]))
+                .collect::<Vec<f32>>()
+        }
+    };
+    let mut low_restated = Vec::new();
+    for (pair, c) in restated.iter().zip(cosines(restated).await) {
+        eprintln!("RESTATED     cos={c:.3}  {:?} ~ {:?}", pair.0, pair.1);
+        if c < threshold {
+            low_restated.push((c, pair.0));
+        }
+    }
+    for (pair, c) in conflicting.iter().zip(cosines(conflicting).await) {
+        let shown = if c >= threshold { "shown" } else { "missed" };
+        eprintln!(
+            "CONFLICTING  cos={c:.3} ({shown})  {:?} ~ {:?}",
+            pair.0, pair.1
+        );
+    }
+    let mut high_neighbouring = Vec::new();
+    for (pair, c) in neighbouring.iter().zip(cosines(neighbouring).await) {
+        eprintln!("NEIGHBOURING cos={c:.3}  {:?} ~ {:?}", pair.0, pair.1);
+        if c >= threshold {
+            high_neighbouring.push((c, pair.0));
+        }
+    }
+    assert!(
+        low_restated.is_empty(),
+        "a restated note must reach the gate ({threshold}): {low_restated:?}"
+    );
+    assert!(
+        high_neighbouring.is_empty(),
+        "a neighbouring topic must not reach the gate ({threshold}): {high_neighbouring:?}"
+    );
+}
+
 /// End-to-end probe of A2 behavior: a self-description with a paragraph duplicating (in other words)
 /// a stored observation (`@self`); against a REAL embedder
 /// `summary_observation_overlaps` returns `Some` and names the observation. Prints
@@ -4277,6 +4390,96 @@ async fn cross_chat_search_answers_from_another_chat_live() {
         !cited.is_empty(),
         "the answer must cite the conversation as {}<id>: {answer}",
         crate::features::chat_links::SCHEME
+    );
+}
+
+/// The two `chat_search` repairs of 2026-11-14 (spec §9.11) against a real model, in
+/// one call: the query is a two-character word the trigram index cannot hold plus a
+/// word that occurs in no other conversation. Before, the first was ignored and the
+/// second zeroed the query — "nothing found". Now the absent word is dropped and
+/// named, the short one is found as a whole word by a scan, and the model must read
+/// the code out of that answer.
+///
+/// The query is dictated, since the point is how the tool answers *this* query, not
+/// whether the model would have chosen it; the profile is narrowed to the pair (the
+/// cross-chat smoke's lesson), and the call is asserted, so a guess cannot pass.
+#[tokio::test]
+#[ignore = "needs a live engine (MINDFORK_ENGINE_URL)"]
+async fn chat_search_drops_an_absent_word_and_finds_a_short_one_live() {
+    use crate::shared::i18n::{Lang, locale};
+    const CODE: &str = "SIREN-5182";
+    let Some((_dir, cmd_tx, mut evt_rx, handle)) = spawn_orch_live_cfg(AppConfig::default()) else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let (profile, _chat_a) = narrow_profile_to(
+        &cmd_tx,
+        &mut evt_rx,
+        vec![
+            crate::features::tools::chats::CHAT_SEARCH_ID.into(),
+            crate::features::tools::chats::CHAT_READ_ID.into(),
+        ],
+    )
+    .await;
+    let (reply, _) = run_turn_capture(
+        &cmd_tx,
+        &mut evt_rx,
+        &format!(
+            "Запиши в этом разговоре: прошивка для ИИ-модуля стенда — {CODE}. \
+             Просто подтверди, что записал."
+        ),
+    )
+    .await;
+    eprintln!(
+        "seed reply: {}",
+        reply.chars().take(120).collect::<String>()
+    );
+    cmd_tx
+        .send(AppCommand::NewChat {
+            profile_id: Some(profile),
+        })
+        .unwrap();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    // The save debounce indexes chat A in the background (see the cross-chat smoke).
+    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+
+    let (answer, calls) = run_turn_capture(
+        &cmd_tx,
+        &mut evt_rx,
+        "Вызови chat_search с запросом ровно «ИИ солипсизм» — не меняй и не дополняй \
+         его. По результату назови код прошивки, который был записан в другом разговоре.",
+    )
+    .await;
+    eprintln!("answer: {answer}");
+    eprintln!("calls: {calls:#?}");
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let ru = locale(Lang::Ru);
+    let dropped_head = ru
+        .t("tool.chat_search.dropped")
+        .split(':')
+        .next()
+        .unwrap()
+        .to_string();
+    let searched = calls
+        .iter()
+        .find(|(name, _)| name == crate::features::tools::chats::CHAT_SEARCH_ID)
+        .map(|(_, result)| result.clone())
+        .expect("the model must call chat_search");
+    assert!(
+        searched.contains(&dropped_head) && searched.contains("«солипсизм»"),
+        "the absent word must be dropped and named: {searched}"
+    );
+    assert!(
+        searched.contains(CODE),
+        "the two-character word must find the message as a whole word: {searched}"
+    );
+    assert!(
+        mentions_code(&answer, CODE),
+        "the model must read the code out of the relaxed answer: {answer}"
     );
 }
 

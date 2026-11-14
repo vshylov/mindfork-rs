@@ -34,6 +34,27 @@ pub const NOTE_CITE_SOURCE_ID: &str = "note_cite_source";
 /// [`crate::shared::embed_calibration::SimilarityScale`] before use; that map is
 /// the identity until a model change is actually recorded.
 const CONSOLIDATE_SIMILARITY: f32 = 0.85;
+/// Similarity threshold at or above which a stored note is shown by the **write
+/// gates** — `note_save`'s and `add_insight`'s "a possible duplicate or conflict"
+/// list. Below it the gate stays silent.
+///
+/// Until 2026-11-14 the gates had no threshold at all and always showed the three
+/// nearest notes: on a live profile (Gemini, bge-m3) every one of nine gate items in a
+/// conversation scored 0.46–0.63 and none was a duplicate, so each write carried
+/// ~1.3K characters of unrelated notes under a hint to merge them. Measured on bge-m3
+/// (docs/journal/notes.md, *the write gates get a threshold*): restated notes and
+/// observations 0.80–0.92; conflicting updates of one fact 0.64–0.87, most ≥ 0.72;
+/// unrelated or merely same-topic pairs 0.37–0.63, and the 105 live pairs of that
+/// profile (none a duplicate) top out at 0.727. 0.70 clears all the noise with a
+/// margin and keeps every repeat. It is lower than [`CONSOLIDATE_SIMILARITY`] on
+/// purpose: a gate item costs one line of the result, a missed conflict leaves two
+/// contradicting memories.
+///
+/// A position in the reference (bge-m3) scale, read through
+/// [`crate::shared::embed_calibration::SimilarityScale`] like the others.
+pub(crate) const WRITE_GATE_SIMILARITY: f32 = 0.70;
+/// How many notes a write gate shows at most.
+const WRITE_GATE_CAP: usize = 3;
 /// Max number of items to show in each section of the consolidation overview.
 const CONSOLIDATE_LIST_CAP: usize = 8;
 
