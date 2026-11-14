@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (10)
+## Entries (11)
 
 - Post-M9: notes connectivity — MVP probe (Tier 1, done)
 - Post-M9: notes connectivity — Tier 2 (graph + revision history, done)
@@ -22,6 +22,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the write gates get a threshold (done)
 - Post-M9: where a fact about the person goes — design and baseline probe (done)
 - Post-M9: where a fact about the person goes — stage 1, the wording (done)
+- Post-M9: where a fact about the person goes — stage 2, the gates across kinds (done)
 
 ### Post-M9: notes connectivity — MVP probe (Tier 1, done)
 - **A shift of memory from accumulation to integration** per the plan
@@ -450,3 +451,49 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
   `note_merge` unions tags, so a merge with an observation yields an observation —
   user's decision 2026-11-14: a merge that includes a regular note yields a regular
   note.
+
+### Post-M9: where a fact about the person goes — stage 2, the gates across kinds (done)
+- **What changed** ([docs/memory-routing.md](../memory-routing.md) §6, stage 2; F4 and
+  its merge rule as the user decided them on 2026-11-14). Since stage 1 a fact about
+  the interlocutor belongs in a note, so the same fact filed once as a note and once
+  as an observation is exactly what a write gate should catch — and each gate looked
+  at its own kind only. The gates' search now returns `GateHits { same, other }`
+  (every live note at or above `WRITE_GATE_SIMILARITY`, split by kind, each capped
+  on its own) and renders the other kind apart under its own lead line —
+  `tool.note_save.gate.cross` (an observation holding the fact: merge it into the
+  note), `tool.add_insight.gate.cross` (a note the observation restates: merge; an
+  own conclusion about it: keep both and link). `self_note_similar` became
+  `observation_gate`.
+- **The merge rule.** `note_merge` kept the union of its sources' tags, so merging
+  an observation into a note made an observation. Now a merge that includes a
+  regular note drops `@self`, and the result says so
+  (`tool.note_merge.result.as_note`) — a merge of a real conclusion into a note is a
+  mistake the model can still see. A merge of observations stays an observation;
+  `note_supersede` is unchanged. The description says both.
+- **Tests.** Unit: the note_save gate lists a close observation apart and never as a
+  "similar note"; each kind keeps its own cap (five observations at 0.99 no longer
+  hide a note at 0.80, nine notes no longer hide an observation); the add_insight
+  gate lists a close note with both routes; a mixed merge is a note with the other
+  tags kept; a merge of observations stays one. Unit tests 4844 green, 324
+  `#[ignore]`.
+- **Smoke — GO** (`memory_routing_cross_kind_*_live`: a profile holding the fact as
+  an observation, the person restating it with a new detail; chat in the cloud, a
+  local bge-m3 for the gate): `gemini-4-hydrogen` — the gate listed the observation
+  and the model merged it into a note **6 of 6**; Gemma 4 31B — listed 8 of 12,
+  merged 6 of those 8, the fact a note only 6 of 12. The probe's first version
+  asserted that every `note_save` lists the observation and failed on Gemma; it now
+  records each note's cosine and asserts only that a note at or above the threshold
+  lists it — which held in every run.
+- **A note names the person; the threshold stays 0.70.** Both recorded misses on
+  Gemma were notes written without naming the person ("Moved from Lisbon to
+  Porto…", 0.690–0.697 against the observation; "Alex moved…" scores 0.80). The
+  threshold was lowered to 0.68 first and caught them — by 0.001 (0.681), leaving
+  the nameless note as poor a memory as before, and giving 9 of the live profile's
+  15 notes a same-topic neighbour against 2. *User's decision (2026-11-14)*: fix the
+  note — `note_save`'s description asks for "a standalone statement that names who
+  it is about — by name when you know it" — keep 0.70, and lower it only if a
+  measurement asks. Re-measured at 0.70: cross-kind Gemma 6/6 and Gemini 3/3 named,
+  listed, merged, a note only, Gemma's notes now at 0.800–0.876; the routing probe
+  kept every written fact out of observations (18/18, 17/17) with every fact note
+  naming the person (20/20, 22/22), and Gemma recorded its own conclusions 6 of 9
+  times (3–4 before). Nothing asks for 0.68.

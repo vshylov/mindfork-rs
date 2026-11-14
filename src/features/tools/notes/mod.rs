@@ -50,8 +50,17 @@ const CONSOLIDATE_SIMILARITY: f32 = 0.85;
 /// observations 0.80–0.92; conflicting updates of one fact 0.64–0.87, most ≥ 0.72;
 /// unrelated or merely same-topic pairs 0.37–0.63, and the 105 live pairs of that
 /// profile (none a duplicate) top out at 0.727. 0.70 clears all the noise with a
-/// margin and keeps every repeat. It is lower than [`CONSOLIDATE_SIMILARITY`] on
-/// purpose: a gate item costs one line of the result, a missed conflict leaves two
+/// margin and keeps every repeat.
+///
+/// **0.68 was weighed and not taken** (docs/memory-routing.md §5.5, the user's
+/// decision of 2026-11-14): a fact restated in a note that does not name the person
+/// ("Moved from Lisbon to Porto…") scores 0.690–0.697 against the observation
+/// holding it, the same sentence beginning "Alex moved…" 0.80. 0.68 catches the
+/// nameless note with a margin of 0.001 and gives 9 of that profile's 15 notes a
+/// neighbour (2 at 0.70); `note_save`'s description asking for a statement that
+/// names who it is about fixes the note instead — and a note without a subject is a
+/// poor memory anyway. It is lower than [`CONSOLIDATE_SIMILARITY`] on purpose: a
+/// gate item costs one line of the result, a missed conflict leaves two
 /// contradicting memories.
 ///
 /// A position in the reference (bge-m3) scale, read through

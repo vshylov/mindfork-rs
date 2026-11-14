@@ -218,16 +218,29 @@ impl Tool for NoteMerge {
             anyhow::bail!(ctx.loc.t("tool.note_merge.err.min_two"));
         }
         // The merged note inherits the union of the sources' tags (including @self
-        // — merging self-notes stays a self-note, hidden from recall).
+        // — merging self-notes stays a self-note, hidden from recall). But a merge
+        // that includes a regular note is a regular note (docs/memory-routing.md F4,
+        // the user's decision of 2026-11-14): what a note and an observation have in
+        // common is a fact about the interlocutor, and that belongs in the notes —
+        // a union would have turned the note into an observation instead.
         let mut tags: Vec<String> = Vec::new();
+        let (mut any_note, mut any_observation) = (false, false);
         for old in &active {
             if let Ok(Some(n)) = ctx.storage.db().note_get(ctx.profile_id, *old) {
+                if is_self_note(&n) {
+                    any_observation = true;
+                } else {
+                    any_note = true;
+                }
                 for t in n.tags {
                     if !tags.contains(&t) {
                         tags.push(t);
                     }
                 }
             }
+        }
+        if any_note {
+            tags.retain(|t| t != SELF_NOTE_TAG);
         }
         let new_id = create_note(ctx, content, tags).await?;
         for old in &active {
@@ -239,13 +252,19 @@ impl Tool for NoteMerge {
                 .db()
                 .note_links_retarget(ctx.profile_id, *old, new_id)?;
         }
-        Ok(ToolOutcome::text(ctx.loc.tf(
+        let mut out = ctx.loc.tf(
             "tool.note_merge.result.done",
             &[
                 ("n", &active.len().to_string()),
                 ("new_id", &new_id.to_string()),
             ],
-        ))
-        .wrote())
+        );
+        // Say so when an observation became part of a note: a merge of a real
+        // conclusion of the companion's into a note is a mistake it can still see.
+        if any_note && any_observation {
+            out.push(' ');
+            out.push_str(ctx.loc.t("tool.note_merge.result.as_note"));
+        }
+        Ok(ToolOutcome::text(out).wrote())
     }
 }
