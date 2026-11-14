@@ -348,23 +348,15 @@ fn handle_key_event(
     match intent {
         // Copying the selection to the clipboard (`Ctrl+C`/`Ctrl+X`) —
         // a UI-layer side effect: we already have the text, no need to go to the orchestrator.
-        // The `arboard` slot is here (`dispatch` doesn't have it). Success is silent,
-        // a failure (headless Linux with no X11) — a note in the feed.
+        // The `arboard` slot is here (`dispatch` doesn't have it). The outcome —
+        // copied, sent to the terminal, too large, failed — is a chip on the
+        // status bar for a few seconds, never a note in the feed: a note
+        // scrolled the feed and split a reply being streamed
+        // (docs/research/mouse-always-captured.md F10).
         Some(AnyIntent::Chat(ChatIntent::CopyToClipboard(text))) => {
             let report = copy_text(clipboard, &text, screen.clipboard_osc52());
-            // Success stays silent here, as it always has: a note on every
-            // `Ctrl+C` would be noise. The exception is the terminal's half —
-            // an unacknowledged protocol is worth one line, since the user has
-            // no other way to learn it was even attempted.
-            let (message, failed) = report.message(screen.loc());
-            match report {
-                CopyReport {
-                    local: Ok(()),
-                    terminal: TerminalCopy::NotTried,
-                } => {}
-                _ if failed => screen.push_error(&message),
-                _ => screen.push_note(&message),
-            }
+            let (chip, failed) = report.chip(screen.loc());
+            screen.show_copy_outcome(chip, failed);
             false
         }
         // Pasting from the clipboard (`Ctrl+V`, `/image paste`) — the same reasoning as

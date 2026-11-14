@@ -3293,3 +3293,56 @@ fn a_typed_paste_says_when_the_clipboard_would_not_open() {
         assert_eq!(clip.asked, ["image", "files", "text"], "{key}");
     }
 }
+
+/// The mouse request's exact bytes, each written once: buttons, drags and SGR
+/// on (`?1003h`, every movement, never), crossterm's five modes off, and
+/// nothing at all while the wish stays what it was.
+#[test]
+fn the_mouse_is_asked_for_once_per_change() {
+    let mut mouse = MouseCapture::default();
+    let mut out = Vec::new();
+    mouse.follow(false, &mut out).unwrap();
+    assert!(out.is_empty(), "off at start, as the terminal is");
+    mouse.follow(true, &mut out).unwrap();
+    assert_eq!(out, crate::shared::mouse::MOUSE_REPORTS_ON.as_bytes());
+    out.clear();
+    mouse.follow(true, &mut out).unwrap();
+    assert!(out.is_empty(), "asked once, not once a tick");
+    mouse.follow(false, &mut out).unwrap();
+    let off = String::from_utf8(out).unwrap();
+    for mode in ["?1006l", "?1002l", "?1000l"] {
+        assert!(off.contains(mode), "{off:?} lifts {mode}");
+    }
+    assert!(!off.contains("1003h"));
+}
+
+/// Capture follows the frame in front (research F7): on only where the chat
+/// is in front and holds the mouse — not under the help dialog, not on the
+/// "window too small" notice, not on a screen with no mouse of its own yet.
+#[test]
+fn the_mouse_is_wanted_only_where_the_chat_answers_it() {
+    use crate::shared::config::{AppConfig, MouseMode};
+    let mut screen = ChatScreen::new();
+    let mut help = HelpOverlay::new(crate::features::demo::locations());
+    let chat = ActiveScreen::Chat;
+    assert!(
+        !mouse_wanted(&chat, &help, &screen, None),
+        "the default leaves the mouse with the terminal"
+    );
+    let mut config = AppConfig::default();
+    config.interface.mouse = MouseMode::App;
+    screen.set_settings(config, vec![], vec![], Default::default(), vec![]);
+    assert!(mouse_wanted(&chat, &help, &screen, None));
+    assert!(!mouse_wanted(&chat, &help, &screen, Some(WayOut::Quit)));
+    let list = ActiveScreen::ChatList(Box::new(ChatListScreen::new(
+        vec![],
+        None,
+        screen.palette(),
+        screen.loc(),
+    )));
+    assert!(!mouse_wanted(&list, &help, &screen, None));
+    help.open_for(HelpContext::Chat);
+    assert!(!mouse_wanted(&chat, &help, &screen, None));
+    help.close();
+    assert!(mouse_wanted(&chat, &help, &screen, None));
+}

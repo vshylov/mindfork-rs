@@ -142,6 +142,11 @@ pub struct StatusModel<'a> {
     /// for `Esc` to cancel — it goes back, and the bar says so — and `F6`
     /// stops the run, a hint shown only while the key works (spec §11.2).
     pub background_run: bool,
+    /// The outcome of the last copy, for a few seconds — what it says, and
+    /// whether it failed (drawn in the error colour). Never a note in the
+    /// feed, which would scroll the feed and split a reply being streamed
+    /// (docs/research/mouse-always-captured.md F10). `None` — nothing to say.
+    pub copy: Option<(&'a str, bool)>,
 }
 
 /// The speaking-indicator glyph (WGL4, width 1 column — the hotkey grid doesn't "shift").
@@ -441,6 +446,17 @@ fn state_chips(
             muted,
         ));
     }
+    // The outcome of a copy, for a few seconds: last, so its coming and going
+    // moves no other chip — quiet when the text went somewhere, in the error
+    // colour when it went nowhere.
+    if let Some((text, failed)) = model.copy {
+        let style = if failed {
+            Style::new().fg(palette.error)
+        } else {
+            muted
+        };
+        behind_sep(Span::styled(text.to_string(), style));
+    }
     chips
 }
 
@@ -637,6 +653,7 @@ mod tests {
             esc_target: EscTarget::default(),
             read_only: false,
             background_run: false,
+            copy: None,
         }
     }
 
@@ -743,6 +760,7 @@ mod tests {
                 esc_target: EscTarget::default(),
                 read_only: false,
                 background_run: false,
+                copy: None,
             };
             lines(200, &m, &compat, ru())
                 .iter()
@@ -1073,6 +1091,40 @@ mod tests {
         assert!(!text.contains("F6"), "{text}");
     }
 
+    /// A copy's outcome is the pill's last chip (research F10): quiet when the
+    /// text went somewhere, in the error colour when it went nowhere — and the
+    /// other chips stay where they were.
+    #[test]
+    fn a_copys_outcome_is_the_last_chip_in_its_own_colour() {
+        let statuses = ready();
+        let palette = Palette::default();
+        let mut m = model(&statuses, false, 0, None, false, false);
+        m.read_only = true;
+        let before = rows_of(140, &m)[0].clone();
+        m.copy = Some(("скопировано", false));
+        let with = rows_of(140, &m)[0].clone();
+        let at = with.find("скопировано").expect("the chip is drawn");
+        assert!(
+            with.find(ru().t("ui.status.read_only")).unwrap() < at,
+            "{with}"
+        );
+        let read_only_at = before.find(ru().t("ui.status.read_only")).unwrap();
+        assert_eq!(with.find(ru().t("ui.status.read_only")), Some(read_only_at));
+        let chip_style = |m: &StatusModel, text: &str| {
+            state_chips(m, &palette, ru())
+                .last()
+                .and_then(|chip| chip.iter().find(|span| span.content == text).cloned())
+                .expect("the last chip")
+                .style
+        };
+        assert_eq!(chip_style(&m, "скопировано"), palette.muted_style());
+        m.copy = Some(("не скопировано: нет X11", true));
+        assert_eq!(
+            chip_style(&m, "не скопировано: нет X11").fg,
+            Some(palette.error)
+        );
+    }
+
     #[test]
     fn a_busy_pill_sheds_hints_but_keeps_the_corner_block() {
         // The state that once stacked six hint rows, then sent the hints onto
@@ -1290,6 +1342,7 @@ mod tests {
             esc_target: EscTarget::SearchResults,
             read_only: false,
             background_run: false,
+            copy: None,
         };
         term.draw(|f| render(f, f.area(), &m, &Palette::default(), ru()))
             .unwrap();

@@ -876,12 +876,17 @@ things on different screens. The highlights:
 | `Ctrl+L` | follow a `chat://` reference the assistant wrote |
 | `Ctrl+←/→`, `Ctrl+Backspace/Delete` | move by words, delete a word — `Alt` (Option on a Mac) does the same |
 | `Home` / `End` | a ladder: first the on-screen row, then the whole line |
-| `Ctrl+W` | toggle mouse capture: wheel scrolling ↔ native text selection |
+| `Ctrl+W` | toggle mouse capture for the session: wheel scrolling ↔ native text selection |
 | `PageUp` / `PageDown` / wheel | scroll the feed |
 
 > The mouse wheel and text selection share one terminal mechanism, so capture is
-> a toggle (`Ctrl+W`): off (default) — select text natively; on — the wheel
-> scrolls the feed and selection needs `Shift`. `Ctrl` shortcuts are
+> a choice — Settings → Interface → *Mouse*: `terminal` (default) — select text
+> natively; `app` — the wheel scrolls the feed, a click follows a `chat://`
+> address, and the terminal's own selection needs its modifier (`Shift` in most
+> terminals, `Option` in iTerm2, `Fn` in Terminal.app). `Ctrl+W` flips it for the
+> session. The legacy terminal mode keeps the mouse with the terminal: conhost
+> has no such modifier. A copy (`Ctrl+C`, `F5`) says how it went on the status
+> bar for a few seconds, and `Ctrl+C` leaves the selection in place. `Ctrl` shortcuts are
 > layout-independent: on Windows under any installed layout, elsewhere under
 > Cyrillic.
 

@@ -334,6 +334,32 @@ pub(super) struct CopyReport {
 }
 
 impl CopyReport {
+    /// The outcome in the few words the chat's status bar has room for (and
+    /// whether it is an error): the chip a copy leaves there for a few seconds
+    /// (docs/research/mouse-always-captured.md F10). The same verdicts as
+    /// [`Self::message`] — which the chat list's notice keeps, with its advice
+    /// — and a failure's cause goes to the log, where a cut chip cannot lose it.
+    pub(super) fn chip(&self, loc: &'static Locale) -> (String, bool) {
+        if let Err(err) = &self.local
+            && self.terminal != TerminalCopy::Sent
+        {
+            tracing::warn!(error = %err, terminal = ?self.terminal, "copy: the local clipboard refused the text");
+        }
+        match (&self.local, self.terminal) {
+            (Ok(()), TerminalCopy::NotTried) => (loc.t("ui.status.copy.copied").into(), false),
+            (_, TerminalCopy::Sent) => (loc.t("ui.status.copy.sent").into(), false),
+            (Ok(()), TerminalCopy::TooLarge { .. }) => {
+                (loc.t("ui.status.copy.here_too_large").into(), false)
+            }
+            (Err(_), TerminalCopy::TooLarge { .. }) => {
+                (loc.t("ui.status.copy.too_large").into(), true)
+            }
+            (Err(err), TerminalCopy::NotTried) => {
+                (loc.tf("ui.status.copy.failed", &[("err", err)]), true)
+            }
+        }
+    }
+
     /// The localized note (and whether it is an error), for whichever surface is
     /// showing it. One place, so the chat feed and the chat list's status area
     /// cannot word the same outcome differently.
@@ -543,6 +569,46 @@ mod tests {
             }
             .message(loc);
             assert!(!plain.contains("/export"), "{lang:?}: {plain}");
+        }
+    }
+
+    /// The status bar's chip (research F10) gives the same verdicts as the
+    /// note — the same outcomes fail — in a few words, and every dead end
+    /// still names the route that always works (`/export`, docs/lessons.md §4),
+    /// in every bundled locale, with no placeholder left.
+    #[test]
+    fn the_chip_is_the_note_in_a_few_words_and_keeps_the_way_out() {
+        for &lang in crate::shared::i18n::Lang::ALL {
+            let loc = crate::shared::i18n::locale(lang);
+            for (local, terminal, dead_end) in [
+                (Ok(()), TerminalCopy::NotTried, false),
+                (Ok(()), TerminalCopy::Sent, true),
+                (Err("x".to_string()), TerminalCopy::Sent, true),
+                (Ok(()), TerminalCopy::TooLarge { bytes: 90_000 }, true),
+                (
+                    Err("x".to_string()),
+                    TerminalCopy::TooLarge { bytes: 90_000 },
+                    true,
+                ),
+                (Err("no X11".to_string()), TerminalCopy::NotTried, false),
+            ] {
+                let report = CopyReport { local, terminal };
+                let (chip, chip_failed) = report.chip(loc);
+                let (note, note_failed) = report.message(loc);
+                assert_eq!(chip_failed, note_failed, "{lang:?} {report:?}");
+                assert!(
+                    chip.chars().count() < note.chars().count(),
+                    "{lang:?}: the chip is the short form: {chip}"
+                );
+                assert!(chip.chars().count() <= 60, "{lang:?}: {chip}");
+                assert!(!chip.contains('{'), "{lang:?}: {chip}");
+                assert_eq!(chip.contains("/export"), dead_end, "{lang:?}: {chip}");
+            }
+            let failure = CopyReport {
+                local: Err("no X11".into()),
+                terminal: TerminalCopy::NotTried,
+            };
+            assert!(failure.chip(loc).0.contains("no X11"), "the cause is said");
         }
     }
 

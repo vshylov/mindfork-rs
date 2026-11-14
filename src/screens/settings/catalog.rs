@@ -1976,6 +1976,12 @@ impl SettingsScreen {
             loc.t("ui.settings.group.behavior"),
             vec![
                 row(
+                    FieldId::IMouse,
+                    loc.t("ui.settings.field.mouse"),
+                    FieldKind::Choice(mouse_mode_label(i.mouse, i.terminal_compat, loc)),
+                )
+                .describe(loc.t("ui.settings.desc.mouse")),
+                row(
                     FieldId::INewlineKey,
                     loc.t("ui.settings.field.newline_key"),
                     FieldKind::Choice(newline_key_label(i.newline_key, loc)),

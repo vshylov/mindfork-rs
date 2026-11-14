@@ -1229,6 +1229,10 @@ src/
    │                       COLORTERM=truecolor gets the 256 — a last pass of
    │                       ui::finish_frame maps every RGB colour to its nearest
    │                       (cube or grey ramp), read once at startup (spec §11.6)
+   ├─ mouse.rs             the mouse reports the app asks for (spec §11.3): button and
+   │                       drag reports in SGR (`?1000h ?1002h ?1006h`), not crossterm's
+   │                       EnableMouseCapture with every movement; Windows asks the
+   │                       console through crossterm's input mode
    ├─ notify.rs            notifications (spec §11.12): NotificationSettings/NotifyEscape
    │                       (read leniently), the OSC 777/OSC 9 escape and the bell (tmux
    │                       passthrough), the ntfy push (title in the query, bearer token)
@@ -4283,6 +4287,19 @@ the ceiling check survived every test while it lived inside the executing
 function. `CopyReport { local, terminal }` carries both halves to one `message`,
 so the chat feed and the chat list's status area cannot word the same outcome
 differently, and the wording never claims an arrival the protocol cannot confirm.
+On the chat the outcome is `CopyReport::chip` — the same verdicts in a few words —
+shown by `ChatScreen::show_copy_outcome` at the end of the status bar for
+`COPY_CHIP_FOR`; the loop drops it with `expire_copy_chip` and draws one frame
+then (docs/research/mouse-always-captured.md F10). The chat list keeps `message`.
+
+**Mouse capture follows the frame in front** (`app/runtime/mod.rs`, spec §11.3).
+The chat keeps the wish — `ChatScreen::mouse_capture`, seeded from
+`InterfaceSettings::mouse_captured` (the *Mouse* setting, vetoed by the legacy
+terminal mode) and flipped for the session by `Ctrl+W` — and the loop, before
+every frame, asks `mouse_wanted` (the chat in front, no help dialog, no "too small"
+notice) and hands the answer to `MouseCapture::follow`, which writes
+`EnableMouseReports` or `DisableMouseCapture` only when it changed. No intent
+carries capture any more; the screen states a wish and `runtime` executes it.
 
 **Typed routes for the chords** (`features/ui_command.rs` +
 `screens/chat/commands.rs`, spec §11.7). One declarative registry (`COMMANDS`:

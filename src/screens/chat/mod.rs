@@ -376,10 +376,6 @@ pub enum ChatIntent {
     /// A row of the *Local servers* list was picked: the orchestrator writes it
     /// into the settings.
     UseLocalServer(crate::shared::api::local_servers::LocalOffer),
-    /// Toggle terminal mouse capture for wheel scrolling (`Ctrl+W`). `true` —
-    /// the wheel scrolls the feed (text selection — with Shift); `false` —
-    /// native mouse selection. See spec §11.3.
-    SetMouseCapture(bool),
     /// The feed's collapse state changed (`Ctrl+T` — "thoughts", `Ctrl+O` —
     /// tool calls). Stored **per chat**, like the draft: the orchestrator writes
     /// it to the active chat and hands it back on activation. See spec §11.3,
@@ -551,6 +547,28 @@ struct RagBanner {
     spinner: Spinner,
 }
 
+/// How long a copy's outcome stays on the status bar
+/// (docs/research/mouse-always-captured.md F10): long enough to read a short
+/// line, short enough that the bar is the bar again before the next copy.
+pub const COPY_CHIP_FOR: Duration = Duration::from_secs(4);
+
+/// A copy's outcome on the status bar ([`ChatScreen::show_copy_outcome`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CopyChip {
+    text: String,
+    failed: bool,
+    /// When it goes ([`ChatScreen::expire_copy_chip`]).
+    until: Instant,
+}
+
+/// A left-button press the next release answers ([`ChatScreen::handle_mouse`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MousePress {
+    /// A drag came between the press and the release: the release is the end
+    /// of a drag, not a click.
+    dragged: bool,
+}
+
 /// The chat screen: all UI state and its rendering.
 pub struct ChatScreen {
     feed: Vec<FeedMessage>,
@@ -678,9 +696,25 @@ pub struct ChatScreen {
     /// docs/i18n-ui.md). `&'static` — a built-in bundle; updated together with
     /// the palette in `set_settings`.
     loc: &'static Locale,
-    /// Whether mouse capture for wheel scrolling is on (the `Ctrl+W` toggle).
-    /// Off by default — native mouse text selection works. See spec §11.3.
+    /// Whether the app holds the mouse while the chat is in front: the
+    /// setting (`interface.mouse`, through [`InterfaceSettings::mouse_captured`]),
+    /// flipped for the session by `Ctrl+W`. The runtime asks the terminal for
+    /// what this says ([`Self::mouse_capture`]). See spec §11.3.
+    ///
+    /// [`InterfaceSettings::mouse_captured`]: crate::shared::config::InterfaceSettings::mouse_captured
     mouse_scroll: bool,
+    /// The setting's verdict as last applied to [`Self::mouse_scroll`]: a
+    /// settings snapshot resets the session's flag only when the verdict
+    /// changed, so `Ctrl+W` survives a save of some other field. `None` —
+    /// no snapshot yet.
+    mouse_setting: Option<bool>,
+    /// The left button's press the next release answers: where it was, and
+    /// whether a drag came in between. A release with no drag is a click, and
+    /// a click on a `chat://` address follows it — on the release, so that a
+    /// drag starting on one can select it (research F8).
+    mouse_press: Option<MousePress>,
+    /// The last copy's outcome, while it is on the status bar.
+    copy_chip: Option<CopyChip>,
     /// Whether background self-model auto-reflection is running (a quiet
     /// status-bar indicator).
     reflecting: bool,
@@ -808,6 +842,9 @@ impl ChatScreen {
             palette: Palette::default(),
             loc: locale(crate::shared::i18n::Lang::default()),
             mouse_scroll: false,
+            mouse_setting: None,
+            mouse_press: None,
+            copy_chip: None,
             reflecting: false,
             background_runs: 0,
             consolidating: false,
@@ -853,7 +890,60 @@ impl ChatScreen {
             .set_code_block_background(config.interface.code_block_background);
         self.feed_view
             .set_show_model_name(config.interface.show_model_name);
+        let captured = config.interface.mouse_captured();
+        if self.mouse_setting != Some(captured) {
+            self.mouse_setting = Some(captured);
+            self.mouse_scroll = captured;
+        }
         self.settings_snapshot = Some((config, profiles, language_locked, mcp, secrets_present));
+    }
+
+    /// Shows a copy's outcome on the status bar for [`COPY_CHIP_FOR`] — the
+    /// selection's `Ctrl+C`/`Ctrl+X` and the conversation's `F5`/`/copy` alike.
+    /// Never a note in the feed: a note scrolls the feed, and one pushed while
+    /// a reply streams splits it in two (docs/lessons.md §5; research F10). A
+    /// newer outcome replaces the one showing.
+    pub fn show_copy_outcome(&mut self, text: String, failed: bool) {
+        self.show_copy_outcome_at(text, failed, Instant::now());
+    }
+
+    /// [`Self::show_copy_outcome`] at a given moment — the seam for tests.
+    pub(crate) fn show_copy_outcome_at(&mut self, text: String, failed: bool, now: Instant) {
+        self.copy_chip = Some(CopyChip {
+            text,
+            failed,
+            until: now + COPY_CHIP_FOR,
+        });
+    }
+
+    /// Drops the copy's outcome once its time is up. `true` when it did: the
+    /// frame that no longer shows it is due — the loop asks every tick, and
+    /// draws only then.
+    pub fn expire_copy_chip(&mut self, now: Instant) -> bool {
+        if self
+            .copy_chip
+            .as_ref()
+            .is_some_and(|chip| now >= chip.until)
+        {
+            self.copy_chip = None;
+            return true;
+        }
+        false
+    }
+
+    /// The copy's outcome on the status bar, if one is showing: its words, and
+    /// whether it failed.
+    pub fn copy_outcome(&self) -> Option<(&str, bool)> {
+        self.copy_chip
+            .as_ref()
+            .map(|chip| (chip.text.as_str(), chip.failed))
+    }
+
+    /// Whether the app wants the terminal's mouse reports while the chat is in
+    /// front — the runtime asks for them only then (research F7). See
+    /// [`Self::mouse_scroll`].
+    pub fn mouse_capture(&self) -> bool {
+        self.mouse_scroll
     }
 
     /// Records what the engine said it is running (`AppEvent::EngineModel`).

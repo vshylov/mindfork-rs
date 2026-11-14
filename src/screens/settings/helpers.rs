@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::shared::api::llama_args::ManagedRole;
-use crate::shared::config::{CodeBlockBackground, NewlineKey, WebProvider};
+use crate::shared::config::{CodeBlockBackground, MouseMode, NewlineKey, WebProvider};
 // ---------- free functions ----------
 
 // The sampling rows the screen offers come from
@@ -1536,6 +1536,20 @@ pub(super) fn code_background_label(b: CodeBlockBackground, loc: &'static Locale
     loc.t(match b {
         CodeBlockBackground::Inverted => "ui.settings.choice.code_background_inverted",
         CodeBlockBackground::Normal => "ui.settings.choice.code_background_normal",
+    })
+    .to_string()
+}
+
+/// The label of a mouse mode (`interface.mouse`). `app` under the legacy
+/// terminal mode says the mode keeps the mouse with the terminal anyway — the
+/// choice is kept, since the same settings serve a terminal that has the
+/// modifier, but the row must not promise a wheel that does nothing
+/// (docs/research/mouse-always-captured.md F1).
+pub(super) fn mouse_mode_label(m: MouseMode, compat: bool, loc: &'static Locale) -> String {
+    loc.t(match m {
+        MouseMode::App if compat => "ui.settings.choice.mouse_app_compat",
+        MouseMode::App => "ui.settings.choice.mouse_app",
+        MouseMode::Terminal => "ui.settings.choice.mouse_terminal",
     })
     .to_string()
 }

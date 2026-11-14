@@ -24,6 +24,7 @@ pub mod machine;
 pub mod markdown;
 pub mod mcp;
 pub mod messenger;
+pub mod mouse;
 pub mod net;
 pub mod notify;
 pub mod oklab;

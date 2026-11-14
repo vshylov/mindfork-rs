@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (43)
+## Entries (44)
 
 - Post-M9: fast multiline clipboard paste (done)
 - Post-M9: `↑/↓` navigation by visual row of a wrapped line (done)
@@ -55,6 +55,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the clipboard on GNOME and KDE, and a paste refused for a clipboard that will not open (done)
 - Post-M9: `Alt+V` — the image paste by key where the terminal keeps `Ctrl+V` (done)
 - Post-M9: the input reader under a stream of mouse reports (done)
+- Post-M9: the *Mouse* setting — capture that follows the screen, the click on the release, the copy chip (done)
 
 ### Post-M9: fast multiline clipboard paste (done)
 - **Symptom**: a large clipboard paste lagged in Windows Terminal, and a line break
@@ -2409,3 +2410,72 @@ red:** with the old rule (the drain's every event counted, the chase renewed by 
 event) the three stream tests fail. **4851 green, 317 `#[ignore]`** on Linux (this
 change adds no `#[ignore]`). No live run in the AGENTS.md §3 sense — no engine, memory
 or tool path; the pty probe above is the live check of the reader.
+
+### Post-M9: the *Mouse* setting — capture that follows the screen, the click on the release, the copy chip (done)
+
+**What.** Stage 1's second half of the mouse track
+([docs/research/mouse-always-captured.md](../research/mouse-always-captured.md) §5.1,
+§5.6; forks decided by the owner on 2026-11-14). Its sibling, the input path (§5.2), has
+an entry of its own, *the input reader under a stream of mouse reports*. Nothing changes for a user who touches no setting except the copy's
+feedback and `Ctrl+C`: the default stays `terminal` until stage 2 brings the feed its
+selection.
+
+**Key decisions.**
+- **`interface.mouse` = `app` | `terminal`** (F1), read leniently like every setting
+  that may grow; *Settings → Interface → Behavior*, first row. `terminal` by default
+  for now, so a release between the stages changes nothing. **The legacy terminal mode
+  vetoes capture** (`InterfaceSettings::mouse_captured`): conhost has no modifier around
+  it. The row keeps the choice and says `app (off in the legacy terminal mode)`, the way
+  the line-break row marks a chord the terminal sends as `Enter`.
+- **`Ctrl+W` stays, for the session**, until stage 2 removes it with the setting's
+  default flipped. A snapshot resets the session's flag only when the setting's verdict
+  changes, so a save of another field keeps a flip. `ChatIntent::SetMouseCapture` is
+  gone: the chat states a wish (`mouse_capture`), and the loop asks the terminal.
+- **Capture follows the frame in front** (F7): `mouse_wanted` — the chat in front, no
+  help dialog, no "too small" notice — goes to `MouseCapture::follow` before every
+  frame. It writes only on a change, so a tick costs nothing. The list, settings, the
+  self-model viewer and the rest keep the terminal's own selection until stage 3 gives
+  them a mouse. This also changes `Ctrl+W` today: capture used to stay on across
+  screens that dropped every report.
+- **Buttons and drags in SGR only** — `shared::mouse::EnableMouseReports`,
+  `?1000h ?1002h ?1006h` — not crossterm's `EnableMouseCapture` with `?1003h` and
+  `?1015h`. On Windows the command delegates to crossterm's console mode; no console mode
+  gives buttons alone, so the reader's drop of movement (the sibling's entry) does the
+  rest.
+  `mindfork keys` asks for the same, so it echoes what the chat receives.
+- **A `chat://` address is followed on the release** (F8) of a click — a press and a
+  release with no drag between them (`MousePress { dragged }`). A drag that starts on an
+  address will select it once the feed has a selection. A release with no press of its
+  own, the right and the middle button do nothing (F3).
+- **The copy's outcome is a chip at the end of the status bar for 4 s** (F10). This
+  covers the selection's `Ctrl+C`/`Ctrl+X` and the conversation's `F5`/`/copy` on the
+  chat. The chat list keeps its notice line, which has room for the sentence. The chip
+  is `CopyReport::chip`: the note's verdicts in a few words, so a chip fits beside the
+  others. The research had planned the note's own wording, but that is a paragraph.
+  Every dead end still names `/export` (lessons §4), and a failure's cause goes to the
+  log. A plain copy, silent before, now says `copied`. The loop asks `expire_copy_chip`
+  each tick and draws one frame when the chip goes. The latent defect the research
+  noted — an OSC 52 note pushed during a stream split the reply — goes with the note.
+- **`Ctrl+C` leaves the field's selection in place** (F2, second round); `Ctrl+X` cuts
+  as before.
+
+**Screenshots.** The Interface section's row count in the settings frames went 26 → 27.
+The four dumps were regenerated (`dump_demo_frames`) and their pictures redrawn
+(`tools/screenshots.py`). On this machine the redraw also moves a few hundred pixels of
+anti-aliasing in the `⚙`/`▸` glyphs, which a fallback font draws, and in frames whose
+dumps did not change. Those other pictures were left as committed.
+
+**Tests.** The setting (default, an old file, the round trip, a newer value read as the
+default without losing the file, the veto); the capture command's bytes; the
+reconciler (asked once per change, the exact bytes each way) and `mouse_wanted` across
+the chat, the list, the help and the notice; the setting seeding the session flag and
+`Ctrl+W` surviving another field's save; the settings row (default, cycle, the veto's
+label, the choice kept); the click on the release, and a drag from an address, a stray
+release and the other buttons following nothing; `Ctrl+C` keeping the selection
+(`ctrl_c_copies_selection_ctrl_x_cuts` rewritten for it); the chip's expiry, a newer
+chip's clock, and no note in the feed; the chip as the pill's last chip, muted or in the
+error colour; the chip's wording in every locale against the note's verdicts. The
+"no command is a silent no-op" gate counts `/mouse`'s flip as visible. **4857 green, 317
+`#[ignore]`** on Linux. No live run in the AGENTS.md §3 sense (no engine, memory or tool
+path). How it feels in Windows Terminal over SSH and natively — the setting, `Shift` for
+the terminal's selection, the chip — is the owner's check (P0 of the research).

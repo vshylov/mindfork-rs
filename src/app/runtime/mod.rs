@@ -15,8 +15,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, bail};
 use ratatui::backend::Backend;
 use ratatui::crossterm::event::{
-    self, DisableBracketedPaste, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent,
-    KeyEventKind, KeyModifiers, MouseEventKind,
+    self, DisableBracketedPaste, DisableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+    KeyModifiers, MouseEventKind,
 };
 #[cfg(unix)]
 use ratatui::crossterm::event::{
@@ -44,6 +44,7 @@ use crate::screens::search::{SearchIntent, SearchScreen};
 use crate::screens::self_model::{SelfModelIntent, SelfModelScreen};
 use crate::screens::settings::{SettingsIntent, SettingsScreen};
 use crate::screens::tasks::{TasksIntent, TasksScreen};
+use crate::shared::mouse::EnableMouseReports;
 use crate::shared::paths::Locations;
 use crate::shared::theme::Palette;
 use crate::shared::ui::{self, MinSize, SPINNER_STEP, WayOut, dim_background};
@@ -410,9 +411,9 @@ pub fn run(
     // Focus reports: a notification is for someone not looking (spec §11.12).
     // A terminal that does not report focus ignores the request.
     let _ = execute!(stdout(), ratatui::crossterm::event::EnableFocusChange);
-    // Mouse capture is OFF by default: then native mouse text selection works. Feed
-    // wheel scrolling is enabled via a toggle (`Ctrl+W`) — it sends
-    // `EnableMouseCapture`/`DisableMouseCapture` (see `dispatch`). We augment ratatui's
+    // Mouse capture is OFF at start: the loop turns it on where the frame in
+    // front wants the mouse (`MouseCapture`, `mouse_wanted` — the setting
+    // `interface.mouse` and the `Ctrl+W` toggle decide). We augment ratatui's
     // panic hook by disabling the mouse and bracketed paste: otherwise after a panic
     // with these modes still on, the terminal would keep sending escape codes to the
     // shell. We also lift synchronized output here (DEC 2026, see the loop): a panic
@@ -613,6 +614,8 @@ fn run_loop(
     // Set when the event channel turns out to be **closed** rather than empty (see
     // [`Drain`]).
     let mut backend_gone = false;
+    // What the terminal was last asked for about the mouse — off at start.
+    let mut mouse = MouseCapture::default();
     while !quit {
         let drained = drain_events(&mut evt_rx, |event| {
             apply_event(
@@ -638,6 +641,11 @@ fn run_loop(
         // While background indexing or impersonation runs, its spinner asks for a
         // frame each time its glyph changes — once a `SPINNER_STEP`, not every tick
         // (outside them, idle ticks don't repaint — `dirty`).
+        // A copy's outcome leaves the status bar when its time is up — a frame
+        // then, and none for it before.
+        if screen.expire_copy_chip(Instant::now()) {
+            dirty = true;
+        }
         if spinner_frame_needed(&active, &screen) {
             dirty = true;
             refresh_task_rows(&active, cmd_tx);
@@ -647,6 +655,14 @@ fn run_loop(
         if let Some(draft) = screen.take_dirty_draft() {
             let _ = cmd_tx.send(AppCommand::SetDraft(draft));
         }
+        // The mouse follows the frame about to be drawn (research F7): every
+        // change that could move it — a key, a screen opened or closed, a
+        // settings snapshot — also makes the frame dirty, so the request
+        // reaches the terminal before the frame does.
+        let _ = mouse.follow(
+            mouse_wanted(&active, &help, &screen, drawn.placeholder),
+            &mut stdout(),
+        );
         if dirty {
             draw_frame(
                 terminal,
@@ -1143,6 +1159,46 @@ fn compose_frame(
     // monochrome mode, what the overlay drew.
     ui::finish_frame(frame.buffer_mut(), palette);
     None
+}
+
+/// What the loop last asked the terminal for about the mouse: its reports on
+/// or off. Off at start, like the terminal itself.
+#[derive(Debug, Default)]
+struct MouseCapture {
+    on: bool,
+}
+
+impl MouseCapture {
+    /// Asks `out` for `want` — button and drag reports
+    /// ([`EnableMouseReports`]) or none — when it is not what was asked last.
+    fn follow(&mut self, want: bool, out: &mut impl std::io::Write) -> std::io::Result<()> {
+        if want == self.on {
+            return Ok(());
+        }
+        if want {
+            ratatui::crossterm::queue!(out, EnableMouseReports)?;
+        } else {
+            ratatui::crossterm::queue!(out, DisableMouseCapture)?;
+        }
+        out.flush()?;
+        self.on = want;
+        Ok(())
+    }
+}
+
+/// Whether the frame in front wants the terminal's mouse reports
+/// (docs/research/mouse-always-captured.md F7): only where the screen answers
+/// the mouse — the chat, when it holds the mouse ([`ChatScreen::mouse_capture`])
+/// — and off everywhere else: the other screens, the help dialog (modal, it
+/// swallows the mouse) and the "window too small" notice. No screen loses the
+/// terminal's own selection before it has one of its own.
+fn mouse_wanted(
+    active: &ActiveScreen,
+    help: &HelpOverlay,
+    screen: &ChatScreen,
+    placeholder: Option<WayOut>,
+) -> bool {
+    active.is_chat() && help.open.is_none() && placeholder.is_none() && screen.mouse_capture()
 }
 
 /// One input tick: polls `source` for [`TICK`], collects the available

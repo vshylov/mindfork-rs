@@ -835,6 +835,9 @@ enum FieldId {
     ISmNoteOrder,
     ISpell,
     IDicts,
+    /// Who answers the mouse inside the window: the app / the terminal
+    /// (`interface.mouse`, spec §11.3).
+    IMouse,
     /// The key that breaks the line in a multi-line field, and that the footers
     /// name: auto (the terminal's) / Shift+Enter / Alt+Enter / Ctrl+Enter / Ctrl+J.
     INewlineKey,
