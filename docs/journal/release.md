@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (94)
+## Entries (95)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -106,6 +106,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Release 0.26.1 (prepared)
 - Release 0.26.2 (prepared)
 - Release 0.26.3 (prepared)
+- Release 0.26.4 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -6685,3 +6686,64 @@ guard's, the site gate's and the AUR renderer's self-tests clean.
       v0.26.3", 21 requests all to mindfork.io, no console error.
   - Scoop and the Homebrew tap still named 0.26.2 five minutes after the publication;
     they pick a release up within four and six hours.
+
+### Release 0.26.4 (prepared)
+
+- **A release PR** per [AGENTS.md §6](../../AGENTS.md), branch `chore/release-0.26.4`,
+  asked for by the owner once the memory-routing track had closed:
+  - `Cargo.toml` `0.26.3 → 0.26.4` (+ one line of `Cargo.lock`), and the site's
+    `app_version`;
+  - `CHANGELOG.md`: `[Unreleased]` → `[0.26.4] — 2026-11-14` under a lead paragraph,
+    "What the companion learns about you goes into its notes, and a search no longer
+    comes back empty over one word", a **Data** section (below), a fresh
+    `[Unreleased]`, and the comparison links;
+  - CLAUDE.md's status heading;
+  - the release's post, and `/llms.txt` regenerated from it.
+
+  Since `v0.26.3`, three pull requests with behaviour:
+  - 956: the write gates get a threshold; the chat and history searches leave out a
+    word found nowhere and search two-letter words (docs/journal/notes.md,
+    docs/journal/tools.md);
+  - 957: the self-model's protocol sends facts about the person to notes
+    (docs/history/memory-routing.md, stage 1);
+  - 958: the write gates look across kinds, a merge that includes a note is a note,
+    and a note names the person (stage 2).
+
+  The rest is documentation: 955, the publication of 0.26.3, and 959, the routing
+  plan moved to `docs/history/`.
+- **A PATCH, as the owner named it.** Two items are under *Changed*, the end of a
+  track, which §6 would count toward a MINOR. Neither adds a tool, a setting or a key:
+  they change the wording of existing tools and what their gates show. No schema
+  constant moved.
+- **The `Data` rubric, by measurement.**
+  - `git diff v0.26.3 -- src/shared/storage src/shared/config.rs src/entities
+    src/features/data_migration.rs src/features/backup.rs` touches one file,
+    `storage/cache/mod.rs`. Its `scan_messages_in` only reads the disposable
+    full-text index, and `CACHE_SCHEMA` stays 2. There is no new value of a stored
+    type: settings 7, profiles 1, chats 8, database 1.
+  - 956 and 957 write what was written before: notes and observations in `data.db`,
+    in the same columns.
+  - 958's merge leaves `@self` out of the merged note's tags when a source is a
+    regular note. That is a tag list without one tag, not a new value.
+  - **Measured** with 0.26.3 built from its tag (a worktree at `v0.26.3`, a target
+    directory of its own; no published binary is installed here).
+  - The data came from this branch's build. The cross-kind arm of
+    `memory_routing_live.rs` (Gemini, a local bge-m3) ran twice, each data root kept
+    by a local edit that was not committed. It seeds an observation holding a fact
+    about the person, and the person restates the fact. In both runs the model saved
+    a note, the gate listed the observation, and `note_merge` folded the two into a
+    note without `@self`. Each root holds 3 notes, 2 of them superseded.
+  - `mindfork stats` from 0.26.3 and 0.26.4 printed the same on both roots, apart from
+    the version and the path in the heading: 1 profile, 1 chat, 2 messages, 3 notes
+    (2 superseded), fingerprints `2442afec88210528` and `4eda6a7515cb3dce`, exit 0.
+  - 0.26.3's TUI started on the first root, driven by `tools/console_probe.py`'s
+    helpers. It showed the chat with the turn's `note_save` and `note_merge` and the
+    reply, and `● chat`. `/notes` showed "All notes (1)", the merged note. It
+    exited 0.
+- **No rehearsal.** `git diff v0.26.3 -- .github packaging tools` is empty.
+  `release_guard.py --tag v0.26.4` accepts the tag, and its notes are the `[0.26.4]`
+  section (48 lines). Its self-tests and `site_release_gate.py`'s are clean.
+- **The site**: `zola check --skip-external-links` and `zola build` (0.23.6) are clean.
+  - The post heads the blog, ahead of 0.26.3's.
+  - The home and install pages say `"softwareVersion": "0.26.4"`.
+  - The post is in the sitemap, and `site_llms_txt.py --check` matches.

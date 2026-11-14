@@ -26,6 +26,7 @@ The assistant keeps notes about you, a model of itself that it revisits, and a k
 
 ## News
 
+- [mindfork 0.26.4 — what the companion learns about you goes into its notes](https://mindfork.io/blog/mindfork-0-26-4/): With the self-model tools on, facts about you mostly went into the companion's observations about itself; they now go into notes. Saving a note no longer lists unrelated ones as duplicates, and a search no longer comes back empty over one word.
 - [mindfork 0.26.3 — a picture pasted in Windows Terminal, and a token counter that holds on Gemini](https://mindfork.io/blog/mindfork-0-26-3/): Windows Terminal keeps Ctrl+V for its own text paste, so a copied picture never reached the app; Alt+V now pastes it in every terminal. A Gemini turn that thinks no longer misstates its tokens.
 - [mindfork 0.26.2 — a persona written into the settings reaches your chat](https://mindfork.io/blog/mindfork-0-26-2/): The chat the first start opens kept the default system message after a persona was written into the profile, so its replies ignored it. A conversation not yet begun now takes the profile's new text, and /system shows or changes the system message of one already under way.
 - [mindfork 0.26.1 — a cargo install keeps its data in your user folder](https://mindfork.io/blog/mindfork-0-26-1/): cargo install mindfork now keeps a new data folder in your user folder, where the packages and the installer keep it, not among the toolchain's programs in ~/.cargo/bin. A folder already there stays in use. A build with a newer Rust no longer prints a warning.

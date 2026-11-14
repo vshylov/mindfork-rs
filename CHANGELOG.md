@@ -14,6 +14,16 @@ split by subsystem.
 
 ## [Unreleased]
 
+## [0.26.4] — 2026-11-14
+
+**What the companion learns about you goes into its notes, and a search no longer comes
+back empty over one word.** With the self-model tools on, facts about you mostly went
+into the companion's observations about itself; they now go into notes, and one already
+filed as an observation is offered for merging into the note. Saving a note no longer
+lists unrelated ones as duplicates, and a search of other conversations leaves out a
+word found nowhere instead of finding nothing. Nothing in your data moves to a new
+format.
+
 ### Changed
 
 - **The companion files what it learns about you as notes, not as its own observations.**
@@ -47,6 +57,13 @@ split by subsystem.
   together, the answer says how many messages each one has.
 - **Two-letter words are searched** — `AI`, `C#` and the like, as whole words. They
   used to be ignored, so a query made only of them was refused.
+
+### Data
+
+- **No data upgrade.** No stored file changes shape: the settings stay at schema 7 and
+  the chats at 8, nothing is migrated at the first start, and going back to 0.26.3
+  needs no backup restored — checked with 0.26.3 built from its tag on notes this
+  version wrote, an observation merged into a note included.
 
 ## [0.26.3] — 2026-11-13
 
@@ -4177,7 +4194,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.26.3...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.26.4...HEAD
+[0.26.4]: https://github.com/vshylov/mindfork-rs/compare/v0.26.3...v0.26.4
 [0.26.3]: https://github.com/vshylov/mindfork-rs/compare/v0.26.2...v0.26.3
 [0.26.2]: https://github.com/vshylov/mindfork-rs/compare/v0.26.1...v0.26.2
 [0.26.1]: https://github.com/vshylov/mindfork-rs/compare/v0.26.0...v0.26.1
