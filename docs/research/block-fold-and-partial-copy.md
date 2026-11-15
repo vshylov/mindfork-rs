@@ -1,8 +1,11 @@
 # Research: folding one block with the mouse, and copying the first or last messages
 
 **Status:** research (2026-11-15). Four decisions were taken by the owner before it
-was written (§4.1). The open forks are F1–F5 (§4.2), awaiting the owner. Nothing is
-built yet.
+was written (§4.1). **Forks F1–F5 decided by the owner the same day** (§4.2): F1–F4
+as recommended, and F5 the other way, so the target is the marker and the pill, not
+the whole header. That choice left an expanded tool card with nothing to click, which
+one more fork (F5b) settled as recommended: the card gets a `▾ details` pill. Nothing
+is built yet.
 
 The roadmap item "per-message collapse, select and copy" (docs/roadmap.md) was
 deferred until the app held the mouse. That track is complete
@@ -32,10 +35,11 @@ is left of the item to two things:
   parent's set, as it shares the flags, because message ids are unique across both.
   A clone keeps the set, because a clone keeps the message ids (§3.3).
 - **The click** (§3.4):
-  - **Where:** the header's rows (fork F5).
-  - **When:** on the release with no drag. A drag from a header still selects.
+  - **Where:** the marker and the pill only (F5). An expanded tool card gets a
+    `▾ details` pill to click (F5b).
+  - **When:** on the release with no drag. A drag from a pill still selects.
   - **Repeats:** each click toggles once.
-  - **Position:** the header stays on its screen row.
+  - **Position:** the pill stays on its screen row.
   - **Exception:** the reply still being written takes no click, since it has no ids
     yet.
 - **The render rebuilds only the clicked block**, not the cache. The flags stay in
@@ -48,8 +52,8 @@ is left of the item to two things:
   - the copy settings (thoughts, calls, results) apply as they do to the whole copy.
 - **F2:** found on the way, the whole copy writes a separate `Assistant:` label for
   every round of a reply with tool calls, so one reply in the feed reads as two or
-  three in the copy. The recommendation is one label per reply, in the whole copy and
-  `/export` too.
+  three in the copy. Decided: one label per reply, in the whole copy and `/export`
+  too.
 - **Two pull requests:** the copy, then the fold (§5). Neither touches the engine, so
   no live run against a model is due. A pty probe and the owner's look in Windows
   Terminal check the fold.
@@ -238,36 +242,41 @@ key the prune drops marks the chat dirty, like any other view change.
 
 ### 3.4 The click
 
-**The target is the header's rows**, at any column past the rail (fork F5):
-- the thoughts' pill or `▾ thoughts` row;
-- a tool card's `⚒ name(args)` rows (a long header wraps), its pill included;
-- the compaction divider.
+**The target is the marker and the pill** (F5, F5b), as drawn:
 
-A header is wide and unmistakable, so it is a better target than the one-cell `▸`.
-Rows past the header are not targets: there a click ends a selection, as anywhere in
-the feed.
+| Block | Collapsed | Expanded |
+|---|---|---|
+| Thoughts | the pill `▸ thoughts · N lines [Ctrl+T]` | `▾ thoughts` |
+| A tool card | its pill `▸ details · [Ctrl+O]` | a new pill `▾ details`, with no keycap (F5b) |
+| The compaction divider | `▸` and its label, with the keycap | `▾` and its label |
+
+The rule that fills the rest of the divider's row is not part of the target.
+
+**The rest of a header is ordinary feed text.** A click there ends a selection, a
+double click takes a word, and a `chat://` reference in a tool's arguments follows.
+A pill's text comes from the locale, so a reference can never be part of a target.
+
+**Where a pill is drawn.** A pill that does not fit on the header's last row moves
+to the next one (`push_trailing`), and the target is wherever it is drawn.
 
 **When.** The toggle comes on the release of a press with no drag. A drag that starts
-on a header selects, as a drag from a `chat://` address does (F8 of the mouse
+on a pill selects, as a drag from a `chat://` address does (F8 of the mouse
 research).
 
-**A `chat://` reference on a header.** A tool's arguments may hold one. A click on
-the reference follows it, and a click on the rest of the header toggles the block.
-
-**Every click toggles.** A press on a header does not take a word or a line, so a
-double click expands and collapses again. A header is a control, and treating the
+**Every click toggles.** A press on a pill does not take a word or a line, so a
+double click expands and collapses again. A pill is a control, and treating the
 second press of a double click differently would mean holding the first toggle back
 for the double-click interval. That delay would be felt on every single click.
 
-**The selection.** A click on a header ends a selection like any click outside the
-highlight. A header inside the highlight still toggles: the rebuild of its block
-drops what the selection held there, as every rewrap of a block does today.
+**The selection.** A click on a pill ends a selection like any click outside the
+highlight. A pill inside the highlight still toggles: the rebuild of its block drops
+what the selection held there, as every rewrap of a block does today.
 
-**The header stays on its row.** Every row above the header is unchanged by the
-toggle, so keeping the scroll offset keeps the header in place. The one thing that
-would move it is the feed following its tail: there the new rows would push the
-header up. So a fold click ends following. Where the content becomes shorter than
-the view, the clamp moves the view, which cannot be helped.
+**The pill stays on its row.** Every row above the pill is unchanged by the toggle,
+so keeping the scroll offset keeps the pill in place. The one thing that would move
+it is the feed following its tail: there the new rows would push the pill up. So a
+fold click ends following. Where the content becomes shorter than the view, the
+clamp moves the view, which cannot be helped.
 
 **While the assistant answers.** The stored blocks above the reply take clicks, as
 references do. The live bubble's take none (§3.2).
@@ -285,18 +294,31 @@ foldable parts. That state is hashed into the block's fingerprint, so a click
 rebuilds the one block that changed. Because the block was rebuilt,
 `forget_selection_in` runs for it, as for any changed block.
 
-**The hit map.** `push_thoughts`, `push_tool` and `push_compaction_boundary` record
-which of their lines is a header, and the wrap turns those into the block's header
-rows. This works the way `links` and `facts` are recorded during the build today.
-`render` maps the visible ones to terminal rows (`fold_hits`, beside `link_hits`), and
-`MessageFeed::fold_at(col, row)` answers against the last drawn frame. The test reads
-the drawn buffer back to find the header it clicks (docs/lessons.md §5).
+**The hit map.**
+- `push_thoughts`, `push_tool` and `push_compaction_boundary` mark their pill's
+  spans.
+- A block's rows are rows as drawn, so after the wrap the build knows each pill's
+  row and columns in the block. It records them with the block's key, the way it
+  records `links` and `facts` today.
+- `render` maps the visible ones to terminal cells (`fold_hits`, beside
+  `link_hits`).
+- `MessageFeed::fold_at(col, row)` answers against the last drawn frame.
+
+The test finds the pill it clicks by reading the drawn buffer back
+(docs/lessons.md §5).
 
 **The pills keep their keycaps** (`Ctrl+T`, `Ctrl+O`). They are still true: the key
 folds every block of the kind. The click is in the help's mouse rows and the manual.
 
-**Nothing changes for a chat with no exceptions**, so the screenshot gate's pictures
-stay as they are.
+**The expanded tool card gains a pill** (F5b): `▾ details`, drawn by the collapsed
+pill's code on the header's last row or the next. A card with nothing to fold (no
+arguments and no result yet) gets none, as it gets no collapsed pill. The pill is
+drawn however the card was expanded, so it reads the same after `Ctrl+O` or a click.
+
+**What this changes in the pictures.** The pill changes the look of every expanded
+card. The demo's captures expand tool calls (`features::demo::feed_view`), so stage 2
+redraws the screenshot gate's pictures and the demo reel, in a commit of their own.
+Nothing else in the feed's look changes.
 
 ### 3.6 `/copy first N` and `/copy last N`
 
@@ -365,7 +387,7 @@ plural rules (the number-neutral wording of docs/journal/i18n.md, guarded in
   recommendation. Without it, the one case it matters for comes back on every
   opening: everything expanded and one huge result folded away.
 
-### 4.2 Open
+### 4.2 Decided by the owner the same day
 
 **F1 — what N counts.**
 - **(a) Messages as the feed draws them: a reply with all its rounds is one.**
@@ -376,6 +398,8 @@ plural rules (the number-neutral wording of docs/journal/i18n.md, guarded in
   greeting, a directed dialogue, a follow-up the assistant wrote unasked).
 - (c) Stored messages. This is the file's count, which no one can see: a reply with
   three rounds would be three.
+
+**Owner's decision (2026-11-15): (a).**
 
 **F2 — one `Assistant:` label per reply.**
 - **(a) One label per reply as drawn, in the whole copy, the excerpt and the
@@ -388,15 +412,21 @@ plural rules (the number-neutral wording of docs/journal/i18n.md, guarded in
 - (c) Leave both as they are. Then `/copy last 1` on such a reply prints two or three
   labels.
 
+**Owner's decision (2026-11-15): (a).**
+
 **F3 — the title in an excerpt.**
 - **(a) No title.** *(Recommended.)* The excerpt is a quote, usually pasted into
   another conversation, where the chat's title is noise.
 - (b) The title first, as in the whole copy.
 
+**Owner's decision (2026-11-15): (a).**
+
 **F4 — a bare `first` or `last`.**
 - **(a) Means 1.** *(Recommended.)* `/copy last` is the commonest case: the last
   reply.
 - (b) N is required.
+
+**Owner's decision (2026-11-15): (a).**
 
 **F5 — the click target.**
 - **(a) The header's rows, at any column past the rail.** *(Recommended.)* A wide
@@ -404,9 +434,25 @@ plural rules (the number-neutral wording of docs/journal/i18n.md, guarded in
 - (b) The marker and the pill's text only: a smaller target that leaves the rest of
   the header to ordinary clicks.
 
+**Owner's decision (2026-11-15): (b)**, against the recommendation.
+
+**F5b — the target on an expanded tool card.** This fork was added after F5 (b): a
+collapsed card ends on its pill, but an expanded one has none. Its `⚒` header has
+been its marker since fork C3 of feed-collapse, while the expanded thoughts and the
+divider show `▾`.
+- **(a) A `▾ details` pill on the expanded card's header**, with no keycap, as the
+  expanded thoughts have none. *(Recommended.)* All three kinds then fold the same
+  way. It changes the look of expanded cards slightly.
+- (b) The `⚒` icon. The look does not change, but the target is two cells and does
+  not look clickable.
+- (c) The icon and the tool's name, without the arguments. A larger target, but it
+  does not look like a button either.
+
+**Owner's decision (2026-11-15): (a).**
+
 ## 5. Stages, tests, the live check
 
-**Stage 1 — `feat/copy-first-last`** (`/copy first|last [N]`, and F2 if chosen).
+**Stage 1 — `feat/copy-first-last`** (`/copy first|last [N]`, and F2).
 
 Tests:
 - the registry parses the subcommand: N, bare, `0`, a non-number, extra tokens;
@@ -420,7 +466,7 @@ Tests:
   - the settings applied;
 - orchestrator: `CopyChat` with each range for a chat and a transcript, and the
   confirmation's count;
-- F2 (a): a reply with three rounds copies as one block, in `F5` and `/export`.
+- F2: a reply with three rounds copies as one block, in `F5` and `/export`.
 
 **Stage 2 — `feat/block-fold`** (§3.1–§3.5).
 
@@ -430,16 +476,19 @@ Tests:
   - a flag toggle empties only its kind's keys;
   - serde: old file, empty set skipped, stable order;
 - the feed:
-  - a click on each kind's header, found by reading the drawn buffer, toggles that
-    block alone;
+  - a click on each kind's pill, collapsed and expanded, found by reading the drawn
+    buffer, toggles that block alone;
   - the other blocks are not rebuilt (their fingerprints and rows are unchanged);
-  - the header stays on its row;
+  - the pill stays on its row;
   - following ends;
-  - a drag from a header selects;
-  - a double click is two toggles;
-  - a reference on a header follows;
+  - a drag from a pill selects;
+  - a double click on a pill is two toggles;
+  - a click on the header beside the pill is an ordinary click, and a reference
+    there follows;
+  - a pill moved to the next row by a narrow panel is still the target;
+  - the expanded card's pill, and none on a card with nothing to fold;
   - the live bubble takes no click;
-  - the narrow and the monochrome layouts;
+  - the monochrome layout;
 - the screen: the click returns `SetFeedView` with the set;
 - orchestrator:
   - stored;
@@ -460,6 +509,8 @@ no `#[ignore]` smoke against a model is due (AGENTS.md §3). The fold is checked
     table's deferred row removed;
   - §11.2: the copy;
 - the manual, the help's mouse row and the command row;
+- the screenshot gate's pictures and the demo reel, redrawn for the expanded card's
+  pill;
 - CHANGELOG;
 - the ui-feed journal for the fold and the ui-input journal for the command;
 - the roadmap item closed.
