@@ -44,8 +44,16 @@ split by subsystem.
   notes' search, the conversation's search bar — where a selection could be made but
   not copied. On a screen without the chat's status bar the outcome shows at the right
   end of the bottom row. A key field copies nothing.
+- **`/copy first N` and `/copy last N` copy part of a conversation**: the first or the
+  last N messages as the conversation shows them (one without N), in the format of the
+  whole copy but without the chat's title. The status bar says how many were copied.
 
 ### Changed
+
+- **A copy of a conversation labels each reply once.** A reply the assistant built over
+  several rounds of tool calls used to copy as two or three `Assistant:` blocks; it now
+  copies as the one reply the conversation shows — in `F5`, `/copy` and a Markdown
+  `/export` alike.
 
 - **A copy says how it went on the status bar** for a few seconds — copied, copied
   through your terminal (OSC 52) over SSH, too big, failed — instead of a line in the

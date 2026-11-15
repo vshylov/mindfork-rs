@@ -2,6 +2,7 @@
 //! module (fixtures in mod.rs). See docs/history/refactoring-god-objects.md, stage 3.
 
 use super::*;
+use crate::features::chat_export::CopyRange;
 use crate::features::export_command::ExportFormat;
 
 #[test]
@@ -38,7 +39,7 @@ fn copy_chat_emits_clipboard_text_or_error_when_empty() {
     chat.push_message(Message::user("привет"));
     chat.push_message(Message::assistant("здравствуйте"));
     orch.chats.push(chat);
-    orch.handle_copy_chat(id);
+    orch.handle_copy_chat(id, CopyRange::All);
     match rx.try_recv().unwrap() {
         AppEvent::CopyToClipboard(text) => {
             assert!(text.contains("Пользователь:\nпривет"));
@@ -51,8 +52,46 @@ fn copy_chat_emits_clipboard_text_or_error_when_empty() {
     let empty = Chat::from_profile(&profile, "Пустой");
     let empty_id = empty.id;
     orch.chats.push(empty);
-    orch.handle_copy_chat(empty_id);
+    orch.handle_copy_chat(empty_id, CopyRange::All);
     assert!(matches!(rx.try_recv().unwrap(), AppEvent::ChatListError(_)));
+}
+
+/// `/copy last N` and `/copy first N` (docs/research/block-fold-and-partial-copy.md
+/// §3.6): the part goes out as `CopyExcerpt` with its count, without the title, the
+/// count being the drawn messages it took — a reply's rounds are one.
+#[test]
+fn copy_chat_takes_the_first_or_last_messages_with_their_count() {
+    let (_d, mut orch, mut rx) = bare_orch_rx();
+    let profile = Profile::new("P", "sys");
+    let mut chat = Chat::from_profile(&profile, "Чат");
+    let id = chat.id;
+    chat.push_message(Message::user("q1"));
+    chat.push_message(Message::assistant("a1"));
+    chat.push_message(Message::user("q2"));
+    chat.push_message(Message::assistant("round one"));
+    chat.push_message(Message::new(MessageRole::Tool, "result"));
+    chat.push_message(Message::assistant("round two"));
+    orch.chats.push(chat);
+
+    orch.handle_copy_chat(id, CopyRange::Last(2));
+    match rx.try_recv().unwrap() {
+        AppEvent::CopyExcerpt { text, messages } => {
+            assert_eq!(
+                text,
+                "Пользователь:\nq2\n\nАссистент:\nround one\n\nround two"
+            );
+            assert_eq!(messages, 2);
+        }
+        other => panic!("expected CopyExcerpt, got {other:?}"),
+    }
+    orch.handle_copy_chat(id, CopyRange::First(9));
+    match rx.try_recv().unwrap() {
+        AppEvent::CopyExcerpt { text, messages } => {
+            assert!(text.starts_with("Пользователь:\nq1"), "no title: {text}");
+            assert_eq!(messages, 4);
+        }
+        other => panic!("expected CopyExcerpt, got {other:?}"),
+    }
 }
 
 /// `F5` labels the roles with the chat profile's custom names (spec §5.1) — resolved
@@ -70,7 +109,7 @@ fn copy_chat_labels_roles_with_profile_names() {
     orch.profiles.push(profile);
     orch.chats.push(chat);
 
-    orch.handle_copy_chat(id);
+    orch.handle_copy_chat(id, CopyRange::All);
     match rx.try_recv().unwrap() {
         AppEvent::CopyToClipboard(text) => {
             assert!(text.contains("Гайя:\nпривет"), "{text}");
@@ -777,7 +816,7 @@ fn export_writes_the_file_and_refuses_to_overwrite_it() {
 #[test]
 fn the_markdown_file_is_exactly_what_the_clipboard_gets() {
     let (dir, mut orch, mut rx, id) = orch_with_conversation();
-    orch.handle_copy_chat(id);
+    orch.handle_copy_chat(id, CopyRange::All);
     let copied = match rx.try_recv().unwrap() {
         AppEvent::CopyToClipboard(text) => text,
         other => panic!("expected CopyToClipboard, got {other:?}"),

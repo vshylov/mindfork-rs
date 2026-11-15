@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (51)
+## Entries (52)
 
 - Post-M9: fast multiline clipboard paste (done)
 - Post-M9: `↑/↓` navigation by visual row of a wrapped line (done)
@@ -63,6 +63,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `Ctrl+C` and `Ctrl+X` in every field (done)
 - Post-M9: the mouse on every screen (done)
 - Post-M9: a selection in read-only text — the mouse track complete (done)
+- Post-M9: `/copy first N` and `/copy last N`; one label per reply (done)
 
 ### Post-M9: fast multiline clipboard paste (done)
 - **Symptom**: a large clipboard paste lagged in Windows Terminal, and a line break
@@ -2912,3 +2913,59 @@ built the feed's own selection and flipped the default, so `Ctrl+W` is gone. Sta
 left the prefixes out of a copy. Stage 3 added copy in every field, the mouse on every
 screen and this selection.
 
+### Post-M9: `/copy first N` and `/copy last N`; one label per reply (done)
+
+**What.** Stage 1 of
+[docs/research/block-fold-and-partial-copy.md](../research/block-fold-and-partial-copy.md),
+on `feat/copy-first-last`. The roadmap's per-message copy was narrowed by the owner: the
+mouse copies text, and a part of a conversation is copied by command. `/copy first N`
+and `/copy last N` take the first or last N messages, as the feed draws them, in the whole
+copy's format without the title (forks F1, F3). A bare `first` or `last` means one (F4).
+
+**Found on the way (F2).** The formatter walked stored messages, and an agentic reply is
+one message per round. A reply that said "Let me check" before its call therefore copied
+as two `Assistant:` blocks, though the feed draws one bubble. Every copy now writes one
+label per drawn reply: `F5`, `/copy`, the excerpt and a Markdown `/export`. Each round's
+thoughts, text and calls follow in the order the round made them.
+
+**How.**
+- **One rule for a bubble.** `entities::chat::visible_row_count` already counted the
+  feed's bubbles for the chat card, pinned to `FeedMessage::from_messages` by an existing
+  agreement test. It became `visible_row_ranges` / `visible_rows`, the bubbles as
+  message ranges, and the count is their length. So N on the command and "N msg" on the
+  card count the same thing, with no third statement of the rule.
+- **The formatter.** `chat_export::format_range(title, messages, CopyRange, …)` formats
+  each bubble and drops one that copies empty under `config.copy` (a reply of calls only,
+  with calls off; a note row). It then takes all, the first n or the last n, and returns
+  `Copied { text, messages }`. `format_conversation`, which `/export` calls, is its
+  `All`.
+- **The route.** The registry's `/copy` row is now `Arity::Subcommand(["first","last"])`.
+  The screen reads the count: from 1; `0`, a non-number or a second token is a note
+  (`ui.cmd.copy_bad_count`). `ChatIntent::CopyChat` and `AppCommand::CopyChat` carry a
+  `CopyRange`; `F5` and the chat list send `All`. An excerpt comes back as
+  `AppEvent::CopyExcerpt { text, messages }`.
+- **The confirmation.** `CopyReport::chip_of` and `message_of` name the count where the
+  copy went somewhere: `messages copied: 3`, or `… (OSC 52)`. The count comes after a
+  label because the bundles have no plural rules. A copy that went nowhere reads as any
+  copy does.
+
+**Tests.**
+- The bubbles as ranges: a stray tool row, rounds, `new_bubble`, a note row; the count
+  equals their length at every prefix.
+- A reply's rounds under one label, with results copied and without.
+- First and last, N past the end, empty bubbles not counted, no title, `First(0)`.
+- The orchestrator's excerpt with its count, for a chat and a transcript.
+- The screen's grammar, including the errors and no chat open.
+- The counted chip and note in every locale.
+
+**4957 green.**
+
+**The pty run** (`mindfork demo`, OSC 52 decoded):
+- `/copy last 2` copied the last question and its answer, and the chip read
+  `messages copied: 2 (OSC 52)`;
+- `/copy first` copied the first question;
+- `/copy last 0` copied nothing and said so in the feed;
+- `/copy last 99` copied all six messages without the title;
+- `/copy` kept the title, with one label for each of the two replies.
+
+No live run in the AGENTS.md §3 sense: the engine is not touched.

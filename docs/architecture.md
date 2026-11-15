@@ -720,7 +720,7 @@ src/
 │  │                        the tools that mint addresses and the feed that draws
 │  │                        them. `find_refs` returns only addresses that resolve
 │  ├─ rename_chat.rs        auto-title (digest, cleanup, trigger predicates), renaming
-│  ├─ chat_export.rs        format_conversation (copy the conversation)
+│  ├─ chat_export.rs        format_conversation / format_range (copy the conversation or part of it)
 │  ├─ chat_files.rs         a chat's stored files on disk (data/files/<chat-id>/): store
 │  │                        under a free name (a call's output, or an original
 │  │                        /file attach kept), find the unlisted, delete our copy;
@@ -4280,7 +4280,11 @@ two callers).
 to a `(format, path?)` pair; the orchestrator writes the file, because it owns
 `Chat` *and* the disk and the answer is a path rather than content — unlike
 `CopyChat`, which hands text back to the UI. Markdown reuses
-`format_conversation` unchanged (one formatter for the clipboard and the file);
+`format_conversation` unchanged (one formatter for the clipboard and the file).
+That formatter writes one block per bubble the feed draws (`entities::chat::visible_rows`,
+the chat card's count), so an agentic reply's rounds copy under one label;
+`format_range` takes the first or last N of them for `/copy first|last N`, without the
+title (docs/research/block-fold-and-partial-copy.md §3.6);
 JSON is a `mindfork-import` v1 document with explicit ids, so `features::import`
 reads an export back onto the same chat — a round trip pinned by a test that
 parses the export with the app's own importer.

@@ -6,7 +6,7 @@
 
 use chrono::{DateTime, Utc};
 
-use crate::entities::chat::Chat;
+use crate::entities::chat::{Chat, visible_rows};
 use crate::entities::message::{Message, MessageRole};
 use crate::entities::profile::{CharacterNames, Profile};
 use crate::shared::config::CopySettings;
@@ -17,9 +17,48 @@ use crate::shared::i18n::Locale;
 /// long enough to tell two conversations apart.
 const SLUG_MAX: usize = 60;
 
-/// Formats a whole chat conversation into readable text for the clipboard: labels
-/// roles (`User`/`Assistant`), preserves multiline text, skips
-/// system/tool messages. A non-empty `title` becomes the header.
+/// Which part of a conversation a copy takes (spec §11.2): the whole of it
+/// (`F5`, `/copy`, the chat list's copy) or the first or last `n` messages as
+/// the feed draws them (`/copy first N`, `/copy last N`,
+/// docs/research/block-fold-and-partial-copy.md §3.6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CopyRange {
+    All,
+    First(usize),
+    Last(usize),
+}
+
+/// A formatted copy, and how many messages it holds — what the confirmation
+/// names for an excerpt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Copied {
+    pub text: String,
+    pub messages: usize,
+}
+
+/// Formats a whole chat conversation into readable text for the clipboard and
+/// for `/export`: [`format_range`] over [`CopyRange::All`].
+pub fn format_conversation(
+    title: &str,
+    messages: &[Message],
+    opts: &CopySettings,
+    names: &CharacterNames,
+    loc: &'static Locale,
+) -> Option<String> {
+    format_range(title, messages, CopyRange::All, opts, names, loc).map(|c| c.text)
+}
+
+/// Formats the conversation, or the part of it `range` names, into readable
+/// text: labels roles (`User`/`Assistant`), preserves multiline text, skips
+/// system/tool messages. A non-empty `title` becomes the header of a whole
+/// copy; an excerpt has none (fork F3 — it is a quote, and the title describes
+/// the whole).
+///
+/// **One block per message as the feed draws it** (fork F2): an assistant
+/// reply's rounds, stored as a message each, go under one label, their parts
+/// in the order the rounds made them. The bubbles are the chat card's
+/// ([`visible_rows`]), so `/copy last N` counts what the card counts (F1); a
+/// bubble that copies empty under `opts` is not one of them.
 ///
 /// `names` — the profile's custom role names (spec §5.1): a set name replaces the
 /// localized label (`Gaia:` instead of `User:`); empty fields keep the default.
@@ -29,48 +68,63 @@ const SLUG_MAX: usize = 60;
 /// tool-call parameters (name + arguments), and their results — taken from
 /// `Message.tool_calls` (separate tool messages are still skipped, to avoid
 /// duplication). Returns `None` if there are no substantive blocks (nothing to copy).
-pub fn format_conversation(
+pub fn format_range(
     title: &str,
     messages: &[Message],
+    range: CopyRange,
+    opts: &CopySettings,
+    names: &CharacterNames,
+    loc: &'static Locale,
+) -> Option<Copied> {
+    let blocks: Vec<String> = visible_rows(messages)
+        .into_iter()
+        .filter_map(|bubble| format_bubble(&messages[bubble], opts, names, loc))
+        .collect();
+    let chosen = match range {
+        CopyRange::All => &blocks[..],
+        CopyRange::First(n) => &blocks[..n.min(blocks.len())],
+        CopyRange::Last(n) => &blocks[blocks.len() - n.min(blocks.len())..],
+    };
+    if chosen.is_empty() {
+        return None;
+    }
+    let title = title.trim();
+    let mut out: Vec<&str> = Vec::with_capacity(chosen.len() + 1);
+    if range == CopyRange::All && !title.is_empty() {
+        out.push(title);
+    }
+    out.extend(chosen.iter().map(String::as_str));
+    Some(Copied {
+        text: out.join("\n\n"),
+        messages: chosen.len(),
+    })
+}
+
+/// One drawn message's block: the person's text under their label, or an
+/// assistant reply — every round of it — under one. A note row (a `System`
+/// entry) and tool messages copy nothing; `None` when nothing is left.
+fn format_bubble(
+    bubble: &[Message],
     opts: &CopySettings,
     names: &CharacterNames,
     loc: &'static Locale,
 ) -> Option<String> {
-    let mut blocks: Vec<String> = Vec::new();
-
-    let title = title.trim();
-    if !title.is_empty() {
-        blocks.push(title.to_string());
-    }
-
-    for m in messages {
-        match m.role {
-            MessageRole::User => {
-                let text = m.text.trim();
-                if !text.is_empty() {
-                    blocks.push(format!(
-                        "{}\n{text}",
-                        role_label(names.user_name(), "ui.export.user", loc)
-                    ));
-                }
-            }
-            MessageRole::Assistant => {
-                if let Some(block) = format_assistant(m, opts, names, loc) {
-                    blocks.push(block);
-                }
-            }
-            // System and tool messages don't go into the conversation
-            // (tool results are taken from the assistant's `tool_calls`).
-            MessageRole::System | MessageRole::Tool => continue,
+    let first = bubble.first()?;
+    match first.role {
+        MessageRole::User => {
+            let text = first.text.trim();
+            (!text.is_empty()).then(|| {
+                format!(
+                    "{}\n{text}",
+                    role_label(names.user_name(), "ui.export.user", loc)
+                )
+            })
         }
+        MessageRole::Assistant => format_assistant(bubble, opts, names, loc),
+        // System and tool messages don't go into the conversation
+        // (tool results are taken from the assistant's `tool_calls`).
+        MessageRole::System | MessageRole::Tool => None,
     }
-
-    // Only the title (or nothing at all) — there's no substantive conversation.
-    let has_messages = blocks.len() > usize::from(!title.is_empty());
-    if !has_messages {
-        return None;
-    }
-    Some(blocks.join("\n\n"))
 }
 
 /// A role's label for the export: the custom name (with the same trailing colon the
@@ -116,23 +170,25 @@ fn tool_parts(m: &Message, opts: &CopySettings, loc: &'static Locale) -> Vec<Str
     parts
 }
 
-/// Builds the block for a single assistant message: optional "thoughts", text, and
-/// optional tool blocks. `None` if the block is empty after filtering.
+/// Builds the block for one assistant reply — its rounds, in order, each with
+/// optional "thoughts", text, and optional tool blocks — under one label. The
+/// bubble's tool messages are skipped. `None` if the block is empty after
+/// filtering.
 fn format_assistant(
-    m: &Message,
+    rounds: &[Message],
     opts: &CopySettings,
     names: &CharacterNames,
     loc: &'static Locale,
 ) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
-    parts.extend(thoughts_part(m, opts, loc));
-
-    let text = m.text.trim();
-    if !text.is_empty() {
-        parts.push(text.to_string());
+    for m in rounds.iter().filter(|m| m.role == MessageRole::Assistant) {
+        parts.extend(thoughts_part(m, opts, loc));
+        let text = m.text.trim();
+        if !text.is_empty() {
+            parts.push(text.to_string());
+        }
+        parts.extend(tool_parts(m, opts, loc));
     }
-
-    parts.extend(tool_parts(m, opts, loc));
 
     if parts.is_empty() {
         return None;
@@ -566,6 +622,100 @@ mod tests {
         };
         let out = format_conversation("", &msgs, &plain(), &only_assistant, ru()).unwrap();
         assert_eq!(out, "Пользователь:\nпривет\n\nАнна:\nздравствуй");
+    }
+
+    /// An assistant message with `text` and one `calculate` call.
+    fn round_with_call(text: &str) -> Message {
+        let mut m = Message::assistant(text);
+        m.tool_calls = vec![ToolCallRecord {
+            thought_signature: None,
+            images: 0,
+            id: "calculate-0".into(),
+            name: "calculate".into(),
+            arguments: serde_json::json!({"expr": "2+2"}),
+            result: Some("4".into()),
+            subagent: None,
+        }];
+        m
+    }
+
+    /// A reply the feed draws as one bubble — a round that spoke before its
+    /// call, the call's tool message, the round that answered — copies under
+    /// one label, each round's parts in the order it made them (fork F2). A
+    /// `new_bubble` round is a reply of its own, as it is drawn.
+    #[test]
+    fn the_rounds_of_one_reply_copy_under_one_label() {
+        let mut followup = Message::assistant("И ещё.");
+        followup.new_bubble = true;
+        let msgs = vec![
+            Message::user("сколько?"),
+            round_with_call("Сейчас посчитаю."),
+            Message::new(MessageRole::Tool, "4"),
+            Message::assistant("Четыре."),
+            followup,
+        ];
+        let out = format_conversation("", &msgs, &plain(), &no_names(), ru()).unwrap();
+        assert_eq!(
+            out,
+            "Пользователь:\nсколько?\n\nАссистент:\nСейчас посчитаю.\n\nЧетыре.\n\n\
+             Ассистент:\nИ ещё."
+        );
+        let opts = CopySettings {
+            copy_tool_results: true,
+            ..Default::default()
+        };
+        let out = format_conversation("", &msgs[1..4], &opts, &no_names(), ru()).unwrap();
+        assert_eq!(
+            out,
+            "Ассистент:\nСейчас посчитаю.\n\n[Инструмент: calculate]\nРезультат: 4\n\nЧетыре."
+        );
+    }
+
+    /// `/copy first N` and `/copy last N` take N of the drawn messages, with
+    /// no title (F3); one that copies empty under the settings — a reply of
+    /// calls only, a note row — is not counted, and an N past the end takes
+    /// them all. The count is what the confirmation names.
+    #[test]
+    fn an_excerpt_takes_the_first_or_last_drawn_messages() {
+        let msgs = vec![
+            Message::user("q1"),
+            Message::assistant("a1"),
+            Message::user("q2"),
+            round_with_call(""),
+            Message::new(MessageRole::Tool, "4"),
+            Message::new(MessageRole::System, "note"),
+            Message::user("q3"),
+            Message::assistant("a3"),
+        ];
+        let copy = |range| format_range("Чат", &msgs, range, &plain(), &no_names(), ru());
+        let last = copy(CopyRange::Last(2)).unwrap();
+        assert_eq!(last.text, "Пользователь:\nq3\n\nАссистент:\na3");
+        assert_eq!(last.messages, 2);
+        let first = copy(CopyRange::First(3)).unwrap();
+        assert_eq!(
+            first.text,
+            "Пользователь:\nq1\n\nАссистент:\na1\n\nПользователь:\nq2"
+        );
+        assert_eq!(first.messages, 3);
+        let beyond = copy(CopyRange::Last(10)).unwrap();
+        assert_eq!(beyond.messages, 5);
+        assert!(beyond.text.starts_with("Пользователь:\nq1"), "no title");
+        let all = copy(CopyRange::All).unwrap();
+        assert!(all.text.starts_with("Чат\n\nПользователь:\nq1"));
+        assert_eq!(all.messages, 5);
+        assert!(copy(CopyRange::First(0)).is_none());
+        // With the calls copied, the reply of calls only is a message again.
+        let opts = CopySettings {
+            copy_tool_calls: true,
+            ..Default::default()
+        };
+        let with_calls =
+            format_range("", &msgs, CopyRange::Last(3), &opts, &no_names(), ru()).unwrap();
+        assert!(
+            with_calls
+                .text
+                .starts_with("Ассистент:\n[Инструмент: calculate]")
+        );
     }
 
     /// A whitespace-only name counts as "not set" (the field isn't a way to blank

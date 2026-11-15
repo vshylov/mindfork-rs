@@ -60,7 +60,9 @@ pub enum UiCommand {
     AutoTitle,
     /// Clone the open chat (`Ctrl+D` in the chat list).
     Clone,
-    /// Copy the whole conversation to the clipboard (`F5`).
+    /// Copy the whole conversation to the clipboard (`F5`); `first`/`last`
+    /// with an optional count, the first or last messages as the feed draws
+    /// them (docs/research/block-fold-and-partial-copy.md §3.6).
     Copy,
     /// Regenerate the last reply (`Ctrl+R`).
     Regen,
@@ -202,7 +204,7 @@ pub const COMMANDS: &[Spec] = &[
     row(&["/rename"], UiCommand::Rename, Arity::Optional, "ui.help.k.rename", "ui.help.cmd_rename"),
     row(&["/autotitle"], UiCommand::AutoTitle, Arity::None, "/autotitle", "ui.help.cmd_autotitle"),
     row(&["/clone"], UiCommand::Clone, Arity::None, "/clone", "ui.help.cmd_clone"),
-    row(&["/copy"], UiCommand::Copy, Arity::None, "/copy", "ui.help.cmd_copy"),
+    row(&["/copy"], UiCommand::Copy, Arity::Subcommand(&["first", "last"]), "ui.help.k.copy", "ui.help.cmd_copy"),
     // Two spellings, on the `/exit`·`/quit` rule: both words are pre-trained
     // elsewhere, and someone reaching for one does not want to learn the other.
     row(&["/regen", "/retry"], UiCommand::Regen, Arity::None, "/regen · /retry", "ui.help.cmd_regen"),

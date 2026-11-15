@@ -27,6 +27,7 @@ use crate::entities::message_image::ImageInfo;
 use crate::entities::profile::{CharacterNames, Profile, ProfileSummary};
 use crate::entities::subagent::ChildView;
 use crate::entities::task::BackgroundKind;
+use crate::features::chat_export::CopyRange;
 use crate::features::rag_ingest::RagProgress;
 use crate::features::spellcheck::SpellChecker;
 use crate::features::tools::confirm::ToolDecision;
@@ -142,8 +143,12 @@ pub enum ChatIntent {
     NewChat {
         profile_id: Option<Uuid>,
     },
-    /// Copy the active chat's whole conversation to the clipboard (`F5`).
-    CopyChat(Uuid),
+    /// Copy the active chat's conversation to the clipboard: the whole of it
+    /// (`F5`, `/copy`) or its first or last messages (`/copy first|last N`).
+    CopyChat {
+        id: Uuid,
+        range: CopyRange,
+    },
     /// Rename the open chat (command `/rename <title>`; the chat list's own
     /// `F2` renames the *selected* chat through
     /// [`ChatListIntent`](crate::screens::chat_list::ChatListIntent)).

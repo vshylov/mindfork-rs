@@ -384,7 +384,8 @@ effort tiers and Fabula — have all closed
   ([block-fold-and-partial-copy.md](research/block-fold-and-partial-copy.md)):
   - a click on a foldable block's header folds that block alone, kept in the chat
     file (with no key for it, as `Ctrl+T`/`Ctrl+O` still fold every block);
-  - `/copy first N` and `/copy last N` copy part of the conversation. Copying one
+  - `/copy first N` and `/copy last N` copy part of the conversation — **built**
+    (stage 1, with one `Assistant:` label per reply in every copy). Copying one
     message by the mouse is not planned.
 - **Horizontal scroll for wide tables** — **idea**, instead of the clip with
   `…`; groundwork from [ADR 0003](decisions/0003-own-markdown-renderer.md).

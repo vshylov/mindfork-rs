@@ -1725,7 +1725,10 @@ fn f5_copies_active_chat_in_main_window() {
     s.activate_chat(id, "Чат".into(), &[], "", FeedView::default(), None, None);
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE)),
-        Some(ChatIntent::CopyChat(id))
+        Some(ChatIntent::CopyChat {
+            id,
+            range: CopyRange::All
+        })
     );
 }
 
@@ -4398,6 +4401,42 @@ fn every_command_agrees_with_the_chord_it_mirrors() {
     assert_eq!(typed.s.search.is_some(), pressed.s.search.is_some());
 }
 
+/// `/copy first|last [N]` (docs/research/block-fold-and-partial-copy.md §3.6):
+/// the word in any case, N from 1, a bare word meaning one (F4); a zero, a
+/// non-number, a second number and an unknown word are said, not sent.
+#[test]
+fn copy_takes_the_first_or_last_messages() {
+    let mut c = Cmd::new();
+    let id = c.chat;
+    for (line, range) in [
+        ("/copy last 3", CopyRange::Last(3)),
+        ("/copy LAST 3", CopyRange::Last(3)),
+        ("/copy first 2", CopyRange::First(2)),
+        ("/copy last", CopyRange::Last(1)),
+        ("/copy first", CopyRange::First(1)),
+        ("/copy", CopyRange::All),
+    ] {
+        assert_eq!(
+            c.run(line),
+            Some(ChatIntent::CopyChat { id, range }),
+            "{line}"
+        );
+    }
+    for (line, said) in [
+        ("/copy last 0", "«0»"),
+        ("/copy first два", "«два»"),
+        ("/copy last 2 3", "«2 3»"),
+    ] {
+        assert_eq!(c.run(line), None, "{line}");
+        assert!(c.last_note().contains(said), "{line}: {}", c.last_note());
+        assert!(c.s.input.is_empty(), "{line} stays in the box");
+    }
+    assert_eq!(c.run("/copy middle 2"), None);
+    assert!(c.last_note().contains("middle"), "{}", c.last_note());
+    let mut bare = Cmd::bare();
+    assert_eq!(bare.run("/copy last 2"), None, "no chat, nothing to copy");
+}
+
 /// Every command clears the input box and hands an **empty** draft back, or the
 /// next launch would greet the user with the command they typed (the `/exit`
 /// trap, journal ui-input.md). Driven off the registry, so a new row is covered
@@ -5067,7 +5106,20 @@ mod read_only_transcript {
     fn the_transcript_commands_still_work() {
         let mut c = transcript();
         let id = c.chat;
-        assert_eq!(c.run("/copy"), Some(ChatIntent::CopyChat(id)));
+        assert_eq!(
+            c.run("/copy"),
+            Some(ChatIntent::CopyChat {
+                id,
+                range: CopyRange::All
+            })
+        );
+        assert_eq!(
+            c.run("/copy last 2"),
+            Some(ChatIntent::CopyChat {
+                id,
+                range: CopyRange::Last(2)
+            })
+        );
         assert!(matches!(
             c.run("/rename Критик X"),
             Some(ChatIntent::RenameChat { id: r, title }) if r == id && title == "Критик X"

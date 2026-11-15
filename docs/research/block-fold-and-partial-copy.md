@@ -4,8 +4,10 @@
 was written (§4.1). **Forks F1–F5 decided by the owner the same day** (§4.2): F1–F4
 as recommended, and F5 the other way, so the target is the marker and the pill, not
 the whole header. That choice left an expanded tool card with nothing to click, which
-one more fork (F5b) settled as recommended: the card gets a `▾ details` pill. Nothing
-is built yet.
+one more fork (F5b) settled as recommended: the card gets a `▾ details` pill. **Stage 1
+is built** (2026-11-15, `feat/copy-first-last`): `/copy first|last [N]` and one label
+per reply (§3.6, F2; [docs/journal/ui-input.md](../journal/ui-input.md)). Stage 2, the
+fold, is next.
 
 The roadmap item "per-message collapse, select and copy" (docs/roadmap.md) was
 deferred until the app held the mouse. That track is complete
@@ -352,13 +354,16 @@ the feed draws, with tool messages drawing none, a `System` entry a note row, an
 consecutive assistant rounds one bubble unless `new_bubble` splits them. The
 `bubble_count_agrees_with_the_list_counter` test pins it to the feed's
 `from_messages`. The copy reuses that rule rather than stating it a third time:
-- it becomes a grouping, `visible_rows(messages) -> Vec<Range<usize>>`;
+- it becomes a grouping, `visible_rows(messages) -> Vec<Range<usize>>` (built as
+  `visible_rows` over messages and `visible_row_ranges` over `(role, new_bubble)`
+  pairs, which `mindfork stats` reads);
 - the count is that grouping's length;
 - `features::chat_export` takes its ranges.
 
 So N on the command and the number on the chat card count the same thing.
 `AppCommand::CopyChat` gains a range (`CopyRange::{All, First(n), Last(n)}`).
-`F5` and the chat list's copy send `All`.
+`F5` and the chat list's copy send `All`. An excerpt comes back as
+`AppEvent::CopyExcerpt { text, messages }`, so the confirmation can name the count.
 
 **The format.**
 - It is `format_conversation`'s, over the chosen messages.

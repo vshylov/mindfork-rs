@@ -142,10 +142,7 @@ impl ChatScreen {
                 || self.note("ui.cmd.no_chat"),
                 |id| Some(ChatIntent::CloneChat(id)),
             ),
-            UiCommand::Copy => self.active_chat.map_or_else(
-                || self.note("ui.cmd.no_chat"),
-                |id| Some(ChatIntent::CopyChat(id)),
-            ),
+            UiCommand::Copy => self.typed_copy(&argument),
             UiCommand::Regen | UiCommand::Takeback => self.typed_destructive(command, alias),
             UiCommand::Continue => self.typed_continue(alias),
             UiCommand::Impersonate => self.typed_impersonate(argument, alias),
@@ -259,6 +256,42 @@ impl ChatScreen {
             "ui.cmd.subagents_collapsed"
         }));
         Some(ChatIntent::SetChildrenExpanded { id, expanded })
+    }
+
+    /// `/copy [first|last [N]]` (spec §11.2): bare, the whole conversation,
+    /// as `F5`; `first`/`last`, the first or last N messages as the feed draws
+    /// them — one when N is left out (docs/research/block-fold-and-partial-copy.md
+    /// §3.6, F4). The parser closed the word over its set; the count is read
+    /// here, and anything but a number from 1 is said rather than guessed.
+    fn typed_copy(&mut self, argument: &str) -> Option<ChatIntent> {
+        let Some(id) = self.active_chat else {
+            return self.note("ui.cmd.no_chat");
+        };
+        if argument.is_empty() {
+            return Some(ChatIntent::CopyChat {
+                id,
+                range: CopyRange::All,
+            });
+        }
+        let (word, count) = argument
+            .split_once(char::is_whitespace)
+            .map_or((argument, ""), |(w, c)| (w, c.trim()));
+        let n = if count.is_empty() {
+            Some(1)
+        } else {
+            count.parse::<usize>().ok().filter(|n| *n > 0)
+        };
+        let Some(n) = n else {
+            let text = self.loc.tf("ui.cmd.copy_bad_count", &[("arg", count)]);
+            self.push_note(&text);
+            return None;
+        };
+        let range = if word == "first" {
+            CopyRange::First(n)
+        } else {
+            CopyRange::Last(n)
+        };
+        Some(ChatIntent::CopyChat { id, range })
     }
 
     /// `/subagents stop [n]` (spec §9.3.2): on an open transcript, that run;

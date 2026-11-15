@@ -1093,7 +1093,7 @@ impl Orchestrator {
             AppCommand::AutoRenameChat(id) => self.handle_auto_rename(id),
             AppCommand::Compact => self.handle_compact(),
             AppCommand::CloneChat(id) => self.handle_clone(id),
-            AppCommand::CopyChat(id) => self.handle_copy_chat(id),
+            AppCommand::CopyChat { id, range } => self.handle_copy_chat(id, range),
             AppCommand::DeleteChat(id) => self.handle_delete(id),
             AppCommand::SearchChats(query) => self.handle_search_chats(query),
             AppCommand::SearchMessages { query, sort } => self.handle_search_messages(query, sort),
