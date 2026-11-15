@@ -1135,6 +1135,12 @@ pub struct SettingsScreen {
     /// scrolling, symmetrically with `↓` (see [`ListScroll`]).
     menu_scroll: ListScroll,
     fields_scroll: ListScroll,
+    /// The field pane's rows as last drawn: the field each list row shows,
+    /// `None` for a group header — what a click and the wheel select by
+    /// (docs/research/mouse-always-captured.md F11, F12).
+    fields_rows: Vec<Option<usize>>,
+    /// The open editor's, filter's or search line's mouse gesture.
+    field_gesture: crate::widgets::input_box::FieldGesture,
 }
 
 // ---------- submodules (a breakup of a god object: docs/history/refactoring-god-objects.md) ----------
@@ -1143,6 +1149,7 @@ mod apply;
 mod catalog;
 mod choice;
 mod helpers;
+mod mouse;
 mod picker;
 mod render;
 mod search;

@@ -1761,9 +1761,9 @@ fn the_chats_typed_help_opens_the_overlay() {
     assert_eq!(state.context, HelpContext::Chat);
 }
 
-/// While the dialog is open a paste (and a mouse event — the same match arm)
-/// acts on nothing: there is no paste target, and the wheel would scroll a
-/// screen the dialog covers — the rule the chat applied while it owned it.
+/// While the dialog is open a paste acts on nothing: there is no paste target
+/// — the rule the chat applied while it owned it. (Its wheel scrolls the
+/// dialog: `the_help_dialog_takes_the_wheel_and_nothing_else`.)
 #[test]
 fn a_paste_is_inert_under_the_open_help() {
     let mut h = Harness::new();
@@ -3328,35 +3328,26 @@ fn the_mouse_request_is_buttons_and_drags_on_and_everything_off() {
     assert!(!off.contains("1003h"));
 }
 
-/// Capture follows the frame in front (research F7): on only where the chat
-/// is in front and holds the mouse — not under the help dialog, not on the
-/// "window too small" notice, not on a screen with no mouse of its own yet.
+/// Capture follows the frame in front (research F7, §5.8): on wherever the app
+/// holds the mouse — every screen and the help dialog answer it since stage 3
+/// — but not on the "window too small" notice, which answers nothing.
 #[test]
-fn the_mouse_is_wanted_only_where_the_chat_answers_it() {
+fn the_mouse_is_wanted_wherever_the_app_holds_it_but_on_the_notice() {
     use crate::shared::config::{AppConfig, MouseMode};
     let mut screen = ChatScreen::new();
-    let mut help = HelpOverlay::new(crate::features::demo::locations());
-    let chat = ActiveScreen::Chat;
     assert!(
-        !mouse_wanted(&chat, &help, &screen, None),
-        "the default leaves the mouse with the terminal"
+        !mouse_wanted(&screen, None),
+        "before the first settings snapshot, the terminal keeps it"
     );
     let mut config = AppConfig::default();
     config.interface.mouse = MouseMode::App;
+    screen.set_settings(config.clone(), vec![], vec![], Default::default(), vec![]);
+    assert!(mouse_wanted(&screen, None));
+    assert!(!mouse_wanted(&screen, Some(WayOut::Quit)));
+    assert!(!mouse_wanted(&screen, Some(WayOut::EscOrQuit)));
+    config.interface.mouse = MouseMode::Terminal;
     screen.set_settings(config, vec![], vec![], Default::default(), vec![]);
-    assert!(mouse_wanted(&chat, &help, &screen, None));
-    assert!(!mouse_wanted(&chat, &help, &screen, Some(WayOut::Quit)));
-    let list = ActiveScreen::ChatList(Box::new(ChatListScreen::new(
-        vec![],
-        None,
-        screen.palette(),
-        screen.loc(),
-    )));
-    assert!(!mouse_wanted(&list, &help, &screen, None));
-    help.open_for(HelpContext::Chat);
-    assert!(!mouse_wanted(&chat, &help, &screen, None));
-    help.close();
-    assert!(mouse_wanted(&chat, &help, &screen, None));
+    assert!(!mouse_wanted(&screen, None), "the setting gives it back");
 }
 
 /// A copy made in another screen's field is said on that screen's footer — it
@@ -3415,4 +3406,55 @@ fn every_screens_copy_is_a_clipboard_text() {
         None,
         "a whole conversation's copy goes through the orchestrator"
     );
+}
+
+/// The help dialog is modal for the mouse too (docs/research/mouse-always-captured.md
+/// §5.8): its wheel scrolls it, and nothing — a click either — reaches the
+/// screen under it.
+#[test]
+fn the_help_dialog_takes_the_wheel_and_nothing_else() {
+    let mut h = Harness::new();
+    h.feed(key(KeyCode::F(1)));
+    h.feed(mouse(MouseEventKind::ScrollDown, 10));
+    h.feed(mouse(MouseEventKind::ScrollDown, 10));
+    assert_eq!(h.help.open.as_ref().unwrap().scroll, 6, "two notches");
+    h.feed(mouse(MouseEventKind::ScrollUp, 10));
+    assert_eq!(h.help.open.as_ref().unwrap().scroll, 3);
+}
+
+/// The mouse reaches the screen in front, as the keys do (§5.8): a click on a
+/// section of the settings screen selects it, through the same pipeline.
+#[test]
+fn a_click_reaches_the_settings_screen_through_the_pipeline() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::crossterm::event::{MouseButton, MouseEvent};
+    let mut h = Harness::new();
+    let config = crate::shared::config::AppConfig::default();
+    h.active = ActiveScreen::Settings(Box::new(SettingsScreen::new(
+        config,
+        Vec::new(),
+        Vec::new(),
+    )));
+    let palette = front_palette(&h.active, &h.screen);
+    let mut term = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    term.draw(|frame| {
+        compose_frame(frame, &mut h.screen, &mut h.active, &mut h.help, &palette);
+    })
+    .unwrap();
+    let ActiveScreen::Settings(settings) = &h.active else {
+        unreachable!()
+    };
+    let before = settings.section_index();
+    let (column, row) = settings.menu_cell(before + 2).expect("the menu is drawn");
+    h.feed(Event::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    }));
+    let ActiveScreen::Settings(settings) = &h.active else {
+        unreachable!()
+    };
+    assert_eq!(settings.section_index(), before + 2);
 }

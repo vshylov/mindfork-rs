@@ -14,7 +14,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::shared::keys;
-use crate::shared::mouse::SelectUnit;
+use crate::shared::mouse::{AUTOSCROLL_STEP, SelectUnit};
 use crate::shared::theme::Palette;
 use crate::shared::ui::{fit_title, render_scrollbar};
 use crate::shared::wrap;
@@ -166,6 +166,116 @@ pub enum KeyOutcome {
     Moved,
     /// The key wasn't handled (the caller decides what to do with it).
     Ignored,
+}
+
+/// One field's left-button gesture, for a screen whose mouse reaches a field
+/// alone (docs/research/mouse-always-captured.md §5.5, §5.8) — the rename, the
+/// settings' editors and filters, the self-model's and the notes' editors and
+/// search: a press in the field places the cursor (a double and a triple press
+/// take a word and a line), a drag selects, clamped to the field, and a drag
+/// held above or below its text scrolls it a row an [`AUTOSCROLL_STEP`]. The
+/// chat keeps a gesture of its own, which spans the feed and the box.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct FieldGesture {
+    press: Option<FieldPress>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct FieldPress {
+    at: (u16, u16),
+    pointer: (u16, u16),
+    dragged: bool,
+    next_step: Option<std::time::Instant>,
+}
+
+impl FieldGesture {
+    /// A left press at `(col, row)` by `unit` (the click count): `true` when
+    /// it landed in `field`, which then owns the gesture until the release.
+    pub fn press(&mut self, field: &mut InputBox, col: u16, row: u16, unit: SelectUnit) -> bool {
+        self.press = None;
+        if !field.mouse_press_by(col, row, unit) {
+            return false;
+        }
+        self.press = Some(FieldPress {
+            at: (col, row),
+            pointer: (col, row),
+            dragged: false,
+            next_step: None,
+        });
+        true
+    }
+
+    /// A drag report: the selection grows to the pointer, clamped to the
+    /// field. A report on the press's own cell is not a drag yet. `true` when
+    /// the field's cursor moved.
+    pub fn drag(&mut self, field: &mut InputBox, col: u16, row: u16) -> bool {
+        let Some(press) = self.press.as_mut() else {
+            return false;
+        };
+        press.pointer = (col, row);
+        if (col, row) == press.at && !press.dragged {
+            return false;
+        }
+        press.dragged = true;
+        field.mouse_drag(col, row)
+    }
+
+    /// The release: the gesture ends, what it selected stays.
+    pub fn release(&mut self, field: &mut InputBox) {
+        if self.press.take().is_some() {
+            field.mouse_release();
+        }
+    }
+
+    /// The loop's tick: a drag held above or below the field's text moves its
+    /// selection a row past the visible ones, at most once an
+    /// [`AUTOSCROLL_STEP`] (research §5.4). `true` when a frame is due.
+    pub fn tick(&mut self, field: &mut InputBox, now: std::time::Instant) -> bool {
+        let Some(press) = self.press.as_mut().filter(|p| p.dragged) else {
+            return false;
+        };
+        let Some(area) = field.text_area() else {
+            return false;
+        };
+        let (col, row) = press.pointer;
+        let outside = row < area.y || row >= area.y.saturating_add(area.height);
+        if !outside || press.next_step.is_some_and(|due| now < due) {
+            return false;
+        }
+        press.next_step = Some(now + AUTOSCROLL_STEP);
+        field.mouse_drag(col, row)
+    }
+
+    /// Whether a press in the field is under way — its drag and release are
+    /// the field's, wherever the pointer goes.
+    pub fn is_active(&self) -> bool {
+        self.press.is_some()
+    }
+
+    /// Routes a left-button report to the gesture: a press that lands in
+    /// `field`, and the drag and the release of one that did. `true` when the
+    /// report was the field's — the caller gives it to nothing else.
+    pub fn on_mouse(
+        &mut self,
+        field: &mut InputBox,
+        mouse: ratatui::crossterm::event::MouseEvent,
+        unit: SelectUnit,
+    ) -> bool {
+        use ratatui::crossterm::event::{MouseButton, MouseEventKind};
+        let (col, row) = (mouse.column, mouse.row);
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => self.press(field, col, row, unit),
+            MouseEventKind::Drag(MouseButton::Left) if self.is_active() => {
+                self.drag(field, col, row);
+                true
+            }
+            MouseEventKind::Up(MouseButton::Left) if self.is_active() => {
+                self.release(field);
+                true
+            }
+            _ => false,
+        }
+    }
 }
 
 /// What `Ctrl+C` or `Ctrl+X` did to a field ([`InputBox::clipboard_key`],
@@ -4111,6 +4221,56 @@ mod tests {
         }
         assert_eq!(ib.cursor(), (11, 3), "the text's end");
         assert_eq!(ib.selected_text(), Some(text.join("\n")));
+    }
+
+    /// A field's gesture on a screen other than the chat
+    /// (docs/research/mouse-always-captured.md §5.8): a press in the field is
+    /// the gesture's, and so are its drag and release wherever the pointer
+    /// goes; a press outside is not, and a report on the press's own cell is
+    /// not a drag yet. Held below a draft taller than the box, the loop's tick
+    /// moves the selection a row at a time, an `AUTOSCROLL_STEP` apart.
+    #[test]
+    fn a_field_gesture_selects_and_scrolls_a_tall_draft_on_the_tick() {
+        use ratatui::crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        let at = |kind, column, row| MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        };
+        let left = MouseButton::Left;
+        let mut ib = InputBox::new();
+        let text: Vec<String> = (0..12).map(|i| format!("l{i}")).collect();
+        ib.set_text(&text.join("\n"));
+        (ib.row, ib.col) = (0, 0);
+        render_at(&mut ib, 20);
+        let mut gesture = FieldGesture::default();
+        let unit = SelectUnit::Char;
+        assert!(!gesture.on_mouse(&mut ib, at(MouseEventKind::Down(left), 0, 0), unit));
+        assert!(!gesture.is_active(), "a press outside the text");
+        assert!(gesture.on_mouse(&mut ib, at(MouseEventKind::Down(left), TX, TY), unit));
+        assert!(!gesture.drag(&mut ib, TX, TY), "the press's own cell");
+        assert!(gesture.on_mouse(
+            &mut ib,
+            at(MouseEventKind::Drag(left), TX + 1, TY + 10),
+            unit
+        ));
+        assert_eq!(ib.cursor(), (6, 1));
+        let t0 = std::time::Instant::now();
+        render_at(&mut ib, 20);
+        assert!(gesture.tick(&mut ib, t0));
+        assert_eq!(ib.cursor(), (7, 1), "a row past the visible ones");
+        render_at(&mut ib, 20);
+        assert!(!gesture.tick(&mut ib, t0), "not before the next step");
+        assert!(gesture.tick(&mut ib, t0 + AUTOSCROLL_STEP));
+        assert_eq!(ib.cursor(), (8, 1));
+        assert!(gesture.on_mouse(&mut ib, at(MouseEventKind::Up(left), 0, 0), unit));
+        assert!(!gesture.is_active());
+        assert!(!gesture.tick(&mut ib, t0 + AUTOSCROLL_STEP * 4), "released");
+        assert_eq!(
+            ib.selected_text(),
+            Some(text[..9].join("\n").replace("l8", "l"))
+        );
     }
 
     /// A double press takes the run under the pointer — the box's own word

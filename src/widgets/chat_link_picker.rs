@@ -12,7 +12,7 @@
 //! executes.
 
 use ratatui::Frame;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, MouseEvent};
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
@@ -66,6 +66,20 @@ impl ChatLinkPickerState {
     /// Id of the selected conversation (if the list isn't empty).
     pub fn selected_id(&self) -> Option<Uuid> {
         self.chats.get(self.selected).map(|c| c.id)
+    }
+
+    /// A mouse event over the popup: the wheel scrolls it, the selection
+    /// pushed along by the edge it would leave (F11); a press on a row selects
+    /// it. `true` when a press landed on a row — the chat makes a double click
+    /// its `Enter` (docs/research/mouse-always-captured.md F12).
+    pub fn on_mouse(&mut self, mouse: MouseEvent) -> bool {
+        self.scroll.on_mouse(mouse, &mut self.selected)
+    }
+
+    /// The first screen cell row `item` was drawn on, for tests that click it.
+    #[cfg(test)]
+    pub fn cell_of(&self, item: usize) -> Option<(u16, u16)> {
+        self.scroll.cell_of(item)
     }
 
     /// Handles a key press, returning the action to execute.

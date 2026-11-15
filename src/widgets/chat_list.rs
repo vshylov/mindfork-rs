@@ -5,7 +5,7 @@
 //! responds to key presses with [`ChatListAction`] (executed by `app` — the sole writer).
 
 use ratatui::Frame;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
@@ -18,6 +18,7 @@ use crate::features::chat_search_sort::{SortMode, filter_and_sort};
 use crate::features::spellcheck::SpellChecker;
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
+use crate::shared::mouse::SelectUnit;
 use crate::shared::theme::Palette;
 use crate::shared::title::sanitize_title;
 use crate::shared::ui::{
@@ -25,7 +26,7 @@ use crate::shared::ui::{
 };
 use crate::shared::wrap;
 use crate::widgets::help_dialog::{HelpContext, HelpSection};
-use crate::widgets::input_box::{InputBox, RenderOpts};
+use crate::widgets::input_box::{FieldGesture, InputBox, RenderOpts};
 
 /// The chat list's "Shortcuts" section (`F1`): one row per key `on_key`
 /// matches — a new arm gets a row here, next door (AGENTS.md §3). The app
@@ -222,6 +223,8 @@ pub struct ChatListState {
     /// Operation confirmation (e.g. "copied") for the same area, but as
     /// success. Reset on the next key press. Mutually exclusive with `error`.
     notice: Option<String>,
+    /// The rename field's mouse gesture (docs/research/mouse-always-captured.md §5.8).
+    field: FieldGesture,
 }
 
 impl ChatListState {
@@ -239,6 +242,7 @@ impl ChatListState {
             mode: Mode::Search,
             error: None,
             notice: None,
+            field: FieldGesture::default(),
         };
         if let Some(active) = active {
             let visible = state.visible();
@@ -439,6 +443,39 @@ impl ChatListState {
         match &mut self.mode {
             Mode::Rename { .. } => self.on_key_rename(key),
             Mode::Search => self.on_key_search(key),
+        }
+    }
+
+    /// A mouse event (docs/research/mouse-always-captured.md §5.8): the wheel over
+    /// the list scrolls it, the selection staying unless the edge pushes it (F11);
+    /// a click on a row selects it, a double click does what `Enter` does (F12).
+    /// While a chat is renamed the mouse is the rename field's — a press places
+    /// the cursor, a drag selects, a double and a triple press take a word and
+    /// the title — and the list takes none of it.
+    pub fn on_mouse(&mut self, mouse: MouseEvent, unit: SelectUnit) -> ChatListAction {
+        if let Mode::Rename { input, .. } = &mut self.mode {
+            self.field.on_mouse(input, mouse, unit);
+            return ChatListAction::None;
+        }
+        let notice = (self.error.take(), self.notice.take());
+        if !self.scroll.on_mouse(mouse, &mut self.selected) {
+            (self.error, self.notice) = notice;
+            return ChatListAction::None;
+        }
+        // A press on a row clears an earlier error or confirmation, as a key
+        // does; a double click is `Enter` on it.
+        if unit == SelectUnit::Word {
+            return self.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        }
+        ChatListAction::None
+    }
+
+    /// The loop's tick for a drag held past the rename field's edge. `true`
+    /// when a frame is due.
+    pub fn mouse_tick(&mut self, now: std::time::Instant) -> bool {
+        match &mut self.mode {
+            Mode::Rename { input, .. } => self.field.tick(input, now),
+            Mode::Search => false,
         }
     }
 
@@ -1334,6 +1371,115 @@ mod tests {
                 sort: SortMode::default(),
             }
         );
+    }
+
+    /// Draws the list into an 80×`h` window and returns where `needle` is.
+    fn draw_and_find(s: &mut ChatListState, h: u16, needle: &str) -> Option<(u16, u16)> {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut term = Terminal::new(TestBackend::new(80, h)).unwrap();
+        term.draw(|f| s.render(f, f.area(), None, &Palette::default(), ru()))
+            .unwrap();
+        let buf = term.backend().buffer().clone();
+        (0..h).find_map(|y| {
+            let row: String = (0..80u16)
+                .map(|x| buf[(x, y)].symbol().to_string())
+                .collect();
+            row.find(needle)
+                .map(|at| (row[..at].chars().count() as u16, y))
+        })
+    }
+
+    fn mouse(kind: ratatui::crossterm::event::MouseEventKind, column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    /// The mouse on the list (docs/research/mouse-always-captured.md F11, F12):
+    /// the wheel scrolls it and pushes the selection along by the edge it would
+    /// leave; a click selects a chat, a second on the same row opens it as
+    /// `Enter` does; a click off the rows does nothing.
+    #[test]
+    fn the_wheel_scrolls_the_list_and_a_double_click_opens_a_chat() {
+        use crate::shared::mouse::SelectUnit;
+        use ratatui::crossterm::event::{MouseButton, MouseEventKind};
+        // Newest first: chat 00 is the most recently modified.
+        let chats: Vec<ChatSummary> = (0..40)
+            .map(|i| {
+                let mut c = chat(&format!("chat {i:02}"));
+                c.modified_at -= chrono::Duration::minutes(i);
+                c
+            })
+            .collect();
+        let ids: Vec<Uuid> = chats.iter().map(|c| c.id).collect();
+        let mut s = ChatListState::new(chats, None);
+        let (col, row) = draw_and_find(&mut s, 24, "chat 00").expect("drawn");
+        assert_eq!(s.selected, 0);
+        s.on_mouse(
+            mouse(MouseEventKind::ScrollDown, col, row),
+            SelectUnit::Char,
+        );
+        assert_eq!(s.selected, 3, "pushed by the top edge");
+        assert_eq!(draw_and_find(&mut s, 24, "chat 00"), None, "scrolled out");
+        assert!(draw_and_find(&mut s, 24, "chat 03").is_some());
+        let (col, row) = draw_and_find(&mut s, 24, "chat 05").unwrap();
+        let press = MouseEventKind::Down(MouseButton::Left);
+        assert_eq!(
+            s.on_mouse(mouse(press, col, row), SelectUnit::Char),
+            ChatListAction::None
+        );
+        assert_eq!(s.selected, 5);
+        assert_eq!(
+            s.on_mouse(mouse(press, col, row), SelectUnit::Word),
+            ChatListAction::Switch(ids[5])
+        );
+        assert_eq!(
+            s.on_mouse(mouse(press, 1, 1), SelectUnit::Word),
+            ChatListAction::None,
+            "the panel's border is no row"
+        );
+    }
+
+    /// While a chat is renamed the mouse is the field's: a press places the
+    /// cursor, a drag selects, and the list under it takes nothing.
+    #[test]
+    fn a_rename_takes_the_mouse_from_the_list() {
+        use crate::shared::mouse::SelectUnit;
+        use ratatui::crossterm::event::{MouseButton, MouseEventKind};
+        let mut first = chat("first chat");
+        first.modified_at += chrono::Duration::minutes(1);
+        let mut s = ChatListState::new(vec![first, chat("second")], None);
+        s.on_key(key(KeyCode::F(2)));
+        // The field is above the list: the title's first sighting is in it.
+        let (col, row) = draw_and_find(&mut s, 24, "first chat").expect("the field");
+        let left = MouseButton::Left;
+        s.on_mouse(
+            mouse(MouseEventKind::Down(left), col, row),
+            SelectUnit::Char,
+        );
+        s.on_mouse(
+            mouse(MouseEventKind::Drag(left), col + 5, row),
+            SelectUnit::Char,
+        );
+        s.on_mouse(
+            mouse(MouseEventKind::Up(left), col + 5, row),
+            SelectUnit::Char,
+        );
+        assert_eq!(
+            s.on_key(ctrl(KeyCode::Char('c'))),
+            ChatListAction::CopyText("first".into())
+        );
+        let (col, row) = draw_and_find(&mut s, 24, "second").unwrap();
+        s.on_mouse(
+            mouse(MouseEventKind::Down(left), col, row),
+            SelectUnit::Word,
+        );
+        assert_eq!(s.selected, 0, "the list took no click");
+        assert!(matches!(s.mode, Mode::Rename { .. }), "still renaming");
     }
 
     #[test]

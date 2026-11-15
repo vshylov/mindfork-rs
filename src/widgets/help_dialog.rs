@@ -252,12 +252,15 @@ pub static GLOBAL: HelpSection = HelpSection {
     // only help key: `?` was listed here while it worked on the chat screen
     // alone, and on an empty input box at that (spec §11.7). `/help` is the
     // typed route.
-    // `Ctrl+C`/`Ctrl+X` in a field are the same keys on every screen since
-    // every field answers them (docs/research/mouse-always-captured.md §5.8).
+    // `Ctrl+C`/`Ctrl+X` in a field, the wheel and the double click, and the
+    // terminal's own selection are the same on every screen since stage 3 of
+    // docs/research/mouse-always-captured.md (§5.8).
     rows: &[
         ("F1", "ui.help.help"),
         ("Ctrl+Q / F10", "ui.help.quit"),
         ("Ctrl+C / Ctrl+X", "ui.help.field_copy"),
+        ("ui.help.k.wheel_click", "ui.help.mouse_lists"),
+        ("ui.help.k.terminal_mouse", "ui.help.terminal_mouse"),
     ],
     openers: &[],
 };

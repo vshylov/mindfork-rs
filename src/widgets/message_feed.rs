@@ -21,7 +21,7 @@ use crate::features::tools::present::{self, ToolBlock};
 use crate::shared::config::CodeBlockBackground;
 use crate::shared::i18n::Locale;
 use crate::shared::markdown::{self, LineMark};
-use crate::shared::mouse::SelectUnit;
+use crate::shared::mouse::{AUTOSCROLL_STEP, SelectUnit};
 use crate::shared::theme::Palette;
 use crate::shared::ui::{self, render_scrollbar};
 use crate::shared::wrap;
@@ -426,11 +426,6 @@ pub struct MessageFeed {
     /// text as it is written, both moving what a selection points at.
     selectable: bool,
 }
-
-/// One step of a drag held past the feed's top or bottom edge: the feed
-/// scrolls a row toward it this often (research §5.4) — the loop's tick, as it
-/// drives the spinner.
-pub const AUTOSCROLL_STEP: std::time::Duration = std::time::Duration::from_millis(50);
 
 /// The geometry of the last drawn frame ([`MessageFeed::drawn`]).
 #[derive(Debug, Clone)]

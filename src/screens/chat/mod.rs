@@ -34,7 +34,7 @@ use crate::shared::api::FinishReason;
 use crate::shared::config::AppConfig;
 use crate::shared::i18n::{Locale, locale};
 use crate::shared::keys;
-use crate::shared::mouse::{ClickCounter, SelectUnit};
+use crate::shared::mouse::{AUTOSCROLL_STEP, ClickCounter, SelectUnit, WHEEL_ROWS};
 use crate::shared::server::{ServerStatus, ServerStatuses};
 use crate::shared::theme::Palette;
 use crate::shared::ui::{ListScroll, MinSize, Prompt, Spinner, dim_background, legend_width};
@@ -42,9 +42,9 @@ use crate::widgets::chat_link_picker::{ChatLinkAction, ChatLinkPickerState};
 use crate::widgets::emoji_picker::{EmojiPickerAction, EmojiPickerState};
 use crate::widgets::help_dialog::{HelpContext, HelpSection};
 use crate::widgets::impersonation_preview;
-use crate::widgets::input_box::InputBox;
+use crate::widgets::input_box::{FieldGesture, InputBox};
 use crate::widgets::local_server_picker::{LocalServerAction, LocalServerPickerState};
-use crate::widgets::message_feed::{AUTOSCROLL_STEP, FeedMessage, FeedRole, MessageFeed};
+use crate::widgets::message_feed::{FeedMessage, FeedRole, MessageFeed};
 use crate::widgets::profile_list::{ProfileListAction, ProfileListState};
 use crate::widgets::status_bar::{self, EscTarget};
 
@@ -93,7 +93,6 @@ pub(crate) static HELP_SECTION: HelpSection = HelpSection {
         ("Ctrl+B", "ui.help.emoji"),
         ("Ctrl+L", "ui.help.chat_links"),
         ("ui.help.k.mouse", "ui.help.mouse_action"),
-        ("ui.help.k.terminal_mouse", "ui.help.terminal_mouse"),
         ("PageUp/PageDown", "ui.help.scroll"),
     ],
     openers: &["Shift+←/→/↑/↓", "Esc", "Ctrl+K", "Ctrl+P"],
@@ -101,9 +100,6 @@ pub(crate) static HELP_SECTION: HelpSection = HelpSection {
 
 /// Feed scroll height per PageUp/PageDown press (rows).
 const PAGE_SCROLL: usize = 8;
-
-/// Feed scroll height per mouse-wheel "notch" (rows).
-const WHEEL_SCROLL: usize = 3;
 
 /// Spellcheck debounce delay: a word isn't flagged while the user is typing.
 const SPELL_DEBOUNCE: Duration = Duration::from_millis(300);
@@ -736,6 +732,9 @@ pub struct ChatScreen {
     mouse_press: Option<MousePress>,
     /// Counts the presses of a double and a triple click.
     clicks: ClickCounter,
+    /// The feed's search bar's mouse gesture (`Ctrl+F`;
+    /// docs/research/mouse-always-captured.md §5.8).
+    search_gesture: FieldGesture,
     /// The last copy's outcome, while it is on the status bar.
     copy_chip: Option<CopyChip>,
     /// Whether background self-model auto-reflection is running (a quiet
@@ -867,6 +866,7 @@ impl ChatScreen {
             mouse_captured: false,
             mouse_press: None,
             clicks: ClickCounter::default(),
+            search_gesture: FieldGesture::default(),
             copy_chip: None,
             reflecting: false,
             background_runs: 0,
@@ -958,8 +958,22 @@ impl ChatScreen {
             .map(|chip| (chip.text.as_str(), chip.failed))
     }
 
-    /// Whether the app wants the terminal's mouse reports while the chat is in
-    /// front — the runtime asks for them only then (research F7). See
+    /// The click count of a left press at the pointer, for a screen other than
+    /// the chat — the runtime counts here, the one counter there is, since one
+    /// screen is in front at a time (research F5, F12). Anything but a left
+    /// press is a single click.
+    pub fn count_click(&mut self, mouse: &MouseEvent, now: Instant) -> SelectUnit {
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                self.clicks.press(mouse.column, mouse.row, now)
+            }
+            _ => SelectUnit::Char,
+        }
+    }
+
+    /// Whether the app wants the terminal's mouse reports — the *Mouse* setting,
+    /// vetoed by the legacy terminal mode; the runtime asks for them on every
+    /// screen but the "too small" notice (research F7, §5.8). See
     /// [`Self::mouse_captured`].
     pub fn mouse_capture(&self) -> bool {
         self.mouse_captured

@@ -237,8 +237,7 @@ pub(super) fn process_input_batch(
             // The help overlay is modal: it has no paste target, and a wheel
             // or click would act on a screen the dialog is covering — the same
             // rule the chat applied while it owned the dialog.
-            Chunk::Paste(_) | Chunk::Event(Event::Paste(_) | Event::Mouse(_))
-                if help.open.is_some() => {}
+            Chunk::Paste(_) | Chunk::Event(Event::Paste(_)) if help.open.is_some() => {}
             // A clipboard paste: on the settings screen — into the active field editor; in
             // the chat — into the input box (never sends); the list has no paste target.
             // `Chunk::Paste` — a reconstruction from key events (Windows); we reconcile it
@@ -257,15 +256,11 @@ pub(super) fn process_input_batch(
                     quit = true;
                 }
             }
-            // The mouse wheel scrolls the chat feed, and a left click can land on a
-            // `chat://` reference (spec §11.3). On the list/settings (which have their
-            // own navigation) mouse events are ignored.
-            Chunk::Event(Event::Mouse(mouse)) if active.is_chat() => {
-                if let Some(intent) = screen.handle_mouse(mouse) {
-                    flush_draft(screen, cmd_tx);
-                    if dispatch(intent, cmd_tx, screen, active, back) {
-                        quit = true;
-                    }
+            // The mouse reaches the help dialog first, then whichever screen is
+            // in front (docs/research/mouse-always-captured.md §5.8).
+            Chunk::Event(Event::Mouse(mouse)) => {
+                if handle_mouse_event(mouse, screen, active, help, back, cmd_tx, clipboard) {
+                    quit = true;
                 }
             }
             // The terminal's window gained or lost focus — the orchestrator asks
@@ -342,6 +337,48 @@ fn handle_key_event(
         ActiveScreen::Tasks(tasks) => tasks.handle_key(key).map(AnyIntent::Tasks),
         ActiveScreen::Notes(notes) => notes.handle_key(key).map(AnyIntent::Notes),
     };
+    run_intent(intent, screen, active, help, back, cmd_tx, clipboard)
+}
+
+/// Handles one mouse event: the help dialog first — modal, its wheel scrolls
+/// it and nothing of the mouse reaches the screen under it — then the screen in
+/// front, whose intent is run the way a key's is ([`run_intent`]). Returns
+/// `true` if quitting was requested (docs/research/mouse-always-captured.md §5.8).
+pub(super) fn handle_mouse_event(
+    mouse: MouseEvent,
+    screen: &mut ChatScreen,
+    active: &mut ActiveScreen,
+    help: &mut HelpOverlay,
+    back: &mut Option<Back>,
+    cmd_tx: &UnboundedSender<AppCommand>,
+    clipboard: &mut Option<arboard::Clipboard>,
+) -> bool {
+    if let Some(state) = help.open.as_mut() {
+        // Clamped to the content where the dialog is drawn.
+        match mouse.kind {
+            MouseEventKind::ScrollUp => state.scroll = state.scroll.saturating_sub(WHEEL_ROWS),
+            MouseEventKind::ScrollDown => state.scroll = state.scroll.saturating_add(WHEEL_ROWS),
+            _ => {}
+        }
+        return false;
+    }
+    let intent = active.handle_mouse(screen, mouse);
+    run_intent(intent, screen, active, help, back, cmd_tx, clipboard)
+}
+
+/// Runs an intent a screen gave for a key or a mouse event: the UI-layer side
+/// effects first — the clipboard's two (only the runtime holds `arboard`), the
+/// help — and everything else through [`dispatch_any`]. Returns `true` if
+/// quitting was requested.
+fn run_intent(
+    intent: Option<AnyIntent>,
+    screen: &mut ChatScreen,
+    active: &mut ActiveScreen,
+    help: &mut HelpOverlay,
+    back: &mut Option<Back>,
+    cmd_tx: &UnboundedSender<AppCommand>,
+    clipboard: &mut Option<arboard::Clipboard>,
+) -> bool {
     if intent.is_some() {
         flush_draft(screen, cmd_tx);
     }

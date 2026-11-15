@@ -888,6 +888,16 @@ things on different screens. The highlights:
 > or typing ends it, `Esc` and a copy do not. While the assistant answers the
 > conversation selects nothing.
 >
+> **On every other screen** — the chat list, settings, the self-model, the search
+> results, the tasks, the notes, the changes, the help — the wheel scrolls the list or
+> the text under the pointer; a selected row stays where it is until the edge of the
+> list pushes it along, so the arrows go on from where you see it. A click selects a
+> row, a double click does what `Enter` does on it — opens a chat or a note, edits or
+> toggles a setting, picks from a list. Text fields — renaming a chat, the settings'
+> editors, the self-model's and the notes' editors, the search lines — take a click, a
+> drag and a double or triple click like the input box. A popup that is open takes the
+> mouse alone; `Esc` closes it.
+>
 > **Your terminal's own selection** is a modifier away: `Shift`+drag in most
 > terminals (Windows Terminal, VS Code on Windows and Linux, GNOME Terminal, Konsole,
 > kitty, Alacritty, WezTerm), `Option` in iTerm2, `Fn` in Terminal.app. In Windows

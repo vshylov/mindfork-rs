@@ -15,7 +15,9 @@
 //! [`SearchIntent`].
 
 use ratatui::Frame;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{
+    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -26,8 +28,11 @@ use crate::features::chat_search::{SearchGroup, Snippet};
 use crate::screens::awaited_chat::AwaitedChat;
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
+use crate::shared::mouse::{SelectUnit, wheel_delta};
 use crate::shared::theme::Palette;
-use crate::shared::ui::{MinSize, SCREEN_MIN_SIZE, render_scrollbar, screen_chrome};
+use crate::shared::ui::{
+    MinSize, RowList, RowSpan, SCREEN_MIN_SIZE, follow_item, render_scrollbar, screen_chrome,
+};
 use crate::shared::wrap::wrap_line;
 use crate::widgets::help_dialog::{HelpContext, HelpSection};
 
@@ -99,6 +104,9 @@ pub struct SearchScreen {
     /// The hit's chat this screen asked for (`Enter`) and stays up for, so the
     /// previous chat is never shown in between. See spec §11.2.
     awaited: AwaitedChat,
+    /// The hits as last drawn, for the mouse
+    /// (docs/research/mouse-always-captured.md F11, F12).
+    drawn: RowList,
 }
 
 impl SearchScreen {
@@ -119,6 +127,7 @@ impl SearchScreen {
             selected: 0,
             scroll: 0,
             awaited: AwaitedChat::Nothing,
+            drawn: RowList::default(),
         }
     }
 
@@ -187,6 +196,31 @@ impl SearchScreen {
 
     /// Handles a key press, returning an intent for `app` (`None` — handled
     /// internally: navigation).
+    /// A mouse event (docs/research/mouse-always-captured.md §5.8): the wheel
+    /// scrolls the hits, the selection pushed along by the edge it would leave,
+    /// a long snippet scrolled through (F11); a click selects a hit and a double
+    /// click opens it, as `Enter` does; a chat's header takes no click (F12).
+    pub fn handle_mouse(&mut self, mouse: MouseEvent, unit: SelectUnit) -> Option<SearchIntent> {
+        let (col, row) = (mouse.column, mouse.row);
+        if let Some(delta) = wheel_delta(mouse.kind) {
+            if self.drawn.holds(col, row)
+                && let Some((scroll, selected)) =
+                    self.drawn.wheel(delta, self.selected, follow_item)
+            {
+                self.scroll = scroll;
+                self.selected = selected;
+            }
+            return None;
+        }
+        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+            return None;
+        }
+        self.selected = self.drawn.item_at(col, row)?;
+        (unit == SelectUnit::Word)
+            .then(|| self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)))
+            .flatten()
+    }
+
     pub fn handle_key(&mut self, key: KeyEvent) -> Option<SearchIntent> {
         if key.kind != KeyEventKind::Press {
             return None;
@@ -376,6 +410,8 @@ impl SearchScreen {
 
         let mut visual: Vec<(bool, Line<'static>)> = Vec::new();
         let (mut sel_start, mut sel_height) = (0usize, 1usize);
+        // The hits' rows, for the mouse: a chat's header row is no hit.
+        let mut spans: Vec<RowSpan> = Vec::new();
         for (line, kind) in &rows {
             let selected = *kind == Row::Hit(self.selected);
             let start = visual.len();
@@ -387,13 +423,22 @@ impl SearchScreen {
                 sel_start = start;
                 sel_height = wrapped.len();
             }
+            if let Row::Hit(id) = *kind {
+                spans.push(RowSpan {
+                    id,
+                    first: start,
+                    rows: wrapped.len(),
+                });
+            }
             for vl in wrapped {
                 visual.push((selected, vl));
             }
         }
 
         let view_h = list_area.height as usize;
-        self.scroll = adjust_scroll(self.scroll, sel_start, sel_height, view_h);
+        self.scroll = follow_item(self.scroll, sel_start, sel_height, view_h);
+        self.drawn
+            .record(list_area, self.scroll, visual.len(), spans);
 
         for (offset, (selected, line)) in visual.iter().enumerate().skip(self.scroll).take(view_h) {
             let row = Rect {
@@ -494,27 +539,6 @@ fn format_ts(ts: &str) -> String {
             .format("%Y-%m-%d %H:%M")
             .to_string(),
         Err(_) => ts.to_string(),
-    }
-}
-
-/// Recomputes scroll so the selected hit (visual rows
-/// `[sel_start, sel_start + sel_height)`) stays visible; a hit taller than the
-/// window is pinned to its **top**. Mirrors the `F3` screen's helper.
-fn adjust_scroll(scroll: usize, sel_start: usize, sel_height: usize, view_h: usize) -> usize {
-    if view_h == 0 {
-        return scroll;
-    }
-    let sel_end = sel_start + sel_height;
-    if sel_start < scroll {
-        sel_start
-    } else if sel_end > scroll + view_h {
-        if sel_height >= view_h {
-            sel_start
-        } else {
-            sel_end - view_h
-        }
-    } else {
-        scroll
     }
 }
 
@@ -711,6 +735,42 @@ mod tests {
         );
     }
 
+    fn mouse_at(kind: MouseEventKind, (column, row): (u16, u16)) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    /// A click selects a hit, a double click opens it as `Enter` does, and a
+    /// chat's header takes none (docs/research/mouse-always-captured.md F12).
+    #[test]
+    fn a_double_click_opens_a_hit_and_a_header_takes_no_click() {
+        use crate::shared::mouse::SelectUnit::{Char, Word};
+        use ratatui::crossterm::event::MouseButton;
+        let mut s = screen();
+        let hits = s.hits();
+        dump(&mut s, 80, 20);
+        let press = MouseEventKind::Down(MouseButton::Left);
+        let at = s.drawn.cell_of(2).expect("the third hit");
+        assert_eq!(s.handle_mouse(mouse_at(press, at), Char), None);
+        assert_eq!(s.selected, 2);
+        assert_eq!(
+            s.handle_mouse(mouse_at(press, at), Word),
+            Some(SearchIntent::OpenHit {
+                chat: hits[2].0,
+                message: hits[2].1,
+                query: "маркер".into(),
+            })
+        );
+        // The first group's header sits on the row above its first hit.
+        let (c, r) = s.drawn.cell_of(0).unwrap();
+        assert_eq!(s.handle_mouse(mouse_at(press, (c, r - 1)), Word), None);
+        assert_eq!(s.selected, 2);
+    }
+
     #[test]
     fn esc_closes_and_ctrl_q_or_f10_quits() {
         let mut s = screen();
@@ -797,11 +857,11 @@ mod tests {
     fn a_long_snippet_scrolls_into_view_instead_of_vanishing() {
         // The `F3` lesson: a tall trailing item must be clipped at the bottom
         // edge, not skipped — so the selection stays reachable.
-        assert_eq!(adjust_scroll(0, 0, 1, 10), 0);
-        assert_eq!(adjust_scroll(5, 2, 1, 10), 2);
-        assert_eq!(adjust_scroll(0, 9, 1, 5), 5);
-        assert_eq!(adjust_scroll(0, 8, 20, 5), 8, "a tall hit pins to its top");
-        assert_eq!(adjust_scroll(3, 0, 1, 0), 3);
+        assert_eq!(follow_item(0, 0, 1, 10), 0);
+        assert_eq!(follow_item(5, 2, 1, 10), 2);
+        assert_eq!(follow_item(0, 9, 1, 5), 5);
+        assert_eq!(follow_item(0, 8, 20, 5), 8, "a tall hit pins to its top");
+        assert_eq!(follow_item(3, 0, 1, 0), 3);
     }
 
     #[test]

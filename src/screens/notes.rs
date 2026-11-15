@@ -14,8 +14,10 @@
 
 use chrono::{DateTime, Utc};
 use ratatui::Frame;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use ratatui::layout::Rect;
+use ratatui::crossterm::event::{
+    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
+use ratatui::layout::{Position, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
@@ -27,13 +29,15 @@ use crate::features::tools::notes::SELF_NOTE_TAG;
 use crate::shared::config::NewlineKey;
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
+use crate::shared::mouse::{SelectUnit, wheel_delta};
 use crate::shared::theme::Palette;
 use crate::shared::ui::{
-    MinSize, SCREEN_MIN_SIZE, dim_background, keep_visible, render_scrollbar, screen_chrome,
+    MinSize, RowList, RowSpan, SCREEN_MIN_SIZE, dim_background, keep_visible, render_scrollbar,
+    screen_chrome,
 };
 use crate::shared::wrap::{truncate_to_width, wrap_line};
 use crate::widgets::help_dialog::{HelpContext, HelpSection};
-use crate::widgets::input_box::{InputBox, RenderOpts};
+use crate::widgets::input_box::{FieldGesture, InputBox, RenderOpts};
 
 /// The notes screen's "Shortcuts" section (`F1`): one row per key
 /// `handle_key` matches — a new arm gets a row here (AGENTS.md §3).
@@ -121,6 +125,12 @@ pub struct NotesScreen {
     /// time: the screen is a full-screen overlay, so the settings cannot
     /// change while it stands. See [`Self::with_newline_key`].
     newline_key: NewlineKey,
+    /// The list as last drawn, and where an opened note was — for the mouse
+    /// (docs/research/mouse-always-captured.md F11, F12).
+    drawn: RowList,
+    note_area: Rect,
+    /// The editor's or the search line's mouse gesture.
+    field_gesture: FieldGesture,
 }
 
 impl NotesScreen {
@@ -138,6 +148,9 @@ impl NotesScreen {
             editor: None,
             confirm_delete: None,
             newline_key: NewlineKey::default(),
+            drawn: RowList::default(),
+            note_area: Rect::default(),
+            field_gesture: FieldGesture::default(),
         }
     }
 
@@ -284,6 +297,68 @@ impl NotesScreen {
             Mode::Note(_) => self.scroll_note(key.code),
         }
         None
+    }
+
+    /// A mouse event (docs/research/mouse-always-captured.md §5.8): the editor's
+    /// while it is open, and the search line's press, drag and release while it
+    /// is typed; otherwise the wheel scrolls the list — the selection pushed
+    /// along by the edge it would leave (F11) — or an opened note, and a click
+    /// selects a note, a double click opening it as `Enter` does (F12). A press
+    /// while a delete waits for its second `Del` keeps the note, as any other
+    /// key does.
+    pub fn handle_mouse(&mut self, mouse: MouseEvent, unit: SelectUnit) -> Option<NotesIntent> {
+        if let Some(editor) = self.editor.as_mut() {
+            self.field_gesture.on_mouse(&mut editor.input, mouse, unit);
+            return None;
+        }
+        if let Some(search) = self.search.as_mut()
+            && self.field_gesture.on_mouse(search, mouse, unit)
+        {
+            return None;
+        }
+        let (col, row) = (mouse.column, mouse.row);
+        if let Some(delta) = wheel_delta(mouse.kind) {
+            match self.mode {
+                Mode::List => {
+                    let rule = |scroll, first, _, view| keep_visible(scroll, first, view);
+                    if self.drawn.holds(col, row)
+                        && let Some((scroll, selected)) =
+                            self.drawn.wheel(delta, self.selected, rule)
+                    {
+                        self.scroll = scroll;
+                        self.selected = selected;
+                    }
+                }
+                // Clamped to the note's lines where it is drawn.
+                Mode::Note(_) if self.note_area.contains(Position::new(col, row)) => {
+                    self.note_scroll = self.note_scroll.saturating_add_signed(delta);
+                }
+                Mode::Note(_) => {}
+            }
+            return None;
+        }
+        if mouse.kind != MouseEventKind::Down(MouseButton::Left) || self.search.is_some() {
+            return None;
+        }
+        self.confirm_delete = None;
+        if self.mode != Mode::List {
+            return None;
+        }
+        self.selected = self.drawn.item_at(col, row)?;
+        (unit == SelectUnit::Word)
+            .then(|| self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)))
+            .flatten()
+    }
+
+    /// The loop's tick, for a drag held past the editor's top or bottom edge.
+    pub fn mouse_tick(&mut self, now: std::time::Instant) -> bool {
+        if let Some(editor) = self.editor.as_mut() {
+            return self.field_gesture.tick(&mut editor.input, now);
+        }
+        match self.search.as_mut() {
+            Some(search) => self.field_gesture.tick(search, now),
+            None => false,
+        }
     }
 
     /// `Esc`: an opened note goes back to the list, a search in force is
@@ -544,6 +619,22 @@ impl NotesScreen {
                 self.note_scroll
             }
         };
+        match (self.mode, focus) {
+            (Mode::List, Some(line)) => {
+                // One line a note, from the one the selection stands on back.
+                let first = line - self.selected;
+                let spans = (0..self.visible().len())
+                    .map(|id| RowSpan {
+                        id,
+                        first: first + id,
+                        rows: 1,
+                    })
+                    .collect();
+                self.drawn.record(body, scroll, total, spans);
+            }
+            (Mode::List, None) => self.drawn.record(body, scroll, total, Vec::new()),
+            (Mode::Note(_), _) => self.note_area = body,
+        }
         let shown: Vec<Line<'static>> = lines.into_iter().skip(scroll).take(view_h).collect();
         frame.render_widget(Paragraph::new(shown), body);
         render_scrollbar(frame, chrome.panel, total, view_h, scroll, true, &palette);

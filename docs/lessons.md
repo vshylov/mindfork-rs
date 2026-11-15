@@ -1743,6 +1743,14 @@ to scrolling, because scrolling is what makes selections long. Hit-test against 
 was painted (`painted_on`), and treat a double click on nothing as a click.
 — *the feed's own text selection*.
 
+**A hit test checked against its own geometry proves nothing — read back what was
+drawn.** The settings' menu passed every test of a click on a section, and a click in
+a pty picked the section below. The test found the row to click through the same
+`item_at` it was testing, so the two agreed with each other. The list's title took its
+top row without a border, and `view_h` was off by one. A test of a click map asks the
+buffer which text is on the row the map names.
+— *the mouse on every screen*.
+
 **A `Line`'s style covers the whole row, not just its text** — so any padding you
 prepend to a styled line inherits it. Indenting markdown output by two spaces made a
 level-1 heading's `UNDERLINED` run out to the left of the text: the writer puts a

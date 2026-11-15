@@ -4310,13 +4310,29 @@ chip from `compose_frame`, at the right end of the frame's last row
 (`ui::render_copy_chip`) — the chat list too, whose notice line words a whole
 conversation's copy (`deliver_clipboard`).
 
+**The mouse on every screen** (research §5.8, spec §11.3). `process_input_batch`
+hands a report to `handle_mouse_event`: the help dialog takes the wheel and nothing
+else reaches under it; otherwise `ActiveScreen::handle_mouse` gives it to the screen
+in front — the chat with its own gesture, the others with the click count of the
+chat's one `ClickCounter` (`ChatScreen::count_click`) — and the intent goes through
+`run_intent`, the tail the keys share. `ActiveScreen::mouse_tick` drives a field's
+autoscroll on any screen. The geometry is the last draw's, recorded where the rows are
+drawn: `ListScroll` keeps its area, first row, length and view (`item_at`, `wheel`,
+`on_mouse`; one row an item, so `view_h` must be the rows the items really get — the
+settings' menu's title takes one); a list drawn line by line keeps a `RowList` of its
+items' `RowSpan`s, ids the screen's own, and `RowList::wheel` takes the screen's own
+follow rule (`keep_visible`, or `follow_item`, which lets the window stand inside a
+selected item taller than itself), so the next draw leaves the window where the wheel
+put it. A field off the chat has a `FieldGesture` (`widgets/input_box.rs`).
+
 **Mouse capture follows the frame in front** (`app/runtime/mod.rs`, spec §11.3).
 The chat keeps the wish — `ChatScreen::mouse_capture`, seeded from
 `InterfaceSettings::mouse_captured` (the *Mouse* setting, `app` by default, vetoed
 by the legacy terminal mode; no session switch since §5.7 of the research) — and
 the loop, before
-every frame, asks `mouse_wanted` (the chat in front, no help dialog, no "too small"
-notice) and hands the answer to `MouseCapture::change`; only a change reaches
+every frame, asks `mouse_wanted` (the wish, and no "too small" notice — every
+screen and the help dialog answer the mouse since stage 3) and hands the answer to
+`MouseCapture::change`; only a change reaches
 `ask_mouse`, which writes `EnableMouseReports` or `DisableMouseCapture`. No intent
 carries capture any more; the screen states a wish and `runtime` executes it.
 

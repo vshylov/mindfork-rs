@@ -6,6 +6,7 @@ use crate::features::tools::default_tool_ids;
 use crate::shared::config::{FlashAttn, MediaResolution, PythonMode, SpecType, WebProvider};
 use crate::shared::embed_prefix::EmbedConvention;
 use crate::shared::secrets::{ExternalSlot, SearchSlot};
+use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 
 fn screen() -> SettingsScreen {
     let mut p = Profile::new("Базовый", "Ты — ассистент.");
@@ -8332,4 +8333,157 @@ fn a_secret_fields_editor_copies_nothing() {
     assert_eq!(s.handle_key(ctrl('c')), None);
     assert_eq!(s.handle_key(ctrl('x')), None);
     assert_eq!(s.editor.as_ref().unwrap().input.text(), "hunter2");
+}
+
+// ---------- the mouse (docs/research/mouse-always-captured.md §5.8) ----------
+
+fn mouse_at(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+    MouseEvent {
+        kind,
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    }
+}
+
+fn press_at(column: u16, row: u16) -> MouseEvent {
+    mouse_at(MouseEventKind::Down(MouseButton::Left), column, row)
+}
+
+fn draw_settings(s: &mut SettingsScreen, w: u16, h: u16) {
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+}
+
+/// A screen cell a list draws item `item` on — at column `col` when the list
+/// is there, the list's first column otherwise.
+fn cell_of(scroll: &ListScroll, item: usize, col: u16, h: u16) -> (u16, u16) {
+    (0..h)
+        .find(|&y| scroll.item_at(col, y) == Some(item))
+        .map(|y| (col, y))
+        .or_else(|| {
+            (0..200u16)
+                .flat_map(|x| (0..h).map(move |y| (x, y)))
+                .find(|&(x, y)| scroll.item_at(x, y) == Some(item))
+        })
+        .unwrap_or_else(|| panic!("item {item} is not drawn"))
+}
+
+/// A click on a section selects it and focuses the menu; a double click is
+/// the menu's `Enter`, into the fields. A click on a field focuses the pane
+/// and selects it, a group header takes none, and a double click on a choice
+/// opens its list — where a double click picks (F12).
+#[test]
+fn clicks_select_sections_and_fields_and_a_double_click_is_enter() {
+    use crate::shared::mouse::SelectUnit::{Char, Word};
+    let mut s = screen();
+    draw_settings(&mut s, 120, 40);
+    let interface = SECTIONS
+        .iter()
+        .position(|&x| x == Section::Interface)
+        .unwrap();
+    let (c, r) = cell_of(&s.menu_scroll, interface, 3, 40);
+    assert_eq!(s.handle_mouse(press_at(c, r), Char), None);
+    assert_eq!(
+        (s.section(), s.focus == Focus::Menu),
+        (Section::Interface, true)
+    );
+    s.handle_mouse(press_at(c, r), Word);
+    assert!(s.focus == Focus::Fields, "Enter on the menu");
+    draw_settings(&mut s, 120, 40);
+    let theme = s
+        .fields()
+        .iter()
+        .position(|f| f.id == FieldId::ITheme)
+        .unwrap();
+    let theme_row = s
+        .fields_rows
+        .iter()
+        .position(|&r| r == Some(theme))
+        .unwrap();
+    let (fc, fr) = cell_of(&s.fields_scroll, theme_row, 40, 40);
+    s.handle_key(key(KeyCode::Esc));
+    assert!(s.focus == Focus::Menu);
+    s.handle_mouse(press_at(fc, fr), Char);
+    assert!(s.focus == Focus::Fields && s.field_idx == theme);
+    // A header row: nothing changes.
+    let header = s.fields_rows.iter().position(Option::is_none).unwrap();
+    let (hc, hr) = cell_of(&s.fields_scroll, header, 40, 40);
+    s.handle_mouse(press_at(hc, hr), Word);
+    assert_eq!(s.field_idx, theme);
+    assert!(s.choice.is_none(), "a header's double click is nothing");
+    // A double click on the theme opens its choice; a double click there picks.
+    s.handle_mouse(press_at(fc, fr), Word);
+    let before = s.config.interface.clone();
+    assert!(s.choice.is_some(), "Enter on a choice opens its list");
+    draw_settings(&mut s, 120, 40);
+    let st = s.choice.as_ref().unwrap();
+    let other = (st.selected + 1) % st.options.len();
+    let (oc, or) = cell_of(&st.scroll, other, fc, 40);
+    assert_eq!(s.handle_mouse(press_at(oc, or), Char), None);
+    assert_eq!(s.choice.as_ref().unwrap().selected, other);
+    match s.handle_mouse(press_at(oc, or), Word) {
+        Some(SettingsIntent::SaveConfig(c)) => assert_ne!(c.interface, before),
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+    assert!(s.choice.is_none());
+}
+
+/// The wheel over the field pane scrolls it and, with the focus there, pushes
+/// the selection along by the edge it would leave — onto a field, never a
+/// group header — leaving a row of context the pane keeps (F11). With the focus
+/// on the menu the pane scrolls and nothing is selected.
+#[test]
+fn the_wheel_over_the_fields_pushes_the_selection_onto_a_field() {
+    use crate::shared::mouse::SelectUnit::Char;
+    let mut s = screen();
+    goto_section(&mut s, Section::Tools);
+    s.handle_key(key(KeyCode::Enter));
+    draw_settings(&mut s, 100, 20);
+    let (c, r) = cell_of(&s.fields_scroll, 1, 40, 20);
+    let down = mouse_at(MouseEventKind::ScrollDown, c, r);
+    let mut last = s.field_idx;
+    for _ in 0..6 {
+        s.handle_mouse(down, Char);
+        draw_settings(&mut s, 100, 20);
+        let row = s.fields_rows.iter().position(|&x| x == Some(s.field_idx));
+        assert!(row.is_some(), "the selection is on a field");
+        assert!(s.field_idx >= last, "pushed down, never back");
+        last = s.field_idx;
+    }
+    assert!(s.fields_scroll.offset() > 0 && s.field_idx > 0);
+    let offset = s.fields_scroll.offset();
+    s.handle_key(key(KeyCode::Esc));
+    s.handle_mouse(mouse_at(MouseEventKind::ScrollUp, c, r), Char);
+    assert_eq!(s.field_idx, last, "no selection to push on the menu");
+    draw_settings(&mut s, 100, 20);
+    assert!(s.fields_scroll.offset() < offset);
+}
+
+/// The editor takes the mouse while it is open: a press places the cursor, a
+/// drag selects, and the selection copies (stage 3a).
+#[test]
+fn a_drag_in_the_editor_selects_what_ctrl_c_copies() {
+    use crate::shared::mouse::SelectUnit::Char;
+    let mut s = screen();
+    goto_section(&mut s, Section::Tools);
+    goto_field(&mut s, FieldId::VideoModel);
+    s.handle_key(key(KeyCode::Enter));
+    s.handle_key(ctrl('k'));
+    for c in "gemini-pro".chars() {
+        s.handle_key(key(KeyCode::Char(c)));
+    }
+    draw_settings(&mut s, 100, 30);
+    let area = s.editor.as_ref().unwrap().input.text_area().expect("drawn");
+    let left = MouseButton::Left;
+    s.handle_mouse(press_at(area.x, area.y), Char);
+    s.handle_mouse(
+        mouse_at(MouseEventKind::Drag(left), area.x + 6, area.y),
+        Char,
+    );
+    s.handle_mouse(mouse_at(MouseEventKind::Up(left), area.x + 6, area.y), Char);
+    assert_eq!(
+        s.handle_key(ctrl('c')),
+        Some(SettingsIntent::CopyText("gemini".into()))
+    );
 }

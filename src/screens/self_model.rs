@@ -9,7 +9,9 @@
 //! `app`/`Storage` (FSD). See docs/history/self-model-mvp.md.
 
 use ratatui::Frame;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::crossterm::event::{
+    KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -21,10 +23,15 @@ use crate::entities::self_model::{GoalStatus, SelfModel, SelfModelEdit, order_na
 use crate::shared::config::{NewlineKey, NoteOrder};
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
+use crate::shared::mouse::{SelectUnit, wheel_delta};
 use crate::shared::theme::Palette;
-use crate::shared::ui::{MinSize, SCREEN_MIN_SIZE, dim_background, screen_chrome};
+use crate::shared::ui::{
+    MinSize, RowList, RowSpan, SCREEN_MIN_SIZE, dim_background, follow_item, row_spans,
+    screen_chrome,
+};
 use crate::shared::wrap::wrap_line;
 use crate::widgets::help_dialog::{HelpContext, HelpSection};
+use crate::widgets::input_box::FieldGesture;
 use crate::widgets::input_box::{InputBox, RenderOpts};
 
 mod history;
@@ -134,6 +141,10 @@ pub struct SelfModelScreen {
     newline_key: NewlineKey,
     /// The history view (`H`, spec §17.9), while it stands over the fields.
     history: Option<History>,
+    /// The list as last drawn, and the editor's mouse gesture — for the mouse
+    /// (docs/research/mouse-always-captured.md §5.8).
+    drawn: RowList,
+    field_gesture: FieldGesture,
 }
 
 impl SelfModelScreen {
@@ -157,6 +168,8 @@ impl SelfModelScreen {
             note_order,
             newline_key: NewlineKey::default(),
             history: None,
+            drawn: RowList::default(),
+            field_gesture: FieldGesture::default(),
         };
         // Row 0 is the "Assistant" header — a decoration. Land the cursor on
         // the first selectable row instead of highlighting a header on open.
@@ -541,6 +554,55 @@ impl SelfModelScreen {
         }
     }
 
+    /// A mouse event (docs/research/mouse-always-captured.md §5.8): the history
+    /// view's while it stands, the editor's while it is open — a press places
+    /// the cursor, a drag selects — and the list's otherwise: the wheel scrolls
+    /// it, the selection pushed along by the edge it would leave, a long item
+    /// scrolled through (F11); a click selects a row, a double click edits it,
+    /// as `Enter` does; a decoration takes no click (F12). A press while the
+    /// clear waits for its second `Ctrl+K` cancels it, as any key does.
+    pub fn handle_mouse(&mut self, mouse: MouseEvent, unit: SelectUnit) -> Option<SelfModelIntent> {
+        if let Some(history) = self.history.as_mut() {
+            history.handle_mouse(mouse, unit);
+            return None;
+        }
+        if let Some(editor) = self.editor.as_mut() {
+            self.field_gesture.on_mouse(&mut editor.input, mouse, unit);
+            return None;
+        }
+        let (col, row) = (mouse.column, mouse.row);
+        if let Some(delta) = wheel_delta(mouse.kind) {
+            if self.drawn.holds(col, row)
+                && let Some((scroll, selected)) =
+                    self.drawn.wheel(delta, self.selected, follow_item)
+            {
+                self.scroll = scroll;
+                self.selected = selected;
+            }
+            return None;
+        }
+        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+            return None;
+        }
+        if self.confirm_clear {
+            self.confirm_clear = false;
+            return None;
+        }
+        let row = self.drawn.item_at(col, row)?;
+        self.selected = row;
+        (unit == SelectUnit::Word)
+            .then(|| self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)))
+            .flatten()
+    }
+
+    /// The loop's tick, for a drag held past the editor's top or bottom edge.
+    pub fn mouse_tick(&mut self, now: std::time::Instant) -> bool {
+        match self.editor.as_mut() {
+            Some(editor) => self.field_gesture.tick(&mut editor.input, now),
+            None => false,
+        }
+    }
+
     /// Clipboard paste — into the active field editor (otherwise a no-op).
     pub fn handle_paste(&mut self, text: &str) {
         if let Some(editor) = self.editor.as_mut() {
@@ -655,7 +717,12 @@ impl SelfModelScreen {
         let (visual, sel_start, sel_height) = expand_visual_rows(&rows, sel, content_width);
 
         let view_h = list_area.height as usize;
-        self.scroll = adjust_scroll(self.scroll, sel_start, sel_height, view_h);
+        self.scroll = follow_item(self.scroll, sel_start, sel_height, view_h);
+        let spans = visual_spans(&visual, |ri| {
+            (!matches!(rows[ri].1, RowAction::Decoration)).then_some(ri)
+        });
+        self.drawn
+            .record(list_area, self.scroll, visual.len(), spans);
 
         draw_visual_rows(frame, list_area, &visual, sel, self.scroll, &palette);
 
@@ -731,6 +798,16 @@ fn draw_visual_rows(
 /// Expands each logical line into visual rows wrapped to `content_width`,
 /// tracking for every row the index of its logical line; returns the rows
 /// plus where the selected row starts and how many visual rows it takes.
+/// The items of `visual` — each row tagged with its logical row — for the
+/// mouse ([`RowList`]): a span a logical row `id_of` gives an id, none for
+/// those it does not (a decoration, a fork's line).
+fn visual_spans(
+    visual: &[(usize, Line<'static>)],
+    id_of: impl Fn(usize) -> Option<usize>,
+) -> Vec<RowSpan> {
+    row_spans(visual.iter().map(|(ri, _)| id_of(*ri)))
+}
+
 fn expand_visual_rows<A>(
     rows: &[(Line<'static>, A)],
     sel: usize,
@@ -784,32 +861,6 @@ fn parse_list(s: &str) -> Vec<String> {
         .map(|x| x.trim().to_string())
         .filter(|x| !x.is_empty())
         .collect()
-}
-
-/// Recomputes scroll so the selected row (visual rows
-/// `[sel_start, sel_start + sel_height)`) is visible in a window of height `view_h`:
-/// - if the row is above the window — raise the window's top to its start;
-/// - if its bottom is past the window — lower the window to its bottom;
-/// - but if the row doesn't fit entirely (taller than the window) — pin it to its **top**
-///   (the top of the long item is visible, not the bottom).
-///
-/// Otherwise scroll is unchanged.
-fn adjust_scroll(scroll: usize, sel_start: usize, sel_height: usize, view_h: usize) -> usize {
-    if view_h == 0 {
-        return scroll;
-    }
-    let sel_end = sel_start + sel_height; // exclusive
-    if sel_start < scroll {
-        sel_start
-    } else if sel_end > scroll + view_h {
-        if sel_height >= view_h {
-            sel_start
-        } else {
-            sel_end - view_h
-        }
-    } else {
-        scroll
-    }
 }
 
 /// A centered rectangle by width/height percentage.
@@ -1040,6 +1091,78 @@ mod tests {
             Some(SelfModelIntent::CopyText(seed))
         );
         assert_eq!(s.editor.as_ref().unwrap().input.text(), "");
+    }
+
+    fn mouse_at(kind: MouseEventKind, (column, row): (u16, u16)) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    /// The mouse on the list (docs/research/mouse-always-captured.md F11, F12):
+    /// the wheel scrolls through a long insight rather than over it — the
+    /// window stands inside it while it is selected — and pushes the selection
+    /// on past its end; a click selects a row, a double click edits it as
+    /// `Enter` does, and a decoration takes no click.
+    #[test]
+    fn the_wheel_scrolls_through_a_long_item_and_a_double_click_edits() {
+        use crate::shared::mouse::SelectUnit::{Char, Word};
+        use ratatui::crossterm::event::MouseButton;
+        let mut m = model();
+        push_insight(&mut m, &"long insight words ".repeat(60));
+        let mut s = SelfModelScreen::new(
+            Some(m),
+            CharacterNames::default(),
+            Palette::default(),
+            ru(),
+            NoteOrder::default(),
+        );
+        let draw = |s: &mut SelfModelScreen| {
+            let mut term = Terminal::new(TestBackend::new(40, 14)).unwrap();
+            term.draw(|f| s.render(f)).unwrap();
+        };
+        draw(&mut s);
+        let rows = s.rows();
+        let long = rows
+            .iter()
+            .position(|(l, _)| l.to_string().contains("long insight"))
+            .unwrap();
+        s.selected = long;
+        draw(&mut s);
+        let top = s.scroll;
+        let (c, r) = s.drawn.cell_of(long).expect("drawn");
+        let down = mouse_at(MouseEventKind::ScrollDown, (c, r));
+        s.handle_mouse(down, Char);
+        assert_eq!(
+            (s.selected, s.scroll),
+            (long, top + 3),
+            "inside the long item"
+        );
+        draw(&mut s);
+        assert_eq!(s.scroll, top + 3, "the draw keeps the window inside it");
+        for _ in 0..40 {
+            s.handle_mouse(down, Char);
+            draw(&mut s);
+        }
+        assert_ne!(s.selected, long, "pushed past its end");
+        // A decoration takes no click; a row takes one, a double click edits.
+        let decoration = rows
+            .iter()
+            .position(|(_, a)| matches!(a, RowAction::Decoration))
+            .unwrap();
+        let summary = s.selectable_indices()[0];
+        s.selected = summary;
+        draw(&mut s);
+        assert_eq!(s.drawn.cell_of(decoration), None, "no span of its own");
+        let (c, r) = s.drawn.cell_of(summary).expect("the summary");
+        let press = MouseEventKind::Down(MouseButton::Left);
+        assert_eq!(s.handle_mouse(mouse_at(press, (c, r)), Char), None);
+        assert!(s.editor.is_none());
+        s.handle_mouse(mouse_at(press, (c, r)), Word);
+        assert!(s.editor.is_some(), "Enter on the summary edits it");
     }
 
     #[test]
@@ -1552,15 +1675,15 @@ mod tests {
     #[test]
     fn adjust_scroll_keeps_selection_visible_and_pins_top_of_tall_item() {
         // The selected row fits entirely in the window — scroll is unchanged.
-        assert_eq!(adjust_scroll(0, 0, 1, 10), 0);
+        assert_eq!(follow_item(0, 0, 1, 10), 0);
         // The row is above the window — raise the window's top to its start.
-        assert_eq!(adjust_scroll(5, 2, 1, 10), 2);
+        assert_eq!(follow_item(5, 2, 1, 10), 2);
         // The row's bottom is past the window (the row is below the window) — lower the window to its bottom.
-        assert_eq!(adjust_scroll(0, 9, 1, 5), 5); // sel_end=10, 10-5=5
+        assert_eq!(follow_item(0, 9, 1, 5), 5); // sel_end=10, 10-5=5
         // A long item that doesn't fit height-wise: pin it to its TOP.
-        assert_eq!(adjust_scroll(0, 8, 20, 5), 8);
+        assert_eq!(follow_item(0, 8, 20, 5), 8);
         // Zero window height — no change.
-        assert_eq!(adjust_scroll(3, 0, 1, 0), 3);
+        assert_eq!(follow_item(3, 0, 1, 0), 3);
     }
 
     #[test]

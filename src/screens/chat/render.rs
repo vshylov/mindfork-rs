@@ -459,7 +459,7 @@ impl ChatScreen {
             dim_background(frame, &self.palette);
             render_suggest(frame, popup, &self.palette, self.loc);
         }
-        if let Some(picker) = &self.emoji {
+        if let Some(picker) = &mut self.emoji {
             dim_background(frame, &self.palette);
             picker.render(frame, frame.area(), &self.palette, self.loc);
         }

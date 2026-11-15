@@ -16,7 +16,7 @@ use anyhow::{Result, bail};
 use ratatui::backend::Backend;
 use ratatui::crossterm::event::{
     self, DisableBracketedPaste, DisableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
-    KeyModifiers, MouseEventKind,
+    KeyModifiers, MouseEvent, MouseEventKind,
 };
 #[cfg(unix)]
 use ratatui::crossterm::event::{
@@ -44,7 +44,7 @@ use crate::screens::search::{SearchIntent, SearchScreen};
 use crate::screens::self_model::{SelfModelIntent, SelfModelScreen};
 use crate::screens::settings::{SettingsIntent, SettingsScreen};
 use crate::screens::tasks::{TasksIntent, TasksScreen};
-use crate::shared::mouse::EnableMouseReports;
+use crate::shared::mouse::{EnableMouseReports, WHEEL_ROWS};
 use crate::shared::paths::Locations;
 use crate::shared::theme::Palette;
 use crate::shared::ui::{self, MinSize, SPINNER_STEP, WayOut, dim_background};
@@ -122,6 +122,48 @@ impl ActiveScreen {
                 notes.set_loc(loc);
             }
             ActiveScreen::Chat | ActiveScreen::Settings(_) => {}
+        }
+    }
+
+    /// Routes a mouse event to the screen in front (docs/research/mouse-always-captured.md
+    /// §5.8) — the chat with its own gesture and click count, the others with
+    /// the click count taken here, off the chat's counter: one screen is in
+    /// front at a time. What it asks for is dispatched like a key's intent.
+    fn handle_mouse(&mut self, chat: &mut ChatScreen, mouse: MouseEvent) -> Option<AnyIntent> {
+        if let ActiveScreen::Chat = self {
+            return chat.handle_mouse(mouse).map(AnyIntent::Chat);
+        }
+        let unit = chat.count_click(&mouse, Instant::now());
+        match self {
+            ActiveScreen::Chat => None,
+            ActiveScreen::ChatList(list) => list.handle_mouse(mouse, unit).map(AnyIntent::List),
+            ActiveScreen::Settings(settings) => {
+                settings.handle_mouse(mouse, unit).map(AnyIntent::Settings)
+            }
+            ActiveScreen::SelfModel(view) => {
+                view.handle_mouse(mouse, unit).map(AnyIntent::SelfModel)
+            }
+            ActiveScreen::Search(search) => search.handle_mouse(mouse, unit).map(AnyIntent::Search),
+            ActiveScreen::Changes(changes) => {
+                changes.handle_mouse(mouse, unit).map(AnyIntent::Changes)
+            }
+            ActiveScreen::Tasks(tasks) => tasks.handle_mouse(mouse, unit).map(AnyIntent::Tasks),
+            ActiveScreen::Notes(notes) => notes.handle_mouse(mouse, unit).map(AnyIntent::Notes),
+        }
+    }
+
+    /// One tick of a drag held past a panel's edge, on the screen in front —
+    /// the feed or a field scrolls a row toward the pointer (research §5.4).
+    /// `true` when a frame is due.
+    fn mouse_tick(&mut self, chat: &mut ChatScreen, now: Instant) -> bool {
+        match self {
+            ActiveScreen::Chat => chat.mouse_tick(now),
+            ActiveScreen::ChatList(list) => list.mouse_tick(now),
+            ActiveScreen::Settings(settings) => settings.mouse_tick(now),
+            ActiveScreen::SelfModel(view) => view.mouse_tick(now),
+            ActiveScreen::Notes(notes) => notes.mouse_tick(now),
+            // No field on these.
+            ActiveScreen::Search(_) | ActiveScreen::Changes(_) | ActiveScreen::Tasks(_) => false,
         }
     }
 
@@ -646,10 +688,10 @@ fn run_loop(
         if screen.expire_copy_chip(Instant::now()) {
             dirty = true;
         }
-        // A drag held past the feed's or the input box's edge scrolls it a row
-        // a tick: the terminal sends nothing while the pointer rests
+        // A drag held past the feed's or a field's edge scrolls it a row a
+        // tick: the terminal sends nothing while the pointer rests
         // (docs/research/mouse-always-captured.md §5.4).
-        if matches!(active, ActiveScreen::Chat) && screen.mouse_tick(Instant::now()) {
+        if active.mouse_tick(&mut screen, Instant::now()) {
             dirty = true;
         }
         if spinner_frame_needed(&active, &screen) {
@@ -665,7 +707,7 @@ fn run_loop(
         // change that could move it — a key, a screen opened or closed, a
         // settings snapshot — also makes the frame dirty, so the request
         // reaches the terminal before the frame does.
-        if let Some(on) = mouse.change(mouse_wanted(&active, &help, &screen, drawn.placeholder)) {
+        if let Some(on) = mouse.change(mouse_wanted(&screen, drawn.placeholder)) {
             let _ = ask_mouse(on, &mut stdout());
         }
         if dirty {
@@ -1205,18 +1247,12 @@ fn ask_mouse(on: bool, out: &mut impl std::io::Write) -> std::io::Result<()> {
 }
 
 /// Whether the frame in front wants the terminal's mouse reports
-/// (docs/research/mouse-always-captured.md F7): only where the screen answers
-/// the mouse — the chat, when it holds the mouse ([`ChatScreen::mouse_capture`])
-/// — and off everywhere else: the other screens, the help dialog (modal, it
-/// swallows the mouse) and the "window too small" notice. No screen loses the
-/// terminal's own selection before it has one of its own.
-fn mouse_wanted(
-    active: &ActiveScreen,
-    help: &HelpOverlay,
-    screen: &ChatScreen,
-    placeholder: Option<WayOut>,
-) -> bool {
-    active.is_chat() && help.open.is_none() && placeholder.is_none() && screen.mouse_capture()
+/// (docs/research/mouse-always-captured.md F7, §5.8): wherever the app holds the
+/// mouse ([`ChatScreen::mouse_capture`] — the *Mouse* setting, the legacy
+/// terminal mode's veto) — every screen and the help dialog answer it since
+/// stage 3 — but not on the "window too small" notice, which answers nothing.
+fn mouse_wanted(screen: &ChatScreen, placeholder: Option<WayOut>) -> bool {
+    placeholder.is_none() && screen.mouse_capture()
 }
 
 /// One input tick: polls `source` for [`TICK`], collects the available

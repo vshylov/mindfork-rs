@@ -5,6 +5,7 @@ use std::fmt;
 use std::time::{Duration, Instant};
 
 use ratatui::crossterm::Command;
+use ratatui::crossterm::event::MouseEventKind;
 
 /// What [`EnableMouseReports`] writes: button reports (`?1000h`), drag reports
 /// — a movement with a button held (`?1002h`) — and the SGR encoding
@@ -55,6 +56,26 @@ pub enum SelectUnit {
     Word,
     Line,
 }
+
+/// The rows one notch of the wheel scrolls, in the feed and in every list and
+/// text view (docs/research/mouse-always-captured.md F11).
+pub const WHEEL_ROWS: usize = 3;
+
+/// The rows a wheel report scrolls, signed — up is back toward the top; `None`
+/// for any other report.
+pub fn wheel_delta(kind: MouseEventKind) -> Option<isize> {
+    match kind {
+        MouseEventKind::ScrollUp => Some(-(WHEEL_ROWS as isize)),
+        MouseEventKind::ScrollDown => Some(WHEEL_ROWS as isize),
+        _ => None,
+    }
+}
+
+/// One step of a drag held past its panel's top or bottom edge: the feed or a
+/// field scrolls a row toward the pointer this often (research §5.4) — the
+/// loop's tick drives it, as it drives the spinner, since the terminal reports
+/// nothing while the pointer rests.
+pub const AUTOSCROLL_STEP: Duration = Duration::from_millis(50);
 
 /// How soon a press must follow the one before it, on the same cell, to count
 /// as the next of a double or a triple click. The figure GUIs default to

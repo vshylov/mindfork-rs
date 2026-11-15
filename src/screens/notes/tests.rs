@@ -248,6 +248,44 @@ fn the_editor_and_the_search_copy_and_cut_their_selection() {
     assert_eq!(s.visible().len(), 3);
 }
 
+fn mouse_at(kind: MouseEventKind, (column, row): (u16, u16)) -> MouseEvent {
+    MouseEvent {
+        kind,
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    }
+}
+
+/// The mouse on the notes (docs/research/mouse-always-captured.md F11, F12): a
+/// click selects a note, a double click opens it as `Enter` does, and the
+/// wheel scrolls an opened note; a press while a delete waits for its second
+/// `Del` keeps the note.
+#[test]
+fn a_double_click_opens_a_note_and_the_wheel_scrolls_it() {
+    use crate::shared::mouse::SelectUnit::{Char, Word};
+    use ratatui::crossterm::event::MouseButton;
+    let mut s = screen();
+    text_at(&mut s, 100, 20);
+    let click = MouseEventKind::Down(MouseButton::Left);
+    let at = s.drawn.cell_of(2).expect("the third note");
+    assert_eq!(s.handle_mouse(mouse_at(click, at), Char), None);
+    assert_eq!(s.selected, 2);
+    press(&mut s, KeyCode::Delete);
+    assert!(s.confirm_delete.is_some());
+    s.handle_mouse(mouse_at(click, at), Char);
+    assert!(s.confirm_delete.is_none(), "a press keeps the note");
+    s.handle_mouse(mouse_at(click, at), Word);
+    assert_eq!(s.mode, Mode::Note(id_at(&s, 2)));
+    if let Some(view) = s.view.as_mut() {
+        view.notes[2].note.content = "line\n".repeat(60);
+    }
+    text_at(&mut s, 100, 20);
+    let inside = (s.note_area.x + 1, s.note_area.y + 1);
+    s.handle_mouse(mouse_at(MouseEventKind::ScrollDown, inside), Char);
+    assert_eq!(s.note_scroll, 3);
+}
+
 #[test]
 fn the_search_opens_on_the_russian_layouts_slash_key() {
     let mut s = screen();

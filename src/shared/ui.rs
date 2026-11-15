@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
+use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -345,9 +346,27 @@ pub fn render_scrollbar(
 /// selection never walks up to the top row (docs/lessons.md §5). The offset is
 /// state, not decoration: the widget owns one of these and calls
 /// [`ListScroll::render`] instead of building a `ListState` itself.
+///
+/// It also keeps where the last draw put the list, which is what a mouse event
+/// over it needs (docs/research/mouse-always-captured.md F11, F12): the wheel
+/// ([`ListScroll::wheel`]) and a click on a row ([`ListScroll::item_at`]).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct ListScroll {
     offset: usize,
+    /// The last draw, for the mouse; `None` before the first.
+    drawn: Option<DrawnList>,
+}
+
+/// Where [`ListScroll::render`] last drew: the whole area (a border included —
+/// what a pointer is over), the first row of the items, how many there were
+/// and how many rows show them. One row an item: every list on the helper
+/// draws one-line items, so `view_h` must be the rows they really get.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DrawnList {
+    area: Rect,
+    top: u16,
+    len: usize,
+    view_h: usize,
 }
 
 impl ListScroll {
@@ -355,6 +374,86 @@ impl ListScroll {
     /// as its `position`.
     pub fn offset(&self) -> usize {
         self.offset
+    }
+
+    /// Whether `(col, row)` is over the list as last drawn — its border too, so
+    /// a wheel over a popup's frame scrolls the popup.
+    pub fn holds(&self, col: u16, row: u16) -> bool {
+        self.drawn
+            .is_some_and(|d| d.area.contains(ratatui::layout::Position::new(col, row)))
+    }
+
+    /// The item drawn on screen row `row` in the last frame, when `(col, row)`
+    /// is over one — what a click selects (F12). `None` over a border, past the
+    /// last item, or before the first draw.
+    pub fn item_at(&self, col: u16, row: u16) -> Option<usize> {
+        let d = self.drawn?;
+        if !self.holds(col, row) || row < d.top {
+            return None;
+        }
+        let shown = usize::from(row - d.top);
+        (shown < d.view_h)
+            .then_some(self.offset + shown)
+            .filter(|&i| i < d.len)
+    }
+
+    /// The first screen cell item `item` was drawn on, for tests that click it.
+    #[cfg(test)]
+    pub fn cell_of(&self, item: usize) -> Option<(u16, u16)> {
+        let d = self.drawn?;
+        let shown = item.checked_sub(self.offset).filter(|&i| i < d.view_h)?;
+        (item < d.len).then(|| (d.area.x + 1, d.top + shown as u16))
+    }
+
+    /// The wheel and a left press over the list, for a list that takes nothing
+    /// else of the mouse: a notch scrolls it, the selection kept or pushed along
+    /// ([`Self::wheel`]); a press on a row selects it. `true` when a press
+    /// landed on a row — the caller makes a double click its `Enter` (F12).
+    pub fn on_mouse(&mut self, mouse: MouseEvent, selected: &mut usize) -> bool {
+        let (col, row) = (mouse.column, mouse.row);
+        if let Some(delta) = crate::shared::mouse::wheel_delta(mouse.kind) {
+            if self.holds(col, row) {
+                *selected = self.wheel(delta, *selected, 0);
+            }
+            return false;
+        }
+        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+            return false;
+        }
+        match self.item_at(col, row) {
+            Some(i) => {
+                *selected = i;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// A notch of the wheel (F11): the window moves `delta` rows, within the
+    /// list, and the selection stays where it is — or, where it would leave the
+    /// window, is pushed along by the edge it would leave. Returns the selection
+    /// to keep, which the caller applies the way its keys would (a push is a
+    /// selection like any other). `padding` — the rows a list drawn with
+    /// `scroll_padding` keeps between the selection and an edge, so that the
+    /// next draw does not move the window back by them.
+    pub fn wheel(&mut self, delta: isize, selected: usize, padding: usize) -> usize {
+        let Some(d) = self.drawn else {
+            return selected;
+        };
+        if d.len == 0 || d.view_h == 0 {
+            return selected;
+        }
+        let max = d.len.saturating_sub(d.view_h);
+        self.offset = self.offset.saturating_add_signed(delta).min(max);
+        let last = (self.offset + d.view_h).min(d.len) - 1;
+        let (mut low, mut high) = (self.offset, last);
+        if self.offset > 0 {
+            low = (low + padding).min(last);
+        }
+        if self.offset + d.view_h < d.len {
+            high = high.saturating_sub(padding).max(low);
+        }
+        selected.clamp(low, high)
     }
 
     /// Draws `list` into `area` with the selection on `selected` (`None` — no
@@ -384,6 +483,176 @@ impl ListScroll {
         }
         frame.render_stateful_widget(list, area, &mut state);
         self.offset = state.offset();
+        // A list drawn into all of `area` has no border; one with a full border
+        // starts its rows a row in, and so does one whose title takes the top
+        // row without a border (the settings' menu): the rows `area` has beyond
+        // `view_h` are a top and a bottom border, or a title alone.
+        let top = area.y + area.height.saturating_sub(view_h as u16).div_ceil(2);
+        self.drawn = Some(DrawnList {
+            area,
+            top,
+            len,
+            view_h,
+        });
+    }
+}
+
+/// One item of a [`RowList`]: the screen's own index for it (into whatever it
+/// selects by) and the rows it takes over the whole list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RowSpan {
+    pub id: usize,
+    pub first: usize,
+    pub rows: usize,
+}
+
+/// A list drawn row by row from a scroll offset — a `Paragraph`, not a `List`
+/// (the self-model, the search results, the tasks, the notes, the changed
+/// files) — as it was last drawn: where, from which row, and the rows each item
+/// took. What the wheel and a click need from it
+/// (docs/research/mouse-always-captured.md F11, F12); the screen keeps its own
+/// scroll position and selection, and records this beside them each frame.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct RowList {
+    area: Rect,
+    scroll: usize,
+    total: usize,
+    /// The items the keys can select, in order. A row none covers (a header,
+    /// a decoration, a blank between items) takes no click and no push.
+    spans: Vec<RowSpan>,
+}
+
+impl RowList {
+    /// Records a draw: the rows `area` shows from `scroll` on, `total` rows in
+    /// all, `spans` the selectable items'.
+    pub fn record(&mut self, area: Rect, scroll: usize, total: usize, spans: Vec<RowSpan>) {
+        *self = Self {
+            area,
+            scroll,
+            total,
+            spans,
+        };
+    }
+
+    /// Whether `(col, row)` is over the list as last drawn.
+    pub fn holds(&self, col: u16, row: u16) -> bool {
+        self.area.contains(ratatui::layout::Position::new(col, row))
+    }
+
+    /// The first screen cell the item `id` was drawn on, for tests that click
+    /// it.
+    #[cfg(test)]
+    pub fn cell_of(&self, id: usize) -> Option<(u16, u16)> {
+        let span = self.spans.iter().find(|s| s.id == id)?;
+        let row = (span.first..span.first + span.rows)
+            .find(|&r| r >= self.scroll && r < self.scroll + usize::from(self.area.height))?;
+        Some((self.area.x, self.area.y + (row - self.scroll) as u16))
+    }
+
+    /// The id of the item whose rows hold screen row `row`, when `(col, row)`
+    /// is over the list — what a click selects (F12).
+    pub fn item_at(&self, col: u16, row: u16) -> Option<usize> {
+        if !self.holds(col, row) {
+            return None;
+        }
+        let at = self.scroll + usize::from(row - self.area.y);
+        self.spans
+            .iter()
+            .find(|s| (s.first..s.first + s.rows).contains(&at))
+            .map(|s| s.id)
+    }
+
+    /// A notch of the wheel (F11): the window moves `delta` rows within the
+    /// list, and the selection (`selected`, an id) stays — or is pushed along by
+    /// the edge it would leave. `follow` is the screen's own rule for keeping
+    /// its selection in view (`keep_visible` on an item's first row, or
+    /// [`follow_item`]), given `(scroll, first, rows, view)`, so the next draw
+    /// leaves the window where the wheel put it. Returns the new scroll and the
+    /// selection's id; `None` when the window cannot move.
+    pub fn wheel(
+        &self,
+        delta: isize,
+        selected: usize,
+        follow: impl Fn(usize, usize, usize, usize) -> usize,
+    ) -> Option<(usize, usize)> {
+        let view = usize::from(self.area.height);
+        let max = self.total.saturating_sub(view);
+        let target = self.scroll.saturating_add_signed(delta).min(max);
+        if target == self.scroll || self.spans.is_empty() {
+            return None;
+        }
+        let held = |i: usize| {
+            let s = self.spans[i];
+            follow(target, s.first, s.rows, view) == target
+        };
+        let at = self
+            .spans
+            .iter()
+            .position(|s| s.id == selected)
+            .unwrap_or(0);
+        if held(at) {
+            return Some((target, selected));
+        }
+        // The nearest item the window holds, on the side it moved toward; when
+        // none fits (items taller than the gap), the next one that way, and its
+        // own rule decides the window.
+        let n = self.spans.len();
+        let pushed = if delta > 0 {
+            (at..n)
+                .find(|&i| held(i))
+                .or_else(|| (at..n).find(|&i| self.spans[i].first >= target))
+        } else {
+            (0..=at).rev().find(|&i| held(i)).or_else(|| {
+                (0..=at)
+                    .rev()
+                    .find(|&i| self.spans[i].first + self.spans[i].rows <= target + view)
+            })
+        }?;
+        let s = self.spans[pushed];
+        Some((follow(target, s.first, s.rows, view), s.id))
+    }
+}
+
+/// The [`RowSpan`]s of a list drawn line by line, from the item each line
+/// shows — `None` for a line that is no item's (a header, a blank): each run
+/// of lines showing one item is its span.
+pub fn row_spans(lines: impl IntoIterator<Item = Option<usize>>) -> Vec<RowSpan> {
+    let mut spans: Vec<RowSpan> = Vec::new();
+    for (at, id) in lines.into_iter().enumerate() {
+        let Some(id) = id else { continue };
+        match spans.last_mut() {
+            Some(last) if last.id == id && last.first + last.rows == at => last.rows += 1,
+            _ => spans.push(RowSpan {
+                id,
+                first: at,
+                rows: 1,
+            }),
+        }
+    }
+    spans
+}
+
+/// Recomputes `scroll` so the selected item — rows `[start, start + height)` —
+/// is in a window of `view` rows: raised to its start when it is above, lowered
+/// to its end when it is below; an item taller than the window is pinned to its
+/// **top**, unless the window already stands inside it — where the wheel put it,
+/// scrolling through a long item rather than over it
+/// (docs/research/mouse-always-captured.md F11). Otherwise `scroll` is kept.
+/// The self-model's and the search results' rule, for items of several rows.
+pub fn follow_item(scroll: usize, start: usize, height: usize, view: usize) -> usize {
+    if view == 0 {
+        return scroll;
+    }
+    let end = start + height; // exclusive
+    if height > view && start <= scroll && scroll + view <= end {
+        return scroll;
+    }
+    if start < scroll {
+        start
+    } else if end > scroll + view {
+        if height >= view { start } else { end - view }
+    } else {
+        scroll
     }
 }
 
@@ -1505,6 +1774,224 @@ pub(crate) mod tests {
         // Shorter than the window — everything is visible from the first row.
         draw(&mut scroll, 4, 3, 10);
         assert_eq!(scroll.offset(), 0);
+    }
+
+    /// One draw into a bordered 12×`h` popup — the shape the pickers have.
+    fn draw_bordered(scroll: &mut ListScroll, len: usize, selected: usize, h: u16) {
+        let mut term = Terminal::new(TestBackend::new(12, h)).unwrap();
+        term.draw(|f| {
+            let items: Vec<ratatui::widgets::ListItem> =
+                (0..len).map(|i| format!("row {i}").into()).collect();
+            let list = List::new(items).block(Block::bordered());
+            let area = f.area();
+            scroll.render(f, list, area, len, h as usize - 2, Some(selected));
+        })
+        .unwrap();
+    }
+
+    fn mouse_at(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: ratatui::crossterm::event::KeyModifiers::NONE,
+        }
+    }
+
+    /// A click finds its row through the last draw — the offset and the
+    /// border taken into account — and nothing on a border or past the last
+    /// item; the border is still over the list, where a wheel scrolls it
+    /// (docs/research/mouse-always-captured.md F12).
+    #[test]
+    fn a_click_finds_the_row_drawn_under_it() {
+        let mut scroll = ListScroll::default();
+        assert_eq!(scroll.item_at(3, 3), None, "nothing drawn yet");
+        draw_bordered(&mut scroll, 30, 29, 10);
+        assert_eq!(scroll.offset(), 22);
+        assert_eq!(scroll.item_at(3, 0), None, "the top border");
+        assert_eq!(scroll.item_at(3, 1), Some(22));
+        assert_eq!(scroll.item_at(3, 8), Some(29));
+        assert_eq!(scroll.item_at(3, 9), None, "the bottom border");
+        assert!(scroll.holds(0, 9) && !scroll.holds(12, 3));
+        // A short list: below its last item is no item.
+        draw_bordered(&mut scroll, 3, 0, 10);
+        assert_eq!(scroll.item_at(3, 3), Some(2));
+        assert_eq!(scroll.item_at(3, 4), None);
+        // A press on a row selects it; the wheel and other buttons do not.
+        let mut selected = 0;
+        let left = MouseEventKind::Down(MouseButton::Left);
+        assert!(scroll.on_mouse(mouse_at(left, 3, 2), &mut selected));
+        assert_eq!(selected, 1);
+        let right = MouseEventKind::Down(MouseButton::Right);
+        assert!(!scroll.on_mouse(mouse_at(right, 3, 3), &mut selected));
+        assert!(!scroll.on_mouse(mouse_at(left, 3, 5), &mut selected));
+        assert_eq!(selected, 1);
+    }
+
+    /// A click finds the row as it is **drawn**, in every shape a list on the
+    /// helper has — no block, a full border, and a title over a right border
+    /// alone (the settings' menu), whose title takes the top row. A click a row
+    /// off once picked the next section there: the test reads the item's text
+    /// back from the buffer rather than trusting the geometry it checks.
+    #[test]
+    fn a_click_lands_on_the_drawn_row_in_every_shape() {
+        use ratatui::widgets::Borders;
+        let shapes: [(Block<'static>, u16); 3] = [
+            (Block::default(), 0),
+            (Block::bordered(), 2),
+            (Block::default().borders(Borders::RIGHT).title("menu"), 1),
+        ];
+        for (block, chrome) in shapes {
+            let mut scroll = ListScroll::default();
+            let mut term = Terminal::new(TestBackend::new(14, 8)).unwrap();
+            term.draw(|f| {
+                let items: Vec<ratatui::widgets::ListItem> =
+                    (0..5).map(|i| format!("row {i}").into()).collect();
+                let area = f.area();
+                let view_h = (area.height - chrome) as usize;
+                scroll.render(
+                    f,
+                    List::new(items).block(block.clone()),
+                    area,
+                    5,
+                    view_h,
+                    Some(0),
+                );
+            })
+            .unwrap();
+            let buf = term.backend().buffer();
+            for y in 0..8u16 {
+                let text: String = (0..13u16).map(|x| buf[(x, y)].symbol()).collect();
+                if let Some(i) = scroll.item_at(2, y) {
+                    assert!(
+                        text.contains(&format!("row {i}")),
+                        "{block:?}: row {y} is {text:?}"
+                    );
+                }
+            }
+            assert!(scroll.item_at(2, if chrome == 0 { 0 } else { 1 }).is_some());
+        }
+    }
+
+    /// The wheel moves the window, not the selection (F11): a selection the
+    /// window still holds stays; one it would leave is pushed along by the edge
+    /// — and the next draw keeps the window where the wheel put it. The window
+    /// stops at the list's ends, and a list that fits does not move at all.
+    #[test]
+    fn the_wheel_moves_the_window_and_pushes_the_selection_at_its_edge() {
+        let mut scroll = ListScroll::default();
+        draw(&mut scroll, 30, 2, 10);
+        assert_eq!(scroll.offset(), 0);
+        let selected = scroll.wheel(3, 2, 0);
+        assert_eq!(
+            (scroll.offset(), selected),
+            (3, 3),
+            "pushed by the top edge"
+        );
+        draw(&mut scroll, 30, selected, 10);
+        assert_eq!(scroll.offset(), 3, "the draw keeps the wheel's window");
+        let selected = scroll.wheel(3, 8, 0);
+        assert_eq!((scroll.offset(), selected), (6, 8), "still held: kept");
+        let selected = scroll.wheel(-3, 8, 0);
+        assert_eq!((scroll.offset(), selected), (3, 8));
+        let selected = scroll.wheel(-3, 12, 0);
+        assert_eq!(
+            (scroll.offset(), selected),
+            (0, 9),
+            "pushed by the bottom edge"
+        );
+        assert_eq!(scroll.wheel(-3, 5, 0), 5, "the top: nothing moves");
+        assert_eq!(scroll.offset(), 0);
+        assert_eq!(scroll.wheel(300, 5, 0), 20);
+        assert_eq!(scroll.offset(), 20, "the bottom: the last ten rows");
+        // A list drawn with a row of padding keeps that row between the
+        // selection and the edge — except at the list's very ends.
+        draw(&mut scroll, 30, 0, 10);
+        assert_eq!(scroll.wheel(3, 0, 1), 4);
+        assert_eq!(scroll.wheel(-3, 9, 1), 8, "a row of padding below");
+        assert_eq!(scroll.wheel(-3, 0, 1), 0, "the first row: no padding above");
+        // A list that fits never scrolls.
+        draw(&mut scroll, 4, 3, 10);
+        assert_eq!((scroll.wheel(3, 3, 0), scroll.offset()), (3, 0));
+    }
+
+    fn spans(items: &[(usize, usize, usize)]) -> Vec<RowSpan> {
+        items
+            .iter()
+            .map(|&(id, first, rows)| RowSpan { id, first, rows })
+            .collect()
+    }
+
+    /// A list drawn line by line: a click finds the item whose rows hold it —
+    /// none on a header — and its own id, not its position.
+    #[test]
+    fn a_row_list_finds_an_item_by_its_rows_and_skips_the_rest() {
+        let mut list = RowList::default();
+        let area = Rect::new(0, 2, 20, 5);
+        // A header at row 0, item 7 on rows 1–2, a blank, item 9 on rows 4–6.
+        list.record(area, 1, 7, spans(&[(7, 1, 2), (9, 4, 3)]));
+        assert_eq!(list.item_at(3, 2), Some(7), "row 1 of the list");
+        assert_eq!(list.item_at(3, 3), Some(7));
+        assert_eq!(list.item_at(3, 4), None, "the blank");
+        assert_eq!(list.item_at(3, 5), Some(9));
+        assert_eq!(list.item_at(3, 1), None, "above the area");
+        assert_eq!(list.item_at(20, 5), None, "beside it");
+        assert_eq!(
+            row_spans([None, Some(7), Some(7), None, Some(9), Some(9), Some(9)]),
+            spans(&[(7, 1, 2), (9, 4, 3)])
+        );
+    }
+
+    /// The wheel over a list drawn line by line, by the screen's own rule:
+    /// with `keep_visible` an item is held while its first row is; with
+    /// `follow_item` a short one must fit, and a selected item taller than the
+    /// window is scrolled through, then left for the next one. Nothing moves
+    /// past the ends.
+    #[test]
+    fn a_row_list_wheel_keeps_the_screens_rule() {
+        let start = |scroll, first, _, view| keep_visible(scroll, first, view);
+        let mut list = RowList::default();
+        let one_each: Vec<RowSpan> = (0..20)
+            .map(|id| RowSpan {
+                id,
+                first: id,
+                rows: 1,
+            })
+            .collect();
+        list.record(Rect::new(0, 0, 10, 5), 0, 20, one_each.clone());
+        assert_eq!(list.wheel(3, 1, start), Some((3, 3)), "pushed");
+        assert_eq!(list.wheel(3, 4, start), Some((3, 4)), "held");
+        assert_eq!(list.wheel(-3, 4, start), None, "the top");
+        list.record(Rect::new(0, 0, 10, 5), 15, 20, one_each);
+        assert_eq!(list.wheel(3, 16, start), None, "the bottom");
+        assert_eq!(list.wheel(-3, 19, start), Some((12, 16)), "pushed up");
+
+        // A tall item (rows 2–11) in a five-row window, then a short one.
+        let items = spans(&[(0, 0, 2), (1, 2, 10), (2, 12, 1), (3, 13, 1)]);
+        list.record(Rect::new(0, 0, 10, 5), 2, 14, items.clone());
+        assert_eq!(
+            list.wheel(3, 1, follow_item),
+            Some((5, 1)),
+            "inside the tall item: kept"
+        );
+        list.record(Rect::new(0, 0, 10, 5), 7, 14, items);
+        assert_eq!(
+            list.wheel(3, 1, follow_item),
+            Some((9, 2)),
+            "past its end: the next item, the window at the list's end"
+        );
+    }
+
+    /// The window may stand anywhere inside a selected item taller than it —
+    /// where the wheel put it — while a selection moved onto a tall item by
+    /// the keys still shows its top.
+    #[test]
+    fn follow_item_scrolls_through_a_tall_item_and_pins_its_top_otherwise() {
+        assert_eq!(follow_item(5, 2, 10, 5), 5, "inside: kept");
+        assert_eq!(follow_item(7, 2, 10, 5), 7, "its last rows: kept");
+        assert_eq!(follow_item(8, 2, 10, 5), 2, "past its end: its top");
+        assert_eq!(follow_item(0, 2, 10, 5), 2, "below the window: its top");
+        assert_eq!(follow_item(0, 9, 1, 5), 5, "a short one: its bottom row");
     }
 
     #[test]

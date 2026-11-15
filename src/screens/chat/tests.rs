@@ -7102,3 +7102,84 @@ fn switching_chats_drops_the_feeds_selection() {
     );
     assert!(!s.feed_view.has_selection());
 }
+
+/// A picker over the chat takes the mouse alone (docs/research/mouse-always-captured.md
+/// §5.8): a double click on a cited conversation follows it, as `Enter` does,
+/// and the wheel scrolls nothing under it.
+#[test]
+fn a_double_click_in_the_link_picker_follows_the_conversation() {
+    use ratatui::crossterm::event::MouseButton;
+    let (here, other) = (gen_id(), gen_id());
+    let mut s = screen_citing(here, &[other], &[other]);
+    draw(&mut s);
+    s.handle_key(ctrl('l'));
+    draw(&mut s);
+    let picker = s.chat_links.as_ref().unwrap();
+    let (c, r) = picker.cell_of(0).expect("the picker's first row");
+    let press = mouse_at(MouseEventKind::Down(MouseButton::Left), c, r);
+    let t0 = std::time::Instant::now();
+    assert_eq!(s.handle_mouse_at(press, t0), None);
+    assert!(s.chat_links.is_some(), "one click selects");
+    assert_eq!(
+        s.handle_mouse_at(press, t0 + std::time::Duration::from_millis(100)),
+        Some(ChatIntent::OpenChatLink(other))
+    );
+    assert!(s.chat_links.is_none());
+}
+
+/// A double click on an emoji inserts it, as `Enter` does; a click off the
+/// grid picks nothing.
+#[test]
+fn a_double_click_on_an_emoji_inserts_it() {
+    use ratatui::crossterm::event::MouseButton;
+    let mut s = ChatScreen::new();
+    s.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
+    draw(&mut s);
+    let grid = s.emoji.as_ref().unwrap().grid_area().expect("drawn");
+    let press = |x, y| mouse_at(MouseEventKind::Down(MouseButton::Left), x, y);
+    let t0 = std::time::Instant::now();
+    s.handle_mouse_at(press(0, 0), t0);
+    assert!(s.emoji.is_some(), "off the grid: nothing");
+    s.handle_mouse_at(
+        press(grid.x + 5, grid.y),
+        t0 + std::time::Duration::from_secs(1),
+    );
+    s.handle_mouse_at(
+        press(grid.x + 5, grid.y),
+        t0 + std::time::Duration::from_millis(1100),
+    );
+    assert!(s.emoji.is_none(), "inserted and closed");
+    assert_eq!(s.input.text(), "😃", "the second emoji of the first row");
+}
+
+/// The feed's search bar takes a press, a drag and a release in its query —
+/// the selection `Ctrl+C` copies — and the wheel under it still scrolls the
+/// feed (§5.8).
+#[test]
+fn the_feed_search_bar_takes_a_drag_and_the_wheel_scrolls_the_feed() {
+    use ratatui::crossterm::event::MouseButton;
+    let (mut s, mut term) = selection_screen("");
+    s.handle_key(ctrl('f'));
+    for c in "answer".chars() {
+        s.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+    }
+    term.draw(|f| s.render(f)).unwrap();
+    let area = s
+        .search
+        .as_ref()
+        .unwrap()
+        .text_area()
+        .expect("the bar is drawn");
+    let left = MouseButton::Left;
+    let t0 = std::time::Instant::now();
+    s.handle_mouse_at(mouse_at(MouseEventKind::Down(left), area.x, area.y), t0);
+    s.handle_mouse_at(mouse_at(MouseEventKind::Drag(left), area.x + 3, area.y), t0);
+    s.handle_mouse_at(mouse_at(MouseEventKind::Up(left), area.x + 3, area.y), t0);
+    assert_eq!(
+        s.handle_key(ctrl('c')),
+        Some(ChatIntent::CopyToClipboard("ans".into()))
+    );
+    assert!(s.feed_view.is_following());
+    s.handle_mouse_at(mouse_at(MouseEventKind::ScrollUp, 5, 3), t0);
+    assert!(!s.feed_view.is_following(), "the wheel scrolled the feed");
+}

@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (49)
+## Entries (50)
 
 - Post-M9: fast multiline clipboard paste (done)
 - Post-M9: `↑/↓` navigation by visual row of a wrapped line (done)
@@ -61,6 +61,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the app holds the mouse by default; `Ctrl+W` is gone (done)
 - Post-M9: a copy leaves the prefixes drawn as text out (done)
 - Post-M9: `Ctrl+C` and `Ctrl+X` in every field (done)
+- Post-M9: the mouse on every screen (done)
 
 ### Post-M9: fast multiline clipboard paste (done)
 - **Symptom**: a large clipboard paste lagged in Windows Terminal, and a line break
@@ -2781,4 +2782,79 @@ terminal's clipboard (OSC 52)…"* — about a title. A field's copy is the chip
 list as everywhere else. The notice line keeps the conversation's copy. The same run
 decoded the OSC 52 sequences: the settings' field search sent its Russian query whole and the
 chip read `copied (OSC 52)` on the footer's last row; the rename sent the title.
+
+### Post-M9: the mouse on every screen (done)
+
+**What.** Stage 3b of the mouse track
+([docs/research/mouse-always-captured.md](../research/mouse-always-captured.md) §5.8,
+F11–F12), on `feat/mouse-everywhere`, stacked on 3a. Before it, the mouse reached the
+chat alone, and the other screens left it with the terminal (F7). Now every screen and
+the help dialog answer it, and capture is on everywhere but the "window too small"
+notice.
+- **Routing.** `handle_mouse_event` gives a report to the help dialog first: modal,
+  its wheel scrolls it. Otherwise `ActiveScreen::handle_mouse` gives it to the screen in
+  front, and the intent goes through `run_intent`, the tail of `handle_key_event`
+  factored out for both. Every screen but the chat takes the click count from the chat's
+  `ClickCounter` (`count_click`), since one screen is in front at a time.
+- **The wheel (F11)** scrolls the panel under the pointer, and the selection stays,
+  pushed along by the edge it would leave.
+- **A click (F12)** selects a row and focuses its pane. A double click sends `Enter` to
+  the screen's own key handler, so it does exactly what the key does.
+- **A popup takes the mouse alone**, as it takes the keys: the settings' editor, choice,
+  model picker and search; the chat's link, server, spelling, emoji and profile pickers;
+  the feed's search bar, whose wheel still scrolls the feed.
+
+**Two shapes of list.** The lists on `ListScroll` draw one item a row through ratatui's
+`List`. The helper now records where it drew: the area, the first row, the length and
+the view. That is enough for `item_at`, `wheel` (with the padding of a list drawn with
+`scroll_padding`) and `on_mouse`, the wheel-and-press every picker shares.
+
+The lists drawn line by line from an offset — the self-model, the search hits, the
+tasks, the notes, the changed files — record a `RowList` instead. It holds their items'
+`RowSpan`s, each id the screen's own, and a row no span covers (a header, a decoration)
+takes no click and no push. `RowList::wheel` is given the screen's own follow rule
+(`keep_visible`, or `follow_item`), and pushes the selection to the nearest item that
+rule holds at the new scroll. So the next draw leaves the window where the wheel put
+it: the rule that keeps the selection in view did not have to change. Changing it was
+fork F11's option (c), and it is the rule that recurred as a defect in eight lists.
+
+**A long item is scrolled through.** The self-model's and the search screen's two copies
+of `adjust_scroll` pinned a selected item taller than the window to its top on every
+draw, so the wheel could never move inside a long insight. They are now one function,
+`ui::follow_item`, which keeps a window that stands inside a selected tall item. A
+selection the keys move onto one still shows its top: the window can be inside an item
+only if the wheel put it there.
+
+**A trap the pty caught, and a lesson.** The settings' menu has a title over a right
+border alone. The title takes the first row, while the call passed the whole height as
+`view_h`. Every unit test of a click on a section passed, and in a pty (`mindfork demo`,
+SGR reports) the click picked the section below. The tests found the cell to click
+through the same `item_at` they tested. The fix: the menu passes the rows its items get,
+and the first row is the rows beyond `view_h`, rounded up (a title alone, or two
+borders). A new test reads each shape's row text back from the buffer, and with the old
+rounding it is red. docs/lessons.md §5 has the lesson.
+
+**Tests.**
+- The helpers: a click on the drawn row in every shape; the wheel's push and padding;
+  the ends of a list; a list that fits does not move; `RowList`'s gaps, ids and both
+  rules; a tall item scrolled through; `row_spans`; `FieldGesture`, including the tick's
+  autoscroll.
+- Each screen on `TestBackend`:
+  - the chat list's wheel, click and double click, and a rename that keeps the mouse
+    from the list;
+  - the settings' menu, a field, a header taking none, a choice opened and picked by
+    double clicks, the field pane's wheel landing on fields, the editor's drag;
+  - the self-model's long insight, decoration and double-click edit;
+  - the search hits' header;
+  - the changes screen's panes and the cancelled revert;
+  - the tasks' wheel and the transcript opened;
+  - the notes' double-click open and note scroll;
+  - the link picker, the emoji grid, the feed search bar.
+- The runtime: the help's wheel, a click through the pipeline to the settings, the
+  capture rule.
+
+**4941 green.** **The pty run** (`mindfork demo`, SGR reports) showed capture on at
+start, the chat list's click selecting and its double click opening the chat, the
+settings' click on *Interface* (after the fix), and the help scrolled by the wheel. No
+live run in the AGENTS.md §3 sense.
 

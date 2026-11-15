@@ -21,7 +21,11 @@ and icon are left out of a copy and the highlight, their rows joined back — an
 code block's rows, wrapped and trimmed by the renderer, get the trimmed spaces back.
 **Stage 3 is designed** (2026-11-15, §5.8): three more forks decided by the owner as
 recommended (F11–F13), and three pull requests — copy in every field (3a), the mouse
-on every screen (3b), a selection in read-only text (3c).
+on every screen (3b), a selection in read-only text (3c). **3a is built**
+(`feat/field-copy`) and **3b is built** (2026-11-15, `feat/mouse-everywhere`): the
+reports reach every screen and the help dialog, capture is on everywhere but the
+"too small" notice, the wheel and the clicks of F11–F12 in every list, the fields'
+grammar. 3c is next.
 
 The ask (the owner, 2026-11-14): look into dropping the mouse's two modes —
 *select* and *scroll* — altogether. Keep the terminal's mouse capture on all the

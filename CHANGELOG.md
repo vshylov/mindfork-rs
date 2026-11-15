@@ -22,7 +22,7 @@ split by subsystem.
   modifier away (`Shift` in most terminals, `Option` in iTerm2, `Fn` in Terminal.app);
   `terminal` leaves the mouse with the terminal, for one without such a modifier (VS
   Code on macOS) or a screen reader. The legacy terminal mode keeps the mouse with the
-  terminal. Other screens leave the mouse with the terminal for now.
+  terminal.
 - **Select text in the conversation with the mouse**: drag
   to select, double-click for a word, triple-click for the line; hold the drag above or
   below the conversation and it scrolls. `Ctrl+C` copies what you see — without the
@@ -31,6 +31,13 @@ split by subsystem.
   without the lines along their edge. The message box gets the same double and triple click, and
   a drag past its edge scrolls a long draft. Nothing is selectable in the conversation
   while the assistant answers.
+- **The mouse works on every screen** — the chat list, settings, the self-model, the
+  search results, the tasks, the notes, the changes and the help: the wheel scrolls
+  whatever is under the pointer, keeping a selected row in view rather than moving it;
+  a click selects a row, a double click does what `Enter` does; text fields take
+  clicks, drags and double and triple clicks like the message box. The popups over the
+  chat — the link, emoji, spelling and profile pickers, the conversation's search bar —
+  take it too.
 - **`Ctrl+C` and `Ctrl+X` work in every text field** — renaming a chat, the settings'
   editors, search and model filter, the self-model's and the notes' editors and the
   notes' search, the conversation's search bar — where a selection could be made but
