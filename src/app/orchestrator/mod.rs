@@ -1856,6 +1856,39 @@ impl Orchestrator {
         )
     }
 
+    /// Drops the feed's flipped blocks (`FeedView::flipped`) whose message a
+    /// take-back or a regeneration removed — at activation, the one place every
+    /// path passes, so the stored set does not collect dead keys
+    /// (docs/research/block-fold-and-partial-copy.md §3.3). A transcript's flips
+    /// are its parent's, as its flags are, so the parent's set is checked
+    /// against the parent's messages, its transcripts' and the rounds the
+    /// running turn has filed so far.
+    fn prune_feed_flips(&mut self, id: Uuid) {
+        let owner = self.parent_of(id).unwrap_or(id);
+        let filed: Vec<Uuid> = self
+            .inflight
+            .as_ref()
+            .filter(|t| t.chat == owner)
+            .map(|t| t.rounds.iter().map(|m| m.id).collect())
+            .unwrap_or_default();
+        let Some(chat) = self.chat_mut(owner) else {
+            return;
+        };
+        if chat.feed_view.flipped.is_empty() {
+            return;
+        }
+        let live: std::collections::HashSet<Uuid> = chat
+            .messages
+            .iter()
+            .chain(chat.children().flat_map(|run| run.messages.iter()))
+            .map(|m| m.id)
+            .chain(filed)
+            .collect();
+        if chat.feed_view.prune(|id| live.contains(&id)) {
+            self.mark_dirty(owner);
+        }
+    }
+
     /// Makes a chat active and sends its messages to the UI.
     fn activate(&mut self, id: Uuid) {
         self.activate_focused(id, None);
@@ -1873,6 +1906,7 @@ impl Orchestrator {
             self.mark_dirty(id);
             self.emit_chat_list();
         }
+        self.prune_feed_flips(id);
         // The running turn's chat and sub-agent (docs/subagent-live.md §3.4,
         // §3.5): the parent's feed gets the rounds filed so far and keeps its
         // generation; the child keeps the status chip.
@@ -1955,7 +1989,7 @@ impl Orchestrator {
                     title: chat.title.clone(),
                     messages,
                     draft: chat.draft.clone(),
-                    feed_view: chat.feed_view,
+                    feed_view: chat.feed_view.clone(),
                     focus,
                     compaction: chat
                         .compaction_view(self.config.compaction.enabled)
@@ -1973,7 +2007,7 @@ impl Orchestrator {
                 title: run.title.clone(),
                 messages: run.messages.clone(),
                 draft: String::new(),
-                feed_view: parent.feed_view,
+                feed_view: parent.feed_view.clone(),
                 focus,
                 compaction: None,
                 child: Some(crate::app::events::ChildView {

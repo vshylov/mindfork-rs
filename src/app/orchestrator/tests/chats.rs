@@ -2,8 +2,10 @@
 //! module (fixtures in mod.rs). See docs/history/refactoring-god-objects.md, stage 3.
 
 use super::*;
+use crate::entities::chat::FoldKey;
 use crate::features::chat_export::CopyRange;
 use crate::features::export_command::ExportFormat;
+use std::collections::BTreeSet;
 
 #[test]
 fn new_chat_value_uses_chosen_profile_with_greeting() {
@@ -160,8 +162,9 @@ fn set_feed_view_persists_to_active_chat_without_bumping_modified() {
     let view = FeedView {
         thoughts: true,
         tools: true,
+        ..FeedView::default()
     };
-    orch.handle_set_feed_view(view);
+    orch.handle_set_feed_view(view.clone());
     let c = orch.chats.iter().find(|c| c.id == id).unwrap();
     assert_eq!(c.feed_view, view);
     assert_eq!(
@@ -174,6 +177,65 @@ fn set_feed_view_persists_to_active_chat_without_bumping_modified() {
     orch.saves.take();
     orch.handle_set_feed_view(view);
     assert!(!orch.saves.is_dirty(id));
+}
+
+/// A click's flips ride `SetFeedView` with the flags
+/// (docs/research/block-fold-and-partial-copy.md §3.3): stored without bumping
+/// the chat; the ones whose message is gone are dropped when the chat is next
+/// activated — the event carries the pruned view and the chat is saved — and a
+/// second activation drops nothing. A clone keeps them: its messages keep
+/// their ids.
+#[test]
+fn flipped_blocks_are_stored_pruned_on_activation_and_cloned() {
+    let (_d, mut orch, mut rx) = bare_orch_rx();
+    let profile = Profile::new("P", "sys");
+    let mut chat = Chat::from_profile(&profile, "Чат");
+    let id = chat.id;
+    chat.push_message(Message::user("q"));
+    chat.push_message(Message::assistant("a"));
+    let modified = chat.modified_at;
+    let kept = chat.messages[1].id;
+    orch.chats.push(chat);
+    orch.active_id = Some(id);
+
+    let mut view = FeedView::default();
+    view.toggle_block(FoldKey::Thoughts(kept));
+    view.toggle_block(FoldKey::Tool {
+        message: Uuid::new_v4(),
+        call: 0,
+    });
+    orch.handle_set_feed_view(view.clone());
+    let c = orch.chats.iter().find(|c| c.id == id).unwrap();
+    assert_eq!(c.feed_view, view);
+    assert_eq!(
+        c.modified_at, modified,
+        "a fold is not a change to the chat"
+    );
+
+    orch.saves.take();
+    while rx.try_recv().is_ok() {}
+    orch.activate(id);
+    let c = orch.chats.iter().find(|c| c.id == id).unwrap();
+    let pruned = BTreeSet::from([FoldKey::Thoughts(kept)]);
+    assert_eq!(c.feed_view.flipped, pruned);
+    assert!(orch.saves.is_dirty(id), "the pruned set is saved");
+    let sent = std::iter::from_fn(|| rx.try_recv().ok())
+        .find_map(|e| match e {
+            AppEvent::ChatActivated { feed_view, .. } => Some(feed_view),
+            _ => None,
+        })
+        .expect("the chat was activated");
+    assert_eq!(sent.flipped, pruned);
+    orch.saves.take();
+    orch.activate(id);
+    assert!(
+        !orch.saves.is_dirty(id),
+        "nothing more to drop, nothing written"
+    );
+
+    orch.handle_clone(id);
+    let clone = orch.chats.iter().find(|c| c.id != id).unwrap();
+    assert_eq!(clone.feed_view.flipped, pruned, "the clone keeps the flips");
 }
 
 #[test]
@@ -249,8 +311,11 @@ async fn feed_view_is_per_chat_and_survives_a_reopen() {
     let expanded = FeedView {
         thoughts: true,
         tools: true,
+        ..FeedView::default()
     };
-    cmd_tx.send(AppCommand::SetFeedView(expanded)).unwrap();
+    cmd_tx
+        .send(AppCommand::SetFeedView(expanded.clone()))
+        .unwrap();
 
     // A second chat is unaffected — the state is per chat, not global.
     cmd_tx

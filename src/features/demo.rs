@@ -53,6 +53,7 @@ pub fn feed_view() -> FeedView {
     FeedView {
         thoughts: true,
         tools: true,
+        ..FeedView::default()
     }
 }
 

@@ -738,7 +738,9 @@ impl ChatScreen {
     ///   in the feed a press changes nothing — a **drag** selects, replacing
     ///   the selection before it. A second press on the same cell takes the
     ///   word, a third the line, in either panel ([`ClickCounter`]);
-    /// - a release with no drag since the press — a **click** — follows the
+    /// - a release with no drag since the press — a **click** — on a foldable
+    ///   block's pill folds or unfolds that block alone, every click once
+    ///   (docs/research/block-fold-and-partial-copy.md §3.4); it follows the
     ///   `chat://` reference under it (spec §11.3; on the release, so that a
     ///   drag which starts on an address selects it, F8), and otherwise a
     ///   click in the feed outside its selection ends it;
@@ -794,6 +796,17 @@ impl ChatScreen {
                 self.feed_view.release();
                 self.input.mouse_release();
                 let press = press.filter(|p| !p.dragged)?;
+                // A pill folds its block alone (docs/research/block-fold-and-partial-copy.md
+                // §3.4): every click toggles, and the click ends a selection as
+                // any click outside its highlight does — inside it, the rebuilt
+                // block would drop it anyway. Stored like a `Ctrl+T`.
+                if press.panel == MousePanel::Feed
+                    && let Some(key) = self.feed_view.fold_at(col, row)
+                {
+                    self.feed_view.toggle_block(key);
+                    self.feed_view.clear_selection();
+                    return Some(ChatIntent::SetFeedView(self.feed_view.view()));
+                }
                 if let Some(chat) = self.feed_view.chat_link_at(col, row) {
                     // Clicking the conversation you are already in is not a
                     // switch — the picker's rule, and the same wording.
@@ -890,6 +903,14 @@ impl ChatScreen {
     /// cursor, §5.3).
     fn mouse_press_panel(&mut self, col: u16, row: u16, unit: SelectUnit) -> MousePanel {
         if self.feed_view.holds(col, row) {
+            // A pill is a control: a second press on it is the second click of
+            // two toggles, not a word to take (§3.4). A drag from it still
+            // selects.
+            let unit = if self.feed_view.fold_at(col, row).is_some() {
+                SelectUnit::Char
+            } else {
+                unit
+            };
             // `press` refuses while the assistant answers; the panel is still
             // the feed, so a click there can follow a reference.
             if !self.generating

@@ -1,11 +1,14 @@
 //! Message feed: markdown rendering of bodies (via [`crate::shared::markdown`]),
 //! a collapsible "thoughts" block (CoT), and vertical scrolling. See spec §11.3-11.4.
 //!
-//! "Thoughts" collapse via a global toggle (`show_thoughts`); tool blocks
-//! (name/arguments/result) show inside the assistant's message (M5).
-//! Per-message/per-block selection — later. The widget only holds view state
-//! (scroll, "follow the tail", thoughts display); the messages themselves
-//! belong to UI state and are passed in for rendering.
+//! "Thoughts" and tool cards fold all at once (`Ctrl+T`, `Ctrl+O`) or one block
+//! alone, by a click on its pill ([`FeedView`],
+//! docs/research/block-fold-and-partial-copy.md); tool blocks
+//! (name/arguments/result) show inside the assistant's message (M5). The widget
+//! only holds view state (scroll, "follow the tail", what is folded); the
+//! messages themselves belong to UI state and are passed in for rendering.
+
+use std::ops::Range;
 
 use ratatui::Frame;
 use ratatui::layout::{Margin, Rect};
@@ -14,7 +17,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use uuid::Uuid;
 
-use crate::entities::chat::FeedView;
+use crate::entities::chat::{FeedView, FoldKey};
 use crate::entities::message::{Message, MessageRole};
 use crate::entities::profile::CharacterNames;
 use crate::features::tools::present::{self, ToolBlock};
@@ -81,6 +84,11 @@ pub struct FeedToolCall {
     /// The call is executing right now: the result area shows *running…*
     /// instead of a result. Only a live card is ever running.
     pub running: bool,
+    /// The block this card is, for a click on its pill
+    /// (docs/research/block-fold-and-partial-copy.md §3.2): its message and its
+    /// index in that message's `tool_calls`. `None` for a live card — it has no
+    /// stored message yet, so it takes no click and follows `Ctrl+O` alone.
+    pub fold: Option<FoldKey>,
 }
 
 /// An item of the message feed.
@@ -177,11 +185,14 @@ impl FeedMessage {
         let off = msg.text.len();
         // Conversation control tools (followup/rewrite) are control signals,
         // not content: their tool blocks aren't shown in the feed. See spec §9.3.
+        // Enumerated **before** the filter: a card's key is its index in the
+        // stored `tool_calls`, which a hidden control call takes a place in.
         let tools = msg
             .tool_calls
             .iter()
-            .filter(|tc| !crate::features::tools::control::is_control_tool(&tc.name))
-            .map(|tc| FeedToolCall {
+            .enumerate()
+            .filter(|(_, tc)| !crate::features::tools::control::is_control_tool(&tc.name))
+            .map(|(call, tc)| FeedToolCall {
                 name: tc.name.clone(),
                 arguments: tc.arguments.to_string(),
                 result: tc.result.clone().unwrap_or_default(),
@@ -189,6 +200,10 @@ impl FeedMessage {
                 images: tc.images,
                 call_id: None,
                 running: false,
+                fold: Some(FoldKey::Tool {
+                    message: msg.id,
+                    call,
+                }),
             })
             .collect();
         Some(Self {
@@ -342,6 +357,10 @@ pub struct MessageFeed {
     /// [`MessageFeed::chat_link_at`], so a click is answered against the frame
     /// the user actually clicked on.
     link_hits: Vec<LinkHit>,
+    /// Where the foldable blocks' pills of the **last drawn frame** sit on
+    /// screen — what [`MessageFeed::fold_at`] answers a click against, like
+    /// [`Self::link_hits`] (docs/research/block-fold-and-partial-copy.md §3.5).
+    fold_hits: Vec<FoldHit>,
     /// Cache of rendered lines, one block per message (see [`CachedBlock`]).
     /// Index = message position. `build_lines` is called on every dirty frame
     /// (streaming, scrolling) and would re-run markdown+syntect over the WHOLE
@@ -505,9 +524,12 @@ pub enum HighlightScope {
 struct CacheKey {
     width: usize,
     palette: Palette,
-    /// Collapsing either kind of block reshapes every message — hence the whole
-    /// view state, not just the thoughts flag it grew out of.
-    view: FeedView,
+    /// Collapsing either kind of block reshapes every message — hence both
+    /// flags. The blocks a click flipped are **not** here: a click changes one
+    /// block, and that block's own fold state rides its cache entry
+    /// ([`CachedBlock::folds`]), so it is the one rebuilt.
+    thoughts: bool,
+    tools: bool,
     table_row_separators: bool,
     render_mermaid: bool,
     code_block_background: CodeBlockBackground,
@@ -550,6 +572,10 @@ struct CacheKey {
 /// with a rail + a trailing separator) together with the source [`FeedMessage`]'s fingerprint.
 struct CachedBlock {
     fingerprint: u64,
+    /// The expanded state of the block's foldable parts ([`fold_state`]): a
+    /// click on one pill changes this, not [`CacheKey`], so the one block it
+    /// folded is rebuilt and no other.
+    folds: u64,
     lines: Vec<Line<'static>>,
     /// One per row of `lines`: what of it is the rail, and whether it
     /// continues the line above — what a selection needs and the bare `Line`
@@ -560,6 +586,10 @@ struct CachedBlock {
     /// is built, because that is where the addresses are recognised and where
     /// they are still whole: after the wrap they may be split across rows.
     links: Vec<Uuid>,
+    /// Where the block's pills are in its rows ([`PillHit`]) — what the click
+    /// map is made of. Recorded while the block is built, as `links` are,
+    /// because only the build knows which spans are a pill.
+    pills: Vec<PillHit>,
     /// How many of `lines` the role header occupies — the highlight pass skips
     /// them. Recorded here because the header's height is only known while the
     /// block is built: it is normally one line, but a long custom role name can
@@ -671,6 +701,7 @@ impl MessageFeed {
             // orchestrator's first status arrives.
             engine_missing: false,
             link_hits: Vec::new(),
+            fold_hits: Vec::new(),
             cache: Vec::new(),
             cache_key: None,
             pending_focus: None,
@@ -819,21 +850,42 @@ impl MessageFeed {
         std::mem::take(&mut self.scrolled)
     }
 
-    /// Toggles showing "thoughts" blocks (`Ctrl+T`).
+    /// Toggles showing "thoughts" blocks (`Ctrl+T`) — every one of them, the
+    /// ones a click flipped included ([`FeedView::toggle_thoughts`]).
     pub fn toggle_thoughts(&mut self) {
-        self.view.thoughts = !self.view.thoughts;
+        self.view.toggle_thoughts();
     }
 
-    /// Toggles showing tool-call arguments and results (`Ctrl+O`). The card's
-    /// header stays visible either way — see [`push_tool`].
+    /// Toggles showing tool-call arguments and results (`Ctrl+O`), every card's.
+    /// The card's header stays visible either way — see [`push_tool`].
     pub fn toggle_tools(&mut self) {
-        self.view.tools = !self.view.tools;
+        self.view.toggle_tools();
+    }
+
+    /// The foldable block whose pill is at this terminal cell, as last drawn —
+    /// `None` anywhere else, and on the reply being written, which has no keys
+    /// yet (docs/research/block-fold-and-partial-copy.md §3.4).
+    pub fn fold_at(&self, col: u16, row: u16) -> Option<FoldKey> {
+        self.fold_hits
+            .iter()
+            .find(|h| h.row == row && (h.start..h.end).contains(&col))
+            .map(|h| h.key)
+    }
+
+    /// A click on a block's pill: that block alone changes state, and only its
+    /// own cached block is rebuilt. The feed stops following its tail, so the
+    /// rows above the pill — unchanged by the toggle — keep it where it was
+    /// clicked; where the content becomes shorter than the view, the clamp moves
+    /// the view (§3.4).
+    pub fn toggle_block(&mut self, key: FoldKey) {
+        self.view.toggle_block(key);
+        self.follow = false;
     }
 
     /// The current collapse state — sent back to the orchestrator after a
     /// toggle, so it is stored on the chat (spec §11.3).
     pub fn view(&self) -> FeedView {
-        self.view
+        self.view.clone()
     }
 
     /// Applies the chat's stored collapse state (on activation). [`CacheKey`]
@@ -1375,6 +1427,11 @@ impl MessageFeed {
         // the only point where the wrap, the scroll and the panel's origin have
         // all been applied (see [`visible_link_hits`]).
         self.link_hits = visible_link_hits(&lines, inner, self.scroll, &self.known_chats);
+        self.fold_hits = if placeholder {
+            Vec::new()
+        } else {
+            visible_fold_hits(&self.cache, inner, self.scroll)
+        };
         // The selection is read against the same frame (research §5.3).
         self.drawn = (!placeholder).then(|| {
             let mut starts = Vec::with_capacity(self.cache.len());
@@ -1510,7 +1567,8 @@ impl MessageFeed {
         let key = CacheKey {
             width,
             palette: *palette,
-            view: self.view,
+            thoughts: self.view.thoughts,
+            tools: self.view.tools,
             table_row_separators: self.table_row_separators,
             render_mermaid: self.render_mermaid,
             code_block_background: self.code_block_background,
@@ -1596,22 +1654,29 @@ impl MessageFeed {
         at_boundary: bool,
     ) {
         let fp = message_fingerprint(item);
-        let hit = self.cache.get(idx).is_some_and(|c| c.fingerprint == fp);
+        let boundary = at_boundary
+            .then(|| self.compaction.as_ref().map(|(id, _)| *id))
+            .flatten();
+        let folds = fold_state(item, &self.view, boundary);
+        let hit = self
+            .cache
+            .get(idx)
+            .is_some_and(|c| c.fingerprint == fp && c.folds == folds);
         if !hit {
             // The block's rows are about to be made anew: a selection in them
             // no longer points at what it took.
             if self.cache.get(idx).is_some() {
                 self.forget_selection_in(idx);
             }
-            let summary = at_boundary
-                .then(|| self.compaction.as_ref().map(|(_, s)| s.as_str()))
-                .flatten();
-            // A streaming/changed message — recompute only its block.
+            let summary =
+                boundary.and_then(|id| self.compaction.as_ref().map(|(_, s)| (id, s.as_str())));
+            // A streaming/changed message, or one a click folded — recompute
+            // only its block.
             let built = build_message_block(
                 item,
                 palette,
                 width,
-                self.view,
+                &self.view,
                 opts,
                 loc,
                 &self.role_names,
@@ -1622,9 +1687,11 @@ impl MessageFeed {
             );
             let cb = CachedBlock {
                 fingerprint: fp,
+                folds,
                 lines: built.lines,
                 facts: built.facts,
                 links: built.links,
+                pills: built.pills,
                 content_from: built.content_from,
             };
             if idx < self.cache.len() {
@@ -1676,9 +1743,48 @@ fn highlight_block_tail(
 struct Body {
     lines: Vec<Line<'static>>,
     marks: Vec<LineMark>,
+    /// Which spans of which lines are a foldable block's pill — the click
+    /// target (docs/research/block-fold-and-partial-copy.md §3.4–§3.5).
+    pills: Vec<PillMark>,
+}
+
+/// A pill in a [`Body`]: the spans of one of its lines a click folds the block
+/// by.
+struct PillMark {
+    line: usize,
+    spans: Range<usize>,
+    key: FoldKey,
+}
+
+/// A pill in a built block: its row there and its columns in the panel's
+/// content (the rail included), half-open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PillHit {
+    row: usize,
+    start: u16,
+    end: u16,
+    key: FoldKey,
+}
+
+/// A pill on the screen, in terminal cells — [`MessageFeed::fold_hits`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FoldHit {
+    row: u16,
+    start: u16,
+    end: u16,
+    key: FoldKey,
 }
 
 impl Body {
+    /// Marks `spans` of line `line` as the pill of the block `key` names. A
+    /// block with no key — the reply being written — draws its pill and takes
+    /// no click.
+    fn mark_pill(&mut self, line: usize, spans: Range<usize>, key: Option<FoldKey>) {
+        if let Some(key) = key {
+            self.pills.push(PillMark { line, spans, key });
+        }
+    }
+
     /// A line with no prefix that continues nothing.
     fn push(&mut self, line: Line<'static>) {
         self.push_marked(line, LineMark::default());
@@ -1741,12 +1847,12 @@ fn build_message_block(
     item: &FeedMessage,
     palette: &Palette,
     width: usize,
-    view: FeedView,
+    view: &FeedView,
     opts: markdown::RenderOpts,
     loc: &'static Locale,
     names: &CharacterNames,
     marked: bool,
-    compaction: Option<&str>,
+    compaction: Option<(Uuid, &str)>,
     known_chats: &[Uuid],
     show_model: bool,
 ) -> BuiltBlock {
@@ -1789,15 +1895,17 @@ fn build_message_block(
                 palette,
             ));
             content_from = body.len();
+            let key = thoughts_key(item);
             push_thoughts(
                 &mut body,
                 &item.thoughts,
-                view.thoughts,
+                key.map_or(view.thoughts, |k| view.expanded(&k)),
+                key,
                 inner,
                 palette,
                 loc,
             );
-            push_assistant_body(&mut body, item, palette, inner, view.tools, opts, loc);
+            push_assistant_body(&mut body, item, palette, inner, view, opts, loc);
         }
         // The persona of a sub-agent transcript: headed like a role, body as
         // prose, on the muted rail a note uses — it is context, not a turn.
@@ -1840,11 +1948,22 @@ fn build_message_block(
     // [`RowFact`] is made with it: the wrap is the one place that knows which
     // rows continue a line.
     let mut facts: Vec<RowFact> = Vec::new();
-    if let Some(summary) = compaction {
+    let mut pills: Vec<PillHit> = Vec::new();
+    if let Some((boundary, summary)) = compaction {
         let mut divider = Body::default();
-        push_compaction_boundary(&mut divider, summary, view.thoughts, width, palette, loc);
-        for (line, mark) in divider.lines.into_iter().zip(divider.marks) {
-            for (k, wrapped) in wrap::wrap_line(&line, width).into_iter().enumerate() {
+        let key = FoldKey::Summary(boundary);
+        let expanded = view.expanded(&key);
+        push_compaction_boundary(&mut divider, summary, expanded, key, width, palette, loc);
+        let Body {
+            lines: divider_lines,
+            marks: divider_marks,
+            pills: divider_pills,
+        } = divider;
+        for (i, (line, mark)) in divider_lines.into_iter().zip(divider_marks).enumerate() {
+            let targets = pill_columns(&divider_pills, i, &line);
+            let rows = wrap::wrap_line(&line, width);
+            place_pills(&mut pills, &targets, &rows, out.len(), 0);
+            for (k, wrapped) in rows.into_iter().enumerate() {
                 out.push(wrapped);
                 facts.push(RowFact::of_piece(0, mark, k));
             }
@@ -1853,15 +1972,25 @@ fn build_message_block(
     let lead = wrap::str_width(rail.glyph) as u16;
     let mut content_row = None;
     let mut links: Vec<Uuid> = Vec::new();
-    for (i, (mut line, mark)) in body.lines.into_iter().zip(body.marks).enumerate() {
+    let Body {
+        lines: body_lines,
+        marks: body_marks,
+        pills: body_pills,
+    } = body;
+    for (i, (mut line, mark)) in body_lines.into_iter().zip(body_marks).enumerate() {
         if i == content_from {
             content_row = Some(out.len());
         }
+        // Measured before the references are styled: styling splits a span,
+        // never changes a width.
+        let targets = pill_columns(&body_pills, i, &line);
         // **Before** the wrap, deliberately: an address is 15 columns
         // (`chat://` + 8 hex) and a narrow panel splits it across two rows,
         // where a per-row scan would no longer see it whole.
         links.extend(style_chat_links(&mut line, known_chats, palette));
-        for (k, wrapped) in wrap::wrap_line(&line, inner).into_iter().enumerate() {
+        let rows = wrap::wrap_line(&line, inner);
+        place_pills(&mut pills, &targets, &rows, out.len(), lead);
+        for (k, wrapped) in rows.into_iter().enumerate() {
             out.push(prepend_rail(wrapped, &rail));
             facts.push(RowFact::of_piece(lead, mark, k));
         }
@@ -1879,7 +2008,112 @@ fn build_message_block(
         facts,
         content_from,
         links,
+        pills,
     }
+}
+
+/// The thoughts block's key: the bubble's **first** message. The reply being
+/// written has no message yet, and no key.
+fn thoughts_key(item: &FeedMessage) -> Option<FoldKey> {
+    item.message_ids.first().copied().map(FoldKey::Thoughts)
+}
+
+/// The expanded state of each of `item`'s foldable parts under `view` — its
+/// thoughts, each tool card, the summary above it — hashed: what a click on
+/// one pill changes in this block alone ([`CachedBlock::folds`]). A part with
+/// no key hashes as `None`, so a bubble that gains its keys (the reply being
+/// written, stored) is rebuilt with its pills.
+fn fold_state(item: &FeedMessage, view: &FeedView, boundary: Option<Uuid>) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    let state = |key: Option<FoldKey>| key.map(|k| view.expanded(&k));
+    state(thoughts_key(item)).hash(&mut h);
+    for tool in &item.tools {
+        state(tool.fold).hash(&mut h);
+    }
+    state(boundary.map(FoldKey::Summary)).hash(&mut h);
+    h.finish()
+}
+
+/// The columns of the pills [`Body::mark_pill`] put on line `index`, from its
+/// spans' widths, with their keys.
+fn pill_columns(pills: &[PillMark], index: usize, line: &Line<'_>) -> Vec<(u16, u16, FoldKey)> {
+    let width = |spans: &[Span<'_>]| -> u16 {
+        spans
+            .iter()
+            .map(|s| wrap::str_width(&s.content))
+            .sum::<usize>() as u16
+    };
+    pills
+        .iter()
+        .filter(|p| p.line == index)
+        .map(|p| {
+            let end = p.spans.end.min(line.spans.len());
+            let start = p.spans.start.min(end);
+            (
+                width(&line.spans[..start]),
+                width(&line.spans[..end]),
+                p.key,
+            )
+        })
+        .collect()
+}
+
+/// Records where a line's pills landed among the `rows` its wrap made of it,
+/// the first at block row `first_row`, past a rail `lead` columns wide. A line
+/// that fits one row — every pill does, but in a very narrow panel — keeps the
+/// pill's columns; one the panel wrapped takes each of its rows whole: half a
+/// pill is still the pill.
+fn place_pills(
+    pills: &mut Vec<PillHit>,
+    targets: &[(u16, u16, FoldKey)],
+    rows: &[Line<'static>],
+    first_row: usize,
+    lead: u16,
+) {
+    for &(start, end, key) in targets {
+        if let [_] = rows {
+            pills.push(PillHit {
+                row: first_row,
+                start: lead + start,
+                end: lead + end,
+                key,
+            });
+            continue;
+        }
+        for (k, row) in rows.iter().enumerate() {
+            pills.push(PillHit {
+                row: first_row + k,
+                start: lead,
+                end: lead + row.width() as u16,
+                key,
+            });
+        }
+    }
+}
+
+/// The pills of the rows on screen, in terminal cells: each block's pills
+/// moved by where its rows begin, kept when inside the `scroll` window of
+/// `inner` (docs/research/block-fold-and-partial-copy.md §3.5).
+fn visible_fold_hits(cache: &[CachedBlock], inner: Rect, scroll: usize) -> Vec<FoldHit> {
+    let mut hits = Vec::new();
+    let mut at = 0usize;
+    let rows = scroll..scroll + inner.height as usize;
+    for block in cache {
+        for pill in &block.pills {
+            let abs = at + pill.row;
+            if rows.contains(&abs) {
+                hits.push(FoldHit {
+                    row: inner.y + (abs - scroll) as u16,
+                    start: inner.x + pill.start,
+                    end: inner.x + pill.end,
+                    key: pill.key,
+                });
+            }
+        }
+        at += block.lines.len();
+    }
+    hits
 }
 
 /// One freshly built block, before it enters the cache.
@@ -1891,6 +2125,8 @@ struct BuiltBlock {
     content_from: usize,
     /// See [`CachedBlock::links`].
     links: Vec<Uuid>,
+    /// See [`CachedBlock::pills`].
+    pills: Vec<PillHit>,
 }
 
 /// Draws every **resolvable** `chat://` address in one unwrapped line in the
@@ -2276,6 +2512,7 @@ fn push_compaction_boundary(
     lines: &mut Body,
     summary: &str,
     expanded: bool,
+    key: FoldKey,
     width: usize,
     palette: &Palette,
     loc: &'static Locale,
@@ -2301,6 +2538,9 @@ fn push_compaction_boundary(
         spans.push(Span::styled(" · ", muted));
         spans.push(palette.keycap("Ctrl+T"));
     }
+    // The pill a click folds the summary by: the marker, the label and the
+    // keycap — not the rule that fills the rest of the row (§3.4).
+    let pill = 0..spans.len();
     // Fill out to the panel width with the rule glyph, so the row reads as a
     // divider rather than as a stray line of text — `rule()` in
     // `shared::markdown` stretches `---` the same way. A prefix that already
@@ -2313,6 +2553,7 @@ fn push_compaction_boundary(
         spans.push(Span::styled(format!(" {}", "─".repeat(pad)), muted));
     }
     lines.push(Line::from(spans));
+    lines.mark_pill(lines.len() - 1, pill, Some(key));
     if !expanded || summary.is_empty() {
         return;
     }
@@ -2356,11 +2597,13 @@ fn push_gutter_line(lines: &mut Body, text: &str, width: usize, palette: &Palett
 
 /// Adds the "thoughts" block: collapsed — a "pill" with a line count and a key hint,
 /// expanded — content on the `│` gutter ([`push_gutter_line`]; `width` is the
-/// content width under the rail).
+/// content width under the rail). Either header row is the pill a click folds
+/// this block alone by (`key`; none on the reply being written).
 fn push_thoughts(
     lines: &mut Body,
     thoughts: &str,
     expanded: bool,
+    key: Option<FoldKey>,
     width: usize,
     palette: &Palette,
     loc: &'static Locale,
@@ -2384,12 +2627,14 @@ fn push_thoughts(
             ),
             palette.keycap("Ctrl+T"),
         ]));
+        lines.mark_pill(lines.len() - 1, 0..4, key);
         return;
     }
     lines.push(Line::from(Span::styled(
         format!("{} {}", glyphs.expanded, loc.t("ui.feed.thoughts")),
         muted.add_modifier(Modifier::ITALIC),
     )));
+    lines.mark_pill(lines.len() - 1, 0..1, key);
     for t in thoughts.lines() {
         push_gutter_line(lines, t, width, palette);
     }
@@ -2407,7 +2652,7 @@ fn push_assistant_body(
     item: &FeedMessage,
     palette: &Palette,
     width: usize,
-    tools_expanded: bool,
+    view: &FeedView,
     opts: markdown::RenderOpts,
     loc: &'static Locale,
 ) {
@@ -2422,7 +2667,8 @@ fn push_assistant_body(
         // A blank line before the call (collapses if the previous one is already blank —
         // e.g. between two consecutive calls).
         ensure_blank_line(lines);
-        push_tool(lines, tool, palette, width, tools_expanded, opts, loc);
+        let expanded = tool.fold.map_or(view.tools, |k| view.expanded(&k));
+        push_tool(lines, tool, palette, width, expanded, opts, loc);
         // A blank (railed) line AFTER the card — so the rail continues under
         // the result regardless of whether text/another call follows. Adjacent
         // `ensure_blank_line` calls collapse (a no-op before the next call/text),
@@ -2562,8 +2808,24 @@ fn push_tool(
             Span::styled(" · ", muted),
             palette.keycap("Ctrl+O"),
         ];
-        push_trailing(lines, pill, glyphs.tool_cont, width);
+        let (line, spans) = push_trailing(lines, pill, glyphs.tool_cont, width);
+        lines.mark_pill(line, spans, tool.fold);
         return;
+    }
+    // Expanded, the card ends its header on a `▾ details` pill of its own
+    // (fork F5b): the other foldable blocks show their marker expanded too, and
+    // it is what a click folds this card alone by. No keycap — the expanded
+    // thoughts have none either. Nothing to fold, no pill.
+    if !p.args.is_empty() || !p.result.is_empty() {
+        let pill = vec![
+            Span::styled(format!("{} ", glyphs.expanded), muted),
+            Span::styled(
+                loc.t("ui.feed.tool_details").to_string(),
+                muted.add_modifier(Modifier::ITALIC),
+            ),
+        ];
+        let (line, spans) = push_trailing(lines, pill, glyphs.tool_cont, width);
+        lines.mark_pill(line, spans, tool.fold);
     }
     for block in &p.args {
         push_block(lines, block, palette, width, false, opts, loc);
@@ -2746,11 +3008,19 @@ const TRAILING_GAP: &str = "  ";
 /// a group appended regardless of room came apart — `▸ details ·` at the end of
 /// one row and the keycap alone at the start of the next, under the icon —
 /// which reads as a stray label rather than a pill. `width` is the wrap width,
-/// so a fit measured here is a fit there.
-fn push_trailing(lines: &mut Body, group: Vec<Span<'static>>, cont: &str, width: usize) {
+/// so a fit measured here is a fit there. Returns where the group landed — its
+/// line and its spans there — for a pill to be marked by ([`Body::mark_pill`]).
+fn push_trailing(
+    lines: &mut Body,
+    group: Vec<Span<'static>>,
+    cont: &str,
+    width: usize,
+) -> (usize, Range<usize>) {
     let span_width =
         |spans: &[Span<'_>]| -> usize { spans.iter().map(|s| wrap::str_width(&s.content)).sum() };
     let group_w = span_width(&group);
+    let n = group.len();
+    let line = lines.len().saturating_sub(1);
     if let Some(last) = lines.last_mut()
         && span_width(&last.spans) + TRAILING_GAP.len() + group_w <= width
     {
@@ -2758,8 +3028,9 @@ fn push_trailing(lines: &mut Body, group: Vec<Span<'static>>, cont: &str, width:
         // whole group reads as one decoration.
         let style = group.first().map(|s| s.style).unwrap_or_default();
         last.spans.push(Span::styled(TRAILING_GAP, style));
+        let from = last.spans.len();
         last.spans.extend(group);
-        return;
+        return (line, from..from + n);
     }
     let mut spans = Vec::with_capacity(group.len() + 1);
     spans.push(Span::raw(cont.to_string()));
@@ -2771,6 +3042,7 @@ fn push_trailing(lines: &mut Body, group: Vec<Span<'static>>, cont: &str, width:
             ..LineMark::default()
         },
     );
+    (lines.len() - 1, 1..1 + n)
 }
 
 /// The nearest (rounding down) valid char boundary for a byte offset.
@@ -2878,6 +3150,7 @@ mod tests {
             images: 0,
             call_id: None,
             running: false,
+            fold: None,
         });
         let lines = feed.build_lines(&[m], &Palette::default(), 80, ru());
         let joined: String = lines
@@ -2914,6 +3187,7 @@ mod tests {
             images: 0,
             call_id: None,
             running: false,
+            fold: None,
         });
         let out = joined(&feed.build_lines(&[m.clone()], &Palette::default(), 80, ru()));
         assert!(out.contains("python_exec"), "the header stays: {out}");
@@ -2949,6 +3223,7 @@ mod tests {
             images: 0,
             call_id: None,
             running: false,
+            fold: None,
         });
         m
     }
@@ -3076,6 +3351,7 @@ mod tests {
             images: 0,
             call_id: None,
             running: false,
+            fold: None,
         });
         feed.toggle_tools();
         let out = joined(&feed.build_lines(&[m.clone()], &Palette::default(), 80, ru()));
@@ -3108,6 +3384,7 @@ mod tests {
             images: 0,
             call_id: None,
             running: false,
+            fold: None,
         });
         let collapsed = joined(&feed.build_lines(&[m.clone()], &Palette::default(), 100, ru()));
         assert!(collapsed.contains('…'), "collapsed truncates: {collapsed}");
@@ -3169,6 +3446,7 @@ mod tests {
             images: 0,
             call_id: None,
             running: false,
+            fold: None,
         });
         let rows = row_texts(&feed.build_lines(&[m], &Palette::default(), 60, ru()));
         let i_head = rows
@@ -3197,6 +3475,7 @@ mod tests {
             images: 0,
             call_id: None,
             running: false,
+            fold: None,
         });
         let out = joined(&feed.build_lines(&[m], &Palette::default(), 80, ru()));
         assert!(out.contains("current_time"), "the header stays: {out}");
@@ -3220,6 +3499,7 @@ mod tests {
                 images: 0,
                 call_id: None,
                 running: false,
+                fold: None,
             });
             let out = joined(&feed.build_lines(&[m], &Palette::default(), 80, loc));
             assert!(
@@ -3249,6 +3529,7 @@ mod tests {
                 images: 0,
                 call_id: None,
                 running: false,
+                fold: None,
             });
             let out = joined(&feed.build_lines(&[m], &Palette::default(), 80, ru()));
             // Rendered under `ru()` above on purpose: the labels must follow the
@@ -3273,6 +3554,7 @@ mod tests {
             images: 0,
             call_id: None,
             running: false,
+            fold: None,
         });
         let out = joined(&feed.build_lines(&[m], &Palette::default(), 80, en));
         assert!(
@@ -3705,6 +3987,7 @@ mod tests {
             images: 0,
             call_id: None,
             running: false,
+            fold: None,
         });
         let user = msg(FeedRole::User, "привет", "");
         let compat = Palette::default().with_compat(true);
@@ -3738,6 +4021,7 @@ mod tests {
             images: 0,
             call_id: None,
             running: false,
+            fold: None,
         });
         let palette = Palette::for_theme(crate::shared::config::Theme::Dark);
         let lines = feed.build_lines(&[m], &palette, 80, ru());
@@ -3774,6 +4058,7 @@ mod tests {
             images: 0,
             call_id: None,
             running: false,
+            fold: None,
         });
         let lines = feed.build_lines(&[m], &palette, 80, ru());
         // The line with the stderr text is colored the error color.
@@ -3809,6 +4094,7 @@ mod tests {
             images: 0,
             call_id: None,
             running: false,
+            fold: None,
         });
         let lines = feed.build_lines(&[m], &Palette::default(), 80, ru());
         let rows: Vec<String> = lines
@@ -3851,6 +4137,7 @@ mod tests {
             images: 0,
             call_id: None,
             running: false,
+            fold: None,
         });
         let rows = row_texts(&feed.build_lines(&[m], &Palette::default(), 80, ru()));
         let i_before = rows.iter().position(|r| r.contains("до")).unwrap();
@@ -3887,6 +4174,7 @@ mod tests {
             images: 0,
             call_id: None,
             running: false,
+            fold: None,
         });
         let next = msg(FeedRole::User, "дальше", "");
         let rows = row_texts(&feed.build_lines(&[m, next], &Palette::default(), 60, ru()));
@@ -3919,6 +4207,7 @@ mod tests {
                 images: 0,
                 call_id: None,
                 running: false,
+                fold: None,
             });
         }
         let rows = row_texts(&feed.build_lines(&[m], &Palette::default(), 80, ru()));
@@ -3942,6 +4231,7 @@ mod tests {
             images: 0,
             call_id: None,
             running: false,
+            fold: None,
         });
         let lines = feed.build_lines(&[m], &Palette::default(), 30, ru());
         // The result isn't truncated (no "…") and is laid out across several rows (rail + gutter
@@ -5354,9 +5644,13 @@ mod tests {
             for palette in [Palette::default(), Palette::default().with_compat(true)] {
                 for thoughts in [false, true] {
                     for tools in [false, true] {
-                        let view = FeedView { thoughts, tools };
+                        let view = FeedView {
+                            thoughts,
+                            tools,
+                            ..FeedView::default()
+                        };
                         let mut warm = MessageFeed::new();
-                        warm.set_view(view);
+                        warm.set_view(view.clone());
                         warm.set_compaction(compaction.clone());
                         // warm the cache with repeated calls
                         let _ = warm.build_lines(messages, &palette, width, ru());
@@ -5364,7 +5658,7 @@ mod tests {
                         let warm_lines = warm.build_lines(messages, &palette, width, ru());
 
                         let mut fresh = MessageFeed::new();
-                        fresh.set_view(view);
+                        fresh.set_view(view.clone());
                         fresh.set_compaction(compaction.clone());
                         let fresh_lines = fresh.build_lines(messages, &palette, width, ru());
 
@@ -5397,6 +5691,7 @@ mod tests {
                 images: 0,
                 call_id: None,
                 running: false,
+                fold: None,
             });
             m
         };
@@ -6354,6 +6649,7 @@ mod tests {
             images: 0,
             call_id: None,
             running: false,
+            fold: None,
         });
         let mut msgs = numbered_long(3);
         msgs.push(assistant);
@@ -6443,6 +6739,7 @@ mod tests {
             images: 0,
             call_id: None,
             running: false,
+            fold: None,
         });
         let mut feed = feed_with_tools();
         let text = copy_all(&mut feed, &[m], 34, 24, &Palette::default());
@@ -6497,5 +6794,255 @@ mod tests {
         assert_ne!(Some(buf[(c - 2, r)].bg), marked, "the `>`");
         assert_eq!(Some(buf[(c, r)].bg), marked, "the text");
         assert_eq!(feed.selected_text().as_deref(), Some("quot"));
+    }
+
+    // ---------- one block folded by a click on its pill (block-fold research §3.4–§3.5) ----------
+
+    /// A stored assistant bubble with thoughts and two tool cards, keyed as
+    /// `from_message` keys them: every kind of pill but the summary's.
+    fn foldable(id: Uuid) -> FeedMessage {
+        let mut m = msg(FeedRole::Assistant, "ответ", "мысль раз\nмысль два");
+        m.message_ids = vec![id];
+        for (call, name) in ["alpha_tool", "beta_tool"].into_iter().enumerate() {
+            m.tools.push(FeedToolCall {
+                name: name.into(),
+                arguments: "{\"q\":\"x\"}".into(),
+                result: format!("{name} result"),
+                text_offset: m.text.len(),
+                images: 0,
+                call_id: None,
+                running: false,
+                fold: Some(FoldKey::Tool { message: id, call }),
+            });
+        }
+        m
+    }
+
+    /// The cell where `needle` first appears on the first row holding `row`,
+    /// read back from the drawn buffer (docs/lessons.md §5) — a wide glyph's
+    /// trailing cell is drawn as a blank, so characters count cells.
+    fn cell_in_row(term: &Terminal<TestBackend>, row: &str, needle: &str) -> (u16, u16) {
+        let buf = term.backend().buffer();
+        for y in 0..buf.area.height {
+            let text: String = (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect();
+            if text.contains(row)
+                && let Some(at) = text.find(needle)
+            {
+                let x = text[..at].chars().count() as u16;
+                assert_eq!(
+                    buf[(x, y)].symbol(),
+                    needle.chars().next().unwrap().to_string(),
+                    "{text:?}"
+                );
+                return (x, y);
+            }
+        }
+        panic!("{needle:?} on a row with {row:?} is not on screen");
+    }
+
+    fn screen_has(term: &Terminal<TestBackend>, needle: &str) -> bool {
+        let buf = term.backend().buffer();
+        (0..buf.area.height).any(|y| {
+            let text: String = (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect();
+            text.contains(needle)
+        })
+    }
+
+    /// Each pill takes a click on its own cells — the marker, the label, the
+    /// keycap — and folds its block alone; the header beside it, the rail and
+    /// the text are ordinary feed. Expanded, a card ends its header on a
+    /// `▾ details` pill (F5b) that folds it back. In the full and the
+    /// monochrome glyphs alike.
+    #[test]
+    fn a_click_on_a_pill_folds_that_block_alone() {
+        for palette in [Palette::default(), Palette::mono()] {
+            let g = palette.glyphs();
+            let (shut, open) = (g.collapsed, g.expanded);
+            let id = Uuid::new_v4();
+            let msgs = vec![msg(FeedRole::User, "вопрос", ""), foldable(id)];
+            let mut feed = MessageFeed::new();
+            let mut term = Terminal::new(TestBackend::new(70, 30)).unwrap();
+            draw_with(&mut term, &mut feed, &msgs, &palette);
+
+            let thoughts = cell_in_row(&term, "мысли", &format!("{shut} мысли"));
+            assert_eq!(
+                feed.fold_at(thoughts.0, thoughts.1),
+                Some(FoldKey::Thoughts(id))
+            );
+            let keycap = cell_in_row(&term, "мысли", "Ctrl+T");
+            assert_eq!(
+                feed.fold_at(keycap.0, keycap.1),
+                Some(FoldKey::Thoughts(id))
+            );
+            assert_eq!(feed.fold_at(thoughts.0 - 1, thoughts.1), None, "the rail");
+            let pill = cell_in_row(&term, "alpha_tool", &format!("{shut} детали"));
+            let alpha = FoldKey::Tool {
+                message: id,
+                call: 0,
+            };
+            assert_eq!(feed.fold_at(pill.0, pill.1), Some(alpha));
+            let name = cell_in_row(&term, "alpha_tool", "alpha_tool");
+            assert_eq!(
+                feed.fold_at(name.0, name.1),
+                None,
+                "the header beside the pill"
+            );
+            let text = cell_in_row(&term, "ответ", "ответ");
+            assert_eq!(feed.fold_at(text.0, text.1), None);
+
+            feed.toggle_block(alpha);
+            draw_with(&mut term, &mut feed, &msgs, &palette);
+            assert!(screen_has(&term, "alpha_tool result"), "the card opened");
+            assert!(!screen_has(&term, "beta_tool result"), "the other did not");
+            assert!(!screen_has(&term, "мысль раз"), "nor the thoughts");
+            let back = cell_in_row(&term, "alpha_tool", &format!("{open} детали"));
+            assert_eq!(feed.fold_at(back.0, back.1), Some(alpha));
+            assert!(feed.view().flipped.contains(&alpha));
+
+            feed.toggle_block(FoldKey::Thoughts(id));
+            draw_with(&mut term, &mut feed, &msgs, &palette);
+            assert!(screen_has(&term, "мысль раз"));
+            let header = cell_in_row(&term, "мысли", &format!("{open} мысли"));
+            assert_eq!(
+                feed.fold_at(header.0, header.1),
+                Some(FoldKey::Thoughts(id))
+            );
+            feed.toggle_block(alpha);
+            draw_with(&mut term, &mut feed, &msgs, &palette);
+            assert!(!screen_has(&term, "alpha_tool result"), "folded back");
+        }
+    }
+
+    /// A click rebuilds the one block it folded: the cache is not cleared, and
+    /// the other bubble keeps its rows as they were — the same allocation.
+    #[test]
+    fn a_click_rebuilds_only_its_block() {
+        let (one, two) = (Uuid::new_v4(), Uuid::new_v4());
+        let msgs = vec![foldable(one), foldable(two)];
+        let mut feed = MessageFeed::new();
+        let _ = drawn(&mut feed, &msgs, 70, 30);
+        let first = feed.cache[0].lines.as_ptr();
+        let second = feed.cache[1].lines.as_ptr();
+        feed.toggle_block(FoldKey::Tool {
+            message: two,
+            call: 1,
+        });
+        let _ = drawn(&mut feed, &msgs, 70, 30);
+        assert_eq!(
+            feed.cache[0].lines.as_ptr(),
+            first,
+            "the other block is kept"
+        );
+        assert_ne!(feed.cache[1].lines.as_ptr(), second, "this one is rebuilt");
+        assert!(!feed.cache_reset, "and the cache was not cleared");
+    }
+
+    /// The pill stays on the row it was clicked on: a click ends following, so
+    /// the rows the expansion adds go below it instead of pushing it up.
+    #[test]
+    fn the_pill_stays_on_its_row() {
+        let id = Uuid::new_v4();
+        let mut msgs: Vec<FeedMessage> = (0..12)
+            .map(|i| msg(FeedRole::User, &format!("строка {i}"), ""))
+            .collect();
+        msgs.push(foldable(id));
+        let mut feed = MessageFeed::new();
+        let mut term = Terminal::new(TestBackend::new(70, 16)).unwrap();
+        draw_with(&mut term, &mut feed, &msgs, &Palette::default());
+        assert!(
+            feed.is_following(),
+            "the premise: the feed follows its tail"
+        );
+        let (_, row) = cell_in_row(&term, "alpha_tool", "▸ детали");
+        feed.toggle_block(FoldKey::Tool {
+            message: id,
+            call: 0,
+        });
+        assert!(!feed.is_following());
+        draw_with(&mut term, &mut feed, &msgs, &Palette::default());
+        let (_, after) = cell_in_row(&term, "alpha_tool", "▾ детали");
+        assert_eq!(after, row);
+    }
+
+    /// A pill that does not fit beside its header goes to a row of its own and
+    /// is the target there; a card with nothing to fold has no pill, collapsed
+    /// or expanded; the reply being written draws its pills and takes no click.
+    #[test]
+    fn pills_in_a_narrow_panel_on_an_empty_card_and_while_writing() {
+        let id = Uuid::new_v4();
+        let mut narrow = foldable(id);
+        narrow.tools.truncate(1);
+        narrow.tools[0].name = "a_rather_long_tool_name".into();
+        let msgs = vec![narrow];
+        let mut feed = MessageFeed::new();
+        let term = drawn(&mut feed, &msgs, 34, 20);
+        let (_, header) = cell_in_row(&term, "a_rather_long", "a_rather_long");
+        let pill = cell_in_row(&term, "детали", "▸ детали");
+        assert!(
+            pill.1 > header,
+            "the premise: the pill moved to the next row"
+        );
+        assert_eq!(
+            feed.fold_at(pill.0, pill.1),
+            Some(FoldKey::Tool {
+                message: id,
+                call: 0
+            })
+        );
+
+        let mut empty = foldable(id);
+        empty.thoughts.clear();
+        empty.tools.truncate(1);
+        empty.tools[0].arguments = "{}".into();
+        empty.tools[0].result.clear();
+        for tools in [false, true] {
+            let mut feed = MessageFeed::new();
+            if tools {
+                feed.toggle_tools();
+            }
+            let term = drawn(&mut feed, std::slice::from_ref(&empty), 70, 12);
+            assert!(!screen_has(&term, "детали"), "tools expanded: {tools}");
+            assert!(feed.fold_hits.is_empty());
+        }
+
+        let mut writing = foldable(id);
+        writing.message_ids.clear();
+        writing.streaming = true;
+        for tool in &mut writing.tools {
+            tool.fold = None;
+        }
+        let mut feed = MessageFeed::new();
+        let term = drawn(&mut feed, &[writing], 70, 20);
+        assert!(screen_has(&term, "▸ мысли") && screen_has(&term, "▸ детали"));
+        assert!(
+            feed.fold_hits.is_empty(),
+            "nothing to click while it is written"
+        );
+    }
+
+    /// The compaction divider folds the summary alone, by its marker, label
+    /// and keycap — not by the rule that fills the rest of its row.
+    #[test]
+    fn the_summary_folds_alone_by_its_pill() {
+        let boundary = Uuid::new_v4();
+        let mut later = msg(FeedRole::User, "дальше", "");
+        later.message_ids = vec![boundary];
+        let msgs = vec![foldable(Uuid::new_v4()), later];
+        let mut feed = MessageFeed::new();
+        feed.set_compaction(Some((boundary, "краткое резюме".into())));
+        let mut term = Terminal::new(TestBackend::new(70, 30)).unwrap();
+        draw_with(&mut term, &mut feed, &msgs, &Palette::default());
+        let pill = cell_in_row(&term, "ранние", "▸ ранние");
+        assert_eq!(
+            feed.fold_at(pill.0, pill.1),
+            Some(FoldKey::Summary(boundary))
+        );
+        let rule = cell_in_row(&term, "ранние", "───");
+        assert_eq!(feed.fold_at(rule.0 + 1, rule.1), None, "the rule");
+
+        feed.toggle_block(FoldKey::Summary(boundary));
+        draw_with(&mut term, &mut feed, &msgs, &Palette::default());
+        assert!(screen_has(&term, "краткое резюме"));
+        assert!(!screen_has(&term, "мысль раз"), "the thoughts stay folded");
     }
 }
