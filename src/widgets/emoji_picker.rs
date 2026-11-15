@@ -13,7 +13,9 @@
 //! details and mechanics at [`EMOJIS`].
 
 use ratatui::Frame;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
+use ratatui::crossterm::event::{
+    KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEvent, MouseEventKind,
+};
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
@@ -68,6 +70,9 @@ pub enum EmojiPickerAction {
 pub struct EmojiPickerState {
     /// The index of the selected emoji in [`EMOJIS`].
     selected: usize,
+    /// Where the grid was last drawn — what a click picks a cell by
+    /// (docs/research/mouse-always-captured.md F12).
+    grid: Option<Rect>,
 }
 
 impl Default for EmojiPickerState {
@@ -79,7 +84,10 @@ impl Default for EmojiPickerState {
 impl EmojiPickerState {
     /// Opens the popup (selection — on the first emoji).
     pub fn new() -> Self {
-        Self { selected: 0 }
+        Self {
+            selected: 0,
+            grid: None,
+        }
     }
 
     /// Opens the popup with a restored selection (the index is clamped to bounds) —
@@ -87,6 +95,7 @@ impl EmojiPickerState {
     pub fn with_selected(idx: usize) -> Self {
         Self {
             selected: idx.min(EMOJIS.len() - 1),
+            grid: None,
         }
     }
 
@@ -144,9 +153,37 @@ impl EmojiPickerState {
         MinSize::new(grid.max(legend_width(loc.t("ui.emoji.footer"))), rows + 2)
     }
 
+    /// A left press on a cell of the grid selects its emoji. `true` when it
+    /// landed on one — the chat makes a double click its `Enter`, the insert
+    /// (docs/research/mouse-always-captured.md F12). The grid does not scroll:
+    /// the wheel has nothing to move.
+    pub fn on_mouse(&mut self, mouse: MouseEvent) -> bool {
+        let Some(grid) = self.grid else {
+            return false;
+        };
+        if mouse.kind != MouseEventKind::Down(MouseButton::Left)
+            || !grid.contains(ratatui::layout::Position::new(mouse.column, mouse.row))
+        {
+            return false;
+        }
+        let c = usize::from((mouse.column - grid.x) / CELL_W);
+        let idx = usize::from(mouse.row - grid.y) * COLS + c;
+        if c >= COLS || idx >= EMOJIS.len() {
+            return false;
+        }
+        self.selected = idx;
+        true
+    }
+
+    /// Where the grid was last drawn, for tests that click it.
+    #[cfg(test)]
+    pub fn grid_area(&self) -> Option<Rect> {
+        self.grid
+    }
+
     /// Draws the popup centered in `area`: an emoji grid, the selected cell — reversed.
     pub fn render(
-        &self,
+        &mut self,
         frame: &mut Frame,
         area: Rect,
         palette: &Palette,
@@ -164,6 +201,7 @@ impl EmojiPickerState {
             )));
         let inner = block.inner(popup);
         frame.render_widget(block, popup);
+        self.grid = Some(inner);
 
         let selected = self.selected.min(EMOJIS.len() - 1);
         let lines: Vec<Line> = EMOJIS
@@ -293,7 +331,7 @@ mod tests {
     fn the_selected_emoji_is_bracketed_where_there_is_no_backdrop() {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
-        let drawn = |state: &EmojiPickerState, palette: &Palette| {
+        let drawn = |state: &mut EmojiPickerState, palette: &Palette| {
             let mut term = Terminal::new(TestBackend::new(60, 10)).unwrap();
             term.draw(|f| state.render(f, f.area(), palette, ru()))
                 .unwrap();
@@ -318,11 +356,11 @@ mod tests {
         let spaces = (String::from(" "), String::from(" "));
 
         let mono = Palette::mono();
-        let first = drawn(&EmojiPickerState::new(), &mono);
+        let first = drawn(&mut EmojiPickerState::new(), &mono);
         assert_eq!(around(&first, EMOJIS[0]), brackets);
         assert_eq!(around(&first, EMOJIS[1]), spaces);
 
-        let moved = drawn(&EmojiPickerState::with_selected(1), &mono);
+        let moved = drawn(&mut EmojiPickerState::with_selected(1), &mono);
         assert_eq!(around(&moved, EMOJIS[0]), spaces, "the brackets moved on");
         assert_eq!(around(&moved, EMOJIS[1]), brackets);
         for emoji in EMOJIS {
@@ -333,7 +371,7 @@ mod tests {
             );
         }
 
-        let plain = drawn(&EmojiPickerState::new(), &Palette::default());
+        let plain = drawn(&mut EmojiPickerState::new(), &Palette::default());
         assert_eq!(around(&plain, EMOJIS[0]), spaces, "no brackets elsewhere");
         for emoji in EMOJIS {
             assert_eq!(column_of(&plain, emoji), column_of(&first, emoji));
@@ -383,7 +421,7 @@ mod tests {
         use ratatui::backend::TestBackend;
         use unicode_width::UnicodeWidthStr;
 
-        let picker = EmojiPickerState::new();
+        let mut picker = EmojiPickerState::new();
         let mut term = Terminal::new(TestBackend::new(60, 10)).unwrap();
         term.draw(|f| picker.render(f, f.area(), &Palette::default(), ru()))
             .unwrap();
@@ -427,14 +465,14 @@ mod tests {
         use ratatui::buffer::Buffer;
         use ratatui::style::Color;
 
-        let render = |state: &EmojiPickerState| {
+        let render = |state: &mut EmojiPickerState| {
             let mut term = Terminal::new(TestBackend::new(60, 10)).unwrap();
             term.draw(|f| state.render(f, f.area(), &Palette::default(), ru()))
                 .unwrap();
             term.backend().buffer().clone()
         };
 
-        let painted = render(&EmojiPickerState::new());
+        let painted = render(&mut EmojiPickerState::new());
         let area = painted.area;
 
         // The selected cell: a wide emoji with a selection background.
@@ -464,7 +502,7 @@ mod tests {
         );
 
         // (B) Shifting the selection: the glyph stays put and stays wide — the tail won't arrive.
-        let moved = render(&EmojiPickerState::with_selected(1));
+        let moved = render(&mut EmojiPickerState::with_selected(1));
         assert_eq!(
             moved[(x, y)].bg,
             Color::Reset,
@@ -508,7 +546,7 @@ mod tests {
     fn render_does_not_panic() {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
-        let s = EmojiPickerState::new();
+        let mut s = EmojiPickerState::new();
         for (w, h) in [(80u16, 24u16), (20, 6)] {
             let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
             term.draw(|f| s.render(f, f.area(), &Palette::default(), ru()))

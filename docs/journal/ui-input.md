@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (48)
+## Entries (51)
 
 - Post-M9: fast multiline clipboard paste (done)
 - Post-M9: `↑/↓` navigation by visual row of a wrapped line (done)
@@ -60,6 +60,9 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the feed's own text selection (done)
 - Post-M9: the app holds the mouse by default; `Ctrl+W` is gone (done)
 - Post-M9: a copy leaves the prefixes drawn as text out (done)
+- Post-M9: `Ctrl+C` and `Ctrl+X` in every field (done)
+- Post-M9: the mouse on every screen (done)
+- Post-M9: a selection in read-only text — the mouse track complete (done)
 
 ### Post-M9: fast multiline clipboard paste (done)
 - **Symptom**: a large clipboard paste lagged in Windows Terminal, and a line break
@@ -2726,3 +2729,186 @@ compaction summary, and a quote's `>` not painted. **4908 green, 317 `#[ignore]`
 Linux; the screenshot dumps are unchanged. **A pty run** (`mindfork demo`) copied the
 scripted `note_save` card as `note_save` / `content: …` / blank / `Note saved (id=…)`,
 with no gutter, corner or icon. No live run in the AGENTS.md §3 sense.
+
+### Post-M9: `Ctrl+C` and `Ctrl+X` in every field (done)
+
+**What.** Stage 3a of the mouse track
+([docs/research/mouse-always-captured.md](../research/mouse-always-captured.md) §5.8),
+on `feat/field-copy`. Planning stage 3 found that only the chat's box copied. The
+selection track (stage B,
+[docs/history/input-selection-undo-mouse.md](../history/input-selection-undo-mouse.md)
+§5.2) gave every `InputBox` a selection. It wired the clipboard into the chat box alone
+and left the other consumers "for later, with the same pattern". So `Shift` selected text
+in the rename, the settings' editors, the self-model's and the notes' editors and the
+search bars, and nothing could copy it: `on_key` swallowed `Ctrl+C`. Stage 3b's mouse
+selection in those fields would have been the same dead end, so this comes first.
+
+**How.** The widget still has no clipboard. `InputBox::clipboard_key` answers the two
+keys with a `Clip`:
+- `Copy(text)` keeps the selection (F2);
+- `Cut(text)` removes the text undoably, and the caller marks it as an edit (spellcheck,
+  validation, the filter);
+- `Nothing` means there was no selection, or the field is masked. A cut in a masked
+  field removes nothing, since nothing may reach the clipboard.
+
+The keys are layout-independent and not AltGr text, like every shortcut in the widget.
+The chat box's own `Ctrl+C`/`Ctrl+X` now go through `copy`/`cut` too. Each screen turns
+the text into its own intent (`ChatListIntent::CopyText`, `SettingsIntent::CopyText`,
+`SelfModelIntent::CopyText`, `NotesIntent::CopyText`). The runtime asks one question of
+every intent, `AnyIntent::clipboard_text`, so a copy is routed the same way wherever it
+was made: `copy_text`, then F10's chip. On the chat it is the status bar's. On every
+other screen `compose_frame` draws it at the right end of the frame's last row, over the
+footer's hints, since those screens have no chat status bar.
+
+**Two smaller decisions.** In the feed's search bar, when nothing is selected in the
+query, `Ctrl+C` copies the feed's selection, which is still drawn behind the bar. `Ctrl+X`
+only ever cuts the query. And the help's *Globally* section gains `Ctrl+C / Ctrl+X`: the
+keys now mean the same thing in every field.
+
+**Tests.** The widget's keys: copy kept, cut undone, nothing without a selection, a
+masked field, AltGr text, the Russian layout. Each screen's fields: the rename (the
+spelling recheck flagged), the settings' editor (an error cleared by a cut), field search
+(a cut re-filters), the model filter, a secret's editor copying nothing, the self-model's
+editor, the notes' editor and search (a copy leaves the list, a cut widens it), the
+feed's search bar. The runtime: every screen's copy is a clipboard text, and the chip is
+drawn on the settings screen's footer. A copy through the pipeline would open the real
+clipboard, which belongs to the `#[ignore]` round trips. **4919 green.** No live run in
+the AGENTS.md §3 sense (no engine, memory or tool path).
+
+**A pty run caught one wording.** The first cut sent a field's copy through
+`deliver_clipboard`, the path a conversation's `F5` takes, which on the chat list puts
+the whole sentence on the list's notice line. A rename's copy, run in a pty with no
+clipboard (`mindfork demo`, `F2`, `Ctrl+A`, `Ctrl+C`), read *"Conversation sent to your
+terminal's clipboard (OSC 52)…"* — about a title. A field's copy is the chip now, on the
+list as everywhere else. The notice line keeps the conversation's copy. The same run
+decoded the OSC 52 sequences: the settings' field search sent its Russian query whole and the
+chip read `copied (OSC 52)` on the footer's last row; the rename sent the title.
+
+### Post-M9: the mouse on every screen (done)
+
+**What.** Stage 3b of the mouse track
+([docs/research/mouse-always-captured.md](../research/mouse-always-captured.md) §5.8,
+F11–F12), on `feat/mouse-everywhere`, stacked on 3a. Before it, the mouse reached the
+chat alone, and the other screens left it with the terminal (F7). Now every screen and
+the help dialog answer it, and capture is on everywhere but the "window too small"
+notice.
+- **Routing.** `handle_mouse_event` gives a report to the help dialog first: modal,
+  its wheel scrolls it. Otherwise `ActiveScreen::handle_mouse` gives it to the screen in
+  front, and the intent goes through `run_intent`, the tail of `handle_key_event`
+  factored out for both. Every screen but the chat takes the click count from the chat's
+  `ClickCounter` (`count_click`), since one screen is in front at a time.
+- **The wheel (F11)** scrolls the panel under the pointer, and the selection stays,
+  pushed along by the edge it would leave.
+- **A click (F12)** selects a row and focuses its pane. A double click sends `Enter` to
+  the screen's own key handler, so it does exactly what the key does.
+- **A popup takes the mouse alone**, as it takes the keys: the settings' editor, choice,
+  model picker and search; the chat's link, server, spelling, emoji and profile pickers;
+  the feed's search bar, whose wheel still scrolls the feed.
+
+**Two shapes of list.** The lists on `ListScroll` draw one item a row through ratatui's
+`List`. The helper now records where it drew: the area, the first row, the length and
+the view. That is enough for `item_at`, `wheel` (with the padding of a list drawn with
+`scroll_padding`) and `on_mouse`, the wheel-and-press every picker shares.
+
+The lists drawn line by line from an offset — the self-model, the search hits, the
+tasks, the notes, the changed files — record a `RowList` instead. It holds their items'
+`RowSpan`s, each id the screen's own, and a row no span covers (a header, a decoration)
+takes no click and no push. `RowList::wheel` is given the screen's own follow rule
+(`keep_visible`, or `follow_item`), and pushes the selection to the nearest item that
+rule holds at the new scroll. So the next draw leaves the window where the wheel put
+it: the rule that keeps the selection in view did not have to change. Changing it was
+fork F11's option (c), and it is the rule that recurred as a defect in eight lists.
+
+**A long item is scrolled through.** The self-model's and the search screen's two copies
+of `adjust_scroll` pinned a selected item taller than the window to its top on every
+draw, so the wheel could never move inside a long insight. They are now one function,
+`ui::follow_item`, which keeps a window that stands inside a selected tall item. A
+selection the keys move onto one still shows its top: the window can be inside an item
+only if the wheel put it there.
+
+**A trap the pty caught, and a lesson.** The settings' menu has a title over a right
+border alone. The title takes the first row, while the call passed the whole height as
+`view_h`. Every unit test of a click on a section passed, and in a pty (`mindfork demo`,
+SGR reports) the click picked the section below. The tests found the cell to click
+through the same `item_at` they tested. The fix: the menu passes the rows its items get,
+and the first row is the rows beyond `view_h`, rounded up (a title alone, or two
+borders). A new test reads each shape's row text back from the buffer, and with the old
+rounding it is red. docs/lessons.md §5 has the lesson.
+
+**Tests.**
+- The helpers: a click on the drawn row in every shape; the wheel's push and padding;
+  the ends of a list; a list that fits does not move; `RowList`'s gaps, ids and both
+  rules; a tall item scrolled through; `row_spans`; `FieldGesture`, including the tick's
+  autoscroll.
+- Each screen on `TestBackend`:
+  - the chat list's wheel, click and double click, and a rename that keeps the mouse
+    from the list;
+  - the settings' menu, a field, a header taking none, a choice opened and picked by
+    double clicks, the field pane's wheel landing on fields, the editor's drag;
+  - the self-model's long insight, decoration and double-click edit;
+  - the search hits' header;
+  - the changes screen's panes and the cancelled revert;
+  - the tasks' wheel and the transcript opened;
+  - the notes' double-click open and note scroll;
+  - the link picker, the emoji grid, the feed search bar.
+- The runtime: the help's wheel, a click through the pipeline to the settings, the
+  capture rule.
+
+**4941 green.** **The pty run** (`mindfork demo`, SGR reports) showed capture on at
+start, the chat list's click selecting and its double click opening the chat, the
+settings' click on *Interface* (after the fix), and the help scrolled by the wheel. No
+live run in the AGENTS.md §3 sense.
+
+**The owner's live check: tabs.** Everything worked except clicks on the tabs, in the
+settings and in the help. F12 had named rows, and a strip of tabs is no list, so neither
+took a click. Now each strip records a `ui::TabHits`, each tab's columns on its row,
+where it is drawn. A click on a settings subsection opens it, with the focus on the
+strip where `←`/`→` leave it. A click on a help tab opens it, and on a strip too narrow
+for every tab a `…` opens the nearest tab hidden on its side. The tests read the clicked
+cell back from the buffer and find the tab's label there (docs/lessons.md §5). A pty run
+opened *Impersonation* and *Commands* by a click. **4944 green.**
+
+### Post-M9: a selection in read-only text — the mouse track complete (done)
+
+**What.** Stage 3c of the mouse track
+([docs/research/mouse-always-captured.md](../research/mouse-always-captured.md) F13),
+on `feat/read-only-selection`, stacked on 3b. With the mouse captured on every screen,
+text nobody edits had no selection at all. The terminal's own needs a modifier, takes
+the borders with the text, and conhost has none. The owner chose the cheap form: a
+selection over the visible cells of one panel. It covers:
+- the help dialog's content, every tab, *About* included;
+- an opened note;
+- the changes screen's diff;
+- an opened version of the self-model's history.
+
+**How.** `shared::cell_selection::CellSelection` reads the panel back from the drawn
+buffer instead of from its model:
+- **Record.** Right after the panel draws, `record` takes each cell's symbol. ratatui
+  draws a wide glyph's trailing cell as a blank, so the cell after a two-column glyph is
+  recorded empty, and a selection starting on that half steps back onto the glyph.
+- **Highlight.** `record` paints the selection backdrop the feed uses, so the monochrome
+  pass keeps it as reverse video.
+- **Dropped when the text changes.** A scroll, a tab, a resize or another file puts
+  other text under the selection. Each draw's rows are compared with the last, and a
+  difference drops it, so no screen has to remember to.
+- **Grammar.** A press starts a gesture and drops any selection standing; a drag
+  selects to the pointer, clamped to the panel; the release ends the gesture.
+- **Copy.** `Ctrl+C` hands up each row's cells with their trailing blanks trimmed,
+  joined by `\n`, as the screen's `CopyText`; the help hands it up as
+  `HelpKeyOutcome::Copy`. The selection stays.
+- **The chip.** It is drawn after the help dialog when one is open, so a copy from the
+  help is said over the dimmed screen.
+
+**Tests.** The selection itself: a forward and a backward drag, the clamp, a press
+alone, new text dropping it, a wide glyph at the start. And each panel: the help's
+content copied and kept until a scroll drops it, an opened note, the diff focused and
+copied across rows, the history's version opened by a double click and its text copied.
+**4951 green**, with 3b's tab fix merged in. **The pty run** (`mindfork demo`, the help's *Shortcuts* tab): a drag
+over a row copied `select text` over OSC 52, and the chip read `copied (OSC 52)` on the
+last row. No live run in the AGENTS.md §3 sense.
+
+**The track is complete.** Stage 1 built the input path and the *Mouse* setting. Stage 2
+built the feed's own selection and flipped the default, so `Ctrl+W` is gone. Stage 2b
+left the prefixes out of a copy. Stage 3 added copy in every field, the mouse on every
+screen and this selection.
+

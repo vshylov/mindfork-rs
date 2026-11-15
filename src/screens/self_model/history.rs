@@ -11,7 +11,10 @@
 //! number when a fresh snapshot replaces it.
 
 use ratatui::Frame;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::crossterm::event::{
+    KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
+use ratatui::layout::{Position, Rect};
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
@@ -21,19 +24,21 @@ use crate::entities::self_model::{GoalStatus, SelfModel};
 use crate::entities::self_model_history::{
     Change, SelfModelHistoryView, SelfModelVersion, VersionAuthor, changes,
 };
+use crate::shared::cell_selection::CellSelection;
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
+use crate::shared::mouse::{SelectUnit, wheel_delta};
 use crate::shared::theme::Palette;
-use crate::shared::ui::{SCREEN_MIN_SIZE, screen_chrome};
+use crate::shared::ui::{RowList, SCREEN_MIN_SIZE, follow_item, screen_chrome};
 use crate::shared::wrap::wrap_line;
 
-use super::{adjust_scroll, draw_visual_rows, expand_visual_rows};
+use super::{draw_visual_rows, expand_visual_rows, visual_spans};
 
 /// How far `PageUp`/`PageDown` move: fixed, like the other screens.
 const PAGE_STEP: usize = 10;
 
 /// What a key did in the history view, for the screen around it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum HistoryKey {
     /// Handled here; the view stays.
     Stay,
@@ -41,6 +46,9 @@ pub(super) enum HistoryKey {
     Back,
     /// `Ctrl+Q`/`F10`: quit the application.
     Quit,
+    /// `Ctrl+C` over an open version's selection: this text for the clipboard
+    /// (docs/research/mouse-always-captured.md F13).
+    Copy(String),
 }
 
 /// The history view's state.
@@ -54,6 +62,12 @@ pub(super) struct History {
     /// The first visible visual row of the list, and of an open version.
     list_scroll: usize,
     detail_scroll: usize,
+    /// The list as last drawn, and where an open version was — for the mouse
+    /// (docs/research/mouse-always-captured.md F11, F12).
+    drawn: RowList,
+    detail_area: Rect,
+    /// A selection over an open version's visible cells (F13).
+    detail_selection: CellSelection,
 }
 
 impl History {
@@ -65,6 +79,9 @@ impl History {
             open: false,
             list_scroll: 0,
             detail_scroll: 0,
+            drawn: RowList::default(),
+            detail_area: Rect::default(),
+            detail_selection: CellSelection::default(),
         }
     }
 
@@ -87,6 +104,13 @@ impl History {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         if (ctrl && keys::hotkey_char(&key) == Some('q')) || key.code == KeyCode::F(10) {
             return HistoryKey::Quit;
+        }
+        if ctrl && self.open && keys::hotkey_char(&key) == Some('c') {
+            return self
+                .detail_selection
+                .text()
+                .filter(|text| !text.is_empty())
+                .map_or(HistoryKey::Stay, HistoryKey::Copy);
         }
         if ctrl {
             return HistoryKey::Stay;
@@ -124,6 +148,46 @@ impl History {
             _ => {}
         }
         HistoryKey::Stay
+    }
+
+    /// A mouse event: an open version's wheel scrolls it; on the list the
+    /// wheel scrolls, the selection pushed along by the edge it would leave
+    /// (F11), a click selects a version and a double click opens it, as `Enter`
+    /// does (F12).
+    pub(super) fn handle_mouse(&mut self, mouse: MouseEvent, unit: SelectUnit) {
+        let (col, row) = (mouse.column, mouse.row);
+        if self.open {
+            // A drag selects what the version shows (F13).
+            if self.detail_selection.on_mouse(mouse) {
+                return;
+            }
+            if let Some(delta) = wheel_delta(mouse.kind)
+                && self.detail_area.contains(Position::new(col, row))
+            {
+                // Clamped to the version's rows where it is drawn.
+                self.detail_scroll = self.detail_scroll.saturating_add_signed(delta);
+            }
+            return;
+        }
+        if let Some(delta) = wheel_delta(mouse.kind) {
+            if self.drawn.holds(col, row)
+                && let Some((scroll, selected)) =
+                    self.drawn.wheel(delta, self.selected, follow_item)
+            {
+                self.list_scroll = scroll;
+                self.selected = selected;
+            }
+            return;
+        }
+        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+            return;
+        }
+        if let Some(version) = self.drawn.item_at(col, row) {
+            self.selected = version;
+            if unit == SelectUnit::Word {
+                self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            }
+        }
     }
 
     fn step_to(&mut self, index: usize) {
@@ -191,6 +255,7 @@ impl History {
                 visual.extend(wrapped);
             }
             self.detail_scroll = self.detail_scroll.min(visual.len().saturating_sub(view_h));
+            self.detail_area = area;
             let shown: Vec<Line<'static>> = visual
                 .into_iter()
                 .skip(self.detail_scroll)
@@ -202,6 +267,8 @@ impl History {
                 })
                 .collect();
             frame.render_widget(Paragraph::new(shown), area);
+            self.detail_selection
+                .record(frame.buffer_mut(), area, palette);
             return;
         }
         let rows = self.list_rows(palette, loc);
@@ -210,7 +277,10 @@ impl History {
             .position(|(_, v)| *v == Some(self.selected))
             .unwrap_or(0);
         let (visual, sel_start, sel_height) = expand_visual_rows(&rows, sel, width);
-        self.list_scroll = adjust_scroll(self.list_scroll, sel_start, sel_height, view_h);
+        self.list_scroll = follow_item(self.list_scroll, sel_start, sel_height, view_h);
+        let spans = visual_spans(&visual, |ri| rows[ri].1);
+        self.drawn
+            .record(area, self.list_scroll, visual.len(), spans);
         draw_visual_rows(frame, area, &visual, sel, self.list_scroll, palette);
     }
 
@@ -609,6 +679,48 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// The mouse in the history (docs/research/mouse-always-captured.md F12,
+    /// F13): a double click on a version opens it, as `Enter` does; a drag
+    /// over the open version selects what it shows, and `Ctrl+C` copies it.
+    #[test]
+    fn a_double_click_opens_a_version_whose_text_a_drag_selects() {
+        use crate::shared::mouse::SelectUnit::{Char, Word};
+        use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+        let mouse = |kind, (column, row): (u16, u16)| MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        };
+        let mut s = screen();
+        s.show_history(view());
+        text(&mut s);
+        let history = s.history.as_mut().unwrap();
+        let cell = history.drawn.cell_of(1).expect("version 2's row");
+        let left = MouseButton::Left;
+        history.handle_mouse(mouse(MouseEventKind::Down(left), cell), Char);
+        assert_eq!(history.selected, 1);
+        history.handle_mouse(mouse(MouseEventKind::Down(left), cell), Word);
+        assert!(history.open, "the version opened");
+        let shown = text(&mut s);
+        let row = shown
+            .lines()
+            .position(|l| l.contains("learn chess"))
+            .unwrap() as u16;
+        let line = shown.lines().nth(row as usize).unwrap();
+        let col = line[..line.find("learn").unwrap()].chars().count() as u16;
+        let history = s.history.as_mut().unwrap();
+        history.handle_mouse(mouse(MouseEventKind::Down(left), (col, row)), Char);
+        history.handle_mouse(mouse(MouseEventKind::Drag(left), (col + 4, row)), Char);
+        history.handle_mouse(mouse(MouseEventKind::Up(left), (col + 4, row)), Char);
+        text(&mut s);
+        let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert_eq!(
+            s.handle_key(ctrl_c),
+            Some(SelfModelIntent::CopyText("learn".into()))
+        );
     }
 
     #[test]

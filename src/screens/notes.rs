@@ -14,8 +14,10 @@
 
 use chrono::{DateTime, Utc};
 use ratatui::Frame;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use ratatui::layout::Rect;
+use ratatui::crossterm::event::{
+    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
+use ratatui::layout::{Position, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
@@ -24,16 +26,19 @@ use uuid::Uuid;
 use crate::entities::note::{NoteCard, NoteEdit, NotesView};
 use crate::entities::self_model::age_label;
 use crate::features::tools::notes::SELF_NOTE_TAG;
+use crate::shared::cell_selection::CellSelection;
 use crate::shared::config::NewlineKey;
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
+use crate::shared::mouse::{SelectUnit, wheel_delta};
 use crate::shared::theme::Palette;
 use crate::shared::ui::{
-    MinSize, SCREEN_MIN_SIZE, dim_background, keep_visible, render_scrollbar, screen_chrome,
+    MinSize, RowList, RowSpan, SCREEN_MIN_SIZE, dim_background, keep_visible, render_scrollbar,
+    screen_chrome,
 };
 use crate::shared::wrap::{truncate_to_width, wrap_line};
 use crate::widgets::help_dialog::{HelpContext, HelpSection};
-use crate::widgets::input_box::{InputBox, RenderOpts};
+use crate::widgets::input_box::{FieldGesture, InputBox, RenderOpts};
 
 /// The notes screen's "Shortcuts" section (`F1`): one row per key
 /// `handle_key` matches — a new arm gets a row here (AGENTS.md §3).
@@ -63,6 +68,9 @@ const SHOWN_MARK: &str = "◆";
 pub enum NotesIntent {
     /// Close and go back to the chat (`Esc`).
     Close,
+    /// Put this text on the clipboard: `Ctrl+C`/`Ctrl+X` in the editor or the
+    /// search (docs/research/mouse-always-captured.md §5.8).
+    CopyText(String),
     /// Quit the application (`Ctrl+Q`/`F10`).
     Quit,
     /// Apply an edit; the orchestrator answers with a fresh snapshot.
@@ -118,6 +126,14 @@ pub struct NotesScreen {
     /// time: the screen is a full-screen overlay, so the settings cannot
     /// change while it stands. See [`Self::with_newline_key`].
     newline_key: NewlineKey,
+    /// The list as last drawn, and where an opened note was — for the mouse
+    /// (docs/research/mouse-always-captured.md F11, F12).
+    drawn: RowList,
+    note_area: Rect,
+    /// A selection over an opened note's visible cells (F13).
+    note_selection: CellSelection,
+    /// The editor's or the search line's mouse gesture.
+    field_gesture: FieldGesture,
 }
 
 impl NotesScreen {
@@ -135,6 +151,10 @@ impl NotesScreen {
             editor: None,
             confirm_delete: None,
             newline_key: NewlineKey::default(),
+            drawn: RowList::default(),
+            note_area: Rect::default(),
+            note_selection: CellSelection::default(),
+            field_gesture: FieldGesture::default(),
         }
     }
 
@@ -230,13 +250,20 @@ impl NotesScreen {
             return self.handle_editor_key(key);
         }
         if self.search.is_some() {
-            self.handle_search_key(key);
-            return None;
+            return self.handle_search_key(key);
         }
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let phys = keys::hotkey_char(&key);
         if key.code == KeyCode::F(10) || (ctrl && phys == Some('q')) {
             return Some(NotesIntent::Quit);
+        }
+        // An opened note's selection (F13): `Ctrl+C` copies it and keeps it.
+        if ctrl && phys == Some('c') && matches!(self.mode, Mode::Note(_)) {
+            return self
+                .note_selection
+                .text()
+                .filter(|text| !text.is_empty())
+                .map(NotesIntent::CopyText);
         }
         // The delete's question: `Del` again deletes, anything else keeps it.
         if let Some(id) = self.confirm_delete.take() {
@@ -284,6 +311,72 @@ impl NotesScreen {
         None
     }
 
+    /// A mouse event (docs/research/mouse-always-captured.md §5.8): the editor's
+    /// while it is open, and the search line's press, drag and release while it
+    /// is typed; otherwise the wheel scrolls the list — the selection pushed
+    /// along by the edge it would leave (F11) — or an opened note, and a click
+    /// selects a note, a double click opening it as `Enter` does (F12). A press
+    /// while a delete waits for its second `Del` keeps the note, as any other
+    /// key does.
+    pub fn handle_mouse(&mut self, mouse: MouseEvent, unit: SelectUnit) -> Option<NotesIntent> {
+        if let Some(editor) = self.editor.as_mut() {
+            self.field_gesture.on_mouse(&mut editor.input, mouse, unit);
+            return None;
+        }
+        if let Some(search) = self.search.as_mut()
+            && self.field_gesture.on_mouse(search, mouse, unit)
+        {
+            return None;
+        }
+        // An opened note's text: a drag selects what it shows (F13).
+        if matches!(self.mode, Mode::Note(_)) && self.note_selection.on_mouse(mouse) {
+            return None;
+        }
+        let (col, row) = (mouse.column, mouse.row);
+        if let Some(delta) = wheel_delta(mouse.kind) {
+            match self.mode {
+                Mode::List => {
+                    let rule = |scroll, first, _, view| keep_visible(scroll, first, view);
+                    if self.drawn.holds(col, row)
+                        && let Some((scroll, selected)) =
+                            self.drawn.wheel(delta, self.selected, rule)
+                    {
+                        self.scroll = scroll;
+                        self.selected = selected;
+                    }
+                }
+                // Clamped to the note's lines where it is drawn.
+                Mode::Note(_) if self.note_area.contains(Position::new(col, row)) => {
+                    self.note_scroll = self.note_scroll.saturating_add_signed(delta);
+                }
+                Mode::Note(_) => {}
+            }
+            return None;
+        }
+        if mouse.kind != MouseEventKind::Down(MouseButton::Left) || self.search.is_some() {
+            return None;
+        }
+        self.confirm_delete = None;
+        if self.mode != Mode::List {
+            return None;
+        }
+        self.selected = self.drawn.item_at(col, row)?;
+        (unit == SelectUnit::Word)
+            .then(|| self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)))
+            .flatten()
+    }
+
+    /// The loop's tick, for a drag held past the editor's top or bottom edge.
+    pub fn mouse_tick(&mut self, now: std::time::Instant) -> bool {
+        if let Some(editor) = self.editor.as_mut() {
+            return self.field_gesture.tick(&mut editor.input, now);
+        }
+        match self.search.as_mut() {
+            Some(search) => self.field_gesture.tick(search, now),
+            None => false,
+        }
+    }
+
     /// `Esc`: an opened note goes back to the list, a search in force is
     /// dropped, and only then the screen closes.
     fn back(&mut self) -> Option<NotesIntent> {
@@ -325,10 +418,18 @@ impl NotesScreen {
         };
     }
 
-    fn handle_search_key(&mut self, key: KeyEvent) {
-        let Some(search) = self.search.as_mut() else {
-            return;
-        };
+    fn handle_search_key(&mut self, key: KeyEvent) -> Option<NotesIntent> {
+        let search = self.search.as_mut()?;
+        // A copy leaves the query, and so the list, as they were; a cut is an
+        // edit of the query like any other.
+        if let Some(clip) = search.clipboard_key(&key) {
+            if clip.edited() {
+                self.query = search.text();
+                self.selected = 0;
+                self.scroll = 0;
+            }
+            return clip.text().map(NotesIntent::CopyText);
+        }
         match key.code {
             // `Enter` keeps the search in force; `Esc` drops it.
             KeyCode::Enter => self.search = None,
@@ -343,6 +444,7 @@ impl NotesScreen {
         }
         self.selected = 0;
         self.scroll = 0;
+        None
     }
 
     fn open_editor(&mut self, kind: fn(Uuid) -> EditKind) {
@@ -366,6 +468,9 @@ impl NotesScreen {
 
     fn handle_editor_key(&mut self, key: KeyEvent) -> Option<NotesIntent> {
         let editor = self.editor.as_mut()?;
+        if let Some(clip) = editor.input.clipboard_key(&key) {
+            return clip.text().map(NotesIntent::CopyText);
+        }
         match key.code {
             KeyCode::Esc => {
                 self.editor = None;
@@ -530,8 +635,28 @@ impl NotesScreen {
                 self.note_scroll
             }
         };
+        match (self.mode, focus) {
+            (Mode::List, Some(line)) => {
+                // One line a note, from the one the selection stands on back.
+                let first = line - self.selected;
+                let spans = (0..self.visible().len())
+                    .map(|id| RowSpan {
+                        id,
+                        first: first + id,
+                        rows: 1,
+                    })
+                    .collect();
+                self.drawn.record(body, scroll, total, spans);
+            }
+            (Mode::List, None) => self.drawn.record(body, scroll, total, Vec::new()),
+            (Mode::Note(_), _) => self.note_area = body,
+        }
         let shown: Vec<Line<'static>> = lines.into_iter().skip(scroll).take(view_h).collect();
         frame.render_widget(Paragraph::new(shown), body);
+        if let Mode::Note(_) = self.mode {
+            self.note_selection
+                .record(frame.buffer_mut(), body, &palette);
+        }
         render_scrollbar(frame, chrome.panel, total, view_h, scroll, true, &palette);
         self.render_editor(frame);
     }

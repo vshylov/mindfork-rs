@@ -17,18 +17,23 @@
 //! the settings screen already established the shape.
 
 use ratatui::Frame;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::crossterm::event::{
+    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
+use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::features::workspace_diff::{ChangeSet, DiffKind, FileChange, FileState};
+use crate::shared::cell_selection::CellSelection;
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
+use crate::shared::mouse::{SelectUnit, wheel_delta};
 use crate::shared::theme::Palette;
 use crate::shared::ui::{
-    MinSize, Prompt, confirm_prompt, keep_visible, render_scrollbar, screen_chrome,
+    MinSize, Prompt, RowList, RowSpan, confirm_prompt, keep_visible, render_scrollbar,
+    screen_chrome,
 };
 use crate::widgets::help_dialog::{HelpContext, HelpSection};
 
@@ -75,6 +80,9 @@ enum Focus {
 pub enum ChangesIntent {
     /// Close and go back to the chat (`Esc`).
     Close,
+    /// Put this text on the clipboard: `Ctrl+C` over the diff's selection
+    /// (docs/research/mouse-always-captured.md F13).
+    CopyText(String),
     /// Quit the application (`Ctrl+Q`/`F10`).
     Quit,
     /// Put this file back to how it was before the assistant touched it.
@@ -98,6 +106,12 @@ pub struct ChangesScreen {
     /// user's file, and it is the one action here that cannot be undone by this
     /// screen — the journal row goes with it.
     confirming: Option<String>,
+    /// The file pane as last drawn, and where the diff was — for the mouse
+    /// (docs/research/mouse-always-captured.md F11, F12).
+    files_drawn: RowList,
+    diff_area: Rect,
+    /// A selection over the diff's visible cells (F13).
+    diff_selection: CellSelection,
 }
 
 impl ChangesScreen {
@@ -111,6 +125,9 @@ impl ChangesScreen {
             file_scroll: 0,
             focus: Focus::Files,
             confirming: None,
+            files_drawn: RowList::default(),
+            diff_area: Rect::default(),
+            diff_selection: CellSelection::default(),
         }
     }
 
@@ -166,6 +183,14 @@ impl ChangesScreen {
             self.confirming = None;
             return (key.code == KeyCode::Enter).then_some(ChangesIntent::Revert(path));
         }
+        // The diff's selection (F13): `Ctrl+C` copies it and keeps it.
+        if ctrl && keys::hotkey_char(&key) == Some('c') {
+            return self
+                .diff_selection
+                .text()
+                .filter(|text| !text.is_empty())
+                .map(ChangesIntent::CopyText);
+        }
         if ctrl {
             return None;
         }
@@ -203,6 +228,64 @@ impl ChangesScreen {
             _ => {}
         }
         None
+    }
+
+    /// A mouse event (docs/research/mouse-always-captured.md §5.8): the wheel
+    /// scrolls the pane under the pointer — the files, the selection pushed
+    /// along by the edge it would leave (F11), or the diff; a click on a file
+    /// selects it and focuses the file pane, a click in the diff focuses it, and
+    /// a double click is `Enter` there (F12). While a revert waits for its
+    /// answer, a press cancels it, as any key but `Enter` does.
+    pub fn handle_mouse(&mut self, mouse: MouseEvent, unit: SelectUnit) -> Option<ChangesIntent> {
+        let (col, row) = (mouse.column, mouse.row);
+        let press = mouse.kind == MouseEventKind::Down(MouseButton::Left);
+        if self.confirming.is_some() {
+            if press {
+                self.confirming = None;
+            }
+            return None;
+        }
+        if let Some(delta) = wheel_delta(mouse.kind) {
+            if self.files_drawn.holds(col, row) {
+                let rule = |scroll, first, _, view| keep_visible(scroll, first, view);
+                if let Some((scroll, file)) = self.files_drawn.wheel(delta, self.selected, rule) {
+                    self.file_scroll = scroll;
+                    self.select(file);
+                }
+            } else if self.diff_area.contains(Position::new(col, row)) {
+                self.diff_scroll = if delta < 0 {
+                    self.diff_scroll.saturating_sub(delta.unsigned_abs())
+                } else {
+                    self.scroll_down(delta.unsigned_abs())
+                };
+            }
+            return None;
+        }
+        // A press in the diff focuses it and starts a selection of what it
+        // shows; its drag and release are the selection's (F13).
+        if self.diff_selection.on_mouse(mouse) {
+            if press {
+                self.focus = Focus::Diff;
+                return (unit == SelectUnit::Word)
+                    .then(|| self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)))
+                    .flatten();
+            }
+            return None;
+        }
+        if !press {
+            return None;
+        }
+        if let Some(file) = self.files_drawn.item_at(col, row) {
+            self.focus = Focus::Files;
+            self.select(file);
+        } else if self.diff_area.contains(Position::new(col, row)) {
+            self.focus = Focus::Diff;
+        } else {
+            return None;
+        }
+        (unit == SelectUnit::Word)
+            .then(|| self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)))
+            .flatten()
     }
 
     /// One arrow step, in whichever pane has focus.
@@ -420,6 +503,15 @@ impl ChangesScreen {
             ]));
         }
         frame.render_widget(Paragraph::new(lines), area);
+        let spans = (0..self.set.files.len())
+            .map(|id| RowSpan {
+                id,
+                first: id,
+                rows: 1,
+            })
+            .collect();
+        self.files_drawn
+            .record(area, self.file_scroll, self.set.files.len(), spans);
         render_scrollbar(
             frame,
             area,
@@ -462,6 +554,7 @@ impl ChangesScreen {
             return;
         };
         let view = area.height as usize;
+        self.diff_area = area;
         if file.lines.is_empty() {
             let key = match file.state {
                 FileState::Created => "ui.changes.detail_new",
@@ -473,6 +566,9 @@ impl ChangesScreen {
                 Paragraph::new(Line::styled(loc.t(key), p.muted_style())),
                 area,
             );
+            let palette = self.palette;
+            self.diff_selection
+                .record(frame.buffer_mut(), area, &palette);
             return;
         }
         self.diff_scroll = self.diff_scroll.min(file.lines.len().saturating_sub(1));
@@ -492,6 +588,9 @@ impl ChangesScreen {
             })
             .collect();
         frame.render_widget(Paragraph::new(lines), area);
+        let palette = self.palette;
+        self.diff_selection
+            .record(frame.buffer_mut(), area, &palette);
         render_scrollbar(
             frame,
             area,
@@ -765,6 +864,83 @@ mod tests {
     /// After a revert the snapshot is rebuilt, and the selection has to follow
     /// the **path**: an index would point at the next file down, and a second
     /// `r` would revert something the user never selected.
+    fn mouse_at(kind: MouseEventKind, (column, row): (u16, u16)) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    /// The mouse in both panes (docs/research/mouse-always-captured.md F11,
+    /// F12): a click on a file selects it and focuses the file pane, a click
+    /// in the diff focuses it, and the wheel over the diff scrolls it whichever
+    /// pane has focus; a press while a revert is asked about cancels it.
+    #[test]
+    fn a_click_picks_a_file_and_the_wheel_scrolls_the_diff_under_it() {
+        use crate::shared::mouse::SelectUnit::Char;
+        use ratatui::crossterm::event::MouseButton;
+        let mut long = modified("src/long.rs");
+        long.lines = (0..80)
+            .map(|i| line(DiffKind::Added, &format!("line {i}")))
+            .collect();
+        let mut s = screen(vec![modified("a.rs"), long, modified("c.rs")]);
+        text(&mut s);
+        let click = MouseEventKind::Down(MouseButton::Left);
+        let at = s.files_drawn.cell_of(1).expect("the second file");
+        s.handle_mouse(mouse_at(click, at), Char);
+        assert_eq!((s.selected, s.focus), (1, Focus::Files));
+        text(&mut s);
+        let diff = (s.diff_area.x + 2, s.diff_area.y + 2);
+        s.handle_mouse(mouse_at(MouseEventKind::ScrollDown, diff), Char);
+        assert_eq!(
+            (s.diff_scroll, s.focus),
+            (3, Focus::Files),
+            "the wheel focuses nothing"
+        );
+        s.handle_mouse(mouse_at(click, diff), Char);
+        assert_eq!(s.focus, Focus::Diff);
+        s.handle_mouse(mouse_at(MouseEventKind::ScrollUp, diff), Char);
+        assert_eq!(s.diff_scroll, 0);
+        press(&mut s, KeyCode::Char('r'));
+        assert!(s.confirming.is_some());
+        s.handle_mouse(mouse_at(click, at), Char);
+        assert!(s.confirming.is_none(), "a press cancels the question");
+    }
+
+    /// A drag over the diff selects what it shows and focuses the pane;
+    /// `Ctrl+C` copies it (docs/research/mouse-always-captured.md F13).
+    #[test]
+    fn a_drag_over_the_diff_selects_what_ctrl_c_copies() {
+        use crate::shared::mouse::SelectUnit::Char;
+        use ratatui::crossterm::event::MouseButton;
+        let mut s = screen(vec![modified("a.rs")]);
+        let shown = text(&mut s);
+        let row = shown.lines().position(|l| l.contains("keep")).unwrap() as u16;
+        let col = shown
+            .lines()
+            .nth(row as usize)
+            .unwrap()
+            .chars()
+            .position(|c| c == 'k')
+            .unwrap() as u16;
+        let left = MouseButton::Left;
+        s.handle_mouse(mouse_at(MouseEventKind::Down(left), (col, row)), Char);
+        assert_eq!(s.focus, Focus::Diff);
+        s.handle_mouse(
+            mouse_at(MouseEventKind::Drag(left), (col + 1, row + 2)),
+            Char,
+        );
+        s.handle_mouse(mouse_at(MouseEventKind::Up(left), (col + 1, row + 2)), Char);
+        text(&mut s);
+        let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert_eq!(
+            s.handle_key(ctrl_c),
+            Some(ChangesIntent::CopyText("keep\n−was\n+is".into()))
+        );
+    }
+
     #[test]
     fn the_selection_follows_the_file_not_the_index() {
         let mut s = screen(vec![modified("a"), modified("b"), modified("c")]);

@@ -888,6 +888,19 @@ things on different screens. The highlights:
 > or typing ends it, `Esc` and a copy do not. While the assistant answers the
 > conversation selects nothing.
 >
+> **On every other screen** — the chat list, settings, the self-model, the search
+> results, the tasks, the notes, the changes, the help — the wheel scrolls the list or
+> the text under the pointer; a selected row stays where it is until the edge of the
+> list pushes it along, so the arrows go on from where you see it. A click on a tab —
+> the settings' subsections, the help's tabs — opens it. A click selects a
+> row, a double click does what `Enter` does on it — opens a chat or a note, edits or
+> toggles a setting, picks from a list. Text fields — renaming a chat, the settings'
+> editors, the self-model's and the notes' editors, the search lines — take a click, a
+> drag and a double or triple click like the input box. A popup that is open takes the
+> mouse alone; `Esc` closes it. In text you only read — the help, an opened note, a
+> diff, a version of the self-model — a drag selects what you see and `Ctrl+C` copies
+> it, line by line as it is shown; scrolling drops the selection.
+>
 > **Your terminal's own selection** is a modifier away: `Shift`+drag in most
 > terminals (Windows Terminal, VS Code on Windows and Linux, GNOME Terminal, Konsole,
 > kitty, Alacritty, WezTerm), `Option` in iTerm2, `Fn` in Terminal.app. In Windows
@@ -899,7 +912,11 @@ things on different screens. The highlights:
 > conhost has no such modifier.
 >
 > A copy (`Ctrl+C`, `F5`) says how it went on the status bar for a few seconds, and
-> `Ctrl+C` leaves the selection in place. `Ctrl` shortcuts are
+> `Ctrl+C` leaves the selection in place. `Ctrl+C` and `Ctrl+X` work in every text
+> field, not only the input box — renaming a chat, the settings' editors and search, the
+> self-model's and the notes' editors — and on a screen without the chat's status bar the
+> outcome shows at the right end of its bottom row; a key field (an API key, the
+> backup password) copies nothing. `Ctrl` shortcuts are
 > layout-independent: on Windows under any installed layout, elsewhere under
 > Cyrillic.
 

@@ -210,6 +210,111 @@ fn the_search_narrows_by_text_and_tags_and_esc_drops_it() {
     assert_eq!(s.visible().len(), 3);
 }
 
+/// The notes' fields answer `Ctrl+C`/`Ctrl+X` with their selection, for the
+/// clipboard (docs/research/mouse-always-captured.md §5.8): the editor's copy
+/// keeps it, its cut removes it; the search's cut is an edit of the query, so
+/// the list widens again, and its copy leaves the list alone.
+#[test]
+fn the_editor_and_the_search_copy_and_cut_their_selection() {
+    let ctrl = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+    let mut s = screen();
+    press(&mut s, KeyCode::Char('e'));
+    assert_eq!(s.handle_key(ctrl('c')), None, "nothing selected");
+    s.handle_key(ctrl('a'));
+    let text = "Interview at Lumen Pay on Monday.".to_string();
+    assert_eq!(
+        s.handle_key(ctrl('c')),
+        Some(NotesIntent::CopyText(text.clone()))
+    );
+    assert!(s.editor.as_ref().unwrap().input.has_selection());
+    assert_eq!(s.handle_key(ctrl('x')), Some(NotesIntent::CopyText(text)));
+    assert_eq!(s.editor.as_ref().unwrap().input.text(), "");
+    press(&mut s, KeyCode::Esc);
+
+    press(&mut s, KeyCode::Char('/'));
+    typed(&mut s, "PEANUT");
+    assert_eq!(s.visible().len(), 1);
+    s.handle_key(ctrl('a'));
+    assert_eq!(
+        s.handle_key(ctrl('c')),
+        Some(NotesIntent::CopyText("PEANUT".into()))
+    );
+    assert_eq!(s.visible().len(), 1, "a copy is not an edit");
+    assert_eq!(
+        s.handle_key(ctrl('x')),
+        Some(NotesIntent::CopyText("PEANUT".into()))
+    );
+    assert!(s.query.is_empty());
+    assert_eq!(s.visible().len(), 3);
+}
+
+fn mouse_at(kind: MouseEventKind, (column, row): (u16, u16)) -> MouseEvent {
+    MouseEvent {
+        kind,
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    }
+}
+
+/// The mouse on the notes (docs/research/mouse-always-captured.md F11, F12): a
+/// click selects a note, a double click opens it as `Enter` does, and the
+/// wheel scrolls an opened note; a press while a delete waits for its second
+/// `Del` keeps the note.
+#[test]
+fn a_double_click_opens_a_note_and_the_wheel_scrolls_it() {
+    use crate::shared::mouse::SelectUnit::{Char, Word};
+    use ratatui::crossterm::event::MouseButton;
+    let mut s = screen();
+    text_at(&mut s, 100, 20);
+    let click = MouseEventKind::Down(MouseButton::Left);
+    let at = s.drawn.cell_of(2).expect("the third note");
+    assert_eq!(s.handle_mouse(mouse_at(click, at), Char), None);
+    assert_eq!(s.selected, 2);
+    press(&mut s, KeyCode::Delete);
+    assert!(s.confirm_delete.is_some());
+    s.handle_mouse(mouse_at(click, at), Char);
+    assert!(s.confirm_delete.is_none(), "a press keeps the note");
+    s.handle_mouse(mouse_at(click, at), Word);
+    assert_eq!(s.mode, Mode::Note(id_at(&s, 2)));
+    if let Some(view) = s.view.as_mut() {
+        view.notes[2].note.content = "line\n".repeat(60);
+    }
+    text_at(&mut s, 100, 20);
+    let inside = (s.note_area.x + 1, s.note_area.y + 1);
+    s.handle_mouse(mouse_at(MouseEventKind::ScrollDown, inside), Char);
+    assert_eq!(s.note_scroll, 3);
+}
+
+/// An opened note's text is selected by a drag over what it shows, and
+/// `Ctrl+C` copies it (docs/research/mouse-always-captured.md F13); on the
+/// list `Ctrl+C` copies nothing.
+#[test]
+fn a_drag_over_an_opened_note_selects_what_ctrl_c_copies() {
+    use crate::shared::mouse::SelectUnit::Char;
+    use ratatui::crossterm::event::MouseButton;
+    let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+    let mut s = screen();
+    assert_eq!(s.handle_key(ctrl_c), None, "the list has no selection");
+    press(&mut s, KeyCode::Enter);
+    let shown = text_at(&mut s, 100, 20);
+    let row = shown
+        .lines()
+        .position(|l| l.contains("Interview at Lumen Pay"))
+        .expect("the note's text") as u16;
+    let line = shown.lines().nth(row as usize).unwrap();
+    let col = line[..line.find("Interview").unwrap()].chars().count() as u16;
+    let left = MouseButton::Left;
+    s.handle_mouse(mouse_at(MouseEventKind::Down(left), (col, row)), Char);
+    s.handle_mouse(mouse_at(MouseEventKind::Drag(left), (col + 8, row)), Char);
+    s.handle_mouse(mouse_at(MouseEventKind::Up(left), (col + 8, row)), Char);
+    text_at(&mut s, 100, 20);
+    assert_eq!(
+        s.handle_key(ctrl_c),
+        Some(NotesIntent::CopyText("Interview".into()))
+    );
+}
+
 #[test]
 fn the_search_opens_on_the_russian_layouts_slash_key() {
     let mut s = screen();

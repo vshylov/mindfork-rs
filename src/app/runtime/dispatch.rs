@@ -677,6 +677,8 @@ pub(super) fn dispatch_notes(
             false
         }
         NotesIntent::Quit => true,
+        // Handled in `handle_key_event`, beside the arboard client.
+        NotesIntent::CopyText(_) => false,
         NotesIntent::Edit(edit) => {
             let _ = cmd_tx.send(AppCommand::EditNote(edit));
             false
@@ -694,6 +696,8 @@ pub(super) fn dispatch_changes(
     active: &mut ActiveScreen,
 ) -> bool {
     match intent {
+        // Handled in `handle_key_event`, beside the arboard client.
+        ChangesIntent::CopyText(_) => false,
         ChangesIntent::Close => {
             *active = ActiveScreen::Chat;
             false
@@ -757,6 +761,24 @@ pub(super) enum AnyIntent {
     Search(SearchIntent),
     Tasks(TasksIntent),
     Notes(NotesIntent),
+}
+
+impl AnyIntent {
+    /// The text a field asks to put on the clipboard — `Ctrl+C`/`Ctrl+X` in
+    /// any screen's field (docs/research/mouse-always-captured.md §5.8). One
+    /// question for every screen, so the runtime routes a copy the same way
+    /// wherever it was made.
+    pub(super) fn clipboard_text(&self) -> Option<&str> {
+        match self {
+            AnyIntent::Chat(ChatIntent::CopyToClipboard(text))
+            | AnyIntent::List(ChatListIntent::CopyText(text))
+            | AnyIntent::Settings(SettingsIntent::CopyText(text))
+            | AnyIntent::SelfModel(SelfModelIntent::CopyText(text))
+            | AnyIntent::Notes(NotesIntent::CopyText(text))
+            | AnyIntent::Changes(ChangesIntent::CopyText(text)) => Some(text),
+            _ => None,
+        }
+    }
 }
 
 /// Dispatches the active screen's intent to the corresponding translator.
@@ -1053,6 +1075,8 @@ pub(super) fn dispatch_chat_list(
             return false;
         }
         ChatListIntent::Quit => return true,
+        // Handled in `handle_key_event`, beside the arboard client.
+        ChatListIntent::CopyText(_) => return false,
         // The list is KEPT open until the chat's `ChatActivated` arrives —
         // otherwise the previous active chat would flash for the duration of
         // the round-trip (`hand_over_to_chat`).
@@ -1147,6 +1171,8 @@ pub(super) fn dispatch_settings(
             return false;
         }
         SettingsIntent::Quit => return true,
+        // Handled in `handle_key_event`, beside the arboard client.
+        SettingsIntent::CopyText(_) => return false,
         SettingsIntent::SaveConfig(config) => AppCommand::UpdateConfig(config),
         SettingsIntent::SaveProfile { id, edit } => AppCommand::UpdateProfile { id, edit },
         SettingsIntent::CreateProfile {
@@ -1245,6 +1271,8 @@ pub(super) fn dispatch_self_model(
             false
         }
         SelfModelIntent::Quit => true,
+        // Handled in `handle_key_event`, beside the arboard client.
+        SelfModelIntent::CopyText(_) => false,
         // An edit: a command to the orchestrator; the screen stays open and refreshes on
         // the reply `SelfModelView` (see `apply_event`).
         SelfModelIntent::Edit(edit) => {

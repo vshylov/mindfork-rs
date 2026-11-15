@@ -9,7 +9,7 @@
 //! (FSD, dependencies flow downward) — like `ChatScreen`/`SettingsScreen`.
 
 use ratatui::Frame;
-use ratatui::crossterm::event::KeyEvent;
+use ratatui::crossterm::event::{KeyEvent, MouseEvent, MouseEventKind};
 use uuid::Uuid;
 
 use crate::entities::chat::ChatSummary;
@@ -17,6 +17,7 @@ use crate::features::chat_search_sort::SortMode;
 use crate::features::spellcheck::SpellChecker;
 use crate::screens::awaited_chat::AwaitedChat;
 use crate::shared::i18n::Locale;
+use crate::shared::mouse::SelectUnit;
 use crate::shared::theme::Palette;
 use crate::shared::ui::MinSize;
 use crate::widgets::chat_list::{ChatListAction, ChatListState};
@@ -37,6 +38,9 @@ pub enum ChatListIntent {
     Clone(Uuid),
     /// Copy a chat's conversation to the clipboard (the list stays open) (`F5`).
     Copy(Uuid),
+    /// Put this text on the clipboard — the rename field's `Ctrl+C`/`Ctrl+X`
+    /// (docs/research/mouse-always-captured.md §5.8).
+    CopyText(String),
     /// Soft-delete a chat (the list stays open) (`Del`).
     Delete(Uuid),
     /// Rename a chat (the list stays open) (`F2`).
@@ -152,7 +156,30 @@ impl ChatListScreen {
         // close on whatever activates next. `app` sets the wait *after* this
         // returns, so the key that asks does not clear its own request.
         self.awaited.clear();
-        match self.state.on_key(key) {
+        let action = self.state.on_key(key);
+        Self::intent(action)
+    }
+
+    /// A mouse event (docs/research/mouse-always-captured.md §5.8): the list's
+    /// wheel and clicks, or the rename field's gesture
+    /// ([`ChatListState::on_mouse`]). A press is the user moving on, as a key
+    /// is: the wait for a chat this list asked for ends.
+    pub fn handle_mouse(&mut self, mouse: MouseEvent, unit: SelectUnit) -> Option<ChatListIntent> {
+        if matches!(mouse.kind, MouseEventKind::Down(_)) {
+            self.awaited.clear();
+        }
+        let action = self.state.on_mouse(mouse, unit);
+        Self::intent(action)
+    }
+
+    /// The loop's tick, for a drag held past the rename field's edge.
+    pub fn mouse_tick(&mut self, now: std::time::Instant) -> bool {
+        self.state.mouse_tick(now)
+    }
+
+    /// What the widget's action asks of `app`.
+    fn intent(action: ChatListAction) -> Option<ChatListIntent> {
+        match action {
             ChatListAction::None => None,
             ChatListAction::Close => Some(ChatListIntent::Close),
             ChatListAction::Quit => Some(ChatListIntent::Quit),
@@ -160,6 +187,7 @@ impl ChatListScreen {
             ChatListAction::New => Some(ChatListIntent::NewChat),
             ChatListAction::Clone(id) => Some(ChatListIntent::Clone(id)),
             ChatListAction::Copy(id) => Some(ChatListIntent::Copy(id)),
+            ChatListAction::CopyText(text) => Some(ChatListIntent::CopyText(text)),
             ChatListAction::Delete(id) => Some(ChatListIntent::Delete(id)),
             ChatListAction::Rename { id, title } => Some(ChatListIntent::Rename { id, title }),
             ChatListAction::AutoRename(id) => Some(ChatListIntent::AutoRename(id)),

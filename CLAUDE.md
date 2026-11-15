@@ -189,7 +189,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-11-15, version 0.26.4)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **4908 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **4951 unit tests
 green, 324 `#[ignore]`** (live smokes + real-clipboard round trips + the
 screenshot-dump and demo-reel regenerators).
 
@@ -202,6 +202,13 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **The app's own mouse — track complete** (2026-11-15, stages 1–3c): capture always
+  on (the *Mouse* setting, `app` by default; the legacy mode keeps the terminal's),
+  `Ctrl+W` gone; the feed's own selection, copied as drawn without its chrome;
+  `Ctrl+C`/`Ctrl+X` in every field; the wheel, clicks and double clicks on every screen;
+  read-only text selected by its visible cells
+  ([docs/research/mouse-always-captured.md](docs/research/mouse-always-captured.md),
+  [docs/journal/ui-input.md](docs/journal/ui-input.md)).
 - **Where a fact about the person goes — track complete** (2026-11-14, a design and
   two stages): facts about the person are notes, not observations; the protocol's
   route to the note tools only where a turn offers them; write gates across kinds, a
@@ -383,12 +390,6 @@ being recent is dropped, not shortened.
   export|check`). Measured on Windows 11's console host; other terminals are a look
   ([docs/history/theme-modes.md](docs/history/theme-modes.md), spec §11.6,
   [docs/journal/ui-feed.md](docs/journal/ui-feed.md)).
-- **A fetched page is searchable in its birth turn — track complete** (2026-09-26).
-  Stage 1: no search promised before it exists, a cut says where, ceiling 1 000 000;
-  stage 2: the index starts at the round's end (`IndexBoard`) and a search waits, 6/6
-  live birth turns found §17.5 with one search
-  ([docs/research/attachment-birth-turn.md](docs/research/attachment-birth-turn.md),
-  [docs/journal/rag.md](docs/journal/rag.md)).
 - **Raw `llama-server` arguments in managed settings** — an *Extra arguments* field
   per managed section (`--n-cpu-moe` fits a 26B MoE in 8.4 GB); a field's flag, the
   connection's, `--tools`/`--agent` and `-hf` refused, their `LLAMA_*` scrubbed from

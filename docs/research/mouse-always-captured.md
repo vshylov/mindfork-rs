@@ -19,7 +19,15 @@ terminal's own modifier. **Stage 2b is built** (2026-11-15, `feat/feed-selection
 a quote's `> `, the thoughts' and the summary's gutter, a tool card's gutters, indent
 and icon are left out of a copy and the highlight, their rows joined back — and a
 code block's rows, wrapped and trimmed by the renderer, get the trimmed spaces back.
-Stage 3 is next.
+**Stage 3 is designed** (2026-11-15, §5.8): three more forks decided by the owner as
+recommended (F11–F13), and three pull requests — copy in every field (3a), the mouse
+on every screen (3b), a selection in read-only text (3c). **3a is built**
+(`feat/field-copy`) and **3b is built** (2026-11-15, `feat/mouse-everywhere`): the
+reports reach every screen and the help dialog, capture is on everywhere but the
+"too small" notice, the wheel and the clicks of F11–F12 in every list, the fields'
+grammar. **3c is built** (2026-11-15, `feat/read-only-selection`): the help, an
+opened note, the diff and an opened version select their visible cells. **The track is
+complete.**
 
 The ask (the owner, 2026-11-14): look into dropping the mouse's two modes —
 *select* and *scroll* — altogether. Keep the terminal's mouse capture on all the
@@ -526,6 +534,51 @@ Each is a test or a live-check line of §7.
   the terminal it exists for, has no modifier around capture at all (§4.1).
   Capture is on when the setting says `app` and the legacy mode is off.
 
+### 5.8 The other screens (stage 3)
+
+- **Where the mouse goes.** The runtime hands every report to the frame in
+  front, the way it hands keys: the help dialog first (modal — its wheel scrolls
+  it), then the screen in front. Capture follows (F7): on wherever the setting
+  says `app` and the legacy mode is off, except on the "window too small"
+  notice. A screen with a popup open — the settings' editor, choice, model picker
+  and field search; the chat's pickers — gives the mouse to the popup alone, and
+  a press outside it does nothing: `Esc` closes a popup, as ever.
+- **The wheel (F11)** scrolls the panel under the pointer — not the focused
+  one, and without focusing it — three rows a notch, like the feed. In a list
+  with a selected row the view moves and **the selection stays where it is,
+  pushed along by the edge it would leave** (vim's `Ctrl+E`/`Ctrl+Y`): it never
+  leaves the screen, so the next arrow moves it from where it is seen. A push is
+  a selection like any other, so whatever follows a selection by the keys follows
+  it here. A selected item taller than the window (a long insight on the
+  self-model screen) is scrolled through, not jumped over: the window may stand
+  anywhere inside it. A view without a selection — the help, an opened note, a
+  diff, a version's detail — simply scrolls.
+- **A click on a row (F12)** selects it and focuses its pane (the settings'
+  menu or fields, the changes screen's files); a **double click** on the same
+  row does what `Enter` does there — opens a chat, a note, a search hit; edits,
+  toggles or chooses a field; picks from a popup. A row the keys skip (a group
+  header in the settings) takes no click. The right and the middle button do
+  nothing (F3). *Added after the owner's live check (2026-11-15):* a click on a
+  tab opens it — the settings' subsections, the help's tabs.
+- **The fields** — the rename, the settings' editor, field search and model
+  filter, the self-model's editor, the notes' editor and search, the feed's
+  search bar — take the chat box's grammar (§5.3, §5.5): a press places the
+  cursor, a drag selects, clamped to the field (a tall draft scrolls), a double
+  and a triple press take a word and a line. The chat list's search line is not
+  a field (a string with a caret at its end) and takes no click.
+- **Copy outside the chat — found on the way.** `Ctrl+C` and `Ctrl+X` copy only
+  in the chat's box: every other field keeps a selection made with `Shift` that
+  nothing can copy (the selection track left their wiring for later,
+  [docs/history/input-selection-undo-mouse.md](../history/input-selection-undo-mouse.md)
+  §5.2), and a mouse selection there would be the same dead end. They copy
+  through the chat's path (`copy_text`: the local clipboard, OSC 52), and the
+  outcome is F10's chip — on a screen without the chat's status bar, at the right
+  of its footer. A masked field (an API key) copies nothing, as ever.
+- **Read-only text (F13)** gets the cheap form: a selection over the visible
+  cells of one panel, its rows joined by `\n`, each row's trailing blanks
+  trimmed; no scrolling under a drag and no soft-wrap join. One implementation
+  for every such panel — the help, an opened note, a diff, a version's detail.
+
 ## 6. Forks
 
 **Decided by the owner, 2026-11-14.** Each fork keeps its options; the decision
@@ -587,6 +640,25 @@ and the theme.
 bar* — with one more reason of the owner's: a note in the feed scrolls the feed.
 A better place may come later, the frame of an element on screen for instance.
 
+**Stage 3's forks, decided by the owner 2026-11-15**, all three as recommended:
+
+**F11 — the wheel in a list with a selected row.** (a) the view scrolls, the
+selection stays and is pushed along by the edge it would leave; (b) the wheel
+moves the selection like `↑`/`↓`; (c) the view scrolls and the selection may
+leave the screen (a GUI's list), the next arrow jumping back to it.
+*Decided: (a).* (b) spends the first notches walking the highlight down the
+screen; (c) needs every list's scroll to stop following its selection, the rule
+that recurred as a defect in eight lists (docs/lessons.md §5).
+
+**F12 — a click on a row.** (a) selects it and focuses its pane, a double click
+is `Enter`; (b) selects only; (c) no clicks in lists. *Decided: (a).*
+
+**F13 — a selection in read-only text** (the help, an opened note, a diff, a
+version's detail). (a) the cheap form over the visible cells of one panel, in a
+pull request of its own after the rest; (b) none — the terminal's modifier, the
+borders in the copy; (c) the feed's form, soft wraps joined and scrolling, per
+screen. *Decided: (a).*
+
 ## 7. Stages, tests, the live check
 
 - **P0 — the terminal side, no code (go/no-go).** The owner, in Windows Terminal
@@ -635,12 +707,24 @@ A better place may come later, the frame of an element on screen for instance.
 - **Stage 2b — the prefixes** (may fold into 2): a quote's `> `, the thoughts'
   gutter and a tool card's indent left out of a copy, their rows joined where they
   continue a line — the facts reported by the builders of §2.4.
-- **Stage 3 — the other screens** (`feat/mouse-everywhere`): mouse events reach
-  every screen; the fields of §5.5 get the click, the drag and the multi-click;
-  the wheel scrolls the chat list, settings, help, tasks, notes and the
-  self-model viewer; capture goes on everywhere. For read-only text (the
-  self-model viewer, help, *About*) the cheap form is a selection over the
-  frame's cells of one panel, the visible part only — if it is wanted at all.
+- **Stage 3 — the other screens** (§5.8), three pull requests:
+  - **3a — copy in every field** (`feat/field-copy`): `Ctrl+C` and `Ctrl+X` in
+    the rename, the settings' editor, search and model filter, the self-model's
+    editor, the notes' editor and search, the feed's search bar; the outcome's
+    chip on every screen. Tests: each field copies its selection and keeps it,
+    cuts and loses it; nothing copied without a selection or from a masked field.
+  - **3b — the mouse on every screen** (`feat/mouse-everywhere`): the reports
+    reach every screen and the help dialog; capture goes on everywhere; the
+    wheel (F11) in every list and text view; the clicks on rows (F12); the
+    fields' grammar. Tests on `TestBackend`, per list: the wheel moves the view
+    and pushes the selection along its edge, scrolls through a tall item, stops at
+    the ends; a click selects and focuses, a double click is `Enter`, a header row
+    takes none; a field's press, drag past its edge and multi-click; a popup takes
+    the mouse alone.
+  - **3c — read-only text** (`feat/read-only-selection`, F13).
+
+  The live check is the owner's, as for stage 2: Windows Terminal over SSH and
+  natively, conhost, VS Code's terminal.
 
 ## 8. Risks and open questions
 

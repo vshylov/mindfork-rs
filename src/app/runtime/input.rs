@@ -237,8 +237,7 @@ pub(super) fn process_input_batch(
             // The help overlay is modal: it has no paste target, and a wheel
             // or click would act on a screen the dialog is covering — the same
             // rule the chat applied while it owned the dialog.
-            Chunk::Paste(_) | Chunk::Event(Event::Paste(_) | Event::Mouse(_))
-                if help.open.is_some() => {}
+            Chunk::Paste(_) | Chunk::Event(Event::Paste(_)) if help.open.is_some() => {}
             // A clipboard paste: on the settings screen — into the active field editor; in
             // the chat — into the input box (never sends); the list has no paste target.
             // `Chunk::Paste` — a reconstruction from key events (Windows); we reconcile it
@@ -257,15 +256,11 @@ pub(super) fn process_input_batch(
                     quit = true;
                 }
             }
-            // The mouse wheel scrolls the chat feed, and a left click can land on a
-            // `chat://` reference (spec §11.3). On the list/settings (which have their
-            // own navigation) mouse events are ignored.
-            Chunk::Event(Event::Mouse(mouse)) if active.is_chat() => {
-                if let Some(intent) = screen.handle_mouse(mouse) {
-                    flush_draft(screen, cmd_tx);
-                    if dispatch(intent, cmd_tx, screen, active, back) {
-                        quit = true;
-                    }
+            // The mouse reaches the help dialog first, then whichever screen is
+            // in front (docs/research/mouse-always-captured.md §5.8).
+            Chunk::Event(Event::Mouse(mouse)) => {
+                if handle_mouse_event(mouse, screen, active, help, back, cmd_tx, clipboard) {
+                    quit = true;
                 }
             }
             // The terminal's window gained or lost focus — the orchestrator asks
@@ -318,6 +313,12 @@ fn handle_key_event(
                 help.close();
                 false
             }
+            HelpKeyOutcome::Copy(text) => {
+                let report = copy_text(clipboard, &text, screen.clipboard_osc52());
+                let (chip, failed) = report.chip(screen.loc());
+                screen.show_copy_outcome(chip, failed);
+                false
+            }
             HelpKeyOutcome::Handled => false,
         };
     }
@@ -342,23 +343,78 @@ fn handle_key_event(
         ActiveScreen::Tasks(tasks) => tasks.handle_key(key).map(AnyIntent::Tasks),
         ActiveScreen::Notes(notes) => notes.handle_key(key).map(AnyIntent::Notes),
     };
+    run_intent(intent, screen, active, help, back, cmd_tx, clipboard)
+}
+
+/// Handles one mouse event: the help dialog first — modal, its wheel scrolls
+/// it and nothing of the mouse reaches the screen under it — then the screen in
+/// front, whose intent is run the way a key's is ([`run_intent`]). Returns
+/// `true` if quitting was requested (docs/research/mouse-always-captured.md §5.8).
+pub(super) fn handle_mouse_event(
+    mouse: MouseEvent,
+    screen: &mut ChatScreen,
+    active: &mut ActiveScreen,
+    help: &mut HelpOverlay,
+    back: &mut Option<Back>,
+    cmd_tx: &UnboundedSender<AppCommand>,
+    clipboard: &mut Option<arboard::Clipboard>,
+) -> bool {
+    if let Some(state) = help.open.as_mut() {
+        // The wheel is clamped to the content where the dialog is drawn; a
+        // click on a tab opens it (F12); a drag over the content selects its
+        // visible cells (F13).
+        match mouse.kind {
+            MouseEventKind::ScrollUp => state.scroll = state.scroll.saturating_sub(WHEEL_ROWS),
+            MouseEventKind::ScrollDown => state.scroll = state.scroll.saturating_add(WHEEL_ROWS),
+            MouseEventKind::Down(MouseButton::Left)
+                if state.tabs.tab_at(mouse.column, mouse.row).is_some() =>
+            {
+                if let Some(tab) = state.tabs.tab_at(mouse.column, mouse.row) {
+                    state.select_tab(HelpTab::ALL[tab]);
+                }
+            }
+            _ => {
+                state.selection.on_mouse(mouse);
+            }
+        }
+        return false;
+    }
+    let intent = active.handle_mouse(screen, mouse);
+    run_intent(intent, screen, active, help, back, cmd_tx, clipboard)
+}
+
+/// Runs an intent a screen gave for a key or a mouse event: the UI-layer side
+/// effects first — the clipboard's two (only the runtime holds `arboard`), the
+/// help — and everything else through [`dispatch_any`]. Returns `true` if
+/// quitting was requested.
+fn run_intent(
+    intent: Option<AnyIntent>,
+    screen: &mut ChatScreen,
+    active: &mut ActiveScreen,
+    help: &mut HelpOverlay,
+    back: &mut Option<Back>,
+    cmd_tx: &UnboundedSender<AppCommand>,
+    clipboard: &mut Option<arboard::Clipboard>,
+) -> bool {
     if intent.is_some() {
         flush_draft(screen, cmd_tx);
     }
+    // Copying a selection to the clipboard (`Ctrl+C`/`Ctrl+X`, in any screen's
+    // field) — a UI-layer side effect: we already have the text, no need to go
+    // to the orchestrator. The `arboard` slot is here (`dispatch` doesn't have
+    // it). The outcome — copied, sent to the terminal, too large, failed — is a
+    // chip for a few seconds, on every screen, never a note in the feed: a note
+    // scrolled the feed and split a reply being streamed
+    // (docs/research/mouse-always-captured.md F10, §5.8). Not the chat list's
+    // notice line, which words a whole conversation's copy (`F5`): a rename's
+    // copy read "Conversation sent to your terminal's clipboard" there.
+    if let Some(text) = intent.as_ref().and_then(AnyIntent::clipboard_text) {
+        let report = copy_text(clipboard, text, screen.clipboard_osc52());
+        let (chip, failed) = report.chip(screen.loc());
+        screen.show_copy_outcome(chip, failed);
+        return false;
+    }
     match intent {
-        // Copying the selection to the clipboard (`Ctrl+C`/`Ctrl+X`) —
-        // a UI-layer side effect: we already have the text, no need to go to the orchestrator.
-        // The `arboard` slot is here (`dispatch` doesn't have it). The outcome —
-        // copied, sent to the terminal, too large, failed — is a chip on the
-        // status bar for a few seconds, never a note in the feed: a note
-        // scrolled the feed and split a reply being streamed
-        // (docs/research/mouse-always-captured.md F10).
-        Some(AnyIntent::Chat(ChatIntent::CopyToClipboard(text))) => {
-            let report = copy_text(clipboard, &text, screen.clipboard_osc52());
-            let (chip, failed) = report.chip(screen.loc());
-            screen.show_copy_outcome(chip, failed);
-            false
-        }
         // Pasting from the clipboard (`Ctrl+V`, `/image paste`) — the same reasoning as
         // above: only this function holds the `arboard` client, so the read happens here
         // and the orchestrator receives pixels rather than a request to go and look.

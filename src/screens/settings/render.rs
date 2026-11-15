@@ -578,10 +578,13 @@ impl SettingsScreen {
             Style::new()
         };
         let list = List::new(items).block(block).highlight_style(hl);
-        // Only the right border is drawn, so the menu owns every row of `area`.
+        // Only the right border is drawn, but the title takes the first row: the
+        // sections are drawn into the rows below it (the mouse finds them there —
+        // a click a row off once picked the next section).
         let (len, selected) = (SECTIONS.len(), self.section_idx);
+        let view_h = area.height.saturating_sub(1) as usize;
         self.menu_scroll
-            .render(frame, list, area, len, area.height as usize, Some(selected));
+            .render(frame, list, area, len, view_h, Some(selected));
     }
 
     /// The server-status chip for the "Model" section's active subsection (assistant →
@@ -640,8 +643,10 @@ impl SettingsScreen {
         self.render_fields_header(frame, head_area, focused, on_tabs, tabs, &palette);
 
         let inner_w = list_area.width as usize;
-        let (items, select) = self.build_field_items(&fields, defaults, focused, inner_w, &palette);
+        let (items, select, rows) =
+            self.build_field_items(&fields, defaults, focused, inner_w, &palette);
         let total = items.len();
+        self.fields_rows = rows;
 
         // Selection — a soft backdrop (as in the section menu and the chat list), not
         // inverting the whole row; the selected row's green rail is added in
@@ -730,7 +735,7 @@ impl SettingsScreen {
     /// Draws the field pane's header: the section title with its focus marker, the
     /// "Model" section's server-status chip, and the subsection tab strip.
     fn render_fields_header(
-        &self,
+        &mut self,
         frame: &mut Frame,
         head_area: Rect,
         focused: bool,
@@ -770,8 +775,17 @@ impl SettingsScreen {
             }
         }
         let mut head_lines = vec![Line::from(title_spans)];
+        self.sub_tabs.clear();
         if let Some((labels, active)) = tabs {
-            head_lines.push(tab_strip_line(&labels, active, on_tabs, palette));
+            let strip = tab_strip_line(&labels, active, on_tabs, palette);
+            // The strip's spans: a lead space, then each tab with a separator
+            // between two — tab `t` is span `2t + 1`.
+            let n = labels.len();
+            self.sub_tabs
+                .record(head_area.x, head_area.y + 1, &strip, |i| {
+                    (i % 2 == 1 && i / 2 < n).then_some(i / 2)
+                });
+            head_lines.push(strip);
         }
         frame.render_widget(Paragraph::new(head_lines), head_area);
     }
@@ -785,7 +799,7 @@ impl SettingsScreen {
         focused: bool,
         inner_w: usize,
         palette: &Palette,
-    ) -> (Vec<ListItem<'static>>, Option<usize>) {
+    ) -> (Vec<ListItem<'static>>, Option<usize>, Vec<Option<usize>>) {
         let loc = self.loc();
         // A single value column across the WHOLE section (`section_label_col`): values
         // and inline hints of all groups line up on one vertical (a per-group column
@@ -802,6 +816,8 @@ impl SettingsScreen {
         // (it's a tab strip): while the cursor is on it, the list has no highlight.
         let mut items: Vec<ListItem> = Vec::with_capacity(fields.len() + 8);
         let mut select: Option<usize> = None;
+        // The field each row shows (`None` — a header), for the mouse.
+        let mut rows: Vec<Option<usize>> = Vec::with_capacity(fields.len() + 8);
         let mut prev_group: Option<&str> = None;
         for (i, f) in fields.iter().enumerate() {
             if is_subsection(f.id) {
@@ -815,6 +831,7 @@ impl SettingsScreen {
                     .copied()
                     .filter(|&(_, total)| total >= 2);
                 items.push(ListItem::new(header_line(f.group, count, inner_w, palette)));
+                rows.push(None);
             }
             prev_group = Some(f.group);
             if focused && i == self.field_idx {
@@ -842,8 +859,9 @@ impl SettingsScreen {
                 focused && i == self.field_idx,
                 palette,
             )));
+            rows.push(Some(i));
         }
-        (items, select)
+        (items, select, rows)
     }
 
     /// The bottom panel: the full value of the selected text field (whole paths,

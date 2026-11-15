@@ -5,7 +5,7 @@
 //! by `app`). Full profile management (CRUD) is at M8; here it's just picking.
 
 use ratatui::Frame;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, MouseEvent};
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
@@ -49,6 +49,14 @@ impl ProfileListState {
     /// Id of the selected profile (if the list isn't empty).
     pub fn selected_id(&self) -> Option<Uuid> {
         self.profiles.get(self.selected).map(|p| p.id)
+    }
+
+    /// A mouse event over the popup: the wheel scrolls it, the selection
+    /// pushed along by the edge it would leave (F11); a press on a row selects
+    /// it. `true` when a press landed on a row — the chat makes a double click
+    /// its `Enter` (docs/research/mouse-always-captured.md F12).
+    pub fn on_mouse(&mut self, mouse: MouseEvent) -> bool {
+        self.scroll.on_mouse(mouse, &mut self.selected)
     }
 
     /// Handles a key press, returning the action to execute.

@@ -18,7 +18,9 @@ use std::time::Instant;
 
 use chrono::{DateTime, Utc};
 use ratatui::Frame;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{
+    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
@@ -29,8 +31,11 @@ use crate::entities::task::{AppTask, BackgroundKind, TaskFollowup, TaskList, Tas
 use crate::screens::awaited_chat::AwaitedChat;
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
+use crate::shared::mouse::{SelectUnit, wheel_delta};
 use crate::shared::theme::Palette;
-use crate::shared::ui::{MinSize, SCREEN_MIN_SIZE, keep_visible, render_scrollbar, screen_chrome};
+use crate::shared::ui::{
+    MinSize, RowList, SCREEN_MIN_SIZE, keep_visible, render_scrollbar, row_spans, screen_chrome,
+};
 use crate::shared::wrap;
 use crate::widgets::chat_list::run_state_key;
 use crate::widgets::help_dialog::{HelpContext, HelpSection};
@@ -134,6 +139,9 @@ pub struct TasksScreen {
     /// The follow-up a first `Del` asked about; a second `Del` on it cancels,
     /// any other key forgets the question.
     confirm_cancel: Option<Uuid>,
+    /// The rows as last drawn, for the mouse
+    /// (docs/research/mouse-always-captured.md F11, F12).
+    drawn: RowList,
 }
 
 impl TasksScreen {
@@ -147,6 +155,7 @@ impl TasksScreen {
             last_drawn: Instant::now(),
             awaited: AwaitedChat::Nothing,
             confirm_cancel: None,
+            drawn: RowList::default(),
         }
     }
 
@@ -280,6 +289,35 @@ impl TasksScreen {
 
     /// Handles a key press, returning an intent for `app` (`None` — handled
     /// internally: navigation).
+    /// A mouse event (docs/research/mouse-always-captured.md §5.8): the wheel
+    /// scrolls the list, the selection pushed along by the edge it would leave
+    /// (F11); a click selects a row and a double click is `Enter` on it — the
+    /// run's transcript; a header takes no click (F12). A press is the user
+    /// moving on, as a key is: the wait for a chat ends, and so does a pending
+    /// cancel's question.
+    pub fn handle_mouse(&mut self, mouse: MouseEvent, unit: SelectUnit) -> Option<TasksIntent> {
+        let (col, row) = (mouse.column, mouse.row);
+        if let Some(delta) = wheel_delta(mouse.kind) {
+            let rule = |scroll, first, _, view| keep_visible(scroll, first, view);
+            if self.drawn.holds(col, row)
+                && let Some((scroll, selected)) = self.drawn.wheel(delta, self.selected, rule)
+            {
+                self.scroll = scroll;
+                self.selected = selected;
+            }
+            return None;
+        }
+        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+            return None;
+        }
+        self.awaited.clear();
+        self.confirm_cancel = None;
+        self.selected = self.drawn.item_at(col, row)?;
+        (unit == SelectUnit::Word)
+            .then(|| self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)))
+            .flatten()
+    }
+
     pub fn handle_key(&mut self, key: KeyEvent) -> Option<TasksIntent> {
         if key.kind != KeyEventKind::Press {
             return None;
@@ -426,6 +464,12 @@ impl TasksScreen {
             .position(|(_, row)| *row == Some(self.selected))
             .unwrap_or(0);
         self.scroll = keep_visible(self.scroll, selected_line, view);
+        self.drawn.record(
+            inner,
+            self.scroll,
+            total,
+            row_spans(lines.iter().map(|(_, row)| *row)),
+        );
         let shown: Vec<Line<'static>> = lines
             .into_iter()
             .skip(self.scroll)
@@ -1171,6 +1215,46 @@ mod tests {
 
     /// The selected row stays on screen as the selection moves through a
     /// list taller than the panel.
+    /// The mouse on the task list (docs/research/mouse-always-captured.md F11,
+    /// F12): the wheel scrolls it, the selection pushed along by the edge it
+    /// would leave; a click selects a row, a double click opens its transcript
+    /// as `Enter` does.
+    #[test]
+    fn the_wheel_scrolls_the_tasks_and_a_double_click_opens_a_run() {
+        use crate::shared::mouse::SelectUnit::{Char, Word};
+        use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+        let at = |kind, (column, row): (u16, u16)| MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        };
+        let runs: Vec<TaskRun> = (0..30).map(|i| landed(&format!("run {i}"))).collect();
+        let ids: Vec<Uuid> = runs.iter().map(|r| r.id).collect();
+        let mut s = screen(runs);
+        text_at(&mut s, 100, 16);
+        assert_eq!(s.selected, 0);
+        let first = s.drawn.cell_of(0).expect("drawn");
+        s.handle_mouse(at(MouseEventKind::ScrollDown, first), Char);
+        assert!(s.selected > 0, "pushed by the top edge");
+        assert_eq!(s.scroll, 3);
+        text_at(&mut s, 100, 16);
+        assert_eq!(s.scroll, 3, "the draw keeps the wheel's window");
+        let row = s.selected + 2;
+        let cell = s.drawn.cell_of(row).expect("a visible row");
+        let click = MouseEventKind::Down(MouseButton::Left);
+        assert_eq!(s.handle_mouse(at(click, cell), Char), None);
+        assert_eq!(s.selected, row);
+        let run = match s.rows()[row] {
+            Row::Run(i) => ids[i],
+            _ => panic!("a run row"),
+        };
+        assert_eq!(
+            s.handle_mouse(at(click, cell), Word),
+            Some(TasksIntent::OpenRun(run))
+        );
+    }
+
     #[test]
     fn the_selection_stays_visible_when_the_list_is_tall() {
         let runs: Vec<TaskRun> = (0..30).map(|i| landed(&format!("run-{i:02}"))).collect();

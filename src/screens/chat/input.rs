@@ -146,21 +146,15 @@ impl ChatScreen {
                 if let Some(text) = self.feed_view.selected_text() {
                     return Some((!text.is_empty()).then_some(ChatIntent::CopyToClipboard(text)));
                 }
-                if self.input.has_selection() {
-                    let text = self.input.selected_text().unwrap_or_default();
-                    return Some(Some(ChatIntent::CopyToClipboard(text)));
-                }
-                Some(None)
+                Some(self.input.copy().text().map(ChatIntent::CopyToClipboard))
             }
             // Cut the selection (Ctrl+X): copy + delete.
             'x' => {
-                if self.input.has_selection() {
-                    let text = self.input.selected_text().unwrap_or_default();
-                    self.input.delete_selection();
+                let clip = self.input.cut();
+                if clip.edited() {
                     self.mark_input_changed();
-                    return Some(Some(ChatIntent::CopyToClipboard(text)));
                 }
-                Some(None)
+                Some(clip.text().map(ChatIntent::CopyToClipboard))
             }
             // Paste (Ctrl+V): an image off the clipboard if there is one, otherwise the
             // text — which is what the help overlay has always advertised this key for.
@@ -658,15 +652,44 @@ impl ChatScreen {
             }
             _ => {}
         }
+        // `Ctrl+C` / `Ctrl+X` in the query (docs/research/mouse-always-captured.md
+        // §5.8). With nothing selected in it, `Ctrl+C` takes the feed's
+        // selection — the one other selection on the screen, still drawn
+        // behind the bar.
+        let clip = self
+            .search
+            .as_mut()
+            .and_then(|field| field.clipboard_key(&key));
+        if let Some(clip) = clip {
+            let edited = clip.edited();
+            let text = clip.text().or_else(|| {
+                (keys::hotkey_char(&key) == Some('c'))
+                    .then(|| self.feed_view.selected_text())
+                    .flatten()
+                    .filter(|text| !text.is_empty())
+            });
+            if edited {
+                self.on_search_edited();
+            }
+            return text.map(ChatIntent::CopyToClipboard);
+        }
         if let Some(field) = &mut self.search
             && field.on_key(key).edited()
         {
+            self.on_search_edited();
+        }
+        None
+    }
+
+    /// The query changed: remembered for the chat, and the feed's matches
+    /// follow it.
+    fn on_search_edited(&mut self) {
+        if let Some(field) = &self.search {
             let q = field.text();
             self.search_last = q.clone();
             self.feed_view
                 .set_search((!q.is_empty()).then_some(q.as_str()));
         }
-        None
     }
 
     pub fn handle_paste(&mut self, text: &str) {
@@ -676,9 +699,7 @@ impl ChatScreen {
         if let Some(field) = &mut self.search {
             if !text.is_empty() {
                 field.insert_str(text);
-                let q = field.text();
-                self.search_last = q.clone();
-                self.feed_view.set_search(Some(&q));
+                self.on_search_edited();
             }
             return;
         }
@@ -723,25 +744,18 @@ impl ChatScreen {
     /// One selection is on the screen at a time: a field's starting ends the
     /// feed's, and the feed's ends the field's. While the assistant answers
     /// the feed selects nothing — the wheel and a reference still work (F6).
-    /// With an overlay/popup open this is a no-op (scrolling/cursor edits
-    /// under them would be unexpected).
+    /// A popup open over the chat takes the mouse alone, as it takes the keys
+    /// ([`Self::popup_mouse`], research §5.8).
     pub fn handle_mouse_at(&mut self, mouse: MouseEvent, now: Instant) -> Option<ChatIntent> {
-        if self.search.is_some()
-            || self.suggest.is_some()
-            || self.emoji.is_some()
-            || self.chat_links.is_some()
-            || self.local_servers.is_some()
-            || self.profile_overlay.is_some()
-            || self.confirm.is_some()
-        {
-            return None;
-        }
         let (col, row) = (mouse.column, mouse.row);
+        let unit = self.count_click(&mouse, now);
+        if let Some(taken) = self.popup_mouse(mouse, unit) {
+            return taken;
+        }
         match mouse.kind {
-            MouseEventKind::ScrollUp => self.feed_view.scroll_up(WHEEL_SCROLL),
-            MouseEventKind::ScrollDown => self.feed_view.scroll_down(WHEEL_SCROLL),
+            MouseEventKind::ScrollUp => self.feed_view.scroll_up(WHEEL_ROWS),
+            MouseEventKind::ScrollDown => self.feed_view.scroll_down(WHEEL_ROWS),
             MouseEventKind::Down(MouseButton::Left) => {
-                let unit = self.clicks.press(col, row, now);
                 let panel = self.mouse_press_panel(col, row, unit);
                 self.mouse_press = Some(MousePress {
                     panel,
@@ -794,6 +808,65 @@ impl ChatScreen {
                 }
             }
             _ => {}
+        }
+        None
+    }
+
+    /// The mouse while a popup is open over the chat — `Some` when one took
+    /// it, with what it asks for. In the order the keys reach them
+    /// ([`Self::route_modal_key`]): the feed's search bar takes a press, drag
+    /// and release in its query, and the wheel still scrolls the feed under
+    /// it; a picker — the local servers, the spelling suggestions, the emoji,
+    /// the `chat://` links, the profiles — scrolls by the wheel, selects a row
+    /// by a click and does `Enter` on a double click (F11, F12); a confirmation
+    /// takes nothing. A press outside a popup does nothing: `Esc` closes it.
+    fn popup_mouse(&mut self, mouse: MouseEvent, unit: SelectUnit) -> Option<Option<ChatIntent>> {
+        let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        let double = unit == SelectUnit::Word;
+        if let Some(field) = self.search.as_deref_mut() {
+            if !self.search_gesture.on_mouse(field, mouse, unit) {
+                match mouse.kind {
+                    MouseEventKind::ScrollUp => self.feed_view.scroll_up(WHEEL_ROWS),
+                    MouseEventKind::ScrollDown => self.feed_view.scroll_down(WHEEL_ROWS),
+                    _ => {}
+                }
+            }
+            return Some(None);
+        }
+        if self.confirm.is_some() {
+            return Some(None);
+        }
+        if let Some(picker) = self.local_servers.as_mut() {
+            let picked = picker.on_mouse(mouse) && double;
+            return Some(
+                picked
+                    .then(|| self.handle_local_server_key(enter))
+                    .flatten(),
+            );
+        }
+        if let Some(popup) = self.suggest.as_mut() {
+            if popup.scroll.on_mouse(mouse, &mut popup.selected) && double {
+                self.handle_suggest_key(enter);
+            }
+            return Some(None);
+        }
+        if let Some(picker) = self.emoji.as_mut() {
+            if picker.on_mouse(mouse) && double {
+                self.handle_emoji_key(enter);
+            }
+            return Some(None);
+        }
+        if let Some(picker) = self.chat_links.as_mut() {
+            let picked = picker.on_mouse(mouse) && double;
+            return Some(picked.then(|| self.handle_chat_link_key(enter)).flatten());
+        }
+        if let Some(overlay) = self.profile_overlay.as_mut() {
+            let picked = overlay.on_mouse(mouse) && double;
+            return Some(
+                picked
+                    .then(|| self.handle_profile_overlay_key(enter))
+                    .flatten(),
+            );
         }
         None
     }

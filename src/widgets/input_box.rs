@@ -14,7 +14,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::shared::keys;
-use crate::shared::mouse::SelectUnit;
+use crate::shared::mouse::{AUTOSCROLL_STEP, SelectUnit};
 use crate::shared::theme::Palette;
 use crate::shared::ui::{fit_title, render_scrollbar};
 use crate::shared::wrap;
@@ -166,6 +166,149 @@ pub enum KeyOutcome {
     Moved,
     /// The key wasn't handled (the caller decides what to do with it).
     Ignored,
+}
+
+/// One field's left-button gesture, for a screen whose mouse reaches a field
+/// alone (docs/research/mouse-always-captured.md §5.5, §5.8) — the rename, the
+/// settings' editors and filters, the self-model's and the notes' editors and
+/// search: a press in the field places the cursor (a double and a triple press
+/// take a word and a line), a drag selects, clamped to the field, and a drag
+/// held above or below its text scrolls it a row an [`AUTOSCROLL_STEP`]. The
+/// chat keeps a gesture of its own, which spans the feed and the box.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct FieldGesture {
+    press: Option<FieldPress>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct FieldPress {
+    at: (u16, u16),
+    pointer: (u16, u16),
+    dragged: bool,
+    next_step: Option<std::time::Instant>,
+}
+
+impl FieldGesture {
+    /// A left press at `(col, row)` by `unit` (the click count): `true` when
+    /// it landed in `field`, which then owns the gesture until the release.
+    pub fn press(&mut self, field: &mut InputBox, col: u16, row: u16, unit: SelectUnit) -> bool {
+        self.press = None;
+        if !field.mouse_press_by(col, row, unit) {
+            return false;
+        }
+        self.press = Some(FieldPress {
+            at: (col, row),
+            pointer: (col, row),
+            dragged: false,
+            next_step: None,
+        });
+        true
+    }
+
+    /// A drag report: the selection grows to the pointer, clamped to the
+    /// field. A report on the press's own cell is not a drag yet. `true` when
+    /// the field's cursor moved.
+    pub fn drag(&mut self, field: &mut InputBox, col: u16, row: u16) -> bool {
+        let Some(press) = self.press.as_mut() else {
+            return false;
+        };
+        press.pointer = (col, row);
+        if (col, row) == press.at && !press.dragged {
+            return false;
+        }
+        press.dragged = true;
+        field.mouse_drag(col, row)
+    }
+
+    /// The release: the gesture ends, what it selected stays.
+    pub fn release(&mut self, field: &mut InputBox) {
+        if self.press.take().is_some() {
+            field.mouse_release();
+        }
+    }
+
+    /// The loop's tick: a drag held above or below the field's text moves its
+    /// selection a row past the visible ones, at most once an
+    /// [`AUTOSCROLL_STEP`] (research §5.4). `true` when a frame is due.
+    pub fn tick(&mut self, field: &mut InputBox, now: std::time::Instant) -> bool {
+        let Some(press) = self.press.as_mut().filter(|p| p.dragged) else {
+            return false;
+        };
+        let Some(area) = field.text_area() else {
+            return false;
+        };
+        let (col, row) = press.pointer;
+        let outside = row < area.y || row >= area.y.saturating_add(area.height);
+        if !outside || press.next_step.is_some_and(|due| now < due) {
+            return false;
+        }
+        press.next_step = Some(now + AUTOSCROLL_STEP);
+        field.mouse_drag(col, row)
+    }
+
+    /// Whether a press in the field is under way — its drag and release are
+    /// the field's, wherever the pointer goes.
+    pub fn is_active(&self) -> bool {
+        self.press.is_some()
+    }
+
+    /// Routes a left-button report to the gesture: a press that lands in
+    /// `field`, and the drag and the release of one that did. `true` when the
+    /// report was the field's — the caller gives it to nothing else.
+    pub fn on_mouse(
+        &mut self,
+        field: &mut InputBox,
+        mouse: ratatui::crossterm::event::MouseEvent,
+        unit: SelectUnit,
+    ) -> bool {
+        use ratatui::crossterm::event::{MouseButton, MouseEventKind};
+        let (col, row) = (mouse.column, mouse.row);
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => self.press(field, col, row, unit),
+            MouseEventKind::Drag(MouseButton::Left) if self.is_active() => {
+                self.drag(field, col, row);
+                true
+            }
+            MouseEventKind::Up(MouseButton::Left) if self.is_active() => {
+                self.release(field);
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
+/// What `Ctrl+C` or `Ctrl+X` did to a field ([`InputBox::clipboard_key`],
+/// [`InputBox::copy`], [`InputBox::cut`]). The widget has no clipboard: the
+/// text goes up to whoever owns one (docs/history/input-selection-undo-mouse.md
+/// §B, docs/research/mouse-always-captured.md §5.8).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Clip {
+    /// The selection's text, for the clipboard; the field and its selection
+    /// are as they were — a copy is not an edit (research F2).
+    Copy(String),
+    /// The selection's text, for the clipboard, already removed from the
+    /// field — an edit, undoable like any other.
+    Cut(String),
+    /// The key, with nothing to put on the clipboard: no selection, or a masked
+    /// field, whose content never leaves it ([`InputBox::selected_text`]).
+    Nothing,
+}
+
+impl Clip {
+    /// The text for the clipboard, if there is any.
+    pub fn text(self) -> Option<String> {
+        match self {
+            Clip::Copy(text) | Clip::Cut(text) => Some(text),
+            Clip::Nothing => None,
+        }
+    }
+
+    /// The key changed the field's content — a cut — so the caller marks it
+    /// the way it marks any edit (a spellcheck recheck, a validation, a draft).
+    pub fn edited(&self) -> bool {
+        matches!(self, Clip::Cut(_))
+    }
 }
 
 impl KeyOutcome {
@@ -770,6 +913,45 @@ impl InputBox {
         self.col = self.lines[self.row].len();
         self.goal_col = None;
         self.last_edit_kind = None;
+    }
+
+    /// `Ctrl+C`: the selection's text for the clipboard ([`Clip::Copy`]), the
+    /// selection kept; [`Clip::Nothing`] without one or in a masked field.
+    pub fn copy(&self) -> Clip {
+        self.selected_text().map_or(Clip::Nothing, Clip::Copy)
+    }
+
+    /// `Ctrl+X`: the selection's text for the clipboard, removed from the field
+    /// ([`Clip::Cut`]); [`Clip::Nothing`] — and the field untouched — without a
+    /// selection or in a masked field, where nothing may reach the clipboard.
+    pub fn cut(&mut self) -> Clip {
+        match self.selected_text() {
+            Some(text) => {
+                self.delete_selection();
+                Clip::Cut(text)
+            }
+            None => Clip::Nothing,
+        }
+    }
+
+    /// Answers `Ctrl+C` ([`Self::copy`]) and `Ctrl+X` ([`Self::cut`]), the two
+    /// keys [`Self::on_key`] leaves to the layer that owns the clipboard — the
+    /// way every field outside the chat's box answers them
+    /// (docs/research/mouse-always-captured.md §5.8). `None` — the key is
+    /// neither: the caller goes on to `on_key`. Layout-independent, like every
+    /// shortcut here, and text typed with AltGr is not a shortcut.
+    pub fn clipboard_key(&mut self, key: &KeyEvent) -> Option<Clip> {
+        if key.kind != KeyEventKind::Press
+            || !key.modifiers.contains(KeyModifiers::CONTROL)
+            || keys::is_altgr_text(key)
+        {
+            return None;
+        }
+        match keys::hotkey_char(key)? {
+            'c' => Some(self.copy()),
+            'x' => Some(self.cut()),
+            _ => None,
+        }
     }
 
     /// Deletes the selection as a **standalone** action (`Ctrl+X` cut): records
@@ -3081,6 +3263,87 @@ mod tests {
         crate::shared::keys::pretend_altgr(None);
     }
 
+    /// `Ctrl+C` and `Ctrl+X`, the keys a field outside the chat's box answers
+    /// through `clipboard_key` (docs/research/mouse-always-captured.md §5.8): a
+    /// copy hands the selection out and keeps it, a cut hands it out and
+    /// removes it — undoably; without a selection both are the key with
+    /// nothing to copy, and every other key is not theirs.
+    #[test]
+    fn clipboard_keys_copy_keep_cut_and_leave_other_keys() {
+        let mut ib = InputBox::new();
+        ib.set_text("hello world");
+        assert_eq!(
+            ib.clipboard_key(&ctrl(KeyCode::Char('c'))),
+            Some(Clip::Nothing)
+        );
+        assert_eq!(
+            ib.clipboard_key(&ctrl(KeyCode::Char('x'))),
+            Some(Clip::Nothing)
+        );
+        assert_eq!(ib.text(), "hello world", "a cut of nothing changes nothing");
+        ib.on_key(ctrl(KeyCode::Home));
+        for _ in 0..5 {
+            ib.on_key(shift(KeyCode::Right));
+        }
+        let copy = ib.clipboard_key(&ctrl(KeyCode::Char('c')));
+        assert_eq!(copy, Some(Clip::Copy("hello".into())));
+        assert!(!copy.unwrap().edited());
+        assert_eq!(ib.selected_text().as_deref(), Some("hello"), "kept");
+        // The physical key decides, as for every shortcut: `Ctrl+С` under a
+        // Russian layout is the copy too.
+        assert_eq!(
+            ib.clipboard_key(&ctrl(KeyCode::Char('с'))),
+            Some(Clip::Copy("hello".into()))
+        );
+        let cut = ib.clipboard_key(&ctrl(KeyCode::Char('x')));
+        assert_eq!(cut, Some(Clip::Cut("hello".into())));
+        assert!(cut.as_ref().is_some_and(Clip::edited));
+        assert_eq!(ib.text(), " world");
+        assert!(ib.undo());
+        assert_eq!(ib.text(), "hello world", "a cut is undone like an edit");
+        // Not theirs: a plain `c`, another shortcut, a release.
+        assert_eq!(ib.clipboard_key(&k(KeyCode::Char('c'))), None);
+        assert_eq!(ib.clipboard_key(&ctrl(KeyCode::Char('a'))), None);
+        let mut release = ctrl(KeyCode::Char('c'));
+        release.kind = KeyEventKind::Release;
+        assert_eq!(ib.clipboard_key(&release), None);
+    }
+
+    /// A masked field's content never reaches the clipboard: its copy and its
+    /// cut are the key with nothing to copy, and the cut leaves the text alone.
+    #[test]
+    fn a_masked_field_copies_and_cuts_nothing() {
+        let mut ib = InputBox::new();
+        ib.set_mask(true);
+        ib.set_text("sk-secret");
+        ib.select_all();
+        assert_eq!(
+            ib.clipboard_key(&ctrl(KeyCode::Char('c'))),
+            Some(Clip::Nothing)
+        );
+        assert_eq!(
+            ib.clipboard_key(&ctrl(KeyCode::Char('x'))),
+            Some(Clip::Nothing)
+        );
+        assert_eq!(ib.text(), "sk-secret");
+    }
+
+    /// AltGr text arrives as `Ctrl+Alt` on Windows: a `c` made with AltGr is a
+    /// character, not the copy.
+    #[test]
+    fn altgr_text_is_not_a_copy() {
+        crate::shared::keys::pretend_altgr(Some('c'));
+        let mut ib = InputBox::new();
+        ib.set_text("abc");
+        ib.select_all();
+        let key = KeyEvent::new(
+            KeyCode::Char('c'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        );
+        assert_eq!(ib.clipboard_key(&key), None);
+        crate::shared::keys::pretend_altgr(None);
+    }
+
     /// An `Alt`+character is a meta-prefixed key, not text: it is not typed.
     /// `Alt+Backspace/Delete` delete a word, as on a Mac and in readline.
     #[test]
@@ -3958,6 +4221,56 @@ mod tests {
         }
         assert_eq!(ib.cursor(), (11, 3), "the text's end");
         assert_eq!(ib.selected_text(), Some(text.join("\n")));
+    }
+
+    /// A field's gesture on a screen other than the chat
+    /// (docs/research/mouse-always-captured.md §5.8): a press in the field is
+    /// the gesture's, and so are its drag and release wherever the pointer
+    /// goes; a press outside is not, and a report on the press's own cell is
+    /// not a drag yet. Held below a draft taller than the box, the loop's tick
+    /// moves the selection a row at a time, an `AUTOSCROLL_STEP` apart.
+    #[test]
+    fn a_field_gesture_selects_and_scrolls_a_tall_draft_on_the_tick() {
+        use ratatui::crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        let at = |kind, column, row| MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        };
+        let left = MouseButton::Left;
+        let mut ib = InputBox::new();
+        let text: Vec<String> = (0..12).map(|i| format!("l{i}")).collect();
+        ib.set_text(&text.join("\n"));
+        (ib.row, ib.col) = (0, 0);
+        render_at(&mut ib, 20);
+        let mut gesture = FieldGesture::default();
+        let unit = SelectUnit::Char;
+        assert!(!gesture.on_mouse(&mut ib, at(MouseEventKind::Down(left), 0, 0), unit));
+        assert!(!gesture.is_active(), "a press outside the text");
+        assert!(gesture.on_mouse(&mut ib, at(MouseEventKind::Down(left), TX, TY), unit));
+        assert!(!gesture.drag(&mut ib, TX, TY), "the press's own cell");
+        assert!(gesture.on_mouse(
+            &mut ib,
+            at(MouseEventKind::Drag(left), TX + 1, TY + 10),
+            unit
+        ));
+        assert_eq!(ib.cursor(), (6, 1));
+        let t0 = std::time::Instant::now();
+        render_at(&mut ib, 20);
+        assert!(gesture.tick(&mut ib, t0));
+        assert_eq!(ib.cursor(), (7, 1), "a row past the visible ones");
+        render_at(&mut ib, 20);
+        assert!(!gesture.tick(&mut ib, t0), "not before the next step");
+        assert!(gesture.tick(&mut ib, t0 + AUTOSCROLL_STEP));
+        assert_eq!(ib.cursor(), (8, 1));
+        assert!(gesture.on_mouse(&mut ib, at(MouseEventKind::Up(left), 0, 0), unit));
+        assert!(!gesture.is_active());
+        assert!(!gesture.tick(&mut ib, t0 + AUTOSCROLL_STEP * 4), "released");
+        assert_eq!(
+            ib.selected_text(),
+            Some(text[..9].join("\n").replace("l8", "l"))
+        );
     }
 
     /// A double press takes the run under the pointer — the box's own word
