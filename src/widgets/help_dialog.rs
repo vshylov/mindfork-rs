@@ -2142,7 +2142,6 @@ mod tests {
         );
     }
 
-    /// An over-scrolled state clamps at render time, and a short terminal —
     /// A click on a tab opens it (F12) — the cell read back from the buffer
     /// shows that tab's label — and on a narrow strip the `…` opens the
     /// nearest tab hidden on its side.
@@ -2195,6 +2194,7 @@ mod tests {
         );
     }
 
+    /// An over-scrolled state clamps at render time, and a short terminal —
     /// where the tab is taller than the view — draws the scrollbar thumb.
     #[test]
     fn help_scroll_clamps_and_draws_scrollbar_on_short_terminal() {
