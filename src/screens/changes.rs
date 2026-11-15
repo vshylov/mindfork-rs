@@ -26,6 +26,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::features::workspace_diff::{ChangeSet, DiffKind, FileChange, FileState};
+use crate::shared::cell_selection::CellSelection;
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
 use crate::shared::mouse::{SelectUnit, wheel_delta};
@@ -79,6 +80,9 @@ enum Focus {
 pub enum ChangesIntent {
     /// Close and go back to the chat (`Esc`).
     Close,
+    /// Put this text on the clipboard: `Ctrl+C` over the diff's selection
+    /// (docs/research/mouse-always-captured.md F13).
+    CopyText(String),
     /// Quit the application (`Ctrl+Q`/`F10`).
     Quit,
     /// Put this file back to how it was before the assistant touched it.
@@ -106,6 +110,8 @@ pub struct ChangesScreen {
     /// (docs/research/mouse-always-captured.md F11, F12).
     files_drawn: RowList,
     diff_area: Rect,
+    /// A selection over the diff's visible cells (F13).
+    diff_selection: CellSelection,
 }
 
 impl ChangesScreen {
@@ -121,6 +127,7 @@ impl ChangesScreen {
             confirming: None,
             files_drawn: RowList::default(),
             diff_area: Rect::default(),
+            diff_selection: CellSelection::default(),
         }
     }
 
@@ -175,6 +182,14 @@ impl ChangesScreen {
             // reader has already been taught elsewhere.
             self.confirming = None;
             return (key.code == KeyCode::Enter).then_some(ChangesIntent::Revert(path));
+        }
+        // The diff's selection (F13): `Ctrl+C` copies it and keeps it.
+        if ctrl && keys::hotkey_char(&key) == Some('c') {
+            return self
+                .diff_selection
+                .text()
+                .filter(|text| !text.is_empty())
+                .map(ChangesIntent::CopyText);
         }
         if ctrl {
             return None;
@@ -243,6 +258,17 @@ impl ChangesScreen {
                 } else {
                     self.scroll_down(delta.unsigned_abs())
                 };
+            }
+            return None;
+        }
+        // A press in the diff focuses it and starts a selection of what it
+        // shows; its drag and release are the selection's (F13).
+        if self.diff_selection.on_mouse(mouse) {
+            if press {
+                self.focus = Focus::Diff;
+                return (unit == SelectUnit::Word)
+                    .then(|| self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)))
+                    .flatten();
             }
             return None;
         }
@@ -540,6 +566,9 @@ impl ChangesScreen {
                 Paragraph::new(Line::styled(loc.t(key), p.muted_style())),
                 area,
             );
+            let palette = self.palette;
+            self.diff_selection
+                .record(frame.buffer_mut(), area, &palette);
             return;
         }
         self.diff_scroll = self.diff_scroll.min(file.lines.len().saturating_sub(1));
@@ -559,6 +588,9 @@ impl ChangesScreen {
             })
             .collect();
         frame.render_widget(Paragraph::new(lines), area);
+        let palette = self.palette;
+        self.diff_selection
+            .record(frame.buffer_mut(), area, &palette);
         render_scrollbar(
             frame,
             area,
@@ -875,6 +907,38 @@ mod tests {
         assert!(s.confirming.is_some());
         s.handle_mouse(mouse_at(click, at), Char);
         assert!(s.confirming.is_none(), "a press cancels the question");
+    }
+
+    /// A drag over the diff selects what it shows and focuses the pane;
+    /// `Ctrl+C` copies it (docs/research/mouse-always-captured.md F13).
+    #[test]
+    fn a_drag_over_the_diff_selects_what_ctrl_c_copies() {
+        use crate::shared::mouse::SelectUnit::Char;
+        use ratatui::crossterm::event::MouseButton;
+        let mut s = screen(vec![modified("a.rs")]);
+        let shown = text(&mut s);
+        let row = shown.lines().position(|l| l.contains("keep")).unwrap() as u16;
+        let col = shown
+            .lines()
+            .nth(row as usize)
+            .unwrap()
+            .chars()
+            .position(|c| c == 'k')
+            .unwrap() as u16;
+        let left = MouseButton::Left;
+        s.handle_mouse(mouse_at(MouseEventKind::Down(left), (col, row)), Char);
+        assert_eq!(s.focus, Focus::Diff);
+        s.handle_mouse(
+            mouse_at(MouseEventKind::Drag(left), (col + 1, row + 2)),
+            Char,
+        );
+        s.handle_mouse(mouse_at(MouseEventKind::Up(left), (col + 1, row + 2)), Char);
+        text(&mut s);
+        let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert_eq!(
+            s.handle_key(ctrl_c),
+            Some(ChangesIntent::CopyText("keep\n−was\n+is".into()))
+        );
     }
 
     #[test]

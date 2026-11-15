@@ -2,6 +2,7 @@
 //! upper layers. See spec §4.2.
 
 pub mod api;
+pub mod cell_selection;
 pub mod child_env;
 pub mod cmdline;
 pub mod colour_depth;

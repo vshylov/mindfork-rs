@@ -696,6 +696,8 @@ pub(super) fn dispatch_changes(
     active: &mut ActiveScreen,
 ) -> bool {
     match intent {
+        // Handled in `handle_key_event`, beside the arboard client.
+        ChangesIntent::CopyText(_) => false,
         ChangesIntent::Close => {
             *active = ActiveScreen::Chat;
             false
@@ -772,7 +774,8 @@ impl AnyIntent {
             | AnyIntent::List(ChatListIntent::CopyText(text))
             | AnyIntent::Settings(SettingsIntent::CopyText(text))
             | AnyIntent::SelfModel(SelfModelIntent::CopyText(text))
-            | AnyIntent::Notes(NotesIntent::CopyText(text)) => Some(text),
+            | AnyIntent::Notes(NotesIntent::CopyText(text))
+            | AnyIntent::Changes(ChangesIntent::CopyText(text)) => Some(text),
             _ => None,
         }
     }

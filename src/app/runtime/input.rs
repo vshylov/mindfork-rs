@@ -313,6 +313,12 @@ fn handle_key_event(
                 help.close();
                 false
             }
+            HelpKeyOutcome::Copy(text) => {
+                let report = copy_text(clipboard, &text, screen.clipboard_osc52());
+                let (chip, failed) = report.chip(screen.loc());
+                screen.show_copy_outcome(chip, failed);
+                false
+            }
             HelpKeyOutcome::Handled => false,
         };
     }
@@ -354,11 +360,14 @@ pub(super) fn handle_mouse_event(
     clipboard: &mut Option<arboard::Clipboard>,
 ) -> bool {
     if let Some(state) = help.open.as_mut() {
-        // Clamped to the content where the dialog is drawn.
+        // Clamped to the content where the dialog is drawn. A drag selects
+        // the content's visible cells (F13).
         match mouse.kind {
             MouseEventKind::ScrollUp => state.scroll = state.scroll.saturating_sub(WHEEL_ROWS),
             MouseEventKind::ScrollDown => state.scroll = state.scroll.saturating_add(WHEEL_ROWS),
-            _ => {}
+            _ => {
+                state.selection.on_mouse(mouse);
+            }
         }
         return false;
     }

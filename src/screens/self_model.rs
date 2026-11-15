@@ -433,6 +433,7 @@ impl SelfModelScreen {
                     None
                 }
                 HistoryKey::Quit => Some(SelfModelIntent::Quit),
+                HistoryKey::Copy(text) => Some(SelfModelIntent::CopyText(text)),
             };
         }
         if self.editor.is_some() {

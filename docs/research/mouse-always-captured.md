@@ -25,7 +25,9 @@ on every screen (3b), a selection in read-only text (3c). **3a is built**
 (`feat/field-copy`) and **3b is built** (2026-11-15, `feat/mouse-everywhere`): the
 reports reach every screen and the help dialog, capture is on everywhere but the
 "too small" notice, the wheel and the clicks of F11–F12 in every list, the fields'
-grammar. 3c is next.
+grammar. **3c is built** (2026-11-15, `feat/read-only-selection`): the help, an
+opened note, the diff and an opened version select their visible cells. **The track is
+complete.**
 
 The ask (the owner, 2026-11-14): look into dropping the mouse's two modes —
 *select* and *scroll* — altogether. Keep the terminal's mouse capture on all the

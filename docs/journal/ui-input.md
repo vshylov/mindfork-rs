@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (50)
+## Entries (51)
 
 - Post-M9: fast multiline clipboard paste (done)
 - Post-M9: `↑/↓` navigation by visual row of a wrapped line (done)
@@ -62,6 +62,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a copy leaves the prefixes drawn as text out (done)
 - Post-M9: `Ctrl+C` and `Ctrl+X` in every field (done)
 - Post-M9: the mouse on every screen (done)
+- Post-M9: a selection in read-only text — the mouse track complete (done)
 
 ### Post-M9: fast multiline clipboard paste (done)
 - **Symptom**: a large clipboard paste lagged in Windows Terminal, and a line break
@@ -2857,4 +2858,48 @@ rounding it is red. docs/lessons.md §5 has the lesson.
 start, the chat list's click selecting and its double click opening the chat, the
 settings' click on *Interface* (after the fix), and the help scrolled by the wheel. No
 live run in the AGENTS.md §3 sense.
+
+### Post-M9: a selection in read-only text — the mouse track complete (done)
+
+**What.** Stage 3c of the mouse track
+([docs/research/mouse-always-captured.md](../research/mouse-always-captured.md) F13),
+on `feat/read-only-selection`, stacked on 3b. With the mouse captured on every screen,
+text nobody edits had no selection at all. The terminal's own needs a modifier, takes
+the borders with the text, and conhost has none. The owner chose the cheap form: a
+selection over the visible cells of one panel. It covers:
+- the help dialog's content, every tab, *About* included;
+- an opened note;
+- the changes screen's diff;
+- an opened version of the self-model's history.
+
+**How.** `shared::cell_selection::CellSelection` reads the panel back from the drawn
+buffer instead of from its model:
+- **Record.** Right after the panel draws, `record` takes each cell's symbol. ratatui
+  draws a wide glyph's trailing cell as a blank, so the cell after a two-column glyph is
+  recorded empty, and a selection starting on that half steps back onto the glyph.
+- **Highlight.** `record` paints the selection backdrop the feed uses, so the monochrome
+  pass keeps it as reverse video.
+- **Dropped when the text changes.** A scroll, a tab, a resize or another file puts
+  other text under the selection. Each draw's rows are compared with the last, and a
+  difference drops it, so no screen has to remember to.
+- **Grammar.** A press starts a gesture and drops any selection standing; a drag
+  selects to the pointer, clamped to the panel; the release ends the gesture.
+- **Copy.** `Ctrl+C` hands up each row's cells with their trailing blanks trimmed,
+  joined by `\n`, as the screen's `CopyText`; the help hands it up as
+  `HelpKeyOutcome::Copy`. The selection stays.
+- **The chip.** It is drawn after the help dialog when one is open, so a copy from the
+  help is said over the dimmed screen.
+
+**Tests.** The selection itself: a forward and a backward drag, the clamp, a press
+alone, new text dropping it, a wide glyph at the start. And each panel: the help's
+content copied and kept until a scroll drops it, an opened note, the diff focused and
+copied across rows, the history's version opened by a double click and its text copied.
+**4948 green.** **The pty run** (`mindfork demo`, the help's *Shortcuts* tab): a drag
+over a row copied `select text` over OSC 52, and the chip read `copied (OSC 52)` on the
+last row. No live run in the AGENTS.md §3 sense.
+
+**The track is complete.** Stage 1 built the input path and the *Mouse* setting. Stage 2
+built the feed's own selection and flipped the default, so `Ctrl+W` is gone. Stage 2b
+left the prefixes out of a copy. Stage 3 added copy in every field, the mouse on every
+screen and this selection.
 

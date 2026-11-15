@@ -286,6 +286,35 @@ fn a_double_click_opens_a_note_and_the_wheel_scrolls_it() {
     assert_eq!(s.note_scroll, 3);
 }
 
+/// An opened note's text is selected by a drag over what it shows, and
+/// `Ctrl+C` copies it (docs/research/mouse-always-captured.md F13); on the
+/// list `Ctrl+C` copies nothing.
+#[test]
+fn a_drag_over_an_opened_note_selects_what_ctrl_c_copies() {
+    use crate::shared::mouse::SelectUnit::Char;
+    use ratatui::crossterm::event::MouseButton;
+    let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+    let mut s = screen();
+    assert_eq!(s.handle_key(ctrl_c), None, "the list has no selection");
+    press(&mut s, KeyCode::Enter);
+    let shown = text_at(&mut s, 100, 20);
+    let row = shown
+        .lines()
+        .position(|l| l.contains("Interview at Lumen Pay"))
+        .expect("the note's text") as u16;
+    let line = shown.lines().nth(row as usize).unwrap();
+    let col = line[..line.find("Interview").unwrap()].chars().count() as u16;
+    let left = MouseButton::Left;
+    s.handle_mouse(mouse_at(MouseEventKind::Down(left), (col, row)), Char);
+    s.handle_mouse(mouse_at(MouseEventKind::Drag(left), (col + 8, row)), Char);
+    s.handle_mouse(mouse_at(MouseEventKind::Up(left), (col + 8, row)), Char);
+    text_at(&mut s, 100, 20);
+    assert_eq!(
+        s.handle_key(ctrl_c),
+        Some(NotesIntent::CopyText("Interview".into()))
+    );
+}
+
 #[test]
 fn the_search_opens_on_the_russian_layouts_slash_key() {
     let mut s = screen();

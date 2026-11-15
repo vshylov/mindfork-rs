@@ -26,6 +26,7 @@ use uuid::Uuid;
 use crate::entities::note::{NoteCard, NoteEdit, NotesView};
 use crate::entities::self_model::age_label;
 use crate::features::tools::notes::SELF_NOTE_TAG;
+use crate::shared::cell_selection::CellSelection;
 use crate::shared::config::NewlineKey;
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
@@ -129,6 +130,8 @@ pub struct NotesScreen {
     /// (docs/research/mouse-always-captured.md F11, F12).
     drawn: RowList,
     note_area: Rect,
+    /// A selection over an opened note's visible cells (F13).
+    note_selection: CellSelection,
     /// The editor's or the search line's mouse gesture.
     field_gesture: FieldGesture,
 }
@@ -150,6 +153,7 @@ impl NotesScreen {
             newline_key: NewlineKey::default(),
             drawn: RowList::default(),
             note_area: Rect::default(),
+            note_selection: CellSelection::default(),
             field_gesture: FieldGesture::default(),
         }
     }
@@ -253,6 +257,14 @@ impl NotesScreen {
         if key.code == KeyCode::F(10) || (ctrl && phys == Some('q')) {
             return Some(NotesIntent::Quit);
         }
+        // An opened note's selection (F13): `Ctrl+C` copies it and keeps it.
+        if ctrl && phys == Some('c') && matches!(self.mode, Mode::Note(_)) {
+            return self
+                .note_selection
+                .text()
+                .filter(|text| !text.is_empty())
+                .map(NotesIntent::CopyText);
+        }
         // The delete's question: `Del` again deletes, anything else keeps it.
         if let Some(id) = self.confirm_delete.take() {
             return (key.code == KeyCode::Delete)
@@ -314,6 +326,10 @@ impl NotesScreen {
         if let Some(search) = self.search.as_mut()
             && self.field_gesture.on_mouse(search, mouse, unit)
         {
+            return None;
+        }
+        // An opened note's text: a drag selects what it shows (F13).
+        if matches!(self.mode, Mode::Note(_)) && self.note_selection.on_mouse(mouse) {
             return None;
         }
         let (col, row) = (mouse.column, mouse.row);
@@ -637,6 +653,10 @@ impl NotesScreen {
         }
         let shown: Vec<Line<'static>> = lines.into_iter().skip(scroll).take(view_h).collect();
         frame.render_widget(Paragraph::new(shown), body);
+        if let Mode::Note(_) = self.mode {
+            self.note_selection
+                .record(frame.buffer_mut(), body, &palette);
+        }
         render_scrollbar(frame, chrome.panel, total, view_h, scroll, true, &palette);
         self.render_editor(frame);
     }

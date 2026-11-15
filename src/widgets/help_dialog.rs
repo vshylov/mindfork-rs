@@ -10,6 +10,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Clear, Paragraph};
 
+use crate::shared::cell_selection::CellSelection;
 use crate::shared::credits;
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
@@ -118,6 +119,9 @@ pub struct HelpState {
     /// where the width — and therefore the wrapped rows above the section —
     /// is known.
     pending_anchor: bool,
+    /// A selection over the content's visible cells
+    /// (docs/research/mouse-always-captured.md F13).
+    pub selection: CellSelection,
 }
 
 impl HelpState {
@@ -131,6 +135,7 @@ impl HelpState {
             scroll: 0,
             context: HelpContext::Chat,
             pending_anchor: false,
+            selection: CellSelection::default(),
         }
     }
 
@@ -142,6 +147,7 @@ impl HelpState {
             scroll: 0,
             context,
             pending_anchor: true,
+            selection: CellSelection::default(),
         }
     }
 
@@ -173,6 +179,14 @@ impl HelpState {
         {
             return HelpKeyOutcome::Quit;
         }
+        // `Ctrl+C` copies the content's selection (F13); it stays selected.
+        if key.modifiers.contains(KeyModifiers::CONTROL) && keys::hotkey_char(key) == Some('c') {
+            return self
+                .selection
+                .text()
+                .filter(|text| !text.is_empty())
+                .map_or(HelpKeyOutcome::Handled, HelpKeyOutcome::Copy);
+        }
         match key.code {
             KeyCode::Tab | KeyCode::Right => self.next_tab(),
             KeyCode::BackTab | KeyCode::Left => self.prev_tab(),
@@ -189,9 +203,12 @@ impl HelpState {
 }
 
 /// What a key did to the open dialog ([`HelpState::handle_key`]): stayed
-/// inside, asked to close, or asked to quit the application.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// inside, asked to close, asked to quit the application, or copied.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HelpKeyOutcome {
+    /// `Ctrl+C` over a selection: this text for the clipboard, which the
+    /// runtime owns (docs/research/mouse-always-captured.md F13).
+    Copy(String),
     /// Consumed (navigation, or ignored) — the dialog stays open.
     Handled,
     /// Close the dialog (`Esc`, a repeat `F1`); the owner remembers
@@ -537,6 +554,8 @@ pub fn render_help(
         Paragraph::new(Text::from(content)).scroll((help.scroll as u16, 0)),
         body_area,
     );
+    help.selection
+        .record(frame.buffer_mut(), body_area, palette);
     // The scrollbar sits on the right border line along the content area (not
     // the full height, so the thumb doesn't intrude on the tab header).
     let bar_area = Rect {
@@ -2103,6 +2122,62 @@ mod tests {
     }
 
     /// An over-scrolled state clamps at render time, and a short terminal —
+    /// A drag over the help's content selects what it shows, and `Ctrl+C`
+    /// hands the text up to be copied — the selection kept; a scroll changes
+    /// what is shown and drops it (docs/research/mouse-always-captured.md F13).
+    #[test]
+    fn a_drag_over_the_content_selects_what_ctrl_c_copies() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+        let at = |kind, column, row| MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        };
+        let palette = Palette::default();
+        let mut help = HelpState::open(HelpTab::Commands);
+        let mut term = Terminal::new(TestBackend::new(90, 24)).unwrap();
+        let mut draw = |help: &mut HelpState| {
+            term.draw(|f| render_help(f, help, NO_SECTIONS, &test_locations(), &palette, ru()))
+                .unwrap();
+            term.backend().buffer().clone()
+        };
+        let buf = draw(&mut help);
+        let (x, y) = (0..24u16)
+            .flat_map(|y| (0..90u16).map(move |x| (x, y)))
+            .find(|&(x, y)| buf[(x, y)].symbol() == "/" && buf[(x + 1, y)].symbol() != " ")
+            .expect("a command on screen");
+        let left = MouseButton::Left;
+        help.selection
+            .on_mouse(at(MouseEventKind::Down(left), x, y));
+        help.selection
+            .on_mouse(at(MouseEventKind::Drag(left), x + 3, y));
+        help.selection
+            .on_mouse(at(MouseEventKind::Up(left), x + 3, y));
+        draw(&mut help);
+        let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        let HelpKeyOutcome::Copy(text) = help.handle_key(&ctrl_c) else {
+            panic!("a selection to copy");
+        };
+        assert!(
+            text.starts_with('/') && text.chars().count() == 4,
+            "{text:?}"
+        );
+        assert!(
+            matches!(help.handle_key(&ctrl_c), HelpKeyOutcome::Copy(_)),
+            "kept"
+        );
+        help.handle_key(&KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        draw(&mut help);
+        assert_eq!(
+            help.handle_key(&ctrl_c),
+            HelpKeyOutcome::Handled,
+            "the scroll dropped it"
+        );
+    }
+
     /// where the tab is taller than the view — draws the scrollbar thumb.
     #[test]
     fn help_scroll_clamps_and_draws_scrollbar_on_short_terminal() {

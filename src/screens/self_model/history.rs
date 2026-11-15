@@ -24,6 +24,7 @@ use crate::entities::self_model::{GoalStatus, SelfModel};
 use crate::entities::self_model_history::{
     Change, SelfModelHistoryView, SelfModelVersion, VersionAuthor, changes,
 };
+use crate::shared::cell_selection::CellSelection;
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
 use crate::shared::mouse::{SelectUnit, wheel_delta};
@@ -37,7 +38,7 @@ use super::{draw_visual_rows, expand_visual_rows, visual_spans};
 const PAGE_STEP: usize = 10;
 
 /// What a key did in the history view, for the screen around it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum HistoryKey {
     /// Handled here; the view stays.
     Stay,
@@ -45,6 +46,9 @@ pub(super) enum HistoryKey {
     Back,
     /// `Ctrl+Q`/`F10`: quit the application.
     Quit,
+    /// `Ctrl+C` over an open version's selection: this text for the clipboard
+    /// (docs/research/mouse-always-captured.md F13).
+    Copy(String),
 }
 
 /// The history view's state.
@@ -62,6 +66,8 @@ pub(super) struct History {
     /// (docs/research/mouse-always-captured.md F11, F12).
     drawn: RowList,
     detail_area: Rect,
+    /// A selection over an open version's visible cells (F13).
+    detail_selection: CellSelection,
 }
 
 impl History {
@@ -75,6 +81,7 @@ impl History {
             detail_scroll: 0,
             drawn: RowList::default(),
             detail_area: Rect::default(),
+            detail_selection: CellSelection::default(),
         }
     }
 
@@ -97,6 +104,13 @@ impl History {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         if (ctrl && keys::hotkey_char(&key) == Some('q')) || key.code == KeyCode::F(10) {
             return HistoryKey::Quit;
+        }
+        if ctrl && self.open && keys::hotkey_char(&key) == Some('c') {
+            return self
+                .detail_selection
+                .text()
+                .filter(|text| !text.is_empty())
+                .map_or(HistoryKey::Stay, HistoryKey::Copy);
         }
         if ctrl {
             return HistoryKey::Stay;
@@ -143,6 +157,10 @@ impl History {
     pub(super) fn handle_mouse(&mut self, mouse: MouseEvent, unit: SelectUnit) {
         let (col, row) = (mouse.column, mouse.row);
         if self.open {
+            // A drag selects what the version shows (F13).
+            if self.detail_selection.on_mouse(mouse) {
+                return;
+            }
             if let Some(delta) = wheel_delta(mouse.kind)
                 && self.detail_area.contains(Position::new(col, row))
             {
@@ -249,6 +267,8 @@ impl History {
                 })
                 .collect();
             frame.render_widget(Paragraph::new(shown), area);
+            self.detail_selection
+                .record(frame.buffer_mut(), area, palette);
             return;
         }
         let rows = self.list_rows(palette, loc);
@@ -659,6 +679,48 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// The mouse in the history (docs/research/mouse-always-captured.md F12,
+    /// F13): a double click on a version opens it, as `Enter` does; a drag
+    /// over the open version selects what it shows, and `Ctrl+C` copies it.
+    #[test]
+    fn a_double_click_opens_a_version_whose_text_a_drag_selects() {
+        use crate::shared::mouse::SelectUnit::{Char, Word};
+        use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+        let mouse = |kind, (column, row): (u16, u16)| MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        };
+        let mut s = screen();
+        s.show_history(view());
+        text(&mut s);
+        let history = s.history.as_mut().unwrap();
+        let cell = history.drawn.cell_of(1).expect("version 2's row");
+        let left = MouseButton::Left;
+        history.handle_mouse(mouse(MouseEventKind::Down(left), cell), Char);
+        assert_eq!(history.selected, 1);
+        history.handle_mouse(mouse(MouseEventKind::Down(left), cell), Word);
+        assert!(history.open, "the version opened");
+        let shown = text(&mut s);
+        let row = shown
+            .lines()
+            .position(|l| l.contains("learn chess"))
+            .unwrap() as u16;
+        let line = shown.lines().nth(row as usize).unwrap();
+        let col = line[..line.find("learn").unwrap()].chars().count() as u16;
+        let history = s.history.as_mut().unwrap();
+        history.handle_mouse(mouse(MouseEventKind::Down(left), (col, row)), Char);
+        history.handle_mouse(mouse(MouseEventKind::Drag(left), (col + 4, row)), Char);
+        history.handle_mouse(mouse(MouseEventKind::Up(left), (col + 4, row)), Char);
+        text(&mut s);
+        let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert_eq!(
+            s.handle_key(ctrl_c),
+            Some(SelfModelIntent::CopyText("learn".into()))
+        );
     }
 
     #[test]

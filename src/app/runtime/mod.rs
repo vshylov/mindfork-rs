@@ -1198,16 +1198,17 @@ fn compose_frame(
         ActiveScreen::Tasks(tasks) => tasks.render(frame),
         ActiveScreen::Notes(notes) => notes.render(frame),
     }
-    // A copy made in another screen's field: that screen has no chat status
-    // bar, so the chip goes on its footer (research §5.8).
-    if !active.is_chat()
-        && let Some((text, failed)) = screen.copy_outcome()
-    {
-        ui::render_copy_chip(frame, palette, text, failed);
-    }
     if let Some(state) = help.open.as_mut() {
         dim_background(frame, palette);
         help_dialog::render_help(frame, state, &HELP_SECTIONS, &help.locations, palette, loc);
+    }
+    // A copy made in another screen's field, or in the help: neither has the
+    // chat's status bar in sight, so the chip goes on the frame's last row
+    // (research §5.8) — over the dimmed chat too, while the help is open.
+    if (!active.is_chat() || help.open.is_some())
+        && let Some((text, failed)) = screen.copy_outcome()
+    {
+        ui::render_copy_chip(frame, palette, text, failed);
     }
     // Last, so it also catches what the overlay's `Clear` reset — and, in the
     // monochrome mode, what the overlay drew.

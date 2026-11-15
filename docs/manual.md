@@ -896,7 +896,9 @@ things on different screens. The highlights:
 > toggles a setting, picks from a list. Text fields — renaming a chat, the settings'
 > editors, the self-model's and the notes' editors, the search lines — take a click, a
 > drag and a double or triple click like the input box. A popup that is open takes the
-> mouse alone; `Esc` closes it.
+> mouse alone; `Esc` closes it. In text you only read — the help, an opened note, a
+> diff, a version of the self-model — a drag selects what you see and `Ctrl+C` copies
+> it, line by line as it is shown; scrolling drops the selection.
 >
 > **Your terminal's own selection** is a modifier away: `Shift`+drag in most
 > terminals (Windows Terminal, VS Code on Windows and Linux, GNOME Terminal, Konsole,

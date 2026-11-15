@@ -37,7 +37,8 @@ split by subsystem.
   a click selects a row, a double click does what `Enter` does; text fields take
   clicks, drags and double and triple clicks like the message box. The popups over the
   chat — the link, emoji, spelling and profile pickers, the conversation's search bar —
-  take it too.
+  take it too. In text you only read — the help, an opened note, a diff, a version of
+  the self-model — a drag selects what is shown and `Ctrl+C` copies it.
 - **`Ctrl+C` and `Ctrl+X` work in every text field** — renaming a chat, the settings'
   editors, search and model filter, the self-model's and the notes' editors and the
   notes' search, the conversation's search bar — where a selection could be made but
