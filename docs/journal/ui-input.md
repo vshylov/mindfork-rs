@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (45)
+## Entries (46)
 
 - Post-M9: fast multiline clipboard paste (done)
 - Post-M9: `↑/↓` navigation by visual row of a wrapped line (done)
@@ -57,6 +57,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the input reader under a stream of mouse reports (done)
 - Post-M9: the *Mouse* setting — capture that follows the screen, the click on the release, the copy chip (done)
 - Post-M9: a copy over OSC 52 reads as a copy (done)
+- Post-M9: the feed's own text selection (done)
 
 ### Post-M9: fast multiline clipboard paste (done)
 - **Symptom**: a large clipboard paste lagged in Windows Terminal, and a line break
@@ -2506,3 +2507,99 @@ went nowhere. `CopyReport::message`, the chat list's sentence, is unchanged.
 in every locale, with no `/export`; the "too big" dead ends still name it. **4864 green,
 317 `#[ignore]`** on Linux, unchanged in number. No live run needed (no engine, memory
 or tool path); the owner's SSH session is the check.
+
+### Post-M9: the feed's own text selection (done)
+
+**What.** Stage 2 of the mouse track, its first half
+([docs/research/mouse-always-captured.md](../research/mouse-always-captured.md)
+§5.3–§5.6), on `feat/feed-selection`. With the *Mouse* setting at `app`, a drag in the
+feed selects text, a double click takes a word and a triple the logical line, and a
+drag held past the feed's top or bottom edge scrolls it. `Ctrl+C` copies what is drawn:
+no rail, no padding, a wrapped paragraph as one line, rendered markdown without its
+markup. The input box gets the same double and triple click, and a drag that never
+leaves it: clamped to its edge, scrolling a draft taller than the box. The default stays
+`terminal` and `Ctrl+W` stays. The second half — the toggle removed and the default
+flipped (§5.7) — is a PR of its own, so this one can be tried with the setting at `app`
+before the default changes for everyone.
+
+**The invariant it rests on: a cached row is a drawn row.** The research's plan carried
+the row facts "through `render`'s second wrap (identity today)". It was not quite
+identity: the compaction divider and its summary went into the block unwrapped, and
+`render` wrapped them. The block builder now wraps every row it emits to the panel's
+width, the divider included. `render` draws the rows as they are and wraps only the empty
+feed's placeholder. A test asserts every cached row fits the panel across widths, both
+colour modes, an open fold, a tool card, a table and a diagram. With that, a selection
+point is simply (block, row, column) into the cache, and the text of rows scrolled off
+screen is still at hand for a copy. The screenshot dumps came out byte-identical, which
+is the check that nothing drawn moved.
+
+**Row facts.** Each cached block keeps a `RowFact` per row: the rail's width and whether
+the row continues the line above. Both are made in the builder's wrap loop, the one
+place that knows them. `wrap_ranges` keeps the whitespace at a soft break at the end of
+the upper row, so joining a line's rows with nothing rebuilds it verbatim. The copy
+trims the whitespace that ends a logical line (a code block's padding) and the trailing
+newlines of a selection that ends on the separator under a message.
+
+**Read against the drawn frame, like the click map.** `DrawnRows` keeps the last
+frame's inner area, scroll and each block's first row. A press resolves against it. A
+drag keeps the pointer's cell and is resolved again after every frame
+(`follow_pointer`), which is what makes a wheel or an autoscroll step under a resting
+pointer grow the selection. The terminal reports nothing while the pointer rests, so the
+loop asks `ChatScreen::mouse_tick` every tick: the feed scrolls a row per
+`AUTOSCROLL_STEP` (50 ms), and the input box moves its selection a row past the visible
+ones. The highlight is painted on the buffer after the `Paragraph` and outside the block
+cache, like the search highlight. It runs from past the rail to each row's last glyph,
+in `Palette::selection`, which is reverse video in the monochrome mode.
+
+**The arithmetic is apart** (`widgets/feed_selection.rs`): points, row facts, the cells
+painted, the copy's text, a word and a line, and a drag grown by its press's unit. It
+reads rows through a `FeedRows` trait, so it is tested on hand-made rows without a
+terminal. `CharClass`/`class_runs` moved from the input box to `shared/wrap.rs`, so a
+double click in the feed and one in the box share the word boundaries `Ctrl+←/→` stops
+at. A press counts as the second or third of a click on one cell within 500 ms
+(`shared::mouse::ClickCounter`), since crossterm reports presses, not clicks.
+
+**The grammar, as decided** (F2, F3, F5, F6, F8, F9). A press remembers its panel
+(`MousePanel`), and the drag stays there. A drag report back on the press's cell is not
+a drag, since a console can report movement inside one cell. One selection is on the
+screen at a time: the feed's drag ends the box's, and a press in the box ends the feed's.
+A click outside the feed's selection ends it, and one inside keeps it. So does `Esc`, and
+so does a copy. A cursor move (any key the box handled) and typed or pasted text
+(`mark_input_changed`) end it. A reply starting drops it (`set_selectable(!generating)`
+before the feed is drawn), and until the reply ends a drag or a double click in the feed
+selects nothing. The wheel and a reference's click still work then. What else drops it
+is whatever makes rows anew: a `CacheKey` change, a rebuilt or removed block it covers,
+a chat switch. A block of a new chat that happened to match by fingerprint would
+otherwise keep it, so activation clears it explicitly.
+
+**Not yet:** a quote's `> `, the thoughts' gutter and a tool card's indent are drawn on
+every row of their lines, so a copy keeps them and breaks those lines at the panel's
+width. That is stage 2b, which needs the markdown writer to report the same two facts.
+
+**Tests.** The arithmetic on rows: a wrapped paragraph as one line, a code block without
+its padding or rail, blocks kept apart, a wide glyph taken by either half, the highlight
+skipping the rail and the padding, a table as drawn, a word, a line, a drag grown by
+words. The feed on `TestBackend`: a drag both ways over a wrapped paragraph, a code
+block through markdown, the highlight's cells in both colour modes and from the rail,
+dropped by a resize, `Ctrl+T`, `Ctrl+O` and the theme, kept by a message appended below,
+dropped by its block rewritten or taken back but not by another block's, a double and a
+triple press, an autoscroll that copies every one of thirty messages it passed (Claude
+Code #83961) and stops at the top, nothing selectable while a reply streams, every
+cached row fitting the panel. The box: a drag clamped at each edge, a tall draft scrolled
+to its end, a word, a run-wise drag and a line. The chat: `Ctrl+C` copying the feed's
+selection twice and keeping it, `Esc` and the right button keeping it, no intent from a
+drag or a release (opencode #51056), each thing that ends it, the feed and the field
+never both selected, double and triple clicks timed in both panels, a reply dropping the
+selection with the wheel and a reference still working, the tick's autoscroll in the feed
+and in the box, a key ending a drag but keeping its selection, a chat switch. The OSC 52 case of §7 (a send told as such) is the
+chip's, decided otherwise by the owner on 2026-11-15. **4898 green, 317 `#[ignore]`** on
+Linux. No live run in the AGENTS.md §3 sense (no engine, memory or tool path). How it
+feels in Windows Terminal over SSH and natively, in conhost, VS Code's terminal and the
+web demo — and a selection with Cyrillic and emoji pasted into Notepad — is the owner's
+check (research §7).
+
+**A pty run on the droplet** (`mindfork demo`, 100×30, no clipboard, so a copy goes out
+as OSC 52): a drag over a 27-character phrase of the scripted reply painted exactly
+those 27 cells; `Ctrl+C` wrote an OSC 52 sequence that decodes to the phrase, and the
+chip read `copied (OSC 52)`; a click two rows up cleared the highlight; a double click
+copied the word under it.

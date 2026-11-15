@@ -14,6 +14,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::shared::keys;
+use crate::shared::mouse::SelectUnit;
 use crate::shared::theme::Palette;
 use crate::shared::ui::{fit_title, render_scrollbar};
 use crate::shared::wrap;
@@ -24,6 +25,11 @@ const PROMPT_W: u16 = 2;
 /// One visual row: `(logical line, start, end)` in the line's character indices
 /// (accounting for width-based wrapping). See [`InputBox::visual_rows`].
 type VisualRow = (usize, usize, usize);
+
+/// What a mouse press took: its unit, and the span from one `(row, column)`
+/// to another — an empty one for a press a character at a time
+/// ([`InputBox::mouse_origin`]).
+type MouseOrigin = (SelectUnit, (usize, usize), (usize, usize));
 
 /// Cache of visual rows: `(width, content revision, rows)`. See
 /// [`InputBox::rows_cache`].
@@ -133,6 +139,11 @@ pub struct InputBox {
     /// (with mouse capture `Ctrl+W`). `None` before the first render. See
     /// [`Self::place_cursor_at`], track stage D.
     last_area: Option<Rect>,
+    /// Between a mouse press and its release: the unit the press selects by
+    /// and what it took — the cursor's place, or the word or the line under it
+    /// — so a drag grows the selection by that unit
+    /// (docs/research/mouse-always-captured.md F5).
+    mouse_origin: Option<MouseOrigin>,
 }
 
 impl Default for InputBox {
@@ -159,9 +170,8 @@ pub enum KeyOutcome {
 
 impl KeyOutcome {
     /// The key was handled by the widget (the caller doesn't process it
-    /// further). Currently only tests need this — production call sites branch
-    /// on [`Self::edited`]; kept as its counterpart in the widget's public API.
-    #[allow(dead_code)]
+    /// further) — an edit or a move of the cursor. The chat ends the feed's
+    /// selection on it (docs/research/mouse-always-captured.md F6).
     pub fn handled(self) -> bool {
         !matches!(self, KeyOutcome::Ignored)
     }
@@ -270,6 +280,7 @@ impl InputBox {
             rows_cache: None,
             anchor: None,
             last_area: None,
+            mouse_origin: None,
         }
     }
 
@@ -846,32 +857,135 @@ impl InputBox {
             self.col = self.lines[self.row].len();
             return true;
         }
-        let (li, start, end) = vrows[vrow];
-        // Inside the row: the logical column by cumulative width; past the row's
-        // end `col_for_visual` gives the row's end (rolling back on a soft wrap) + a snap.
-        self.col = col_for_visual(&self.lines[li], start, end, vcol, is_soft(&vrows, vrow));
-        self.row = li;
+        self.place_at_visual(&vrows, vrow, vcol);
         true
+    }
+
+    /// Puts the cursor on visual row `vrow` (in range) at visual column `vcol`:
+    /// inside the row, the logical column by cumulative width; past the row's
+    /// end `col_for_visual` gives the row's end (rolling back on a soft wrap) +
+    /// a snap.
+    fn place_at_visual(&mut self, vrows: &[VisualRow], vrow: usize, vcol: usize) {
+        let (li, start, end) = vrows[vrow];
+        self.col = col_for_visual(&self.lines[li], start, end, vcol, is_soft(vrows, vrow));
+        self.row = li;
+    }
+
+    /// [`Self::place_cursor_at`] for a drag, which never leaves the field
+    /// (docs/research/mouse-always-captured.md §5.5): a pointer past the
+    /// text's side is on its edge column, and one past its top or bottom edge
+    /// puts the cursor a visual row beyond the visible ones — the next frame
+    /// scrolls the field toward it — or, with no row there, at the text's
+    /// start or end, as a click below the last row does. `false` before the
+    /// first render.
+    fn place_cursor_clamped(&mut self, mx: u16, my: u16) -> bool {
+        let Some(area) = self.last_area else {
+            return false;
+        };
+        if area.width == 0 || area.height == 0 {
+            return false;
+        }
+        let x = mx.clamp(area.x, area.x + area.width - 1);
+        let above = my < area.y;
+        let below = my >= area.y + area.height;
+        if self.single_line || !(above || below) {
+            return self.place_cursor_at(x, my.clamp(area.y, area.y + area.height - 1));
+        }
+        self.goal_col = None;
+        self.last_edit_kind = None;
+        let vrows = self.rows_cached(self.last_width).to_vec();
+        let vrow = if above {
+            self.scroll.checked_sub(1)
+        } else {
+            Some(self.scroll + usize::from(area.height)).filter(|&v| v < vrows.len())
+        };
+        match vrow {
+            Some(vrow) => self.place_at_visual(&vrows, vrow, usize::from(x - area.x)),
+            None if above => (self.row, self.col) = (0, 0),
+            None => {
+                self.row = self.lines.len() - 1;
+                self.col = self.lines[self.row].len();
+            }
+        }
+        true
+    }
+
+    /// The text's area as last drawn — where a drag past its edge scrolls it.
+    pub fn text_area(&self) -> Option<Rect> {
+        self.last_area
     }
 
     /// Places the cursor on a left mouse button press and **starts** a
     /// selection from that point (empty — the cursor moved, no visible
     /// selection yet; dragging grows it). Returns whether the click landed in
-    /// the text area. See [`Self::place_cursor_at`].
+    /// the text area. See [`Self::place_cursor_at`]. The chat presses by the
+    /// click count ([`Self::mouse_press_by`]); this is its single press.
+    #[cfg(test)]
     pub fn mouse_press(&mut self, mx: u16, my: u16) -> bool {
-        if self.place_cursor_at(mx, my) {
-            self.anchor = Some((self.row, self.col));
-            true
-        } else {
-            false
+        self.mouse_press_by(mx, my, SelectUnit::Char)
+    }
+
+    /// [`Self::mouse_press`] by `unit`, the click count: a double press
+    /// selects the run under the pointer — the box's own word boundaries
+    /// ([`wrap::run_at`]) — and a triple the logical line, at once; a drag
+    /// after either grows by it (research F5).
+    pub fn mouse_press_by(&mut self, mx: u16, my: u16, unit: SelectUnit) -> bool {
+        if !self.place_cursor_at(mx, my) {
+            return false;
         }
+        let (from, to) = self.unit_bounds(unit, (self.row, self.col));
+        self.anchor = Some(from);
+        (self.row, self.col) = to;
+        self.mouse_origin = Some((unit, from, to));
+        true
     }
 
     /// Moves the cursor by a mouse drag, **keeping** the anchor — the selection
-    /// grows from the press point to the current one. Returns whether the drag
-    /// landed in the text area.
+    /// grows from the press point to the current one, by the press's unit.
+    /// Past the text's edge the pointer is clamped to it, and a draft taller
+    /// than the field scrolls ([`Self::place_cursor_clamped`]). Returns whether
+    /// the cursor moved.
     pub fn mouse_drag(&mut self, mx: u16, my: u16) -> bool {
-        self.place_cursor_at(mx, my)
+        let before = (self.row, self.col);
+        if !self.place_cursor_clamped(mx, my) {
+            return false;
+        }
+        if let Some((unit, from, to)) = self.mouse_origin
+            && unit != SelectUnit::Char
+        {
+            let (head_from, head_to) = self.unit_bounds(unit, (self.row, self.col));
+            if head_from < from {
+                self.anchor = Some(to);
+                (self.row, self.col) = head_from;
+            } else {
+                self.anchor = Some(from);
+                (self.row, self.col) = head_to.max(to);
+            }
+        }
+        (self.row, self.col) != before
+    }
+
+    /// The left button released: a drag after it no longer grows the
+    /// selection by the press's unit.
+    pub fn mouse_release(&mut self) {
+        self.mouse_origin = None;
+    }
+
+    /// What a press by `unit` at `(row, col)` takes: the position, the run of
+    /// one class holding the character there, or the logical line.
+    fn unit_bounds(
+        &self,
+        unit: SelectUnit,
+        (row, col): (usize, usize),
+    ) -> ((usize, usize), (usize, usize)) {
+        let line = &self.lines[row];
+        match unit {
+            SelectUnit::Char => ((row, col), (row, col)),
+            SelectUnit::Word => wrap::run_at(line, col).map_or(((row, col), (row, col)), |run| {
+                ((row, run.start), (row, run.end))
+            }),
+            SelectUnit::Line => ((row, 0), (row, line.len())),
+        }
     }
 
     /// The text's inner area from the last render (for mouse-handling tests —
@@ -1723,69 +1837,17 @@ fn navigation(code: KeyCode, ctrl: bool) -> Option<fn(&mut InputBox)> {
     })
 }
 
-/// What a grapheme cluster is to word-wise movement and deletion (`Ctrl+←/→`,
-/// `Ctrl+Backspace/Delete`) — spec §11.5.
-///
-/// Three classes, the rule of code editors: punctuation is a run **of its own**,
-/// so from the end of `test1, test2,` the first `Ctrl+←` stops before the comma
-/// and the second before `test2`. With two classes (whitespace or not — what
-/// this was until 2026-09-28) the comma travelled with the word, and the end of
-/// a word that punctuation follows could only be reached character by character.
-///
-/// This is **not** spellcheck's segmentation (`features/spellcheck/segment.rs`),
-/// and the two are not to be reconciled: there an apostrophe or a hyphen between
-/// letters is part of the word, digits are not letters and a URL is skipped
-/// whole — it answers "what is looked up in a dictionary", this answers "where
-/// does the cursor stop".
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CharClass {
-    Space,
-    /// Letters, digits and `_` — what an identifier is made of.
-    Word,
-    /// Everything else that is drawn: punctuation, symbols, emoji.
-    Punct,
-}
-
-impl CharClass {
-    fn of(c: char) -> Self {
-        if c.is_whitespace() {
-            Self::Space
-        } else if c.is_alphanumeric() || c == '_' {
-            Self::Word
-        } else {
-            Self::Punct
-        }
-    }
-}
-
-/// The line as maximal runs of one class: `(start, class)` of every run, in
-/// order. A **grapheme cluster** takes the class of its first character, so
-/// what rides on a base never ends a run: `char::is_alphanumeric` is false for
-/// a stress mark (`U+0301`), and classifying by scalar would stop the cursor
-/// between a letter and its mark — inside a cluster, where the next edit
-/// splits it.
-fn class_runs(line: &[char]) -> Vec<(usize, CharClass)> {
-    let mut runs: Vec<(usize, CharClass)> = Vec::new();
-    for start in wrap::cluster_starts(line) {
-        let class = CharClass::of(line[start]);
-        if runs.last().is_none_or(|&(_, last)| last != class) {
-            runs.push((start, class));
-        }
-    }
-    runs
-}
-
 /// Word boundary to the left of `col`: the start of the run the character
 /// before the cursor belongs to, whitespace skipped first — so the stop is the
 /// start of a word or of a run of punctuation. Leading whitespace has nothing
 /// before it and yields the line's start.
 fn word_left(line: &[char], col: usize) -> usize {
-    let runs = class_runs(line);
+    let runs = wrap::class_runs(line);
     let Some(idx) = runs.iter().rposition(|&(start, _)| start < col) else {
         return 0;
     };
     match runs[idx] {
-        (_, CharClass::Space) if idx > 0 => runs[idx - 1].0,
+        (_, wrap::CharClass::Space) if idx > 0 => runs[idx - 1].0,
         (start, _) => start,
     }
 }
@@ -1794,13 +1856,13 @@ fn word_left(line: &[char], col: usize) -> usize {
 /// run the character under the cursor belongs to, whitespace skipped first.
 /// Trailing whitespace has nothing after it and yields the line's end.
 fn word_right(line: &[char], col: usize) -> usize {
-    let runs = class_runs(line);
+    let runs = wrap::class_runs(line);
     let end_of = |idx: usize| runs.get(idx + 1).map_or(line.len(), |&(start, _)| start);
     let Some(idx) = runs.iter().rposition(|&(start, _)| start <= col) else {
         return line.len();
     };
     match runs[idx].1 {
-        CharClass::Space if idx + 1 < runs.len() => end_of(idx + 1),
+        wrap::CharClass::Space if idx + 1 < runs.len() => end_of(idx + 1),
         _ => end_of(idx),
     }
 }
@@ -3852,6 +3914,74 @@ mod tests {
         assert!(ib.mouse_drag(TX + 1, TY + 1)); // bottom row (the last word), column 1
         assert_eq!(ib.cursor(), (0, 10)); // the last word starts at index 9 → +1 = 10
         assert_eq!(ib.selected_text().as_deref(), Some("один два т"));
+    }
+
+    /// A drag never leaves the field (research §5.5): past its side the
+    /// pointer is on the edge column, past its top the text's start, past its
+    /// bottom the text's end.
+    #[test]
+    fn a_drag_past_the_text_is_clamped_to_its_edge() {
+        let mut ib = InputBox::new();
+        ib.set_text("hello world");
+        render_at(&mut ib, 20);
+        assert!(ib.mouse_press(TX + 2, TY));
+        assert!(ib.mouse_drag(TX + 40, TY), "past the right edge");
+        assert_eq!(ib.selected_text().as_deref(), Some("llo world"));
+        assert!(ib.mouse_drag(0, TY), "on the prompt and the border");
+        assert_eq!(ib.selected_text().as_deref(), Some("he"));
+        assert!(ib.mouse_drag(TX + 9, TY + 20), "below the box");
+        assert_eq!(ib.selected_text().as_deref(), Some("llo world"));
+        assert!(ib.mouse_drag(TX + 9, 0), "above it");
+        assert_eq!(ib.selected_text().as_deref(), Some("he"));
+        assert!(!ib.mouse_drag(TX + 9, 0), "nothing moved");
+    }
+
+    /// A drag held below a draft taller than the box moves the selection a
+    /// row past the visible ones each time it is asked, and the box scrolls
+    /// after it — to the text's end.
+    #[test]
+    fn a_drag_past_the_bottom_scrolls_a_tall_draft() {
+        let mut ib = InputBox::new();
+        let text: Vec<String> = (0..12).map(|i| format!("l{i}")).collect();
+        ib.set_text(&text.join("\n"));
+        (ib.row, ib.col) = (0, 0);
+        render_at(&mut ib, 20); // six rows of text
+        assert!(ib.mouse_press(TX, TY));
+        assert!(ib.mouse_drag(TX + 1, TY + 10));
+        assert_eq!(ib.cursor(), (6, 1), "the row under the box");
+        render_at(&mut ib, 20);
+        assert!(ib.mouse_drag(TX + 1, TY + 10));
+        assert_eq!(ib.cursor(), (7, 1), "and the next, once it has scrolled");
+        for _ in 0..8 {
+            render_at(&mut ib, 20);
+            ib.mouse_drag(TX + 1, TY + 10);
+        }
+        assert_eq!(ib.cursor(), (11, 3), "the text's end");
+        assert_eq!(ib.selected_text(), Some(text.join("\n")));
+    }
+
+    /// A double press takes the run under the pointer — the box's own word
+    /// boundaries — and a drag after it grows by runs; a triple press the
+    /// logical line (research F5).
+    #[test]
+    fn a_double_and_a_triple_press_select_a_word_and_a_line() {
+        let mut ib = InputBox::new();
+        ib.set_text("say hello, world\nnext");
+        render_at(&mut ib, 30);
+        assert!(ib.mouse_press_by(TX + 5, TY, SelectUnit::Word));
+        assert_eq!(ib.selected_text().as_deref(), Some("hello"));
+        assert!(ib.mouse_drag(TX + 12, TY));
+        assert_eq!(ib.selected_text().as_deref(), Some("hello, world"));
+        assert!(ib.mouse_drag(TX + 1, TY));
+        assert_eq!(ib.selected_text().as_deref(), Some("say hello"));
+        ib.mouse_release();
+        assert!(ib.mouse_press_by(TX + 2, TY, SelectUnit::Line));
+        assert_eq!(ib.selected_text().as_deref(), Some("say hello, world"));
+        // After the release a drag is a character at a time again.
+        ib.mouse_release();
+        assert!(ib.mouse_press(TX + 4, TY));
+        assert!(ib.mouse_drag(TX + 6, TY));
+        assert_eq!(ib.selected_text().as_deref(), Some("he"));
     }
 
     #[test]

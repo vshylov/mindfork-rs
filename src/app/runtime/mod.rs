@@ -646,6 +646,12 @@ fn run_loop(
         if screen.expire_copy_chip(Instant::now()) {
             dirty = true;
         }
+        // A drag held past the feed's or the input box's edge scrolls it a row
+        // a tick: the terminal sends nothing while the pointer rests
+        // (docs/research/mouse-always-captured.md §5.4).
+        if matches!(active, ActiveScreen::Chat) && screen.mouse_tick(Instant::now()) {
+            dirty = true;
+        }
         if spinner_frame_needed(&active, &screen) {
             dirty = true;
             refresh_task_rows(&active, cmd_tx);

@@ -22,6 +22,13 @@ split by subsystem.
   selects, a click follows a `chat://` link — while the terminal's own selection stays a
   modifier away (`Shift` in most terminals). `Ctrl+W` still switches it for the session.
   The legacy terminal mode keeps the mouse with the terminal.
+- **Select text in the conversation with the mouse** (with *Mouse* set to `app`): drag
+  to select, double-click for a word, triple-click for the line; hold the drag above or
+  below the conversation and it scrolls. `Ctrl+C` copies what you see — without the
+  coloured bar on the left or the padding, a wrapped paragraph as one line, formatted
+  text without its markdown. The message box gets the same double and triple click, and
+  a drag past its edge scrolls a long draft. Nothing is selectable in the conversation
+  while the assistant answers.
 
 ### Changed
 

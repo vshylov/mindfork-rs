@@ -882,9 +882,18 @@ things on different screens. The highlights:
 > The mouse wheel and text selection share one terminal mechanism, so capture is
 > a choice — Settings → Interface → *Mouse*: `terminal` (default) — select text
 > natively; `app` — the wheel scrolls the feed, a click follows a `chat://`
-> address, and the terminal's own selection needs its modifier (`Shift` in most
-> terminals, `Option` in iTerm2, `Fn` in Terminal.app). `Ctrl+W` flips it for the
-> session. The legacy terminal mode keeps the mouse with the terminal: conhost
+> address, the app selects text itself, and the terminal's own selection needs its
+> modifier (`Shift` in most terminals, `Option` in iTerm2, `Fn` in Terminal.app).
+> `Ctrl+W` flips it for the session.
+>
+> With `app`, drag in the conversation to select — a double click takes a word, a
+> triple the line, and held above or below the conversation the drag scrolls it. A
+> copy holds what you see: no rail, no padding, a wrapped paragraph as one line,
+> formatted text without its markdown (`F5` copies a conversation's source). The
+> same drag and clicks work in the input box. One selection stands at a time; a
+> click elsewhere in the conversation, the cursor's move or typing ends it, `Esc`
+> and a copy do not. While the assistant answers the conversation selects nothing.
+> The legacy terminal mode keeps the mouse with the terminal: conhost
 > has no such modifier. A copy (`Ctrl+C`, `F5`) says how it went on the status
 > bar for a few seconds, and `Ctrl+C` leaves the selection in place. `Ctrl` shortcuts are
 > layout-independent: on Windows under any installed layout, elsewhere under

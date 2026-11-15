@@ -506,7 +506,13 @@ src/
 │  │                        `set_show_model_name` → CacheKey, spec §11.3);
 │  │                        drawn bordered or bare (`FeedFrame`, spec §11.1.1);
 │  │                        the border carries the token counter at its bottom
-│  │                        right corner (`fit_counter`, spec §11.3)
+│  │                        right corner (`fit_counter`, spec §11.3);
+│  │                        the feed's own text selection (`press`/`drag`/
+│  │                        `release`/`autoscroll`, `selected_text`; §10 below)
+│  ├─ feed_selection.rs     the arithmetic of that selection: `FeedPoint` (block,
+│  │                        row, column), `RowFact` (the rail's width, a soft wrap),
+│  │                        the cells painted, the text copied, a word and a line
+│  │                        (`FeedRows` — tested on rows without drawing them)
 │  ├─ chat_link_picker.rs   the Ctrl+L overlay over a chat's `chat://` references
 │  ├─ local_server_picker.rs the *Local servers* list: a row per server and model, Enter picks, Esc closes
 │  │                        (spec §11.3) — the profile-picker shape: snapshot in,
@@ -514,7 +520,9 @@ src/
 │  ├─ input_box.rs          our own multiline input (ADR 0001): cursor, wrap, spellcheck,
 │  │                        single-line mode (settings fields), visual navigation;
 │  │                        bordered, or bare with the title as a tag
-│  │                        (`RenderOpts::bare`/`text_width`, spec §11.1.1)
+│  │                        (`RenderOpts::bare`/`text_width`, spec §11.1.1);
+│  │                        the mouse: a press by `SelectUnit`, a drag clamped to
+│  │                        the text (a tall draft scrolls), spec §11.5
 │  ├─ logo.rs               brand mark drawn with terminal cells (half blocks
 │  │                        `▀`/`▄`/`█`): 10×6 glyph + wordmark in our own pixel
 │  │                        font → 65×6 horizontal lockup, left-aligned in the
@@ -1232,7 +1240,9 @@ src/
    ├─ mouse.rs             the mouse reports the app asks for (spec §11.3): button and
    │                       drag reports in SGR (`?1000h ?1002h ?1006h`), not crossterm's
    │                       EnableMouseCapture with every movement; Windows asks the
-   │                       console through crossterm's input mode
+   │                       console through crossterm's input mode. What a press
+   │                       selects by: `SelectUnit` from `ClickCounter` (a double
+   │                       and a triple click on one cell within `MULTI_CLICK`)
    ├─ notify.rs            notifications (spec §11.12): NotificationSettings/NotifyEscape
    │                       (read leniently), the OSC 777/OSC 9 escape and the bell (tmux
    │                       passthrough), the ntfy push (title in the query, bearer token)
@@ -4300,6 +4310,28 @@ every frame, asks `mouse_wanted` (the chat in front, no help dialog, no "too sma
 notice) and hands the answer to `MouseCapture::change`; only a change reaches
 `ask_mouse`, which writes `EnableMouseReports` or `DisableMouseCapture`. No intent
 carries capture any more; the screen states a wish and `runtime` executes it.
+
+**The feed's selection** (`widgets/message_feed.rs`, `widgets/feed_selection.rs`,
+spec §11.3; docs/research/mouse-always-captured.md §5.3–§5.4). The invariant it
+rests on: **every row a cached block holds is a row as drawn** — the block builder
+wraps every row to the panel's width, the compaction divider included, and `render`
+draws them as they are (the second wrap is left to the empty feed's placeholder).
+Beside each row the block keeps a `RowFact` — the rail's width and whether the row
+continues the line above — made in the builder's wrap loop, the one place that
+knows. A selection is two `FeedPoint`s (block, row, column): anchored to blocks, so
+an appended message moves nothing above it, and dropped by whatever makes rows
+anew — a `CacheKey` change, a rebuilt or removed block it covers
+(`forget_selection_in`/`_from`), `set_selectable(false)` while a reply streams,
+a chat switch. Like the click map it is read against **the last drawn frame**
+(`DrawnRows`: the inner area, the scroll, each block's first row): a press
+resolves there; a drag keeps the pointer's cell and is resolved again after every
+frame (`follow_pointer`), so a wheel or an `autoscroll` step under a resting
+pointer grows the selection. The highlight is painted on the buffer after the
+`Paragraph`, outside the cache. The chat screen owns the grammar
+(`handle_mouse_at`: the panel of the press — `MousePanel` — keeps the drag; a
+click follows a reference or ends the selection; one selection on the screen,
+the feed's or the input box's) and `mouse_tick`, which the loop calls each tick
+while the chat is in front.
 
 **Typed routes for the chords** (`features/ui_command.rs` +
 `screens/chat/commands.rs`, spec §11.7). One declarative registry (`COMMANDS`:

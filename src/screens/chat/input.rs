@@ -19,6 +19,11 @@ impl ChatScreen {
         if key.kind != KeyEventKind::Press {
             return None;
         }
+        // A key ends a mouse gesture under way — the selection it made stays.
+        // The key may take the chat out of the front (or `Ctrl+W` the mouse
+        // from the app), and the release would never come: a drag left held
+        // past an edge would scroll on its own once the chat is back.
+        self.end_mouse_gesture();
         if let Some(handled) = self.route_modal_key(key) {
             return handled;
         }
@@ -133,7 +138,14 @@ impl ChatScreen {
             // The selection stays: a copy is not an edit, and a text field in a
             // GUI keeps what was copied selected (research F2). A move of the
             // cursor or typed text ends it, as ever.
+            //
+            // The feed's selection first: one selection is on the screen at a
+            // time (research §5.3), so when the feed has one the field has none.
+            // A selection of only empty rows copies nothing.
             'c' => {
+                if let Some(text) = self.feed_view.selected_text() {
+                    return Some((!text.is_empty()).then_some(ChatIntent::CopyToClipboard(text)));
+                }
                 if self.input.has_selection() {
                     let text = self.input.selected_text().unwrap_or_default();
                     return Some(Some(ChatIntent::CopyToClipboard(text)));
@@ -312,8 +324,15 @@ impl ChatScreen {
                 // Mark the input "dirty" only on an actual edit — a bare
                 // cursor move (`Moved`) shouldn't needlessly wake the
                 // spellcheck debounce or send `SetDraft`. See [`KeyOutcome`].
-                if self.input.on_key(key).edited() {
+                let outcome = self.input.on_key(key);
+                if outcome.edited() {
                     self.mark_input_changed();
+                }
+                // A move of the input box's cursor ends the feed's selection,
+                // as it would a GUI's (research F6); an edit does it in
+                // `mark_input_changed`.
+                if outcome.handled() {
+                    self.feed_view.clear_selection();
                 }
                 None
             }
@@ -688,22 +707,34 @@ impl ChatScreen {
     }
 
     /// Handles a mouse event (only arrives while the app holds the mouse —
-    /// `interface.mouse`, or `Ctrl+W` for the session): the wheel scrolls the
-    /// chat feed; a left-button press/drag in the input box places the cursor /
-    /// grows the selection (stage D of the plan); a left **click** — a release
-    /// with no drag since the press — on a `chat://` reference in the feed
-    /// follows it (spec §11.3). On the release, not the press, so that a drag
-    /// which starts on an address can select it once the feed has a selection
-    /// (docs/research/mouse-always-captured.md F8). Works only in the main
-    /// view — with an overlay/popup/help open this is a no-op
-    /// (scrolling/cursor edits under them would be unexpected). A click
-    /// elsewhere in the feed is still a no-op (feed selection is stage 2 of
-    /// that track). See spec §11.3, §11.5.
-    ///
-    /// The reference and the input box cannot compete: they own disjoint
-    /// areas of the screen, and `mouse_press` already answers `false` outside
-    /// its own.
+    /// `interface.mouse`, or `Ctrl+W` for the session). See
+    /// [`Self::handle_mouse_at`].
     pub fn handle_mouse(&mut self, mouse: MouseEvent) -> Option<ChatIntent> {
+        self.handle_mouse_at(mouse, Instant::now())
+    }
+
+    /// [`Self::handle_mouse`] at `now` — the click count's clock; the seam for
+    /// tests. The grammar of docs/research/mouse-always-captured.md §5.3:
+    ///
+    /// - the wheel scrolls the feed;
+    /// - a left **press** remembers the panel under it — the feed's rows or
+    ///   the input box's text — and a drag stays in that panel whatever it
+    ///   crosses. In the field the press places the cursor at once, as ever;
+    ///   in the feed a press changes nothing — a **drag** selects, replacing
+    ///   the selection before it. A second press on the same cell takes the
+    ///   word, a third the line, in either panel ([`ClickCounter`]);
+    /// - a release with no drag since the press — a **click** — follows the
+    ///   `chat://` reference under it (spec §11.3; on the release, so that a
+    ///   drag which starts on an address selects it, F8), and otherwise a
+    ///   click in the feed outside its selection ends it;
+    /// - the right and the middle button do nothing (F3).
+    ///
+    /// One selection is on the screen at a time: a field's starting ends the
+    /// feed's, and the feed's ends the field's. While the assistant answers
+    /// the feed selects nothing — the wheel and a reference still work (F6).
+    /// With an overlay/popup open this is a no-op (scrolling/cursor edits
+    /// under them would be unexpected).
+    pub fn handle_mouse_at(&mut self, mouse: MouseEvent, now: Instant) -> Option<ChatIntent> {
         if self.search.is_some()
             || self.suggest.is_some()
             || self.emoji.is_some()
@@ -714,25 +745,49 @@ impl ChatScreen {
         {
             return None;
         }
+        let (col, row) = (mouse.column, mouse.row);
         match mouse.kind {
             MouseEventKind::ScrollUp => self.feed_view.scroll_up(WHEEL_SCROLL),
             MouseEventKind::ScrollDown => self.feed_view.scroll_down(WHEEL_SCROLL),
-            // Click/drag in the input box — only when the field is visible
-            // (during impersonation a preview sits in its place, and the
-            // field's `last_area` is stale).
-            MouseEventKind::Down(MouseButton::Left) if self.impersonation.is_none() => {
-                self.mouse_press = Some(MousePress { dragged: false });
-                self.input.mouse_press(mouse.column, mouse.row);
+            MouseEventKind::Down(MouseButton::Left) => {
+                let unit = self.clicks.press(col, row, now);
+                let panel = self.mouse_press_panel(col, row, unit);
+                self.mouse_press = Some(MousePress {
+                    panel,
+                    unit,
+                    at: (col, row),
+                    pointer: (col, row),
+                    dragged: false,
+                    next_step: None,
+                });
             }
-            MouseEventKind::Drag(MouseButton::Left) if self.impersonation.is_none() => {
-                if let Some(press) = self.mouse_press.as_mut() {
-                    press.dragged = true;
+            MouseEventKind::Drag(MouseButton::Left) => {
+                let press = self.mouse_press.as_mut()?;
+                press.pointer = (col, row);
+                if (col, row) == press.at && !press.dragged {
+                    return None;
                 }
-                self.input.mouse_drag(mouse.column, mouse.row);
+                press.dragged = true;
+                match press.panel {
+                    MousePanel::Feed => {
+                        if self.feed_view.drag(col, row) {
+                            self.input.clear_selection();
+                        }
+                    }
+                    // The field is hidden during impersonation — a preview
+                    // stands in its place, and its `last_area` is stale.
+                    MousePanel::Field if self.impersonation.is_none() => {
+                        self.input.mouse_drag(col, row);
+                    }
+                    _ => {}
+                }
             }
             MouseEventKind::Up(MouseButton::Left) => {
-                let click = self.mouse_press.take().is_some_and(|press| !press.dragged);
-                if click && let Some(chat) = self.feed_view.chat_link_at(mouse.column, mouse.row) {
+                let press = self.mouse_press.take();
+                self.feed_view.release();
+                self.input.mouse_release();
+                let press = press.filter(|p| !p.dragged)?;
+                if let Some(chat) = self.feed_view.chat_link_at(col, row) {
                     // Clicking the conversation you are already in is not a
                     // switch — the picker's rule, and the same wording.
                     if self.active_chat == Some(chat) {
@@ -741,10 +796,82 @@ impl ChatScreen {
                     }
                     return Some(ChatIntent::OpenChatLink(chat));
                 }
+                if press.panel == MousePanel::Feed
+                    && press.unit == SelectUnit::Char
+                    && !self.feed_view.selection_holds(col, row)
+                {
+                    self.feed_view.clear_selection();
+                }
             }
             _ => {}
         }
         None
+    }
+
+    /// Forgets the left-button gesture under way, in the chat and in both
+    /// panels; what it selected stays.
+    fn end_mouse_gesture(&mut self) {
+        if self.mouse_press.take().is_some() {
+            self.feed_view.release();
+            self.input.mouse_release();
+        }
+    }
+
+    /// The panel a left press at `(col, row)` lands in, and what the press
+    /// does there right away: in the feed, a double or a triple press selects
+    /// (and ends the field's selection); in the field, the cursor moves (and
+    /// the feed's selection ends — a click in the field is a move of the
+    /// cursor, §5.3).
+    fn mouse_press_panel(&mut self, col: u16, row: u16, unit: SelectUnit) -> MousePanel {
+        if self.feed_view.holds(col, row) {
+            // `press` refuses while the assistant answers; the panel is still
+            // the feed, so a click there can follow a reference.
+            if !self.generating
+                && self.feed_view.press(col, row, unit)
+                && self.feed_view.has_selection()
+            {
+                self.input.clear_selection();
+            }
+            return MousePanel::Feed;
+        }
+        if self.impersonation.is_none() && self.input.mouse_press_by(col, row, unit) {
+            self.feed_view.clear_selection();
+            return MousePanel::Field;
+        }
+        MousePanel::Other
+    }
+
+    /// One tick of a drag held past its panel's top or bottom edge, where the
+    /// terminal reports nothing while the pointer rests: the feed scrolls a
+    /// row toward the pointer ([`MessageFeed::autoscroll`]), the input box
+    /// moves its selection a row past its visible ones — at most one row an
+    /// [`AUTOSCROLL_STEP`] (research §5.4). `true` when a frame is due. The
+    /// loop asks every tick, while the chat is in front.
+    pub fn mouse_tick(&mut self, now: Instant) -> bool {
+        let Some(press) = self.mouse_press.filter(|p| p.dragged) else {
+            return false;
+        };
+        match press.panel {
+            MousePanel::Feed => self.feed_view.autoscroll(now),
+            MousePanel::Field => {
+                let Some(area) = self.input.text_area() else {
+                    return false;
+                };
+                let (col, row) = press.pointer;
+                let outside = row < area.y || row >= area.y.saturating_add(area.height);
+                if !outside
+                    || self.impersonation.is_some()
+                    || press.next_step.is_some_and(|due| now < due)
+                {
+                    return false;
+                }
+                if let Some(p) = self.mouse_press.as_mut() {
+                    p.next_step = Some(now + AUTOSCROLL_STEP);
+                }
+                self.input.mouse_drag(col, row)
+            }
+            MousePanel::Other => false,
+        }
     }
 
     /// Takes the "the feed was just scrolled" flag and tells the loop
@@ -813,6 +940,9 @@ impl ChatScreen {
     /// Marks the input as changed (starts the spellcheck-recheck debounce and
     /// saves the draft in the active chat).
     pub(super) fn mark_input_changed(&mut self) {
+        // Typed text ends the feed's selection (research F6): one selection
+        // is on the screen at a time, and this one is the field's turn.
+        self.feed_view.clear_selection();
         self.spell_dirty = true;
         self.draft_dirty = true;
         self.last_edit = Some(Instant::now());

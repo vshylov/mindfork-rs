@@ -280,6 +280,9 @@ impl ChatScreen {
         } else {
             FeedFrame::Bare
         };
+        // No feed selection while the assistant answers (research F6): the
+        // one standing is dropped as the reply starts, before its first frame.
+        self.feed_view.set_selectable(!self.generating);
         self.feed_view.render(
             frame,
             feed_area,

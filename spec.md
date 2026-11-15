@@ -3745,7 +3745,7 @@ this?"*; this screen answers *"where exactly, and take me there."*
   left click on the address follows it too** — the first thing in the feed that
   is clickable at all. A click is a press and a release with no drag between
   them, and the address is followed **on the release**, so a drag that starts on
-  one is a drag (it will select, once the feed has a selection of its own). The
+  one is a drag — it selects the address instead. The
   key is the route, the click is the convenience: capture is **off by default**
   because turning it on costs native terminal selection, so a click-only design
   would be unreachable for most users. Following an address
@@ -3788,7 +3788,8 @@ this?"*; this screen answers *"where exactly, and take me there."*
     rather than hidden: an address the wrap **split across two rows** is styled
     but not clickable — half an address is not an address — and `Ctrl+L`
     remains the route that always works.
-- **Mouse in the input box** (with capture on — the setting, or `Ctrl+W`): a left click places the cursor, a drag selects text (the cursor snaps to a grapheme-cluster boundary). A click outside the box (in the feed) is a no-op (feed selection is a separate track). See §11.5.
+- **Mouse in the input box** (with capture on — the setting, or `Ctrl+W`): a left click places the cursor, a drag selects text (the cursor snaps to a grapheme-cluster boundary), a double click takes a word and a triple the line. See §11.5.
+- **The feed's own text selection** (with capture on; [docs/research/mouse-always-captured.md](docs/research/mouse-always-captured.md) §5.3–§5.4). A left **drag** in the feed selects, from the press to the pointer, replacing the selection before it; a press alone changes nothing. A **double click** takes the word under the pointer (a run of one class — letters and digits, punctuation, or whitespace — the input box's word boundaries), a **triple** the logical line, and a drag after either grows by that unit. The selection is **confined to the panel** its press was in: past the feed's side the pointer is on its edge column, and held above or below its rows the feed **scrolls a row per tick** (`AUTOSCROLL_STEP` = 50 ms — the terminal reports nothing while the pointer rests, so the loop's tick drives it) while the selection follows. **One selection is on the screen at a time**: the feed's starting ends the input box's, and a press in the box ends the feed's. **What ends it**: a click in the feed outside it (one inside keeps it), a move of the input box's cursor, typed or pasted text, a click in the box — **not** `Esc`, which keeps its meanings, and **never a copy**. `Ctrl+C` copies it and leaves it in place; the right and the middle button do nothing (a terminal in a browser tab opens its menu there). **No feed selection while the assistant answers**: a selection standing when a reply starts is dropped, and until the reply ends a drag in the feed selects nothing — the feed scrolls itself then, and markdown re-forms the text as it streams; a `chat://` click still follows and the wheel still scrolls. **What drops it besides**: every rewrap of the feed — a resize, the theme, `Ctrl+T`/`Ctrl+O`, the language, role names, a jump's marker, the address book, the compaction boundary, the feed's render settings — and a regenerate or a take-back that rebuilds or removes a block it covers; a message or a note appended below keeps it, since a point is (block, row, column). **The highlight** is the selection backdrop (`Palette::selection`; in the monochrome mode the mark the frame's last pass keeps as reverse video), painted over the drawn frame outside the block cache — a selection costs no re-render — from the content's first column, past the rail, to each row's last glyph. **What is copied is what is drawn**: rendered markdown — no `**`, a code block without its fences, a table in box-drawing characters — less the rail; the rows a wrap made of one line joined back into it, the lines by `\n`, the whitespace that ends a line (a code block's padding) trimmed; a wide glyph is in when either of its cells is. Each cached block keeps a **row fact** beside every row — the rail's width and whether the row continues the line above (`widgets/feed_selection.rs`), made where the row is wrapped — and every row a block holds is a row as drawn, the compaction divider included: `render` no longer wraps a block's rows a second time. The source of a whole conversation is `F5` / `/copy`. Not yet left out of a copy: a quote's `> `, the thoughts' gutter and a tool card's indent, which are drawn as text on every row of their lines.
 - **Full redraw for emoji in the feed**: on legacy terminals, lines with emoji leave "hanging" artifacts, so a full per-cell redraw is requested by **two** events — scrolling the feed and **the feed's content changing** (a response streaming, a note added, `Ctrl+T`; flagged by the feed's own mutators — **before** rendering, so the artifact doesn't flash for even one frame: a bad frame can't be hidden behind synchronized output, since conhost ignores mode 2026). The gate is glyphs in the risk group (`is_risky_glyph`: VS16, ZWJ clusters, skin tone, supplementary pictographs, BMP emoji of width 2); CJK is deliberately excluded (terminals render ideographs consistently). **Known limitation**: a wide glyph's background can end up painted only halfway — `ratatui` resets the trailing cell to the default style and doesn't send it in the diff, and the terminal doesn't set the second half's attribute itself; this can only be fixed upstream. The redraw mechanism is `shared/ui.rs::prime_full_redraw` (a marker written into the buffer + `swap_buffers` with no screen output; `terminal.clear()` won't do — its `ESC[2J` causes flicker). The marker is a **space + the `HIDDEN` modifier**, not a placeholder character: a space matches the content of a wide glyph's trailing cell, so `ratatui` won't send it to the terminal. Otherwise their workaround for VS16 kicks in ("send the trailing cell too"), and the `crossterm` backend tracks position by cell number without accounting for glyph width (`x == last.x + 1` → no `MoveTo`) — the trailing cell would print one column to the right and shift the rest of the row (an adjacent wide glyph goes dark, the right border drifts). `HIDDEN` isn't otherwise used in the interface, which is pinned by a test.
 
 #### 11.3.1. In-feed search (`Ctrl+F`)
@@ -4753,7 +4754,7 @@ docs/history/external-api-key.md.
 | `Shift+Enter` / `Alt+Enter` / `Ctrl+J` | line break in the input box (`Alt+Enter` — a fallback for terminals without the kitty protocol; `Ctrl+J`, a line feed, arrives from every terminal and is the one Terminal.app delivers by default); `Ctrl+Enter` too when it is the chosen key (`interface.newline_key`, §11.5), and the footers name the chosen one |
 | `Shift+←/→/↑/↓`, `Shift+Home/End` | select text (`Ctrl+Shift+←/→` — by word) |
 | `Ctrl+A` | select all text in the input box |
-| `Ctrl+C` | copy the selection to the clipboard, leaving it selected (no-op without a selection) |
+| `Ctrl+C` | copy the selection — the feed's or the input box's — to the clipboard, leaving it selected (no-op without a selection) |
 | `Ctrl+X` | cut the selection to the clipboard |
 | `Ctrl+V` | paste from the clipboard (as one chunk, multiline, without sending); an image on the clipboard is staged instead (§9.10) |
 | `Alt+V` | stage the clipboard's image — `/image paste` by key, for terminals that keep `Ctrl+V` for their own paste (Windows Terminal; §9.10) |
@@ -4782,6 +4783,8 @@ docs/history/external-api-key.md.
 | `Ctrl+O` | in a chat: collapse/expand tool calls in the feed — the header stays, the arguments/result fold away (per chat, §11.3); in the chat list: fold/unfold the selected chat's subagent transcripts (per chat, collapsed by default, §11.2 — `/subagents` is the typed route) |
 | `Ctrl+W` | toggle mouse capture for the session: the wheel scrolls the feed ↔ native text selection (where it starts — the *Mouse* setting) |
 | click/drag with the mouse in the box | place the cursor / select text (with capture on) |
+| drag with the mouse in the feed | select the feed's text — held past its edge, the feed scrolls (with capture on; not while the assistant answers) |
+| double / triple click, in the feed or the box | select a word / the line (with capture on) |
 | click on a `chat://` reference in the feed | follow it, on the release (with capture on; `Ctrl+L` is the route that needs no mouse) |
 | `Ctrl+B` | the emoji picker popup (inserted into the input box at the cursor; remembers the last choice) |
 | `Ctrl+L` | follow a `chat://` reference the assistant wrote: a picker of the conversations this chat links to, `Enter` opens (§11.3) |
@@ -5176,9 +5179,15 @@ snaps to a grapheme-cluster boundary, so it doesn't land in the middle of an emo
 remembers the area of its last render and inverts the wrap layout
 (screen coordinates → a position in the text); a click below the last row → the end of the text,
 a click right of a row's end → the end of that row. Click/drag never change the content (don't wake
-the spellcheck debounce/draft save) and don't bump the wrap cache's revision. A click outside the box
-(in the feed) is a no-op. Double-click (word selection) is groundwork (crossterm doesn't
-give it to us directly).
+the spellcheck debounce/draft save) and don't bump the wrap cache's revision. **A drag never leaves the
+box** (docs/research/mouse-always-captured.md §5.5): past its side the pointer is on the edge column;
+held above or below the text it puts the cursor a visual row past the visible ones — the box scrolls
+toward it, a row per tick while the pointer rests — or, with no row there, at the text's start or end.
+A **double click** takes the run under the pointer by the box's own word boundaries (the classes
+`Ctrl+←/→` stops at — `shared::wrap::run_at`), a **triple** the logical line, and a drag after either
+grows by that unit; the presses are counted on one cell within `MULTI_CLICK` = 500 ms
+(`shared::mouse::ClickCounter` — crossterm reports presses, not clicks). A press in the box ends the
+feed's selection, and the feed's drag ends the box's (§11.3).
 
 **Preserving deleted exchanges (`Ctrl+E`/`Ctrl+R`).** Deleting an exchange (`Ctrl+E`) and
 regenerating the last response (`Ctrl+R`) are irreversible in the UI, but nothing deleted this

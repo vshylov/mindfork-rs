@@ -34,6 +34,7 @@ use crate::shared::api::FinishReason;
 use crate::shared::config::AppConfig;
 use crate::shared::i18n::{Locale, locale};
 use crate::shared::keys;
+use crate::shared::mouse::{ClickCounter, SelectUnit};
 use crate::shared::server::{ServerStatus, ServerStatuses};
 use crate::shared::theme::Palette;
 use crate::shared::ui::{ListScroll, MinSize, Prompt, Spinner, dim_background, legend_width};
@@ -43,7 +44,7 @@ use crate::widgets::help_dialog::{HelpContext, HelpSection};
 use crate::widgets::impersonation_preview;
 use crate::widgets::input_box::InputBox;
 use crate::widgets::local_server_picker::{LocalServerAction, LocalServerPickerState};
-use crate::widgets::message_feed::{FeedMessage, FeedRole, MessageFeed};
+use crate::widgets::message_feed::{AUTOSCROLL_STEP, FeedMessage, FeedRole, MessageFeed};
 use crate::widgets::profile_list::{ProfileListAction, ProfileListState};
 use crate::widgets::status_bar::{self, EscTarget};
 
@@ -564,9 +565,35 @@ struct CopyChip {
 /// A left-button press the next release answers ([`ChatScreen::handle_mouse`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct MousePress {
+    /// The panel the press was in: a drag stays in it, whatever it crosses
+    /// (docs/research/mouse-always-captured.md §5.3).
+    panel: MousePanel,
+    /// The unit the press selects by — the click count.
+    unit: SelectUnit,
+    /// The cell of the press. A drag report back on it is not a drag: a
+    /// console can report a movement within one cell.
+    at: (u16, u16),
+    /// The pointer's last cell.
+    pointer: (u16, u16),
     /// A drag came between the press and the release: the release is the end
     /// of a drag, not a click.
     dragged: bool,
+    /// When a drag held past the input box's edge next moves its selection a
+    /// row (the feed keeps its own, [`MessageFeed::autoscroll`]).
+    ///
+    /// [`MessageFeed::autoscroll`]: crate::widgets::message_feed::MessageFeed::autoscroll
+    next_step: Option<Instant>,
+}
+
+/// Which panel a left press landed in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MousePanel {
+    /// The feed's rows.
+    Feed,
+    /// The input box's text.
+    Field,
+    /// Neither — a border, the status bar.
+    Other,
 }
 
 /// The chat screen: all UI state and its rendering.
@@ -713,6 +740,8 @@ pub struct ChatScreen {
     /// a click on a `chat://` address follows it — on the release, so that a
     /// drag starting on one can select it (research F8).
     mouse_press: Option<MousePress>,
+    /// Counts the presses of a double and a triple click.
+    clicks: ClickCounter,
     /// The last copy's outcome, while it is on the status bar.
     copy_chip: Option<CopyChip>,
     /// Whether background self-model auto-reflection is running (a quiet
@@ -844,6 +873,7 @@ impl ChatScreen {
             mouse_scroll: false,
             mouse_setting: None,
             mouse_press: None,
+            clicks: ClickCounter::default(),
             copy_chip: None,
             reflecting: false,
             background_runs: 0,

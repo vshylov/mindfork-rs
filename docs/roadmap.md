@@ -372,7 +372,9 @@ effort tiers and Fabula — have all closed
   particular message or block needs block selection first. The selection half
   is **in progress** — mouse capture made permanent and the `Ctrl+W` toggle
   removed ([mouse-always-captured.md](research/mouse-always-captured.md), forks
-  decided 2026-11-14); stage 1's input path is built, the capture setting next.
+  decided 2026-11-14); stage 1 (the input path, the capture setting) is built,
+  and stage 2's feed selection — drag, a word, a line, a copy of what is drawn;
+  the default flip to `app` and the toggle's removal next.
 - **Horizontal scroll for wide tables** — **idea**, instead of the clip with
   `…`; groundwork from [ADR 0003](decisions/0003-own-markdown-renderer.md).
 - **Mermaid — whitelist expansion** — **deferred**. flowchart and sequence

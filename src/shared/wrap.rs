@@ -234,6 +234,72 @@ pub fn cluster_starts(chars: &[char]) -> Vec<usize> {
     starts
 }
 
+/// What a grapheme cluster is to word-wise movement and deletion (`Ctrl+←/→`,
+/// `Ctrl+Backspace/Delete`) and to a double click, which takes the run under the
+/// pointer (docs/research/mouse-always-captured.md F5) — spec §11.5.
+///
+/// Three classes, the rule of code editors: punctuation is a run **of its own**,
+/// so from the end of `test1, test2,` the first `Ctrl+←` stops before the comma
+/// and the second before `test2`. With two classes (whitespace or not — what
+/// this was until 2026-09-28) the comma travelled with the word, and the end of
+/// a word that punctuation follows could only be reached character by character.
+///
+/// This is **not** spellcheck's segmentation (`features/spellcheck/segment.rs`),
+/// and the two are not to be reconciled: there an apostrophe or a hyphen between
+/// letters is part of the word, digits are not letters and a URL is skipped
+/// whole — it answers "what is looked up in a dictionary", this answers "where
+/// does the cursor stop".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CharClass {
+    Space,
+    /// Letters, digits and `_` — what an identifier is made of.
+    Word,
+    /// Everything else that is drawn: punctuation, symbols, emoji.
+    Punct,
+}
+
+impl CharClass {
+    pub fn of(c: char) -> Self {
+        if c.is_whitespace() {
+            Self::Space
+        } else if c.is_alphanumeric() || c == '_' {
+            Self::Word
+        } else {
+            Self::Punct
+        }
+    }
+}
+
+/// The line as maximal runs of one class: `(start, class)` of every run, in
+/// order. A **grapheme cluster** takes the class of its first character, so
+/// what rides on a base never ends a run: `char::is_alphanumeric` is false for
+/// a stress mark (`U+0301`), and classifying by scalar would stop the cursor
+/// between a letter and its mark — inside a cluster, where the next edit
+/// splits it.
+pub fn class_runs(line: &[char]) -> Vec<(usize, CharClass)> {
+    let mut runs: Vec<(usize, CharClass)> = Vec::new();
+    for start in cluster_starts(line) {
+        let class = CharClass::of(line[start]);
+        if runs.last().is_none_or(|&(_, last)| last != class) {
+            runs.push((start, class));
+        }
+    }
+    runs
+}
+
+/// The run of one [`CharClass`] holding the character at `i`, as a half-open
+/// range of character indices — what a double click takes (research F5): a
+/// word, a run of punctuation, or the whitespace between them. `i` past the
+/// end takes the line's last run; an empty line has none.
+pub fn run_at(line: &[char], i: usize) -> Option<std::ops::Range<usize>> {
+    let runs = class_runs(line);
+    let idx = runs
+        .iter()
+        .rposition(|&(start, _)| start <= i.min(line.len().saturating_sub(1)))?;
+    let end = runs.get(idx + 1).map_or(line.len(), |&(start, _)| start);
+    Some(runs[idx].0..end)
+}
+
 /// Hard break point for a long word at index `i` (the character that overflowed
 /// the row width), snapped to a grapheme-cluster boundary — so an emoji with a
 /// variation selector (`❤️`) or a flag (a pair of regional indicators) is not

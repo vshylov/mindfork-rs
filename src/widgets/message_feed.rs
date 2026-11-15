@@ -21,9 +21,11 @@ use crate::features::tools::present::{self, ToolBlock};
 use crate::shared::config::CodeBlockBackground;
 use crate::shared::i18n::Locale;
 use crate::shared::markdown;
+use crate::shared::mouse::SelectUnit;
 use crate::shared::theme::Palette;
 use crate::shared::ui::{self, render_scrollbar};
 use crate::shared::wrap;
+use crate::widgets::feed_selection::{self, FeedPoint, FeedRows, RowFact};
 use crate::widgets::token_counter::TokenCounter;
 
 /// Gutter rail to the left of every message line: a colored vertical bar +
@@ -400,6 +402,96 @@ pub struct MessageFeed {
     /// key changed), i.e. every row offset it had produced before is stale.
     /// Consumed by `render` to re-derive the anchored row. See [`CacheKey`].
     cache_reset: bool,
+    /// Where the rows of the **last drawn frame** sit on screen — what a press,
+    /// a drag and the selection's highlight are read against, like the click
+    /// map ([`Self::link_hits`]): the frame the user pointed at, not a stored
+    /// assumption about it. `None` before the first frame and over an empty
+    /// feed (docs/research/mouse-always-captured.md §5.3).
+    drawn: Option<DrawnRows>,
+    /// The feed's text selection: `(start, end)` in reading order, both cells
+    /// in it (§5.3–§5.4). At most one selection is on the screen, the feed's or
+    /// a field's — the chat screen ends the other when one starts.
+    ///
+    /// **What drops it** (research F9): every [`CacheKey`] change, since each
+    /// one rewraps every row; a block it covers rebuilt or removed — a
+    /// regenerate, a take-back; and the assistant starting to answer
+    /// ([`Self::set_selectable`], F6). A message or a note appended below
+    /// keeps it: a point is anchored to its block.
+    selection: Option<(FeedPoint, FeedPoint)>,
+    /// The left-button gesture under way in the feed ([`Self::press`] to
+    /// [`Self::release`]).
+    gesture: Option<Gesture>,
+    /// Whether a selection can be made: not while the assistant answers
+    /// (research F6) — the feed scrolls itself then and markdown re-forms the
+    /// text as it is written, both moving what a selection points at.
+    selectable: bool,
+}
+
+/// One step of a drag held past the feed's top or bottom edge: the feed
+/// scrolls a row toward it this often (research §5.4) — the loop's tick, as it
+/// drives the spinner.
+pub const AUTOSCROLL_STEP: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// The geometry of the last drawn frame ([`MessageFeed::drawn`]).
+#[derive(Debug, Clone)]
+struct DrawnRows {
+    /// The panel's inner area — the rows' cells.
+    inner: Rect,
+    /// The first row drawn, as an index into the whole feed's rows.
+    scroll: usize,
+    /// The furthest the feed scrolls (`render`'s `max_scroll`).
+    max_scroll: usize,
+    /// Where each block's rows begin in the whole feed's rows.
+    starts: Vec<usize>,
+    /// How many rows the feed has.
+    total: usize,
+}
+
+impl DrawnRows {
+    fn holds(&self, col: u16, row: u16) -> bool {
+        let r = self.inner;
+        (r.x..r.x.saturating_add(r.width)).contains(&col)
+            && (r.y..r.y.saturating_add(r.height)).contains(&row)
+    }
+
+    /// The block holding the feed's `abs`-th row, and the row within it.
+    fn locate(&self, abs: usize) -> (usize, usize) {
+        let block = self.starts.partition_point(|&s| s <= abs).saturating_sub(1);
+        (block, abs - self.starts[block])
+    }
+}
+
+/// A left-button gesture in the feed: what its press took, and where the
+/// pointer is now.
+#[derive(Debug, Clone, Copy)]
+struct Gesture {
+    /// A character at a time, or the word or the line of a double or a
+    /// triple press ([`SelectUnit`]).
+    unit: SelectUnit,
+    /// What the press took: its cell, or the word or the line under it.
+    origin: (FeedPoint, FeedPoint),
+    /// The pointer's cell since the first drag. Resolved again after every
+    /// frame — a wheel or an autoscroll moves the rows under a pointer that
+    /// stays.
+    pointer: Option<(u16, u16)>,
+    /// When the next autoscroll step is due.
+    next_step: Option<std::time::Instant>,
+}
+
+/// The feed's cached blocks, as [`FeedRows`].
+struct Blocks<'a>(&'a [CachedBlock]);
+
+impl FeedRows for Blocks<'_> {
+    fn block_count(&self) -> usize {
+        self.0.len()
+    }
+    fn row_count(&self, block: usize) -> usize {
+        self.0[block].lines.len()
+    }
+    fn row(&self, block: usize, row: usize) -> (&Line<'static>, RowFact) {
+        let b = &self.0[block];
+        (&b.lines[row], b.facts[row])
+    }
 }
 
 /// How far the feed's highlight reaches. See [`MessageFeed::highlight_scope`].
@@ -464,6 +556,10 @@ struct CacheKey {
 struct CachedBlock {
     fingerprint: u64,
     lines: Vec<Line<'static>>,
+    /// One per row of `lines`: what of it is the rail, and whether it
+    /// continues the line above — what a selection needs and the bare `Line`
+    /// no longer says (docs/research/mouse-always-captured.md §5.4).
+    facts: Vec<RowFact>,
     /// The conversations this block links to, in the order they are drawn —
     /// what the reference picker offers (spec §11.3). Recorded while the block
     /// is built, because that is where the addresses are recognised and where
@@ -591,6 +687,10 @@ impl MessageFeed {
             current_match: 0,
             scroll_to_match: false,
             cache_reset: false,
+            drawn: None,
+            selection: None,
+            gesture: None,
+            selectable: true,
         }
     }
 
@@ -941,6 +1041,223 @@ impl MessageFeed {
         self.highlight.as_deref()
     }
 
+    // ---------- the selection (docs/research/mouse-always-captured.md §5.3–§5.4) ----------
+
+    /// Whether `(col, row)` is on the feed's rows as last drawn — the panel a
+    /// press there belongs to. `false` over an empty feed.
+    pub fn holds(&self, col: u16, row: u16) -> bool {
+        self.drawn.as_ref().is_some_and(|d| d.holds(col, row))
+    }
+
+    /// A left press at `(col, row)`, `unit` from the click count. A press a
+    /// character at a time changes nothing yet — the drag after it selects; a
+    /// double or a triple press selects the word or the logical line under it
+    /// at once. `false` when it began nothing: off the feed's rows, or nothing
+    /// selectable (the assistant answering, research F6).
+    pub fn press(&mut self, col: u16, row: u16, unit: SelectUnit) -> bool {
+        if !self.selectable {
+            return false;
+        }
+        let Some(p) = self.point_at(col, row, false) else {
+            return false;
+        };
+        let rows = Blocks(&self.cache);
+        let origin = match unit {
+            SelectUnit::Char => (p, p),
+            SelectUnit::Word => feed_selection::word_bounds(&rows, p),
+            SelectUnit::Line => feed_selection::line_bounds(&rows, p),
+        };
+        if unit != SelectUnit::Char {
+            self.selection = Some(origin);
+        }
+        self.gesture = Some(Gesture {
+            unit,
+            origin,
+            pointer: None,
+            next_step: None,
+        });
+        true
+    }
+
+    /// A left drag of the gesture [`Self::press`] began, the pointer at
+    /// `(col, row)`: the selection runs from what the press took to the
+    /// pointer, replacing the one before it. The pointer is clamped to the
+    /// panel — a selection never leaves the panel its press was in — and one
+    /// past its top or bottom edge scrolls it ([`Self::autoscroll`]). `true`
+    /// when the selection changed.
+    pub fn drag(&mut self, col: u16, row: u16) -> bool {
+        let Some(gesture) = self.gesture.as_mut() else {
+            return false;
+        };
+        if gesture.pointer == Some((col, row)) {
+            return false;
+        }
+        gesture.pointer = Some((col, row));
+        self.follow_pointer()
+    }
+
+    /// The left button released: the gesture is over, the selection stays.
+    pub fn release(&mut self) {
+        self.gesture = None;
+    }
+
+    /// One step of a drag held past the panel's top or bottom edge: the feed
+    /// scrolls a row toward it, at most once an [`AUTOSCROLL_STEP`], and the
+    /// selection's head follows in the frame this asks for. The terminal sends
+    /// nothing while the pointer rests, so the loop's tick drives this. `true`
+    /// when it scrolled.
+    pub fn autoscroll(&mut self, now: std::time::Instant) -> bool {
+        let (Some(gesture), Some(drawn)) = (self.gesture.as_ref(), self.drawn.as_ref()) else {
+            return false;
+        };
+        let Some((_, row)) = gesture.pointer else {
+            return false;
+        };
+        let up = row < drawn.inner.y;
+        let down = row >= drawn.inner.y.saturating_add(drawn.inner.height);
+        let room = if up {
+            self.scroll > 0
+        } else {
+            self.scroll < drawn.max_scroll
+        };
+        if !(up || down) || !room || gesture.next_step.is_some_and(|due| now < due) {
+            return false;
+        }
+        if let Some(gesture) = self.gesture.as_mut() {
+            gesture.next_step = Some(now + AUTOSCROLL_STEP);
+        }
+        if up {
+            self.scroll_up(1);
+        } else {
+            self.scroll_down(1);
+        }
+        true
+    }
+
+    /// Whether the feed has a selection — what `Ctrl+C` copies when it does.
+    pub fn has_selection(&self) -> bool {
+        self.selection.is_some()
+    }
+
+    /// Whether the cell under `(col, row)` is in the selection: a click there
+    /// keeps it, one anywhere else in the feed ends it (research §5.3).
+    pub fn selection_holds(&self, col: u16, row: u16) -> bool {
+        match (self.selection, self.point_at(col, row, false)) {
+            (Some((start, end)), Some(p)) => (start..=end).contains(&p),
+            _ => false,
+        }
+    }
+
+    /// Ends the selection and any gesture making one. `true` when there was a
+    /// selection — a frame is due.
+    pub fn clear_selection(&mut self) -> bool {
+        self.gesture = None;
+        self.selection.take().is_some()
+    }
+
+    /// Whether a selection can be made — the chat screen says not while the
+    /// assistant answers (research F6), and the one standing is dropped then.
+    pub fn set_selectable(&mut self, on: bool) {
+        self.selectable = on;
+        if !on {
+            self.clear_selection();
+        }
+    }
+
+    /// The text a copy takes from the selection: what is drawn, less the rail,
+    /// with the rows of a wrapped line joined back into it
+    /// ([`feed_selection::text`]). `None` without a selection.
+    pub fn selected_text(&self) -> Option<String> {
+        let (start, end) = self.selection?;
+        Some(feed_selection::text(&Blocks(&self.cache), start, end))
+    }
+
+    /// The feed's cell under the screen cell `(col, row)` of the last drawn
+    /// frame. `clamp` — a pointer off the panel counts as on its nearest edge
+    /// (a drag); without it a cell off the panel is `None` (a press). A cell
+    /// under the last row of a short feed is on its last row.
+    fn point_at(&self, col: u16, row: u16, clamp: bool) -> Option<FeedPoint> {
+        let drawn = self.drawn.as_ref()?;
+        let inner = drawn.inner;
+        if drawn.total == 0
+            || inner.width == 0
+            || inner.height == 0
+            || (!clamp && !drawn.holds(col, row))
+        {
+            return None;
+        }
+        let x = col.clamp(inner.x, inner.x + inner.width.saturating_sub(1)) - inner.x;
+        let y = usize::from(row.saturating_sub(inner.y)).min(usize::from(inner.height) - 1);
+        let abs = (drawn.scroll + y).min(drawn.total - 1);
+        let (block, r) = drawn.locate(abs);
+        Some(FeedPoint::new(block, r, x))
+    }
+
+    /// Resolves a drag's head where its pointer is in the last drawn frame.
+    /// `true` when the selection changed.
+    fn follow_pointer(&mut self) -> bool {
+        let Some(gesture) = self.gesture else {
+            return false;
+        };
+        let Some((col, row)) = gesture.pointer else {
+            return false;
+        };
+        let Some(head) = self.point_at(col, row, true) else {
+            return false;
+        };
+        let span = feed_selection::grow(&Blocks(&self.cache), gesture.unit, gesture.origin, head);
+        let changed = self.selection != Some(span);
+        self.selection = Some(span);
+        changed
+    }
+
+    /// Drops the selection and the gesture when either reaches block `from`
+    /// or past it — the feed no longer has those blocks.
+    fn forget_selection_from(&mut self, from: usize) {
+        if self.selection.is_some_and(|(_, end)| end.block >= from)
+            || self.gesture.is_some_and(|g| g.origin.1.block >= from)
+        {
+            self.clear_selection();
+        }
+    }
+
+    /// Drops the selection and the gesture when either covers block `idx`,
+    /// whose rows are being made anew.
+    fn forget_selection_in(&mut self, idx: usize) {
+        let covers =
+            |(start, end): (FeedPoint, FeedPoint)| (start.block..=end.block).contains(&idx);
+        if self.selection.is_some_and(covers) || self.gesture.is_some_and(|g| covers(g.origin)) {
+            self.clear_selection();
+        }
+    }
+
+    /// Paints the selection's visible cells on the frame just drawn — the
+    /// selection backdrop, or in the monochrome mode the mark the frame's
+    /// last pass keeps as reverse video ([`Palette::selection`]). From the
+    /// content's first column, past the rail, to each row's last glyph
+    /// ([`feed_selection::painted`]).
+    fn paint_selection(&self, buf: &mut ratatui::buffer::Buffer, palette: &Palette) {
+        let (Some((start, end)), Some(drawn)) = (self.selection, self.drawn.as_ref()) else {
+            return;
+        };
+        let rows = Blocks(&self.cache);
+        let inner = drawn.inner;
+        let last = (drawn.scroll + usize::from(inner.height)).min(drawn.total);
+        for abs in drawn.scroll..last {
+            let (block, row) = drawn.locate(abs);
+            let Some(cols) = feed_selection::painted_on(&rows, start, end, block, row) else {
+                continue;
+            };
+            let y = inner.y + (abs - drawn.scroll) as u16;
+            for col in cols.start..cols.end.min(inner.width) {
+                if let Some(cell) = buf.cell_mut((inner.x + col, y)) {
+                    let style = palette.selection(cell.style());
+                    cell.set_style(style);
+                }
+            }
+        }
+    }
+
     /// Draws the feed. `messages` — the active chat's current content;
     /// `header` — the panel's border with the chat's title and the model
     /// caption on it, or nothing around the rows ([`FeedFrame`]).
@@ -963,9 +1280,11 @@ impl MessageFeed {
         };
         let bare = matches!(header, FeedFrame::Bare);
 
-        // Wrap lines to the feed's width ahead of time: this way the number of visual
-        // rows matches `lines.len()`, and the scroll/"follow the tail" math
-        // below stays row-based (see shared::wrap, ADR 0001).
+        // Every row of a message's block is already wrapped to the feed's width
+        // (`build_message_block`): the number of visual rows matches
+        // `lines.len()`, and the scroll/"follow the tail" math below stays
+        // row-based (see shared::wrap, ADR 0001). Only the empty feed's
+        // placeholder is wrapped here.
         let view_w = inner.width.max(1) as usize;
         let unwrapped = self.build_lines(messages, palette, view_w, loc);
 
@@ -974,10 +1293,9 @@ impl MessageFeed {
         // only exists after `build_lines` at this width (§1.1).
         //
         // `build_lines` concatenates `cache[i].lines` in order, so the per-block
-        // lengths address the unwrapped stream exactly; the row offset is then
-        // accumulated **through the wrap** rather than read off the cache. The
-        // second pass is identity here by construction, not by contract — this
-        // stays correct if that ever stops being true (§1.1).
+        // lengths address the stream exactly. The rows are drawn as the blocks
+        // hold them — a contract since the feed's selection, which addresses a
+        // row as (block, row) (docs/research/mouse-always-captured.md §5.4).
         let target = self.take_focus_target();
         let start = target.and_then(|idx| {
             (idx < self.cache.len())
@@ -989,17 +1307,22 @@ impl MessageFeed {
         let match_line = std::mem::take(&mut self.scroll_to_match)
             .then(|| self.matches.get(self.current_match).copied())
             .flatten();
+        let placeholder = messages.is_empty();
         let mut lines: Vec<Line> = Vec::with_capacity(unwrapped.len());
         let mut target_row: Option<usize> = None;
         let mut match_row: Option<usize> = None;
-        for (i, line) in unwrapped.iter().enumerate() {
+        for (i, line) in unwrapped.into_iter().enumerate() {
             if start == Some(i) {
                 target_row = Some(lines.len());
             }
             if match_line == Some(i) {
                 match_row = Some(lines.len());
             }
-            lines.extend(wrap::wrap_line(line, view_w));
+            if placeholder {
+                lines.extend(wrap::wrap_line(&line, view_w));
+            } else {
+                lines.push(line);
+            }
         }
         // Applied after the jump target, so pressing next/prev wins over a stale
         // pending jump rather than fighting it.
@@ -1036,9 +1359,35 @@ impl MessageFeed {
         // the only point where the wrap, the scroll and the panel's origin have
         // all been applied (see [`visible_link_hits`]).
         self.link_hits = visible_link_hits(&lines, inner, self.scroll, &self.known_chats);
+        // The selection is read against the same frame (research §5.3).
+        self.drawn = (!placeholder).then(|| {
+            let mut starts = Vec::with_capacity(self.cache.len());
+            let mut at = 0usize;
+            for block in &self.cache {
+                starts.push(at);
+                at += block.lines.len();
+            }
+            DrawnRows {
+                inner,
+                scroll: self.scroll,
+                max_scroll,
+                starts,
+                total,
+            }
+        });
+        if placeholder {
+            self.selection = None;
+            self.gesture = None;
+        }
+        // A drag's head is where its pointer is in *this* frame: a wheel or an
+        // autoscroll since the last one moved the rows under it.
+        self.follow_pointer();
 
         let paragraph = Paragraph::new(Text::from(lines)).scroll((self.scroll as u16, 0));
         frame.render_widget(paragraph, inner);
+        // Painted over the frame, outside the block cache like the search
+        // highlight, so a selection costs no re-render.
+        self.paint_selection(frame.buffer_mut(), palette);
 
         // Scrollbar on the panel's right border (corners untouched) — only when
         // the feed doesn't fit vertically. Doesn't take width away from content; the
@@ -1162,9 +1511,13 @@ impl MessageFeed {
             // Every row offset the previous cache produced is stale — `render`
             // re-derives the anchored one from this flag.
             self.cache_reset = true;
+            // So is every point of a selection: the rows it named are rewrapped
+            // (research F9).
+            self.clear_selection();
         }
         // History truncated (Ctrl+E/regenerate) — drop the cache's tail.
         self.cache.truncate(messages.len());
+        self.forget_selection_from(messages.len());
 
         // Base markdown-render flags from the feed's settings; `soft_break_as_newline`
         // stays per-role (set by push_body for user messages).
@@ -1229,6 +1582,11 @@ impl MessageFeed {
         let fp = message_fingerprint(item);
         let hit = self.cache.get(idx).is_some_and(|c| c.fingerprint == fp);
         if !hit {
+            // The block's rows are about to be made anew: a selection in them
+            // no longer points at what it took.
+            if self.cache.get(idx).is_some() {
+                self.forget_selection_in(idx);
+            }
             let summary = at_boundary
                 .then(|| self.compaction.as_ref().map(|(_, s)| s.as_str()))
                 .flatten();
@@ -1249,6 +1607,7 @@ impl MessageFeed {
             let cb = CachedBlock {
                 fingerprint: fp,
                 lines: built.lines,
+                facts: built.facts,
                 links: built.links,
                 content_from: built.content_from,
             };
@@ -1405,9 +1764,26 @@ fn build_message_block(
     // divider's label is chrome, and the summary is derived text no message
     // contains, so lighting it up would offer a match the search screen cannot
     // jump to.
+    // Every row a block holds is a row as drawn: wrapped here, to the panel's
+    // width, the divider included — `render` draws the rows as they are, and a
+    // selection addresses them by (block, row) (research §5.4). Each row's
+    // [`RowFact`] is made with it: the wrap is the one place that knows which
+    // rows continue a line.
+    let mut facts: Vec<RowFact> = Vec::new();
     if let Some(summary) = compaction {
-        push_compaction_boundary(&mut out, summary, view.thoughts, width, palette, loc);
+        let mut divider = Vec::new();
+        push_compaction_boundary(&mut divider, summary, view.thoughts, width, palette, loc);
+        for line in divider {
+            for (k, wrapped) in wrap::wrap_line(&line, width).into_iter().enumerate() {
+                out.push(wrapped);
+                facts.push(RowFact {
+                    lead: 0,
+                    soft: k > 0,
+                });
+            }
+        }
     }
+    let lead = wrap::str_width(rail.glyph) as u16;
     let mut content_row = None;
     let mut links: Vec<Uuid> = Vec::new();
     for (i, mut line) in body.into_iter().enumerate() {
@@ -1418,8 +1794,9 @@ fn build_message_block(
         // (`chat://` + 8 hex) and a narrow panel splits it across two rows,
         // where a per-row scan would no longer see it whole.
         links.extend(style_chat_links(&mut line, known_chats, palette));
-        for wrapped in wrap::wrap_line(&line, inner) {
+        for (k, wrapped) in wrap::wrap_line(&line, inner).into_iter().enumerate() {
             out.push(prepend_rail(wrapped, &rail));
+            facts.push(RowFact { lead, soft: k > 0 });
         }
     }
     // A header-only block never reaches the index above.
@@ -1427,10 +1804,12 @@ fn build_message_block(
     // Separator between messages — without a rail.
     if !body_ends_blank {
         out.push(Line::from(""));
+        facts.push(RowFact::default());
     }
     links.dedup();
     BuiltBlock {
         lines: out,
+        facts,
         content_from,
         links,
     }
@@ -1439,6 +1818,8 @@ fn build_message_block(
 /// One freshly built block, before it enters the cache.
 struct BuiltBlock {
     lines: Vec<Line<'static>>,
+    /// See [`CachedBlock::facts`].
+    facts: Vec<RowFact>,
     /// See [`CachedBlock::content_from`].
     content_from: usize,
     /// See [`CachedBlock::links`].
@@ -5033,9 +5414,17 @@ mod tests {
         ru().t("ui.feed.compacted")
     }
 
-    /// The index of the compaction divider among rendered rows.
+    /// The index of the compaction divider's last row among rendered rows.
+    /// A block's rows come wrapped to the panel (the selection addresses them
+    /// as drawn), so on a narrow one the label runs over two.
     fn divider_row(rows: &[String]) -> Option<usize> {
-        rows.iter().position(|r| r.contains(compacted_label()))
+        let mut words = compacted_label().split_whitespace();
+        let (first, last) = (words.next()?, words.last()?);
+        let start = rows.iter().position(|r| r.contains(first))?;
+        rows[start..]
+            .iter()
+            .position(|r| r.contains(last))
+            .map(|i| start + i)
     }
 
     /// The divider sits **immediately above** the block where verbatim history
@@ -5511,6 +5900,346 @@ mod tests {
         for row in &summary_rows {
             assert!(row.starts_with(GUTTER), "{row:?}");
             assert!(wrap::str_width(row) <= width, "{row:?}");
+        }
+    }
+
+    // ---------- the selection (docs/research/mouse-always-captured.md §5.3–§5.4) ----------
+
+    /// Draws the feed in a `w`×`h` terminal with the bordered panel.
+    fn draw_with(
+        term: &mut Terminal<TestBackend>,
+        feed: &mut MessageFeed,
+        msgs: &[FeedMessage],
+        palette: &Palette,
+    ) {
+        term.draw(|f| feed.render(f, f.area(), PANEL, msgs, palette, ru()))
+            .unwrap();
+    }
+
+    fn drawn(
+        feed: &mut MessageFeed,
+        msgs: &[FeedMessage],
+        w: u16,
+        h: u16,
+    ) -> Terminal<TestBackend> {
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        draw_with(&mut term, feed, msgs, &Palette::default());
+        term
+    }
+
+    /// The screen cell where `needle` first appears — one cell per character,
+    /// so for text without wide glyphs.
+    fn cell_of(term: &Terminal<TestBackend>, needle: &str) -> (u16, u16) {
+        let buf = term.backend().buffer();
+        for y in 0..buf.area.height {
+            let row: Vec<&str> = (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect();
+            let text: String = row.concat();
+            if let Some(at) = text.find(needle) {
+                return (text[..at].chars().count() as u16, y);
+            }
+        }
+        panic!("{needle:?} is not on screen");
+    }
+
+    #[test]
+    fn a_drag_over_a_wrapped_paragraph_copies_it_as_one_line() {
+        let text = "alpha beta gamma delta epsilon zeta eta theta iota kappa";
+        let msgs = vec![msg(FeedRole::User, text, "")];
+        let mut feed = MessageFeed::new();
+        let term = drawn(&mut feed, &msgs, 24, 12);
+        let (c0, r0) = cell_of(&term, "alpha");
+        let (c1, r1) = cell_of(&term, "kappa");
+        assert!(r1 > r0 + 1, "the premise: the paragraph wraps over rows");
+        assert!(feed.press(c0, r0, SelectUnit::Char));
+        assert!(
+            feed.selected_text().is_none(),
+            "a press alone selects nothing"
+        );
+        assert!(feed.drag(c1 + 4, r1));
+        assert_eq!(feed.selected_text().as_deref(), Some(text));
+        // Backwards — from the end to the start — is the same text.
+        feed.release();
+        assert!(feed.clear_selection());
+        assert!(feed.press(c1 + 4, r1, SelectUnit::Char));
+        assert!(feed.drag(c0, r0));
+        assert_eq!(feed.selected_text().as_deref(), Some(text));
+    }
+
+    #[test]
+    fn a_drag_over_a_code_block_copies_its_lines_without_padding_or_rail() {
+        let msgs = vec![msg(
+            FeedRole::Assistant,
+            "Code:\n\n```\nfn main() {\n    run();\n}\n```\n\nDone.",
+            "",
+        )];
+        let mut feed = MessageFeed::new();
+        let term = drawn(&mut feed, &msgs, 40, 16);
+        let (c0, r0) = cell_of(&term, "fn main");
+        let (_, r1) = cell_of(&term, "}");
+        assert!(feed.press(c0, r0, SelectUnit::Char));
+        // Past the right edge: the pointer is clamped to the panel.
+        assert!(feed.drag(60, r1));
+        assert_eq!(
+            feed.selected_text().as_deref(),
+            Some("fn main() {\n    run();\n}")
+        );
+    }
+
+    /// The highlight is the selection backdrop on the selected glyphs — not on
+    /// the rail, not past the row's text — and in the monochrome mode the mark
+    /// the frame's last pass turns into reverse video.
+    #[test]
+    fn the_highlight_is_the_selection_style_in_both_colour_modes() {
+        let msgs = vec![msg(FeedRole::User, "one two three", "")];
+        for palette in [Palette::default(), Palette::mono()] {
+            let mut feed = MessageFeed::new();
+            let mut term = Terminal::new(TestBackend::new(30, 8)).unwrap();
+            draw_with(&mut term, &mut feed, &msgs, &palette);
+            let (c, r) = cell_of(&term, "two");
+            assert!(feed.press(c, r, SelectUnit::Char));
+            assert!(feed.drag(c + 2, r));
+            draw_with(&mut term, &mut feed, &msgs, &palette);
+            let buf = term.backend().buffer();
+            let marked = palette.selection(Style::new()).bg;
+            let bg = |x: u16| buf[(x, r)].bg;
+            for x in c..c + 3 {
+                assert_eq!(Some(bg(x)), marked, "{x} in the selection");
+            }
+            assert_ne!(Some(bg(c - 1)), marked, "the space before it");
+            assert_ne!(Some(bg(c + 3)), marked, "the space after it");
+            // A drag from the rail takes the row from its first glyph.
+            feed.release();
+            assert!(feed.press(1, r, SelectUnit::Char));
+            assert!(feed.drag(c + 2, r));
+            draw_with(&mut term, &mut feed, &msgs, &palette);
+            let buf = term.backend().buffer();
+            assert_ne!(Some(buf[(1, r)].bg), marked, "the rail");
+            assert_ne!(Some(buf[(2, r)].bg), marked, "the rail's space");
+            assert_eq!(Some(buf[(3, r)].bg), marked, "the first glyph");
+            assert_eq!(feed.selected_text().as_deref(), Some("one two"));
+        }
+    }
+
+    /// Every change that rewraps the rows drops the selection (research F9);
+    /// a message appended below keeps it.
+    #[test]
+    fn a_rewrap_drops_the_selection_and_a_message_below_keeps_it() {
+        let base = vec![
+            msg(FeedRole::User, "first message here", ""),
+            msg(FeedRole::Assistant, "second message there", "a thought"),
+        ];
+        let select = |feed: &mut MessageFeed, msgs: &[FeedMessage]| -> Terminal<TestBackend> {
+            let term = drawn(feed, msgs, 40, 16);
+            let (c, r) = cell_of(&term, "first");
+            assert!(feed.press(c, r, SelectUnit::Char));
+            assert!(feed.drag(c + 4, r));
+            feed.release();
+            assert_eq!(feed.selected_text().as_deref(), Some("first"));
+            term
+        };
+        // Appended below: kept, the same text.
+        let mut feed = MessageFeed::new();
+        let mut term = select(&mut feed, &base);
+        let mut longer = base.clone();
+        longer.push(msg(FeedRole::User, "third", ""));
+        draw_with(&mut term, &mut feed, &longer, &Palette::default());
+        assert_eq!(feed.selected_text().as_deref(), Some("first"));
+        // A resize.
+        let mut feed = MessageFeed::new();
+        select(&mut feed, &base);
+        drawn(&mut feed, &base, 36, 16);
+        assert!(!feed.has_selection(), "a resize");
+        // Ctrl+T and Ctrl+O.
+        for toggle in [MessageFeed::toggle_thoughts, MessageFeed::toggle_tools] {
+            let mut feed = MessageFeed::new();
+            let mut term = select(&mut feed, &base);
+            toggle(&mut feed);
+            draw_with(&mut term, &mut feed, &base, &Palette::default());
+            assert!(!feed.has_selection(), "a fold toggled");
+        }
+        // The theme.
+        let mut feed = MessageFeed::new();
+        let mut term = select(&mut feed, &base);
+        let light = Palette::built_in("light").unwrap();
+        draw_with(&mut term, &mut feed, &base, &light);
+        assert!(!feed.has_selection(), "the theme");
+    }
+
+    /// A block the selection covers made anew — rewritten, or taken back —
+    /// drops it; one outside it does not.
+    #[test]
+    fn a_selected_block_rebuilt_or_removed_drops_the_selection() {
+        let base = vec![
+            msg(FeedRole::User, "keep this", ""),
+            msg(FeedRole::Assistant, "answer one", ""),
+        ];
+        let select_answer = |feed: &mut MessageFeed| -> Terminal<TestBackend> {
+            let term = drawn(feed, &base, 40, 16);
+            let (c, r) = cell_of(&term, "answer");
+            assert!(feed.press(c, r, SelectUnit::Word));
+            assert_eq!(feed.selected_text().as_deref(), Some("answer"));
+            feed.release();
+            term
+        };
+        let mut feed = MessageFeed::new();
+        let mut term = select_answer(&mut feed);
+        let mut rewritten = base.clone();
+        rewritten[1].text = "answer two".into();
+        draw_with(&mut term, &mut feed, &rewritten, &Palette::default());
+        assert!(!feed.has_selection(), "its block rewritten");
+
+        let mut feed = MessageFeed::new();
+        let mut term = select_answer(&mut feed);
+        draw_with(&mut term, &mut feed, &base[..1], &Palette::default());
+        assert!(!feed.has_selection(), "its block taken back");
+
+        // The first block's selection survives the second's rewrite.
+        let mut feed = MessageFeed::new();
+        let mut term = drawn(&mut feed, &base, 40, 16);
+        let (c, r) = cell_of(&term, "keep");
+        assert!(feed.press(c, r, SelectUnit::Word));
+        draw_with(&mut term, &mut feed, &rewritten, &Palette::default());
+        assert_eq!(feed.selected_text().as_deref(), Some("keep"));
+    }
+
+    /// A double press takes the word, a triple the line — at once, before any
+    /// drag; a drag after a double press grows by words.
+    #[test]
+    fn a_double_and_a_triple_press_select_a_word_and_a_line() {
+        let text = "alpha beta gamma delta epsilon zeta eta theta iota kappa";
+        let msgs = vec![msg(FeedRole::User, text, "")];
+        let mut feed = MessageFeed::new();
+        let term = drawn(&mut feed, &msgs, 24, 12);
+        let (c, r) = cell_of(&term, "gamma");
+        assert!(feed.press(c + 2, r, SelectUnit::Word));
+        assert_eq!(feed.selected_text().as_deref(), Some("gamma"));
+        let (d, dr) = cell_of(&term, "delta");
+        assert!(feed.drag(d + 1, dr));
+        assert_eq!(feed.selected_text().as_deref(), Some("gamma delta"));
+        feed.release();
+        assert!(feed.press(c + 2, r, SelectUnit::Line));
+        assert_eq!(
+            feed.selected_text().as_deref(),
+            Some(text),
+            "the whole wrapped line"
+        );
+    }
+
+    /// A drag held past the panel's top edge scrolls it a row a step, and the
+    /// selection grows to every row it passes — none skipped (Claude Code
+    /// #83961) — until the top, where it stops.
+    #[test]
+    fn a_drag_past_the_edge_scrolls_and_the_copy_holds_every_row_it_covered() {
+        let msgs = numbered(30);
+        let mut feed = MessageFeed::new();
+        let mut term = drawn(&mut feed, &msgs, 30, 12);
+        let (c, r) = cell_of(&term, "сообщение-29");
+        // On its last character: the press's cell is the selection's end.
+        assert!(feed.press(c + 11, r, SelectUnit::Char));
+        assert!(feed.drag(c, 0), "above the panel's rows: on its top row");
+        let mut steps = 0;
+        let mut now = std::time::Instant::now();
+        while feed.autoscroll(now) {
+            // Not again before the step is due.
+            assert!(!feed.autoscroll(now));
+            draw_with(&mut term, &mut feed, &msgs, &Palette::default());
+            now += AUTOSCROLL_STEP;
+            steps += 1;
+            assert!(steps < 1000, "it stops at the top");
+        }
+        assert!(steps > 20, "the premise: it scrolled a long way ({steps})");
+        assert_eq!(feed.scroll_row(), 0);
+        let text = feed.selected_text().unwrap();
+        for i in 0..30 {
+            assert!(text.contains(&format!("сообщение-{i}")), "{i}: {text}");
+        }
+        // Released, nothing scrolls on.
+        feed.release();
+        assert!(!feed.autoscroll(now + AUTOSCROLL_STEP));
+    }
+
+    /// While the assistant answers the feed selects nothing, and a selection
+    /// standing then is dropped (research F6).
+    #[test]
+    fn nothing_is_selectable_while_the_assistant_answers() {
+        let msgs = vec![msg(FeedRole::User, "a question", "")];
+        let mut feed = MessageFeed::new();
+        let term = drawn(&mut feed, &msgs, 30, 8);
+        let (c, r) = cell_of(&term, "question");
+        assert!(feed.press(c, r, SelectUnit::Word));
+        assert!(feed.has_selection());
+        feed.set_selectable(false);
+        assert!(!feed.has_selection(), "dropped as the reply starts");
+        assert!(!feed.press(c, r, SelectUnit::Word));
+        assert!(!feed.drag(c + 3, r));
+        assert!(!feed.has_selection());
+        feed.set_selectable(true);
+        assert!(feed.press(c, r, SelectUnit::Word), "and back once it ends");
+    }
+
+    /// A click keeps the selection where it lands inside it; the empty feed
+    /// has no rows to select.
+    #[test]
+    fn the_selection_knows_its_cells_and_an_empty_feed_has_none() {
+        let msgs = vec![msg(FeedRole::User, "one two three", "")];
+        let mut feed = MessageFeed::new();
+        let term = drawn(&mut feed, &msgs, 30, 8);
+        let (c, r) = cell_of(&term, "two");
+        assert!(feed.holds(c, r));
+        assert!(feed.press(c, r, SelectUnit::Word));
+        assert!(feed.selection_holds(c + 1, r));
+        assert!(!feed.selection_holds(c + 4, r));
+        assert!(!feed.holds(0, 0), "the border");
+        assert!(feed.clear_selection());
+        assert!(!feed.clear_selection(), "nothing left to end");
+
+        let mut empty = MessageFeed::new();
+        drawn(&mut empty, &[], 30, 8);
+        assert!(!empty.holds(5, 3));
+        assert!(!empty.press(5, 3, SelectUnit::Char));
+    }
+
+    /// The rows a block holds are the rows drawn: every one fits the panel, so
+    /// `render` draws them unwrapped and a selection addresses them as
+    /// (block, row) — the compaction divider, folds open, a tool card, a
+    /// table and a diagram included.
+    #[test]
+    fn every_cached_row_fits_the_panel() {
+        let mut assistant = msg(
+            FeedRole::Assistant,
+            "| a | b |\n|---|---|\n| one long cell of text | two |\n\n```mermaid\ngraph TD\nA-->B\n```\n\nand a paragraph that is long enough to wrap over several rows",
+            "a thought that is also rather long and wraps over the rows of the panel",
+        );
+        assistant.tools.push(FeedToolCall {
+            name: "web_search".into(),
+            arguments: "{\"query\":\"a query long enough to wrap over the panel's rows\"}".into(),
+            result: "a result that is also long enough to need several rows of the panel".into(),
+            text_offset: 0,
+            images: 0,
+            call_id: None,
+            running: false,
+        });
+        let mut msgs = numbered_long(3);
+        msgs.push(assistant);
+        for palette in [Palette::default(), Palette::mono()] {
+            for width in [12usize, 20, 33, 60] {
+                let mut feed = MessageFeed::new();
+                let summary = "a summary of what was said before, long enough to wrap";
+                feed.set_compaction(Some((msgs[1].message_ids[0], summary.into())));
+                feed.toggle_thoughts();
+                feed.toggle_tools();
+                feed.build_lines(&msgs, &palette, width, ru());
+                for (b, block) in feed.cache.iter().enumerate() {
+                    assert_eq!(block.lines.len(), block.facts.len());
+                    for (i, row) in block.lines.iter().enumerate() {
+                        assert_eq!(
+                            wrap::wrap_line(row, width).len(),
+                            1,
+                            "width {width}, block {b}, row {i}: {row:?}"
+                        );
+                    }
+                }
+            }
         }
     }
 }

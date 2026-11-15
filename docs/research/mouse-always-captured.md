@@ -9,8 +9,12 @@ the assistant answers, and a copy never ends a selection. **Stage 1 is built**
 the second half (§5.1, `feat/mouse-capture-setting`) — the *Mouse* setting,
 `terminal` by default, the legacy mode's veto, button-and-drag capture following
 the screen, the link on the release, the copy chip and `Ctrl+C` keeping the
-field's selection ([docs/journal/ui-input.md](../journal/ui-input.md)). Stage 2,
-the feed's selection, is next.
+field's selection ([docs/journal/ui-input.md](../journal/ui-input.md)). **Stage 2's
+first half is built** (2026-11-15, `feat/feed-selection`): §5.3–§5.6 — the row
+facts, the feed's selection and its grammar, the highlight, the text, the multi-click
+and the autoscroll, the box's clamped drag and its multi-click. Its second half, §5.7
+— the toggle removed and the default flipped to `app` — is next; stage 2b (the
+prefixes) after it.
 
 The ask (the owner, 2026-11-14): look into dropping the mouse's two modes —
 *select* and *scroll* — altogether. Keep the terminal's mouse capture on all the

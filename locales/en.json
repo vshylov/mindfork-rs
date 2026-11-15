@@ -1229,7 +1229,7 @@
   "ui.help.chat_links": "follow a chat:// link the assistant wrote",
   "ui.help.emoji": "insert emoji",
   "ui.help.mouse_toggle": "mouse wheel ↔ text selection",
-  "ui.help.mouse_action": "cursor/selection in field (when Ctrl+W captured)",
+  "ui.help.mouse_action": "select text in the feed or the field: double — a word, triple — a line",
   "ui.help.rename_chat": "rename the chat",
   "ui.help.find_in_chat": "find in this conversation",
   "ui.help.list_type": "search as you type",
