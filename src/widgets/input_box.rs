@@ -136,7 +136,7 @@ pub struct InputBox {
     /// The text's inner area from the last render (after the border and the `❯`
     /// column). Needed by mouse-click mapping (screen coordinates → a text
     /// position): a left click/drag places the cursor / grows the selection
-    /// (with mouse capture `Ctrl+W`). `None` before the first render. See
+    /// (with mouse capture on). `None` before the first render. See
     /// [`Self::place_cursor_at`], track stage D.
     last_area: Option<Rect>,
     /// Between a mouse press and its release: the unit the press selects by
@@ -823,7 +823,7 @@ impl InputBox {
     // ---------- mouse ----------
 
     /// Places the cursor at the mouse click's screen coordinates `(mx, my)`
-    /// (with mouse capture `Ctrl+W`). Returns whether the click landed inside
+    /// (with mouse capture on). Returns whether the click landed inside
     /// the text's inner area from the last render ([`Self::last_area`]). The
     /// cursor snaps to a grapheme-cluster boundary (a click on a wide/emoji
     /// glyph doesn't place it in the middle, item 1); a click below the last row

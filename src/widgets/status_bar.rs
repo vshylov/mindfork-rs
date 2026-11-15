@@ -27,8 +27,7 @@ const ESC_KEY: &str = "Esc";
 /// ([`lines`]). Named like [`ESC_KEY`] so the lookup isn't a bare string match.
 const HELP_KEY: &str = "F1";
 
-/// Keys of the status bar's fixed hotkeys (after the mouse toggle `Ctrl+W`, whose
-/// description depends on the mode). "Key" + a description key (localized in [`lines`]).
+/// Keys of the status bar's hotkeys. "Key" + a description key (localized in [`lines`]).
 /// The `Esc` entry carries its **default** description; the live one comes from
 /// [`StatusModel::esc_target`].
 const HOTKEYS: [(&str, &str); 5] = [
@@ -103,8 +102,7 @@ fn esc_hint_key(model: &StatusModel) -> &'static str {
 /// A state snapshot for the status line — the screen assembles it in one place
 /// ([`ChatScreen::status_model`](crate::screens::chat::ChatScreen)), so a new
 /// indicator adds a field rather than extending the `render`/`height` signatures.
-/// `mouse_scroll` — whether mouse capture for wheel scrolling is on (otherwise
-/// native text selection). `background` — a quiet indicator of
+/// `background` — a quiet indicator of
 /// the running background tasks, already composed into one label by the caller
 /// (auto-reflection, note/self-model consolidation, history compaction; `None` —
 /// nothing running). See spec §11.1, §11.3.
@@ -116,7 +114,6 @@ pub struct StatusModel<'a> {
     /// §11.1.1, §11.3). `None` — it is not the bar's to draw. A counter with
     /// nothing to count yet is not drawn either.
     pub counter: Option<TokenCounter>,
-    pub mouse_scroll: bool,
     pub background: Option<&'a str>,
     /// Speech synthesis is running (`/tts`) — a quiet "speaking" chip. See spec §11.9.
     pub speaking: bool,
@@ -249,21 +246,13 @@ fn lines_within(
     let state_w = spans_width(&state);
 
     let hotkeys = hotkey_list(model, loc);
-    // In "scroll" mode, highlight the mouse toggle's description (index 0) with the
-    // `accent` color — the same one that highlights markdown headings in the feed.
-    let accent_idx = model.mouse_scroll.then_some(0usize);
-
     let cell_w = ui::hint_cell_widths(&hotkeys);
 
     let avail = width.saturating_sub(state_w + ui::HINT_GAP);
-    let kept = trim_to_fit(&cell_w, avail, model.mouse_scroll, max_rows);
+    let kept = trim_to_fit(&cell_w, avail, max_rows);
     if !kept.is_empty() {
         let sub: Vec<(&str, &str, bool)> = kept.iter().map(|&i| hotkeys[i]).collect();
         let sub_w: Vec<usize> = kept.iter().map(|&i| cell_w[i]).collect();
-        // The accent follows the mouse toggle into the kept sub-list — or is
-        // dropped with it (it never is while anything is kept: scroll mode
-        // pins the toggle at the top of `keep_order`).
-        let accent = accent_idx.and_then(|a| kept.iter().position(|&i| i == a));
         let cols = ui::capped_hint_grid(&sub_w, avail, max_rows).unwrap_or(1);
         return ui::render_hint_grid(
             &ui::HintGrid {
@@ -272,7 +261,6 @@ fn lines_within(
                 cols,
                 width,
                 lead: Some(state),
-                accent,
             },
             palette,
         );
@@ -303,9 +291,9 @@ fn lines_within(
 /// many rows while its window has rows to spare (spec §11.1.1).
 pub const HINT_ROWS_MAX: u16 = 2;
 
-/// [`HELP_KEY`]'s index in [`hotkey_list`]'s order (right after the prepended
-/// mouse toggle). `keep_order_matches_the_hotkey_list` pins the mapping.
-const HELP_IDX: usize = 1;
+/// [`HELP_KEY`]'s index in [`hotkey_list`]'s order, the first.
+/// `keep_order_matches_the_hotkey_list` pins the mapping.
+const HELP_IDX: usize = 0;
 
 /// The stop key of a background run's open transcript (spec §9.3.2) — the
 /// one hint that comes and goes with the state ([`StatusModel::background_run`]).
@@ -313,27 +301,23 @@ const STOP_KEY: &str = "F6";
 
 /// [`STOP_KEY`]'s index in [`hotkey_list`]'s order when it is present: after
 /// the five fixed hotkeys. `keep_order_matches_the_hotkey_list` pins it.
-const STOP_IDX: usize = 6;
+const STOP_IDX: usize = 5;
 
 /// The order the corner block **keeps** hints when the pill leaves it too
 /// little width — later entries shed first. `F1` outlives everything: it opens
 /// the full per-screen hotkey list every hidden hint is still on (spec §11.7).
 /// `Esc` next — its label is the live one ([`esc_hint_key`]: the running
-/// turn's cancel, else where back goes). Then
-/// quit, the mouse toggle, settings, new chat. In scroll mode the mouse toggle
-/// instead jumps to the front: accent-highlighted, it is the one thing on
-/// screen saying why native selection is off — a mode light, not a hint.
+/// turn's cancel, else where back goes). Then quit, settings, new chat. (The
+/// mouse toggle `Ctrl+W` stood among them, and in its scroll mode jumped to the
+/// front as a mode light, until the mouse became a setting —
+/// docs/research/mouse-always-captured.md §5.7.)
 /// The stop key of a background run's transcript (`with_stop`) goes right
 /// behind `F1`: on that screen it is the one hint that says what the screen
 /// is for, and `Esc` there only navigates.
 /// Values index [`hotkey_list`]'s order; `keep_order_matches_the_hotkey_list`
 /// pins the mapping.
-fn keep_order(mouse_pinned: bool, with_stop: bool) -> Vec<usize> {
-    let mut order: Vec<usize> = if mouse_pinned {
-        vec![0, HELP_IDX, 2, 5, 4, 3]
-    } else {
-        vec![HELP_IDX, 2, 5, 0, 4, 3]
-    };
+fn keep_order(with_stop: bool) -> Vec<usize> {
+    let mut order: Vec<usize> = vec![HELP_IDX, 1, 4, 3, 2];
     if with_stop {
         let after_help = order.iter().position(|&i| i == HELP_IDX).unwrap_or(0) + 1;
         order.insert(after_help, STOP_IDX);
@@ -351,8 +335,8 @@ fn keep_order(mouse_pinned: bool, with_stop: bool) -> Vec<usize> {
 /// Within a turn the pill only grows (the generation chip; the token counter,
 /// where the pill carries it), so hints shed monotonically — no flicker — and
 /// return when the turn's chips leave.
-fn trim_to_fit(cell_w: &[usize], avail: usize, mouse_pinned: bool, max_rows: usize) -> Vec<usize> {
-    let order = keep_order(mouse_pinned, cell_w.len() > STOP_IDX);
+fn trim_to_fit(cell_w: &[usize], avail: usize, max_rows: usize) -> Vec<usize> {
+    let order = keep_order(cell_w.len() > STOP_IDX);
     let kept = ui::keep_hints(cell_w, avail, max_rows, order);
     if !kept.contains(&HELP_IDX) {
         return Vec::new();
@@ -501,19 +485,14 @@ pub fn cut_chip(chip: Vec<Span<'static>>, width: usize) -> Vec<Span<'static>> {
         .collect()
 }
 
-/// Hotkeys: the mouse toggle `Ctrl+W` (description = the current mode) + the fixed ones.
+/// Hotkeys: the fixed ones, `Esc`'s description live, and the stop key where it applies.
 /// The third field is the shared grid's "dangerous key" flag — the chat bar has
 /// no destructive hint, so it is always `false` here.
 fn hotkey_list(
     model: &StatusModel,
     loc: &'static Locale,
 ) -> Vec<(&'static str, &'static str, bool)> {
-    let mouse_desc = if model.mouse_scroll {
-        loc.t("ui.status.mouse.scroll")
-    } else {
-        loc.t("ui.status.mouse.select")
-    };
-    let mut hotkeys: Vec<(&'static str, &'static str, bool)> = vec![("Ctrl+W", mouse_desc, false)];
+    let mut hotkeys: Vec<(&'static str, &'static str, bool)> = Vec::new();
     hotkeys.extend(HOTKEYS.iter().map(|(key, default)| {
         // `Esc` is the one hint whose meaning moves with the state; the rest are
         // fixed. Keeping it in the const preserves one ordered list.
@@ -633,7 +612,6 @@ mod tests {
         tokens: u64,
         context: Option<u64>,
         context_exact: bool,
-        mouse_scroll: bool,
     ) -> StatusModel<'a> {
         StatusModel {
             statuses,
@@ -645,7 +623,6 @@ mod tests {
                 context_exact,
                 ..TokenCounter::default()
             }),
-            mouse_scroll,
             background: None,
             speaking: false,
             attachments: None,
@@ -664,16 +641,8 @@ mod tests {
         tokens: u64,
         context: Option<u64>,
         context_exact: bool,
-        mouse_scroll: bool,
     ) -> String {
-        let m = model(
-            statuses,
-            generating,
-            tokens,
-            context,
-            context_exact,
-            mouse_scroll,
-        );
+        let m = model(statuses, generating, tokens, context, context_exact);
         lines(200, &m, &Palette::default(), ru())
             .iter()
             .flat_map(|l| l.spans.iter())
@@ -682,7 +651,7 @@ mod tests {
     }
 
     fn text(statuses: &ServerStatuses, generating: bool) -> String {
-        flat(statuses, generating, 0, None, false, false)
+        flat(statuses, generating, 0, None, false)
     }
 
     #[test]
@@ -700,7 +669,7 @@ mod tests {
         // that language's bundle; en — Latin script. Also checks there's no panic on different
         // widths of the translated text.
         let statuses = ready();
-        let m = model(&statuses, false, 0, None, false, false);
+        let m = model(&statuses, false, 0, None, false);
         for &lang in crate::shared::i18n::Lang::ALL {
             let loc = crate::shared::i18n::locale(lang);
             let flat: String = lines(200, &m, &Palette::default(), loc)
@@ -752,7 +721,6 @@ mod tests {
                 statuses,
                 generating,
                 counter: None,
-                mouse_scroll: false,
                 background: Some("рефлексия"),
                 speaking: false,
                 attachments: None,
@@ -808,33 +776,6 @@ mod tests {
         assert!(!text(&ready(), false).contains("генерация"));
     }
 
-    #[test]
-    fn shows_mouse_mode() {
-        let mode = |scroll| flat(&ready(), false, 0, None, false, scroll);
-        assert!(mode(true).contains("мышь: прокрутка"));
-        assert!(mode(false).contains("мышь: выделение"));
-    }
-
-    #[test]
-    fn scroll_mode_highlights_only_value() {
-        let palette = Palette::default();
-        let span_fg = |scroll, needle: &str| {
-            let statuses = ready();
-            let m = model(&statuses, false, 0, None, false, scroll);
-            lines(200, &m, &palette, ru())
-                .iter()
-                .flat_map(|l| l.spans.clone())
-                .find(|s| s.content.contains(needle))
-                .and_then(|s| s.style.fg)
-        };
-        // In scroll mode, only the mode value is highlighted (with the `accent` color, as
-        // markdown headings are), while the "mouse:" label stays muted — separate spans.
-        assert_eq!(span_fg(true, "прокрутка"), Some(palette.accent));
-        assert_eq!(span_fg(true, "мышь:"), Some(palette.muted));
-        // In selection mode — the whole description is muted.
-        assert_eq!(span_fg(false, "мышь: выделение"), Some(palette.muted));
-    }
-
     /// The pill carries the counter it is handed — in a window with no feed
     /// border (spec §11.1.1) — in its own place behind the generation chip,
     /// and nothing of it when the screen hands it none: the feed's corner
@@ -842,7 +783,7 @@ mod tests {
     /// `widgets::token_counter`'s.
     #[test]
     fn the_pill_carries_the_counter_only_when_handed_one() {
-        let line = |tokens, context, exact| flat(&ready(), true, tokens, context, exact, false);
+        let line = |tokens, context, exact| flat(&ready(), true, tokens, context, exact);
         // Nothing to count — nothing drawn, though a counter was handed.
         assert!(!line(0, None, false).contains("токены"));
         let t = line(42, Some(1000), false);
@@ -850,7 +791,7 @@ mod tests {
         assert!(line(42, Some(1000), true).contains("токены: 1042"));
         // Not handed one: the pill has no counter, whatever the turn counted.
         let statuses = ready();
-        let mut m = model(&statuses, true, 42, Some(1000), true, false);
+        let mut m = model(&statuses, true, 42, Some(1000), true);
         m.counter = None;
         let text: String = lines(200, &m, &Palette::default(), ru())
             .iter()
@@ -866,7 +807,7 @@ mod tests {
     #[test]
     fn hotkeys_fit_on_one_line_when_wide() {
         let statuses = ready();
-        let m = model(&statuses, false, 0, None, false, false);
+        let m = model(&statuses, false, 0, None, false);
         let n = lines(200, &m, &Palette::default(), ru()).len();
         assert_eq!(n, 1);
     }
@@ -874,21 +815,18 @@ mod tests {
     #[test]
     fn a_narrow_bar_wraps_to_two_rows_and_sheds_the_rest() {
         // At 40 columns the corner beside the chat chip holds four hints as a
-        // 2×2 block; the wide mouse toggle and settings shed (both are on the
-        // F1 help list) instead of stacking extra rows.
+        // 2×2 block; the wide settings hint sheds (it is on the F1 help list)
+        // instead of stacking extra rows.
         let statuses = ready();
-        let m = model(&statuses, false, 0, None, false, false);
+        let m = model(&statuses, false, 0, None, false);
         assert_eq!(height(40, &m, &Palette::default(), ru(), HINT_ROWS_MAX), 2);
         let text = rows_of(40, &m).join("\n");
         for kept in ["F1", "справка", "чаты", "новый", "выход"] {
             assert!(text.contains(kept), "{kept} kept: {text}");
         }
-        for shed in ["мышь", "настройки"] {
-            assert!(!text.contains(shed), "{shed} shed: {text}");
-        }
+        assert!(!text.contains("настройки"), "settings shed: {text}");
         // Every hint is back where the line has room (the `flat` width, 200).
-        let flat = flat(&ready(), false, 0, None, false, false);
-        assert!(flat.contains("Ctrl+W") && flat.contains("мышь: выделение"));
+        let flat = flat(&ready(), false, 0, None, false);
         for (_, desc) in HOTKEYS {
             assert!(flat.contains(ru().t(desc)));
         }
@@ -909,14 +847,14 @@ mod tests {
                 ..TokenCounter::default()
             }),
             attachments: Some("файлы: 2 (~532)"),
-            ..model(statuses, false, 0, None, false, false)
+            ..model(statuses, false, 0, None, false)
         }
     }
 
     /// Renders the status bar at width `w` and returns the buffer's rows as text.
     fn rows(w: u16) -> Vec<String> {
         let statuses = ready();
-        let m = model(&statuses, false, 0, None, false, false);
+        let m = model(&statuses, false, 0, None, false);
         rows_of(w, &m)
     }
 
@@ -963,7 +901,7 @@ mod tests {
     fn wrapped_grid_is_right_aligned_with_pill_on_top_line() {
         // Narrow — hotkeys wrap into a neat grid, right-aligned; the status chip
         // shares the TOP row with the grid, the wrap lands exactly under the column above.
-        let r = rows(100);
+        let r = rows(80);
         assert_eq!(r.len(), 2, "expected a wrap to 2 lines: {r:?}");
         // The status chip — on the top row, on the left.
         assert!(
@@ -992,31 +930,25 @@ mod tests {
 
     #[test]
     fn trim_keeps_the_highest_ranked_hints_that_fit() {
-        // The cell widths of the chat's six hotkeys in the ru bundle: one wide
-        // cell (the mouse toggle) and five short ones. Synthetic on purpose —
-        // the rule is about widths, and shouldn't be re-measured against wording.
-        let cells = [24, 12, 10, 14, 18, 14];
-        // Room for one row — everything stays, as one row of six.
-        assert_eq!(trim_to_fit(&cells, 107, false, 2), vec![0, 1, 2, 3, 4, 5]);
-        assert_eq!(ui::capped_hint_grid(&cells, 107, 2), Some(6));
-        // The quiet pill's remainder at 120 columns — everything stays, as the
-        // reference 3×2 grid.
-        assert_eq!(trim_to_fit(&cells, 71, false, 2), vec![0, 1, 2, 3, 4, 5]);
-        assert_eq!(ui::capped_hint_grid(&cells, 71, 2), Some(3));
-        // The generating pill's remainder — settings and new-chat shed.
-        assert_eq!(trim_to_fit(&cells, 54, false, 2), vec![0, 1, 2, 5]);
-        // Tighter still — the wide mouse toggle sheds too, and new-chat comes
+        // The cell widths of the chat's five hotkeys in the ru bundle — F1, Esc,
+        // new chat, settings, quit. Synthetic on purpose — the rule is about
+        // widths, and shouldn't be re-measured against wording.
+        let cells = [12, 10, 14, 18, 14];
+        // Room for one row — everything stays, as one row of five.
+        assert_eq!(trim_to_fit(&cells, 80, 2), vec![0, 1, 2, 3, 4]);
+        assert_eq!(ui::capped_hint_grid(&cells, 80, 2), Some(5));
+        // Two rows' worth — everything stays, as a 3×2 grid.
+        assert_eq!(trim_to_fit(&cells, 50, 2), vec![0, 1, 2, 3, 4]);
+        assert_eq!(ui::capped_hint_grid(&cells, 50, 2), Some(3));
+        // A column short of that — new-chat sheds first.
+        assert_eq!(trim_to_fit(&cells, 49, 2), vec![0, 1, 3, 4]);
+        // Tighter still — the wide settings cell sheds too, and new-chat comes
         // back in its place: a too-wide cell is passed over, not a lock-out.
-        assert_eq!(trim_to_fit(&cells, 32, false, 2), vec![1, 2, 3, 5]);
+        assert_eq!(trim_to_fit(&cells, 34, 2), vec![0, 1, 2, 4]);
         // Barely a corner: F1 anchors a one-column block, then nothing — a
         // block that cannot hold F1 is refused even when Esc alone would fit.
-        assert_eq!(trim_to_fit(&cells, 12, false, 2), vec![1, 2]);
-        assert!(trim_to_fit(&cells, 11, false, 2).is_empty());
-        // Scroll mode pins the mouse toggle ahead of everything: it stays at a
-        // width where it shed above (a one-column block with F1)…
-        assert_eq!(trim_to_fit(&cells, 25, true, 2), vec![0, 1]);
-        // …and where even it cannot fit, it is passed over like any other.
-        assert_eq!(trim_to_fit(&cells, 23, true, 2), vec![1, 2]);
+        assert_eq!(trim_to_fit(&cells, 12, 2), vec![0, 1]);
+        assert!(trim_to_fit(&cells, 11, 2).is_empty());
     }
 
     /// `keep_order` addresses hints by index into `hotkey_list`'s order — this
@@ -1025,7 +957,7 @@ mod tests {
     #[test]
     fn keep_order_matches_the_hotkey_list() {
         let statuses = ready();
-        let m = model(&statuses, false, 0, None, false, false);
+        let m = model(&statuses, false, 0, None, false);
         let keys: Vec<&str> = hotkey_list(&m, ru()).iter().map(|(k, _, _)| *k).collect();
         assert_eq!(keys[HELP_IDX], HELP_KEY);
         assert_eq!(
@@ -1035,27 +967,19 @@ mod tests {
         );
         let named = |order: Vec<usize>| order.into_iter().map(|i| keys[i]).collect::<Vec<_>>();
         assert_eq!(
-            named(keep_order(false, false)),
-            ["F1", "Esc", "Ctrl+Q", "Ctrl+W", "Ctrl+P", "Ctrl+N"]
-        );
-        assert_eq!(
-            named(keep_order(true, false)),
-            ["Ctrl+W", "F1", "Esc", "Ctrl+Q", "Ctrl+P", "Ctrl+N"]
+            named(keep_order(false)),
+            ["F1", "Esc", "Ctrl+Q", "Ctrl+P", "Ctrl+N"]
         );
         // On a background run's transcript the stop key joins, right behind
         // `F1` in the shedding order, at the fixed list's tail on screen.
-        let mut bg = model(&statuses, true, 0, None, false, false);
+        let mut bg = model(&statuses, true, 0, None, false);
         bg.background_run = true;
         let keys: Vec<&str> = hotkey_list(&bg, ru()).iter().map(|(k, _, _)| *k).collect();
         assert_eq!(keys[STOP_IDX], STOP_KEY);
         let named = |order: Vec<usize>| order.into_iter().map(|i| keys[i]).collect::<Vec<_>>();
         assert_eq!(
-            named(keep_order(false, true)),
-            ["F1", "F6", "Esc", "Ctrl+Q", "Ctrl+W", "Ctrl+P", "Ctrl+N"]
-        );
-        assert_eq!(
-            named(keep_order(true, true)),
-            ["Ctrl+W", "F1", "F6", "Esc", "Ctrl+Q", "Ctrl+P", "Ctrl+N"]
+            named(keep_order(true)),
+            ["F1", "F6", "Esc", "Ctrl+Q", "Ctrl+P", "Ctrl+N"]
         );
     }
 
@@ -1070,7 +994,7 @@ mod tests {
         let cancel = ru().t("ui.status.hotkey.cancel");
         let chats = ru().t("ui.status.hotkey.chats");
 
-        let mut m = model(&statuses, true, 0, None, false, false);
+        let mut m = model(&statuses, true, 0, None, false);
         m.background_run = true;
         m.read_only = true;
         let text = rows_of(140, &m).join(" ");
@@ -1079,13 +1003,13 @@ mod tests {
         assert!(text.contains(chats), "{text}");
 
         // A turn's own chat mid-generation: no stop key, `Esc` cancels.
-        let turn = model(&statuses, true, 0, None, false, false);
+        let turn = model(&statuses, true, 0, None, false);
         let text = rows_of(140, &turn).join(" ");
         assert!(!text.contains("F6"), "{text}");
         assert!(text.contains(cancel), "{text}");
 
         // The run ended: the transcript is a plain read-only one again.
-        let mut ended = model(&statuses, false, 0, None, false, false);
+        let mut ended = model(&statuses, false, 0, None, false);
         ended.read_only = true;
         let text = rows_of(140, &ended).join(" ");
         assert!(!text.contains("F6"), "{text}");
@@ -1098,7 +1022,7 @@ mod tests {
     fn a_copys_outcome_is_the_last_chip_in_its_own_colour() {
         let statuses = ready();
         let palette = Palette::default();
-        let mut m = model(&statuses, false, 0, None, false, false);
+        let mut m = model(&statuses, false, 0, None, false);
         m.read_only = true;
         let before = rows_of(140, &m)[0].clone();
         m.copy = Some(("скопировано", false));
@@ -1176,8 +1100,9 @@ mod tests {
 
     /// The screenshot behind the corner rule: a generating pill of 63 columns
     /// at a 120-column window used to send all six hints onto a full-width row
-    /// below — a wall of keycaps starting under the server chips. Now the two
-    /// widest hints shed and the block stays beside the pill.
+    /// below — a wall of keycaps starting under the server chips. The block stays
+    /// beside the pill; with the mouse toggle gone (it was the widest hint,
+    /// docs/research/mouse-always-captured.md §5.7) all five hints fit there.
     #[test]
     fn the_generating_pill_keeps_the_hints_in_the_corner() {
         let statuses = ServerStatuses {
@@ -1195,59 +1120,25 @@ mod tests {
                 reasoning: 4732,
                 ..TokenCounter::default()
             }),
-            ..model(&statuses, false, 0, None, false, false)
+            ..model(&statuses, false, 0, None, false)
         };
         let r = rows_of(120, &m);
         assert_eq!(r.len(), 2, "{r:?}");
         assert!(r[0].contains("токены: 27329 (рассужд. 4732)"), "{:?}", r[0]);
         assert!(
-            r[0].trim_end().ends_with("справка"),
-            "the mouse toggle and F1 share the pill's row: {:?}",
+            r[0].trim_end().ends_with("новый"),
+            "F1 and two more share the pill's row: {:?}",
             r[0]
         );
         let char_col = |line: &str, pat: &str| line.find(pat).map(|b| line[..b].chars().count());
         assert_eq!(
-            char_col(&r[1], "Esc"),
-            char_col(&r[0], "Ctrl+W"),
-            "a right-aligned 2×2 block, nothing under the pill:\n{:?}\n{:?}",
+            char_col(&r[1], "Ctrl+P"),
+            char_col(&r[0], "Esc"),
+            "a right-aligned 3×2 block, nothing under the pill:\n{:?}\n{:?}",
             r[0],
             r[1]
         );
-        let text = r.join("\n");
-        assert!(
-            !text.contains("новый") && !text.contains("настройки"),
-            "{text}"
-        );
-    }
-
-    /// Scroll mode survives shedding: the accent-highlighted mouse toggle is a
-    /// mode light, pinned ahead of everything, and keeps its accent inside the
-    /// trimmed block.
-    #[test]
-    fn scroll_mode_pins_the_mouse_toggle_through_trimming() {
-        let statuses = ServerStatuses {
-            chat: ServerStatus::Ready,
-            embed: ServerStatus::Ready,
-            impersonation: ServerStatus::NotConfigured,
-        };
-        let mut m = busy(&statuses);
-        m.mouse_scroll = true;
-        let p = Palette::default();
-        let ls = lines(120, &m, &p, ru());
-        assert_eq!(ls.len(), 2);
-        let accent_span = ls
-            .iter()
-            .flat_map(|l| l.spans.iter())
-            .find(|s| s.content.contains("прокрутка"))
-            .expect("the pinned mouse toggle is shown");
-        assert_eq!(accent_span.style.fg, Some(p.accent));
-        let flat: String = ls
-            .iter()
-            .flat_map(|l| l.spans.iter())
-            .map(|s| s.content.as_ref())
-            .collect();
-        assert!(flat.contains("F1"), "F1 rides along: {flat}");
-        assert!(!flat.contains("настройки"), "sheds still happen: {flat}");
+        assert!(r[1].trim_end().ends_with("выход"), "{:?}", r[1]);
     }
 
     /// A pill that fills the window leaves no corner that could anchor on
@@ -1281,8 +1172,7 @@ mod tests {
         // that can hold its cell.
         let p = Palette::default();
         let quiet_statuses = ready();
-        let quiet = model(&quiet_statuses, false, 0, None, false, false);
-        let scroll = model(&quiet_statuses, false, 0, None, false, true);
+        let quiet = model(&quiet_statuses, false, 0, None, false);
         let busy_statuses = ServerStatuses {
             chat: ServerStatus::Disconnected("connection refused".into()),
             embed: ServerStatus::Ready,
@@ -1293,7 +1183,7 @@ mod tests {
             let loc = crate::shared::i18n::locale(lang);
             let f1_cell = 2 + 2 + 1 + str_w(loc.t("ui.status.hotkey.help"));
             for w in 12..=240usize {
-                for m in [&quiet, &scroll, &busy] {
+                for m in [&quiet, &busy] {
                     let ls = lines(w, m, &p, loc);
                     assert!(
                         ls.len() <= usize::from(HINT_ROWS_MAX),
@@ -1334,7 +1224,6 @@ mod tests {
                 context_exact: true,
                 ..TokenCounter::default()
             }),
-            mouse_scroll: true,
             background: Some("рефлексия"),
             speaking: true,
             attachments: Some("файлы: 2 (~3.1k)"),
@@ -1357,7 +1246,7 @@ mod tests {
     fn staged_images_chip_is_separate_and_one_column() {
         let statuses = ready();
         let text = |files, images| {
-            let mut m = model(&statuses, false, 0, None, false, false);
+            let mut m = model(&statuses, false, 0, None, false);
             m.attachments = files;
             m.staged_images = images;
             lines(200, &m, &Palette::default(), ru())
@@ -1391,7 +1280,7 @@ mod tests {
         assert_ne!(chats, results, "the two labels must be distinguishable");
 
         let text = |target| {
-            let mut m = model(&statuses, false, 0, None, false, false);
+            let mut m = model(&statuses, false, 0, None, false);
             m.esc_target = target;
             lines(200, &m, &Palette::default(), ru())
                 .iter()
@@ -1421,7 +1310,7 @@ mod tests {
         let statuses = ready();
         let cancel = ru().t("ui.status.hotkey.cancel");
         let text = |generating, target| {
-            let mut m = model(&statuses, generating, 0, None, false, false);
+            let mut m = model(&statuses, generating, 0, None, false);
             m.esc_target = target;
             rows_of(120, &m).join(" ")
         };
@@ -1535,7 +1424,7 @@ mod tests {
     #[test]
     fn the_bar_lays_itself_out_within_the_rows_it_is_given() {
         let statuses = ready();
-        let quiet = model(&statuses, false, 0, None, false, false);
+        let quiet = model(&statuses, false, 0, None, false);
         let p = Palette::default();
         let flat = |lines: Vec<Line<'static>>| -> Vec<String> {
             lines

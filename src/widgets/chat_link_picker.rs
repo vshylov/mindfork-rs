@@ -2,10 +2,10 @@
 //! docs/research/chat-uri-links.md §4.5.
 //!
 //! The feed draws a resolvable `chat://` address as a link; this overlay is how
-//! it is *followed*. A keyboard route rather than a click, because mouse
-//! capture is `Ctrl+W` and off by default — turning it on costs native terminal
-//! selection, so a click would be unreachable for most users (fork F4). The
-//! mouse is a second stage, not the way in.
+//! it is *followed*. A keyboard route as well as a click: when this was built,
+//! mouse capture was `Ctrl+W` and off by default, so a click was unreachable
+//! for most users (fork F4); the app now holds the mouse by default, but the
+//! *Mouse* setting can still give it to the terminal, and the key works there.
 //!
 //! Self-contained like the profile picker it is modelled on: it holds a
 //! snapshot and answers key presses with a [`ChatLinkAction`] the layer above

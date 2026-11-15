@@ -1100,10 +1100,10 @@ fn interface_has_the_code_block_background_choice() {
     );
 }
 
-/// `interface.mouse` (spec §11.3): a row in the "Interface" section,
-/// `terminal` by default while the track is in progress, cycling to `app` and
-/// back; under the legacy terminal mode `app` says the mode keeps the mouse
-/// with the terminal, and the choice is kept (research F1).
+/// `interface.mouse` (spec §11.3): a row in the "Interface" section, `app` by
+/// default (docs/research/mouse-always-captured.md §5.7), cycling to
+/// `terminal` and back; under the legacy terminal mode `app` says the mode
+/// keeps the mouse with the terminal, and the choice is kept (research F1).
 #[test]
 fn interface_has_the_mouse_choice() {
     use crate::shared::config::MouseMode;
@@ -1118,9 +1118,9 @@ fn interface_has_the_mouse_choice() {
         FieldKind::Choice(label) => label,
         _ => panic!("the mouse row is a choice"),
     };
-    assert_eq!(label(&s), "терминал");
+    assert_eq!(label(&s), "приложение");
     assert!(field_desc(&s, FieldId::IMouse).is_some());
-    assert_eq!(s.config.interface.mouse, MouseMode::Terminal);
+    assert_eq!(s.config.interface.mouse, MouseMode::App);
     let mut seen = vec![s.config.interface.mouse];
     for _ in 0..MouseMode::ALL.len() {
         match s.cycle_field(FieldId::IMouse, 1) {
@@ -1130,11 +1130,12 @@ fn interface_has_the_mouse_choice() {
     }
     assert_eq!(
         seen,
-        vec![MouseMode::Terminal, MouseMode::App, MouseMode::Terminal],
+        vec![MouseMode::App, MouseMode::Terminal, MouseMode::App],
         "the cycle must return to where it started"
     );
     s.cycle_field(FieldId::IMouse, 1);
-    assert_eq!(label(&s), "приложение");
+    assert_eq!(label(&s), "терминал");
+    s.cycle_field(FieldId::IMouse, 1);
     s.toggle_field(FieldId::ICompat);
     assert_eq!(
         label(&s),

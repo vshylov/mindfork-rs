@@ -165,7 +165,6 @@ impl ChatScreen {
             UiCommand::Thoughts => self.handle_ctrl_shortcut('t').flatten(),
             UiCommand::ToolCalls => self.handle_ctrl_shortcut('o').flatten(),
             UiCommand::Subagents => self.typed_subagents(argument),
-            UiCommand::Mouse => self.handle_ctrl_shortcut('w').flatten(),
             UiCommand::Emoji => self.handle_ctrl_shortcut('b').flatten(),
         }
     }

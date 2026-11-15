@@ -144,7 +144,6 @@ impl ChatScreen {
             statuses: &self.statuses,
             generating: self.generating,
             counter: (!chrome.feed_border).then(|| self.token_counter()),
-            mouse_scroll: self.mouse_scroll,
             background,
             speaking: self.speaking,
             attachments,

@@ -16,13 +16,14 @@ split by subsystem.
 
 ### Added
 
-- **A *Mouse* setting** (Settings → Interface → Behavior): `terminal`, the default,
-  leaves the mouse with your terminal as before; `app` gives it to the app whenever the
-  chat is in front — the wheel scrolls the conversation, a drag in the message box
-  selects, a click follows a `chat://` link — while the terminal's own selection stays a
-  modifier away (`Shift` in most terminals). `Ctrl+W` still switches it for the session.
-  The legacy terminal mode keeps the mouse with the terminal.
-- **Select text in the conversation with the mouse** (with *Mouse* set to `app`): drag
+- **The app holds the mouse in the chat**, and a *Mouse* setting (Settings → Interface
+  → Behavior) says so: `app`, the default — the wheel scrolls the conversation, a drag
+  selects, a click follows a `chat://` link — while your terminal's own selection is a
+  modifier away (`Shift` in most terminals, `Option` in iTerm2, `Fn` in Terminal.app);
+  `terminal` leaves the mouse with the terminal, for one without such a modifier (VS
+  Code on macOS) or a screen reader. The legacy terminal mode keeps the mouse with the
+  terminal. Other screens leave the mouse with the terminal for now.
+- **Select text in the conversation with the mouse**: drag
   to select, double-click for a word, triple-click for the line; hold the drag above or
   below the conversation and it scrolls. `Ctrl+C` copies what you see — without the
   coloured bar on the left or the padding, a wrapped paragraph as one line, formatted
@@ -44,9 +45,16 @@ split by subsystem.
   every movement of the pointer — and the other screens leave the mouse with the
   terminal, so text there can be selected as usual.
 
+### Removed
+
+- **`Ctrl+W`, `/mouse` and the `mouse:` light on the status bar.** There is no mouse
+  mode to switch any more: the setting decides, and `Ctrl+W` is also the key a browser
+  tab closes the tab on. The status bar's hints get the space back.
+
 ### Fixed
 
-- **The screen no longer freezes while the mouse moves in scroll mode (`Ctrl+W`).**
+- **The screen no longer freezes while the mouse moves** with the app holding it (the
+  `Ctrl+W` scroll mode of earlier versions).
   When the terminal delivered two mouse reports at once — common over SSH, or in a long
   chat — the app took them for the start of a paste and waited for the mouse to stop:
   a wheel spin or a drag drew nothing until then, and a key typed meanwhile appeared

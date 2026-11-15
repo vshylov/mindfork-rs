@@ -413,7 +413,7 @@ pub fn run(
     let _ = execute!(stdout(), ratatui::crossterm::event::EnableFocusChange);
     // Mouse capture is OFF at start: the loop turns it on where the frame in
     // front wants the mouse (`MouseCapture`, `mouse_wanted` — the setting
-    // `interface.mouse` and the `Ctrl+W` toggle decide). We augment ratatui's
+    // `interface.mouse` decides). We augment ratatui's
     // panic hook by disabling the mouse and bracketed paste: otherwise after a panic
     // with these modes still on, the terminal would keep sending escape codes to the
     // shell. We also lift synchronized output here (DEC 2026, see the loop): a panic

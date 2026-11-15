@@ -542,7 +542,7 @@ src/
 │  │                        (tab_window); "About" ends with the Locations group
 │  │                        (location_lines) from the paths::Locations the
 │  │                        runtime's HelpOverlay holds — the demo's made up
-│  ├─ status_bar.rs         server status/generation/quiet chips/mouse mode — and the
+│  ├─ status_bar.rs         server status/generation/quiet chips — and the
 │  │                        token counter where the feed has no border. The hint
 │  │                        block's geometry is shared::ui's; what is local is the
 │  │                        capped, shedding column choice the status pill's
@@ -1177,8 +1177,7 @@ src/
    │                       convenience). Right-aligned, columns lined up
    │                       vertically, an incomplete bottom row under the columns
    │                       above; the chat bar passes its status pill as `lead`
-   │                       and the mouse-mode light as `accent`, and keeps only
-   │                       its keep order and its F1 rule locally. Every
+   │                       and keeps only its keep order and its F1 rule locally. Every
    │                       footer and the bar come out of here, so they cannot
    │                       drift (spec §11.1,
    │                       docs/history/status-hints-unified.md). Shedding is
@@ -4304,8 +4303,9 @@ then (docs/research/mouse-always-captured.md F10). The chat list keeps `message`
 
 **Mouse capture follows the frame in front** (`app/runtime/mod.rs`, spec §11.3).
 The chat keeps the wish — `ChatScreen::mouse_capture`, seeded from
-`InterfaceSettings::mouse_captured` (the *Mouse* setting, vetoed by the legacy
-terminal mode) and flipped for the session by `Ctrl+W` — and the loop, before
+`InterfaceSettings::mouse_captured` (the *Mouse* setting, `app` by default, vetoed
+by the legacy terminal mode; no session switch since §5.7 of the research) — and
+the loop, before
 every frame, asks `mouse_wanted` (the chat in front, no help dialog, no "too small"
 notice) and hands the answer to `MouseCapture::change`; only a change reaches
 `ask_mouse`, which writes `EnableMouseReports` or `DisableMouseCapture`. No intent

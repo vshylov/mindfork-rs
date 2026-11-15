@@ -670,28 +670,6 @@ impl Palette {
         ]
     }
 
-    /// Like `hint`, but the **value after the colon** is highlighted in
-    /// `color`, while the label (the colon itself included) stays muted — for
-    /// highlighting the value of the active mode (e.g. "scroll" in "mouse:
-    /// scroll" in `accent` color, like markdown headings in the feed). Splits
-    /// on `:`, not on a space, which is correct for multi-word values
-    /// (important for future localization). With no colon — the whole
-    /// description is highlighted.
-    pub fn hint_highlight_value(&self, key: &str, desc: &str, color: Color) -> Vec<Span<'static>> {
-        let mut spans = vec![self.keycap(key)];
-        match desc.split_once(':') {
-            Some((label, value)) => {
-                spans.push(Span::styled(format!(" {label}: "), self.muted_style()));
-                spans.push(Span::styled(
-                    value.trim().to_string(),
-                    Style::new().fg(color),
-                ));
-            }
-            None => spans.push(Span::styled(format!(" {desc}"), Style::new().fg(color))),
-        }
-        spans
-    }
-
     /// Like [`Palette::hint`], but a "dangerous" key (delete and friends) gets a
     /// red keycap. The one place the two keycap styles are chosen between:
     /// every hint in the application is drawn by

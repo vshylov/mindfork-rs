@@ -20,9 +20,9 @@ impl ChatScreen {
             return None;
         }
         // A key ends a mouse gesture under way — the selection it made stays.
-        // The key may take the chat out of the front (or `Ctrl+W` the mouse
-        // from the app), and the release would never come: a drag left held
-        // past an edge would scroll on its own once the chat is back.
+        // The key may take the chat out of the front, and the release would
+        // never come: a drag left held past an edge would scroll on its own
+        // once the chat is back.
         self.end_mouse_gesture();
         if let Some(handled) = self.route_modal_key(key) {
             return handled;
@@ -206,8 +206,8 @@ impl ChatScreen {
                 Some(None)
             }
             // Following a `chat://` reference the assistant wrote (spec
-            // §11.3). A key rather than a click: mouse capture is `Ctrl+W` and
-            // off by default, so a click is unreachable for most users
+            // §11.3). A key as well as a click: the *Mouse* setting can leave
+            // the mouse with the terminal, where no click reaches the app
             // (docs/research/chat-uri-links.md fork F4).
             'l' => {
                 self.open_chat_links();
@@ -236,15 +236,6 @@ impl ChatScreen {
                 self.feed_view.toggle_tools();
                 self.mark_feed_changed();
                 Some(Some(ChatIntent::SetFeedView(self.feed_view.view())))
-            }
-            // The toggle between wheel scrolling ↔ mouse text selection
-            // (spec §11.3), for the session: the setting `interface.mouse`
-            // decides where it starts. The runtime asks the terminal for what
-            // the flag says before the next frame (`Self::mouse_capture`).
-            // `Ctrl+M` doesn't work for this: the terminal reports it as Enter.
-            'w' => {
-                self.mouse_scroll = !self.mouse_scroll;
-                Some(None)
             }
             _ => None,
         }
@@ -707,7 +698,7 @@ impl ChatScreen {
     }
 
     /// Handles a mouse event (only arrives while the app holds the mouse —
-    /// `interface.mouse`, or `Ctrl+W` for the session). See
+    /// `interface.mouse`). See
     /// [`Self::handle_mouse_at`].
     pub fn handle_mouse(&mut self, mouse: MouseEvent) -> Option<ChatIntent> {
         self.handle_mouse_at(mouse, Instant::now())

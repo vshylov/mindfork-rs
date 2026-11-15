@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (46)
+## Entries (47)
 
 - Post-M9: fast multiline clipboard paste (done)
 - Post-M9: `↑/↓` navigation by visual row of a wrapped line (done)
@@ -58,6 +58,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the *Mouse* setting — capture that follows the screen, the click on the release, the copy chip (done)
 - Post-M9: a copy over OSC 52 reads as a copy (done)
 - Post-M9: the feed's own text selection (done)
+- Post-M9: the app holds the mouse by default; `Ctrl+W` is gone (done)
 
 ### Post-M9: fast multiline clipboard paste (done)
 - **Symptom**: a large clipboard paste lagged in Windows Terminal, and a line break
@@ -2603,3 +2604,58 @@ as OSC 52): a drag over a 27-character phrase of the scripted reply painted exac
 those 27 cells; `Ctrl+C` wrote an OSC 52 sequence that decodes to the phrase, and the
 chip read `copied (OSC 52)`; a click two rows up cleared the highlight; a double click
 copied the word under it.
+
+### Post-M9: the app holds the mouse by default; `Ctrl+W` is gone (done)
+
+**What.** Stage 2's second half of the mouse track
+([docs/research/mouse-always-captured.md](../research/mouse-always-captured.md) §5.7,
+F1), on `feat/mouse-app-default`, after the feed got its own selection. `MouseMode`'s
+default is `App`: a `settings.json` without the field (every released one) reads as the
+app holding the mouse in the chat. A file that holds `"mouse": "terminal"` keeps it.
+Only builds of `main` since stage 1 wrote the field, so that is the owner's own file, if
+anyone's. `Ctrl+W` and `/mouse` are removed (`UiCommand::Mouse` with them), and so is
+the session flag that a settings snapshot used to reset only when the setting's verdict
+changed. `ChatScreen::mouse_capture` is now the setting's verdict through the legacy
+terminal mode's veto, and `false` until the first snapshot. `mindfork keys` keeps its
+own `Ctrl+W`: it is the diagnostic that shows what a terminal sends with capture and
+without.
+
+**The status bar's light went with the key.** The `mouse: select`/`mouse: scroll` cell
+was the widest of the bar's hints, and in scroll mode it was pinned ahead of `F1` in the
+accent colour as the mode's indicator. With no mode to show, the hint list is the five
+fixed keys (`HELP_IDX` 1 → 0, `STOP_IDX` 6 → 5, the keep order without a pinned
+variant). A generating pill at 120 columns now keeps all five hints in its corner where
+it used to shed two. The hint grid's `accent` cell and `Palette::hint_highlight_value`
+existed only for that light, and are removed rather than left as an option nobody
+passes.
+
+**What replaced it in words.** The help overlay names the terminal's own selection on a
+row of its own (`Shift+drag`; `Option` in iTerm2, `Fn` in Terminal.app). The manual
+names the terminals with `Shift` and Windows Terminal's two catches: `Shift`+right click
+pastes, and its copy of a `Shift` selection joins the lines while `Ctrl+Shift+C` keeps
+them. It also says when to choose `terminal`: VS Code on macOS, a screen reader. The
+setting's hint says the same, at the height it had. The web demo's page stops offering
+`/mouse` for the key a browser tab keeps.
+
+**A typed `/mouse` now goes to the model as a message**, like any `/…` that is not a
+command. That is the registry's rule (the input box's title marks a command as it is
+typed, and does not mark this one); a refusal kept for one removed command was not part
+of F1.
+
+**Tests.** The setting's default and an old file read as `app`, a stored `terminal`
+round-trips, and a newer value reads as the default. The chat holds the mouse from the
+first snapshot, the legacy mode vetoes it, `terminal` releases it, and `Ctrl+W` changes
+nothing. The settings row starts at `app`. The bar's shedding is rewritten for five hints
+(synthetic widths: all five in one row, then as a 3×2 block, new chat shed first, the
+wide settings hint passed over for new chat, `F1` alone, nothing below `F1`'s cell), and
+the keep order is pinned without a mouse entry. The three tests of the light and the
+toggle's own test are gone. **4894 green, 317 `#[ignore]`** on Linux. The chat
+screenshots (`chat-dark-en`, `chat-light-en`) were regenerated; their status bar lost
+the cell.
+
+**A pty run on the droplet** (`mindfork demo`, default settings): the terminal is asked
+for `?1000h ?1002h ?1006h` at start with no key pressed; `Ctrl+W` writes no mode at all;
+a drag and `Ctrl+C` copy `double the window` over OSC 52 with the chip
+`copied (OSC 52)`; the status bar reads `F1 help · Esc chats · Ctrl+N new · Ctrl+P
+settings` with no `mouse:` cell. How it feels where the owner works is the owner's
+check (research §7).

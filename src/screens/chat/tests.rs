@@ -1876,52 +1876,45 @@ fn activating_a_chat_applies_its_stored_collapse_state() {
     assert_eq!(s.feed_view.view(), FeedView::default());
 }
 
+/// The mouse is the setting's (`interface.mouse`, through the legacy
+/// terminal mode's veto): the chat holds it under `app` once a snapshot says
+/// so, and nowhere else. `Ctrl+W`, the session's switch until the mouse became
+/// a setting (docs/research/mouse-always-captured.md §5.7), touches nothing.
 #[test]
-fn ctrl_w_toggles_mouse_capture_for_the_session() {
-    let mut s = ChatScreen::new();
-    let ctrl_w = KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL);
-    // Capture is off until a setting says otherwise → the first press turns it
-    // on. The key asks the orchestrator nothing: the runtime reads the flag.
-    assert!(!s.mouse_capture());
-    assert_eq!(s.handle_key(ctrl_w), None);
-    assert!(s.mouse_capture());
-    // The second one — turns it off.
-    assert_eq!(s.handle_key(ctrl_w), None);
-    assert!(!s.mouse_capture());
-    // Also works under a Cyrillic layout: Ctrl+ц (physical W).
-    s.handle_key(KeyEvent::new(KeyCode::Char('ц'), KeyModifiers::CONTROL));
-    assert!(s.mouse_capture());
-}
-
-/// The setting (`interface.mouse`) decides where the session's flag starts;
-/// `Ctrl+W` flips it, and a later snapshot that leaves the setting's verdict
-/// as it was — a save of another field — keeps the flip. A change of the
-/// verdict (the setting, or the legacy terminal mode's veto) resets it.
-#[test]
-fn the_mouse_setting_seeds_the_session_and_ctrl_w_survives_other_saves() {
+fn the_mouse_follows_the_setting_and_ctrl_w_is_gone() {
     use crate::shared::config::{AppConfig, MouseMode};
     let mut s = ChatScreen::new();
-    let snapshot = |s: &mut ChatScreen, mouse, terminal_compat, spell| {
+    assert!(
+        !s.mouse_capture(),
+        "nothing is captured before the settings arrive"
+    );
+    let snapshot = |s: &mut ChatScreen, mouse, terminal_compat| {
         let mut config = AppConfig::default();
         config.interface.mouse = mouse;
         config.interface.terminal_compat = terminal_compat;
-        config.interface.spellcheck_enabled = spell;
         s.set_settings(config, vec![], vec![], Default::default(), vec![]);
     };
-    snapshot(&mut s, MouseMode::App, false, true);
-    assert!(s.mouse_capture(), "app: the chat holds the mouse");
-    s.handle_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL));
-    assert!(!s.mouse_capture(), "Ctrl+W hands it back for the session");
-    snapshot(&mut s, MouseMode::App, false, false);
-    assert!(!s.mouse_capture(), "another field saved: the flip stands");
-    snapshot(&mut s, MouseMode::App, true, false);
+    s.set_settings(
+        AppConfig::default(),
+        vec![],
+        vec![],
+        Default::default(),
+        vec![],
+    );
+    assert!(s.mouse_capture(), "the default: the chat holds the mouse");
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)),
+        None
+    );
+    assert!(s.mouse_capture(), "Ctrl+W switches nothing");
+    snapshot(&mut s, MouseMode::App, true);
     assert!(
         !s.mouse_capture(),
         "the legacy terminal mode vetoes capture"
     );
-    snapshot(&mut s, MouseMode::App, false, false);
+    snapshot(&mut s, MouseMode::App, false);
     assert!(s.mouse_capture(), "the veto lifted: the setting again");
-    snapshot(&mut s, MouseMode::Terminal, false, false);
+    snapshot(&mut s, MouseMode::Terminal, false);
     assert!(!s.mouse_capture(), "terminal: no capture");
 }
 
@@ -4364,7 +4357,6 @@ fn every_command_agrees_with_the_chord_it_mirrors() {
         ("/new", 'n'),
         ("/thoughts", 't'),
         ("/toolcalls", 'o'),
-        ("/mouse", 'w'),
         ("/links", 'l'),
     ];
     for (line, chord) in ctrl_pairs {

@@ -92,8 +92,8 @@ pub(crate) static HELP_SECTION: HelpSection = HelpSection {
         ("Ctrl+O", "ui.help.tool_calls"),
         ("Ctrl+B", "ui.help.emoji"),
         ("Ctrl+L", "ui.help.chat_links"),
-        ("Ctrl+W", "ui.help.mouse_toggle"),
         ("ui.help.k.mouse", "ui.help.mouse_action"),
+        ("ui.help.k.terminal_mouse", "ui.help.terminal_mouse"),
         ("PageUp/PageDown", "ui.help.scroll"),
     ],
     openers: &["Shift+←/→/↑/↓", "Esc", "Ctrl+K", "Ctrl+P"],
@@ -724,17 +724,13 @@ pub struct ChatScreen {
     /// the palette in `set_settings`.
     loc: &'static Locale,
     /// Whether the app holds the mouse while the chat is in front: the
-    /// setting (`interface.mouse`, through [`InterfaceSettings::mouse_captured`]),
-    /// flipped for the session by `Ctrl+W`. The runtime asks the terminal for
-    /// what this says ([`Self::mouse_capture`]). See spec §11.3.
+    /// setting (`interface.mouse`, through [`InterfaceSettings::mouse_captured`],
+    /// which the legacy terminal mode vetoes). The runtime asks the terminal for
+    /// what this says ([`Self::mouse_capture`]). `false` until the first
+    /// settings snapshot. See spec §11.3.
     ///
     /// [`InterfaceSettings::mouse_captured`]: crate::shared::config::InterfaceSettings::mouse_captured
-    mouse_scroll: bool,
-    /// The setting's verdict as last applied to [`Self::mouse_scroll`]: a
-    /// settings snapshot resets the session's flag only when the verdict
-    /// changed, so `Ctrl+W` survives a save of some other field. `None` —
-    /// no snapshot yet.
-    mouse_setting: Option<bool>,
+    mouse_captured: bool,
     /// The left button's press the next release answers: where it was, and
     /// whether a drag came in between. A release with no drag is a click, and
     /// a click on a `chat://` address follows it — on the release, so that a
@@ -870,8 +866,7 @@ impl ChatScreen {
             engine_sampling_fields: None,
             palette: Palette::default(),
             loc: locale(crate::shared::i18n::Lang::default()),
-            mouse_scroll: false,
-            mouse_setting: None,
+            mouse_captured: false,
             mouse_press: None,
             clicks: ClickCounter::default(),
             copy_chip: None,
@@ -920,11 +915,7 @@ impl ChatScreen {
             .set_code_block_background(config.interface.code_block_background);
         self.feed_view
             .set_show_model_name(config.interface.show_model_name);
-        let captured = config.interface.mouse_captured();
-        if self.mouse_setting != Some(captured) {
-            self.mouse_setting = Some(captured);
-            self.mouse_scroll = captured;
-        }
+        self.mouse_captured = config.interface.mouse_captured();
         self.settings_snapshot = Some((config, profiles, language_locked, mcp, secrets_present));
     }
 
@@ -971,9 +962,9 @@ impl ChatScreen {
 
     /// Whether the app wants the terminal's mouse reports while the chat is in
     /// front — the runtime asks for them only then (research F7). See
-    /// [`Self::mouse_scroll`].
+    /// [`Self::mouse_captured`].
     pub fn mouse_capture(&self) -> bool {
-        self.mouse_scroll
+        self.mouse_captured
     }
 
     /// Records what the engine said it is running (`AppEvent::EngineModel`).

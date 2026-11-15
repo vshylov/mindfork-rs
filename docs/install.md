@@ -2163,9 +2163,10 @@ empty chat lists the ways to connect one. Basic keys: `F1` — help, `Ctrl+P` �
 settings, `Esc` — chat list
 (open/close) and cancel generation, `Ctrl+N` — new chat,
 `Ctrl+U` — write a message as the user (impersonation), `Ctrl+Q` — quit.
-Scrolling the feed — `PageUp`/`PageDown` or the mouse wheel; mouse capture for the
-wheel is a toggle, `Ctrl+W` (off by default, so native text selection works;
-with capture on, text is selected while holding `Shift`).
+Scrolling the feed — `PageUp`/`PageDown` or the mouse wheel; a drag selects text in
+the app's own selection, and the terminal's is a modifier away — `Shift` in most
+terminals (Settings → Interface → *Mouse* leaves the mouse with the terminal
+instead; see [manual.md](manual.md)).
 Ctrl shortcuts work under any keyboard layout (including Russian).
 
 **Theme and the terminal's background.** The default theme (`auto`) asks the

@@ -2045,15 +2045,17 @@ where
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MouseMode {
-    /// The app: the terminal's mouse capture is on while the chat is in front
-    /// — the wheel scrolls the feed, a drag in the input box selects, a click
-    /// on a `chat://` address follows it. The terminal's own selection is
-    /// behind its modifier (`Shift` in most terminals).
-    App,
-    /// The terminal (the default while the track is in progress, so a release
-    /// between its stages changes nothing): no capture, the terminal's own
-    /// selection; `Ctrl+W` hands the mouse to the app for the session.
+    /// The app, the default: the terminal's mouse capture is on while the chat
+    /// is in front — the wheel scrolls the feed, a drag selects text in the
+    /// feed or the input box, a click on a `chat://` address follows it. The
+    /// terminal's own selection is behind its modifier (`Shift` in most
+    /// terminals, `Option` in iTerm2, `Fn` in Terminal.app).
     #[default]
+    App,
+    /// The terminal: no capture, the terminal's own selection everywhere — for
+    /// a terminal with no modifier around capture (VS Code on macOS by
+    /// default), a screen reader, or a terminal whose mouse reports misbehave
+    /// (docs/research/mouse-always-captured.md §5.7).
     Terminal,
 }
 
@@ -4543,27 +4545,29 @@ mod tests {
         );
     }
 
-    /// The mouse stays the terminal's unless chosen (the track's default
-    /// until its feed selection lands), an old file reads as that, a value
-    /// round-trips by its name, and one a newer version adds reads as the
-    /// default without costing the rest of the file (lessons §8).
+    /// The mouse is the app's unless the terminal is chosen
+    /// (docs/research/mouse-always-captured.md §5.7), an old file — one from
+    /// before the setting — reads as that, a value round-trips by its name, and
+    /// one a newer version adds reads as the default without costing the rest
+    /// of the file (lessons §8). A `terminal` a file holds stays the terminal's.
     #[test]
-    fn the_mouse_is_the_terminals_unless_chosen() {
-        assert_eq!(InterfaceSettings::default().mouse, MouseMode::Terminal);
+    fn the_mouse_is_the_apps_unless_the_terminal_is_chosen() {
+        assert_eq!(InterfaceSettings::default().mouse, MouseMode::App);
         let old: AppConfig = serde_json::from_str(r#"{"interface":{"theme":"dark"}}"#).unwrap();
-        assert_eq!(old.interface.mouse, MouseMode::Terminal);
+        assert_eq!(old.interface.mouse, MouseMode::App);
+        assert!(old.interface.mouse_captured());
         let chosen = InterfaceSettings {
-            mouse: MouseMode::App,
+            mouse: MouseMode::Terminal,
             ..InterfaceSettings::default()
         };
         let written = serde_json::to_value(&chosen).unwrap();
-        assert_eq!(written["mouse"], "app");
+        assert_eq!(written["mouse"], "terminal");
         let back: InterfaceSettings = serde_json::from_value(written).unwrap();
-        assert_eq!(back.mouse, MouseMode::App);
+        assert_eq!(back.mouse, MouseMode::Terminal);
         let newer: AppConfig =
             serde_json::from_str(r#"{"interface":{"mouse":"hover","terminal_compat":true}}"#)
                 .unwrap();
-        assert_eq!(newer.interface.mouse, MouseMode::Terminal);
+        assert_eq!(newer.interface.mouse, MouseMode::App);
         assert!(
             newer.interface.terminal_compat,
             "the rest of the file holds"
