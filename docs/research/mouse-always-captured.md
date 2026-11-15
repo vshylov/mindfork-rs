@@ -15,7 +15,11 @@ facts, the feed's selection and its grammar, the highlight, the text, the multi-
 and the autoscroll, the box's clamped drag and its multi-click. **Its second half is
 built** (2026-11-15, `feat/mouse-app-default`): §5.7 — `app` the default, `Ctrl+W`,
 its status-bar light and `/mouse` removed, the help and the manual naming the
-terminal's own modifier. Stage 2b (the prefixes) is next, then stage 3.
+terminal's own modifier. **Stage 2b is built** (2026-11-15, `feat/feed-selection-prefixes`):
+a quote's `> `, the thoughts' and the summary's gutter, a tool card's gutters, indent
+and icon are left out of a copy and the highlight, their rows joined back — and a
+code block's rows, wrapped and trimmed by the renderer, get the trimmed spaces back.
+Stage 3 is next.
 
 The ask (the owner, 2026-11-14): look into dropping the mouse's two modes —
 *select* and *scroll* — altogether. Keep the terminal's mouse capture on all the

@@ -20,7 +20,7 @@ use crate::entities::profile::CharacterNames;
 use crate::features::tools::present::{self, ToolBlock};
 use crate::shared::config::CodeBlockBackground;
 use crate::shared::i18n::Locale;
-use crate::shared::markdown;
+use crate::shared::markdown::{self, LineMark};
 use crate::shared::mouse::SelectUnit;
 use crate::shared::theme::Palette;
 use crate::shared::ui::{self, render_scrollbar};
@@ -1670,6 +1670,60 @@ fn highlight_block_tail(
     }
 }
 
+/// A message's lines before the feed's wrap, each with its [`LineMark`]: the
+/// columns of a prefix drawn as text — a quote's `> `, the `│ ` gutter of the
+/// thoughts and the summary, a tool card's indent and icon — and whether the
+/// line continues the one above, where a builder wrapped it itself
+/// (docs/research/mouse-always-captured.md §5.4, stage 2b). Every builder
+/// pushes through it, so the lines and their marks cannot drift apart; the
+/// block's wrap turns them into [`RowFact`]s.
+#[derive(Default)]
+struct Body {
+    lines: Vec<Line<'static>>,
+    marks: Vec<LineMark>,
+}
+
+impl Body {
+    /// A line with no prefix that continues nothing.
+    fn push(&mut self, line: Line<'static>) {
+        self.push_marked(line, LineMark::default());
+    }
+
+    fn push_marked(&mut self, line: Line<'static>, mark: LineMark) {
+        self.lines.push(line);
+        self.marks.push(mark);
+    }
+
+    /// A markdown render's lines with the marks it made.
+    fn extend_marked(&mut self, rendered: markdown::Marked) {
+        self.lines.extend(rendered.lines);
+        self.marks.extend(rendered.marks);
+    }
+
+    fn last(&self) -> Option<&Line<'static>> {
+        self.lines.last()
+    }
+
+    fn last_mut(&mut self) -> Option<&mut Line<'static>> {
+        self.lines.last_mut()
+    }
+
+    fn len(&self) -> usize {
+        self.lines.len()
+    }
+}
+
+/// The marks of `n` rows a builder wrapped one source line into, under a
+/// prefix `prefix` columns wide on each: the first row continues what the line
+/// did, every later one continues the row above.
+fn wrapped_marks(prefix: usize, first: LineMark) -> impl Fn(usize) -> LineMark {
+    move |k| LineMark {
+        prefix: prefix as u16,
+        continues: first.continues || k > 0,
+        glue: if k == 0 { first.glue } else { None },
+    }
+}
+
 /// Builds one message's contribution to the feed: width-wrapped lines with a colored
 /// role rail + a trailing separator (if the body doesn't already end on a blank line).
 /// A pure function of (`item`, `palette`, `width`, `view`, `opts`, `names`) —
@@ -1705,7 +1759,7 @@ fn build_message_block(
     let inner = width.saturating_sub(RAIL.chars().count()).max(1);
     let rail = rail_of(item.role, marked, palette);
     // Build the message body without a rail, at width `inner`.
-    let mut body: Vec<Line<'static>> = Vec::new();
+    let mut body = Body::default();
     // Where the message's own content starts, i.e. past the role header. The
     // header is excluded from the highlight because it is not indexed and would
     // fire on ordinary queries: `ASSISTANT` matches a search for "assistant" in
@@ -1792,22 +1846,19 @@ fn build_message_block(
     // rows continue a line.
     let mut facts: Vec<RowFact> = Vec::new();
     if let Some(summary) = compaction {
-        let mut divider = Vec::new();
+        let mut divider = Body::default();
         push_compaction_boundary(&mut divider, summary, view.thoughts, width, palette, loc);
-        for line in divider {
+        for (line, mark) in divider.lines.into_iter().zip(divider.marks) {
             for (k, wrapped) in wrap::wrap_line(&line, width).into_iter().enumerate() {
                 out.push(wrapped);
-                facts.push(RowFact {
-                    lead: 0,
-                    soft: k > 0,
-                });
+                facts.push(RowFact::of_piece(0, mark, k));
             }
         }
     }
     let lead = wrap::str_width(rail.glyph) as u16;
     let mut content_row = None;
     let mut links: Vec<Uuid> = Vec::new();
-    for (i, mut line) in body.into_iter().enumerate() {
+    for (i, (mut line, mark)) in body.lines.into_iter().zip(body.marks).enumerate() {
         if i == content_from {
             content_row = Some(out.len());
         }
@@ -1817,7 +1868,7 @@ fn build_message_block(
         links.extend(style_chat_links(&mut line, known_chats, palette));
         for (k, wrapped) in wrap::wrap_line(&line, inner).into_iter().enumerate() {
             out.push(prepend_rail(wrapped, &rail));
-            facts.push(RowFact { lead, soft: k > 0 });
+            facts.push(RowFact::of_piece(lead, mark, k));
         }
     }
     // A header-only block never reaches the index above.
@@ -2227,7 +2278,7 @@ fn prepend_rail(line: Line<'static>, rail: &Rail) -> Line<'static> {
 /// separator. They are not wrapped here; `render`'s second pass does that, as it
 /// does for the thoughts block.
 fn push_compaction_boundary(
-    lines: &mut Vec<Line<'static>>,
+    lines: &mut Body,
     summary: &str,
     expanded: bool,
     width: usize,
@@ -2284,24 +2335,35 @@ fn push_compaction_boundary(
 /// gutter on every row: muted italic is what tells a wrapped row of a thought
 /// from the reply under it, and where that is stripped the gutter is all
 /// there is — so it cannot stop at the first row (spec §11.6).
-fn push_gutter_line(lines: &mut Vec<Line<'static>>, text: &str, width: usize, palette: &Palette) {
+fn push_gutter_line(lines: &mut Body, text: &str, width: usize, palette: &Palette) {
     let style = palette.muted_style().add_modifier(Modifier::ITALIC);
+    let gutter = wrap::str_width(GUTTER);
     if !palette.mono {
-        lines.push(Line::from(Span::styled(format!("{GUTTER}{text}"), style)));
+        lines.push_marked(
+            Line::from(vec![
+                Span::styled(GUTTER, style),
+                Span::styled(text.to_string(), style),
+            ]),
+            wrapped_marks(gutter, LineMark::default())(0),
+        );
         return;
     }
-    lines.extend(wrap::wrap_hanging(
+    let marks = wrapped_marks(gutter, LineMark::default());
+    let rows = wrap::wrap_hanging(
         &[Span::styled(GUTTER, style)],
         &Line::from(Span::styled(text.to_string(), style)),
         width,
-    ));
+    );
+    for (k, row) in rows.into_iter().enumerate() {
+        lines.push_marked(row, marks(k));
+    }
 }
 
 /// Adds the "thoughts" block: collapsed — a "pill" with a line count and a key hint,
 /// expanded — content on the `│` gutter ([`push_gutter_line`]; `width` is the
 /// content width under the rail).
 fn push_thoughts(
-    lines: &mut Vec<Line<'static>>,
+    lines: &mut Body,
     thoughts: &str,
     expanded: bool,
     width: usize,
@@ -2346,7 +2408,7 @@ fn push_thoughts(
 /// line above and below, so they don't blend into the message; consecutive calls are
 /// separated by exactly one blank line (`ensure_blank_line` collapses adjacent ones).
 fn push_assistant_body(
-    lines: &mut Vec<Line<'static>>,
+    lines: &mut Body,
     item: &FeedMessage,
     palette: &Palette,
     width: usize,
@@ -2389,7 +2451,7 @@ fn push_assistant_body(
 /// Appends a blank separator line if the last line isn't already blank.
 /// This way adjacent separators (e.g. "after a call" + "before the next call")
 /// collapse into one blank line. A no-op on an empty buffer (no leading blank).
-fn ensure_blank_line(lines: &mut Vec<Line<'static>>) {
+fn ensure_blank_line(lines: &mut Body) {
     let blank = lines
         .last()
         .map(|l| l.spans.iter().all(|s| s.content.trim().is_empty()))
@@ -2401,7 +2463,7 @@ fn ensure_blank_line(lines: &mut Vec<Line<'static>>) {
 
 /// Renders a text fragment as markdown (if not empty). Returns whether it produced any lines.
 fn push_markdown_fragment(
-    lines: &mut Vec<Line<'static>>,
+    lines: &mut Body,
     fragment: &str,
     palette: &Palette,
     width: usize,
@@ -2410,8 +2472,7 @@ fn push_markdown_fragment(
     if fragment.trim().is_empty() {
         return false;
     }
-    let rendered = markdown::render_with(fragment, width, palette, opts);
-    lines.extend(rendered.lines);
+    lines.extend_marked(markdown::render_marked(fragment, width, palette, opts));
     true
 }
 
@@ -2426,7 +2487,7 @@ fn push_markdown_fragment(
 /// omitted when the presenter produced nothing to hide (a call with no arguments
 /// and no result yet), mirroring [`push_thoughts`] on empty thoughts.
 fn push_tool(
-    lines: &mut Vec<Line<'static>>,
+    lines: &mut Body,
     tool: &FeedToolCall,
     palette: &Palette,
     width: usize,
@@ -2517,10 +2578,16 @@ fn push_tool(
     // result. The `│` gutter **continues** through it — a bare blank row would
     // cut the card in two. Only when there is something on both sides of it.
     if !p.args.is_empty() && !p.result.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "│".to_string(),
-            Style::default().fg(palette.muted),
-        )));
+        lines.push_marked(
+            Line::from(Span::styled(
+                "│".to_string(),
+                Style::default().fg(palette.muted),
+            )),
+            LineMark {
+                prefix: 1,
+                ..LineMark::default()
+            },
+        );
     }
     for block in &p.result {
         push_block(lines, block, palette, width, true, opts, loc);
@@ -2531,7 +2598,7 @@ fn push_tool(
 /// starts with `└ ` (a corner), an argument with `│ ` (a vertical bar, "nested under
 /// the header"). The `│`/`└` gutter is WGL4-safe under compatibility mode too.
 fn push_block(
-    lines: &mut Vec<Line<'static>>,
+    lines: &mut Body,
     block: &ToolBlock,
     palette: &Palette,
     width: usize,
@@ -2551,12 +2618,14 @@ fn push_block(
         }
         ToolBlock::Code { lang, text } => {
             let hl = markdown::highlight_code(text, lang, palette);
-            push_gutter_lines(lines, hl, "│ ", "│ ", gutter_style, width);
+            let marks = vec![LineMark::default(); hl.len()];
+            let src = markdown::Marked { lines: hl, marks };
+            push_gutter_lines(lines, src, "│ ", "│ ", gutter_style, width);
         }
         ToolBlock::Markdown(text) => {
             let body_w = width.saturating_sub(2).max(1);
-            let rendered = markdown::render_with(text, body_w, palette, opts);
-            push_gutter_lines(lines, rendered.lines, "└ ", "  ", gutter_style, width);
+            let rendered = markdown::render_marked(text, body_w, palette, opts);
+            push_gutter_lines(lines, rendered, "└ ", "  ", gutter_style, width);
         }
         ToolBlock::Console(c) => push_console(lines, c, palette, width, loc),
     }
@@ -2566,7 +2635,7 @@ fn push_block(
 /// color), and the exit code (warning color) as separate sections. Each
 /// section — a label on the `└ ` gutter and content on `│ `.
 fn push_console(
-    lines: &mut Vec<Line<'static>>,
+    lines: &mut Body,
     console: &present::Console,
     palette: &Palette,
     width: usize,
@@ -2612,8 +2681,8 @@ fn push_console(
 /// line-level style is folded into the content spans (as in [`prepend_rail`]), so
 /// line-level modifiers (e.g. `DIM` on table borders) don't leak onto the gutter.
 fn push_gutter_lines(
-    lines: &mut Vec<Line<'static>>,
-    src: Vec<Line<'static>>,
+    lines: &mut Body,
+    src: markdown::Marked,
     first: &str,
     cont: &str,
     gutter_style: Style,
@@ -2623,12 +2692,16 @@ fn push_gutter_lines(
     let cont_w = wrap::display_width(&cont.chars().collect::<Vec<_>>());
     let body_w = width.saturating_sub(first_w.max(cont_w)).max(1);
     let mut first_row = true;
-    for line in src {
+    for (line, mark) in src.lines.into_iter().zip(src.marks) {
         let line_style = line.style;
         let align = line.alignment;
-        for wrapped in wrap::wrap_line(&line, body_w) {
+        for (k, wrapped) in wrap::wrap_line(&line, body_w).into_iter().enumerate() {
             let prefix = if first_row { first } else { cont };
             first_row = false;
+            // The gutter is a prefix of every row; the source line's own (a
+            // quote's `> `) only of its first.
+            let own = if k == 0 { usize::from(mark.prefix) } else { 0 };
+            let row_mark = wrapped_marks(wrap::str_width(prefix) + own, mark)(k);
             let mut spans = Vec::with_capacity(wrapped.spans.len() + 1);
             spans.push(Span::styled(prefix.to_string(), gutter_style));
             for span in wrapped.spans {
@@ -2636,7 +2709,7 @@ fn push_gutter_lines(
             }
             let mut out = Line::from(spans);
             out.alignment = align;
-            lines.push(out);
+            lines.push_marked(out, row_mark);
         }
     }
 }
@@ -2645,28 +2718,25 @@ fn push_gutter_lines(
 /// `first` — the prefix for the block's very first row, `cont` — for all subsequent rows
 /// (both wrap continuations and new logical lines of the source). Each line of
 /// `text` is wrapped separately, preserving line breaks.
-fn push_wrapped(
-    lines: &mut Vec<Line<'static>>,
-    first: &str,
-    cont: &str,
-    text: &str,
-    width: usize,
-    style: Style,
-) {
+fn push_wrapped(lines: &mut Body, first: &str, cont: &str, text: &str, width: usize, style: Style) {
     let first_w = wrap::display_width(&first.chars().collect::<Vec<_>>());
     let cont_w = wrap::display_width(&cont.chars().collect::<Vec<_>>());
     let body_w = width.saturating_sub(first_w.max(cont_w)).max(1);
     let mut first_row = true;
     for src in text.split('\n') {
         let chars: Vec<char> = src.chars().collect();
-        for (s, e) in wrap::wrap_ranges(&chars, body_w) {
+        for (k, (s, e)) in wrap::wrap_ranges(&chars, body_w).into_iter().enumerate() {
             let prefix = if first_row { first } else { cont };
             first_row = false;
             let content: String = chars[s..e].iter().collect();
-            lines.push(Line::from(vec![
-                Span::styled(prefix.to_string(), style),
-                Span::styled(content, style),
-            ]));
+            let mark = wrapped_marks(wrap::str_width(prefix), LineMark::default())(k);
+            lines.push_marked(
+                Line::from(vec![
+                    Span::styled(prefix.to_string(), style),
+                    Span::styled(content, style),
+                ]),
+                mark,
+            );
         }
     }
 }
@@ -2682,12 +2752,7 @@ const TRAILING_GAP: &str = "  ";
 /// one row and the keycap alone at the start of the next, under the icon —
 /// which reads as a stray label rather than a pill. `width` is the wrap width,
 /// so a fit measured here is a fit there.
-fn push_trailing(
-    lines: &mut Vec<Line<'static>>,
-    group: Vec<Span<'static>>,
-    cont: &str,
-    width: usize,
-) {
+fn push_trailing(lines: &mut Body, group: Vec<Span<'static>>, cont: &str, width: usize) {
     let span_width =
         |spans: &[Span<'_>]| -> usize { spans.iter().map(|s| wrap::str_width(&s.content)).sum() };
     let group_w = span_width(&group);
@@ -2704,7 +2769,13 @@ fn push_trailing(
     let mut spans = Vec::with_capacity(group.len() + 1);
     spans.push(Span::raw(cont.to_string()));
     spans.extend(group);
-    lines.push(Line::from(spans));
+    lines.push_marked(
+        Line::from(spans),
+        LineMark {
+            prefix: wrap::str_width(cont) as u16,
+            ..LineMark::default()
+        },
+    );
 }
 
 /// The nearest (rounding down) valid char boundary for a byte offset.
@@ -2717,7 +2788,7 @@ fn clamp_boundary(text: &str, mut off: usize) -> usize {
 
 /// Adds the message body: markdown for user, dim text for notes.
 fn push_body(
-    lines: &mut Vec<Line<'static>>,
+    lines: &mut Body,
     item: &FeedMessage,
     palette: &Palette,
     width: usize,
@@ -2743,8 +2814,7 @@ fn push_body(
                 soft_break_as_newline: true,
                 ..opts
             };
-            let rendered = markdown::render_with(&item.text, width, palette, opts);
-            lines.extend(rendered.lines);
+            lines.extend_marked(markdown::render_marked(&item.text, width, palette, opts));
         }
     }
 }
@@ -6312,5 +6382,125 @@ mod tests {
                 }
             }
         }
+    }
+
+    // ---------- prefixes left out of a copy (research §5.4, stage 2b) ----------
+
+    /// Draws `msgs` in a `w`×`h` bordered panel tall enough to hold them, drags
+    /// from the panel's first cell to its last, and returns the copy.
+    fn copy_all(
+        feed: &mut MessageFeed,
+        msgs: &[FeedMessage],
+        w: u16,
+        h: u16,
+        palette: &Palette,
+    ) -> String {
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        draw_with(&mut term, feed, msgs, palette);
+        assert!(feed.press(1, 1, SelectUnit::Char));
+        assert!(feed.drag(w - 2, h - 2));
+        feed.release();
+        feed.selected_text().unwrap()
+    }
+
+    /// A quote is copied without its `> `, its wrapped rows joined back into
+    /// the line — in the full mode, where the feed wraps it, and in the
+    /// monochrome mode, where the prefix is drawn on every row.
+    #[test]
+    fn a_quote_is_copied_without_its_prefix_and_as_one_line() {
+        let quote = "one two three four five six seven eight nine ten eleven";
+        let msgs = vec![msg(FeedRole::Assistant, &format!("> {quote}\n\nafter"), "")];
+        for palette in [Palette::default(), Palette::mono()] {
+            let mut feed = MessageFeed::new();
+            let text = copy_all(&mut feed, &msgs, 30, 20, &palette);
+            assert!(text.contains(&format!("\n{quote}\n")), "{text:?}");
+            assert!(!text.contains('>'), "{text:?}");
+        }
+    }
+
+    /// Thoughts, unfolded, are copied without their `│ ` gutter, a wrapped
+    /// thought as one line — in both colour modes.
+    #[test]
+    fn thoughts_are_copied_without_their_gutter() {
+        let thought = "a thought that runs well past the width of this narrow panel";
+        let msgs = vec![msg(FeedRole::Assistant, "the answer", thought)];
+        for palette in [Palette::default(), Palette::mono()] {
+            let mut feed = MessageFeed::new();
+            feed.toggle_thoughts();
+            let text = copy_all(&mut feed, &msgs, 30, 20, &palette);
+            assert!(text.contains(&format!("\n{thought}\n")), "{text:?}");
+            assert!(!text.contains(GUTTER), "{text:?}");
+        }
+    }
+
+    /// A tool card is copied without its gutters and indent — the `│ ` of the
+    /// arguments, the `└ ` of the result, the icon of the header — its long
+    /// lines joined back.
+    #[test]
+    fn a_tool_card_is_copied_without_its_gutters() {
+        let mut m = msg(FeedRole::Assistant, "done", "");
+        let result = "a result long enough to wrap over several rows of the card";
+        m.tools.push(FeedToolCall {
+            name: "note_save".into(),
+            arguments: "{\"content\":\"x\"}".into(),
+            result: result.into(),
+            text_offset: 0,
+            images: 0,
+            call_id: None,
+            running: false,
+        });
+        let mut feed = feed_with_tools();
+        let text = copy_all(&mut feed, &[m], 34, 24, &Palette::default());
+        assert!(
+            text.contains("\nnote_save"),
+            "the header without the icon: {text:?}"
+        );
+        assert!(text.contains(&format!("\n{result}")), "{text:?}");
+        for chrome in ["│ ", "└ ", "⚒"] {
+            assert!(!text.contains(chrome), "{chrome:?} left in: {text:?}");
+        }
+    }
+
+    /// A code block's long line, wrapped by the renderer at a space it then
+    /// trimmed to square the background off, is copied as the line it was —
+    /// the space put back.
+    #[test]
+    fn a_wrapped_code_line_is_copied_with_its_spaces() {
+        let line = "cargo test --bin mindfork -- feed_selection --nocapture";
+        let msgs = vec![msg(FeedRole::Assistant, &format!("```\n{line}\n```"), "")];
+        let mut feed = MessageFeed::new();
+        let text = copy_all(&mut feed, &msgs, 30, 20, &Palette::default());
+        assert!(text.contains(&format!("\n{line}\n")), "{text:?}");
+    }
+
+    /// The compaction summary is copied without its gutter.
+    #[test]
+    fn the_compaction_summary_is_copied_without_its_gutter() {
+        let summary = "earlier the two of them discussed a great many things at length";
+        let messages = numbered(2);
+        let mut feed = MessageFeed::new();
+        feed.set_compaction(Some((messages[1].message_ids[0], summary.into())));
+        feed.toggle_thoughts();
+        let text = copy_all(&mut feed, &messages, 30, 24, &Palette::default());
+        assert!(text.contains(&format!("\n{summary}\n")), "{text:?}");
+        assert!(!text.contains(GUTTER), "{text:?}");
+    }
+
+    /// A prefix is chrome to the highlight too: it is not painted.
+    #[test]
+    fn a_quotes_prefix_is_not_painted() {
+        let msgs = vec![msg(FeedRole::Assistant, "> quoted words", "")];
+        let mut feed = MessageFeed::new();
+        let mut term = Terminal::new(TestBackend::new(30, 8)).unwrap();
+        draw_with(&mut term, &mut feed, &msgs, &Palette::default());
+        let (c, r) = cell_of(&term, "quoted");
+        assert!(feed.press(1, r, SelectUnit::Char));
+        assert!(feed.drag(c + 3, r));
+        draw_with(&mut term, &mut feed, &msgs, &Palette::default());
+        let marked = Palette::default().selection(Style::new()).bg;
+        let buf = term.backend().buffer();
+        assert_ne!(Some(buf[(c - 2, r)].bg), marked, "the `>`");
+        assert_eq!(Some(buf[(c, r)].bg), marked, "the text");
+        assert_eq!(feed.selected_text().as_deref(), Some("quot"));
     }
 }
