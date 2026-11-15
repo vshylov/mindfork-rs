@@ -378,8 +378,14 @@ effort tiers and Fabula — have all closed
   Stage 3, the other screens, is designed (forks F11–F13, 2026-11-15) in three
   parts, all built — `Ctrl+C`/`Ctrl+X` in every field, the mouse on every screen (the
   wheel, a click selecting a row and a double click as `Enter`, the fields), a
-  selection over the visible cells of read-only text. **The selection half is done**;
-  per-message collapse and copy remain.
+  selection over the visible cells of read-only text. **The selection half is done**.
+  What remains was narrowed by the owner (2026-11-15) to two things and is
+  **researched**, forks F1–F5 open
+  ([block-fold-and-partial-copy.md](research/block-fold-and-partial-copy.md)):
+  - a click on a foldable block's header folds that block alone, kept in the chat
+    file (with no key for it, as `Ctrl+T`/`Ctrl+O` still fold every block);
+  - `/copy first N` and `/copy last N` copy part of the conversation. Copying one
+    message by the mouse is not planned.
 - **Horizontal scroll for wide tables** — **idea**, instead of the clip with
   `…`; groundwork from [ADR 0003](decisions/0003-own-markdown-renderer.md).
 - **Mermaid — whitelist expansion** — **deferred**. flowchart and sequence
