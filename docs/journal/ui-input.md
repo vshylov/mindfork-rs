@@ -2858,3 +2858,12 @@ start, the chat list's click selecting and its double click opening the chat, th
 settings' click on *Interface* (after the fix), and the help scrolled by the wheel. No
 live run in the AGENTS.md §3 sense.
 
+**The owner's live check: tabs.** Everything worked except clicks on the tabs, in the
+settings and in the help. F12 had named rows, and a strip of tabs is no list, so neither
+took a click. Now each strip records a `ui::TabHits`, each tab's columns on its row,
+where it is drawn. A click on a settings subsection opens it, with the focus on the
+strip where `←`/`→` leave it. A click on a help tab opens it, and on a strip too narrow
+for every tab a `…` opens the nearest tab hidden on its side. The tests read the clicked
+cell back from the buffer and find the tab's label there (docs/lessons.md §5). A pty run
+opened *Impersonation* and *Commands* by a click. **4944 green.**
+

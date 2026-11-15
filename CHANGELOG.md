@@ -34,7 +34,7 @@ split by subsystem.
 - **The mouse works on every screen** — the chat list, settings, the self-model, the
   search results, the tasks, the notes, the changes and the help: the wheel scrolls
   whatever is under the pointer, keeping a selected row in view rather than moving it;
-  a click selects a row, a double click does what `Enter` does; text fields take
+  a click selects a row or opens a tab, a double click does what `Enter` does; text fields take
   clicks, drags and double and triple clicks like the message box. The popups over the
   chat — the link, emoji, spelling and profile pickers, the conversation's search bar —
   take it too.

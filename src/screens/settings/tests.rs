@@ -8487,3 +8487,33 @@ fn a_drag_in_the_editor_selects_what_ctrl_c_copies() {
         Some(SettingsIntent::CopyText("gemini".into()))
     );
 }
+
+/// A click on a subsection tab opens it, with the focus on the tab strip —
+/// where `←`/`→` leave it (F12). The cell clicked is read back from the
+/// buffer: it shows the tab's label, not just what the map says.
+#[test]
+fn a_click_on_a_subsection_tab_opens_it() {
+    use crate::shared::mouse::SelectUnit::Char;
+    let mut s = screen();
+    goto_section(&mut s, Section::Model);
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 40)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+    let (c, r) = s.sub_tabs.cell_of(1).expect("the strip is drawn");
+    let buf = term.backend().buffer().clone();
+    let label: String = (c..c + 20)
+        .map(|x| buf[(x, r)].symbol().to_string())
+        .collect();
+    let impersonation = model_tab_labels(s.loc())[1];
+    assert!(
+        label.contains(impersonation),
+        "{label:?} is not {impersonation:?}"
+    );
+    assert_eq!(s.handle_mouse(press_at(c, r), Char), None);
+    assert_eq!(s.model_sub, ModelTab::from_index(1));
+    assert!(s.focus == Focus::Fields);
+    assert!(is_subsection(s.fields()[s.field_idx].id), "on the strip");
+    // A section without tabs draws none, and a click there selects no tab.
+    goto_section(&mut s, Section::Tools);
+    term.draw(|f| s.render(f)).unwrap();
+    assert_eq!(s.sub_tabs.cell_of(0), None);
+}

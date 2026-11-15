@@ -891,7 +891,8 @@ things on different screens. The highlights:
 > **On every other screen** — the chat list, settings, the self-model, the search
 > results, the tasks, the notes, the changes, the help — the wheel scrolls the list or
 > the text under the pointer; a selected row stays where it is until the edge of the
-> list pushes it along, so the arrows go on from where you see it. A click selects a
+> list pushes it along, so the arrows go on from where you see it. A click on a tab —
+> the settings' subsections, the help's tabs — opens it. A click selects a
 > row, a double click does what `Enter` does on it — opens a chat or a note, edits or
 > toggles a setting, picks from a list. Text fields — renaming a chat, the settings'
 > editors, the self-model's and the notes' editors, the search lines — take a click, a

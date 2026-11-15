@@ -16,7 +16,7 @@ use anyhow::{Result, bail};
 use ratatui::backend::Backend;
 use ratatui::crossterm::event::{
     self, DisableBracketedPaste, DisableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
-    KeyModifiers, MouseEvent, MouseEventKind,
+    KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 #[cfg(unix)]
 use ratatui::crossterm::event::{

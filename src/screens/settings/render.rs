@@ -735,7 +735,7 @@ impl SettingsScreen {
     /// Draws the field pane's header: the section title with its focus marker, the
     /// "Model" section's server-status chip, and the subsection tab strip.
     fn render_fields_header(
-        &self,
+        &mut self,
         frame: &mut Frame,
         head_area: Rect,
         focused: bool,
@@ -775,8 +775,17 @@ impl SettingsScreen {
             }
         }
         let mut head_lines = vec![Line::from(title_spans)];
+        self.sub_tabs.clear();
         if let Some((labels, active)) = tabs {
-            head_lines.push(tab_strip_line(&labels, active, on_tabs, palette));
+            let strip = tab_strip_line(&labels, active, on_tabs, palette);
+            // The strip's spans: a lead space, then each tab with a separator
+            // between two — tab `t` is span `2t + 1`.
+            let n = labels.len();
+            self.sub_tabs
+                .record(head_area.x, head_area.y + 1, &strip, |i| {
+                    (i % 2 == 1 && i / 2 < n).then_some(i / 2)
+                });
+            head_lines.push(strip);
         }
         frame.render_widget(Paragraph::new(head_lines), head_area);
     }

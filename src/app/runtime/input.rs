@@ -354,10 +354,16 @@ pub(super) fn handle_mouse_event(
     clipboard: &mut Option<arboard::Clipboard>,
 ) -> bool {
     if let Some(state) = help.open.as_mut() {
-        // Clamped to the content where the dialog is drawn.
+        // The wheel is clamped to the content where the dialog is drawn; a
+        // click on a tab opens it (F12).
         match mouse.kind {
             MouseEventKind::ScrollUp => state.scroll = state.scroll.saturating_sub(WHEEL_ROWS),
             MouseEventKind::ScrollDown => state.scroll = state.scroll.saturating_add(WHEEL_ROWS),
+            MouseEventKind::Down(MouseButton::Left) => {
+                if let Some(tab) = state.tabs.tab_at(mouse.column, mouse.row) {
+                    state.select_tab(HelpTab::ALL[tab]);
+                }
+            }
             _ => {}
         }
         return false;

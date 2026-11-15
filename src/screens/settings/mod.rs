@@ -1141,6 +1141,8 @@ pub struct SettingsScreen {
     fields_rows: Vec<Option<usize>>,
     /// The open editor's, filter's or search line's mouse gesture.
     field_gesture: crate::widgets::input_box::FieldGesture,
+    /// The subsection tabs as last drawn, for a click on one.
+    sub_tabs: crate::shared::ui::TabHits,
 }
 
 // ---------- submodules (a breakup of a god object: docs/history/refactoring-god-objects.md) ----------

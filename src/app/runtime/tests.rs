@@ -3458,3 +3458,32 @@ fn a_click_reaches_the_settings_screen_through_the_pipeline() {
     };
     assert_eq!(settings.section_index(), before + 2);
 }
+
+/// A click on one of the help's tabs opens it, through the pipeline (F12).
+#[test]
+fn a_click_on_a_help_tab_opens_it() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::crossterm::event::{MouseButton, MouseEvent};
+    let mut h = Harness::new();
+    h.feed(key(KeyCode::F(1)));
+    let palette = front_palette(&h.active, &h.screen);
+    let mut term = Terminal::new(TestBackend::new(110, 34)).unwrap();
+    term.draw(|frame| {
+        compose_frame(frame, &mut h.screen, &mut h.active, &mut h.help, &palette);
+    })
+    .unwrap();
+    let state = h.help.open.as_ref().unwrap();
+    let legal = HelpTab::ALL
+        .iter()
+        .position(|&t| t == HelpTab::Legal)
+        .unwrap();
+    let (column, row) = state.tabs.cell_of(legal).expect("the strip is drawn");
+    h.feed(Event::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    }));
+    assert_eq!(h.help.open.as_ref().unwrap().tab, HelpTab::Legal);
+}

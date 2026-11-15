@@ -51,6 +51,7 @@ impl SettingsScreen {
             fields_scroll: ListScroll::default(),
             fields_rows: Vec::new(),
             field_gesture: Default::default(),
+            sub_tabs: Default::default(),
         }
     }
 

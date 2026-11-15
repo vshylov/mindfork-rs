@@ -4323,7 +4323,9 @@ settings' menu's title takes one); a list drawn line by line keeps a `RowList` o
 items' `RowSpan`s, ids the screen's own, and `RowList::wheel` takes the screen's own
 follow rule (`keep_visible`, or `follow_item`, which lets the window stand inside a
 selected item taller than itself), so the next draw leaves the window where the wheel
-put it. A field off the chat has a `FieldGesture` (`widgets/input_box.rs`).
+put it. A strip of tabs records a `TabHits` (each tab's columns on its row) where it
+is drawn — the settings' subsections, the help's tabs, whose `…` maps to the nearest
+hidden tab. A field off the chat has a `FieldGesture` (`widgets/input_box.rs`).
 
 **Mouse capture follows the frame in front** (`app/runtime/mod.rs`, spec §11.3).
 The chat keeps the wish — `ChatScreen::mouse_capture`, seeded from
