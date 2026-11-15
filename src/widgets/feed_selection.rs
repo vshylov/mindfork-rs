@@ -139,6 +139,20 @@ pub fn painted(line: &Line<'_>, fact: RowFact, from: u16, to: u16) -> Option<Ran
     Some(first.col..last.end())
 }
 
+/// The columns of a row's text: from past its lead to the end of its last
+/// glyph that is not whitespace. `None` for a row with nothing on it — a blank
+/// row, the separator under a message. A double or a triple click selects only
+/// where it lands on these; beside the text it is a plain click.
+pub fn content_cols(line: &Line<'_>, fact: RowFact) -> Option<Range<u16>> {
+    let (_, glyphs) = glyphs(line);
+    let end = glyphs
+        .iter()
+        .rev()
+        .find(|g| g.class != CharClass::Space)
+        .map(Glyph::end)?;
+    (fact.lead < end).then_some(fact.lead..end)
+}
+
 /// The part of the selection on the row at `(block, row)`: its columns,
 /// inclusive. The first row starts at the selection's start, the last ends at
 /// its end, and every row between is whole.
@@ -454,6 +468,16 @@ mod tests {
         assert_eq!(word_bounds(&r, pt(0, 0, 0)), (pt(0, 0, 2), pt(0, 0, 4)));
         let empty = rows(vec![vec![(Line::from(""), BARE)]]);
         assert_eq!(word_bounds(&empty, pt(0, 0, 3)), (pt(0, 0, 3), pt(0, 0, 3)));
+    }
+
+    /// A row's text runs from past the rail to its last glyph; a blank row,
+    /// or one of spaces, has none.
+    #[test]
+    fn a_rows_text_is_past_the_rail_and_before_the_padding() {
+        let (line, blank) = (railed("  code   "), railed("    "));
+        assert_eq!(content_cols(&line, RAILED), Some(2..8));
+        assert_eq!(content_cols(&blank, RAILED), None);
+        assert_eq!(content_cols(&Line::from(""), BARE), None);
     }
 
     #[test]

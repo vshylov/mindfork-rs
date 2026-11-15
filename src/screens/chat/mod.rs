@@ -568,8 +568,6 @@ struct MousePress {
     /// The panel the press was in: a drag stays in it, whatever it crosses
     /// (docs/research/mouse-always-captured.md §5.3).
     panel: MousePanel,
-    /// The unit the press selects by — the click count.
-    unit: SelectUnit,
     /// The cell of the press. A drag report back on it is not a drag: a
     /// console can report a movement within one cell.
     at: (u16, u16),

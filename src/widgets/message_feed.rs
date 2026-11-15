@@ -1061,6 +1061,14 @@ impl MessageFeed {
         let Some(p) = self.point_at(col, row, false) else {
             return false;
         };
+        // A double or a triple click beside the text — past a row's last
+        // glyph, on a blank row, on the rail — selects nothing: it is the
+        // click that ends a selection, however fast it came after the last.
+        let unit = if self.on_text(p) {
+            unit
+        } else {
+            SelectUnit::Char
+        };
         let rows = Blocks(&self.cache);
         let origin = match unit {
             SelectUnit::Char => (p, p),
@@ -1139,13 +1147,26 @@ impl MessageFeed {
         self.selection.is_some()
     }
 
-    /// Whether the cell under `(col, row)` is in the selection: a click there
-    /// keeps it, one anywhere else in the feed ends it (research §5.3).
+    /// Whether the cell under `(col, row)` is **highlighted** by the selection:
+    /// a click there keeps it, one anywhere else in the feed ends it (research
+    /// §5.3). What is painted, not what lies between the selection's ends in
+    /// reading order: that span also holds the empty cells beside every row it
+    /// crosses, and a click there kept a selection the user saw nothing of
+    /// under the pointer (the owner's live check, 2026-11-15).
     pub fn selection_holds(&self, col: u16, row: u16) -> bool {
-        match (self.selection, self.point_at(col, row, false)) {
-            (Some((start, end)), Some(p)) => (start..=end).contains(&p),
-            _ => false,
-        }
+        let (Some((start, end)), Some(p)) = (self.selection, self.point_at(col, row, false)) else {
+            return false;
+        };
+        feed_selection::painted_on(&Blocks(&self.cache), start, end, p.block, p.row)
+            .is_some_and(|cols| cols.contains(&p.col))
+    }
+
+    /// Whether the feed's cell `p` is on its row's text
+    /// ([`feed_selection::content_cols`]).
+    fn on_text(&self, p: FeedPoint) -> bool {
+        let block = &self.cache[p.block];
+        feed_selection::content_cols(&block.lines[p.row], block.facts[p.row])
+            .is_some_and(|cols| cols.contains(&p.col))
     }
 
     /// Ends the selection and any gesture making one. `true` when there was a
@@ -6123,6 +6144,56 @@ mod tests {
             Some(text),
             "the whole wrapped line"
         );
+    }
+
+    /// A click keeps the selection only on its highlight. The empty cells
+    /// beside the rows it spans lie between its ends in reading order, and a
+    /// click there kept it — the owner found it in every terminal, on the long
+    /// selections a scroll makes (2026-11-15).
+    #[test]
+    fn only_the_highlight_holds_the_selection() {
+        let text = "alpha beta gamma delta epsilon zeta eta theta iota kappa";
+        let msgs = vec![msg(FeedRole::User, text, "")];
+        let mut feed = MessageFeed::new();
+        let term = drawn(&mut feed, &msgs, 24, 12);
+        let (c0, r0) = cell_of(&term, "alpha");
+        let (c1, r1) = cell_of(&term, "kappa");
+        assert!(feed.press(c0, r0, SelectUnit::Char));
+        assert!(feed.drag(c1 + 4, r1));
+        feed.release();
+        let middle = r0 + 1;
+        assert!(feed.selection_holds(c0 + 1, middle), "on the highlight");
+        assert!(
+            !feed.selection_holds(21, middle),
+            "beside a middle row's text"
+        );
+        assert!(!feed.selection_holds(1, middle), "on the rail");
+        assert!(feed.selection_holds(c1 + 4, r1), "the last glyph");
+        assert!(!feed.selection_holds(c0, r1 + 1), "the separator below");
+    }
+
+    /// A double or a triple click beside the text selects nothing — it would
+    /// otherwise take the row's last word, after a click meant to end a
+    /// selection — and on the text it selects as ever.
+    #[test]
+    fn a_double_click_beside_the_text_selects_nothing() {
+        let msgs = vec![msg(FeedRole::User, "one two three", "")];
+        let mut feed = MessageFeed::new();
+        let term = drawn(&mut feed, &msgs, 30, 8);
+        let (c, r) = cell_of(&term, "three");
+        for unit in [SelectUnit::Word, SelectUnit::Line] {
+            assert!(
+                feed.press(c + 10, r, unit),
+                "{unit:?}: a press all the same"
+            );
+            assert!(!feed.has_selection(), "{unit:?} beside the text");
+            feed.release();
+            assert!(feed.press(1, r, unit));
+            assert!(!feed.has_selection(), "{unit:?} on the rail");
+            feed.release();
+        }
+        assert!(feed.press(c + 1, r, SelectUnit::Word));
+        assert_eq!(feed.selected_text().as_deref(), Some("three"));
     }
 
     /// A drag held past the panel's top edge scrolls it a row a step, and the
