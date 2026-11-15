@@ -146,21 +146,15 @@ impl ChatScreen {
                 if let Some(text) = self.feed_view.selected_text() {
                     return Some((!text.is_empty()).then_some(ChatIntent::CopyToClipboard(text)));
                 }
-                if self.input.has_selection() {
-                    let text = self.input.selected_text().unwrap_or_default();
-                    return Some(Some(ChatIntent::CopyToClipboard(text)));
-                }
-                Some(None)
+                Some(self.input.copy().text().map(ChatIntent::CopyToClipboard))
             }
             // Cut the selection (Ctrl+X): copy + delete.
             'x' => {
-                if self.input.has_selection() {
-                    let text = self.input.selected_text().unwrap_or_default();
-                    self.input.delete_selection();
+                let clip = self.input.cut();
+                if clip.edited() {
                     self.mark_input_changed();
-                    return Some(Some(ChatIntent::CopyToClipboard(text)));
                 }
-                Some(None)
+                Some(clip.text().map(ChatIntent::CopyToClipboard))
             }
             // Paste (Ctrl+V): an image off the clipboard if there is one, otherwise the
             // text — which is what the help overlay has always advertised this key for.
@@ -658,15 +652,44 @@ impl ChatScreen {
             }
             _ => {}
         }
+        // `Ctrl+C` / `Ctrl+X` in the query (docs/research/mouse-always-captured.md
+        // §5.8). With nothing selected in it, `Ctrl+C` takes the feed's
+        // selection — the one other selection on the screen, still drawn
+        // behind the bar.
+        let clip = self
+            .search
+            .as_mut()
+            .and_then(|field| field.clipboard_key(&key));
+        if let Some(clip) = clip {
+            let edited = clip.edited();
+            let text = clip.text().or_else(|| {
+                (keys::hotkey_char(&key) == Some('c'))
+                    .then(|| self.feed_view.selected_text())
+                    .flatten()
+                    .filter(|text| !text.is_empty())
+            });
+            if edited {
+                self.on_search_edited();
+            }
+            return text.map(ChatIntent::CopyToClipboard);
+        }
         if let Some(field) = &mut self.search
             && field.on_key(key).edited()
         {
+            self.on_search_edited();
+        }
+        None
+    }
+
+    /// The query changed: remembered for the chat, and the feed's matches
+    /// follow it.
+    fn on_search_edited(&mut self) {
+        if let Some(field) = &self.search {
             let q = field.text();
             self.search_last = q.clone();
             self.feed_view
                 .set_search((!q.is_empty()).then_some(q.as_str()));
         }
-        None
     }
 
     pub fn handle_paste(&mut self, text: &str) {
@@ -676,9 +699,7 @@ impl ChatScreen {
         if let Some(field) = &mut self.search {
             if !text.is_empty() {
                 field.insert_str(text);
-                let q = field.text();
-                self.search_last = q.clone();
-                self.feed_view.set_search(Some(&q));
+                self.on_search_edited();
             }
             return;
         }

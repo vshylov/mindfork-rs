@@ -345,20 +345,22 @@ fn handle_key_event(
     if intent.is_some() {
         flush_draft(screen, cmd_tx);
     }
+    // Copying a selection to the clipboard (`Ctrl+C`/`Ctrl+X`, in any screen's
+    // field) — a UI-layer side effect: we already have the text, no need to go
+    // to the orchestrator. The `arboard` slot is here (`dispatch` doesn't have
+    // it). The outcome — copied, sent to the terminal, too large, failed — is a
+    // chip for a few seconds, on every screen, never a note in the feed: a note
+    // scrolled the feed and split a reply being streamed
+    // (docs/research/mouse-always-captured.md F10, §5.8). Not the chat list's
+    // notice line, which words a whole conversation's copy (`F5`): a rename's
+    // copy read "Conversation sent to your terminal's clipboard" there.
+    if let Some(text) = intent.as_ref().and_then(AnyIntent::clipboard_text) {
+        let report = copy_text(clipboard, text, screen.clipboard_osc52());
+        let (chip, failed) = report.chip(screen.loc());
+        screen.show_copy_outcome(chip, failed);
+        return false;
+    }
     match intent {
-        // Copying the selection to the clipboard (`Ctrl+C`/`Ctrl+X`) —
-        // a UI-layer side effect: we already have the text, no need to go to the orchestrator.
-        // The `arboard` slot is here (`dispatch` doesn't have it). The outcome —
-        // copied, sent to the terminal, too large, failed — is a chip on the
-        // status bar for a few seconds, never a note in the feed: a note
-        // scrolled the feed and split a reply being streamed
-        // (docs/research/mouse-always-captured.md F10).
-        Some(AnyIntent::Chat(ChatIntent::CopyToClipboard(text))) => {
-            let report = copy_text(clipboard, &text, screen.clipboard_osc52());
-            let (chip, failed) = report.chip(screen.loc());
-            screen.show_copy_outcome(chip, failed);
-            false
-        }
         // Pasting from the clipboard (`Ctrl+V`, `/image paste`) — the same reasoning as
         // above: only this function holds the `arboard` client, so the read happens here
         // and the orchestrator receives pixels rather than a request to go and look.

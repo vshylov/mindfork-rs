@@ -489,6 +489,14 @@ impl SettingsScreen {
             return self.apply_text(field, &text);
         }
         let editor = self.editor.as_mut()?;
+        // `Ctrl+C`/`Ctrl+X` — the clipboard is the runtime's; a secret field
+        // copies nothing (`InputBox::selected_text`).
+        if let Some(clip) = editor.input.clipboard_key(&key) {
+            if clip.edited() {
+                editor.error = None;
+            }
+            return clip.text().map(SettingsIntent::CopyText);
+        }
         match (key.code, key.modifiers) {
             (KeyCode::Esc, _) => {
                 self.editor = None;

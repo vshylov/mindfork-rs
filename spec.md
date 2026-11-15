@@ -4929,7 +4929,17 @@ belongs to the key *labeled* with that letter. Details and the platform matrix �
 Selection and **undo/redo** live inside the `InputBox` widget itself — available in every
 input field (chat, chat renaming, settings fields, the self-model editor). Clipboard
 copy/cut (`Ctrl+C`/`Ctrl+X`) is a UI-layer side effect (`runtime` via
-`arboard`, the text is already at the UI, the orchestrator isn't involved); so far it's only wired up in the chat input box.
+`arboard`, the text is already at the UI, the orchestrator isn't involved), wired up in
+**every field** — the chat box and the feed's search bar, the chat list's rename, the
+settings' editor, field search and model filter, the self-model's editor, the notes'
+editor and search (stage 3a of [docs/research/mouse-always-captured.md](docs/research/mouse-always-captured.md)
+§5.8; until then only the chat box copied, and a selection made with `Shift` anywhere
+else was a dead end). The widget answers the two keys with `InputBox::clipboard_key` —
+the text goes up as each screen's copy intent, and the runtime asks one question of
+every screen's intent (`AnyIntent::clipboard_text`), so a copy is routed the same way
+wherever it was made. A masked field (an API key, the backup password) copies nothing
+and its cut removes nothing. In the feed's search bar a query with nothing selected
+leaves `Ctrl+C` to the feed's selection, still drawn behind the bar.
 **Undo/redo** (`Ctrl+Z`/`Ctrl+Y`) — a stack of `(lines, cursor)` snapshots with coalescing:
 consecutive edits of the same class (typing/deleting) merge into one undo unit
 (typing breaks at a space — word-granular), navigation/selection/a structural edit
@@ -5168,7 +5178,11 @@ text). What the protocol forces:
   note's. The two "too big" verdicts, which the app knows went nowhere, keep it. Never a note
   in the feed: a note scrolled the feed, and one pushed while a reply streamed
   split the reply in two (docs/research/mouse-always-captured.md F10). The chat
-  list keeps the whole sentence on its notice line (`CopyReport::message`).
+  list keeps the whole sentence on its notice line (`CopyReport::message`) for a
+  conversation's copy. **A field's copy on the other screens** — which have no chat
+  status bar — is the same chip, drawn at the right end of the frame's last row (the
+  screen's footer) over the hints there, for the same 4 s (`ui::render_copy_chip`);
+  the chat list's rename included, whose notice line words a whole conversation.
   **`Ctrl+C` leaves the selection in place**, as a text field in a GUI does; a
   move of the cursor or typed text ends it, and `Ctrl+X` removes what it cut.
 

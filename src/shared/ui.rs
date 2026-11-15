@@ -1056,6 +1056,36 @@ enum TooSmallLine {
     Keys,
 }
 
+/// A copy's outcome on a screen that has no chat status bar to show it on
+/// (docs/research/mouse-always-captured.md F10, §5.8): at the right end of the
+/// frame's last row — the screen's footer — over the hints drawn there, for the
+/// few seconds the chip lasts. Quiet when the text went somewhere, in the error
+/// colour when it went nowhere, like the chip on the chat's bar.
+pub fn render_copy_chip(frame: &mut Frame, palette: &Palette, text: &str, failed: bool) {
+    let area = frame.area();
+    if area.height == 0 || area.width < 3 {
+        return;
+    }
+    let (text, _) = crate::shared::wrap::truncate_to_width(text, usize::from(area.width - 2));
+    let width = (str_width(&text) as u16 + 2).min(area.width);
+    let chip = Rect {
+        x: area.right() - width,
+        y: area.bottom() - 1,
+        width,
+        height: 1,
+    };
+    let style = if failed {
+        Style::new().fg(palette.error)
+    } else {
+        palette.muted_style()
+    };
+    frame.render_widget(Clear, chip);
+    frame.render_widget(
+        Paragraph::new(Span::styled(format!(" {text} "), style)),
+        chip,
+    );
+}
+
 /// Draws the "window too small" notice over the whole frame: the window is
 /// smaller than the layer in front needs (`need`), and a frame with parts
 /// missing would be drawn otherwise (spec §11.1.1). `way_out` — the keys that

@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (48)
+## Entries (49)
 
 - Post-M9: fast multiline clipboard paste (done)
 - Post-M9: `↑/↓` navigation by visual row of a wrapped line (done)
@@ -60,6 +60,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the feed's own text selection (done)
 - Post-M9: the app holds the mouse by default; `Ctrl+W` is gone (done)
 - Post-M9: a copy leaves the prefixes drawn as text out (done)
+- Post-M9: `Ctrl+C` and `Ctrl+X` in every field (done)
 
 ### Post-M9: fast multiline clipboard paste (done)
 - **Symptom**: a large clipboard paste lagged in Windows Terminal, and a line break
@@ -2726,3 +2727,58 @@ compaction summary, and a quote's `>` not painted. **4908 green, 317 `#[ignore]`
 Linux; the screenshot dumps are unchanged. **A pty run** (`mindfork demo`) copied the
 scripted `note_save` card as `note_save` / `content: …` / blank / `Note saved (id=…)`,
 with no gutter, corner or icon. No live run in the AGENTS.md §3 sense.
+
+### Post-M9: `Ctrl+C` and `Ctrl+X` in every field (done)
+
+**What.** Stage 3a of the mouse track
+([docs/research/mouse-always-captured.md](../research/mouse-always-captured.md) §5.8),
+on `feat/field-copy`. Planning stage 3 found that only the chat's box copied. The
+selection track (stage B,
+[docs/history/input-selection-undo-mouse.md](../history/input-selection-undo-mouse.md)
+§5.2) gave every `InputBox` a selection. It wired the clipboard into the chat box alone
+and left the other consumers "for later, with the same pattern". So `Shift` selected text
+in the rename, the settings' editors, the self-model's and the notes' editors and the
+search bars, and nothing could copy it: `on_key` swallowed `Ctrl+C`. Stage 3b's mouse
+selection in those fields would have been the same dead end, so this comes first.
+
+**How.** The widget still has no clipboard. `InputBox::clipboard_key` answers the two
+keys with a `Clip`:
+- `Copy(text)` keeps the selection (F2);
+- `Cut(text)` removes the text undoably, and the caller marks it as an edit (spellcheck,
+  validation, the filter);
+- `Nothing` means there was no selection, or the field is masked. A cut in a masked
+  field removes nothing, since nothing may reach the clipboard.
+
+The keys are layout-independent and not AltGr text, like every shortcut in the widget.
+The chat box's own `Ctrl+C`/`Ctrl+X` now go through `copy`/`cut` too. Each screen turns
+the text into its own intent (`ChatListIntent::CopyText`, `SettingsIntent::CopyText`,
+`SelfModelIntent::CopyText`, `NotesIntent::CopyText`). The runtime asks one question of
+every intent, `AnyIntent::clipboard_text`, so a copy is routed the same way wherever it
+was made: `copy_text`, then F10's chip. On the chat it is the status bar's. On every
+other screen `compose_frame` draws it at the right end of the frame's last row, over the
+footer's hints, since those screens have no chat status bar.
+
+**Two smaller decisions.** In the feed's search bar, when nothing is selected in the
+query, `Ctrl+C` copies the feed's selection, which is still drawn behind the bar. `Ctrl+X`
+only ever cuts the query. And the help's *Globally* section gains `Ctrl+C / Ctrl+X`: the
+keys now mean the same thing in every field.
+
+**Tests.** The widget's keys: copy kept, cut undone, nothing without a selection, a
+masked field, AltGr text, the Russian layout. Each screen's fields: the rename (the
+spelling recheck flagged), the settings' editor (an error cleared by a cut), field search
+(a cut re-filters), the model filter, a secret's editor copying nothing, the self-model's
+editor, the notes' editor and search (a copy leaves the list, a cut widens it), the
+feed's search bar. The runtime: every screen's copy is a clipboard text, and the chip is
+drawn on the settings screen's footer. A copy through the pipeline would open the real
+clipboard, which belongs to the `#[ignore]` round trips. **4919 green.** No live run in
+the AGENTS.md §3 sense (no engine, memory or tool path).
+
+**A pty run caught one wording.** The first cut sent a field's copy through
+`deliver_clipboard`, the path a conversation's `F5` takes, which on the chat list puts
+the whole sentence on the list's notice line. A rename's copy, run in a pty with no
+clipboard (`mindfork demo`, `F2`, `Ctrl+A`, `Ctrl+C`), read *"Conversation sent to your
+terminal's clipboard (OSC 52)…"* — about a title. A field's copy is the chip now, on the
+list as everywhere else. The notice line keeps the conversation's copy. The same run
+decoded the OSC 52 sequences: the settings' field search sent its Russian query whole and the
+chip read `copied (OSC 52)` on the footer's last row; the rename sent the title.
+

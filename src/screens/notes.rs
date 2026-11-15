@@ -63,6 +63,9 @@ const SHOWN_MARK: &str = "◆";
 pub enum NotesIntent {
     /// Close and go back to the chat (`Esc`).
     Close,
+    /// Put this text on the clipboard: `Ctrl+C`/`Ctrl+X` in the editor or the
+    /// search (docs/research/mouse-always-captured.md §5.8).
+    CopyText(String),
     /// Quit the application (`Ctrl+Q`/`F10`).
     Quit,
     /// Apply an edit; the orchestrator answers with a fresh snapshot.
@@ -230,8 +233,7 @@ impl NotesScreen {
             return self.handle_editor_key(key);
         }
         if self.search.is_some() {
-            self.handle_search_key(key);
-            return None;
+            return self.handle_search_key(key);
         }
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let phys = keys::hotkey_char(&key);
@@ -325,10 +327,18 @@ impl NotesScreen {
         };
     }
 
-    fn handle_search_key(&mut self, key: KeyEvent) {
-        let Some(search) = self.search.as_mut() else {
-            return;
-        };
+    fn handle_search_key(&mut self, key: KeyEvent) -> Option<NotesIntent> {
+        let search = self.search.as_mut()?;
+        // A copy leaves the query, and so the list, as they were; a cut is an
+        // edit of the query like any other.
+        if let Some(clip) = search.clipboard_key(&key) {
+            if clip.edited() {
+                self.query = search.text();
+                self.selected = 0;
+                self.scroll = 0;
+            }
+            return clip.text().map(NotesIntent::CopyText);
+        }
         match key.code {
             // `Enter` keeps the search in force; `Esc` drops it.
             KeyCode::Enter => self.search = None,
@@ -343,6 +353,7 @@ impl NotesScreen {
         }
         self.selected = 0;
         self.scroll = 0;
+        None
     }
 
     fn open_editor(&mut self, kind: fn(Uuid) -> EditKind) {
@@ -366,6 +377,9 @@ impl NotesScreen {
 
     fn handle_editor_key(&mut self, key: KeyEvent) -> Option<NotesIntent> {
         let editor = self.editor.as_mut()?;
+        if let Some(clip) = editor.input.clipboard_key(&key) {
+            return clip.text().map(NotesIntent::CopyText);
+        }
         match key.code {
             KeyCode::Esc => {
                 self.editor = None;

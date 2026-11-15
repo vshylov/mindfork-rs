@@ -8251,3 +8251,85 @@ fn a_picture_answer_is_kept_for_what_it_was_asked_under() {
     s.config.image_gen.provider = ImageGenProvider::OpenAi;
     assert_ne!(s.slot_source(ModelSlot::Image), first, "the provider");
 }
+
+/// Every field on the screen answers `Ctrl+C`/`Ctrl+X` with its selection as
+/// text for the clipboard (docs/research/mouse-always-captured.md §5.8): the
+/// editor (a copy keeps the selection, a cut removes it and clears an error),
+/// the field search (a cut re-filters), the model filter. Nothing selected —
+/// nothing goes up.
+#[test]
+fn the_fields_copy_and_cut_their_selection() {
+    let shift = |code| KeyEvent::new(code, KeyModifiers::SHIFT);
+    // The editor.
+    let mut s = screen();
+    goto_section(&mut s, Section::Tools);
+    goto_field(&mut s, FieldId::VideoModel);
+    s.handle_key(key(KeyCode::Enter));
+    s.handle_key(ctrl('k'));
+    for c in "gemini-pro".chars() {
+        s.handle_key(key(KeyCode::Char(c)));
+    }
+    assert_eq!(s.handle_key(ctrl('c')), None, "nothing selected");
+    for _ in 0..3 {
+        s.handle_key(shift(KeyCode::Left));
+    }
+    assert_eq!(
+        s.handle_key(ctrl('c')),
+        Some(SettingsIntent::CopyText("pro".into()))
+    );
+    assert!(s.editor.as_ref().unwrap().input.has_selection(), "kept");
+    s.editor.as_mut().unwrap().error = Some("stale".into());
+    assert_eq!(
+        s.handle_key(ctrl('x')),
+        Some(SettingsIntent::CopyText("pro".into()))
+    );
+    let editor = s.editor.as_ref().unwrap();
+    assert_eq!(editor.input.text(), "gemini-");
+    assert_eq!(editor.error, None, "a cut is an edit");
+
+    // The field search: a cut of the query widens the results again.
+    let mut s = screen();
+    s.handle_key(key(KeyCode::Char('/')));
+    for c in "приветствие".chars() {
+        s.handle_key(key(KeyCode::Char(c)));
+    }
+    let narrowed = s.search.as_ref().unwrap().results.len();
+    s.handle_key(ctrl('a'));
+    assert_eq!(
+        s.handle_key(ctrl('x')),
+        Some(SettingsIntent::CopyText("приветствие".into()))
+    );
+    let st = s.search.as_ref().unwrap();
+    assert_eq!(st.results.len(), st.all.len(), "an empty query matches all");
+    assert!(st.results.len() > narrowed);
+
+    // The model filter.
+    let mut s = on_the_model_row(ServerMode::Claude);
+    s.handle_key(key(KeyCode::Enter));
+    for c in "opus".chars() {
+        s.handle_key(key(KeyCode::Char(c)));
+    }
+    s.handle_key(ctrl('a'));
+    assert_eq!(
+        s.handle_key(ctrl('c')),
+        Some(SettingsIntent::CopyText("opus".into()))
+    );
+    assert!(s.picker.is_some(), "a copy closes nothing");
+}
+
+/// A secret's editor is masked: what is typed into it never reaches the
+/// clipboard, by a copy or a cut, and a cut leaves it as it was.
+#[test]
+fn a_secret_fields_editor_copies_nothing() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Data);
+    goto_field(&mut s, FieldId::BackupPassword);
+    s.handle_key(key(KeyCode::Enter));
+    for c in "hunter2".chars() {
+        s.handle_key(key(KeyCode::Char(c)));
+    }
+    s.handle_key(ctrl('a'));
+    assert_eq!(s.handle_key(ctrl('c')), None);
+    assert_eq!(s.handle_key(ctrl('x')), None);
+    assert_eq!(s.editor.as_ref().unwrap().input.text(), "hunter2");
+}

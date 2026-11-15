@@ -899,7 +899,11 @@ things on different screens. The highlights:
 > conhost has no such modifier.
 >
 > A copy (`Ctrl+C`, `F5`) says how it went on the status bar for a few seconds, and
-> `Ctrl+C` leaves the selection in place. `Ctrl` shortcuts are
+> `Ctrl+C` leaves the selection in place. `Ctrl+C` and `Ctrl+X` work in every text
+> field, not only the input box — renaming a chat, the settings' editors and search, the
+> self-model's and the notes' editors — and on a screen without the chat's status bar the
+> outcome shows at the right end of its bottom row; a key field (an API key, the
+> backup password) copies nothing. `Ctrl` shortcuts are
 > layout-independent: on Windows under any installed layout, elsewhere under
 > Cyrillic.
 

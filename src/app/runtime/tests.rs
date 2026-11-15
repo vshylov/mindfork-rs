@@ -3358,3 +3358,61 @@ fn the_mouse_is_wanted_only_where_the_chat_answers_it() {
     help.close();
     assert!(mouse_wanted(&chat, &help, &screen, None));
 }
+
+/// A copy made in another screen's field is said on that screen's footer — it
+/// has no chat status bar — at the right end of the last row, for as long as
+/// the chip lasts (docs/research/mouse-always-captured.md §5.8, F10).
+#[test]
+fn a_copys_chip_is_drawn_on_another_screens_footer() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let config = crate::shared::config::AppConfig::default();
+    let mut screen = ChatScreen::new();
+    let mut active = ActiveScreen::Settings(Box::new(SettingsScreen::new(
+        config,
+        Vec::new(),
+        Vec::new(),
+    )));
+    let mut help = HelpOverlay::new(crate::features::demo::locations());
+    let palette = front_palette(&active, &screen);
+    let mut draw = |screen: &mut ChatScreen| {
+        let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        term.draw(|frame| {
+            compose_frame(frame, screen, &mut active, &mut help, &palette);
+        })
+        .unwrap();
+        let buf = term.backend().buffer().clone();
+        (0..100u16)
+            .map(|x| buf[(x, 29)].symbol().to_string())
+            .collect::<String>()
+    };
+    assert!(!draw(&mut screen).contains("copied (test)"));
+    screen.show_copy_outcome("copied (test)".into(), false);
+    let last = draw(&mut screen);
+    assert!(last.ends_with(" copied (test) "), "{last:?}");
+}
+
+/// Every screen's field copy is one question to the runtime
+/// ([`AnyIntent::clipboard_text`]), so each is routed the same way: the chat's
+/// box and search, the rename, the settings' fields, the self-model's editor,
+/// the notes' fields — and nothing else is taken for one.
+#[test]
+fn every_screens_copy_is_a_clipboard_text() {
+    let t = || "x".to_string();
+    for intent in [
+        AnyIntent::Chat(ChatIntent::CopyToClipboard(t())),
+        AnyIntent::List(ChatListIntent::CopyText(t())),
+        AnyIntent::Settings(SettingsIntent::CopyText(t())),
+        AnyIntent::SelfModel(SelfModelIntent::CopyText(t())),
+        AnyIntent::Notes(NotesIntent::CopyText(t())),
+    ] {
+        assert_eq!(intent.clipboard_text(), Some("x"));
+    }
+    assert_eq!(AnyIntent::Chat(ChatIntent::Quit).clipboard_text(), None);
+    assert_eq!(
+        AnyIntent::List(ChatListIntent::Copy(uuid::Uuid::nil())).clipboard_text(),
+        None,
+        "a whole conversation's copy goes through the orchestrator"
+    );
+}

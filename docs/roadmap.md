@@ -375,7 +375,9 @@ effort tiers and Fabula — have all closed
   decided 2026-11-14); stages 1 and 2 are built — the app holds the mouse by
   default, the feed has a selection of its own (drag, a word, a line, a copy of
   what is drawn, without a quote's or a tool card's prefixes), `Ctrl+W` is gone.
-  Next: the other screens (stage 3).
+  Stage 3, the other screens, is designed (forks F11–F13, 2026-11-15) in three
+  parts; 3a is built — `Ctrl+C`/`Ctrl+X` in every field. Next: the mouse on every
+  screen (3b), then a selection in read-only text (3c).
 - **Horizontal scroll for wide tables** — **idea**, instead of the clip with
   `…`; groundwork from [ADR 0003](decisions/0003-own-markdown-renderer.md).
 - **Mermaid — whitelist expansion** — **deferred**. flowchart and sequence

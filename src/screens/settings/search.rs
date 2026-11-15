@@ -143,6 +143,16 @@ impl SettingsScreen {
     }
 
     pub(super) fn handle_search_key(&mut self, key: KeyEvent) -> Option<SettingsIntent> {
+        if let Some(clip) = self
+            .search
+            .as_mut()
+            .and_then(|s| s.input.clipboard_key(&key))
+        {
+            if clip.edited() {
+                self.search_filter();
+            }
+            return clip.text().map(SettingsIntent::CopyText);
+        }
         match (key.code, key.modifiers) {
             (KeyCode::Esc, _) => self.search = None,
             (KeyCode::Enter, _) => self.jump_to_selected(),

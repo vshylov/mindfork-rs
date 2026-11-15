@@ -6715,6 +6715,42 @@ fn select_in_feed(s: &mut ChatScreen, term: &ratatui::Terminal<ratatui::backend:
     assert_eq!(s.feed_view.selected_text().as_deref(), Some("answer worth"));
 }
 
+/// The feed's search bar answers `Ctrl+C`/`Ctrl+X` with the query's selection
+/// (docs/research/mouse-always-captured.md §5.8); with nothing selected in the
+/// query, `Ctrl+C` copies the feed's selection, still drawn behind the bar. A
+/// cut is an edit of the query: the matches follow it, and the chat remembers it.
+#[test]
+fn the_feed_search_copies_its_query_or_else_the_feeds_selection() {
+    let (mut s, term) = selection_screen("");
+    select_in_feed(&mut s, &term);
+    s.handle_key(ctrl('f'));
+    assert!(s.search.is_some());
+    assert_eq!(
+        s.handle_key(ctrl('c')),
+        Some(ChatIntent::CopyToClipboard("answer worth".into())),
+        "the query has no selection: the feed's"
+    );
+    assert_eq!(
+        s.handle_key(ctrl('x')),
+        None,
+        "a cut takes only the query's"
+    );
+    for c in "worth".chars() {
+        s.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+    }
+    s.handle_key(ctrl('a'));
+    assert_eq!(
+        s.handle_key(ctrl('c')),
+        Some(ChatIntent::CopyToClipboard("worth".into()))
+    );
+    assert_eq!(
+        s.handle_key(ctrl('x')),
+        Some(ChatIntent::CopyToClipboard("worth".into()))
+    );
+    assert_eq!(s.search.as_ref().unwrap().text(), "");
+    assert_eq!(s.search_last, "", "the chat remembers the query as cut");
+}
+
 /// `Ctrl+C` copies the feed's selection once per press, never on the drag or
 /// the release, and leaves it in place — as does `Esc` (research F2, F6).
 #[test]

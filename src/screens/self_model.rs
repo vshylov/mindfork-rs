@@ -57,6 +57,9 @@ pub(crate) static HELP_SECTION: HelpSection = HelpSection {
 pub enum SelfModelIntent {
     /// Close the view, return to the chat (`Esc`).
     Close,
+    /// Put this text on the clipboard: `Ctrl+C`/`Ctrl+X` in the editor
+    /// (docs/research/mouse-always-captured.md §5.8).
+    CopyText(String),
     /// Quit the application (`Ctrl+Q`/`F10`).
     Quit,
     /// Apply a manual edit (the orchestrator will save and re-emit the snapshot).
@@ -510,6 +513,9 @@ impl SelfModelScreen {
 
     fn handle_editor_key(&mut self, key: KeyEvent) -> Option<SelfModelIntent> {
         let editor = self.editor.as_mut()?;
+        if let Some(clip) = editor.input.clipboard_key(&key) {
+            return clip.text().map(SelfModelIntent::CopyText);
+        }
         match (key.code, key.modifiers) {
             (KeyCode::Esc, _) => {
                 self.editor = None;
@@ -1003,6 +1009,37 @@ mod tests {
             other => panic!("expected SetSummary, got {other:?}"),
         }
         assert!(s.editor.is_none());
+    }
+
+    /// The editor answers `Ctrl+C`/`Ctrl+X` with its selection, for the
+    /// clipboard (docs/research/mouse-always-captured.md §5.8): a copy keeps
+    /// the editor and the selection, a cut removes the text; nothing selected,
+    /// nothing goes up.
+    #[test]
+    fn the_editor_copies_and_cuts_its_selection() {
+        let ctrl = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+        let mut s = SelfModelScreen::new(
+            Some(model()),
+            CharacterNames::default(),
+            Palette::default(),
+            ru(),
+            NoteOrder::default(),
+        );
+        s.handle_key(key(KeyCode::Enter));
+        let seed = s.editor.as_ref().unwrap().input.text();
+        assert!(!seed.is_empty());
+        assert_eq!(s.handle_key(ctrl('c')), None, "nothing selected");
+        s.handle_key(ctrl('a'));
+        assert_eq!(
+            s.handle_key(ctrl('c')),
+            Some(SelfModelIntent::CopyText(seed.clone()))
+        );
+        assert!(s.editor.as_ref().unwrap().input.has_selection());
+        assert_eq!(
+            s.handle_key(ctrl('x')),
+            Some(SelfModelIntent::CopyText(seed))
+        );
+        assert_eq!(s.editor.as_ref().unwrap().input.text(), "");
     }
 
     #[test]

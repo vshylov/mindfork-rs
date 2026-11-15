@@ -1156,6 +1156,13 @@ fn compose_frame(
         ActiveScreen::Tasks(tasks) => tasks.render(frame),
         ActiveScreen::Notes(notes) => notes.render(frame),
     }
+    // A copy made in another screen's field: that screen has no chat status
+    // bar, so the chip goes on its footer (research §5.8).
+    if !active.is_chat()
+        && let Some((text, failed)) = screen.copy_outcome()
+    {
+        ui::render_copy_chip(frame, palette, text, failed);
+    }
     if let Some(state) = help.open.as_mut() {
         dim_background(frame, palette);
         help_dialog::render_help(frame, state, &HELP_SECTIONS, &help.locations, palette, loc);

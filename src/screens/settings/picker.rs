@@ -366,6 +366,12 @@ impl SettingsScreen {
 
     pub(super) fn handle_picker_key(&mut self, key: KeyEvent) -> Option<SettingsIntent> {
         let st = self.picker.as_mut()?;
+        if let Some(clip) = st.input.clipboard_key(&key) {
+            if clip.edited() {
+                self.picker_filter();
+            }
+            return clip.text().map(SettingsIntent::CopyText);
+        }
         match (key.code, key.modifiers) {
             (KeyCode::Esc, _) => {
                 self.picker = None;

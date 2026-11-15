@@ -210,6 +210,44 @@ fn the_search_narrows_by_text_and_tags_and_esc_drops_it() {
     assert_eq!(s.visible().len(), 3);
 }
 
+/// The notes' fields answer `Ctrl+C`/`Ctrl+X` with their selection, for the
+/// clipboard (docs/research/mouse-always-captured.md §5.8): the editor's copy
+/// keeps it, its cut removes it; the search's cut is an edit of the query, so
+/// the list widens again, and its copy leaves the list alone.
+#[test]
+fn the_editor_and_the_search_copy_and_cut_their_selection() {
+    let ctrl = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+    let mut s = screen();
+    press(&mut s, KeyCode::Char('e'));
+    assert_eq!(s.handle_key(ctrl('c')), None, "nothing selected");
+    s.handle_key(ctrl('a'));
+    let text = "Interview at Lumen Pay on Monday.".to_string();
+    assert_eq!(
+        s.handle_key(ctrl('c')),
+        Some(NotesIntent::CopyText(text.clone()))
+    );
+    assert!(s.editor.as_ref().unwrap().input.has_selection());
+    assert_eq!(s.handle_key(ctrl('x')), Some(NotesIntent::CopyText(text)));
+    assert_eq!(s.editor.as_ref().unwrap().input.text(), "");
+    press(&mut s, KeyCode::Esc);
+
+    press(&mut s, KeyCode::Char('/'));
+    typed(&mut s, "PEANUT");
+    assert_eq!(s.visible().len(), 1);
+    s.handle_key(ctrl('a'));
+    assert_eq!(
+        s.handle_key(ctrl('c')),
+        Some(NotesIntent::CopyText("PEANUT".into()))
+    );
+    assert_eq!(s.visible().len(), 1, "a copy is not an edit");
+    assert_eq!(
+        s.handle_key(ctrl('x')),
+        Some(NotesIntent::CopyText("PEANUT".into()))
+    );
+    assert!(s.query.is_empty());
+    assert_eq!(s.visible().len(), 3);
+}
+
 #[test]
 fn the_search_opens_on_the_russian_layouts_slash_key() {
     let mut s = screen();

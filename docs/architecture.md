@@ -4300,6 +4300,15 @@ On the chat the outcome is `CopyReport::chip` — the same verdicts in a few wor
 shown by `ChatScreen::show_copy_outcome` at the end of the status bar for
 `COPY_CHIP_FOR`; the loop drops it with `expire_copy_chip` and draws one frame
 then (docs/research/mouse-always-captured.md F10). The chat list keeps `message`.
+**Every field copies** (research §5.8): `InputBox::clipboard_key` answers
+`Ctrl+C`/`Ctrl+X` with a `Clip` (copy, cut — an edit — or nothing: no selection, a
+masked field), each screen lifts the text into its own `…::CopyText` intent, and
+`handle_key_event` asks one question of every intent, `AnyIntent::clipboard_text`,
+before dispatching — so a field's copy takes `deliver_clipboard` wherever it was
+made: `copy_text`, then the chip. A screen without the chat's status bar gets the
+chip from `compose_frame`, at the right end of the frame's last row
+(`ui::render_copy_chip`) — the chat list too, whose notice line words a whole
+conversation's copy (`deliver_clipboard`).
 
 **Mouse capture follows the frame in front** (`app/runtime/mod.rs`, spec §11.3).
 The chat keeps the wish — `ChatScreen::mouse_capture`, seeded from

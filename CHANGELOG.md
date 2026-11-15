@@ -31,6 +31,11 @@ split by subsystem.
   without the lines along their edge. The message box gets the same double and triple click, and
   a drag past its edge scrolls a long draft. Nothing is selectable in the conversation
   while the assistant answers.
+- **`Ctrl+C` and `Ctrl+X` work in every text field** — renaming a chat, the settings'
+  editors, search and model filter, the self-model's and the notes' editors and the
+  notes' search, the conversation's search bar — where a selection could be made but
+  not copied. On a screen without the chat's status bar the outcome shows at the right
+  end of the bottom row. A key field copies nothing.
 
 ### Changed
 

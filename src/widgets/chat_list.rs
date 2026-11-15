@@ -80,6 +80,9 @@ pub enum ChatListAction {
     Clone(Uuid),
     /// Copy the whole chat conversation to the clipboard.
     Copy(Uuid),
+    /// Put this text on the clipboard: `Ctrl+C`/`Ctrl+X` in the rename field
+    /// (docs/research/mouse-always-captured.md §5.8).
+    CopyText(String),
     /// Soft-delete a chat.
     Delete(Uuid),
     /// Rename a chat.
@@ -645,6 +648,15 @@ impl ChatListState {
         // word deletion `Ctrl+Backspace/Delete`, `Ctrl+Home/End`, undo/redo
         // `Ctrl+Z/Y`) are handled by `InputBox` itself in `on_key` (layout-independent);
         // it swallows unrecognized ones. `Ctrl+K` → `Edited` → flag the highlighting to recompute.
+        // `Ctrl+C`/`Ctrl+X` it leaves to us: the clipboard is the runtime's.
+        if let Some(clip) = input.clipboard_key(&key) {
+            if clip.edited() {
+                *spell_dirty = true;
+            }
+            return clip
+                .text()
+                .map_or(ChatListAction::None, ChatListAction::CopyText);
+        }
         match key.code {
             KeyCode::Esc => {
                 self.mode = Mode::Search;
@@ -1608,6 +1620,49 @@ mod tests {
             ChatListAction::Rename {
                 id,
                 title: "abc".into()
+            }
+        );
+    }
+
+    /// The rename field answers `Ctrl+C`/`Ctrl+X` (docs/research/mouse-always-captured.md
+    /// §5.8): its selection goes up as text for the clipboard — kept by a copy,
+    /// cut out of the title by a cut, which marks the spelling for a recheck.
+    /// Without a selection the key does nothing.
+    #[test]
+    fn rename_copies_and_cuts_its_selection() {
+        let chats = vec![chat("Старое имя")];
+        let id = chats[0].id;
+        let mut s = ChatListState::new(chats, None);
+        s.on_key(key(KeyCode::F(2)));
+        assert_eq!(s.on_key(ctrl(KeyCode::Char('c'))), ChatListAction::None);
+        s.on_key(ctrl(KeyCode::Char('a')));
+        assert_eq!(
+            s.on_key(ctrl(KeyCode::Char('c'))),
+            ChatListAction::CopyText("Старое имя".into())
+        );
+        s.on_key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE));
+        for _ in 0..4 {
+            s.on_key(KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT));
+        }
+        if let Mode::Rename { spell_dirty, .. } = &mut s.mode {
+            *spell_dirty = false;
+        }
+        assert_eq!(
+            s.on_key(ctrl(KeyCode::Char('x'))),
+            ChatListAction::CopyText(" имя".into())
+        );
+        assert!(matches!(
+            &s.mode,
+            Mode::Rename {
+                spell_dirty: true,
+                ..
+            }
+        ));
+        assert_eq!(
+            s.on_key(key(KeyCode::Enter)),
+            ChatListAction::Rename {
+                id,
+                title: "Старое".into()
             }
         );
     }

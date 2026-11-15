@@ -37,6 +37,9 @@ pub enum ChatListIntent {
     Clone(Uuid),
     /// Copy a chat's conversation to the clipboard (the list stays open) (`F5`).
     Copy(Uuid),
+    /// Put this text on the clipboard — the rename field's `Ctrl+C`/`Ctrl+X`
+    /// (docs/research/mouse-always-captured.md §5.8).
+    CopyText(String),
     /// Soft-delete a chat (the list stays open) (`Del`).
     Delete(Uuid),
     /// Rename a chat (the list stays open) (`F2`).
@@ -160,6 +163,7 @@ impl ChatListScreen {
             ChatListAction::New => Some(ChatListIntent::NewChat),
             ChatListAction::Clone(id) => Some(ChatListIntent::Clone(id)),
             ChatListAction::Copy(id) => Some(ChatListIntent::Copy(id)),
+            ChatListAction::CopyText(text) => Some(ChatListIntent::CopyText(text)),
             ChatListAction::Delete(id) => Some(ChatListIntent::Delete(id)),
             ChatListAction::Rename { id, title } => Some(ChatListIntent::Rename { id, title }),
             ChatListAction::AutoRename(id) => Some(ChatListIntent::AutoRename(id)),

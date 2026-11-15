@@ -168,6 +168,39 @@ pub enum KeyOutcome {
     Ignored,
 }
 
+/// What `Ctrl+C` or `Ctrl+X` did to a field ([`InputBox::clipboard_key`],
+/// [`InputBox::copy`], [`InputBox::cut`]). The widget has no clipboard: the
+/// text goes up to whoever owns one (docs/history/input-selection-undo-mouse.md
+/// §B, docs/research/mouse-always-captured.md §5.8).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Clip {
+    /// The selection's text, for the clipboard; the field and its selection
+    /// are as they were — a copy is not an edit (research F2).
+    Copy(String),
+    /// The selection's text, for the clipboard, already removed from the
+    /// field — an edit, undoable like any other.
+    Cut(String),
+    /// The key, with nothing to put on the clipboard: no selection, or a masked
+    /// field, whose content never leaves it ([`InputBox::selected_text`]).
+    Nothing,
+}
+
+impl Clip {
+    /// The text for the clipboard, if there is any.
+    pub fn text(self) -> Option<String> {
+        match self {
+            Clip::Copy(text) | Clip::Cut(text) => Some(text),
+            Clip::Nothing => None,
+        }
+    }
+
+    /// The key changed the field's content — a cut — so the caller marks it
+    /// the way it marks any edit (a spellcheck recheck, a validation, a draft).
+    pub fn edited(&self) -> bool {
+        matches!(self, Clip::Cut(_))
+    }
+}
+
 impl KeyOutcome {
     /// The key was handled by the widget (the caller doesn't process it
     /// further) — an edit or a move of the cursor. The chat ends the feed's
@@ -770,6 +803,45 @@ impl InputBox {
         self.col = self.lines[self.row].len();
         self.goal_col = None;
         self.last_edit_kind = None;
+    }
+
+    /// `Ctrl+C`: the selection's text for the clipboard ([`Clip::Copy`]), the
+    /// selection kept; [`Clip::Nothing`] without one or in a masked field.
+    pub fn copy(&self) -> Clip {
+        self.selected_text().map_or(Clip::Nothing, Clip::Copy)
+    }
+
+    /// `Ctrl+X`: the selection's text for the clipboard, removed from the field
+    /// ([`Clip::Cut`]); [`Clip::Nothing`] — and the field untouched — without a
+    /// selection or in a masked field, where nothing may reach the clipboard.
+    pub fn cut(&mut self) -> Clip {
+        match self.selected_text() {
+            Some(text) => {
+                self.delete_selection();
+                Clip::Cut(text)
+            }
+            None => Clip::Nothing,
+        }
+    }
+
+    /// Answers `Ctrl+C` ([`Self::copy`]) and `Ctrl+X` ([`Self::cut`]), the two
+    /// keys [`Self::on_key`] leaves to the layer that owns the clipboard — the
+    /// way every field outside the chat's box answers them
+    /// (docs/research/mouse-always-captured.md §5.8). `None` — the key is
+    /// neither: the caller goes on to `on_key`. Layout-independent, like every
+    /// shortcut here, and text typed with AltGr is not a shortcut.
+    pub fn clipboard_key(&mut self, key: &KeyEvent) -> Option<Clip> {
+        if key.kind != KeyEventKind::Press
+            || !key.modifiers.contains(KeyModifiers::CONTROL)
+            || keys::is_altgr_text(key)
+        {
+            return None;
+        }
+        match keys::hotkey_char(key)? {
+            'c' => Some(self.copy()),
+            'x' => Some(self.cut()),
+            _ => None,
+        }
     }
 
     /// Deletes the selection as a **standalone** action (`Ctrl+X` cut): records
@@ -3078,6 +3150,87 @@ mod tests {
         ib.select_all();
         assert!(ib.on_key(ctrl_alt('\u{20bd}')).edited());
         assert_eq!(ib.text(), "\u{20bd}");
+        crate::shared::keys::pretend_altgr(None);
+    }
+
+    /// `Ctrl+C` and `Ctrl+X`, the keys a field outside the chat's box answers
+    /// through `clipboard_key` (docs/research/mouse-always-captured.md §5.8): a
+    /// copy hands the selection out and keeps it, a cut hands it out and
+    /// removes it — undoably; without a selection both are the key with
+    /// nothing to copy, and every other key is not theirs.
+    #[test]
+    fn clipboard_keys_copy_keep_cut_and_leave_other_keys() {
+        let mut ib = InputBox::new();
+        ib.set_text("hello world");
+        assert_eq!(
+            ib.clipboard_key(&ctrl(KeyCode::Char('c'))),
+            Some(Clip::Nothing)
+        );
+        assert_eq!(
+            ib.clipboard_key(&ctrl(KeyCode::Char('x'))),
+            Some(Clip::Nothing)
+        );
+        assert_eq!(ib.text(), "hello world", "a cut of nothing changes nothing");
+        ib.on_key(ctrl(KeyCode::Home));
+        for _ in 0..5 {
+            ib.on_key(shift(KeyCode::Right));
+        }
+        let copy = ib.clipboard_key(&ctrl(KeyCode::Char('c')));
+        assert_eq!(copy, Some(Clip::Copy("hello".into())));
+        assert!(!copy.unwrap().edited());
+        assert_eq!(ib.selected_text().as_deref(), Some("hello"), "kept");
+        // The physical key decides, as for every shortcut: `Ctrl+С` under a
+        // Russian layout is the copy too.
+        assert_eq!(
+            ib.clipboard_key(&ctrl(KeyCode::Char('с'))),
+            Some(Clip::Copy("hello".into()))
+        );
+        let cut = ib.clipboard_key(&ctrl(KeyCode::Char('x')));
+        assert_eq!(cut, Some(Clip::Cut("hello".into())));
+        assert!(cut.as_ref().is_some_and(Clip::edited));
+        assert_eq!(ib.text(), " world");
+        assert!(ib.undo());
+        assert_eq!(ib.text(), "hello world", "a cut is undone like an edit");
+        // Not theirs: a plain `c`, another shortcut, a release.
+        assert_eq!(ib.clipboard_key(&k(KeyCode::Char('c'))), None);
+        assert_eq!(ib.clipboard_key(&ctrl(KeyCode::Char('a'))), None);
+        let mut release = ctrl(KeyCode::Char('c'));
+        release.kind = KeyEventKind::Release;
+        assert_eq!(ib.clipboard_key(&release), None);
+    }
+
+    /// A masked field's content never reaches the clipboard: its copy and its
+    /// cut are the key with nothing to copy, and the cut leaves the text alone.
+    #[test]
+    fn a_masked_field_copies_and_cuts_nothing() {
+        let mut ib = InputBox::new();
+        ib.set_mask(true);
+        ib.set_text("sk-secret");
+        ib.select_all();
+        assert_eq!(
+            ib.clipboard_key(&ctrl(KeyCode::Char('c'))),
+            Some(Clip::Nothing)
+        );
+        assert_eq!(
+            ib.clipboard_key(&ctrl(KeyCode::Char('x'))),
+            Some(Clip::Nothing)
+        );
+        assert_eq!(ib.text(), "sk-secret");
+    }
+
+    /// AltGr text arrives as `Ctrl+Alt` on Windows: a `c` made with AltGr is a
+    /// character, not the copy.
+    #[test]
+    fn altgr_text_is_not_a_copy() {
+        crate::shared::keys::pretend_altgr(Some('c'));
+        let mut ib = InputBox::new();
+        ib.set_text("abc");
+        ib.select_all();
+        let key = KeyEvent::new(
+            KeyCode::Char('c'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        );
+        assert_eq!(ib.clipboard_key(&key), None);
         crate::shared::keys::pretend_altgr(None);
     }
 

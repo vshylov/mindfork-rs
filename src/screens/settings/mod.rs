@@ -74,6 +74,10 @@ pub(crate) static HELP_SECTION: HelpSection = HelpSection {
 pub enum SettingsIntent {
     /// Close the settings screen (return to chat).
     Close,
+    /// Put this text on the clipboard: `Ctrl+C`/`Ctrl+X` in the field editor,
+    /// the field search or the model filter
+    /// (docs/research/mouse-always-captured.md §5.8).
+    CopyText(String),
     /// Quit the app (`Ctrl+Q`/`F10`).
     Quit,
     /// Save the configuration (an edit to any section except profiles).
