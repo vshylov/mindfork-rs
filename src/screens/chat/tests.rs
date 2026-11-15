@@ -1876,52 +1876,45 @@ fn activating_a_chat_applies_its_stored_collapse_state() {
     assert_eq!(s.feed_view.view(), FeedView::default());
 }
 
+/// The mouse is the setting's (`interface.mouse`, through the legacy
+/// terminal mode's veto): the chat holds it under `app` once a snapshot says
+/// so, and nowhere else. `Ctrl+W`, the session's switch until the mouse became
+/// a setting (docs/research/mouse-always-captured.md §5.7), touches nothing.
 #[test]
-fn ctrl_w_toggles_mouse_capture_for_the_session() {
-    let mut s = ChatScreen::new();
-    let ctrl_w = KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL);
-    // Capture is off until a setting says otherwise → the first press turns it
-    // on. The key asks the orchestrator nothing: the runtime reads the flag.
-    assert!(!s.mouse_capture());
-    assert_eq!(s.handle_key(ctrl_w), None);
-    assert!(s.mouse_capture());
-    // The second one — turns it off.
-    assert_eq!(s.handle_key(ctrl_w), None);
-    assert!(!s.mouse_capture());
-    // Also works under a Cyrillic layout: Ctrl+ц (physical W).
-    s.handle_key(KeyEvent::new(KeyCode::Char('ц'), KeyModifiers::CONTROL));
-    assert!(s.mouse_capture());
-}
-
-/// The setting (`interface.mouse`) decides where the session's flag starts;
-/// `Ctrl+W` flips it, and a later snapshot that leaves the setting's verdict
-/// as it was — a save of another field — keeps the flip. A change of the
-/// verdict (the setting, or the legacy terminal mode's veto) resets it.
-#[test]
-fn the_mouse_setting_seeds_the_session_and_ctrl_w_survives_other_saves() {
+fn the_mouse_follows_the_setting_and_ctrl_w_is_gone() {
     use crate::shared::config::{AppConfig, MouseMode};
     let mut s = ChatScreen::new();
-    let snapshot = |s: &mut ChatScreen, mouse, terminal_compat, spell| {
+    assert!(
+        !s.mouse_capture(),
+        "nothing is captured before the settings arrive"
+    );
+    let snapshot = |s: &mut ChatScreen, mouse, terminal_compat| {
         let mut config = AppConfig::default();
         config.interface.mouse = mouse;
         config.interface.terminal_compat = terminal_compat;
-        config.interface.spellcheck_enabled = spell;
         s.set_settings(config, vec![], vec![], Default::default(), vec![]);
     };
-    snapshot(&mut s, MouseMode::App, false, true);
-    assert!(s.mouse_capture(), "app: the chat holds the mouse");
-    s.handle_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL));
-    assert!(!s.mouse_capture(), "Ctrl+W hands it back for the session");
-    snapshot(&mut s, MouseMode::App, false, false);
-    assert!(!s.mouse_capture(), "another field saved: the flip stands");
-    snapshot(&mut s, MouseMode::App, true, false);
+    s.set_settings(
+        AppConfig::default(),
+        vec![],
+        vec![],
+        Default::default(),
+        vec![],
+    );
+    assert!(s.mouse_capture(), "the default: the chat holds the mouse");
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)),
+        None
+    );
+    assert!(s.mouse_capture(), "Ctrl+W switches nothing");
+    snapshot(&mut s, MouseMode::App, true);
     assert!(
         !s.mouse_capture(),
         "the legacy terminal mode vetoes capture"
     );
-    snapshot(&mut s, MouseMode::App, false, false);
+    snapshot(&mut s, MouseMode::App, false);
     assert!(s.mouse_capture(), "the veto lifted: the setting again");
-    snapshot(&mut s, MouseMode::Terminal, false, false);
+    snapshot(&mut s, MouseMode::Terminal, false);
     assert!(!s.mouse_capture(), "terminal: no capture");
 }
 
@@ -4364,7 +4357,6 @@ fn every_command_agrees_with_the_chord_it_mirrors() {
         ("/new", 'n'),
         ("/thoughts", 't'),
         ("/toolcalls", 'o'),
-        ("/mouse", 'w'),
         ("/links", 'l'),
     ];
     for (line, chord) in ctrl_pairs {
@@ -6650,4 +6642,427 @@ mod greeting_command {
         assert_eq!(bare.run("/greeting"), None);
         assert!(!bare.last_note().is_empty());
     }
+}
+
+// ---------- the feed's selection (docs/research/mouse-always-captured.md §5.3) ----------
+
+/// A chat with one exchange, drawn at 60×16, and the terminal it is drawn in.
+fn selection_screen(draft: &str) -> (ChatScreen, ratatui::Terminal<ratatui::backend::TestBackend>) {
+    let mut s = ChatScreen::new();
+    s.set_server_status(ready_statuses());
+    s.activate_chat(
+        gen_id(),
+        "Чат".into(),
+        &[
+            Message::user("first question"),
+            Message::assistant("an answer worth copying"),
+        ],
+        draft,
+        FeedView::default(),
+        None,
+        None,
+    );
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(60, 16)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+    (s, term)
+}
+
+/// The screen cell where `needle` first appears (text without wide glyphs).
+fn screen_cell(
+    term: &ratatui::Terminal<ratatui::backend::TestBackend>,
+    needle: &str,
+) -> (u16, u16) {
+    let buf = term.backend().buffer();
+    for y in 0..buf.area.height {
+        let text: String = (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect();
+        if let Some(at) = text.find(needle) {
+            return (text[..at].chars().count() as u16, y);
+        }
+    }
+    panic!("{needle:?} is not on screen");
+}
+
+/// A left drag from `from` to `to` and its release; every answer the screen
+/// gave on the way — none of them may be a copy (research §4.5, opencode
+/// #51056: a copy per report).
+///
+/// Each drag is a second after the one before it on a clock of its own, so
+/// two drags from one cell are two gestures, not a double click.
+fn drag(s: &mut ChatScreen, from: (u16, u16), to: (u16, u16)) {
+    use ratatui::crossterm::event::MouseButton;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SECONDS: AtomicU64 = AtomicU64::new(0);
+    let at =
+        Instant::now() + std::time::Duration::from_secs(SECONDS.fetch_add(1, Ordering::Relaxed));
+    let left = MouseButton::Left;
+    for (kind, (c, r)) in [
+        (MouseEventKind::Down(left), from),
+        (MouseEventKind::Drag(left), to),
+        (MouseEventKind::Up(left), to),
+    ] {
+        assert_eq!(
+            s.handle_mouse_at(mouse_at(kind, c, r), at),
+            None,
+            "{kind:?}"
+        );
+    }
+}
+
+/// Selects "answer worth" in the feed.
+fn select_in_feed(s: &mut ChatScreen, term: &ratatui::Terminal<ratatui::backend::TestBackend>) {
+    let (c, r) = screen_cell(term, "answer worth");
+    drag(s, (c, r), (c + 11, r));
+    assert_eq!(s.feed_view.selected_text().as_deref(), Some("answer worth"));
+}
+
+/// `Ctrl+C` copies the feed's selection once per press, never on the drag or
+/// the release, and leaves it in place — as does `Esc` (research F2, F6).
+#[test]
+fn a_drag_in_the_feed_selects_and_ctrl_c_copies_it_and_keeps_it() {
+    let (mut s, term) = selection_screen("");
+    select_in_feed(&mut s, &term);
+    for _ in 0..2 {
+        assert_eq!(
+            s.handle_key(ctrl('c')),
+            Some(ChatIntent::CopyToClipboard("answer worth".into()))
+        );
+    }
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+        Some(ChatIntent::OpenChatList)
+    );
+    assert!(s.feed_view.has_selection(), "Esc keeps it");
+    // A right click does nothing, to the selection either (F3).
+    use ratatui::crossterm::event::MouseButton;
+    let (c, r) = screen_cell(&term, "first");
+    s.handle_mouse(mouse_at(MouseEventKind::Down(MouseButton::Right), c, r));
+    s.handle_mouse(mouse_at(MouseEventKind::Up(MouseButton::Right), c, r));
+    assert!(s.feed_view.has_selection(), "the right button");
+}
+
+/// What ends the feed's selection: a click in the feed outside it, a move of
+/// the input box's cursor, typed text, a click in the field (research F6) — and
+/// what keeps it: a click inside it.
+#[test]
+fn the_feeds_selection_ends_on_a_click_outside_a_move_or_typing() {
+    let (mut s, term) = selection_screen("draft");
+    let (c, r) = screen_cell(&term, "answer worth");
+    let (q, qr) = screen_cell(&term, "question");
+
+    select_in_feed(&mut s, &term);
+    assert_eq!(click(&mut s, c + 3, r), None);
+    assert!(s.feed_view.has_selection(), "a click inside it");
+    // Not a double click: another cell.
+    assert_eq!(click(&mut s, q, qr), None);
+    assert!(!s.feed_view.has_selection(), "a click outside it");
+
+    let cases: [(&str, KeyEvent); 3] = [
+        ("an arrow", KeyEvent::new(KeyCode::Left, KeyModifiers::NONE)),
+        ("Home", KeyEvent::new(KeyCode::Home, KeyModifiers::NONE)),
+        (
+            "typed text",
+            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE),
+        ),
+    ];
+    for (what, key) in cases {
+        select_in_feed(&mut s, &term);
+        s.handle_key(key);
+        assert!(!s.feed_view.has_selection(), "{what}");
+    }
+    select_in_feed(&mut s, &term);
+    s.handle_paste("pasted");
+    assert!(!s.feed_view.has_selection(), "a paste");
+
+    select_in_feed(&mut s, &term);
+    let area = s.input.text_area().expect("the field is drawn");
+    click(&mut s, area.x, area.y);
+    assert!(!s.feed_view.has_selection(), "a click in the field");
+}
+
+/// One selection on the screen at a time (§5.3): the feed's starting ends the
+/// field's, the field's the feed's, and `Ctrl+C` copies whichever there is.
+#[test]
+fn the_feed_and_the_field_never_hold_a_selection_at_once() {
+    let (mut s, term) = selection_screen("hello world");
+    let area = s.input.text_area().expect("the field is drawn");
+    drag(&mut s, (area.x, area.y), (area.x + 5, area.y));
+    assert_eq!(s.input.selected_text().as_deref(), Some("hello"));
+    assert_eq!(
+        s.handle_key(ctrl('c')),
+        Some(ChatIntent::CopyToClipboard("hello".into()))
+    );
+
+    select_in_feed(&mut s, &term);
+    assert!(
+        !s.input.has_selection(),
+        "the feed's drag ended the field's"
+    );
+    assert_eq!(
+        s.handle_key(ctrl('c')),
+        Some(ChatIntent::CopyToClipboard("answer worth".into()))
+    );
+    assert_eq!(s.handle_key(ctrl('x')), None, "the feed is not cut");
+
+    drag(&mut s, (area.x + 6, area.y), (area.x + 11, area.y));
+    assert!(
+        !s.feed_view.has_selection(),
+        "the field's press ended the feed's"
+    );
+    assert_eq!(s.input.selected_text().as_deref(), Some("world"));
+}
+
+/// A double click takes the word, a triple the line — in the feed and in the
+/// field alike, counted on the same cell within the double-click time; a
+/// slower second press is a first one again.
+#[test]
+fn a_double_and_a_triple_click_take_a_word_and_a_line() {
+    use ratatui::crossterm::event::MouseButton;
+    use std::time::Duration;
+    let (mut s, term) = selection_screen("say hello, world");
+    let t0 = Instant::now();
+    let ms = Duration::from_millis;
+    let left = MouseButton::Left;
+    let press_release = |s: &mut ChatScreen, (c, r): (u16, u16), at: Instant| {
+        s.handle_mouse_at(mouse_at(MouseEventKind::Down(left), c, r), at);
+        s.handle_mouse_at(mouse_at(MouseEventKind::Up(left), c, r), at);
+    };
+    let (c, r) = screen_cell(&term, "worth");
+    press_release(&mut s, (c + 1, r), t0);
+    press_release(&mut s, (c + 1, r), t0 + ms(150));
+    assert_eq!(s.feed_view.selected_text().as_deref(), Some("worth"));
+    press_release(&mut s, (c + 1, r), t0 + ms(300));
+    assert_eq!(
+        s.feed_view.selected_text().as_deref(),
+        Some("an answer worth copying")
+    );
+
+    let area = s.input.text_area().expect("the field is drawn");
+    let at = (area.x + 5, area.y);
+    press_release(&mut s, at, t0 + ms(1000));
+    press_release(&mut s, at, t0 + ms(1100));
+    assert_eq!(s.input.selected_text().as_deref(), Some("hello"));
+    assert!(!s.feed_view.has_selection());
+    press_release(&mut s, at, t0 + ms(1200));
+    assert_eq!(s.input.selected_text().as_deref(), Some("say hello, world"));
+    // Too slow: a single click, which places the cursor.
+    press_release(&mut s, at, t0 + ms(3000));
+    press_release(&mut s, at, t0 + ms(4000));
+    assert!(!s.input.has_selection());
+}
+
+/// When the assistant starts answering the feed's selection goes, and until
+/// it ends a drag in the feed selects nothing — the wheel still scrolls and a
+/// reference still follows (research F6).
+#[test]
+fn a_reply_drops_the_feeds_selection_and_none_is_made_while_it_streams() {
+    use ratatui::crossterm::event::MouseButton;
+    let (mut s, mut term) = selection_screen("");
+    select_in_feed(&mut s, &term);
+    let id = gen_id();
+    s.begin_generation(id, None);
+    term.draw(|f| s.render(f)).unwrap();
+    assert!(!s.feed_view.has_selection(), "dropped as the reply starts");
+
+    let (c, r) = screen_cell(&term, "answer worth");
+    drag(&mut s, (c, r), (c + 6, r));
+    assert!(!s.feed_view.has_selection(), "a drag selects nothing");
+    let left = MouseButton::Left;
+    let at = Instant::now();
+    s.handle_mouse_at(mouse_at(MouseEventKind::Down(left), c, r), at);
+    s.handle_mouse_at(mouse_at(MouseEventKind::Up(left), c, r), at);
+    s.handle_mouse_at(mouse_at(MouseEventKind::Down(left), c, r), at);
+    assert!(!s.feed_view.has_selection(), "nor a double click");
+    s.handle_mouse_at(mouse_at(MouseEventKind::Up(left), c, r), at);
+    assert_eq!(s.handle_key(ctrl('c')), None, "nothing to copy");
+    s.handle_mouse(wheel(MouseEventKind::ScrollUp));
+    assert!(!s.feed_view.is_following(), "the wheel still scrolls");
+
+    s.finish_generation(id, FinishReason::Stop, false);
+    term.draw(|f| s.render(f)).unwrap();
+    select_in_feed(&mut s, &term);
+}
+
+/// A reference still follows on a click while the assistant answers.
+#[test]
+fn a_reference_follows_while_the_assistant_answers() {
+    let (here, other) = (gen_id(), gen_id());
+    let mut s = screen_citing(here, &[other], &[other]);
+    s.begin_generation(gen_id(), None);
+    draw(&mut s);
+    let at = s
+        .feed_view
+        .link_hit_for_test(0)
+        .expect("the address is drawn");
+    assert_eq!(
+        click(&mut s, at.0, at.1),
+        Some(ChatIntent::OpenChatLink(other))
+    );
+}
+
+/// A drag held above the feed scrolls it a row per tick while the pointer
+/// rests there — the terminal reports nothing then — and the tick stops when
+/// the button is released.
+#[test]
+fn a_drag_held_past_the_feed_scrolls_it_on_the_tick() {
+    use ratatui::crossterm::event::MouseButton;
+    let mut s = ChatScreen::new();
+    let messages: Vec<Message> = (0..20)
+        .map(|i| Message::user(format!("line-{i}")))
+        .collect();
+    s.activate_chat(
+        gen_id(),
+        "Чат".into(),
+        &messages,
+        "",
+        FeedView::default(),
+        None,
+        None,
+    );
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(60, 16)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+    let (c, r) = screen_cell(&term, "line-19");
+    let left = MouseButton::Left;
+    s.handle_mouse(mouse_at(MouseEventKind::Down(left), c + 6, r));
+    s.handle_mouse(mouse_at(MouseEventKind::Drag(left), c, 0));
+    let now = Instant::now();
+    let before = s.feed_view.scroll_row();
+    assert!(s.mouse_tick(now));
+    assert!(!s.mouse_tick(now), "a row a step, no faster");
+    term.draw(|f| s.render(f)).unwrap();
+    assert!(s.mouse_tick(now + AUTOSCROLL_STEP));
+    term.draw(|f| s.render(f)).unwrap();
+    assert_eq!(s.feed_view.scroll_row(), before - 2);
+    s.handle_mouse(mouse_at(MouseEventKind::Up(left), c, 0));
+    assert!(!s.mouse_tick(now + AUTOSCROLL_STEP * 2), "released");
+    let text = s.feed_view.selected_text().unwrap();
+    assert!(text.ends_with("line-19"), "{text}");
+}
+
+/// A drag held above a draft taller than the input box moves its selection a
+/// row up per tick, and the box scrolls after it.
+#[test]
+fn a_drag_held_past_the_input_box_scrolls_the_draft_on_the_tick() {
+    use ratatui::crossterm::event::MouseButton;
+    let draft: Vec<String> = (0..30).map(|i| format!("d{i}")).collect();
+    let (mut s, mut term) = selection_screen(&draft.join("\n"));
+    let area = s.input.text_area().expect("the field is drawn");
+    let left = MouseButton::Left;
+    s.handle_mouse(mouse_at(MouseEventKind::Down(left), area.x + 1, area.y + 1));
+    let (row, _) = s.input.cursor();
+    s.handle_mouse(mouse_at(MouseEventKind::Drag(left), area.x, area.y - 1));
+    let now = Instant::now();
+    term.draw(|f| s.render(f)).unwrap();
+    assert!(s.mouse_tick(now));
+    assert!(!s.mouse_tick(now), "a row a step, no faster");
+    term.draw(|f| s.render(f)).unwrap();
+    assert!(s.mouse_tick(now + AUTOSCROLL_STEP));
+    assert!(
+        s.input.cursor().0 < row - 2,
+        "{:?} from {row}",
+        s.input.cursor()
+    );
+    assert!(s.input.has_selection());
+    // Inside the box the tick does nothing; the drag does.
+    s.handle_mouse(mouse_at(MouseEventKind::Drag(left), area.x, area.y));
+    assert!(!s.mouse_tick(now + AUTOSCROLL_STEP * 3));
+}
+
+/// A key ends a drag under way — it may take the chat out of the front, and
+/// the release would never come — and keeps what the drag selected.
+#[test]
+fn a_key_ends_a_drag_but_keeps_its_selection() {
+    use ratatui::crossterm::event::MouseButton;
+    let mut s = ChatScreen::new();
+    let messages: Vec<Message> = (0..20)
+        .map(|i| Message::user(format!("line-{i}")))
+        .collect();
+    s.activate_chat(
+        gen_id(),
+        "Чат".into(),
+        &messages,
+        "",
+        FeedView::default(),
+        None,
+        None,
+    );
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(60, 16)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+    let (c, r) = screen_cell(&term, "line-19");
+    let left = MouseButton::Left;
+    s.handle_mouse(mouse_at(MouseEventKind::Down(left), c + 6, r));
+    s.handle_mouse(mouse_at(MouseEventKind::Drag(left), c, 0));
+    assert!(s.feed_view.has_selection());
+    s.handle_key(KeyEvent::new(KeyCode::F(3), KeyModifiers::NONE));
+    assert!(
+        !s.mouse_tick(Instant::now()),
+        "no autoscroll without a gesture"
+    );
+    assert!(s.feed_view.has_selection(), "the selection stays");
+}
+
+/// A click beside the text ends the selection even between its ends: the
+/// empty cells next to a middle row of a long selection kept it, in every
+/// terminal the owner tried (2026-11-15). A fast second click there — the
+/// first one's double — selects nothing either.
+#[test]
+fn a_click_beside_a_long_selections_rows_ends_it() {
+    use ratatui::crossterm::event::MouseButton;
+    use std::time::Duration;
+    let mut s = ChatScreen::new();
+    s.activate_chat(
+        gen_id(),
+        "Чат".into(),
+        &[Message::assistant(
+            "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu",
+        )],
+        "",
+        FeedView::default(),
+        None,
+        None,
+    );
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(30, 16)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+    let (c0, r0) = screen_cell(&term, "alpha");
+    let (c1, r1) = screen_cell(&term, "mu");
+    assert!(r1 >= r0 + 2, "the premise: three rows or more");
+    drag(&mut s, (c0, r0), (c1 + 1, r1));
+    assert!(s.feed_view.has_selection());
+    term.draw(|f| s.render(f)).unwrap();
+    // The panel's last column of a middle row: nothing drawn there.
+    let beside = (28, r0 + 1);
+    let left = MouseButton::Left;
+    let t0 = Instant::now();
+    s.handle_mouse_at(mouse_at(MouseEventKind::Down(left), beside.0, beside.1), t0);
+    s.handle_mouse_at(mouse_at(MouseEventKind::Up(left), beside.0, beside.1), t0);
+    assert!(!s.feed_view.has_selection(), "a click beside a middle row");
+    let again = t0 + Duration::from_millis(150);
+    s.handle_mouse_at(
+        mouse_at(MouseEventKind::Down(left), beside.0, beside.1),
+        again,
+    );
+    s.handle_mouse_at(
+        mouse_at(MouseEventKind::Up(left), beside.0, beside.1),
+        again,
+    );
+    assert!(!s.feed_view.has_selection(), "its double selects nothing");
+}
+
+/// Switching chats drops a selection — it named the previous chat's rows.
+#[test]
+fn switching_chats_drops_the_feeds_selection() {
+    let (mut s, term) = selection_screen("");
+    select_in_feed(&mut s, &term);
+    s.activate_chat(
+        gen_id(),
+        "Другой".into(),
+        &[
+            Message::user("first question"),
+            Message::assistant("an answer worth copying"),
+        ],
+        "",
+        FeedView::default(),
+        None,
+        None,
+    );
+    assert!(!s.feed_view.has_selection());
 }

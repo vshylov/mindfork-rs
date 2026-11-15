@@ -34,6 +34,7 @@ use crate::shared::api::FinishReason;
 use crate::shared::config::AppConfig;
 use crate::shared::i18n::{Locale, locale};
 use crate::shared::keys;
+use crate::shared::mouse::{ClickCounter, SelectUnit};
 use crate::shared::server::{ServerStatus, ServerStatuses};
 use crate::shared::theme::Palette;
 use crate::shared::ui::{ListScroll, MinSize, Prompt, Spinner, dim_background, legend_width};
@@ -43,7 +44,7 @@ use crate::widgets::help_dialog::{HelpContext, HelpSection};
 use crate::widgets::impersonation_preview;
 use crate::widgets::input_box::InputBox;
 use crate::widgets::local_server_picker::{LocalServerAction, LocalServerPickerState};
-use crate::widgets::message_feed::{FeedMessage, FeedRole, MessageFeed};
+use crate::widgets::message_feed::{AUTOSCROLL_STEP, FeedMessage, FeedRole, MessageFeed};
 use crate::widgets::profile_list::{ProfileListAction, ProfileListState};
 use crate::widgets::status_bar::{self, EscTarget};
 
@@ -91,8 +92,8 @@ pub(crate) static HELP_SECTION: HelpSection = HelpSection {
         ("Ctrl+O", "ui.help.tool_calls"),
         ("Ctrl+B", "ui.help.emoji"),
         ("Ctrl+L", "ui.help.chat_links"),
-        ("Ctrl+W", "ui.help.mouse_toggle"),
         ("ui.help.k.mouse", "ui.help.mouse_action"),
+        ("ui.help.k.terminal_mouse", "ui.help.terminal_mouse"),
         ("PageUp/PageDown", "ui.help.scroll"),
     ],
     openers: &["Shift+←/→/↑/↓", "Esc", "Ctrl+K", "Ctrl+P"],
@@ -564,9 +565,33 @@ struct CopyChip {
 /// A left-button press the next release answers ([`ChatScreen::handle_mouse`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct MousePress {
+    /// The panel the press was in: a drag stays in it, whatever it crosses
+    /// (docs/research/mouse-always-captured.md §5.3).
+    panel: MousePanel,
+    /// The cell of the press. A drag report back on it is not a drag: a
+    /// console can report a movement within one cell.
+    at: (u16, u16),
+    /// The pointer's last cell.
+    pointer: (u16, u16),
     /// A drag came between the press and the release: the release is the end
     /// of a drag, not a click.
     dragged: bool,
+    /// When a drag held past the input box's edge next moves its selection a
+    /// row (the feed keeps its own, [`MessageFeed::autoscroll`]).
+    ///
+    /// [`MessageFeed::autoscroll`]: crate::widgets::message_feed::MessageFeed::autoscroll
+    next_step: Option<Instant>,
+}
+
+/// Which panel a left press landed in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MousePanel {
+    /// The feed's rows.
+    Feed,
+    /// The input box's text.
+    Field,
+    /// Neither — a border, the status bar.
+    Other,
 }
 
 /// The chat screen: all UI state and its rendering.
@@ -697,22 +722,20 @@ pub struct ChatScreen {
     /// the palette in `set_settings`.
     loc: &'static Locale,
     /// Whether the app holds the mouse while the chat is in front: the
-    /// setting (`interface.mouse`, through [`InterfaceSettings::mouse_captured`]),
-    /// flipped for the session by `Ctrl+W`. The runtime asks the terminal for
-    /// what this says ([`Self::mouse_capture`]). See spec §11.3.
+    /// setting (`interface.mouse`, through [`InterfaceSettings::mouse_captured`],
+    /// which the legacy terminal mode vetoes). The runtime asks the terminal for
+    /// what this says ([`Self::mouse_capture`]). `false` until the first
+    /// settings snapshot. See spec §11.3.
     ///
     /// [`InterfaceSettings::mouse_captured`]: crate::shared::config::InterfaceSettings::mouse_captured
-    mouse_scroll: bool,
-    /// The setting's verdict as last applied to [`Self::mouse_scroll`]: a
-    /// settings snapshot resets the session's flag only when the verdict
-    /// changed, so `Ctrl+W` survives a save of some other field. `None` —
-    /// no snapshot yet.
-    mouse_setting: Option<bool>,
+    mouse_captured: bool,
     /// The left button's press the next release answers: where it was, and
     /// whether a drag came in between. A release with no drag is a click, and
     /// a click on a `chat://` address follows it — on the release, so that a
     /// drag starting on one can select it (research F8).
     mouse_press: Option<MousePress>,
+    /// Counts the presses of a double and a triple click.
+    clicks: ClickCounter,
     /// The last copy's outcome, while it is on the status bar.
     copy_chip: Option<CopyChip>,
     /// Whether background self-model auto-reflection is running (a quiet
@@ -841,9 +864,9 @@ impl ChatScreen {
             engine_sampling_fields: None,
             palette: Palette::default(),
             loc: locale(crate::shared::i18n::Lang::default()),
-            mouse_scroll: false,
-            mouse_setting: None,
+            mouse_captured: false,
             mouse_press: None,
+            clicks: ClickCounter::default(),
             copy_chip: None,
             reflecting: false,
             background_runs: 0,
@@ -890,11 +913,7 @@ impl ChatScreen {
             .set_code_block_background(config.interface.code_block_background);
         self.feed_view
             .set_show_model_name(config.interface.show_model_name);
-        let captured = config.interface.mouse_captured();
-        if self.mouse_setting != Some(captured) {
-            self.mouse_setting = Some(captured);
-            self.mouse_scroll = captured;
-        }
+        self.mouse_captured = config.interface.mouse_captured();
         self.settings_snapshot = Some((config, profiles, language_locked, mcp, secrets_present));
     }
 
@@ -941,9 +960,9 @@ impl ChatScreen {
 
     /// Whether the app wants the terminal's mouse reports while the chat is in
     /// front — the runtime asks for them only then (research F7). See
-    /// [`Self::mouse_scroll`].
+    /// [`Self::mouse_captured`].
     pub fn mouse_capture(&self) -> bool {
-        self.mouse_scroll
+        self.mouse_captured
     }
 
     /// Records what the engine said it is running (`AppEvent::EngineModel`).

@@ -102,8 +102,6 @@ pub enum UiCommand {
     /// set the state outright, for the hand that knows what it wants without
     /// checking first.
     Subagents,
-    /// Toggle mouse capture (`Ctrl+W`).
-    Mouse,
     /// The emoji picker (`Ctrl+B`).
     Emoji,
 }
@@ -223,7 +221,6 @@ pub const COMMANDS: &[Spec] = &[
     row(&["/thoughts"], UiCommand::Thoughts, Arity::None, "/thoughts", "ui.help.cmd_thoughts"),
     row(&["/toolcalls"], UiCommand::ToolCalls, Arity::None, "/toolcalls", "ui.help.cmd_toolcalls"),
     row(&["/subagents"], UiCommand::Subagents, Arity::Subcommand(&["expand", "collapse", "stop"]), "ui.help.k.subagents", "ui.help.cmd_subagents"),
-    row(&["/mouse"], UiCommand::Mouse, Arity::None, "/mouse", "ui.help.cmd_mouse"),
     row(&["/emoji"], UiCommand::Emoji, Arity::None, "/emoji", "ui.help.cmd_emoji"),
 ];
 

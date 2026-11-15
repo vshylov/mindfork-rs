@@ -6,6 +6,7 @@
 pub mod chat_link_picker;
 pub mod chat_list;
 pub mod emoji_picker;
+pub mod feed_selection;
 pub mod help_dialog;
 pub mod impersonation_preview;
 pub mod input_box;

@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (45)
+## Entries (47)
 
 - Post-M9: fast multiline clipboard paste (done)
 - Post-M9: `↑/↓` navigation by visual row of a wrapped line (done)
@@ -57,6 +57,8 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the input reader under a stream of mouse reports (done)
 - Post-M9: the *Mouse* setting — capture that follows the screen, the click on the release, the copy chip (done)
 - Post-M9: a copy over OSC 52 reads as a copy (done)
+- Post-M9: the feed's own text selection (done)
+- Post-M9: the app holds the mouse by default; `Ctrl+W` is gone (done)
 
 ### Post-M9: fast multiline clipboard paste (done)
 - **Symptom**: a large clipboard paste lagged in Windows Terminal, and a line break
@@ -2506,3 +2508,169 @@ went nowhere. `CopyReport::message`, the chat list's sentence, is unchanged.
 in every locale, with no `/export`; the "too big" dead ends still name it. **4864 green,
 317 `#[ignore]`** on Linux, unchanged in number. No live run needed (no engine, memory
 or tool path); the owner's SSH session is the check.
+
+### Post-M9: the feed's own text selection (done)
+
+**What.** Stage 2 of the mouse track, its first half
+([docs/research/mouse-always-captured.md](../research/mouse-always-captured.md)
+§5.3–§5.6), on `feat/feed-selection`. With the *Mouse* setting at `app`, a drag in the
+feed selects text, a double click takes a word and a triple the logical line, and a
+drag held past the feed's top or bottom edge scrolls it. `Ctrl+C` copies what is drawn:
+no rail, no padding, a wrapped paragraph as one line, rendered markdown without its
+markup. The input box gets the same double and triple click, and a drag that never
+leaves it: clamped to its edge, scrolling a draft taller than the box. The default stays
+`terminal` and `Ctrl+W` stays. The second half — the toggle removed and the default
+flipped (§5.7) — is a PR of its own, so this one can be tried with the setting at `app`
+before the default changes for everyone.
+
+**The invariant it rests on: a cached row is a drawn row.** The research's plan carried
+the row facts "through `render`'s second wrap (identity today)". It was not quite
+identity: the compaction divider and its summary went into the block unwrapped, and
+`render` wrapped them. The block builder now wraps every row it emits to the panel's
+width, the divider included. `render` draws the rows as they are and wraps only the empty
+feed's placeholder. A test asserts every cached row fits the panel across widths, both
+colour modes, an open fold, a tool card, a table and a diagram. With that, a selection
+point is simply (block, row, column) into the cache, and the text of rows scrolled off
+screen is still at hand for a copy. The screenshot dumps came out byte-identical, which
+is the check that nothing drawn moved.
+
+**Row facts.** Each cached block keeps a `RowFact` per row: the rail's width and whether
+the row continues the line above. Both are made in the builder's wrap loop, the one
+place that knows them. `wrap_ranges` keeps the whitespace at a soft break at the end of
+the upper row, so joining a line's rows with nothing rebuilds it verbatim. The copy
+trims the whitespace that ends a logical line (a code block's padding) and the trailing
+newlines of a selection that ends on the separator under a message.
+
+**Read against the drawn frame, like the click map.** `DrawnRows` keeps the last
+frame's inner area, scroll and each block's first row. A press resolves against it. A
+drag keeps the pointer's cell and is resolved again after every frame
+(`follow_pointer`), which is what makes a wheel or an autoscroll step under a resting
+pointer grow the selection. The terminal reports nothing while the pointer rests, so the
+loop asks `ChatScreen::mouse_tick` every tick: the feed scrolls a row per
+`AUTOSCROLL_STEP` (50 ms), and the input box moves its selection a row past the visible
+ones. The highlight is painted on the buffer after the `Paragraph` and outside the block
+cache, like the search highlight. It runs from past the rail to each row's last glyph,
+in `Palette::selection`, which is reverse video in the monochrome mode.
+
+**The arithmetic is apart** (`widgets/feed_selection.rs`): points, row facts, the cells
+painted, the copy's text, a word and a line, and a drag grown by its press's unit. It
+reads rows through a `FeedRows` trait, so it is tested on hand-made rows without a
+terminal. `CharClass`/`class_runs` moved from the input box to `shared/wrap.rs`, so a
+double click in the feed and one in the box share the word boundaries `Ctrl+←/→` stops
+at. A press counts as the second or third of a click on one cell within 500 ms
+(`shared::mouse::ClickCounter`), since crossterm reports presses, not clicks.
+
+**The grammar, as decided** (F2, F3, F5, F6, F8, F9). A press remembers its panel
+(`MousePanel`), and the drag stays there. A drag report back on the press's cell is not
+a drag, since a console can report movement inside one cell. One selection is on the
+screen at a time: the feed's drag ends the box's, and a press in the box ends the feed's.
+A click outside the feed's selection ends it, and one inside keeps it. So does `Esc`, and
+so does a copy. A cursor move (any key the box handled) and typed or pasted text
+(`mark_input_changed`) end it. A reply starting drops it (`set_selectable(!generating)`
+before the feed is drawn), and until the reply ends a drag or a double click in the feed
+selects nothing. The wheel and a reference's click still work then. What else drops it
+is whatever makes rows anew: a `CacheKey` change, a rebuilt or removed block it covers,
+a chat switch. A block of a new chat that happened to match by fingerprint would
+otherwise keep it, so activation clears it explicitly.
+
+**Found in the owner's live check (2026-11-15), fixed before the merge.** Ending the
+selection with a click on empty space was erratic in every terminal tried (Windows
+Terminal over SSH and natively, conhost, VS Code), and it seemed to come with scrolling.
+The cause was the test for "a click inside keeps it". It asked whether the clicked point
+lay between the selection's ends in reading order, and that span holds the empty cells
+beside every row the selection crosses. A long selection, the kind a scroll makes, kept
+itself on most clicks beside it; a short one did not, which is what tied it to scrolling.
+A pty probe reproduced it: a four-row selection survived clicks beside row 2, after the
+start on row 1 and before the text of row 4. "Inside" is now the highlight
+(`selection_holds` asks `painted_on`), and the release ends the selection on any click
+off it, whatever the click count. The neighbouring trap went with it. A second click on
+the same empty cell within 500 ms counted as a double click and selected the row's last
+word, so a hurried "click again" produced a new selection. A double or a triple click
+beside the text (`content_cols`) is now a plain click.
+
+**Not yet:** a quote's `> `, the thoughts' gutter and a tool card's indent are drawn on
+every row of their lines, so a copy keeps them and breaks those lines at the panel's
+width. That is stage 2b, which needs the markdown writer to report the same two facts.
+
+**Tests.** The arithmetic on rows: a wrapped paragraph as one line, a code block without
+its padding or rail, blocks kept apart, a wide glyph taken by either half, the highlight
+skipping the rail and the padding, a table as drawn, a word, a line, a drag grown by
+words. The feed on `TestBackend`: a drag both ways over a wrapped paragraph, a code
+block through markdown, the highlight's cells in both colour modes and from the rail,
+dropped by a resize, `Ctrl+T`, `Ctrl+O` and the theme, kept by a message appended below,
+dropped by its block rewritten or taken back but not by another block's, a double and a
+triple press, an autoscroll that copies every one of thirty messages it passed (Claude
+Code #83961) and stops at the top, nothing selectable while a reply streams, every
+cached row fitting the panel. The box: a drag clamped at each edge, a tall draft scrolled
+to its end, a word, a run-wise drag and a line. The chat: `Ctrl+C` copying the feed's
+selection twice and keeping it, `Esc` and the right button keeping it, no intent from a
+drag or a release (opencode #51056), each thing that ends it, the feed and the field
+never both selected, double and triple clicks timed in both panels, a reply dropping the
+selection with the wheel and a reference still working, the tick's autoscroll in the feed
+and in the box, a key ending a drag but keeping its selection, a chat switch. The OSC 52 case of §7 (a send told as such) is the
+chip's, decided otherwise by the owner on 2026-11-15. With the live check's fix: only the highlight holding a click, a row's text, a double click beside it selecting nothing, a click beside a long selection's middle row and its double. **4902 green, 317 `#[ignore]`** on
+Linux. No live run in the AGENTS.md §3 sense (no engine, memory or tool path). How it
+feels in Windows Terminal over SSH and natively, in conhost, VS Code's terminal and the
+web demo — and a selection with Cyrillic and emoji pasted into Notepad — is the owner's
+check (research §7).
+
+**A pty run on the droplet** (`mindfork demo`, 100×30, no clipboard, so a copy goes out
+as OSC 52): a drag over a 27-character phrase of the scripted reply painted exactly
+those 27 cells; `Ctrl+C` wrote an OSC 52 sequence that decodes to the phrase, and the
+chip read `copied (OSC 52)`; a click two rows up cleared the highlight; a double click
+copied the word under it.
+
+### Post-M9: the app holds the mouse by default; `Ctrl+W` is gone (done)
+
+**What.** Stage 2's second half of the mouse track
+([docs/research/mouse-always-captured.md](../research/mouse-always-captured.md) §5.7,
+F1), on `feat/mouse-app-default`, after the feed got its own selection. `MouseMode`'s
+default is `App`: a `settings.json` without the field (every released one) reads as the
+app holding the mouse in the chat. A file that holds `"mouse": "terminal"` keeps it.
+Only builds of `main` since stage 1 wrote the field, so that is the owner's own file, if
+anyone's. `Ctrl+W` and `/mouse` are removed (`UiCommand::Mouse` with them), and so is
+the session flag that a settings snapshot used to reset only when the setting's verdict
+changed. `ChatScreen::mouse_capture` is now the setting's verdict through the legacy
+terminal mode's veto, and `false` until the first snapshot. `mindfork keys` keeps its
+own `Ctrl+W`: it is the diagnostic that shows what a terminal sends with capture and
+without.
+
+**The status bar's light went with the key.** The `mouse: select`/`mouse: scroll` cell
+was the widest of the bar's hints, and in scroll mode it was pinned ahead of `F1` in the
+accent colour as the mode's indicator. With no mode to show, the hint list is the five
+fixed keys (`HELP_IDX` 1 → 0, `STOP_IDX` 6 → 5, the keep order without a pinned
+variant). A generating pill at 120 columns now keeps all five hints in its corner where
+it used to shed two. The hint grid's `accent` cell and `Palette::hint_highlight_value`
+existed only for that light, and are removed rather than left as an option nobody
+passes.
+
+**What replaced it in words.** The help overlay names the terminal's own selection on a
+row of its own (`Shift+drag`; `Option` in iTerm2, `Fn` in Terminal.app). The manual
+names the terminals with `Shift` and Windows Terminal's two catches: `Shift`+right click
+pastes, and its copy of a `Shift` selection joins the lines while `Ctrl+Shift+C` keeps
+them. It also says when to choose `terminal`: VS Code on macOS, a screen reader. The
+setting's hint says the same, at the height it had. The web demo's page stops offering
+`/mouse` for the key a browser tab keeps.
+
+**A typed `/mouse` now goes to the model as a message**, like any `/…` that is not a
+command. That is the registry's rule (the input box's title marks a command as it is
+typed, and does not mark this one); a refusal kept for one removed command was not part
+of F1.
+
+**Tests.** The setting's default and an old file read as `app`, a stored `terminal`
+round-trips, and a newer value reads as the default. The chat holds the mouse from the
+first snapshot, the legacy mode vetoes it, `terminal` releases it, and `Ctrl+W` changes
+nothing. The settings row starts at `app`. The bar's shedding is rewritten for five hints
+(synthetic widths: all five in one row, then as a 3×2 block, new chat shed first, the
+wide settings hint passed over for new chat, `F1` alone, nothing below `F1`'s cell), and
+the keep order is pinned without a mouse entry. The three tests of the light and the
+toggle's own test are gone. **4898 green, 317 `#[ignore]`** on Linux. The chat
+screenshots (`chat-dark-en`, `chat-light-en`) were regenerated; their status bar lost
+the cell.
+
+**A pty run on the droplet** (`mindfork demo`, default settings): the terminal is asked
+for `?1000h ?1002h ?1006h` at start with no key pressed; `Ctrl+W` writes no mode at all;
+a drag and `Ctrl+C` copy `double the window` over OSC 52 with the chip
+`copied (OSC 52)`; the status bar reads `F1 help · Esc chats · Ctrl+N new · Ctrl+P
+settings` with no `mouse:` cell. How it feels where the owner works is the owner's
+check (research §7).

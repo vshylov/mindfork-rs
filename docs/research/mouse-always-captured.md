@@ -9,8 +9,13 @@ the assistant answers, and a copy never ends a selection. **Stage 1 is built**
 the second half (§5.1, `feat/mouse-capture-setting`) — the *Mouse* setting,
 `terminal` by default, the legacy mode's veto, button-and-drag capture following
 the screen, the link on the release, the copy chip and `Ctrl+C` keeping the
-field's selection ([docs/journal/ui-input.md](../journal/ui-input.md)). Stage 2,
-the feed's selection, is next.
+field's selection ([docs/journal/ui-input.md](../journal/ui-input.md)). **Stage 2's
+first half is built** (2026-11-15, `feat/feed-selection`): §5.3–§5.6 — the row
+facts, the feed's selection and its grammar, the highlight, the text, the multi-click
+and the autoscroll, the box's clamped drag and its multi-click. **Its second half is
+built** (2026-11-15, `feat/mouse-app-default`): §5.7 — `app` the default, `Ctrl+W`,
+its status-bar light and `/mouse` removed, the help and the manual naming the
+terminal's own modifier. Stage 2b (the prefixes) is next, then stage 3.
 
 The ask (the owner, 2026-11-14): look into dropping the mouse's two modes —
 *select* and *scroll* — altogether. Keep the terminal's mouse capture on all the
@@ -414,7 +419,10 @@ Each is a test or a live-check line of §7.
   - *release without a drag* (a click) — follows the `chat://` address under it
     (F8: on the release, so that a drag which starts on an address selects it);
     otherwise a click in the feed outside the selection ends it, one inside
-    keeps it, and in a field the click places the cursor;
+    keeps it, and in a field the click places the cursor. *Built (the owner's
+    live check, 2026-11-15):* "inside" is the highlight, not the span between
+    the selection's ends in reading order — that span holds the empty cells
+    beside every row it crosses, where a click kept a long selection;
   - a second or third press on the same cell within 500 ms — the word, then the
     line (F5; Codex counts 400 ms).
 - **The wheel** scrolls the panel under the pointer (the feed; later a field

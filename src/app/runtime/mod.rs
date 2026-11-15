@@ -413,7 +413,7 @@ pub fn run(
     let _ = execute!(stdout(), ratatui::crossterm::event::EnableFocusChange);
     // Mouse capture is OFF at start: the loop turns it on where the frame in
     // front wants the mouse (`MouseCapture`, `mouse_wanted` — the setting
-    // `interface.mouse` and the `Ctrl+W` toggle decide). We augment ratatui's
+    // `interface.mouse` decides). We augment ratatui's
     // panic hook by disabling the mouse and bracketed paste: otherwise after a panic
     // with these modes still on, the terminal would keep sending escape codes to the
     // shell. We also lift synchronized output here (DEC 2026, see the loop): a panic
@@ -644,6 +644,12 @@ fn run_loop(
         // A copy's outcome leaves the status bar when its time is up — a frame
         // then, and none for it before.
         if screen.expire_copy_chip(Instant::now()) {
+            dirty = true;
+        }
+        // A drag held past the feed's or the input box's edge scrolls it a row
+        // a tick: the terminal sends nothing while the pointer rests
+        // (docs/research/mouse-always-captured.md §5.4).
+        if matches!(active, ActiveScreen::Chat) && screen.mouse_tick(Instant::now()) {
             dirty = true;
         }
         if spinner_frame_needed(&active, &screen) {

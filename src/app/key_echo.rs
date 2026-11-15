@@ -80,8 +80,10 @@ enum Control {
     Quit,
 }
 
-/// The app's own quit (`Ctrl+Q`, `F10`) ends the echo too, and its mouse
-/// switch (`Ctrl+W`) switches it here; everything else is only shown.
+/// The app's own quit (`Ctrl+Q`, `F10`) ends the echo too, and `Ctrl+W` — the
+/// chat's mouse switch until the mouse became a setting, kept here as the
+/// diagnostic's own (docs/research/mouse-always-captured.md §5.1) — switches
+/// capture; everything else is only shown.
 fn control_of(key: &KeyEvent) -> Control {
     if key.code == KeyCode::F(10) {
         return Control::Quit;

@@ -99,6 +99,10 @@ impl ChatScreen {
         self.refresh_known_chats();
         // The reference picker lists the *previous* chat's links.
         self.chat_links = None;
+        // A selection points into the previous chat's rows — and a block of
+        // the new one that happens to match by fingerprint would keep it.
+        self.feed_view.clear_selection();
+        self.mouse_press = None;
         // Stitch agentic-loop rounds into one "Assistant:" block with inline tool blocks.
         self.feed = FeedMessage::from_messages(messages);
         // A sub-agent transcript opens with its persona (spec §11.3) — the one

@@ -876,17 +876,30 @@ things on different screens. The highlights:
 | `Ctrl+L` | follow a `chat://` reference the assistant wrote |
 | `Ctrl+←/→`, `Ctrl+Backspace/Delete` | move by words, delete a word — `Alt` (Option on a Mac) does the same |
 | `Home` / `End` | a ladder: first the on-screen row, then the whole line |
-| `Ctrl+W` | toggle mouse capture for the session: wheel scrolling ↔ native text selection |
 | `PageUp` / `PageDown` / wheel | scroll the feed |
 
-> The mouse wheel and text selection share one terminal mechanism, so capture is
-> a choice — Settings → Interface → *Mouse*: `terminal` (default) — select text
-> natively; `app` — the wheel scrolls the feed, a click follows a `chat://`
-> address, and the terminal's own selection needs its modifier (`Shift` in most
-> terminals, `Option` in iTerm2, `Fn` in Terminal.app). `Ctrl+W` flips it for the
-> session. The legacy terminal mode keeps the mouse with the terminal: conhost
-> has no such modifier. A copy (`Ctrl+C`, `F5`) says how it went on the status
-> bar for a few seconds, and `Ctrl+C` leaves the selection in place. `Ctrl` shortcuts are
+> **The mouse.** The wheel scrolls the conversation, a click follows a `chat://`
+> address, and a drag selects text — the app's own selection: a double click takes a
+> word, a triple the line, and a drag held above or below the conversation scrolls it.
+> A copy (`Ctrl+C`) holds what you see: no coloured bar on the left, no padding, a
+> wrapped paragraph as one line, formatted text without its markdown (`F5` copies a
+> conversation's source). The same drag and clicks work in the input box. One
+> selection stands at a time; a click elsewhere in the conversation, the cursor's move
+> or typing ends it, `Esc` and a copy do not. While the assistant answers the
+> conversation selects nothing.
+>
+> **Your terminal's own selection** is a modifier away: `Shift`+drag in most
+> terminals (Windows Terminal, VS Code on Windows and Linux, GNOME Terminal, Konsole,
+> kitty, Alacritty, WezTerm), `Option` in iTerm2, `Fn` in Terminal.app. In Windows
+> Terminal, `Shift`+right click pastes, and its copy of such a selection joins the
+> lines — `Ctrl+Shift+C` keeps them. Where there is no such modifier — VS Code on
+> macOS by default, or for a screen reader — set Settings → Interface → *Mouse* to
+> `terminal`: the mouse stays with the terminal, the wheel scrolls its own buffer, and
+> nothing in the app answers a click. The legacy terminal mode does that by itself:
+> conhost has no such modifier.
+>
+> A copy (`Ctrl+C`, `F5`) says how it went on the status bar for a few seconds, and
+> `Ctrl+C` leaves the selection in place. `Ctrl` shortcuts are
 > layout-independent: on Windows under any installed layout, elsewhere under
 > Cyrillic.
 
@@ -970,7 +983,7 @@ the keys for itself:
 | `/stop` | `Esc` | cancel the running generation |
 | `/find [text]` · `/search <text>` | `Ctrl+F` · `Ctrl+G` | find in this conversation / find messages across every chat |
 | `/links` | `Ctrl+L` | follow a `chat://` reference the assistant wrote |
-| `/thoughts` · `/toolcalls` · `/mouse` · `/emoji` | `Ctrl+T` · `Ctrl+O` · `Ctrl+W` · `Ctrl+B` | the feed and the input box |
+| `/thoughts` · `/toolcalls` · `/emoji` | `Ctrl+T` · `Ctrl+O` · `Ctrl+B` | the feed and the input box |
 | `/subagents [expand\|collapse\|stop [n]]` | `Ctrl+O` in the list · `F6` | this chat's subagent transcripts; `stop [n]` ends the n-th background run |
 | `/profile list` · `/profile new [name]` · `/profile delete <name>` | `Ctrl+N` · `Ctrl+D` in settings | your companion profiles |
 | `/profile fork [name]` | — | a copy of this chat's profile with its memory, without its chats |
