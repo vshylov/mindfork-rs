@@ -994,7 +994,7 @@
   "ui.status.mouse.scroll": "мышь: прокрутка",
   "ui.status.mouse.select": "мышь: выделение",
   "ui.status.copy.copied": "скопировано",
-  "ui.status.copy.sent": "отправлено по OSC 52, без подтверждения — /export",
+  "ui.status.copy.sent": "скопировано (OSC 52)",
   "ui.status.copy.here_too_large": "скопировано здесь; для OSC 52 велико — /export",
   "ui.status.copy.too_large": "не скопировано: нет буфера, для OSC 52 велико — /export",
   "ui.status.copy.failed": "не скопировано: {err}",

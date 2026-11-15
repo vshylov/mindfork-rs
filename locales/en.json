@@ -993,7 +993,7 @@
   "ui.status.mouse.scroll": "mouse: scroll",
   "ui.status.mouse.select": "mouse: select",
   "ui.status.copy.copied": "copied",
-  "ui.status.copy.sent": "sent via OSC 52, unconfirmed — /export",
+  "ui.status.copy.sent": "copied (OSC 52)",
   "ui.status.copy.here_too_large": "copied here; too big for OSC 52 — /export",
   "ui.status.copy.too_large": "not copied: no clipboard, too big for OSC 52 — /export",
   "ui.status.copy.failed": "not copied: {err}",

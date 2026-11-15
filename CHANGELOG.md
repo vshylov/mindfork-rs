@@ -25,9 +25,10 @@ split by subsystem.
 
 ### Changed
 
-- **A copy says how it went on the status bar** for a few seconds — copied, sent to your
-  terminal, too big, failed — instead of a line in the conversation, which scrolled it
-  and could split a reply being written. A plain copy now says "copied" too.
+- **A copy says how it went on the status bar** for a few seconds — copied, copied
+  through your terminal (OSC 52) over SSH, too big, failed — instead of a line in the
+  conversation, which scrolled it and could split a reply being written. A plain copy
+  now says "copied" too.
 - **`Ctrl+C` leaves the selection in the message box selected**, as text fields usually
   do; moving the cursor or typing ends it.
 - **A click on a `chat://` link follows it when the button is released**, so a drag that
