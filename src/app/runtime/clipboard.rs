@@ -339,6 +339,14 @@ impl CopyReport {
     /// (docs/research/mouse-always-captured.md F10). The same verdicts as
     /// [`Self::message`] — which the chat list's notice keeps, with its advice
     /// — and a failure's cause goes to the log, where a cut chip cannot lose it.
+    ///
+    /// A copy sent over OSC 52 reads `copied (OSC 52)` (the owner's decision,
+    /// 2026-11-15): over SSH it is every copy, and a line saying it is
+    /// unconfirmed, on every `Ctrl+C` in a terminal that took it each time, was
+    /// the noise the chip was meant to avoid. The protocol named in it is the
+    /// clue for a terminal that drops the sequence; the route for that case
+    /// (`/export`) is the manual's and the chat list's longer note's. The two
+    /// "too big" verdicts keep `/export`: the app knows those went nowhere.
     pub(super) fn chip(&self, loc: &'static Locale) -> (String, bool) {
         if let Err(err) = &self.local
             && self.terminal != TerminalCopy::Sent
@@ -573,17 +581,19 @@ mod tests {
     }
 
     /// The status bar's chip (research F10) gives the same verdicts as the
-    /// note — the same outcomes fail — in a few words, and every dead end
-    /// still names the route that always works (`/export`, docs/lessons.md §4),
-    /// in every bundled locale, with no placeholder left.
+    /// note — the same outcomes fail — in a few words, and every dead end the
+    /// app knows of still names the route that always works (`/export`,
+    /// docs/lessons.md §4), in every bundled locale, with no placeholder left.
+    /// A send over OSC 52 is not one: it reads as a copy, naming the protocol
+    /// (the owner's decision, 2026-11-15).
     #[test]
     fn the_chip_is_the_note_in_a_few_words_and_keeps_the_way_out() {
         for &lang in crate::shared::i18n::Lang::ALL {
             let loc = crate::shared::i18n::locale(lang);
             for (local, terminal, dead_end) in [
                 (Ok(()), TerminalCopy::NotTried, false),
-                (Ok(()), TerminalCopy::Sent, true),
-                (Err("x".to_string()), TerminalCopy::Sent, true),
+                (Ok(()), TerminalCopy::Sent, false),
+                (Err("x".to_string()), TerminalCopy::Sent, false),
                 (Ok(()), TerminalCopy::TooLarge { bytes: 90_000 }, true),
                 (
                     Err("x".to_string()),
@@ -609,6 +619,20 @@ mod tests {
                 terminal: TerminalCopy::NotTried,
             };
             assert!(failure.chip(loc).0.contains("no X11"), "the cause is said");
+            // A send over SSH reads as a copy, and says how it went: the
+            // protocol is the clue where a terminal drops it.
+            let sent = CopyReport {
+                local: Err("no X11".into()),
+                terminal: TerminalCopy::Sent,
+            }
+            .chip(loc);
+            let plain = CopyReport {
+                local: Ok(()),
+                terminal: TerminalCopy::NotTried,
+            }
+            .chip(loc);
+            assert!(sent.0.starts_with(&plain.0), "{lang:?}: {}", sent.0);
+            assert!(sent.0.contains("OSC 52"), "{lang:?}: {}", sent.0);
         }
     }
 

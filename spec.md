@@ -5154,11 +5154,16 @@ text). What the protocol forces:
   clipboard addon — so the browser-terminal case that first raised this is
   exactly the one it cannot serve.
 - **Where the outcome is said.** On the chat, a **chip at the end of the status
-  bar** for `COPY_CHIP_FOR` = 4 s — `copied`, `sent via OSC 52, unconfirmed —
-  /export`, the two "too big" verdicts and a failure, the last two in the error
-  colour — for a selection's `Ctrl+C`/`Ctrl+X` and a conversation's `F5`/`/copy`
-  alike (`CopyReport::chip`, the note's verdicts in a few words, every dead end
-  still naming `/export`; a failure's cause also goes to the log). Never a note
+  bar** for `COPY_CHIP_FOR` = 4 s — `copied`, `copied (OSC 52)`, the two "too
+  big" verdicts and a failure, the last two in the error colour — for a
+  selection's `Ctrl+C`/`Ctrl+X` and a conversation's `F5`/`/copy` alike
+  (`CopyReport::chip`, the note's verdicts in a few words; a failure's cause also
+  goes to the log). **A send over OSC 52 reads as a copy, naming the protocol**
+  (the owner's decision, 2026-11-15): over SSH it is every copy, and "sent,
+  unconfirmed — /export" on each `Ctrl+C` in a terminal that took the text every
+  time was noise. The protocol named is the clue where a terminal drops it; the
+  route for that case, `/export`, is the manual's and the chat list's longer
+  note's. The two "too big" verdicts, which the app knows went nowhere, keep it. Never a note
   in the feed: a note scrolled the feed, and one pushed while a reply streamed
   split the reply in two (docs/research/mouse-always-captured.md F10). The chat
   list keeps the whole sentence on its notice line (`CopyReport::message`).

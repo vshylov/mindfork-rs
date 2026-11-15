@@ -488,8 +488,11 @@ Each is a test or a live-check line of §7.
   the feed (F10): copied here, sent to your terminal (OSC 52), too large or failed
   in the error colour. The input box's copy moves there as well — the verdicts
   `CopyReport::message` gives today, in the few words a chip has room for
-  (`CopyReport::chip`; every dead end still names `/export`), on a surface that
-  neither splits a reply nor scrolls the feed.
+  (`CopyReport::chip`; the "too big" dead ends still name `/export`), on a
+  surface that neither splits a reply nor scrolls the feed. *After stage 1, the
+  owner's decision (2026-11-15):* a send over OSC 52 reads `copied (OSC 52)` —
+  over SSH the unconfirmed-send line came up on every `Ctrl+C`, in a terminal
+  that had taken the text each time.
 
 ### 5.7 What goes away
 

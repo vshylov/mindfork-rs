@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (44)
+## Entries (45)
 
 - Post-M9: fast multiline clipboard paste (done)
 - Post-M9: `↑/↓` navigation by visual row of a wrapped line (done)
@@ -56,6 +56,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: `Alt+V` — the image paste by key where the terminal keeps `Ctrl+V` (done)
 - Post-M9: the input reader under a stream of mouse reports (done)
 - Post-M9: the *Mouse* setting — capture that follows the screen, the click on the release, the copy chip (done)
+- Post-M9: a copy over OSC 52 reads as a copy (done)
 
 ### Post-M9: fast multiline clipboard paste (done)
 - **Symptom**: a large clipboard paste lagged in Windows Terminal, and a line break
@@ -2481,3 +2482,27 @@ input path's tests merged in. No live run in the AGENTS.md §3 sense (no engine,
 or tool path). How it feels in Windows Terminal over SSH and natively — the setting,
 `Shift` for the terminal's selection, the chip — is the owner's check (P0 of the
 research).
+
+### Post-M9: a copy over OSC 52 reads as a copy (done)
+
+**What.** The owner's live check of stage 1 of the mouse track, on 2026-11-15, in
+Windows Terminal on Windows 11: all good natively. Over SSH to the droplet every
+`Ctrl+C` showed `sent via OSC 52, unconfirmed — /export`, though the text had been
+copied each time. Nothing was broken: the droplet has no clipboard, so every copy over
+SSH goes through OSC 52, and its chip was the honest "sent, not confirmed" that the
+OSC 52 track chose for its note (docs/history/osc52-clipboard.md F4). As a feed note it
+came up rarely; as a chip, on every copy, it was the noise the chip had been meant to
+avoid.
+
+**Decision** (the owner's, 2026-11-15, from three options: this one; the full line on a
+session's first send and the short one after; a plain `copied`). A send over OSC 52
+reads `copied (OSC 52)`, in Russian the same words. The protocol named in it is the clue
+for a terminal that drops the sequence (GNOME Terminal, Terminal.app, JupyterLab). The
+route for that case, `/export`, stays in the manual's note and in the chat list's longer
+notice. The two "too big" verdicts keep `/export` in the chip, since the app knows those
+went nowhere. `CopyReport::message`, the chat list's sentence, is unchanged.
+
+**Tests.** The chip test now holds a send to the plain copy's word plus the protocol,
+in every locale, with no `/export`; the "too big" dead ends still name it. **4864 green,
+317 `#[ignore]`** on Linux, unchanged in number. No live run needed (no engine, memory
+or tool path); the owner's SSH session is the check.

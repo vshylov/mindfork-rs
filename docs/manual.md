@@ -919,11 +919,11 @@ things on different screens. The highlights:
 > runs on — over SSH that is the server, and a headless one has no clipboard at
 > all. So a copy is also handed to *your* terminal's clipboard using OSC 52,
 > automatically when the session looks remote
-> (`interface.clipboard_osc52`: `auto`/`always`/`off`). The terminal never
-> confirms it, so the app says the text was *sent* rather than that it arrived,
-> and not every terminal supports the sequence — GNOME Terminal, Terminal.app and
-> JupyterLab's terminal do not; VS Code's, kitty, alacritty, Windows Terminal,
-> iTerm2, wezterm and tmux do. A conversation over ~75 KB is too large for it,
+> (`interface.clipboard_osc52`: `auto`/`always`/`off`). The status bar then
+> says *copied (OSC 52)*. The terminal never confirms it, and not every terminal
+> supports the sequence — GNOME Terminal, Terminal.app and JupyterLab's terminal
+> do not; VS Code's, kitty, alacritty, Windows Terminal, iTerm2, wezterm and tmux
+> do. If nothing pastes, `/export` writes the conversation to a file instead. A conversation over ~75 KB is too large for it,
 > and the app says so instead of sending half of one.
 
 ## 10. Commands
