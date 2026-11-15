@@ -44,6 +44,10 @@ split by subsystem.
   notes' search, the conversation's search bar — where a selection could be made but
   not copied. On a screen without the chat's status bar the outcome shows at the right
   end of the bottom row. A key field copies nothing.
+- **Fold one block at a time with the mouse**: a click on the `▸`/`▾` pill of the
+  thinking, a tool call or the summary of earlier messages folds or unfolds that block
+  alone, and the chat remembers it. `Ctrl+T` and `Ctrl+O` still fold every block of
+  their kind. An expanded tool call now ends its header on a `▾ details` pill to click.
 - **`/copy first N` and `/copy last N` copy part of a conversation**: the first or the
   last N messages as the conversation shows them (one without N), in the format of the
   whole copy but without the chat's title. The status bar says how many were copied.

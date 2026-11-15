@@ -493,7 +493,9 @@ src/
 ├─ widgets/                 composite UI blocks (FSD "widgets")
 │  ├─ message_feed.rs       feed: markdown, collapsible thoughts (Ctrl+T) and tool
 │  │                        cards (Ctrl+O) — both collapsed by default, the state
-│  │                        per chat (`FeedView`, spec §11.3), scroll, wrap,
+│  │                        per chat (`FeedView`, spec §11.3); one block alone by a
+│  │                        click on its pill (fold_at/toggle_block, its fold state
+│  │                        in its cache entry, not CacheKey), scroll, wrap,
 │  │                        jump to a message (pending_focus/anchor/marker, §4),
 │  │                        in-feed search (Ctrl+F): highlight scope, match list and
 │  │                        next/prev to the matched line — see the invariant in §4,
@@ -871,7 +873,8 @@ src/
 │  │                        `N` is `#N` unless an item is called that — one core,
 │  │                        resolve_handle_by, also behind chat_inputs::resolve)
 │  ├─ chat.rs               Chat, ChatSummary, CharacterNames, Chat::from_profile, draft,
-│  │                        FeedView (per-chat collapse state of the feed's foldable blocks)
+│  │                        FeedView (per-chat collapse state of the feed's foldable blocks:
+│  │                        two flags plus the blocks a click flipped, named by FoldKey)
 │  ├─ chat_file.rs          ChatFile/FileOrigin — a file stored with a chat (bytes in
 │  │                        data/files/<chat-id>/): a call's output, one adopted at
 │  │                        startup, an original /file attach kept, or a picture

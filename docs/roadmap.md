@@ -365,28 +365,6 @@ effort tiers and Fabula — have all closed
   so it needs its own measurement. Unexplored: replacing the base bundle with
   the current `sublimehq/Packages` (198 syntaxes, newer versions of what we
   ship).
-- **Per-message collapse, select and copy** — **idea**, deferred past M3
-  ("account for the mouse toggle `Ctrl+W`"). Collapsing is done for the *whole
-  feed* (`Ctrl+T` thoughts, `Ctrl+O` tool calls, stored per chat, spec §11.3),
-  and `F5`/`/copy` take the whole conversation; folding or copying one
-  particular message or block needs block selection first. The selection half
-  is **in progress** — mouse capture made permanent and the `Ctrl+W` toggle
-  removed ([mouse-always-captured.md](research/mouse-always-captured.md), forks
-  decided 2026-11-14); stages 1 and 2 are built — the app holds the mouse by
-  default, the feed has a selection of its own (drag, a word, a line, a copy of
-  what is drawn, without a quote's or a tool card's prefixes), `Ctrl+W` is gone.
-  Stage 3, the other screens, is designed (forks F11–F13, 2026-11-15) in three
-  parts, all built — `Ctrl+C`/`Ctrl+X` in every field, the mouse on every screen (the
-  wheel, a click selecting a row and a double click as `Enter`, the fields), a
-  selection over the visible cells of read-only text. **The selection half is done**.
-  What remains was narrowed by the owner (2026-11-15) to two things and is
-  **researched**, forks F1–F5 decided
-  ([block-fold-and-partial-copy.md](research/block-fold-and-partial-copy.md)):
-  - a click on a foldable block's header folds that block alone, kept in the chat
-    file (with no key for it, as `Ctrl+T`/`Ctrl+O` still fold every block);
-  - `/copy first N` and `/copy last N` copy part of the conversation — **built**
-    (stage 1, with one `Assistant:` label per reply in every copy). Copying one
-    message by the mouse is not planned.
 - **Horizontal scroll for wide tables** — **idea**, instead of the clip with
   `…`; groundwork from [ADR 0003](decisions/0003-own-markdown-renderer.md).
 - **Mermaid — whitelist expansion** — **deferred**. flowchart and sequence
@@ -772,6 +750,20 @@ An index, newest first — one line per track, with the release that shipped it
 and where its story is told. What a track left open is a bullet above, under
 its area.
 
+- **One block folded, part of a chat copied** — unreleased (2026-11-15), research and
+  two stages: what the roadmap's per-message collapse and copy had left once the
+  mouse track was done. A click on a block's pill folds the thoughts, a tool card or
+  the summary alone, kept in the chat as exceptions a whole-feed toggle forgets;
+  `/copy first|last [N]` copies part of a conversation, and every copy labels a reply
+  once ([block-fold-and-partial-copy.md](research/block-fold-and-partial-copy.md),
+  [journal/ui-feed.md](journal/ui-feed.md), [journal/ui-input.md](journal/ui-input.md)).
+- **The app's own mouse** — unreleased (2026-11-15), research and stages 1–3c: the
+  selection half of the per-message collapse and copy. Capture is always on and
+  `Ctrl+W` is gone; the feed has a selection of its own, copied as drawn; `Ctrl+C`
+  and `Ctrl+X` work in every field; the wheel and clicks work on every screen;
+  read-only text selects its visible cells
+  ([mouse-always-captured.md](research/mouse-always-captured.md),
+  [journal/ui-input.md](journal/ui-input.md)).
 - **Where a fact about the person goes — notes or observations** — unreleased
   (2026-11-14), a design, a probe and two stages. On a live profile 7 of 10 facts
   about the person had been written as the companion's own observations: the
