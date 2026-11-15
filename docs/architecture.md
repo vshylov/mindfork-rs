@@ -4316,9 +4316,13 @@ spec §11.3; docs/research/mouse-always-captured.md §5.3–§5.4). The invarian
 rests on: **every row a cached block holds is a row as drawn** — the block builder
 wraps every row to the panel's width, the compaction divider included, and `render`
 draws them as they are (the second wrap is left to the empty feed's placeholder).
-Beside each row the block keeps a `RowFact` — the rail's width and whether the row
-continues the line above — made in the builder's wrap loop, the one place that
-knows. A selection is two `FeedPoint`s (block, row, column): anchored to blocks, so
+Beside each row the block keeps a `RowFact` — the chrome's width and whether the row
+continues the line above — made in the builder's wrap loop from the `LineMark`s
+the line's builder handed it (`Body`: a quote's `> ` from the markdown `Writer`,
+the gutters and indents of thoughts, the summary and tool cards, the rows those
+builders wrapped themselves; `shared::markdown::render_marked`). A code block's
+rows, which `pad_code_block` trims and pads, carry the whitespace the trim took
+(`glue`), so a copy drops the padding and puts the break's spaces back. A selection is two `FeedPoint`s (block, row, column): anchored to blocks, so
 an appended message moves nothing above it, and dropped by whatever makes rows
 anew — a `CacheKey` change, a rebuilt or removed block it covers
 (`forget_selection_in`/`_from`), `set_selectable(false)` while a reply streams,

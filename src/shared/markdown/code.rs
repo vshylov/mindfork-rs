@@ -136,6 +136,11 @@ pub(super) fn highlight_line_or_plain(
 /// prose.
 pub(super) const CODE_RIGHT_PAD: usize = 1;
 
+/// How many characters a row holds — what [`pad_code_block`] measures its trim by.
+fn row_chars(row: &Line<'_>) -> usize {
+    row.spans.iter().map(|s| s.content.chars().count()).sum()
+}
+
 /// Lays an already-emitted code block out as a solid rectangle: its rows are
 /// wrapped to the panel width and padded with spaces up to the block's own
 /// width — the widest row plus [`CODE_RIGHT_PAD`], capped at `width`. `start`
@@ -158,24 +163,51 @@ pub(super) const CODE_RIGHT_PAD: usize = 1;
 /// Only the unhighlighted path calls this: a syntect-highlighted block carries
 /// no background at all (the pipeline only transfers foreground color, see
 /// [`build_code_theme`]), so there would be no rectangle to square off.
-pub(super) fn pad_code_block(lines: &mut Vec<Line<'static>>, start: usize, width: usize) {
+///
+/// `marks` runs beside `lines` ([`LineMark`]): a row the wrap here made of a
+/// longer line continues it, and carries how much whitespace the trim took off
+/// the row above — the space a word wrap broke at, which a copy puts back.
+pub(super) fn pad_code_block(
+    lines: &mut Vec<Line<'static>>,
+    marks: &mut Vec<LineMark>,
+    start: usize,
+    width: usize,
+) {
     let text_w = width.saturating_sub(CODE_RIGHT_PAD);
-    let rows: Vec<Line<'static>> = lines
-        .split_off(start)
-        .into_iter()
-        .flat_map(|line| wrap::wrap_line(&line, text_w))
-        // Trailing spaces carry no meaning in a code block (leading ones —
-        // indentation — do), and `wrap_ranges` "spills" a word-boundary space
-        // past the row's edge; both would inflate the measured width and defeat
-        // the padding. Same reasoning as `trim_row_trailing_ws` in a table cell.
-        .map(trim_row_trailing_ws)
-        .collect();
+    let mut rows: Vec<Line<'static>> = Vec::new();
+    let mut row_marks: Vec<LineMark> = Vec::new();
+    let tail = lines.split_off(start);
+    let tail_marks = marks.split_off(start.min(marks.len()));
+    for (line, mark) in tail.into_iter().zip(tail_marks) {
+        let mut glue = 0u8;
+        for (k, row) in wrap::wrap_line(&line, text_w).into_iter().enumerate() {
+            // Trailing spaces carry no meaning in a code block (leading ones —
+            // indentation — do), and `wrap_ranges` "spills" a word-boundary
+            // space past the row's edge; both would inflate the measured width
+            // and defeat the padding. Same reasoning as `trim_row_trailing_ws`
+            // in a table cell.
+            let before = row_chars(&row);
+            let row = trim_row_trailing_ws(row);
+            row_marks.push(if k == 0 {
+                mark
+            } else {
+                LineMark {
+                    prefix: 0,
+                    continues: true,
+                    glue: Some(glue),
+                }
+            });
+            glue = u8::try_from(before - row_chars(&row)).unwrap_or(u8::MAX);
+            rows.push(row);
+        }
+    }
     let block = rows
         .iter()
         .map(|l| cell_width(&l.spans) + CODE_RIGHT_PAD)
         .max()
         .unwrap_or(0)
         .min(width);
+    marks.extend(row_marks);
     lines.extend(rows.into_iter().map(|mut row| {
         let pad = block.saturating_sub(cell_width(&row.spans));
         if pad > 0 {

@@ -70,6 +70,33 @@ pub struct RenderOpts {
     pub code_block_background: CodeBlockBackground,
 }
 
+/// What the feed must know about one rendered line that its text does not
+/// say — for a copy of what is drawn (docs/research/mouse-always-captured.md
+/// §5.4, stage 2b). Made where the line is made, as [`Marked`] carries it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LineMark {
+    /// Columns of chrome the line starts with, drawn as text: a quote's `> `,
+    /// one per level. A copy leaves them out.
+    pub prefix: u16,
+    /// The line continues the one above it: the renderer wrapped a longer
+    /// line here (a quote's rows in the monochrome mode, a code block's on its
+    /// background). A copy joins the two back into one line.
+    pub continues: bool,
+    /// `Some(n)` where the renderer trimmed the line above at this wrap — a
+    /// code block's rows are trimmed and padded to square its background off:
+    /// the whitespace ending that line is padding, and `n` spaces stood at the
+    /// break, which a copy puts back. `None` — the line above keeps the
+    /// whitespace it broke at, and a copy joins the two as they are.
+    pub glue: Option<u8>,
+}
+
+/// A render's lines, each with its [`LineMark`].
+#[derive(Debug, Clone, Default)]
+pub struct Marked {
+    pub lines: Vec<Line<'static>>,
+    pub marks: Vec<LineMark>,
+}
+
 /// Renders a markdown string into an owning [`Text`] (ready to show/cache)
 /// with default flags ([`RenderOpts::default`]).
 ///
@@ -97,6 +124,13 @@ pub fn render_with(
     palette: &Palette,
     opts: RenderOpts,
 ) -> Text<'static> {
+    Text::from(render_marked(input, width, palette, opts).lines)
+}
+
+/// [`render_with`], each line with its [`LineMark`] — what the feed builds a
+/// message from, so that a copy can leave a quote's prefix out and join the
+/// rows a wrap made of one line.
+pub fn render_marked(input: &str, width: usize, palette: &Palette, opts: RenderOpts) -> Marked {
     let normalized = normalize_delimiters(input);
     let mut parse_opts = Options::empty();
     parse_opts.insert(Options::ENABLE_STRIKETHROUGH);
@@ -113,7 +147,7 @@ pub fn render_with(
     // code block apart from one truncated mid-stream (the mermaid path, see
     // fenced_block_is_closed).
     writer.run(&normalized, parser.into_offset_iter());
-    Text::from(writer.finish())
+    writer.finish()
 }
 
 /// Highlights a code block `code` in language `lang` **with no enclosing
@@ -299,4 +333,82 @@ pub(super) mod testkit {
 | MergeSort | O(n log n) | O(n) |";
 
     pub(super) const CODE_MD: &str = "```rust\nfn main() {\n    let s = \"hi\";\n    // c\n}\n```";
+}
+
+/// The marks a render makes beside its lines ([`LineMark`],
+/// docs/research/mouse-always-captured.md §5.4 stage 2b).
+#[cfg(test)]
+mod mark_tests {
+    use super::*;
+
+    fn text_of(line: &Line<'_>) -> String {
+        line.spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    /// Every line has a mark; a quote's carries its `> ` per level, and the
+    /// prose around it none.
+    #[test]
+    fn a_quotes_lines_carry_their_prefix() {
+        let md = "before\n\n> quoted\n>\n> > nested\n\nafter";
+        let r = render_marked(md, 80, &Palette::default(), RenderOpts::default());
+        assert_eq!(r.lines.len(), r.marks.len());
+        let mark_of = |needle: &str| {
+            let at = r
+                .lines
+                .iter()
+                .position(|l| text_of(l).contains(needle))
+                .unwrap_or_else(|| panic!("{needle:?} rendered"));
+            r.marks[at]
+        };
+        assert_eq!(mark_of("before").prefix, 0);
+        assert_eq!(mark_of("quoted").prefix, 2);
+        assert_eq!(mark_of("nested").prefix, 4);
+        assert_eq!(mark_of("after").prefix, 0);
+        assert!(
+            r.marks.iter().all(|m| !m.continues),
+            "nothing wrapped at 80"
+        );
+    }
+
+    /// The monochrome mode wraps a quote here, its `> ` on every row: every
+    /// row but the first continues the one above.
+    #[test]
+    fn a_monochrome_quotes_rows_continue_each_other() {
+        let md = "> one two three four five six seven eight nine ten";
+        let r = render_marked(md, 20, &Palette::mono(), RenderOpts::default());
+        assert!(r.lines.len() > 2, "the premise: it wraps");
+        for (i, (line, mark)) in r.lines.iter().zip(&r.marks).enumerate() {
+            assert!(text_of(line).starts_with("> "), "{i}");
+            assert_eq!(mark.prefix, 2, "{i}");
+            assert_eq!(mark.continues, i > 0, "{i}");
+        }
+    }
+
+    /// An unhighlighted code block on its background is wrapped here, and its
+    /// rows trimmed to square the background off — so a row the wrap made
+    /// says how many spaces the trim took off the row above.
+    #[test]
+    fn a_code_blocks_wrapped_rows_say_what_the_trim_took() {
+        let md = "```\nalpha beta  gamma delta epsilon\n```";
+        let r = render_marked(md, 14, &Palette::default(), RenderOpts::default());
+        assert_eq!(r.lines.len(), r.marks.len());
+        let rows: Vec<(String, LineMark)> = r
+            .lines
+            .iter()
+            .map(|l| text_of(l).trim_end().to_string())
+            .zip(r.marks.iter().copied())
+            .filter(|(t, _)| !t.starts_with("```"))
+            .collect();
+        assert!(rows.len() > 2, "the premise: it wraps: {rows:?}");
+        assert!(!rows[0].1.continues);
+        assert_eq!(rows[0].1.glue, None);
+        let mut joined = rows[0].0.clone();
+        for (text, mark) in &rows[1..] {
+            assert!(mark.continues, "{text:?}");
+            let glue = mark.glue.expect("a trimmed row above");
+            joined.push_str(&" ".repeat(usize::from(glue)));
+            joined.push_str(text);
+        }
+        assert_eq!(joined, "alpha beta  gamma delta epsilon");
+    }
 }

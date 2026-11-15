@@ -18,6 +18,7 @@ use std::ops::Range;
 use ratatui::text::Line;
 use unicode_segmentation::UnicodeSegmentation;
 
+use crate::shared::markdown::LineMark;
 use crate::shared::mouse::SelectUnit;
 use crate::shared::wrap::{self, CharClass};
 
@@ -28,15 +29,44 @@ use crate::shared::wrap::{self, CharClass};
 /// be told from the text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RowFact {
-    /// Columns of chrome the row starts with — the rail. A selection is never
-    /// painted on them and a copy never takes them. 0 on a railless row: the
-    /// separator under a message, the compaction divider.
+    /// Columns of chrome the row starts with — the rail, and a prefix drawn
+    /// as text after it (a quote's `> `, a gutter, a tool card's indent:
+    /// [`LineMark::prefix`]). A selection is never painted on them and a copy
+    /// never takes them. 0 on a railless row: the separator under a message,
+    /// the compaction divider.
     pub lead: u16,
     /// The row continues the logical line of the row above it: the feed's
-    /// wrap broke the line there. A copy joins the two with nothing — the
-    /// whitespace at the break stays at the end of the upper row
-    /// (`wrap::wrap_ranges`), so the joined rows are the line verbatim.
+    /// wrap, or a builder's ([`LineMark::continues`]), broke the line there. A
+    /// copy joins the two back into one line ([`Self::glue`] says how).
     pub soft: bool,
+    /// How a copy joins this row to the one above, when it is soft: `None` —
+    /// as they are, the feed's own wrap having kept the whitespace it broke at
+    /// on the upper row; `Some(n)` — a renderer trimmed the upper row at the
+    /// wrap and padded it (a code block, squared off for its background), so
+    /// its trailing whitespace is padding, and `n` spaces stood at the break.
+    pub glue: Option<u8>,
+}
+
+impl RowFact {
+    /// The fact of piece `k` of a line the block's wrap split, under a rail
+    /// `rail` columns wide: the first piece carries the line's own prefix and
+    /// what it continued; every later one starts at the rail — the wrap does
+    /// not repeat a prefix — and continues the piece above.
+    pub fn of_piece(rail: u16, mark: LineMark, k: usize) -> Self {
+        if k == 0 {
+            Self {
+                lead: rail + mark.prefix,
+                soft: mark.continues,
+                glue: mark.glue,
+            }
+        } else {
+            Self {
+                lead: rail,
+                soft: true,
+                glue: None,
+            }
+        }
+    }
 }
 
 /// A cell of the feed's content: the block (one message's rows), the row
@@ -233,9 +263,15 @@ pub fn text(rows: &impl FeedRows, start: FeedPoint, end: FeedPoint) -> String {
     for (i, (block, row, piece)) in picked.iter().enumerate() {
         // The next row continues this one's line when it is the same
         // block's next row and the wrap broke the line there.
-        let joined = i < last && picked[i + 1].0 == *block && rows.row(*block, row + 1).1.soft;
-        if joined {
-            out.push_str(piece);
+        let next = (i < last && picked[i + 1].0 == *block).then(|| rows.row(*block, row + 1).1);
+        if let Some(next) = next.filter(|f| f.soft) {
+            match next.glue {
+                None => out.push_str(piece),
+                Some(n) => {
+                    out.push_str(piece.trim_end());
+                    out.extend(std::iter::repeat_n(' ', usize::from(n)));
+                }
+            }
         } else {
             out.push_str(piece.trim_end());
             if i < last {
@@ -342,14 +378,17 @@ mod tests {
     const RAILED: RowFact = RowFact {
         lead: 2,
         soft: false,
+        glue: None,
     };
     const SOFT: RowFact = RowFact {
         lead: 2,
         soft: true,
+        glue: None,
     };
     const BARE: RowFact = RowFact {
         lead: 0,
         soft: false,
+        glue: None,
     };
 
     /// A railed row: the rail in a span of its own, as the feed draws it.
@@ -440,6 +479,30 @@ mod tests {
         assert_eq!(painted_on(&r, start, end, 0, 1), Some(2..8));
         assert_eq!(painted_on(&r, start, end, 0, 2), None, "a blank row");
         assert_eq!(painted_on(&r, pt(0, 1, 0), end, 0, 0), None, "outside");
+    }
+
+    /// Rows a renderer trimmed and padded (a code block on its background):
+    /// the padding is left out of the join, and the spaces the trim took at
+    /// the break are put back. A row the feed wrapped keeps its whitespace and
+    /// is joined as it is.
+    #[test]
+    fn a_padded_rows_join_puts_the_break_back_and_drops_the_padding() {
+        let glued = |n| RowFact {
+            lead: 2,
+            soft: true,
+            glue: Some(n),
+        };
+        let r = rows(vec![vec![
+            (railed("cargo test     "), RAILED),
+            (railed("--bin x        "), glued(1)),
+            (railed("--nocapture    "), glued(2)),
+            (railed("tail "), RAILED),
+            (railed("end"), SOFT),
+        ]]);
+        assert_eq!(
+            text(&r, pt(0, 0, 0), pt(0, 4, u16::MAX)),
+            "cargo test --bin x  --nocapture\ntail end"
+        );
     }
 
     /// A table is copied as drawn — box-drawing characters and all (F4).

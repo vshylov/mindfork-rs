@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (47)
+## Entries (48)
 
 - Post-M9: fast multiline clipboard paste (done)
 - Post-M9: `↑/↓` navigation by visual row of a wrapped line (done)
@@ -59,6 +59,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a copy over OSC 52 reads as a copy (done)
 - Post-M9: the feed's own text selection (done)
 - Post-M9: the app holds the mouse by default; `Ctrl+W` is gone (done)
+- Post-M9: a copy leaves the prefixes drawn as text out (done)
 
 ### Post-M9: fast multiline clipboard paste (done)
 - **Symptom**: a large clipboard paste lagged in Windows Terminal, and a line break
@@ -2674,3 +2675,54 @@ a drag and `Ctrl+C` copy `double the window` over OSC 52 with the chip
 `copied (OSC 52)`; the status bar reads `F1 help · Esc chats · Ctrl+N new · Ctrl+P
 settings` with no `mouse:` cell. How it feels where the owner works is the owner's
 check (research §7).
+
+### Post-M9: a copy leaves the prefixes drawn as text out (done)
+
+**What.** Stage 2b of the mouse track
+([docs/research/mouse-always-captured.md](../research/mouse-always-captured.md) §5.4),
+on `feat/feed-selection-prefixes`. Some chrome in the feed is drawn as text on each row
+of its lines: a quote's `> `, the `│ ` gutter of the thoughts and of the compaction
+summary, and a tool card's `│ `/`└ ` gutters, its indent and the header's icon. A copy
+took all of them, and where a builder had wrapped a line itself, the copy broke it at the
+panel's width. That happens for a quote in the monochrome mode and for a card's long
+result. All of this is now chrome to the copy and the highlight, and those rows are
+joined back like the feed's own.
+
+**How the facts travel.** The feed already kept a `RowFact` per row, made in the
+block's wrap loop, but the loop sees a bare `Line`. The builders that draw a prefix now
+say so as they push, with a `LineMark`: the prefix's width and whether the line
+continues the one above. The marks come from two places:
+- The markdown `Writer` keeps a `marks` vector in step with its lines at every place
+  that adds one: `push_line` (the quote's width), the highlighted code, a table, the
+  monochrome splice of a quote's rows, and `pad_code_block`. `render_marked` returns
+  both, and `render_with` keeps its signature.
+- The feed's builders push through a `Body` (lines + marks) instead of a
+  `Vec<Line>`. Its push sites are `push_gutter_line`, `push_wrapped`,
+  `push_gutter_lines` (the gutter plus a rendered line's own prefix on its first row),
+  `push_trailing` and the card's gap row.
+
+`RowFact::of_piece` turns a mark into the facts of the pieces the block's wrap makes of
+the line. The first piece starts past the rail plus the prefix; a later piece starts at
+the rail, since the wrap does not repeat a prefix.
+
+**A trap found by the first test.** Recognising a prefix by its text was rejected at
+once: a code line can start with `│ `. The other trap was in the data. `pad_code_block`
+wraps an unhighlighted code block's long lines itself, then trims each row's trailing
+whitespace and pads it to the block's width, to square the background off. A row it made
+continues the line, but the space the wrap broke at is gone and the row ends in padding.
+So a mark has `glue: Option<u8>`. `None` joins the rows as they are, because the feed's
+wrap keeps the break's whitespace on the upper row. `Some(n)` trims the upper row's
+padding and puts back the `n` spaces the trim took. Without it, an unlabelled
+`cargo test --bin mindfork -- feed_selection --nocapture` came back as
+`--bin mindfork  -- feed_selection          --nocapture`. A list's `- ` and `1. ` stay in
+a copy: they are the list's content, not chrome.
+
+**Tests.** The writer's marks: a quote per level, the monochrome rows continuing, a code
+block's wrapped rows and their glue rebuilding the line. The join: padding dropped,
+spaces put back, a feed-wrapped row joined as it is. The feed, copied whole on
+`TestBackend`: a quote in both colour modes, thoughts in both, a tool card (no `│ `,
+`└ ` or icon, its result as one line), a wrapped code line with its spaces, the
+compaction summary, and a quote's `>` not painted. **4908 green, 317 `#[ignore]`** on
+Linux; the screenshot dumps are unchanged. **A pty run** (`mindfork demo`) copied the
+scripted `note_save` card as `note_save` / `content: …` / blank / `Note saved (id=…)`,
+with no gutter, corner or icon. No live run in the AGENTS.md §3 sense.

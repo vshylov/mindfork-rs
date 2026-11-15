@@ -10,6 +10,10 @@ pub(super) struct Writer {
     /// Panel width in columns (table layout).
     width: usize,
     pub(super) lines: Vec<Line<'static>>,
+    /// One per line of [`Self::lines`], kept in step by every place that adds
+    /// one ([`Self::push_line`], the highlighted code, a table,
+    /// [`pad_code_block`]) — see [`LineMark`].
+    marks: Vec<LineMark>,
     /// Inline-style stack (top — current).
     inline_styles: Vec<Style>,
     /// Line prefixes (for quotes: `>`), applied in [`Writer::push_line`].
@@ -91,6 +95,7 @@ impl Writer {
             palette,
             width,
             lines: Vec::new(),
+            marks: Vec::new(),
             inline_styles: Vec::new(),
             line_prefixes: Vec::new(),
             line_styles: Vec::new(),
@@ -113,22 +118,44 @@ impl Writer {
         }
     }
 
-    /// The rendered lines. In the monochrome mode the quoted ones are wrapped
-    /// here, to the panel width, with their `> ` on every row: a quote's
-    /// wrapped rows are told from the prose around it by dim italic, and
-    /// where that is stripped from the frame the prefix is all there is
-    /// (spec §11.6). In every other mode the lines leave as they are and the
-    /// feed wraps them.
-    pub(super) fn finish(mut self) -> Vec<Line<'static>> {
+    /// The rendered lines and their marks. In the monochrome mode the quoted
+    /// ones are wrapped here, to the panel width, with their `> ` on every
+    /// row: a quote's wrapped rows are told from the prose around it by dim
+    /// italic, and where that is stripped from the frame the prefix is all
+    /// there is (spec §11.6). In every other mode the lines leave as they are
+    /// and the feed wraps them.
+    pub(super) fn finish(mut self) -> Marked {
+        debug_assert_eq!(self.lines.len(), self.marks.len());
         // Last to first, so the indexes ahead stay where they were recorded.
         for (at, prefixes) in std::mem::take(&mut self.hanging).into_iter().rev() {
             let mut line = self.lines.remove(at);
+            let mark = self.marks.remove(at);
             let content = line.spans.split_off(prefixes.min(line.spans.len()));
             let prefix = std::mem::replace(&mut line.spans, content);
             let rows = wrap::wrap_hanging(&prefix, &line, self.width);
+            let marks: Vec<LineMark> = (0..rows.len())
+                .map(|k| LineMark {
+                    prefix: mark.prefix,
+                    continues: mark.continues || k > 0,
+                    glue: if k == 0 { mark.glue } else { None },
+                })
+                .collect();
             self.lines.splice(at..at, rows);
+            self.marks.splice(at..at, marks);
         }
-        self.lines
+        Marked {
+            lines: self.lines,
+            marks: self.marks,
+        }
+    }
+
+    /// Adds lines that carry no prefix and continue nothing — highlighted
+    /// code, a table's rows.
+    fn extend_plain(&mut self, lines: impl IntoIterator<Item = Line<'static>>) {
+        for line in lines {
+            self.lines.push(line);
+            self.marks.push(LineMark::default());
+        }
     }
 
     /// Runs the event stream with byte ranges (`Parser::into_offset_iter`
@@ -468,7 +495,7 @@ impl Writer {
         if self.code_highlighter.take().is_none() {
             self.line_styles.pop();
             if let Some(start) = self.code_start.take() {
-                pad_code_block(&mut self.lines, start, self.width);
+                pad_code_block(&mut self.lines, &mut self.marks, start, self.width);
             }
         }
     }
@@ -489,7 +516,7 @@ impl Writer {
         self.push_line(fence_line("```".to_string()));
         self.line_styles.pop();
         if self.plain_code_has_background() {
-            pad_code_block(&mut self.lines, start, self.width);
+            pad_code_block(&mut self.lines, &mut self.marks, start, self.width);
         }
     }
 
@@ -531,7 +558,7 @@ impl Writer {
             for line in LinesWithEndings::from(&text) {
                 rendered.extend(highlight_line_or_plain(highlighter, line));
             }
-            self.lines.extend(rendered);
+            self.extend_plain(rendered);
             self.needs_newline = false;
             return;
         }
@@ -659,9 +686,8 @@ impl Writer {
 
     pub(super) fn end_table(&mut self) {
         if let Some(tb) = self.table.take() {
-            for line in render_table(&tb, self.width, &self.palette, self.table_row_separators) {
-                self.lines.push(line);
-            }
+            let rows = render_table(&tb, self.width, &self.palette, self.table_row_separators);
+            self.extend_plain(rows);
         }
         self.needs_newline = true;
     }
@@ -721,7 +747,16 @@ impl Writer {
             self.hanging
                 .push((self.lines.len(), self.line_prefixes.len()));
         }
+        let prefix: usize = self
+            .line_prefixes
+            .iter()
+            .map(|p| wrap::str_width(&p.content))
+            .sum();
         self.lines.push(line);
+        self.marks.push(LineMark {
+            prefix: prefix as u16,
+            ..LineMark::default()
+        });
     }
 
     pub(super) fn push_span(&mut self, span: Span<'static>) {

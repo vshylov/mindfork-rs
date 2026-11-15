@@ -27,7 +27,8 @@ split by subsystem.
   to select, double-click for a word, triple-click for the line; hold the drag above or
   below the conversation and it scrolls. `Ctrl+C` copies what you see — without the
   coloured bar on the left or the padding, a wrapped paragraph as one line, formatted
-  text without its markdown. The message box gets the same double and triple click, and
+  text without its markdown, a quote without its `>` and a tool card or the thinking
+  without the lines along their edge. The message box gets the same double and triple click, and
   a drag past its edge scrolls a long draft. Nothing is selectable in the conversation
   while the assistant answers.
 
