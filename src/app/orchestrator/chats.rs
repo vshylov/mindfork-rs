@@ -370,10 +370,16 @@ impl Orchestrator {
         self.activate(new_id);
     }
 
-    /// Copies the whole chat conversation to the clipboard (spec §11.2): the orchestrator
-    /// (the owner of `Chat`) builds the text and emits `CopyToClipboard` — writing to the
-    /// clipboard and the confirmation are done by the UI layer (`runtime`). An empty chat → a clear error.
-    pub(super) fn handle_copy_chat(&mut self, id: Uuid) {
+    /// Copies the chat conversation — or the part `range` names — to the clipboard
+    /// (spec §11.2): the orchestrator (the owner of `Chat`) builds the text and emits
+    /// `CopyToClipboard`, or `CopyExcerpt` with the count for a part — writing to the
+    /// clipboard and the confirmation are done by the UI layer (`runtime`). An empty
+    /// chat → a clear error.
+    pub(super) fn handle_copy_chat(
+        &mut self,
+        id: Uuid,
+        range: crate::features::chat_export::CopyRange,
+    ) {
         let Some(view) = self.view(id) else {
             return;
         };
@@ -385,15 +391,22 @@ impl Orchestrator {
         // the localized "User:"/"Assistant:"; a transcript's are the parent persona
         // and the sub-agent (see `names_of`).
         let names = self.names_of(id);
-        match crate::features::chat_export::format_conversation(
+        match crate::features::chat_export::format_range(
             &title,
             &messages,
+            range,
             &self.config.copy,
             &names,
             self.ui_locale(),
         ) {
-            Some(text) => {
-                let _ = self.evt_tx.send(AppEvent::CopyToClipboard(text));
+            Some(copied) if range == crate::features::chat_export::CopyRange::All => {
+                let _ = self.evt_tx.send(AppEvent::CopyToClipboard(copied.text));
+            }
+            Some(copied) => {
+                let _ = self.evt_tx.send(AppEvent::CopyExcerpt {
+                    text: copied.text,
+                    messages: copied.messages,
+                });
             }
             None => {
                 let _ = self.evt_tx.send(AppEvent::ChatListError(

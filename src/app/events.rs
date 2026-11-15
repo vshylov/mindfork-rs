@@ -126,10 +126,14 @@ pub enum AppCommand {
     AutoRenameChat(Uuid),
     /// Clone a chat (a copy of the messages and settings).
     CloneChat(Uuid),
-    /// Copy the whole chat conversation to the clipboard. The orchestrator builds the
-    /// text (it owns `Chat`) and emits `CopyToClipboard`; writing to the clipboard is a
-    /// UI-layer concern.
-    CopyChat(Uuid),
+    /// Copy the chat's conversation to the clipboard — the whole of it, or its
+    /// first or last messages (`range`, spec §11.2). The orchestrator builds the
+    /// text (it owns `Chat`) and emits `CopyToClipboard` (`CopyExcerpt` for a
+    /// part); writing to the clipboard is a UI-layer concern.
+    CopyChat {
+        id: Uuid,
+        range: crate::features::chat_export::CopyRange,
+    },
     /// Write the chat's conversation to a file (`/export`). Unlike
     /// [`AppCommand::CopyChat`] the orchestrator finishes the job itself: it owns
     /// `Chat` *and* the disk, and the answer is a path, not content. Reports
@@ -447,7 +451,7 @@ impl AppCommand {
             | AppCommand::RenameChat { .. }
             | AppCommand::AutoRenameChat(_)
             | AppCommand::CloneChat(_)
-            | AppCommand::CopyChat(_)
+            | AppCommand::CopyChat { .. }
             | AppCommand::DeleteChat(_)
             | AppCommand::SearchChats(_)
             | AppCommand::SearchMessages { .. }
@@ -547,6 +551,10 @@ pub enum AppEvent {
     /// the chat conversation text; runtime writes it to the clipboard and sends a
     /// confirmation/error to the overlay.
     CopyToClipboard(String),
+    /// Like [`AppEvent::CopyToClipboard`], for part of a conversation
+    /// (`/copy first|last N`): the confirmation names how many messages it
+    /// took (docs/research/block-fold-and-partial-copy.md §3.6).
+    CopyExcerpt { text: String, messages: usize },
     /// The full list of visible profiles (for the selection overlay when creating a
     /// chat).
     ProfileList(Vec<ProfileSummary>),

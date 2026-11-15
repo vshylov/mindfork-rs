@@ -189,7 +189,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-11-15, version 0.26.4)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **4951 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **4957 unit tests
 green, 324 `#[ignore]`** (live smokes + real-clipboard round trips + the
 screenshot-dump and demo-reel regenerators).
 
@@ -202,6 +202,11 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **One block folded, part of a chat copied** (2026-11-15, stage 1 of 2): `/copy
+  first|last [N]` counts the chat card's bubbles, an excerpt has no title, a copy
+  labels each reply once; next, a click on a block's pill folds it alone, kept in the
+  chat ([docs/research/block-fold-and-partial-copy.md](docs/research/block-fold-and-partial-copy.md),
+  [docs/journal/ui-input.md](docs/journal/ui-input.md)).
 - **The app's own mouse — track complete** (2026-11-15, stages 1–3c): capture always
   on (the *Mouse* setting, `app` by default; the legacy mode keeps the terminal's),
   `Ctrl+W` gone; the feed's own selection, copied as drawn without its chrome;
@@ -390,12 +395,6 @@ being recent is dropped, not shortened.
   export|check`). Measured on Windows 11's console host; other terminals are a look
   ([docs/history/theme-modes.md](docs/history/theme-modes.md), spec §11.6,
   [docs/journal/ui-feed.md](docs/journal/ui-feed.md)).
-- **Raw `llama-server` arguments in managed settings** — an *Extra arguments* field
-  per managed section (`--n-cpu-moe` fits a 26B MoE in 8.4 GB); a field's flag, the
-  connection's, `--tools`/`--agent` and `-hf` refused, their `LLAMA_*` scrubbed from
-  the child, a refused launch said in llama.cpp's words. Live **GO**
-  ([docs/research/managed-extra-args.md](docs/research/managed-extra-args.md),
-  spec §3.4, [docs/journal/engine.md](docs/journal/engine.md)).
 - **A headless launch (no TTY) exits with code 2** and a one-line reason — the
   TUI cannot be run from an agent's shell; how it *looks* needs a real terminal
   and a person. What a console *holds* can be measured on Windows:

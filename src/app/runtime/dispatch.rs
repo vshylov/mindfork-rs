@@ -58,7 +58,12 @@ pub(super) fn apply_event(
         // Writing to the clipboard is a UI-layer side effect; the write itself and
         // routing the confirmation/error are factored into `deliver_clipboard`
         // (`apply_event` doesn't know about `arboard`).
-        AppEvent::CopyToClipboard(text) => deliver_clipboard(screen, active, clipboard, &text),
+        AppEvent::CopyToClipboard(text) => {
+            deliver_clipboard(screen, active, clipboard, &text, None)
+        }
+        AppEvent::CopyExcerpt { text, messages } => {
+            deliver_clipboard(screen, active, clipboard, &text, Some(messages));
+        }
         AppEvent::ProfileList(profiles) => screen.set_profile_list(profiles),
         AppEvent::Settings {
             config,
@@ -730,20 +735,21 @@ pub(super) fn deliver_clipboard(
     active: &mut ActiveScreen,
     clipboard: &mut Option<arboard::Clipboard>,
     text: &str,
+    messages: Option<usize>,
 ) {
     let loc = screen.loc();
     let report = copy_text(clipboard, text, screen.clipboard_osc52());
     match active {
         // The list's notice line has the room for the whole verdict, advice
         // included.
-        ActiveScreen::ChatList(list) => match report.message(loc) {
+        ActiveScreen::ChatList(list) => match report.message_of(loc, messages) {
             (message, true) => list.set_error(message),
             (message, false) => list.set_notice(message),
         },
         // Anywhere else the chat's status bar says it, for a few seconds — not
         // the feed (research F10; see `CopyReport::chip`).
         _ => {
-            let (chip, failed) = report.chip(loc);
+            let (chip, failed) = report.chip_of(loc, messages);
             screen.show_copy_outcome(chip, failed);
         }
     }
@@ -821,7 +827,7 @@ pub(super) fn dispatch(
         ChatIntent::Impersonate { seed } => AppCommand::Impersonate { seed },
         ChatIntent::CancelImpersonation => AppCommand::CancelImpersonation,
         ChatIntent::NewChat { profile_id } => AppCommand::NewChat { profile_id },
-        ChatIntent::CopyChat(id) => AppCommand::CopyChat(id),
+        ChatIntent::CopyChat { id, range } => AppCommand::CopyChat { id, range },
         ChatIntent::RenameChat { id, title } => AppCommand::RenameChat { id, title },
         // The chat list's `Ctrl+R` for the open chat; the result comes back as
         // `ChatRenamed`, a failure as `ChatListError` (which falls back to a
@@ -1111,7 +1117,10 @@ pub(super) fn dispatch_chat_list(
         // Copy/delete/rename/auto-title don't close the list:
         // the confirmation/error arrives in its status area, the updated set —
         // via the `ChatList` event.
-        ChatListIntent::Copy(id) => AppCommand::CopyChat(id),
+        ChatListIntent::Copy(id) => AppCommand::CopyChat {
+            id,
+            range: crate::features::chat_export::CopyRange::All,
+        },
         ChatListIntent::Delete(id) => AppCommand::DeleteChat(id),
         ChatListIntent::Rename { id, title } => AppCommand::RenameChat { id, title },
         ChatListIntent::AutoRename(id) => AppCommand::AutoRenameChat(id),

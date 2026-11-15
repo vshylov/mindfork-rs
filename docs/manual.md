@@ -990,6 +990,7 @@ the keys for itself:
 | `/settings` · `/self` · `/tasks` · `/help` · `/chats` | `Ctrl+P` · `F3` · `F7` · `F1` · `Esc` | the screens |
 | `/new [profile]` | `Ctrl+N` | new chat; a name picks the profile (a prefix is enough) |
 | `/rename [title]` · `/clone` · `/copy` | `F2` · `Ctrl+D` · `F5` | this chat: rename, clone, copy the conversation |
+| `/copy first [N]` · `/copy last [N]` | — | copy only the first or the last N messages (one without N), as the conversation shows them, without the chat's title |
 | `/autotitle` | `Ctrl+R` in the list | have the model title this chat |
 | `/regen` · `/retry` · `/takeback` | `Ctrl+R` · `Ctrl+E` | regenerate the last reply / take back the last exchange |
 | `/continue` | — | resume the last interrupted reply from where it stopped — local and external engines, Gemini, and Claude up to the 4.5 generation; DeepSeek in the `deepseek` mode, in a conversation without tool calls; through OpenRouter or another gateway, only Gemini models and Claude up to 4.5 |

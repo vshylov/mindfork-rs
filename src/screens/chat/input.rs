@@ -257,7 +257,10 @@ impl ChatScreen {
             // Copy the active chat's conversation to the clipboard (like F5
             // in the chat list). The confirmation/error arrives as a note in
             // the feed (no overlay).
-            (KeyCode::F(5), _) => self.active_chat.map(ChatIntent::CopyChat),
+            (KeyCode::F(5), _) => self.active_chat.map(|id| ChatIntent::CopyChat {
+                id,
+                range: CopyRange::All,
+            }),
             // Feed scrolling (spec §11.3).
             (KeyCode::PageUp, _) => {
                 self.feed_view.scroll_up(PAGE_SCROLL);

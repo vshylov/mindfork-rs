@@ -1418,7 +1418,12 @@ async fn delete_and_clone_refuse_a_transcript_and_a_cloned_parent_reids_its_runs
 async fn copying_a_transcript_labels_the_roles_as_its_own() {
     let (dir, _chat_id, run_id) = delegated().await;
     let (cmd_tx, mut evt_rx, handle, _, _) = reopen(dir.path()).await;
-    cmd_tx.send(AppCommand::CopyChat(run_id)).unwrap();
+    cmd_tx
+        .send(AppCommand::CopyChat {
+            id: run_id,
+            range: crate::features::chat_export::CopyRange::All,
+        })
+        .unwrap();
     let copied = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::CopyToClipboard(_)))
         .await
         .unwrap();
@@ -1427,6 +1432,22 @@ async fn copying_a_transcript_labels_the_roles_as_its_own() {
     };
     assert!(text.contains("Critic"), "{text}");
     assert!(text.contains("it is noon"), "{text}");
+    // `/copy last` on the transcript takes its own last message.
+    cmd_tx
+        .send(AppCommand::CopyChat {
+            id: run_id,
+            range: crate::features::chat_export::CopyRange::Last(1),
+        })
+        .unwrap();
+    let excerpt = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::CopyExcerpt { .. }))
+        .await
+        .unwrap();
+    let AppEvent::CopyExcerpt { text, messages } = excerpt else {
+        unreachable!()
+    };
+    assert_eq!(messages, 1);
+    assert!(text.ends_with("it is noon"), "{text}");
+    assert!(!text.contains("Critic\n"), "the title is left out: {text}");
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 }

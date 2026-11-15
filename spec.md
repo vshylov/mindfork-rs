@@ -3433,6 +3433,20 @@ A direct requirement from the task:
   (name + arguments), and their results (taken from `Message.tool_calls`).
   Roles are labeled with the chat profile's **custom names** when set (`Gaia:` instead
   of `User:`, §10); otherwise with the interface language's labels.
+  **One block per message as the feed draws it**: an assistant reply's rounds — a
+  stored message each, an agentic loop's — copy under one label, each round's
+  thoughts, text and calls in the order it made them; a `new_bubble` round is a reply
+  of its own, as it is drawn. The bubbles are the card's own count
+  (`entities::chat::visible_rows`, the rule `visible_message_count` counts).
+- **Copying part of a conversation**, from the chat (`/copy first [N]`,
+  `/copy last [N]`; [docs/research/block-fold-and-partial-copy.md](docs/research/block-fold-and-partial-copy.md)
+  §3.6): the first or last N messages as the feed draws them — the number the card's
+  "N msg" counts — one when N is left out, all of them when N is past the end. A
+  message that copies empty under `config.copy` (a reply of calls only, with calls
+  not copied; a dialogue's note row) is not one of them. The format is the whole
+  copy's **without the title**: an excerpt is a quote. N is a number from 1; anything
+  else is said in a note, not guessed. The status bar's chip names the count
+  (`messages copied: 3`). In a transcript it takes the transcript's messages.
 - Virtualization of a long list (only visible rows are rendered).
 
 #### 11.2.1. The message-level search screen
@@ -4982,7 +4996,7 @@ host, so the interface is fully operable by commands plus the safe key subset
 (printable characters, `Enter`, `Esc`, `Backspace`/`Delete`, `Tab`, the arrows,
 `Home`/`End`, `PageUp`/`PageDown`, `Shift`+arrows). Twenty-eight commands:
 `/settings` `/local` `/self` `/chats` `/changes` `/tasks [stop <kind>|all]` `/notes` `/help` · `/new [profile]`
-`/rename [title]` `/autotitle` `/clone` `/copy` `/regen`·`/retry` `/continue`
+`/rename [title]` `/autotitle` `/clone` `/copy [first|last [N]]` `/regen`·`/retry` `/continue`
 `/takeback` `/impersonate [text]` `/greeting [N]` `/system [text|reset|clear]` `/bridge [pair|unpair]` `/stop` · `/find [text]` `/search <text>`
 `/links` · `/thoughts` `/toolcalls` `/subagents [expand|collapse|stop [n]]`
 `/emoji` (`/mouse` went with `Ctrl+W`, §11.3).

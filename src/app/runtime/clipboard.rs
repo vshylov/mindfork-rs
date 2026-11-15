@@ -348,11 +348,31 @@ impl CopyReport {
     /// (`/export`) is the manual's and the chat list's longer note's. The two
     /// "too big" verdicts keep `/export`: the app knows those went nowhere.
     pub(super) fn chip(&self, loc: &'static Locale) -> (String, bool) {
+        self.chip_of(loc, None)
+    }
+
+    /// [`Self::chip`] for a copy of `messages` messages (`/copy first|last N`):
+    /// a copy that went somewhere names how many it took, so a count past the
+    /// conversation's end is visible in the chip (docs/research/block-fold-and-partial-copy.md
+    /// §3.6). The verdicts that went nowhere read as they do for any copy.
+    pub(super) fn chip_of(&self, loc: &'static Locale, messages: Option<usize>) -> (String, bool) {
         if let Err(err) = &self.local
             && self.terminal != TerminalCopy::Sent
         {
             tracing::warn!(error = %err, terminal = ?self.terminal, "copy: the local clipboard refused the text");
         }
+        let counted = |key: &str, n: usize| loc.tf(key, &[("n", &n.to_string())]);
+        match (&self.local, self.terminal, messages) {
+            (Ok(()), TerminalCopy::NotTried, Some(n)) => {
+                (counted("ui.status.copy.copied_n", n), false)
+            }
+            (_, TerminalCopy::Sent, Some(n)) => (counted("ui.status.copy.sent_n", n), false),
+            _ => self.verdict_chip(loc),
+        }
+    }
+
+    /// The chip's verdict, the same for every copy.
+    fn verdict_chip(&self, loc: &'static Locale) -> (String, bool) {
         match (&self.local, self.terminal) {
             (Ok(()), TerminalCopy::NotTried) => (loc.t("ui.status.copy.copied").into(), false),
             (_, TerminalCopy::Sent) => (loc.t("ui.status.copy.sent").into(), false),
@@ -368,10 +388,27 @@ impl CopyReport {
         }
     }
 
+    /// [`Self::message_of`] for a copy that counts nothing — the tests' name
+    /// for it; the runtime always says whether it counted.
+    #[cfg(test)]
+    pub(super) fn message(&self, loc: &'static Locale) -> (String, bool) {
+        self.message_of(loc, None)
+    }
+
     /// The localized note (and whether it is an error), for whichever surface is
     /// showing it. One place, so the chat feed and the chat list's status area
-    /// cannot word the same outcome differently.
-    pub(super) fn message(&self, loc: &'static Locale) -> (String, bool) {
+    /// cannot word the same outcome differently. For a copy of `messages`
+    /// messages the ordinary local copy names the count, as [`Self::chip_of`]
+    /// does; the other verdicts — about the terminal and a size — read as they
+    /// do for any copy.
+    pub(super) fn message_of(
+        &self,
+        loc: &'static Locale,
+        messages: Option<usize>,
+    ) -> (String, bool) {
+        if let (Ok(()), TerminalCopy::NotTried, Some(n)) = (&self.local, self.terminal, messages) {
+            return (loc.tf("ui.chat.copied_n", &[("n", &n.to_string())]), false);
+        }
         match (&self.local, self.terminal) {
             // The ordinary local copy — unchanged wording.
             (Ok(()), TerminalCopy::NotTried) => (loc.t("ui.chat.copied").into(), false),
@@ -633,6 +670,40 @@ mod tests {
             .chip(loc);
             assert!(sent.0.starts_with(&plain.0), "{lang:?}: {}", sent.0);
             assert!(sent.0.contains("OSC 52"), "{lang:?}: {}", sent.0);
+        }
+    }
+
+    /// A copy of part of a conversation (`/copy first|last N`) names how many
+    /// messages it took where the copy went somewhere — locally, or over OSC
+    /// 52, still naming the protocol — and reads as any copy where it went
+    /// nowhere, in every bundled locale.
+    #[test]
+    fn an_excerpt_names_its_count_where_it_was_copied() {
+        for &lang in crate::shared::i18n::Lang::ALL {
+            let loc = crate::shared::i18n::locale(lang);
+            let report = |local: Result<(), String>, terminal| CopyReport { local, terminal };
+            let local = report(Ok(()), TerminalCopy::NotTried);
+            for (text, _) in [local.chip_of(loc, Some(3)), local.message_of(loc, Some(3))] {
+                assert!(
+                    text.contains('3') && !text.contains('{'),
+                    "{lang:?}: {text}"
+                );
+            }
+            let sent = report(Err("no X11".into()), TerminalCopy::Sent).chip_of(loc, Some(3));
+            assert!(
+                sent.0.contains('3') && sent.0.contains("OSC 52"),
+                "{lang:?}: {}",
+                sent.0
+            );
+            assert!(!sent.1);
+            let nowhere = report(Err("no X11".into()), TerminalCopy::NotTried);
+            assert_eq!(nowhere.chip_of(loc, Some(3)), nowhere.chip(loc), "{lang:?}");
+            assert_eq!(
+                nowhere.message_of(loc, Some(3)),
+                nowhere.message(loc),
+                "{lang:?}"
+            );
+            assert_eq!(local.chip_of(loc, None), local.chip(loc));
         }
     }
 

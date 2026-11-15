@@ -1,6 +1,8 @@
 //! A chat: the message list, a profile binding, the active system message.
 //! See spec §5.1.
 
+use std::ops::Range;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -444,24 +446,47 @@ pub fn visible_message_count(messages: &[Message]) -> usize {
 /// (docs/history/data-stats.md F7) and must agree with the list's cards, so it feeds
 /// the same rule rather than restating it.
 pub fn visible_row_count(rows: impl IntoIterator<Item = (MessageRole, bool)>) -> usize {
-    let mut count = 0;
+    visible_row_ranges(rows).len()
+}
+
+/// The bubbles the feed draws over `messages`, each as the range of the
+/// messages it shows — [`visible_message_count`]'s rule, kept as ranges for a
+/// reader that needs the bubbles themselves: `/copy first|last N` takes N of
+/// them, so N counts what the chat card counts
+/// (docs/research/block-fold-and-partial-copy.md §3.6, F1).
+pub fn visible_rows(messages: &[Message]) -> Vec<Range<usize>> {
+    visible_row_ranges(messages.iter().map(|m| (m.role, m.new_bubble)))
+}
+
+/// [`visible_rows`] over bare `(role, new_bubble)` pairs — the rule itself,
+/// which [`visible_row_count`] counts. A tool message draws nothing of its own
+/// and belongs to the bubble before it (the round that called it); one before
+/// any bubble belongs to none.
+pub fn visible_row_ranges(
+    rows: impl IntoIterator<Item = (MessageRole, bool)>,
+) -> Vec<Range<usize>> {
+    let mut bubbles: Vec<Range<usize>> = Vec::new();
     let mut in_assistant_bubble = false;
-    for (role, new_bubble) in rows {
-        match role {
-            MessageRole::Tool => {}
+    for (i, (role, new_bubble)) in rows.into_iter().enumerate() {
+        let starts = match role {
+            MessageRole::Tool => false,
             MessageRole::User | MessageRole::System => {
-                count += 1;
                 in_assistant_bubble = false;
+                true
             }
             MessageRole::Assistant => {
-                if !in_assistant_bubble || new_bubble {
-                    count += 1;
-                }
+                let starts = !in_assistant_bubble || new_bubble;
                 in_assistant_bubble = true;
+                starts
             }
+        };
+        if starts {
+            bubbles.push(i..i + 1);
+        } else if let Some(last) = bubbles.last_mut() {
+            last.end = i + 1;
         }
     }
-    count
+    bubbles
 }
 
 /// A short chat card for the list/overlay (no messages). See spec §11.2.
@@ -823,6 +848,34 @@ mod tests {
         messages.push(Message::user("q2"));
         messages.push(Message::assistant("a2"));
         assert_eq!(visible_message_count(&messages), 7);
+    }
+
+    /// The bubbles as ranges: a round's tool results and its later rounds
+    /// stay in its range, a `new_bubble` round and a note row start their own,
+    /// and a tool row before any bubble belongs to none. The count is the
+    /// ranges' length at every prefix.
+    #[test]
+    fn visible_rows_are_the_bubbles_as_ranges() {
+        let mut followup = Message::assistant("more");
+        followup.new_bubble = true;
+        let messages = vec![
+            Message::new(MessageRole::Tool, "stray"),
+            Message::user("q"),
+            Message::assistant(""),
+            Message::new(MessageRole::Tool, "result"),
+            Message::assistant("the answer"),
+            followup,
+            Message::new(MessageRole::System, "note"),
+            Message::assistant("post-note"),
+        ];
+        assert_eq!(visible_rows(&messages), vec![1..2, 2..5, 5..6, 6..7, 7..8]);
+        for upto in 0..=messages.len() {
+            assert_eq!(
+                visible_rows(&messages[..upto]).len(),
+                visible_message_count(&messages[..upto]),
+                "prefix {upto}"
+            );
+        }
     }
 
     /// Both cards go through [`visible_message_count`]: the chat's own and
