@@ -558,7 +558,8 @@ Each is a test or a live-check line of §7.
   row does what `Enter` does there — opens a chat, a note, a search hit; edits,
   toggles or chooses a field; picks from a popup. A row the keys skip (a group
   header in the settings) takes no click. The right and the middle button do
-  nothing (F3).
+  nothing (F3). *Added after the owner's live check (2026-11-15):* a click on a
+  tab opens it — the settings' subsections, the help's tabs.
 - **The fields** — the rename, the settings' editor, field search and model
   filter, the self-model's editor, the notes' editor and search, the feed's
   search bar — take the chat box's grammar (§5.3, §5.5): a press places the

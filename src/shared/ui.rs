@@ -632,6 +632,53 @@ pub fn row_spans(lines: impl IntoIterator<Item = Option<usize>>) -> Vec<RowSpan>
     spans
 }
 
+/// Where a strip of tabs was last drawn, tab by tab — what a click on one needs
+/// (docs/research/mouse-always-captured.md F12): the settings' subsections and
+/// the help dialog's tabs.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct TabHits {
+    /// `(row, first column, past its last column, tab)`, a tab drawn each.
+    tabs: Vec<(u16, u16, u16, usize)>,
+}
+
+impl TabHits {
+    /// Records `line` drawn from `(x, y)`, left-aligned: its span `i` shows
+    /// the tab `tab_of(i)`, if any (a separator shows none).
+    pub fn record(&mut self, x: u16, y: u16, line: &Line, tab_of: impl Fn(usize) -> Option<usize>) {
+        self.tabs.clear();
+        let mut at = x;
+        for (i, span) in line.spans.iter().enumerate() {
+            let end = at.saturating_add(span.width() as u16);
+            if let Some(tab) = tab_of(i) {
+                self.tabs.push((y, at, end, tab));
+            }
+            at = end;
+        }
+    }
+
+    /// No strip is drawn.
+    pub fn clear(&mut self) {
+        self.tabs.clear();
+    }
+
+    /// The tab drawn under `(col, row)`.
+    pub fn tab_at(&self, col: u16, row: u16) -> Option<usize> {
+        self.tabs
+            .iter()
+            .find(|&&(y, x0, x1, _)| y == row && (x0..x1).contains(&col))
+            .map(|&(.., tab)| tab)
+    }
+
+    /// The first cell of tab `tab`, for tests that click it.
+    #[cfg(test)]
+    pub fn cell_of(&self, tab: usize) -> Option<(u16, u16)> {
+        self.tabs
+            .iter()
+            .find(|t| t.3 == tab)
+            .map(|&(y, x0, ..)| (x0, y))
+    }
+}
+
 /// Recomputes `scroll` so the selected item — rows `[start, start + height)` —
 /// is in a window of `view` rows: raised to its start when it is above, lowered
 /// to its end when it is below; an item taller than the window is pinned to its

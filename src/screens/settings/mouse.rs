@@ -9,7 +9,8 @@ use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 
-use super::{Focus, SettingsIntent, SettingsScreen};
+use super::helpers::is_subsection;
+use super::{Focus, ModelTab, Section, SettingsIntent, SettingsScreen, Subsection};
 use crate::shared::mouse::{SelectUnit, wheel_delta};
 
 /// `Enter`, as a double click sends it (F12).
@@ -120,6 +121,10 @@ impl SettingsScreen {
         if !is_press(&mouse) {
             return None;
         }
+        if let Some(tab) = self.sub_tabs.tab_at(col, row) {
+            self.select_subsection(tab);
+            return None;
+        }
         if let Some(section) = self.menu_scroll.item_at(col, row) {
             self.select_section(section);
             self.focus = Focus::Menu;
@@ -137,6 +142,21 @@ impl SettingsScreen {
         (unit == SelectUnit::Word)
             .then(|| self.handle_fields_key(enter()))
             .flatten()
+    }
+
+    /// A click on a subsection tab: the subsection the tab names, with the focus
+    /// on the tab strip — where `←`/`→` would have left it.
+    fn select_subsection(&mut self, tab: usize) {
+        match self.section() {
+            Section::Model => self.model_sub = ModelTab::from_index(tab),
+            Section::Sampling => self.sampling_sub = Subsection::from_index(tab),
+            Section::Profiles => self.profile_sub = Subsection::from_index(tab),
+            _ => return,
+        }
+        self.focus = Focus::Fields;
+        if let Some(pos) = self.fields().iter().position(|f| is_subsection(f.id)) {
+            self.field_idx = pos;
+        }
     }
 
     /// Selects a section as `↑`/`↓` on the menu do: a new section starts at its

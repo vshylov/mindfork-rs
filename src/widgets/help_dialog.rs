@@ -16,7 +16,9 @@ use crate::shared::i18n::Locale;
 use crate::shared::keys;
 use crate::shared::paths::{DataLocation, Locations};
 use crate::shared::theme::Palette;
-use crate::shared::ui::{MinSize, centered_rect, fit_title, legend_width, render_scrollbar};
+use crate::shared::ui::{
+    MinSize, TabHits, centered_rect, fit_title, legend_width, render_scrollbar,
+};
 use crate::shared::wrap;
 use crate::widgets::logo::{LOCKUP_COLS, LOCKUP_ROWS, lockup_lines};
 
@@ -122,6 +124,8 @@ pub struct HelpState {
     /// A selection over the content's visible cells
     /// (docs/research/mouse-always-captured.md F13).
     pub selection: CellSelection,
+    /// The tab strip as last drawn, for a click on a tab (F12).
+    pub tabs: TabHits,
 }
 
 impl HelpState {
@@ -136,6 +140,7 @@ impl HelpState {
             context: HelpContext::Chat,
             pending_anchor: false,
             selection: CellSelection::default(),
+            tabs: TabHits::default(),
         }
     }
 
@@ -148,6 +153,16 @@ impl HelpState {
             context,
             pending_anchor: true,
             selection: CellSelection::default(),
+            tabs: TabHits::default(),
+        }
+    }
+
+    /// A tab chosen by a click (F12): the tab, its content from the top — as
+    /// the keys switch it.
+    pub fn select_tab(&mut self, tab: HelpTab) {
+        if tab != self.tab {
+            self.tab = tab;
+            self.scroll = 0;
         }
     }
 
@@ -511,7 +526,9 @@ pub fn render_help(
         }));
         header.push(Line::raw(""));
     }
-    header.push(help_tab_strip(help.tab, palette, loc, inner_w));
+    let (strip, strip_tabs) = help_tab_strip_with_tabs(help.tab, palette, loc, inner_w);
+    let strip_row = header.len() as u16;
+    header.push(strip.clone());
     header.push(Line::styled(
         "─".repeat(inner_w),
         palette.border_style(false),
@@ -521,6 +538,10 @@ pub fn render_help(
     let [head_area, body_area] =
         Layout::vertical([Constraint::Length(header_h), Constraint::Min(0)]).areas(inner);
     frame.render_widget(Paragraph::new(header), head_area);
+    help.tabs
+        .record(head_area.x, head_area.y + strip_row, &strip, |i| {
+            strip_tabs[i]
+        });
 
     // Content for the active tab (language-neutral data — license/components —
     // is read straight from `shared::credits`, bypassing locales).
@@ -579,13 +600,27 @@ pub fn render_help(
 /// (docs/research/small-terminal.md §7.3). Narrower, the strip shows a run of
 /// whole tabs with the active one in it — the leftmost such run, so moving
 /// through the tabs that are on screen moves nothing — and a `…` cell on
-/// each side that has tabs hidden ([`tab_window`]).
+/// each side that has tabs hidden ([`tab_window`]). The dialog draws it through
+/// [`help_tab_strip_with_tabs`], which also says where each tab is.
+#[cfg(test)]
 pub fn help_tab_strip(
     active: HelpTab,
     palette: &Palette,
     loc: &'static Locale,
     width: usize,
 ) -> Line<'static> {
+    help_tab_strip_with_tabs(active, palette, loc, width).0
+}
+
+/// [`help_tab_strip`], with the tab each of its spans shows — what a click
+/// on it selects (docs/research/mouse-always-captured.md F12): a tab's label
+/// its own, the `…` on a side the nearest tab hidden there, a separator none.
+fn help_tab_strip_with_tabs(
+    active: HelpTab,
+    palette: &Palette,
+    loc: &'static Locale,
+    width: usize,
+) -> (Line<'static>, Vec<Option<usize>>) {
     let labels: Vec<String> = HelpTab::ALL
         .iter()
         .map(|tab| palette.tab_label(loc.t(tab.label_key()), *tab == active))
@@ -596,12 +631,15 @@ pub fn help_tab_strip(
     let more = || Span::styled(format!(" {HIDDEN_TABS} "), palette.muted_style());
 
     let mut spans: Vec<Span<'static>> = vec![Span::raw(" ")];
+    let mut tabs: Vec<Option<usize>> = vec![None];
     if lo > 0 {
         spans.extend([more(), sep()]);
+        tabs.extend([Some(lo - 1), None]);
     }
     for (i, label) in labels.iter().enumerate().take(hi + 1).skip(lo) {
         if i > lo {
             spans.push(sep());
+            tabs.push(None);
         }
         let style = if i == active.index() {
             Style::new().fg(palette.text).bg(palette.keycap_bg).bold()
@@ -609,11 +647,13 @@ pub fn help_tab_strip(
             palette.muted_style()
         };
         spans.push(Span::styled(label.clone(), style));
+        tabs.push(Some(i));
     }
     if hi + 1 < labels.len() {
         spans.extend([sep(), more()]);
+        tabs.extend([None, Some(hi + 1)]);
     }
-    Line::from(spans)
+    (Line::from(spans), tabs)
 }
 
 /// The mark on the side of the tab strip where tabs are hidden.
@@ -2121,7 +2161,58 @@ mod tests {
         );
     }
 
-    /// An over-scrolled state clamps at render time, and a short terminal —
+    /// A click on a tab opens it (F12) — the cell read back from the buffer
+    /// shows that tab's label — and on a narrow strip the `…` opens the
+    /// nearest tab hidden on its side.
+    #[test]
+    fn a_click_on_a_tab_or_its_hidden_mark_opens_it() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let palette = Palette::default();
+        let mut help = HelpState::open(HelpTab::About);
+        let mut term = Terminal::new(TestBackend::new(110, 30)).unwrap();
+        term.draw(|f| render_help(f, &mut help, NO_SECTIONS, &test_locations(), &palette, ru()))
+            .unwrap();
+        let commands = HelpTab::Commands.index();
+        let (c, r) = help.tabs.cell_of(commands).expect("the strip is drawn");
+        let buf = term.backend().buffer().clone();
+        let label: String = (c..c + 10)
+            .map(|x| buf[(x, r)].symbol().to_string())
+            .collect();
+        assert!(
+            label.contains(ru().t(HelpTab::Commands.label_key())),
+            "{label:?}"
+        );
+        assert_eq!(help.tabs.tab_at(c, r), Some(commands));
+        help.select_tab(HelpTab::ALL[commands]);
+        assert_eq!(help.tab, HelpTab::Commands);
+        // Narrow: the strip hides tabs behind a `…`, which opens the next one.
+        let mut narrow = Terminal::new(TestBackend::new(HELP_MIN_WIDTH - 10, 30)).unwrap();
+        let mut help = HelpState::open(HelpTab::About);
+        narrow
+            .draw(|f| render_help(f, &mut help, NO_SECTIONS, &test_locations(), &palette, ru()))
+            .unwrap();
+        let buf = narrow.backend().buffer().clone();
+        let (x, y) = (0..buf.area.height)
+            .flat_map(|y| (0..buf.area.width).map(move |x| (x, y)))
+            .filter(|&(x, y)| buf[(x, y)].symbol() == "…")
+            .find(|&(x, y)| help.tabs.tab_at(x, y).is_some())
+            .expect("a hidden-tabs mark");
+        let hidden = help.tabs.tab_at(x, y).unwrap();
+        assert!(
+            hidden > HelpTab::About.index(),
+            "the mark on the right: a tab past the strip"
+        );
+        help.select_tab(HelpTab::ALL[hidden]);
+        narrow
+            .draw(|f| render_help(f, &mut help, NO_SECTIONS, &test_locations(), &palette, ru()))
+            .unwrap();
+        assert!(
+            help.tabs.cell_of(hidden).is_some(),
+            "now on the strip, as a tab"
+        );
+    }
+
     /// A drag over the help's content selects what it shows, and `Ctrl+C`
     /// hands the text up to be copied — the selection kept; a scroll changes
     /// what is shown and drops it (docs/research/mouse-always-captured.md F13).
@@ -2178,6 +2269,7 @@ mod tests {
         );
     }
 
+    /// An over-scrolled state clamps at render time, and a short terminal —
     /// where the tab is taller than the view — draws the scrollbar thumb.
     #[test]
     fn help_scroll_clamps_and_draws_scrollbar_on_short_terminal() {

@@ -4323,7 +4323,9 @@ settings' menu's title takes one); a list drawn line by line keeps a `RowList` o
 items' `RowSpan`s, ids the screen's own, and `RowList::wheel` takes the screen's own
 follow rule (`keep_visible`, or `follow_item`, which lets the window stand inside a
 selected item taller than itself), so the next draw leaves the window where the wheel
-put it. A field off the chat has a `FieldGesture` (`widgets/input_box.rs`). Read-only
+put it. A strip of tabs records a `TabHits` (each tab's columns on its row) where it
+is drawn — the settings' subsections, the help's tabs, whose `…` maps to the nearest
+hidden tab. A field off the chat has a `FieldGesture` (`widgets/input_box.rs`). Read-only
 text — the help's content, an opened note, the diff, a history version — owns a
 `shared::cell_selection::CellSelection`: recorded from the drawn buffer right after
 the panel is drawn (its rows' symbols, a wide glyph's trailing cell blank), painted
