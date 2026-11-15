@@ -754,7 +754,6 @@ impl ChatScreen {
                 let panel = self.mouse_press_panel(col, row, unit);
                 self.mouse_press = Some(MousePress {
                     panel,
-                    unit,
                     at: (col, row),
                     pointer: (col, row),
                     dragged: false,
@@ -796,10 +795,10 @@ impl ChatScreen {
                     }
                     return Some(ChatIntent::OpenChatLink(chat));
                 }
-                if press.panel == MousePanel::Feed
-                    && press.unit == SelectUnit::Char
-                    && !self.feed_view.selection_holds(col, row)
-                {
+                // Whatever the click count: a double or a triple click that
+                // selected stands on its own highlight, and one beside the
+                // text selected nothing and ends the selection like any click.
+                if press.panel == MousePanel::Feed && !self.feed_view.selection_holds(col, row) {
                     self.feed_view.clear_selection();
                 }
             }

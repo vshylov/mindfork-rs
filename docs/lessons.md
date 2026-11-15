@@ -1735,6 +1735,14 @@ emoji vanishing from a grid, and a "broken" frame. A fourth lies upstream.
 — *emoji popup — a "hanging" selection ghost after closing*, *ratatui-core/crossterm
 update 0.1.1 to 0.1.2*.
 
+**A click's "inside" is what the user sees, not the model's span.** The feed's
+selection kept itself on a click "inside" it, and inside was asked of the two ends in
+reading order. That span holds the empty cells beside every row a selection crosses, so
+a long selection survived most clicks beside it: erratic to the user, and seemingly tied
+to scrolling, because scrolling is what makes selections long. Hit-test against what
+was painted (`painted_on`), and treat a double click on nothing as a click.
+— *the feed's own text selection*.
+
 **A `Line`'s style covers the whole row, not just its text** — so any padding you
 prepend to a styled line inherits it. Indenting markdown output by two spaces made a
 level-1 heading's `UNDERLINED` run out to the left of the text: the writer puts a

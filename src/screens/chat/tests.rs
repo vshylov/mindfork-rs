@@ -7008,6 +7008,53 @@ fn a_key_ends_a_drag_but_keeps_its_selection() {
     assert!(s.feed_view.has_selection(), "the selection stays");
 }
 
+/// A click beside the text ends the selection even between its ends: the
+/// empty cells next to a middle row of a long selection kept it, in every
+/// terminal the owner tried (2026-11-15). A fast second click there — the
+/// first one's double — selects nothing either.
+#[test]
+fn a_click_beside_a_long_selections_rows_ends_it() {
+    use ratatui::crossterm::event::MouseButton;
+    use std::time::Duration;
+    let mut s = ChatScreen::new();
+    s.activate_chat(
+        gen_id(),
+        "Чат".into(),
+        &[Message::assistant(
+            "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu",
+        )],
+        "",
+        FeedView::default(),
+        None,
+        None,
+    );
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(30, 16)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+    let (c0, r0) = screen_cell(&term, "alpha");
+    let (c1, r1) = screen_cell(&term, "mu");
+    assert!(r1 >= r0 + 2, "the premise: three rows or more");
+    drag(&mut s, (c0, r0), (c1 + 1, r1));
+    assert!(s.feed_view.has_selection());
+    term.draw(|f| s.render(f)).unwrap();
+    // The panel's last column of a middle row: nothing drawn there.
+    let beside = (28, r0 + 1);
+    let left = MouseButton::Left;
+    let t0 = Instant::now();
+    s.handle_mouse_at(mouse_at(MouseEventKind::Down(left), beside.0, beside.1), t0);
+    s.handle_mouse_at(mouse_at(MouseEventKind::Up(left), beside.0, beside.1), t0);
+    assert!(!s.feed_view.has_selection(), "a click beside a middle row");
+    let again = t0 + Duration::from_millis(150);
+    s.handle_mouse_at(
+        mouse_at(MouseEventKind::Down(left), beside.0, beside.1),
+        again,
+    );
+    s.handle_mouse_at(
+        mouse_at(MouseEventKind::Up(left), beside.0, beside.1),
+        again,
+    );
+    assert!(!s.feed_view.has_selection(), "its double selects nothing");
+}
+
 /// Switching chats drops a selection — it named the previous chat's rows.
 #[test]
 fn switching_chats_drops_the_feeds_selection() {

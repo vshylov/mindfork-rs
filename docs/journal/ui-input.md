@@ -2572,6 +2572,21 @@ is whatever makes rows anew: a `CacheKey` change, a rebuilt or removed block it 
 a chat switch. A block of a new chat that happened to match by fingerprint would
 otherwise keep it, so activation clears it explicitly.
 
+**Found in the owner's live check (2026-11-15), fixed before the merge.** Ending the
+selection with a click on empty space was erratic in every terminal tried (Windows
+Terminal over SSH and natively, conhost, VS Code), and it seemed to come with scrolling.
+The cause was the test for "a click inside keeps it". It asked whether the clicked point
+lay between the selection's ends in reading order, and that span holds the empty cells
+beside every row the selection crosses. A long selection, the kind a scroll makes, kept
+itself on most clicks beside it; a short one did not, which is what tied it to scrolling.
+A pty probe reproduced it: a four-row selection survived clicks beside row 2, after the
+start on row 1 and before the text of row 4. "Inside" is now the highlight
+(`selection_holds` asks `painted_on`), and the release ends the selection on any click
+off it, whatever the click count. The neighbouring trap went with it. A second click on
+the same empty cell within 500 ms counted as a double click and selected the row's last
+word, so a hurried "click again" produced a new selection. A double or a triple click
+beside the text (`content_cols`) is now a plain click.
+
 **Not yet:** a quote's `> `, the thoughts' gutter and a tool card's indent are drawn on
 every row of their lines, so a copy keeps them and breaks those lines at the panel's
 width. That is stage 2b, which needs the markdown writer to report the same two facts.
@@ -2592,7 +2607,7 @@ drag or a release (opencode #51056), each thing that ends it, the feed and the f
 never both selected, double and triple clicks timed in both panels, a reply dropping the
 selection with the wheel and a reference still working, the tick's autoscroll in the feed
 and in the box, a key ending a drag but keeping its selection, a chat switch. The OSC 52 case of §7 (a send told as such) is the
-chip's, decided otherwise by the owner on 2026-11-15. **4898 green, 317 `#[ignore]`** on
+chip's, decided otherwise by the owner on 2026-11-15. With the live check's fix: only the highlight holding a click, a row's text, a double click beside it selecting nothing, a click beside a long selection's middle row and its double. **4902 green, 317 `#[ignore]`** on
 Linux. No live run in the AGENTS.md §3 sense (no engine, memory or tool path). How it
 feels in Windows Terminal over SSH and natively, in conhost, VS Code's terminal and the
 web demo — and a selection with Cyrillic and emoji pasted into Notepad — is the owner's

@@ -418,7 +418,10 @@ Each is a test or a live-check line of §7.
   - *release without a drag* (a click) — follows the `chat://` address under it
     (F8: on the release, so that a drag which starts on an address selects it);
     otherwise a click in the feed outside the selection ends it, one inside
-    keeps it, and in a field the click places the cursor;
+    keeps it, and in a field the click places the cursor. *Built (the owner's
+    live check, 2026-11-15):* "inside" is the highlight, not the span between
+    the selection's ends in reading order — that span holds the empty cells
+    beside every row it crosses, where a click kept a long selection;
   - a second or third press on the same cell within 500 ms — the word, then the
     line (F5; Codex counts 400 ms).
 - **The wheel** scrolls the panel under the pointer (the feed; later a field
