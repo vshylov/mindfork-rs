@@ -1650,6 +1650,43 @@ async fn continue_appends_into_the_same_message() {
     );
 }
 
+/// A turn's rows go to the feed as they landed (`TurnLanded`,
+/// docs/research/block-fold-and-partial-copy.md §3.2): the reply's message, its
+/// id the one on disk — and after a `/continue`, that same message first, the
+/// new round folded into it, so the feed's resumed bubble keeps its key.
+#[tokio::test]
+async fn a_landed_turn_hands_the_feed_its_rows() {
+    let (dir, cmd_tx, mut evt_rx, handle, _) = interrupted_turn(vec![
+        vec![
+            ChatChunk::Text("Нача".into()),
+            ChatChunk::Finished(FinishReason::Cancelled),
+        ],
+        vec![
+            ChatChunk::Text("ло готово.".into()),
+            ChatChunk::Finished(FinishReason::Stop),
+        ],
+    ])
+    .await;
+    let landed = |e: &AppEvent| matches!(e, AppEvent::TurnLanded { .. });
+    let Some(AppEvent::TurnLanded { messages, .. }) = wait_for(&mut evt_rx, landed).await else {
+        panic!("the first turn landed");
+    };
+    let seed = messages[0].id;
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].text, "Нача");
+
+    cmd_tx.send(AppCommand::ContinueLast).unwrap();
+    let Some(AppEvent::TurnLanded { messages, .. }) = wait_for(&mut evt_rx, landed).await else {
+        panic!("the continuation landed");
+    };
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    assert_eq!(messages[0].id, seed, "the resumed message, not a new one");
+    assert_eq!(messages[0].text, "Начало готово.");
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    assert_eq!(reload_chat(dir.path()).messages[1].id, seed);
+}
+
 /// llama.cpp returns prefill + continuation (research §7.1): the echoed prefix
 /// must reach neither the screen nor the stored message. The second turn's
 /// script echoes the partial verbatim; the feed sees only the new text, and

@@ -680,6 +680,48 @@ impl ChatScreen {
         }
     }
 
+    /// The turn's rows as they landed in the chat (`AppEvent::TurnLanded`): the
+    /// bubbles that streamed the turn take the stored messages' ids and their
+    /// cards' keys, so the reply just written folds by a click like one opened
+    /// from the list (docs/research/block-fold-and-partial-copy.md §3.2).
+    ///
+    /// Paired from the end, by role, over the people's and the assistant's
+    /// bubbles — the screen's own notes between them are skipped; the first
+    /// pair whose roles differ ends it. A bubble whose cards do not match the
+    /// stored ones in number is replaced by the stored projection whole: it is
+    /// what opening the chat again would draw.
+    pub fn key_landed_turn(&mut self, chat_id: Uuid, messages: &[Message]) {
+        if self.active_chat != Some(chat_id) {
+            return;
+        }
+        let spoken = |m: &FeedMessage| matches!(m.role, FeedRole::User | FeedRole::Assistant);
+        let mut stored = FeedMessage::from_messages(messages)
+            .into_iter()
+            .filter(spoken)
+            .rev();
+        let mut changed = false;
+        for item in self.feed.iter_mut().rev().filter(|m| spoken(m)) {
+            let Some(landed) = stored.next() else {
+                break;
+            };
+            if landed.role != item.role {
+                break;
+            }
+            if item.tools.len() == landed.tools.len() {
+                for (card, kept) in item.tools.iter_mut().zip(&landed.tools) {
+                    card.fold = kept.fold;
+                }
+                item.message_ids = landed.message_ids;
+            } else {
+                *item = landed;
+            }
+            changed = true;
+        }
+        if changed {
+            self.mark_feed_changed();
+        }
+    }
+
     pub fn push_error(&mut self, message: &str) {
         let warn = self.palette.glyphs().warn;
         self.push_note(&format!("{warn} {message}"));
