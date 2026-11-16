@@ -774,6 +774,16 @@ pub enum AppEvent {
     /// `rewrite_current_message`): UI discards the already-accumulated text of the
     /// current bubble; the rewritten reply will go into it. See spec §9.3.
     AssistantRewrite { generation_id: Uuid },
+    /// A turn's rows as they landed in the chat — a `/continue`'s resumed
+    /// message first, with its new round folded in. The feed streamed them
+    /// without the stored messages' ids; the chat screen gives the bubbles
+    /// that showed the turn their ids and their cards' keys, so the reply just
+    /// written folds by a click like one opened from the list
+    /// (docs/research/block-fold-and-partial-copy.md §3.2).
+    TurnLanded {
+        chat_id: Uuid,
+        messages: Vec<crate::entities::message::Message>,
+    },
     /// Generation finished.
     Finished {
         generation_id: Uuid,

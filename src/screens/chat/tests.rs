@@ -1910,6 +1910,102 @@ fn a_click_on_a_pill_folds_that_block_and_reports_the_view() {
     );
 }
 
+/// A stored assistant message with thoughts and `calls` web searches — what a
+/// turn lands in the chat.
+fn landed_answer(calls: usize) -> Message {
+    use crate::entities::message::ToolCallRecord;
+    let mut answer = Message::assistant("готово");
+    answer.thoughts = Some("думаю".into());
+    answer.tool_calls = (0..calls)
+        .map(|i| ToolCallRecord {
+            id: format!("c{i}"),
+            name: format!("web_search_{i}"),
+            arguments: serde_json::json!({"query": "x"}),
+            result: Some("found it".into()),
+            thought_signature: None,
+            images: 0,
+            subagent: None,
+        })
+        .collect();
+    answer
+}
+
+/// A screen that streamed a turn — a question, thoughts, one tool call, the
+/// reply — and ended it, as a reply written in this session leaves the feed.
+fn streamed_turn(chat: Uuid) -> ChatScreen {
+    let mut s = ChatScreen::new();
+    s.set_server_status(ready_statuses());
+    s.activate_chat(chat, "Чат".into(), &[], "", FeedView::default(), None, None);
+    s.push_user_message("вопрос".into());
+    let turn = gen_id();
+    s.begin_generation(turn, None);
+    s.push_thoughts(turn, "думаю");
+    s.push_tool_call(
+        turn,
+        "c0".into(),
+        "web_search_0".into(),
+        "{\"query\":\"x\"}".into(),
+        "found it".into(),
+        0,
+    );
+    s.push_chunk(turn, "готово");
+    s.finish_generation(turn, FinishReason::Stop, false);
+    s
+}
+
+/// The owner's report (2026-11-16): a reply written in this session did not
+/// fold by a click — the feed streams a turn without the stored messages'
+/// ids, and nothing gave them to it before the chat was opened again. Now the
+/// landed rows (`TurnLanded`) give its bubble the ids and its cards their keys
+/// (docs/research/block-fold-and-partial-copy.md §3.2); a landing in another
+/// chat changes nothing here.
+#[test]
+fn a_reply_written_here_folds_once_it_lands() {
+    use crate::entities::chat::FoldKey;
+    let chat = gen_id();
+    let mut s = streamed_turn(chat);
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(70, 20)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+    let (c, r) = screen_cell(&term, "▸ детали");
+    assert_eq!(click(&mut s, c, r), None, "the premise: not landed, no key");
+
+    let answer = landed_answer(1);
+    s.key_landed_turn(gen_id(), std::slice::from_ref(&answer));
+    term.draw(|f| s.render(f)).unwrap();
+    assert_eq!(click(&mut s, c, r), None, "another chat's landing");
+
+    s.key_landed_turn(chat, std::slice::from_ref(&answer));
+    term.draw(|f| s.render(f)).unwrap();
+    let (c, r) = screen_cell(&term, "▸ детали");
+    let Some(ChatIntent::SetFeedView(view)) = click(&mut s, c, r) else {
+        panic!("the landed card folds by its pill");
+    };
+    let card = FoldKey::Tool {
+        message: answer.id,
+        call: 0,
+    };
+    assert_eq!(view.flipped, std::collections::BTreeSet::from([card]));
+    term.draw(|f| s.render(f)).unwrap();
+    let (c, r) = screen_cell(&term, "▸ мысли");
+    let Some(ChatIntent::SetFeedView(view)) = click(&mut s, c, r) else {
+        panic!("and so do its thoughts");
+    };
+    assert!(view.flipped.contains(&FoldKey::Thoughts(answer.id)));
+    assert!(s.feed_texts().contains(&"вопрос"), "the question is kept");
+}
+
+/// A bubble whose cards do not match the landed ones in number takes the
+/// stored bubble whole — what opening the chat again would draw.
+#[test]
+fn a_landed_bubble_that_disagrees_is_drawn_as_stored() {
+    let chat = gen_id();
+    let mut s = streamed_turn(chat);
+    s.key_landed_turn(chat, &[landed_answer(2)]);
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(70, 20)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+    screen_cell(&term, "web_search_1");
+}
+
 #[test]
 fn ctrl_t_and_ctrl_o_report_the_new_collapse_state() {
     // Both toggles are independent and both report the whole view back, so the

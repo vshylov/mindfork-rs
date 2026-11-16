@@ -3487,3 +3487,123 @@ fn a_click_on_a_help_tab_opens_it() {
     }));
     assert_eq!(h.help.open.as_ref().unwrap().tab, HelpTab::Legal);
 }
+
+/// The owner's report (2026-11-16) through the runtime's own path: a turn
+/// streamed into the open chat and landed. `TurnLanded` reaches the screen,
+/// the reply's bubble takes the stored ids, and a click on its card's pill
+/// folds that card — before the event the pill took no click
+/// (docs/research/block-fold-and-partial-copy.md §3.2).
+#[test]
+fn a_landed_turn_makes_the_reply_just_written_foldable() {
+    use crate::entities::chat::FoldKey;
+    use crate::entities::message::{Message, ToolCallRecord};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+
+    let mut screen = ChatScreen::new();
+    let mut active = ActiveScreen::Chat;
+    let mut clip = None;
+    let mut back = None;
+    let (cmd_tx, _cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut apply = |screen: &mut ChatScreen, event: AppEvent| {
+        apply_event(screen, &mut active, &mut back, &mut clip, &cmd_tx, event);
+    };
+    let (chat, turn) = (uuid::Uuid::new_v4(), uuid::Uuid::new_v4());
+    let question = Message::user("вопрос");
+    apply(
+        &mut screen,
+        AppEvent::ChatActivated {
+            id: chat,
+            title: "Чат".into(),
+            messages: vec![question],
+            draft: String::new(),
+            feed_view: FeedView::default(),
+            focus: None,
+            compaction: None,
+            child: None,
+            live_turn: None,
+        },
+    );
+    for event in [
+        AppEvent::GenerationStarted {
+            generation_id: turn,
+            model: None,
+            continuation: false,
+        },
+        AppEvent::ToolCall {
+            generation_id: turn,
+            call_id: "c0".into(),
+            name: "web_search".into(),
+            arguments: "{\"query\":\"x\"}".into(),
+            result: "found it".into(),
+            images: 0,
+        },
+        AppEvent::Chunk {
+            generation_id: turn,
+            text: "готово".into(),
+        },
+        AppEvent::Finished {
+            generation_id: turn,
+            reason: crate::shared::api::FinishReason::Stop,
+            continuable: false,
+        },
+    ] {
+        apply(&mut screen, event);
+    }
+    let mut term = Terminal::new(TestBackend::new(70, 20)).unwrap();
+    let pill = |term: &Terminal<TestBackend>| {
+        let buf = term.backend().buffer();
+        (0..buf.area.height)
+            .find_map(|y| {
+                let row: String = (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect();
+                row.find("▸ детали")
+                    .map(|at| (row[..at].chars().count() as u16, y))
+            })
+            .expect("the card's pill is drawn")
+    };
+    let click = |screen: &mut ChatScreen, (column, row): (u16, u16)| {
+        let at = |kind| MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: ratatui::crossterm::event::KeyModifiers::NONE,
+        };
+        screen.handle_mouse(at(MouseEventKind::Down(MouseButton::Left)));
+        screen.handle_mouse(at(MouseEventKind::Up(MouseButton::Left)))
+    };
+    term.draw(|f| screen.render(f)).unwrap();
+    let at = pill(&term);
+    assert_eq!(
+        click(&mut screen, at),
+        None,
+        "the premise: no key before landing"
+    );
+
+    let mut answer = Message::assistant("готово");
+    answer.tool_calls = vec![ToolCallRecord {
+        id: "c0".into(),
+        name: "web_search".into(),
+        arguments: serde_json::json!({"query": "x"}),
+        result: Some("found it".into()),
+        thought_signature: None,
+        images: 0,
+        subagent: None,
+    }];
+    let key = FoldKey::Tool {
+        message: answer.id,
+        call: 0,
+    };
+    apply(
+        &mut screen,
+        AppEvent::TurnLanded {
+            chat_id: chat,
+            messages: vec![answer],
+        },
+    );
+    term.draw(|f| screen.render(f)).unwrap();
+    let Some(ChatIntent::SetFeedView(view)) = click(&mut screen, pill(&term)) else {
+        panic!("the landed card folds by its pill");
+    };
+    assert!(view.flipped.contains(&key));
+}

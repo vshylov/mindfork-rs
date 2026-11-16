@@ -185,6 +185,7 @@ pub(super) fn apply_event(
             reason,
             continuable,
         } => screen.finish_generation(generation_id, reason, continuable),
+        AppEvent::TurnLanded { chat_id, messages } => screen.key_landed_turn(chat_id, &messages),
         AppEvent::ImpersonationStarted { generation_id } => {
             screen.begin_impersonation(generation_id)
         }

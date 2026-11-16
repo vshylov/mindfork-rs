@@ -1423,6 +1423,7 @@ impl Orchestrator {
         // (docs/history/sandbox-file-exchange.md §11 S7) — applied below, outside the `chat`
         // borrow.
         let mut landed = Landed::default();
+        let mut turn_rows: Vec<Message> = Vec::new();
         if let Some(chat) = self.chat_mut(res.chat_id) {
             // Discarded by the "rewrite" tool — into the deleted archive (manual
             // recovery by editing JSON), like Ctrl+E/Ctrl+R. See spec §9.3, §11.7.
@@ -1431,9 +1432,17 @@ impl Orchestrator {
                 chat.record_deleted(deleted, String::new(), DeletedCause::Rewrite);
             }
             land_continuation(chat, &mut res);
+            // Where the turn's rows begin in the chat: the message a
+            // `/continue` resumed, which its first round was folded into,
+            // else the first row pushed below.
+            let start = res
+                .continuation
+                .and_then(|seed| chat.messages.iter().rposition(|m| m.id == seed))
+                .unwrap_or(chat.messages.len());
             for msg in res.messages {
                 chat.push_message(msg);
             }
+            turn_rows = chat.messages[start..].to_vec();
             // Tool effects are applied by the orchestrator (the owner of Chat, §4.4.2).
             landed = apply_effects(chat, res.effects);
             self.mark_dirty(res.chat_id);
@@ -1446,6 +1455,15 @@ impl Orchestrator {
             self.insert_attachment(res.chat_id, a, None);
         }
         self.list_stored_files(res.chat_id, landed.stored);
+        // The feed streamed this turn without the stored messages' ids, so its
+        // blocks had nothing to be folded by: the rows as they landed give them
+        // their keys (docs/research/block-fold-and-partial-copy.md §3.2).
+        if !turn_rows.is_empty() {
+            let _ = self.evt_tx.send(AppEvent::TurnLanded {
+                chat_id: res.chat_id,
+                messages: turn_rows,
+            });
+        }
         // A background run that ended while this turn ran: its notification
         // goes after the turn's rows, and the assistant may be woken on it
         // (docs/research/background-subagents.md §4.4). Before the silent
