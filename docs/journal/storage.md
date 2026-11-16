@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (37)
+## Entries (38)
 
 - Post-M9: persisting the input-box draft in the chat file (done)
 - Post-M9: persisting deleted exchanges in the chat file (`Ctrl+E`/`Ctrl+R`) (done)
@@ -49,6 +49,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a big database compacted in memory for its backup (done)
 - Post-M9: a big entry compressed on many threads, its AE-2 written here (done)
 - Post-M9: a cargo install keeps its data in the user folder (done)
+- Post-M9: the fold's stored keys read entry by entry; `MouseMode` in the ledger (done)
 
 ### Post-M9: persisting the input-box draft in the chat file (done)
 - **Unsaved input-box text is stored on the chat and restored on
@@ -2096,3 +2097,25 @@ the owner's decision of 2026-11-09; the research's last stage.
 
 **Gates**: 4803 unit tests green, 310 `#[ignore]` (Linux); clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.
+
+### Post-M9: the fold's stored keys read entry by entry; `MouseMode` in the ledger (done)
+
+**What.** Found while preparing 0.27.0's `Data` rubric (AGENTS.md §6). Two enums are new
+in the files this release writes, and neither was in the stored-enum ledger
+(`schema/stored_enums_tests.rs`):
+- **`MouseMode`**, the settings' `interface.mouse`. It is read leniently, so an unknown
+  mode is `app`. It came with a field of its own, which 0.26.4 skips whole. It goes into
+  the ledger at settings schema 7, as `NewlineKey` did, which pins its wire forms.
+- **`FoldKey`**, a chat's `feed_view.flipped`. It carries a message id, which the
+  ledger's unit values cannot hold, and it was read strictly. A kind of block a later
+  version added would therefore fail 0.27.0's parse of the whole chat file, and such a
+  chat is left out of the list in silence (lessons §8). Fixed before any release wrote
+  it: `lenient_flips` reads the list one entry at a time and drops an entry it cannot
+  read with a line in the log. A `flipped` that is not a list reads as none. A new kind
+  then needs no schema step. The ledger's header names `FoldKey` among what it leaves
+  out, and why; the round-trip test pins all three wire forms.
+
+**Tests.** A view holding a known key, an unknown kind, a string, a tool key with a
+wrong field and a good one reads the two good keys. `"flipped": 5` reads as none. A chat
+file whose view holds an unknown kind reads, keeping the rest. **A control run:**
+with `deserialize_with` removed, the test fails. **4975 green.**

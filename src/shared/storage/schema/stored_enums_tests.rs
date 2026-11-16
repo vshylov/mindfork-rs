@@ -16,7 +16,11 @@
 //! What is not here, and why: `Lang` reads any code it is given, `RoleLite`
 //! (`data_stats`) has a `#[serde(other)]` arm, `CommandSlot` is not stored (a
 //! workspace keeps a field per slot), `DataLocation` lives in `defaults.json`,
-//! which has no schema, and the wire enums are the providers'.
+//! which has no schema, and the wire enums are the providers'. `FoldKey` (a
+//! chat's `feed_view.flipped`) carries a message id, which this ledger's unit
+//! values cannot: it is read entry by entry, a kind this version does not know
+//! dropped rather than the chat, and its wire forms are pinned beside it
+//! (`entities::chat`'s tests).
 //!
 //! The schemas are read off the releases: a value present in 0.9.0, the first,
 //! is `1`; one added later names the schema of its step, or — when it came
@@ -37,8 +41,8 @@ use crate::entities::self_model::GoalStatus;
 use crate::entities::subagent::{RunKind, RunOutcome};
 use crate::shared::config::{
     AutoTitleMode, CodeBlockBackground, FlashAttn, ImageGenProvider, ImpersonationMode,
-    MediaResolution, NewlineKey, NoteOrder, PythonMode, ServerMode, SpecType, SttMode, Theme,
-    ThemeMode, TtsMode, VideoProvider, WebProvider,
+    MediaResolution, MouseMode, NewlineKey, NoteOrder, PythonMode, ServerMode, SpecType, SttMode,
+    Theme, ThemeMode, TtsMode, VideoProvider, WebProvider,
 };
 use crate::shared::embed_prefix::EmbedConvention;
 use crate::shared::notify::NotifyEscape;
@@ -207,6 +211,10 @@ pub(super) fn ledgers() -> Vec<Ledger> {
         }),
         // Came with a field of its own, which an older reader skips whole.
         ledger!(NotifyEscape in Settings { 7 => [Osc777 = "osc777", Osc9 = "osc9", Off = "off"] }),
+        // Came with a field of its own (`interface.mouse`, 0.27.0), which an older
+        // reader skips whole; read leniently from its first release, so a mode
+        // added later reads as `app`.
+        ledger!(MouseMode in Settings { 7 => [App = "app", Terminal = "terminal"] }),
         // Came with the `stt` section, which an older reader skips whole.
         ledger!(SttMode in Settings {
             7 => [OpenAi = "openai", OpenRouter = "openrouter", External = "external"],

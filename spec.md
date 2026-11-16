@@ -3680,7 +3680,11 @@ this?"*; this screen answers *"where exactly, and take me there."*
   - **Storage.** The set is stored as `feed_view.flipped`, an additive field
     skipped when empty. It is pruned at activation of keys whose message a
     take-back or a regeneration removed. A transcript's exceptions are its
-    parent's, as its flags are, and a clone keeps them.
+    parent's, as its flags are, and a clone keeps them. It is read **entry by
+    entry**: an entry this version cannot read, such as a kind of block a later
+    version adds, is dropped with a line in the log, and the chat still reads. A
+    strict read would leave the whole chat out of the list in silence. So a new
+    kind needs no schema step.
   - **Rendering.** A block's own fold state rides its cache entry, not the cache
     key, so a click rebuilds the one block.
 - **Tool cards** (`⚒ name(…)`) show arguments/results meaningfully rather than as raw JSON: a presenter (`features/tools/present.rs`) produces a compact header (`name(value)`/`name(k=v, …)`) and blocks — `python_exec` draws a highlighted Python code block and a console (stdout/stderr/exit code in separate colors), `fs_read`/`fs_write` — content highlighted by the path's extension, prose tools (`web_search`/`fetch_url`/`rag_search`/`note_recall`) — markdown, short arguments — inline. Knowledge about tools lives in the tools layer; `message_feed` stays generic, reusing `markdown::highlight_code`. A card gets a **rail extension underneath it** (the colored `▌` gutter continues under the result) regardless of whether assistant text follows — so the rail doesn't cut off at the result when the call ends the turn.
