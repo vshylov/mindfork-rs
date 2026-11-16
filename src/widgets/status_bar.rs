@@ -146,6 +146,51 @@ pub struct StatusModel<'a> {
     pub copy: Option<(&'a str, bool)>,
 }
 
+impl<'a> StatusModel<'a> {
+    /// The bar **at rest**: this snapshot without the chips that come and go
+    /// by themselves — a turn's generation chip (and the `Esc` label it
+    /// moves), the token counter it updates, the background work, the speech,
+    /// a copy's outcome. What is left changes only when the user does
+    /// something (attaches a file, stages an image, opens a transcript) or a
+    /// server changes state. [`height`] is read from it, so the bar's height
+    /// does not follow the transient chips: they are fitted into the rows the
+    /// rest needs and cost hints there, the way a busy pill already did beside
+    /// a two-row block (spec §11.1, user's decision 2026-11-16). Before this,
+    /// a `copied` beside a one-row block took the bar to two rows for four
+    /// seconds and moved the input box and the feed's edge twice.
+    ///
+    /// Every field is named, so a new one does not compile until it is
+    /// classified as standing or transient.
+    pub fn at_rest(&self) -> StatusModel<'a> {
+        let StatusModel {
+            statuses,
+            generating: _,
+            counter: _,
+            background: _,
+            speaking: _,
+            attachments,
+            staged_images,
+            esc_target,
+            read_only,
+            background_run,
+            copy: _,
+        } = *self;
+        StatusModel {
+            statuses,
+            generating: false,
+            counter: None,
+            background: None,
+            speaking: false,
+            attachments,
+            staged_images,
+            esc_target,
+            read_only,
+            background_run,
+            copy: None,
+        }
+    }
+}
+
 /// The speaking-indicator glyph (WGL4, width 1 column — the hotkey grid doesn't "shift").
 const SPEAKING_GLYPH: char = '♪';
 
@@ -188,13 +233,16 @@ pub fn render(
     frame.render_widget(Paragraph::new(lines), area);
 }
 
-/// How many lines the status bar takes at width `width` within `max_rows` —
-/// the caller reserves exactly this height. One at least while a row is
-/// allowed at all (the pill's), and never more than allowed: the corner grid
-/// is capped at the rows, and the degenerate `F1` row below the pill needs a
-/// second one (spec §11.1.1 — the chat gives the bar two rows, then one, then
-/// none). Both bounds are [`lines_within`]'s own, so there is no clamp here
-/// to keep them a second time.
+/// How many rows the caller reserves for the status bar at width `width`
+/// within `max_rows`: the lines the bar **at rest** takes
+/// ([`StatusModel::at_rest`]), so a chip that comes and goes by itself never
+/// changes the height — [`render`] fits the live bar into these rows, and the
+/// chip costs hints instead. One at least while a row is allowed at all (the
+/// pill's), and never more than allowed: the corner grid is capped at the
+/// rows, and the degenerate `F1` row below the pill needs a second one (spec
+/// §11.1.1 — the chat gives the bar two rows, then one, then none). Both
+/// bounds are [`lines_within`]'s own, so there is no clamp here to keep them
+/// a second time.
 pub fn height(
     width: usize,
     model: &StatusModel,
@@ -203,7 +251,7 @@ pub fn height(
     max_rows: u16,
 ) -> u16 {
     // At most `max_rows` lines, so the narrowing cast cannot truncate.
-    lines_within(width, model, palette, loc, usize::from(max_rows)).len() as u16
+    lines_within(width, &model.at_rest(), palette, loc, usize::from(max_rows)).len() as u16
 }
 
 /// Builds the status bar's lines. On the left of the **top** row — "state"
@@ -225,7 +273,10 @@ pub fn height(
 /// (user's decision, 2026-08-30). Every hidden hint is still on the `F1` help
 /// list, which is why `F1` sheds last; in the degenerate case where not even
 /// it fits beside the pill, it alone takes a row below — the sole remnant of
-/// the old layout. See spec §11.1, §11.3.
+/// the old layout — where the rows allow one. The rows themselves are the
+/// bar at rest's ([`height`], [`StatusModel::at_rest`]): a chip that comes
+/// and goes by itself sheds hints within them and never adds one. See spec
+/// §11.1, §11.3.
 ///
 /// `max_rows` is the ceiling the window sets (spec §11.1.1): two in a window
 /// with rows to spare, one where the chat has shed its chrome, none below
@@ -858,12 +909,18 @@ mod tests {
         rows_of(w, &m)
     }
 
-    /// Renders `m` at width `w` (at its own height) and returns the buffer's rows.
+    /// Renders `m` at width `w` at the height the chat reserves for it
+    /// ([`height`] — the bar at rest's) and returns the buffer's rows.
     fn rows_of(w: u16, m: &StatusModel) -> Vec<String> {
+        let h = height(w as usize, m, &Palette::default(), ru(), HINT_ROWS_MAX);
+        rows_in(w, h, m)
+    }
+
+    /// Renders `m` into a `w`×`h` area and returns the buffer's rows.
+    fn rows_in(w: u16, h: u16, m: &StatusModel) -> Vec<String> {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
         let p = Palette::default();
-        let h = height(w as usize, m, &p, ru(), HINT_ROWS_MAX);
         let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
         term.draw(|f| render(f, f.area(), m, &p, ru())).unwrap();
         let buf = term.backend().buffer().clone();
@@ -1055,13 +1112,16 @@ mod tests {
         // a full-width row below the pill: at 120 columns the busy pill leaves
         // the corner 32. Now the wide hints shed (mouse toggle, settings) and
         // the rest stay a 2×2 block beside the pill — two rows, and no keycap
-        // ever sits under the indicators.
+        // ever sits under the indicators. Laid out within the **two rows** a
+        // rest that needs them gives the bar (a narrower window, a fuller
+        // rest); this rest needs one at 120 columns, and there the turn sheds
+        // within it (`chips_that_come_and_go_never_change_the_bars_height`).
         let statuses = ServerStatuses {
             chat: ServerStatus::Ready,
             embed: ServerStatus::Ready,
             impersonation: ServerStatus::NotConfigured,
         };
-        let r = rows_of(120, &busy(&statuses));
+        let r = rows_in(120, HINT_ROWS_MAX, &busy(&statuses));
         assert_eq!(r.len(), 2, "pill plus a two-row corner block: {r:?}");
         assert!(
             r[0].trim_start().starts_with('●') && r[0].contains("токены"),
@@ -1102,7 +1162,9 @@ mod tests {
     /// at a 120-column window used to send all six hints onto a full-width row
     /// below — a wall of keycaps starting under the server chips. The block stays
     /// beside the pill; with the mouse toggle gone (it was the widest hint,
-    /// docs/research/mouse-always-captured.md §5.7) all five hints fit there.
+    /// docs/research/mouse-always-captured.md §5.7) all five hints fit there —
+    /// within two rows, which the bar has where its rest needs them (as in
+    /// [`a_busy_pill_sheds_hints_but_keeps_the_corner_block`]).
     #[test]
     fn the_generating_pill_keeps_the_hints_in_the_corner() {
         let statuses = ServerStatuses {
@@ -1122,7 +1184,7 @@ mod tests {
             }),
             ..model(&statuses, false, 0, None, false)
         };
-        let r = rows_of(120, &m);
+        let r = rows_in(120, HINT_ROWS_MAX, &m);
         assert_eq!(r.len(), 2, "{r:?}");
         assert!(r[0].contains("токены: 27329 (рассужд. 4732)"), "{:?}", r[0]);
         assert!(
@@ -1473,5 +1535,151 @@ mod tests {
             .unwrap();
         let row = crate::shared::ui::tests::buffer_rows(term.backend().buffer()).remove(0);
         assert_eq!(row, one[0]);
+    }
+
+    /// The owner's screenshot (2026-11-16): two servers and three attached
+    /// files at 120 columns, the hints beside the pill in one row. A copy's
+    /// outcome used to take the bar to two rows for four seconds — the input
+    /// box up a row and back down, the feed a row shorter and longer. The bar
+    /// keeps its row now, and the least important hint gives way while the
+    /// chip stands.
+    #[test]
+    fn a_copy_beside_a_one_row_block_costs_a_hint_not_a_row() {
+        let statuses = ServerStatuses {
+            chat: ServerStatus::Ready,
+            embed: ServerStatus::Ready,
+            impersonation: ServerStatus::NotConfigured,
+        };
+        let p = Palette::default();
+        let rest = StatusModel {
+            counter: None,
+            attachments: Some("файлы: 3 (~648)"),
+            ..model(&statuses, false, 0, None, false)
+        };
+        let copied = StatusModel {
+            copy: Some(("скопировано", false)),
+            ..rest.at_rest()
+        };
+        let before = rows_of(120, &rest);
+        assert_eq!(before.len(), 1, "{before:?}");
+        assert!(
+            before[0].contains("новый") && before[0].trim_end().ends_with("выход"),
+            "every hint beside the pill: {before:?}"
+        );
+        // What the bar took when its height followed the chip.
+        assert_eq!(lines(120, &copied, &p, ru()).len(), 2);
+
+        let after = rows_of(120, &copied);
+        assert_eq!(after.len(), 1, "the bar keeps its one row: {after:?}");
+        let row = &after[0];
+        assert!(row.contains("§ файлы: 3 (~648)  │  скопировано"), "{row}");
+        for kept in ["F1", "справка", "Esc", "чаты", "настройки", "выход"]
+        {
+            assert!(row.contains(kept), "{kept} kept: {row}");
+        }
+        assert!(
+            !row.contains("Ctrl+N"),
+            "the first hint to shed gives way: {row}"
+        );
+        assert_eq!(
+            row.find('§'),
+            before[0].find('§'),
+            "the pill's chips stand where they stood"
+        );
+    }
+
+    /// The rule across languages, widths, the rows a window allows and the
+    /// rests a chat can be in: a chip that comes and goes by itself — a
+    /// turn's (and the `Esc` label it moves), the counter, background work,
+    /// speech, a copy's outcome, failed or not — never changes the height the
+    /// chat reserves, and the live bar is laid out within that height.
+    #[test]
+    fn chips_that_come_and_go_never_change_the_bars_height() {
+        let p = Palette::default();
+        let one = ready();
+        let three = ServerStatuses {
+            chat: ServerStatus::Ready,
+            embed: ServerStatus::Ready,
+            impersonation: ServerStatus::Connecting,
+        };
+        let quiet = |statuses| StatusModel {
+            counter: None,
+            ..model(statuses, false, 0, None, false)
+        };
+        let rests = [
+            quiet(&one),
+            StatusModel {
+                attachments: Some("файлы: 3 (~648)"),
+                staged_images: Some("картинки: 2 (~1.5k)"),
+                ..quiet(&three)
+            },
+            StatusModel {
+                read_only: true,
+                esc_target: EscTarget::SearchResults,
+                ..quiet(&one)
+            },
+            StatusModel {
+                read_only: true,
+                background_run: true,
+                esc_target: EscTarget::Tasks,
+                ..quiet(&three)
+            },
+        ];
+        let chips: [fn(&mut StatusModel); 6] = [
+            |m| m.generating = true,
+            |m| {
+                m.counter = Some(TokenCounter {
+                    generating: true,
+                    tokens: 14587,
+                    context: Some(36490),
+                    context_exact: true,
+                    reasoning: 10,
+                    ..TokenCounter::default()
+                });
+            },
+            |m| m.background = Some("рефлексия, сводка заметок"),
+            |m| m.speaking = true,
+            |m| m.copy = Some(("скопировано (OSC 52)", false)),
+            |m| {
+                m.copy = Some((
+                    "не скопировано: нет буфера, для OSC 52 велико — /export",
+                    true,
+                ))
+            },
+        ];
+        // Each chip alone, then all of them at once (the last copy wins).
+        let sets: Vec<Vec<usize>> = (0..chips.len())
+            .map(|i| vec![i])
+            .chain(std::iter::once((0..chips.len()).collect()))
+            .collect();
+        let mut moved = 0usize;
+        for &lang in crate::shared::i18n::Lang::ALL {
+            let loc = crate::shared::i18n::locale(lang);
+            for rest in &rests {
+                for set in &sets {
+                    let mut live = rest.at_rest();
+                    for &i in set {
+                        chips[i](&mut live);
+                    }
+                    for max_rows in 1..=HINT_ROWS_MAX {
+                        for w in 12..=240usize {
+                            let h = height(w, rest, &p, loc, max_rows);
+                            assert_eq!(
+                                height(w, &live, &p, loc, max_rows),
+                                h,
+                                "{lang:?} w={w} rows={max_rows} chips={set:?}"
+                            );
+                            let drawn = lines_within(w, &live, &p, loc, usize::from(h)).len();
+                            assert!(drawn <= usize::from(h), "{lang:?} w={w}: {drawn} > {h}");
+                            moved += usize::from(
+                                lines_within(w, &live, &p, loc, usize::from(max_rows)).len()
+                                    != usize::from(h),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        assert!(moved > 0, "the sweep holds states the old height moved in");
     }
 }

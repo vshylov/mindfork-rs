@@ -243,7 +243,10 @@ impl ChatScreen {
         // an empty rectangle, rendering into it is harmless).
         let banner_h: u16 = if self.rag.is_some() { 1 } else { 0 };
         // The status bar's height depends on width: hotkeys wrap when they
-        // don't fit. The status snapshot is built as a temporary via
+        // don't fit beside the pill at rest — the chips that come and go by
+        // themselves (a turn, background work, speech, a copy's outcome) shed
+        // hints within that height rather than adding a row
+        // (`StatusModel::at_rest`). The status snapshot is built as a temporary via
         // `status_model` on each call (a short-lived `&self` borrow — doesn't
         // overlap `&mut self.feed_view` below).
         let background = self.background_hint();

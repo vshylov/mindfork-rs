@@ -2082,6 +2082,39 @@ fn a_copys_outcome_leaves_the_status_bar_when_its_time_is_up() {
     assert!(s.feed.is_empty(), "never a note in the feed");
 }
 
+/// A copy's outcome moves nothing above the status bar (2026-11-16): at every
+/// width the feed and the input box stand where they stood without it. Where
+/// the hints filled the bar's one row, the chip used to take a second one —
+/// the input box up a row for four seconds — and now costs a hint instead.
+#[test]
+fn a_copys_outcome_moves_nothing_above_the_status_bar() {
+    const H: u16 = 20;
+    let mut s = ChatScreen::new();
+    s.input.insert_str("draft");
+    let copied = s.loc.t("ui.status.copy.copied").to_string();
+    let mut shed = 0usize;
+    for w in 40..=200u16 {
+        s.copy_chip = None;
+        let before = screen_rows(&mut s, w, H);
+        s.show_copy_outcome(copied.clone(), false);
+        let after = screen_rows(&mut s, w, H);
+        // The bar is at most two rows; everything above them is the feed's
+        // and the input box's, and a bar that grew would have moved it.
+        let above = usize::from(H) - 2;
+        assert_eq!(before[..above], after[..above], "w={w}");
+        let prompt = |rows: &[String]| rows.iter().position(|r| r.contains("draft"));
+        assert_eq!(prompt(&before), prompt(&after), "w={w}");
+        let bar = |rows: &[String]| rows[above..].join("\n");
+        if bar(&before).contains("Ctrl+N") && !bar(&after).contains("Ctrl+N") {
+            shed += 1;
+        }
+    }
+    assert!(
+        shed > 0,
+        "the sweep reaches widths where the chip costs a hint"
+    );
+}
+
 #[test]
 fn mouse_wheel_ignored_while_overlay_open() {
     let mut s = ChatScreen::new();
