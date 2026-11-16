@@ -86,6 +86,11 @@ split by subsystem.
   a wheel spin or a drag drew nothing until then, and a key typed meanwhile appeared
   about half a second late. Moving the mouse without a button pressed no longer redraws
   the screen at all.
+- **The chat no longer jumps a row when a copy says "copied"**, nor at the start and
+  end of a reply or when background work begins. Where the key hints just fitted on the
+  status bar's one row, any of these took the bar to a second row and moved the message
+  box and the whole conversation up and back down a few seconds later. The bar now keeps
+  its height, and the least needed hint steps aside meanwhile (`F1` lists them all).
 
 ## [0.26.4] — 2026-11-14
 

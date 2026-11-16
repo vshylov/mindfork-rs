@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (58)
+## Entries (59)
 
 - Post-M9: mouse-wheel feed scrolling (done)
 - Post-M9: own markdown renderer (tables + LaTeX + theme) (done)
@@ -70,6 +70,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: inside tmux a notification needs `allow-passthrough all` — WezTerm, Ghostty and tmux measured (done)
 - Post-M9: kitty, foot, rxvt-unicode and a Wayland session — the rest of the terminals measured (done)
 - Post-M9: one block folded by a click on its pill, kept in the chat (done)
+- Post-M9: the status bar's height is the bar at rest's — a chip that comes and goes costs a hint (done)
 
 ### Post-M9: mouse-wheel feed scrolling (done)
 - **The mouse wheel scrolls the feed** on par with `PageUp/PageDown`. `ratatui::init()`
@@ -3583,3 +3584,71 @@ for the new pill in a commit of their own.
 - `Ctrl+O` after a click folded every card, and a second `Ctrl+O` opened them all.
 
 No live run in the AGENTS.md §3 sense: no engine path is touched.
+
+### Post-M9: the status bar's height is the bar at rest's — a chip that comes and goes costs a hint (done)
+
+**What.** On `fix/status-bar-steady-height`. The owner, from a pair of screenshots: a
+copy took the chat's status bar from one row to two for a few seconds, and "for a second
+I think I pressed something wrong". At about 120 columns, two server chips and three
+attached files (34 columns), a gap of 3 and the five Russian hints (80) fit one row,
+117. The Russian `copied` chip added 16 with its separator. The corner block went 4+1,
+the bar grew a row, and the input box and the whole feed moved up a row, then back when
+`COPY_CHIP_FOR` ran out.
+
+**Why it happened.** The 2026-08-30 rule caps the corner block at two rows and sheds
+hints past that, but the bar's height was still what the live line needed, one row or
+two. `ChatChrome` caps the rows by the window's height; the rows actually taken followed
+the pill. The same jump hid in every turn at that width (the generation chip +17, the
+`Esc` label's *cancel* +2 → 136), and came with no key pressed when background work or
+speech began.
+
+**The fork, put to the owner** (2026-11-16):
+1. the height is the bar at rest's, and a transient chip sheds hints within it;
+2. always two rows with a fixed 3+2 hint grid: nothing moves, but the feed loses a row
+   for good;
+3. move only `copied` to the feed's bottom border: the turn's jump stays.
+
+**User's decision:** option 1.
+
+**The change.**
+- `StatusModel::at_rest` is the snapshot without the chips that come and go by
+  themselves: `generating` (and so the `Esc` label), `counter`, `background`,
+  `speaking`, `copy`.
+- What remains changes only by the user's hand or a server's state: the server chips,
+  attachments, staged images, read-only, the background run's `F6`.
+- It destructures every field, so a new field does not compile until it is classified.
+- `status_bar::height` reads the bar at rest. `render` already laid the live bar out
+  within its area, so the transient chip sheds through the existing `trim_to_fit`.
+
+**The cost, stated in spec §11.1.**
+- In the screenshot's state, a copy hides `Ctrl+N` for four seconds, and a turn hides
+  it for the turn.
+- Where the rest needs one row, a pill so full that not even `F1` fits beside it shows
+  no hint until it empties. The `F1`-alone row is the two-row bar's.
+
+**Tests.**
+- Two geometry tests fixed the old behaviour (a busy and a generating pill at 120
+  columns in two rows). They now render into an explicit two-row area: the geometry is
+  still real wherever a rest needs two rows.
+- Three new tests:
+  - the screenshot's state keeps one row with the copy chip on it, and `Ctrl+N` gives
+    way;
+  - a sweep over both languages, widths 12–240, one or two rows, four rests and the
+    transient chips one at a time and all together: the reserved height never moves
+    and the live bar fits within it;
+  - at the screen level, widths 40–200: a copy changes nothing above the bar's rows.
+- **A control run:** with `height` reading the live model again, all three fail.
+- The screenshot dumps' drift gate is unchanged: no picture is mid-turn.
+
+**4970 green.**
+
+**The pty run** (`mindfork demo`, read with pyte):
+- At 100 columns, `F5` put `copied (OSC 52)` on the bar: only the last row changed, and
+  `Ctrl+N` stepped aside for four seconds.
+- A scripted turn kept the input box's top border on row 26 throughout.
+- **Control** (the old rule, same binary otherwise): the copy changed 26 of the 30 rows,
+  with the bar on two and the feed shifted a row, and the turn moved the border
+  26 → 25 → 26.
+
+No live run in the AGENTS.md §3 sense: a pure UI change, no engine path is touched. How it
+looks in Windows Terminal is the owner's check.
