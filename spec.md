@@ -3030,7 +3030,25 @@ Two main screens + overlays (modals):
   because it is what the rule is for: **the bar is never taller than two rows,
   and the hints always read as one corner block** — a fuller status line costs
   hints, not rows. In the degenerate case where not even `F1` fits beside the
-  indicators, it alone takes the second row.
+  indicators, it alone takes the second row, where the bar has one.
+- **A chip that comes and goes does not change the bar's height** (user's
+  decision, 2026-11-16). The height is the one the bar **at rest** needs
+  (`StatusModel::at_rest`): its server chips and the chips that stand until
+  the user changes something — attached files, staged images, a transcript's
+  read-only mark. The chips that come and go by themselves — a turn's
+  generation chip and the `Esc` label it moves, the background work, the
+  speech, a copy's outcome (and the token counter, where the pill carries it)
+  — are fitted into those rows, shedding hints by the rule above. Before, the
+  height followed the line: where the hints just fit beside a quiet pill in one
+  row, a copy's `copied` took the bar to a second row for four seconds, and the
+  input box and the whole feed moved a row up and back down — twice per copy,
+  at both ends of every turn, and with no key pressed at all when background
+  work began. The owner read it as having pressed something wrong. The cost is a
+  hint or two hidden while such a chip stands — `Ctrl+N` first, all of them on
+  `F1`; and where the bar at rest has one row, a pill so full that not even `F1`
+  fits beside it shows no hint until it empties. The rule that took the hints'
+  second arrangement away (above) applied to the height, which was the
+  geometry still following the content.
 - **Every screen's hint row is the same block.** The chat bar's geometry — cells
   filled row-by-row, columns lined up vertically, an incomplete bottom row
   right-aligned **under the columns above**, the block hugging the right edge —
@@ -5219,7 +5237,8 @@ text). What the protocol forces:
   big" verdicts and a failure, the last two in the error colour — for a
   selection's `Ctrl+C`/`Ctrl+X` and a conversation's `F5`/`/copy` alike
   (`CopyReport::chip`, the note's verdicts in a few words; a failure's cause also
-  goes to the log). **A send over OSC 52 reads as a copy, naming the protocol**
+  goes to the log). Where the bar's row is full the chip costs a hint, never a
+  row ([11.1](#111-screens-and-navigation)). **A send over OSC 52 reads as a copy, naming the protocol**
   (the owner's decision, 2026-11-15): over SSH it is every copy, and "sent,
   unconfirmed — /export" on each `Ctrl+C` in a terminal that took the text every
   time was noise. The protocol named is the clue where a terminal drops it; the

@@ -1836,7 +1836,14 @@ that sheds its least important entries when crowded, anchored on the one entry
 that reopens the full list (`F1`). When a widget's parts compete for space,
 pick the shape once and decide which content gives way; a layout that switches
 shapes with its content switches exactly when the content is moving.
-— *the status bar's hints never leave the corner*.
+The fix left one dimension following the content: the bar's **height**, one
+row or two, still came from the live line. So a four-second `copied`, the start
+of a turn or background work beginning moved the input box and the whole feed a
+row, and back. Fixing a widget's shape covers its size as well. The size comes
+from the content's resting state (`StatusModel::at_rest`), and what comes and
+goes is degraded within it.
+— *the status bar's hints never leave the corner*; *the status bar's height is
+the bar at rest's*.
 
 **A `ListState` built inside `render` is a scroll position that is recomputed
 every frame.** ratatui moves a list's offset only far enough to bring the

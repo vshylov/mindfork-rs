@@ -551,6 +551,8 @@ src/
 │  │                        competition for the row makes chat-specific
 │  │                        (HINT_ROWS_MAX/corner_cols/trim_to_fit/keep_order),
 │  │                        within the rows the chat allows (`height`'s ceiling),
+│  │                        the height read off the bar at rest (`at_rest`: a
+│  │                        chip that comes and goes sheds hints, not a row),
 │  │                        and the pill fitted to the row (`fit_pill`)
 │  ├─ token_counter.rs      the token counter's text, notes and style — one type for
 │  │                        the feed's bottom border and the status pill (spec §11.3)
@@ -4612,7 +4614,9 @@ borders — and `render` builds everything else from it: the input box's
 layout, since the rows a draft wraps into depend on the frame's text width
 (`RenderOpts::text_width`, the one source `content_rows` measures with and the
 widget wraps with); `input_height` with its border flag (half the window
-bordered, a third bare); `status_bar::height` with the ceiling; `chat_areas`
+bordered, a third bare); `status_bar::height` with the ceiling, read off the
+bar at rest (`StatusModel::at_rest` — the snapshot less its turn, background,
+speech and copy chips, so they never move the input box); `chat_areas`
 with the chrome, for the feed's minimum rows; the feed's `FeedFrame`. The three
 widgets each own their bare form — `InputBox::render` with `RenderOpts::bare`
 (the title as a right-hand tag whose columns come off every row, no

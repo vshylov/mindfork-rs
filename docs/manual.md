@@ -1053,7 +1053,9 @@ Eleven rows and up look as they always did.
 **A key I know is missing from the bottom line.** The key hints under a screen
 take at most a third of the window; in a small window the ones that do not fit
 are left out, `F1` and `Esc` last. Every key still works, and `F1` lists them
-all.
+all. On the chat the status bar keeps its height while a reply is written,
+background work runs or a copy says how it went: where its row is full, the
+least needed hints step aside for that time instead.
 
 **The engine says "not configured".** The empty chat lists the ways to connect
 one; `Ctrl+P → Model/server` is where they are. A managed server needs both a
