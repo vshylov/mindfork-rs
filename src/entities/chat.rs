@@ -187,8 +187,14 @@ pub struct FeedView {
     /// The blocks a click on their pill set opposite to their kind's flag. A
     /// `BTreeSet`, so the file's order is stable and a save that changed nothing
     /// writes the same bytes. Additive (ADR 0006 §8): an older version reads the
-    /// flags and drops this.
-    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    /// flags and drops this. Read entry by entry ([`lenient_flips`]), so a kind
+    /// of block a later version adds costs this version that one flip, not the
+    /// chat.
+    #[serde(
+        default,
+        skip_serializing_if = "BTreeSet::is_empty",
+        deserialize_with = "lenient_flips"
+    )]
     pub flipped: BTreeSet<FoldKey>,
 }
 
@@ -208,6 +214,39 @@ pub enum FoldKey {
     /// The compaction summary drawn above the message verbatim history resumes
     /// at. A new roll moves the boundary, and its summary starts from the flag.
     Summary(Uuid),
+}
+
+/// Reads `feed_view.flipped` one entry at a time: an entry this version cannot
+/// read — a kind of block a later version added, or anything that is not a key —
+/// is dropped with a line in the log; something that is not a list reads as
+/// none. A strict read would fail the whole chat file on a new kind, and a chat
+/// that fails its parse is left out of the list in silence (docs/lessons.md §8);
+/// view state must never cost a chat. So a new [`FoldKey`] needs no schema step.
+fn lenient_flips<'de, D>(de: D) -> Result<BTreeSet<FoldKey>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = serde_json::Value::deserialize(de)?;
+    let entries = match raw {
+        serde_json::Value::Array(entries) => entries,
+        other => {
+            tracing::warn!(value = %other, "feed_view.flipped is not a list — read as none");
+            return Ok(BTreeSet::new());
+        }
+    };
+    Ok(entries
+        .into_iter()
+        .filter_map(|entry| match FoldKey::deserialize(&entry) {
+            Ok(key) => Some(key),
+            Err(_) => {
+                tracing::warn!(
+                    value = %entry,
+                    "feed_view.flipped holds a block this version does not know — dropped"
+                );
+                None
+            }
+        })
+        .collect())
 }
 
 impl FoldKey {
@@ -973,8 +1012,52 @@ mod tests {
             "{json}"
         );
         assert!(json.contains(&format!(r#"{{"summary":"{a}"}}"#)), "{json}");
+        assert!(json.contains(&format!(r#"{{"thoughts":"{b}"}}"#)), "{json}");
         let back: FeedView = serde_json::from_str(&json).unwrap();
         assert_eq!(back, one);
+    }
+
+    /// A flip this version cannot read — a kind of block a later version adds,
+    /// or a broken entry — is dropped and the rest kept; a `flipped` that is not
+    /// a list reads as none. The chat file holding them still reads: view state
+    /// never costs a chat (docs/lessons.md §8).
+    #[test]
+    fn a_flip_this_version_cannot_read_is_dropped_not_the_chat() {
+        let id = Uuid::from_u128(7);
+        let view: FeedView = serde_json::from_value(serde_json::json!({
+            "tools": true,
+            "flipped": [
+                {"thoughts": id},
+                {"quote": id},
+                "garbage",
+                {"tool": {"message": id, "call": "two"}},
+                {"tool": {"message": id, "call": 1}},
+            ],
+        }))
+        .unwrap();
+        assert!(view.tools);
+        assert_eq!(
+            view.flipped,
+            BTreeSet::from([
+                FoldKey::Thoughts(id),
+                FoldKey::Tool {
+                    message: id,
+                    call: 1
+                }
+            ])
+        );
+        let none: FeedView = serde_json::from_str(r#"{"flipped": 5}"#).unwrap();
+        assert!(none.flipped.is_empty());
+
+        let p = Profile::new("P", "sys");
+        let chat = Chat::from_profile(&p, "Чат");
+        let mut json = serde_json::to_value(&chat).unwrap();
+        json["feed_view"] = serde_json::json!({"flipped": [{"quote": id}, {"summary": id}]});
+        let back: Chat = serde_json::from_value(json).expect("the chat reads");
+        assert_eq!(
+            back.feed_view.flipped,
+            BTreeSet::from([FoldKey::Summary(id)])
+        );
     }
 
     #[test]

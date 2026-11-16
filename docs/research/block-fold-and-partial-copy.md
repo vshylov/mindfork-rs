@@ -244,6 +244,14 @@ stable and a save that changed nothing writes the same bytes.
 returns `ChatIntent::SetFeedView` the way a key does. `FeedView` stops being `Copy`,
 a mechanical change at the places that copy it.
 
+**Read entry by entry** (added 2026-11-16, before the first release that writes it). A
+strict read of `FoldKey` would fail the whole chat file on a kind of block a later
+version adds, and such a chat is left out of the list in silence (docs/lessons.md §8).
+So an entry that does not read is dropped with a line in the log, and a `flipped` that
+is not a list reads as none. A new kind then needs no schema step. The stored-enum
+ledger cannot hold `FoldKey`, which carries an id, so its wire forms are pinned by
+`entities::chat`'s tests.
+
 **Pruning.** A key whose message is gone is pruned **when the chat is activated**,
 against its messages and its transcripts' messages. That is the one place every path
 passes, and it keeps the stored set from collecting the dead keys of take-backs. A
