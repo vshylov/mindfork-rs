@@ -26,6 +26,7 @@ The assistant keeps notes about you, a model of itself that it revisits, and a k
 
 ## News
 
+- [mindfork 0.27.0 — the mouse on every screen](https://mindfork.io/blog/mindfork-0-27-0/): The app now holds the mouse: the wheel, clicks and drags work on every screen, a selection in the conversation copies what you see, Ctrl+C and Ctrl+X work in every field, a click folds one block, and /copy first N and /copy last N copy part of a conversation.
 - [mindfork 0.26.4 — what the companion learns about you goes into its notes](https://mindfork.io/blog/mindfork-0-26-4/): With the self-model tools on, facts about you mostly went into the companion's observations about itself; they now go into notes. Saving a note no longer lists unrelated ones as duplicates, and a search no longer comes back empty over one word.
 - [mindfork 0.26.3 — a picture pasted in Windows Terminal, and a token counter that holds on Gemini](https://mindfork.io/blog/mindfork-0-26-3/): Windows Terminal keeps Ctrl+V for its own text paste, so a copied picture never reached the app; Alt+V now pastes it in every terminal. A Gemini turn that thinks no longer misstates its tokens.
 - [mindfork 0.26.2 — a persona written into the settings reaches your chat](https://mindfork.io/blog/mindfork-0-26-2/): The chat the first start opens kept the default system message after a persona was written into the profile, so its replies ignored it. A conversation not yet begun now takes the profile's new text, and /system shows or changes the system message of one already under way.

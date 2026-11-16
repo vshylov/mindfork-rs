@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (95)
+## Entries (96)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -107,6 +107,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Release 0.26.2 (prepared)
 - Release 0.26.3 (prepared)
 - Release 0.26.4 (prepared)
+- Release 0.27.0 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -6812,3 +6813,61 @@ guard's, the site gate's and the AUR renderer's self-tests clean.
       v0.26.4", 21 requests all to mindfork.io, no console error.
   - Scoop and the Homebrew tap still named 0.26.3 six minutes after the publication;
     they pick a release up within four and six hours.
+
+### Release 0.27.0 (prepared)
+
+- **A release PR** per [AGENTS.md §6](../../AGENTS.md), on branch `chore/release-0.27.0`.
+  The owner asked for it after testing the mouse and block-fold tracks and finding no
+  bugs. It contains:
+  - `Cargo.toml` `0.26.4 → 0.27.0`, one line of `Cargo.lock`, and the site's
+    `app_version`;
+  - `CHANGELOG.md`: `[Unreleased]` → `[0.27.0] — 2026-11-16`, under the lead paragraph
+    "The mouse works on every screen", with a **Data** section (below), a fresh
+    `[Unreleased]` and the comparison links;
+  - CLAUDE.md's status heading;
+  - the release's post, and `/llms.txt` regenerated from it.
+
+  **The changelog reconciled.** The *Changed* item from mouse stage 1 still said "the
+  other screens leave the mouse with the terminal", which stage 3b had reversed; that
+  half is gone. The first *Added* item no longer says "in the chat".
+
+  **What it ships.** Since `v0.26.4`:
+  - **The mouse track:** 962 research; 963 the input path; 964 the *Mouse* setting;
+    965 the copy chip; 967 `app` by default and `Ctrl+W` removed; 966 and 969 the
+    feed's selection; 970 copy in every field; 971 the mouse on every screen; 972
+    read-only selection.
+  - **Block fold and partial copy:** 974 research; 975 `/copy first|last`; 976 the
+    one-block fold; 980 its fix for a reply written in the session.
+  - **Other fixes:** 977 the status bar's steady height.
+  - **Pins:** two Dependabot action bumps, 978 and 979.
+- **A MINOR.** Two tracks of features; no schema constant moved.
+- **The `Data` rubric, by measurement.**
+  - `git diff v0.26.4` over the storage paths touches `entities/chat.rs` and
+    `shared/config.rs`. Two fields are new:
+    - the settings' `interface.mouse`, whose `MouseMode` is read leniently;
+    - a chat's `feed_view.flipped`, whose `FoldKey` carries a message id.
+  - Neither enum was in the stored-enum ledger, and `FoldKey` was read strictly: a
+    kind a later version added would have cost 0.27.0 the whole chat file. Fixed first,
+    in a pull request of its own (981, the storage journal), which this release PR is
+    stacked on.
+  - **Measured** with 0.26.4 built from its tag, in a worktree with a target directory
+    of its own. Each binary was pointed at one root by a `defaults.json` of mode
+    `path`. The root was seeded by this version's `mindfork import`; its settings were
+    given `interface.mouse = "terminal"` and its chat a view with two flipped keys.
+  - **Both `mindfork stats`** printed the same counts and fingerprint,
+    `30d9cb21ec61a34b`.
+  - **0.26.4's TUI** started in a pty, opened the chat and showed the chat list, and
+    exited 0. It rewrote `settings.json` without `interface.mouse`, and left the chat
+    file byte for byte as it was.
+  - **This version** on that root started and opened the chat, exit 0. It reads the
+    absent field as `app`, and the two keys were still in the chat.
+- **No rehearsal.** Since `v0.26.4`, `release.yml` and `packaging.yml` changed only
+  by a pinned action's patch bump (979), which `packaging.yml` ran on its pull request.
+  `ci.yml` had the same bump and the Sonar scan bump (978). `web-demo.yml` and the web
+  demo page lost `Ctrl+W`/`/mouse` (967).
+  - `release_guard.py --tag v0.27.0` accepts the tag, with the `[0.27.0]` section as
+    its notes (99 lines).
+  - Its self-tests, `site_release_gate.py`'s and `site_webdemo.py`'s are clean, and
+    `site_llms_txt.py --check` matches.
+  - Zola is not installed on the droplet, so the site's build is left to `site.yml` on
+    the pull request.
