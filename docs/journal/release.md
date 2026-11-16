@@ -6871,3 +6871,54 @@ guard's, the site gate's and the AUR renderer's self-tests clean.
     `site_llms_txt.py --check` matches.
   - Zola is not installed on the droplet, so the site's build is left to `site.yml` on
     the pull request.
+- **The draft, checked before anyone else could see it** (§6 step 5).
+  - The owner merged 981, then 982, and set `v0.27.0` on the merge commit `a8215501`,
+    which was `origin/main`.
+  - **The run.** `release.yml` (run 43915709588) was green in all nine jobs in
+    **18 min 13 s** (17:11:21 → 17:29:34Z). macOS took the longest at 16 min 51 s,
+    then Windows 14 min 28 s, Linux 10 min 47 s, the demo for the browser 11 min 2 s
+    and the animation 3 min 44 s. **Both non-gate jobs succeeded.**
+  - **The draft** was not a prerelease and held sixteen assets, 0.26.4's set. All
+    fifteen files in `sha256sums.txt` match. The notes are the `[0.27.0]` section
+    with the workflow's footer below.
+  - **`install.sh` is 0.26.4's byte for byte.** The six animation files changed, as
+    they should: the status bar lost the `Ctrl+W` hint, and the tool card gained its
+    `▾ details` pill. The last frame of `mindfork-demo-dark-en.gif` was looked at.
+  - **The archives** hold 0.26.4's file names, entry for entry: Windows 48, Linux 49,
+    macOS 49.
+  - **Attestations** verify for the three archives, the installer, the `.deb` and
+    `mindfork-webdemo.tar`, and fail on a scratch file (exit 1).
+  - **The Linux binary on a copy of data.** It was unpacked into an empty directory and
+    pointed by `defaults.json` at a copy of the `Data` measurement's root.
+    - `--version` said 0.27.0, and `stats` gave the root's fingerprint
+      `30d9cb21ec61a34b`.
+    - Its TUI in a pty opened the chat, listed it and exited 0.
+    - `mindfork demo` on the same binary: a question sent, the demo engine's reply,
+      then a click on that reply's `▾ thinking`. It folded, and a click on the pill
+      where it then stood opened it. That is 980's fix, in the released build.
+  - **The demo for the browser.** Its manifest says format 2, application 0.27.0, commit
+    `a8215501`. It was served locally and opened in a headless Chromium (Playwright
+    in a scratch venv, its libraries from `apt-get download`; the droplet has no
+    browser of its own, and the app's browser pane was not available to this session).
+    - **Start** gave a machine ready 0.5 s after the click; its own `readyAt` was 0.3 s.
+    - `F1` drew "About · mindfork v0.27.0", read from the xterm buffer
+      (`window.__demo.term`).
+    - 18 requests went out, all to the page's own origin, with no console error.
+  - Not checked: the Windows and macOS binaries run (no such host here), the packages
+    installed (`packaging.yml` installed them on 982), a message sent in the web demo.
+- **Published, and what followed** (the owner, 17:35:21Z).
+  - `crates-io.yml` (run 43919958625) published the crate in 2 min 41 s. crates.io's
+    newest version is 0.27.0.
+  - `aur.yml` (run 43919958543) built, linted, installed and ran `mindfork-rs-bin`
+    0.27.0 on Arch in 34 s. It stopped before the push, since `AUR_SSH_PRIVATE_KEY` is
+    not set — as with 0.26.4.
+  - The deploy (run 43920436381, `workflow_run`) followed crates.io two seconds later.
+    Its gate found 0.27.0 published, and "Deploy to mindfork.io" succeeded.
+  - mindfork.io's blog heads with "mindfork 0.27.0 — the mouse on every screen", and the
+    post answers 200. The home page says `"softwareVersion": "0.27.0"`.
+  - mindfork.io/try/ loads `webdemo/v0.27.0/`, whose manifest names commit `a8215501`.
+    In the headless Chromium it was ready 2.1 s after **Start**, `F1` said "About ·
+    mindfork v0.27.0", and 22 requests went out, all to mindfork.io, with no console
+    error.
+  - Scoop and the Homebrew tap pick a release up within four and six hours; not looked
+    at.
