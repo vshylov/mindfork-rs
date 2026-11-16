@@ -3661,8 +3661,12 @@ this?"*; this screen answers *"where exactly, and take me there."*
     the row it was clicked on: the click ends the feed's following its tail, and
     only the clicked block is rebuilt.
   - **Exceptions.** The reply being written has no stored messages yet, so its
-    pills take no click. There is no key for one block: `Ctrl+T`/`Ctrl+O` keep
-    folding every block of their kind.
+    pills take no click until it lands. Then the turn's rows as stored
+    (`AppEvent::TurnLanded`, a `/continue`'s resumed message first) give the
+    bubbles that showed it their ids and their cards their keys. They are paired
+    from the end by role, and a bubble whose cards disagree in number is redrawn
+    as stored. There is no key for one block: `Ctrl+T`/`Ctrl+O` keep folding
+    every block of their kind.
   - **The state is the flags plus exceptions** (`FeedView::flipped`): the blocks
     a click set opposite to their kind's flag, each named by what the chat file
     holds (`FoldKey`):

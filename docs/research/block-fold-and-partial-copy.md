@@ -9,7 +9,9 @@ is built** (2026-11-15, `feat/copy-first-last`): `/copy first|last [N]` and one 
 per reply (§3.6, F2; [docs/journal/ui-input.md](../journal/ui-input.md)). **Stage 2 is
 built** (2026-11-15, `feat/block-fold`): a click on a block's pill folds it alone, kept
 in the chat (§3.1–§3.5; [docs/journal/ui-feed.md](../journal/ui-feed.md)). **The track is
-complete.**
+complete.** A fix followed the owner's live use (2026-11-16, `fix/fold-new-reply`): a reply
+written in the session did not fold, because §2.2's claim about the live bubble was wrong.
+The landed rows now give it its keys (§2.2, §3.2).
 
 The roadmap item "per-message collapse, select and copy" (docs/roadmap.md) was
 deferred until the app held the mouse. That track is complete
@@ -113,9 +115,14 @@ index in that message's `tool_calls`. That index is fixed once the message is st
 (`ChatActivated.compaction`'s `Uuid`). A new roll moves it.
 
 **The reply being written.** The live bubble is pushed as literals and has no
-`message_ids` until the turn ends and the chat is drawn from stored messages. A
-card it shows carries `call_id` for `ToolCallStarted`/`ToolCall` to match, but no
-stored message. Rounds already finished when a chat is opened mid-turn arrive as
+`message_ids`. A card it shows carries `call_id` for `ToolCallStarted`/`ToolCall` to
+match, but no stored message.
+
+*Corrected 2026-11-16.* This paragraph first said the ids came "when the turn ends and
+the chat is drawn from stored messages". Nothing redraws the chat then: the screen keeps
+the streamed bubble until the chat is activated again (`push_user_message`'s comment
+says so). The fix sends the turn's landed rows to the screen as `AppEvent::TurnLanded`
+(§3.2). Rounds already finished when a chat is opened mid-turn arrive as
 messages (`seat_rounds`) and have ids.
 
 ### 2.3 The feed's click
@@ -201,7 +208,13 @@ Where each key comes from:
   `fold: Option<FoldKey>` field). `merge_round` keeps each call's own key.
 - **The summary key** is the boundary's id. After a new roll the old key no longer
   matches, and the new summary starts from the flag. That is right: it is new text.
-- **The live bubble's blocks** have no key, so they take no click.
+- **The live bubble's blocks** have no key, so they take no click until the turn
+  lands. `handle_done` then sends the rows as they are in the chat
+  (`AppEvent::TurnLanded`, from a `/continue`'s resumed message on).
+  `ChatScreen::key_landed_turn` projects them and pairs the bubbles from the end by
+  role, skipping the screen's notes:
+  - each paired bubble takes the stored ids and its cards' keys;
+  - a bubble whose cards disagree in number is replaced by the stored projection.
 
 ### 3.3 Storage
 

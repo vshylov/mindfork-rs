@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (59)
+## Entries (60)
 
 - Post-M9: mouse-wheel feed scrolling (done)
 - Post-M9: own markdown renderer (tables + LaTeX + theme) (done)
@@ -71,6 +71,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: kitty, foot, rxvt-unicode and a Wayland session — the rest of the terminals measured (done)
 - Post-M9: one block folded by a click on its pill, kept in the chat (done)
 - Post-M9: the status bar's height is the bar at rest's — a chip that comes and goes costs a hint (done)
+- Post-M9: a reply written in this session folds too (done)
 
 ### Post-M9: mouse-wheel feed scrolling (done)
 - **The mouse wheel scrolls the feed** on par with `PageUp/PageDown`. `ratatui::init()`
@@ -3652,3 +3653,50 @@ speech began.
 
 No live run in the AGENTS.md §3 sense: a pure UI change, no engine path is touched. How it
 looks in Windows Terminal is the owner's check.
+
+### Post-M9: a reply written in this session folds too (done)
+
+**What.** A fix on `fix/fold-new-reply`, after #976. The owner reported (2026-11-16) that
+a click on a pill sometimes stopped working, and that a double click took a word instead.
+It reproduced on a fresh chat: ask, read the reply, scroll up, click its thoughts.
+
+**Why.** The fold names a block by the stored messages' ids, and the feed streams a turn
+without them. The design said the ids arrive "when the turn ends and the chat is drawn
+from stored messages", and nothing does that: the screen keeps the streamed bubble until
+the chat is activated again. So a reply written in the session drew its pills with no key
+until the chat was reopened. That is why it worked after a restart and in chats opened
+from the list. Every test built its feed from stored messages. The lesson is in
+docs/lessons.md §3.
+
+**The fix.**
+- `handle_done` notes where the turn's rows begin in the chat: a `/continue`'s resumed
+  message, which its first round folds into, or the first row pushed. After pushing, it
+  sends the rows as they are in the chat as `AppEvent::TurnLanded { chat_id, messages }`.
+- `ChatScreen::key_landed_turn` ignores another chat's landing. It projects the rows with
+  `FeedMessage::from_messages` and pairs the people's and the assistant's bubbles from the
+  end by role, skipping the screen's notes and stopping at the first mismatch.
+- Each paired bubble takes the stored ids and its cards' keys. A bubble whose cards
+  disagree in number is replaced by the stored projection, which is what an activation
+  would draw.
+- The block's fold state already hashes whether a part has a key, so the bubble is
+  rebuilt with its pills.
+
+**Tests.**
+- The screen: a streamed turn's pill takes no click, another chat's landing changes
+  nothing, the landed one folds its card and its thoughts and keeps the question; a
+  bubble that disagrees is drawn as stored.
+- The orchestrator: the first turn's rows, then a `/continue`'s, are the resumed message
+  with its id kept.
+- The runtime, end to end through `apply_event`: the events of a turn, then `TurnLanded`,
+  then a click that folds the card.
+- **A control run:** the dispatch arm made a no-op, and the end-to-end test failed.
+
+**4974 green.**
+
+**The pty run** (`mindfork demo`): send a question, let the demo engine answer, scroll to
+the reply's `▾ thinking`, click.
+- On `main` the clicks did nothing: the report, reproduced.
+- With the fix the thinking folded, and a click on the pill opened it again.
+- The pill moved down a row after folding. The reply is the chat's last, so the shorter
+  feed was clamped to the view: §3.4's known case, and the reason a second click in the
+  same cell hit the role header.

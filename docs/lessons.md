@@ -765,6 +765,17 @@ row too: the second one lands on what the first one left.
 
 ## 3. Measure; do not assume
 
+**A design's claim about when data arrives is a hypothesis until it is read in the
+code.** The one-block fold names a block by the stored messages' ids, and its design
+said the reply being written has none "until the turn ends and the chat is drawn from
+stored messages". Nothing redraws it: the feed keeps the streamed bubble, without ids,
+until the chat is opened again. Every test built its feed from stored messages and
+passed. The owner's first real use was the reply he had just read, and it would not
+fold. **When a feature keys on something, find every path that produces it (loaded,
+streamed, resumed, rebuilt) and test the one the user meets first.** That is usually
+the newest, live one, not the fixture.
+— *ui-feed — a reply written in this session folds too*.
+
 **One pixel column at two scales is a sample, not a measurement.** Asked whether the
 site's SVG stills had the same breaks in their bars as the PNGs, the first check
 read one pixel column down one bar at 100 % and 125 %, found it one colour, and
