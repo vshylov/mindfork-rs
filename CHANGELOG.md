@@ -14,9 +14,22 @@ split by subsystem.
 
 ## [Unreleased]
 
+## [0.27.0] — 2026-11-16
+
+**The mouse works on every screen.** The app now takes the mouse itself:
+- the wheel scrolls whatever is under the pointer;
+- a click selects a row or opens a tab, a double click does what `Enter` does;
+- a drag selects text. In the conversation the copy is what you see: no coloured bar,
+  no markdown, a wrapped paragraph as one line.
+
+`Ctrl+C` and `Ctrl+X` work in every text field, and `Ctrl+W` is gone. A click on a
+block's `▸`/`▾` pill folds that block alone, and the chat remembers it. `/copy first N`
+and `/copy last N` copy part of a conversation. Two new things are stored, the *Mouse*
+setting and the blocks you folded; going back to 0.26.4 needs no backup restored.
+
 ### Added
 
-- **The app holds the mouse in the chat**, and a *Mouse* setting (Settings → Interface
+- **The app holds the mouse**, and a *Mouse* setting (Settings → Interface
   → Behavior) says so: `app`, the default — the wheel scrolls the conversation, a drag
   selects, a click follows a `chat://` link — while your terminal's own selection is a
   modifier away (`Shift` in most terminals, `Option` in iTerm2, `Fn` in Terminal.app);
@@ -58,7 +71,6 @@ split by subsystem.
   several rounds of tool calls used to copy as two or three `Assistant:` blocks; it now
   copies as the one reply the conversation shows — in `F5`, `/copy` and a Markdown
   `/export` alike.
-
 - **A copy says how it went on the status bar** for a few seconds — copied, copied
   through your terminal (OSC 52) over SSH, too big, failed — instead of a line in the
   conversation, which scrolled it and could split a reply being written. A plain copy
@@ -68,8 +80,7 @@ split by subsystem.
 - **A click on a `chat://` link follows it when the button is released**, so a drag that
   starts on a link no longer opens it.
 - **With the mouse given to the app, only clicks and drags are reported** — no longer
-  every movement of the pointer — and the other screens leave the mouse with the
-  terminal, so text there can be selected as usual.
+  every movement of the pointer.
 
 ### Removed
 
@@ -91,6 +102,19 @@ split by subsystem.
   status bar's one row, any of these took the bar to a second row and moved the message
   box and the whole conversation up and back down a few seconds later. The bar now keeps
   its height, and the least needed hint steps aside meanwhile (`F1` lists them all).
+
+### Data
+
+- **No data upgrade.** The settings stay at schema 7 and the chats at 8, and nothing is
+  migrated at the first start.
+- **Two fields are new**: the settings' `interface.mouse` and a chat's
+  `feed_view.flipped`, the blocks folded by a click.
+- **Going back to 0.26.4 needs no backup restored.** This was checked with 0.26.4 built
+  from its tag, on data this version wrote. It starts and opens the chat.
+  - The *Mouse* setting is dropped from `settings.json` at 0.26.4's first save, and this
+    version then reads it as `app`.
+  - The folded blocks stay in the chat file until 0.26.4 saves that chat, which forgets
+    them.
 
 ## [0.26.4] — 2026-11-14
 
@@ -4272,7 +4296,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.26.4...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.27.0...HEAD
+[0.27.0]: https://github.com/vshylov/mindfork-rs/compare/v0.26.4...v0.27.0
 [0.26.4]: https://github.com/vshylov/mindfork-rs/compare/v0.26.3...v0.26.4
 [0.26.3]: https://github.com/vshylov/mindfork-rs/compare/v0.26.2...v0.26.3
 [0.26.2]: https://github.com/vshylov/mindfork-rs/compare/v0.26.1...v0.26.2
