@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (57)
+## Entries (58)
 
 - Post-M9: mouse-wheel feed scrolling (done)
 - Post-M9: own markdown renderer (tables + LaTeX + theme) (done)
@@ -69,6 +69,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: Windows Terminal shows OSC 777 only from Preview 1.26, opt-in — a correction (done)
 - Post-M9: inside tmux a notification needs `allow-passthrough all` — WezTerm, Ghostty and tmux measured (done)
 - Post-M9: kitty, foot, rxvt-unicode and a Wayland session — the rest of the terminals measured (done)
+- Post-M9: one block folded by a click on its pill, kept in the chat (done)
 
 ### Post-M9: mouse-wheel feed scrolling (done)
 - **The mouse wheel scrolls the feed** on par with `PageUp/PageDown`. `ratatui::init()`
@@ -3507,3 +3508,78 @@ and openbox, not GNOME's or KDE's notification services. The image
 **Gates**: 4200 unit tests green, 289 `#[ignore]`; clippy `-D warnings`, fmt,
 `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean; no screenshot
 dump holds the hint. No live run: nothing a model reads changed.
+
+### Post-M9: one block folded by a click on its pill, kept in the chat (done)
+
+**What.** Stage 2 of
+[docs/research/block-fold-and-partial-copy.md](../research/block-fold-and-partial-copy.md),
+on `feat/block-fold`. `Ctrl+T` and `Ctrl+O` folded every block of their kind and nothing
+folded one. Now a click on a block's marker and pill folds that block alone (F5): the
+thoughts, a tool card or the compaction summary. The owner decided there is no key for it
+(D3) and that the state is kept in the chat file (D4). An expanded card had no pill to
+click, so it now ends its header on `▾ details` (F5b).
+
+**State: flags plus exceptions.** `FeedView` keeps its two flags and gains `flipped`,
+the blocks a click set opposite to their kind's flag. A block is expanded when the flag
+is on or the block is flipped, not both. A whole-feed toggle forgets its kind's flips, so
+"fold all" still means all and the set is empty after every toggle. `FoldKey` names a
+block by what the file holds:
+- the thoughts by the bubble's first message;
+- a card by its message and its index in `tool_calls`. The wire id would not do: the
+  Gemini client synthesizes `name-index`, which repeats between rounds;
+- the summary by its boundary message.
+
+The set is stored additively (skipped when empty, no schema step) and travels the route
+the flags already took: `SetFeedView`, `ChatActivated`. Dead keys are pruned at activation
+against the chat's messages, its transcripts' and the rounds the running turn has filed.
+A transcript's flips are its parent's, and a clone keeps them, since its messages keep
+their ids.
+
+**Rendering.** The render-cache key keeps the two flags only. A block's own fold state
+(`fold_state`, hashed) rides its cache entry, so a click rebuilds that block, not the
+feed. A test pins this: the other block's rows stay the same allocation. The pills are
+found the way references are:
+- `push_thoughts`, `push_tool` and `push_compaction_boundary` mark their pill's spans on
+  the `Body`; `push_trailing` now says where its group landed.
+- The block's wrap turns the marks into columns. They are measured before the
+  references are styled, which splits spans but never changes a width. A line a very
+  narrow panel wrapped gives each of its rows whole.
+- `render` maps the visible pills to cells, and `fold_at` answers a click against the
+  last frame.
+
+**The click.**
+- It acts on the release, with no drag. A drag from a pill selects.
+- A press on a pill takes no word, so a double click is two toggles.
+- The click ends a selection.
+- It ends the feed's following its tail, so the pill stays on the row it was clicked
+  on. Where the content becomes shorter than the view, the clamp moves it.
+- The reply being written has no message ids and takes no click.
+
+**Tests.**
+- **The state:** flips against flags, a toggle forgetting its kind's, the prune, the
+  serde shape and its stable order.
+- **The feed**, with each pill found by reading the drawn buffer back (lessons §5):
+  - every kind of pill, collapsed and expanded, in the full and monochrome glyphs;
+  - the header beside a pill, the rail and the rule are not targets;
+  - only the clicked block is rebuilt;
+  - the pill stays on its row;
+  - a pill moved to its own row by a narrow panel is still the target;
+  - an empty card has no pill, and the reply being written takes no click.
+- **The screen:** a click reports the view with the flip; a double click is two toggles
+  and selects nothing; a drag selects and folds nothing; `Ctrl+O` after a click.
+- **The orchestrator:** stored without touching `modified_at`; pruned at activation, the
+  event carrying the pruned view and the chat saved; a clone keeps the set.
+- **A control run:** pills shifted three columns made three tests fail.
+
+**4967 green.** The demo's captures expand tool calls, so the chat pictures were redrawn
+for the new pill in a commit of their own.
+
+**The pty run** (`mindfork demo`, SGR clicks, the screen read with pyte):
+- a click on the card's `▾ details` folded it; the collapsed pill no longer fit beside
+  the header's argument summary and took the next row;
+- a second click opened it again;
+- the thinking pill folded and unfolded on its row;
+- a click on the tool's name did nothing;
+- `Ctrl+O` after a click folded every card, and a second `Ctrl+O` opened them all.
+
+No live run in the AGENTS.md §3 sense: no engine path is touched.

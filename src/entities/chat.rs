@@ -1,6 +1,7 @@
 //! A chat: the message list, a profile binding, the active system message.
 //! See spec §5.1.
 
+use std::collections::BTreeSet;
 use std::ops::Range;
 
 use chrono::{DateTime, Utc};
@@ -161,14 +162,21 @@ pub struct Compaction {
 /// Which of the feed's foldable blocks are expanded — the view state of one chat
 /// (see [`Chat::feed_view`], spec §11.3).
 ///
-/// Both default to `false` = **collapsed**: the feed is scanned for the reply,
-/// and reasoning/tool plumbing is detail you ask for. A named type rather than
-/// two loose bools because it travels through a command, an event and the feed's
-/// render-cache key, where a bare `(bool, bool)` is exactly the pair that gets
-/// swapped by accident.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// Two flags, one per kind, both `false` = **collapsed** by default: the feed is
+/// scanned for the reply, and reasoning/tool plumbing is detail you ask for. And
+/// the blocks a click set the other way ([`Self::flipped`],
+/// docs/research/block-fold-and-partial-copy.md §3.1): a block is expanded when
+/// its kind's flag is on **or** it is flipped, not both. A whole-feed toggle
+/// (`Ctrl+T`, `Ctrl+O`) brings every block of its kind to the new state, so it
+/// forgets that kind's flips — the set stays short, empty after every toggle.
+///
+/// A named type rather than loose fields because it travels through a command,
+/// an event and the feed's render-cache key, where a bare `(bool, bool)` is
+/// exactly the pair that gets swapped by accident.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct FeedView {
-    /// Show the "thoughts" (CoT) block expanded (`Ctrl+T`).
+    /// Show the "thoughts" (CoT) blocks expanded (`Ctrl+T`). The compaction
+    /// summary folds with them.
     #[serde(default)]
     pub thoughts: bool,
     /// Show tool-call arguments and results (`Ctrl+O`). The card's header
@@ -176,13 +184,92 @@ pub struct FeedView {
     /// the fact that a tool ran.
     #[serde(default)]
     pub tools: bool,
+    /// The blocks a click on their pill set opposite to their kind's flag. A
+    /// `BTreeSet`, so the file's order is stable and a save that changed nothing
+    /// writes the same bytes. Additive (ADR 0006 §8): an older version reads the
+    /// flags and drops this.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub flipped: BTreeSet<FoldKey>,
+}
+
+/// One foldable block of the feed, named by what the chat file holds
+/// (docs/research/block-fold-and-partial-copy.md §3.2) — never by a feed
+/// position, which a regeneration or a new message moves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FoldKey {
+    /// The thoughts of the bubble whose **first** message this is: a bubble
+    /// joins its rounds' thoughts into one block.
+    Thoughts(Uuid),
+    /// The `call`-th entry of this message's `tool_calls`. Not the call's wire
+    /// id: the Gemini client synthesizes `name-index`, which repeats between
+    /// rounds.
+    Tool { message: Uuid, call: usize },
+    /// The compaction summary drawn above the message verbatim history resumes
+    /// at. A new roll moves the boundary, and its summary starts from the flag.
+    Summary(Uuid),
+}
+
+impl FoldKey {
+    /// The message the key names — what pruning checks is still there.
+    pub fn message(&self) -> Uuid {
+        match *self {
+            Self::Thoughts(id) | Self::Summary(id) => id,
+            Self::Tool { message, .. } => message,
+        }
+    }
+
+    /// Whether `Ctrl+T` folds this block (the thoughts and the summary) rather
+    /// than `Ctrl+O` (a tool card).
+    fn folds_with_thoughts(&self) -> bool {
+        !matches!(self, Self::Tool { .. })
+    }
 }
 
 impl FeedView {
-    /// Everything collapsed — the default. Lets `serde` skip the field entirely
-    /// for a chat the user never expanded anything in.
+    /// Everything collapsed, nothing flipped — the default. Lets `serde` skip
+    /// the field entirely for a chat the user never expanded anything in.
     pub fn is_default(&self) -> bool {
         *self == Self::default()
+    }
+
+    /// Whether the block `key` names is drawn expanded: its kind's flag, unless
+    /// a click flipped it.
+    pub fn expanded(&self, key: &FoldKey) -> bool {
+        let flag = if key.folds_with_thoughts() {
+            self.thoughts
+        } else {
+            self.tools
+        };
+        flag != self.flipped.contains(key)
+    }
+
+    /// A click on the block's pill: it changes state, alone.
+    pub fn toggle_block(&mut self, key: FoldKey) {
+        if !self.flipped.remove(&key) {
+            self.flipped.insert(key);
+        }
+    }
+
+    /// `Ctrl+T`: every thoughts block and the summary to the other state — the
+    /// flag flips and their clicks are forgotten.
+    pub fn toggle_thoughts(&mut self) {
+        self.thoughts = !self.thoughts;
+        self.flipped.retain(|k| !k.folds_with_thoughts());
+    }
+
+    /// `Ctrl+O`: every tool card to the other state, its clicks forgotten.
+    pub fn toggle_tools(&mut self) {
+        self.tools = !self.tools;
+        self.flipped.retain(FoldKey::folds_with_thoughts);
+    }
+
+    /// Drops the flips whose message `live` no longer holds — a take-back or a
+    /// regeneration removed it. `true` when one was dropped.
+    pub fn prune(&mut self, live: impl Fn(Uuid) -> bool) -> bool {
+        let before = self.flipped.len();
+        self.flipped.retain(|k| live(k.message()));
+        self.flipped.len() != before
     }
 }
 
@@ -781,11 +868,113 @@ mod tests {
         expanded.feed_view = FeedView {
             thoughts: true,
             tools: false,
+            ..FeedView::default()
         };
         json = serde_json::to_value(&expanded).unwrap();
         assert!(json.get("feed_view").is_some());
         let back: Chat = serde_json::from_value(json).unwrap();
         assert_eq!(back.feed_view, expanded.feed_view);
+    }
+
+    /// A click flips one block against its kind's flag; a whole-feed toggle
+    /// brings every block of its kind to the new state and forgets that kind's
+    /// flips only — the summary folds with the thoughts
+    /// (docs/research/block-fold-and-partial-copy.md §3.1).
+    #[test]
+    fn a_flip_is_an_exception_a_whole_feed_toggle_forgets() {
+        let (m, n) = (Uuid::new_v4(), Uuid::new_v4());
+        let thoughts = FoldKey::Thoughts(m);
+        let card = FoldKey::Tool {
+            message: m,
+            call: 1,
+        };
+        let other = FoldKey::Tool {
+            message: n,
+            call: 0,
+        };
+        let summary = FoldKey::Summary(n);
+        let mut view = FeedView::default();
+        assert!(!view.expanded(&thoughts) && !view.expanded(&card));
+
+        view.toggle_block(card);
+        assert!(view.expanded(&card), "the clicked card opens");
+        assert!(!view.expanded(&other), "and no other");
+        view.toggle_block(thoughts);
+        view.toggle_block(summary);
+        assert!(view.expanded(&thoughts) && view.expanded(&summary));
+
+        // `Ctrl+O`: every card open, its flips gone; the thoughts' stay.
+        view.toggle_tools();
+        assert!(view.tools && view.expanded(&card) && view.expanded(&other));
+        assert_eq!(view.flipped, BTreeSet::from([thoughts, summary]));
+        // A click under an open flag folds that card alone.
+        view.toggle_block(card);
+        assert!(!view.expanded(&card) && view.expanded(&other));
+        view.toggle_block(card);
+        assert!(view.expanded(&card), "a second click undoes the first");
+        assert_eq!(view.flipped.len(), 2, "and leaves no key behind");
+
+        // `Ctrl+T`: every thoughts block and the summary to the new state.
+        view.toggle_thoughts();
+        assert!(view.thoughts && view.expanded(&thoughts) && view.expanded(&summary));
+        assert!(view.flipped.is_empty());
+    }
+
+    /// The prune drops the flips whose message is gone and says whether it did.
+    #[test]
+    fn a_prune_drops_the_flips_of_messages_that_are_gone() {
+        let (kept, gone) = (Uuid::new_v4(), Uuid::new_v4());
+        let mut view = FeedView::default();
+        view.toggle_block(FoldKey::Thoughts(kept));
+        view.toggle_block(FoldKey::Tool {
+            message: gone,
+            call: 0,
+        });
+        view.toggle_block(FoldKey::Summary(gone));
+        assert!(!view.prune(|_| true), "nothing gone, nothing dropped");
+        assert!(view.prune(|id| id == kept));
+        assert_eq!(view.flipped, BTreeSet::from([FoldKey::Thoughts(kept)]));
+    }
+
+    /// The flips are stored with the flags (ADR 0006 §8, additive): a file
+    /// written before them reads with none, an empty set writes no key, the
+    /// order is the set's whatever the clicks' was, and each kind round-trips.
+    #[test]
+    fn the_flips_round_trip_in_a_stable_order() {
+        let (a, b) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let old: FeedView = serde_json::from_str(r#"{"thoughts":true}"#).unwrap();
+        assert!(old.thoughts && old.flipped.is_empty());
+        let plain = serde_json::to_value(FeedView {
+            tools: true,
+            ..FeedView::default()
+        })
+        .unwrap();
+        assert!(plain.get("flipped").is_none(), "{plain}");
+
+        let keys = [
+            FoldKey::Summary(a),
+            FoldKey::Tool {
+                message: b,
+                call: 2,
+            },
+            FoldKey::Thoughts(b),
+        ];
+        let (mut one, mut other) = (FeedView::default(), FeedView::default());
+        for k in keys {
+            one.toggle_block(k);
+        }
+        for k in keys.iter().rev() {
+            other.toggle_block(*k);
+        }
+        let json = serde_json::to_string(&one).unwrap();
+        assert_eq!(json, serde_json::to_string(&other).unwrap(), "one order");
+        assert!(
+            json.contains(&format!(r#"{{"tool":{{"message":"{b}","call":2}}}}"#)),
+            "{json}"
+        );
+        assert!(json.contains(&format!(r#"{{"summary":"{a}"}}"#)), "{json}");
+        let back: FeedView = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, one);
     }
 
     #[test]

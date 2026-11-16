@@ -3628,8 +3628,39 @@ this?"*; this screen answers *"where exactly, and take me there."*
   touching `modified_at`** (folding a block away isn't a change to the
   conversation), and hands it back in `AppEvent::ChatActivated`. So one chat can
   be read with everything expanded while another stays compact, and the choice
-  survives a restart. Per-*message* collapse (a key on the selected block) —
-  deferred; both flags are part of the feed's render-cache key.
+  survives a restart. Both flags are part of the feed's render-cache key.
+  **One block alone, by the mouse**
+  ([docs/research/block-fold-and-partial-copy.md](docs/research/block-fold-and-partial-copy.md)):
+  - **The target** is a block's marker and pill as drawn: the thoughts'
+    `▸ thoughts · N lines · Ctrl+T` or `▾ thoughts`, a card's `▸ details · Ctrl+O`
+    or, expanded, the `▾ details` pill its header ends on (with no keycap, as the
+    expanded thoughts have none; a card with nothing to fold has neither), the
+    compaction divider's marker and label (not the rule filling its row).
+  - **What it does.** A click — on the release, with no drag — folds or unfolds
+    that block and no other. Every click toggles once, so a double click on a pill
+    is two toggles and takes no word; a drag from a pill selects; the rest of a
+    header is ordinary feed text. The click ends a selection. The pill stays on
+    the row it was clicked on: the click ends the feed's following its tail, and
+    only the clicked block is rebuilt.
+  - **Exceptions.** The reply being written has no stored messages yet, so its
+    pills take no click. There is no key for one block: `Ctrl+T`/`Ctrl+O` keep
+    folding every block of their kind.
+  - **The state is the flags plus exceptions** (`FeedView::flipped`): the blocks
+    a click set opposite to their kind's flag, each named by what the chat file
+    holds (`FoldKey`):
+    - the thoughts by their bubble's first message;
+    - a card by its message and its index in that message's `tool_calls` (not the
+      call's wire id: the Gemini client synthesizes `name-index`, which repeats
+      between rounds);
+    - the summary by its boundary message.
+  - **A whole-feed toggle forgets its kind's exceptions**, so after `Ctrl+T` or
+    `Ctrl+O` every block of the kind is in the new state, and the set stays short.
+  - **Storage.** The set is stored as `feed_view.flipped`, an additive field
+    skipped when empty. It is pruned at activation of keys whose message a
+    take-back or a regeneration removed. A transcript's exceptions are its
+    parent's, as its flags are, and a clone keeps them.
+  - **Rendering.** A block's own fold state rides its cache entry, not the cache
+    key, so a click rebuilds the one block.
 - **Tool cards** (`⚒ name(…)`) show arguments/results meaningfully rather than as raw JSON: a presenter (`features/tools/present.rs`) produces a compact header (`name(value)`/`name(k=v, …)`) and blocks — `python_exec` draws a highlighted Python code block and a console (stdout/stderr/exit code in separate colors), `fs_read`/`fs_write` — content highlighted by the path's extension, prose tools (`web_search`/`fetch_url`/`rag_search`/`note_recall`) — markdown, short arguments — inline. Knowledge about tools lives in the tools layer; `message_feed` stays generic, reusing `markdown::highlight_code`. A card gets a **rail extension underneath it** (the colored `▌` gutter continues under the result) regardless of whether assistant text follows — so the rail doesn't cut off at the result when the call ends the turn.
 - A per-message Markdown toggle.
 - **Role headers** (`✦ ASSISTANT` / `❯ YOU`) show the profile's **custom names** when set
@@ -4807,7 +4838,7 @@ docs/history/external-api-key.md.
 | `Ctrl+L` | follow a `chat://` reference the assistant wrote: a picker of the conversations this chat links to, `Enter` opens (§11.3) |
 | `PageUp`/`PageDown` / mouse wheel | scroll the feed |
 | `e` (on a message) | edit the message |
-| `Space`/`Tab` (on a block) | collapse/expand a **single** block — deferred; today `Ctrl+T`/`Ctrl+O` act on the whole feed |
+| click on a block's `▸`/`▾` pill | collapse/expand that **single** block — the thoughts, a tool call, the compaction summary; by the mouse only, no key (docs/research/block-fold-and-partial-copy.md) |
 | `F1` | the help/"about" dialog (tabbed, see below) |
 
 **The help/"about" dialog (`F1`)** — a modal popup in the KDE/Qt style:

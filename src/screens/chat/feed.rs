@@ -308,6 +308,7 @@ impl ChatScreen {
                 images: 0,
                 call_id: Some(call_id),
                 running: true,
+                fold: None,
             });
             self.mark_feed_changed();
             self.feed_view.scroll_to_bottom_if_following();
@@ -348,6 +349,7 @@ impl ChatScreen {
                     images,
                     call_id: Some(call_id),
                     running: false,
+                    fold: None,
                 });
             }
             // Separate the next round's text/thoughts with a separator (matching a reload).

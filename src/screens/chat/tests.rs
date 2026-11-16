@@ -1821,6 +1821,95 @@ fn mouse_wheel_up_scrolls_feed_and_disables_follow() {
     );
 }
 
+/// A click on a tool card's pill folds that card alone and reports the view,
+/// the flip in it, for the orchestrator to store
+/// (docs/research/block-fold-and-partial-copy.md §3.4); a double click is two
+/// toggles and selects nothing; a drag from the pill selects and folds
+/// nothing; `Ctrl+O` after it brings every card to one state.
+#[test]
+fn a_click_on_a_pill_folds_that_block_and_reports_the_view() {
+    use crate::entities::chat::FoldKey;
+    use crate::entities::message::ToolCallRecord;
+    use ratatui::crossterm::event::MouseButton;
+    use std::time::Duration;
+    let mut answer = Message::assistant("готово");
+    answer.tool_calls = vec![ToolCallRecord {
+        id: "c1".into(),
+        name: "web_search".into(),
+        arguments: serde_json::json!({"query": "x"}),
+        result: Some("found it".into()),
+        thought_signature: None,
+        images: 0,
+        subagent: None,
+    }];
+    let key = FoldKey::Tool {
+        message: answer.id,
+        call: 0,
+    };
+    let mut s = ChatScreen::new();
+    s.set_server_status(ready_statuses());
+    s.activate_chat(
+        gen_id(),
+        "Чат".into(),
+        &[Message::user("вопрос"), answer],
+        "",
+        FeedView::default(),
+        None,
+        None,
+    );
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(70, 20)).unwrap();
+    term.draw(|f| s.render(f)).unwrap();
+    let (c, r) = screen_cell(&term, "▸ детали");
+    let left = MouseButton::Left;
+    let t0 = Instant::now();
+    let ms = Duration::from_millis;
+    let click_at = |s: &mut ChatScreen, at: Instant| {
+        s.handle_mouse_at(mouse_at(MouseEventKind::Down(left), c, r), at);
+        s.handle_mouse_at(mouse_at(MouseEventKind::Up(left), c, r), at)
+    };
+    let Some(ChatIntent::SetFeedView(view)) = click_at(&mut s, t0) else {
+        panic!("a click on the pill reports the view");
+    };
+    assert_eq!(view.flipped, std::collections::BTreeSet::from([key]));
+    term.draw(|f| s.render(f)).unwrap();
+    assert!(screen_cell(&term, "found it").1 > r, "the card opened");
+    // The second click of a double click folds it back, and takes no word.
+    // The expanded header drops its argument summary, so the pill moves left
+    // on its row — the clicked cell is still on it.
+    let (c2, r2) = screen_cell(&term, "▾ детали");
+    assert_eq!(r2, r, "the pill stayed on the row it was clicked on");
+    assert!(
+        (c2..c2 + 8).contains(&c),
+        "the clicked cell is on the open pill"
+    );
+    let Some(ChatIntent::SetFeedView(view)) = click_at(&mut s, t0 + ms(150)) else {
+        panic!("the second click toggles too");
+    };
+    assert!(view.flipped.is_empty());
+    assert!(
+        !s.feed_view.has_selection(),
+        "a double click on a pill selects nothing"
+    );
+    // A drag from the pill selects; its release is no click.
+    term.draw(|f| s.render(f)).unwrap();
+    drag(&mut s, (c, r), (c + 4, r));
+    assert!(s.feed_view.has_selection());
+    assert!(
+        s.feed_view.view().flipped.is_empty(),
+        "the drag folded nothing"
+    );
+    // `Ctrl+O` after a click: every card to one state, the flip forgotten.
+    term.draw(|f| s.render(f)).unwrap();
+    click_at(&mut s, t0 + ms(5000));
+    assert_eq!(
+        s.handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL)),
+        Some(ChatIntent::SetFeedView(FeedView {
+            tools: true,
+            ..FeedView::default()
+        }))
+    );
+}
+
 #[test]
 fn ctrl_t_and_ctrl_o_report_the_new_collapse_state() {
     // Both toggles are independent and both report the whole view back, so the
@@ -1830,14 +1919,16 @@ fn ctrl_t_and_ctrl_o_report_the_new_collapse_state() {
         s.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL)),
         Some(ChatIntent::SetFeedView(FeedView {
             thoughts: true,
-            tools: false
+            tools: false,
+            ..FeedView::default()
         }))
     );
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL)),
         Some(ChatIntent::SetFeedView(FeedView {
             thoughts: true,
-            tools: true
+            tools: true,
+            ..FeedView::default()
         }))
     );
     // ...and back, one at a time.
@@ -1845,7 +1936,8 @@ fn ctrl_t_and_ctrl_o_report_the_new_collapse_state() {
         s.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL)),
         Some(ChatIntent::SetFeedView(FeedView {
             thoughts: false,
-            tools: true
+            tools: true,
+            ..FeedView::default()
         }))
     );
     // Layout-independent: Ctrl+щ is the physical O.
@@ -1863,8 +1955,17 @@ fn activating_a_chat_applies_its_stored_collapse_state() {
     let expanded = FeedView {
         thoughts: true,
         tools: true,
+        ..FeedView::default()
     };
-    s.activate_chat(gen_id(), "Чат".into(), &[], "", expanded, None, None);
+    s.activate_chat(
+        gen_id(),
+        "Чат".into(),
+        &[],
+        "",
+        expanded.clone(),
+        None,
+        None,
+    );
     assert_eq!(s.feed_view.view(), expanded);
     // ...and switching to a chat that never expanded anything collapses again.
     s.activate_chat(

@@ -44,7 +44,7 @@
 <text xml:space="preserve" y="681.04"><tspan x="10" fill="#bec1c6">│</tspan></text>
 <text xml:space="preserve" y="702.16"><tspan x="10" fill="#bec1c6">│</tspan><tspan x="38.8" textLength="393.6">Note saved. The cache rule to remember: M</tspan><tspan x="437.2" text-anchor="middle">ₖ</tspan><tspan x="446.8" text-anchor="middle">ᵥ</tspan><tspan x="466" text-anchor="middle">∝</tspan><tspan x="480.4" textLength="633.6">L — double the window, double the cache.                          </tspan></text>
 <text xml:space="preserve" y="723.28"><tspan x="10" fill="#bec1c6">│</tspan></text>
-<text xml:space="preserve" y="744.4"><tspan x="10" fill="#bec1c6">│</tspan><tspan x="43.6" text-anchor="middle" fill="#8e5700">⚒</tspan><tspan x="67.6" textLength="86.4" class="b" fill="#8e5700">note_save</tspan></text>
+<text xml:space="preserve" y="744.4"><tspan x="10" fill="#bec1c6">│</tspan><tspan x="43.6" text-anchor="middle" fill="#8e5700">⚒</tspan><tspan x="67.6" textLength="86.4" class="b" fill="#8e5700">note_save</tspan><tspan x="173.2" textLength="19.2" fill="#5f646c">▾ </tspan><tspan x="192.4" textLength="67.2" class="i" fill="#5f646c">details</tspan></text>
 <text xml:space="preserve" y="765.52"><tspan x="10" fill="#bec1c6">│</tspan><tspan x="38.8" textLength="825.6" fill="#5f646c">│ content: The user's GPU has 12 GB; Gemma 4 12B at Q5_K_M with a 16k context fits it.</tspan></text>
 <text xml:space="preserve" y="786.64"><tspan x="10" fill="#bec1c6">│</tspan><tspan x="38.8" fill="#5f646c">│</tspan></text>
 <text xml:space="preserve" y="807.76"><tspan x="10" fill="#bec1c6">│</tspan><tspan x="38.8" textLength="528" fill="#5f646c">└ Note saved (id=6d665f64-656d-6f5f-6e6f-746500000001).</tspan></text>

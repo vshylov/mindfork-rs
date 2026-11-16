@@ -189,7 +189,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-11-15, version 0.26.4)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **4957 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **4967 unit tests
 green, 324 `#[ignore]`** (live smokes + real-clipboard round trips + the
 screenshot-dump and demo-reel regenerators).
 
@@ -202,11 +202,12 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
-- **One block folded, part of a chat copied** (2026-11-15, stage 1 of 2): `/copy
-  first|last [N]` counts the chat card's bubbles, an excerpt has no title, a copy
-  labels each reply once; next, a click on a block's pill folds it alone, kept in the
-  chat ([docs/research/block-fold-and-partial-copy.md](docs/research/block-fold-and-partial-copy.md),
-  [docs/journal/ui-input.md](docs/journal/ui-input.md)).
+- **One block folded, part of a chat copied — track complete** (2026-11-15, two
+  stages): a click on a block's pill folds it alone, kept in the chat as exceptions
+  `Ctrl+T`/`Ctrl+O` forget; `/copy first|last [N]` counts the chat card's bubbles, a
+  copy labels each reply once
+  ([docs/research/block-fold-and-partial-copy.md](docs/research/block-fold-and-partial-copy.md),
+  [docs/journal/ui-feed.md](docs/journal/ui-feed.md)).
 - **The app's own mouse — track complete** (2026-11-15, stages 1–3c): capture always
   on (the *Mouse* setting, `app` by default; the legacy mode keeps the terminal's),
   `Ctrl+W` gone; the feed's own selection, copied as drawn without its chrome;

@@ -6,8 +6,10 @@ as recommended, and F5 the other way, so the target is the marker and the pill, 
 the whole header. That choice left an expanded tool card with nothing to click, which
 one more fork (F5b) settled as recommended: the card gets a `▾ details` pill. **Stage 1
 is built** (2026-11-15, `feat/copy-first-last`): `/copy first|last [N]` and one label
-per reply (§3.6, F2; [docs/journal/ui-input.md](../journal/ui-input.md)). Stage 2, the
-fold, is next.
+per reply (§3.6, F2; [docs/journal/ui-input.md](../journal/ui-input.md)). **Stage 2 is
+built** (2026-11-15, `feat/block-fold`): a click on a block's pill folds it alone, kept
+in the chat (§3.1–§3.5; [docs/journal/ui-feed.md](../journal/ui-feed.md)). **The track is
+complete.**
 
 The roadmap item "per-message collapse, select and copy" (docs/roadmap.md) was
 deferred until the app held the mouse. That track is complete

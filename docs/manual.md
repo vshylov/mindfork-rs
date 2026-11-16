@@ -866,7 +866,7 @@ things on different screens. The highlights:
 | `F6` | on an open background subagent transcript: stop that run |
 | `Ctrl+F` | find in this conversation; in the chat list — switch search between titles and message content |
 | `Ctrl+G` | in the input box: spellcheck suggestions; in the chat list's content search: the matching messages themselves |
-| `Ctrl+T` / `Ctrl+O` | collapse/expand "thoughts" / tool calls; `Ctrl+O` in the chat list — fold/unfold the selected chat's subagent transcripts |
+| `Ctrl+T` / `Ctrl+O` | collapse/expand "thoughts" / tool calls — all of them; `Ctrl+O` in the chat list — fold/unfold the selected chat's subagent transcripts |
 | `Shift+←/→/↑/↓`, `Ctrl+A` | select text / select all |
 | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | copy / cut / paste |
 | `Alt+V` | paste the clipboard's image (`/image paste`) — where the terminal keeps `Ctrl+V`, as Windows Terminal does |
@@ -887,6 +887,12 @@ things on different screens. The highlights:
 > selection stands at a time; a click elsewhere in the conversation, the cursor's move
 > or typing ends it, `Esc` and a copy do not. While the assistant answers the
 > conversation selects nothing.
+>
+> **One block at a time.** A click on a block's `▸` or `▾` pill — the thinking, a tool
+> call's `details`, the summary of earlier messages — folds or unfolds that block
+> alone, and the chat remembers it. `Ctrl+T` and `Ctrl+O` still fold or unfold every
+> block of their kind, and forget the clicks. A reply that is still being written takes
+> no click until it is done.
 >
 > **On every other screen** — the chat list, settings, the self-model, the search
 > results, the tasks, the notes, the changes, the help — the wheel scrolls the list or

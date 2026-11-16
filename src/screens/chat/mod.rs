@@ -91,6 +91,9 @@ pub(crate) static HELP_SECTION: HelpSection = HelpSection {
         ("Ctrl+F", "ui.help.find_in_chat"),
         ("Ctrl+T", "ui.help.thoughts"),
         ("Ctrl+O", "ui.help.tool_calls"),
+        // One block alone, by the mouse only — no key for it
+        // (docs/research/block-fold-and-partial-copy.md D3).
+        ("ui.help.k.pill_click", "ui.help.fold_one"),
         ("Ctrl+B", "ui.help.emoji"),
         ("Ctrl+L", "ui.help.chat_links"),
         ("ui.help.k.mouse", "ui.help.mouse_action"),
