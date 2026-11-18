@@ -129,6 +129,7 @@ pub(super) fn apply_event(
         }
         AppEvent::UserMessage(text) => screen.push_user_message(text),
         AppEvent::RestoreInput(text) => screen.restore_input(text),
+        AppEvent::Branches(view) => screen.set_branches(*view),
         AppEvent::GenerationStarted {
             generation_id,
             model,
@@ -824,6 +825,8 @@ pub(super) fn dispatch(
         ChatIntent::RegenerateLast => AppCommand::RegenerateLast,
         ChatIntent::ContinueLast => AppCommand::ContinueLast,
         ChatIntent::DeleteLastExchange => AppCommand::DeleteLastExchange,
+        ChatIntent::ForkAt(message) => AppCommand::ForkAt { message },
+        ChatIntent::SwitchBranch(first) => AppCommand::SwitchBranch { first },
         ChatIntent::Cancel => AppCommand::Cancel,
         ChatIntent::Impersonate { seed } => AppCommand::Impersonate { seed },
         ChatIntent::CancelImpersonation => AppCommand::CancelImpersonation,

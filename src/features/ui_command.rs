@@ -72,6 +72,14 @@ pub enum UiCommand {
     Continue,
     /// Delete the last exchange (`Ctrl+E`).
     Takeback,
+    /// Continue the conversation from message N, keeping what followed as a
+    /// branch (docs/research/chat-branches.md §3.6). Bare — a list of the
+    /// conversation's messages to pick one from. No chord: a number has to be
+    /// typed anyway.
+    Fork,
+    /// The chat's branches: bare — the list of them; `N K` — message N
+    /// switched to its variant K (research §3.6).
+    Branch,
     /// Write a message as the user; the argument seeds it (`Ctrl+U`).
     Impersonate,
     /// The open chat's greeting swapped for the profile's next one, or its
@@ -106,6 +114,50 @@ pub enum UiCommand {
     Subagents,
     /// The emoji picker (`Ctrl+B`).
     Emoji,
+}
+
+impl UiCommand {
+    /// Whether the command's first argument is a **message's number** — the
+    /// `#N` a message shows at the end of its header's row (spec §11.3). A
+    /// click on a number writes it into such a command and into no other
+    /// (docs/research/chat-branches.md §3.7, F4), so a command that takes one
+    /// says so here, beside its row, and joins by that.
+    pub fn takes_message_number(self) -> bool {
+        matches!(self, UiCommand::Fork | UiCommand::Branch)
+    }
+}
+
+/// The input `text` with the message number `n` as its command's first
+/// argument: written where there is none, replacing the one that is there,
+/// what follows it kept. `None` when the text is not a command that takes a
+/// message's number ([`UiCommand::takes_message_number`]) — then a click on a
+/// number is not this function's business.
+pub fn with_message_number(text: &str, n: u32) -> Option<String> {
+    let trimmed = text.trim();
+    let (head, rest) = trimmed
+        .split_once(char::is_whitespace)
+        .map_or((trimmed, ""), |(h, r)| (h, r.trim_start()));
+    let spec = COMMANDS
+        .iter()
+        .find(|s| s.aliases.iter().any(|a| head.eq_ignore_ascii_case(a)))?;
+    if !spec.command.takes_message_number() {
+        return None;
+    }
+    let (first, tail) = rest
+        .split_once(char::is_whitespace)
+        .map_or((rest, ""), |(f, t)| (f, t.trim_start()));
+    // The first argument is the number's place when it is one already, or
+    // when nothing is there; anything else typed is kept after the number.
+    let kept = if first.is_empty() || first.parse::<u32>().is_ok() {
+        tail
+    } else {
+        rest
+    };
+    Some(if kept.is_empty() {
+        format!("{head} {n}")
+    } else {
+        format!("{head} {n} {kept}")
+    })
 }
 
 /// How many arguments a command takes. The whole remainder of the line is one
@@ -210,6 +262,8 @@ pub const COMMANDS: &[Spec] = &[
     row(&["/regen", "/retry"], UiCommand::Regen, Arity::None, "/regen · /retry", "ui.help.cmd_regen"),
     row(&["/continue"], UiCommand::Continue, Arity::None, "/continue", "ui.help.cmd_continue"),
     row(&["/takeback"], UiCommand::Takeback, Arity::None, "/takeback", "ui.help.cmd_takeback"),
+    row(&["/fork"], UiCommand::Fork, Arity::Optional, "ui.help.k.fork", "ui.help.cmd_fork"),
+    row(&["/branch"], UiCommand::Branch, Arity::Optional, "ui.help.k.branch", "ui.help.cmd_branch"),
     row(&["/impersonate"], UiCommand::Impersonate, Arity::Optional, "ui.help.k.impersonate", "ui.help.cmd_impersonate"),
     row(&["/greeting"], UiCommand::Greeting, Arity::Optional, "ui.help.k.greeting", "ui.help.cmd_greeting"),
     row(&["/system"], UiCommand::System, Arity::Optional, "ui.help.k.system", "ui.help.cmd_system"),
@@ -296,6 +350,43 @@ mod tests {
 
     fn ru() -> &'static Locale {
         locale(Lang::Ru)
+    }
+
+    /// A click on a message's number writes it as the first argument of a
+    /// command that takes one — where there is none, in place of the one
+    /// there, what else was typed kept — and of no other command, and of no
+    /// text that is not a command (docs/research/chat-branches.md §3.7).
+    #[test]
+    fn a_message_number_goes_into_the_commands_that_take_one() {
+        for (typed, expected) in [
+            ("/fork", Some("/fork 7")),
+            ("/fork ", Some("/fork 7")),
+            ("  /FORK  ", Some("/FORK 7")),
+            ("/fork 3", Some("/fork 7")),
+            ("/branch", Some("/branch 7")),
+            ("/branch 3 2", Some("/branch 7 2")),
+            // Not a number in the number's place: kept, after it.
+            ("/branch two", Some("/branch 7 two")),
+            ("/copy last", None),
+            ("/regen", None),
+            ("/forked", None),
+            ("fork", None),
+            ("a question about #7", None),
+            ("", None),
+        ] {
+            assert_eq!(
+                with_message_number(typed, 7).as_deref(),
+                expected,
+                "{typed:?}"
+            );
+        }
+        // The commands that take one are the registry's to name.
+        let taking: Vec<&str> = COMMANDS
+            .iter()
+            .filter(|s| s.command.takes_message_number())
+            .map(|s| s.aliases[0])
+            .collect();
+        assert_eq!(taking, ["/fork", "/branch"]);
     }
 
     /// Every spelling of every command, with the padding and letter case a real

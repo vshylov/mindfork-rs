@@ -709,6 +709,7 @@ fn orch_ready_for_self_consolidation() -> (tempfile::TempDir, Orchestrator, Uuid
 mod attachments;
 mod background;
 mod background_dialogue;
+mod branches;
 mod bridge;
 mod bridge_live;
 mod cached_tokens_live;

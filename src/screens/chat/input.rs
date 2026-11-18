@@ -95,6 +95,9 @@ impl ChatScreen {
         if self.chat_links.is_some() {
             return Some(self.handle_chat_link_key(key));
         }
+        if self.branch_popup.is_some() {
+            return Some(self.handle_branch_popup_key(key));
+        }
         if self.profile_overlay.is_some() {
             return Some(self.handle_profile_overlay_key(key));
         }
@@ -407,6 +410,8 @@ impl ChatScreen {
             "/regen",
             "/retry",
             "/takeback",
+            "/fork",
+            "/branch",
             "/impersonate",
             "/clone",
         ];
@@ -807,6 +812,18 @@ impl ChatScreen {
                     self.feed_view.clear_selection();
                     return Some(ChatIntent::SetFeedView(self.feed_view.view()));
                 }
+                // The tag a message's row ends with (docs/research/chat-branches.md
+                // §3.7): an arrow of its variants mark switches the variant, its
+                // number goes into a command that takes one. A number with no
+                // such command in the box is not a control, and the click is the
+                // feed's own.
+                if press.panel == MousePanel::Feed
+                    && let Some(tap) = self.feed_view.tap_at(col, row)
+                    && let Some(answer) = self.tapped(tap)
+                {
+                    self.feed_view.clear_selection();
+                    return answer;
+                }
                 if let Some(chat) = self.feed_view.chat_link_at(col, row) {
                     // Clicking the conversation you are already in is not a
                     // switch — the picker's rule, and the same wording.
@@ -876,6 +893,14 @@ impl ChatScreen {
             let picked = picker.on_mouse(mouse) && double;
             return Some(picked.then(|| self.handle_chat_link_key(enter)).flatten());
         }
+        if let Some(popup) = self.branch_popup.as_mut() {
+            let picked = popup.picker.on_mouse(mouse) && double;
+            return Some(
+                picked
+                    .then(|| self.handle_branch_popup_key(enter))
+                    .flatten(),
+            );
+        }
         if let Some(overlay) = self.profile_overlay.as_mut() {
             let picked = overlay.on_mouse(mouse) && double;
             return Some(
@@ -906,7 +931,9 @@ impl ChatScreen {
             // A pill is a control: a second press on it is the second click of
             // two toggles, not a word to take (§3.4). A drag from it still
             // selects.
-            let unit = if self.feed_view.fold_at(col, row).is_some() {
+            let unit = if self.feed_view.fold_at(col, row).is_some()
+                || self.feed_view.tap_at(col, row).is_some()
+            {
                 SelectUnit::Char
             } else {
                 unit

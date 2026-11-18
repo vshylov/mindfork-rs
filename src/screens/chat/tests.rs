@@ -7505,3 +7505,380 @@ fn the_feed_search_bar_takes_a_drag_and_the_wheel_scrolls_the_feed() {
     s.handle_mouse_at(mouse_at(MouseEventKind::ScrollUp, 5, 3), t0);
     assert!(!s.feed_view.is_following(), "the wheel scrolled the feed");
 }
+
+/// `/fork` and `/branch` (docs/research/chat-branches.md §3.6): the number is
+/// resolved on the screen, to the message the numbered bubble carries.
+mod branch_commands {
+    use super::*;
+    use crate::entities::chat_branch::{BranchInfo, BranchView, LineMark};
+    use crate::entities::message::MessageRole;
+
+    /// `q1 a1 q2 a2`, opened from the list: the four messages have their ids.
+    fn talk() -> (Cmd, Vec<Uuid>) {
+        let mut c = Cmd::new();
+        let messages = [
+            Message::user("q1"),
+            Message::assistant("a1"),
+            Message::user("q2"),
+            Message::assistant("a2"),
+        ];
+        let ids = messages.iter().map(|m| m.id).collect();
+        c.s.activate_chat(
+            c.chat,
+            "Про космос".into(),
+            &messages,
+            "",
+            FeedView::default(),
+            None,
+            None,
+        );
+        (c, ids)
+    }
+
+    fn parked(first: Uuid, number: u32, variant: u16, of: u16) -> BranchInfo {
+        BranchInfo {
+            first,
+            number,
+            variant,
+            of,
+            bubbles: 2,
+            role: MessageRole::User,
+            preview: format!("variant {variant} of #{number}"),
+            at: chrono::Utc::now(),
+            depth: 0,
+            at_end: false,
+            detached: false,
+        }
+    }
+
+    /// `/fork N` sends the id of the message the bubble `#N` shows — whatever
+    /// it is; where the cut falls is the orchestrator's.
+    #[test]
+    fn fork_names_the_message_its_number_shows() {
+        let (mut c, ids) = talk();
+        assert_eq!(c.run("/fork 2"), Some(ChatIntent::ForkAt(ids[1])));
+        assert_eq!(c.run("/fork 3"), Some(ChatIntent::ForkAt(ids[2])));
+        assert_eq!(c.s.input.text(), "", "the command leaves the box");
+    }
+
+    /// A number the feed does not show is answered with the numbers there are;
+    /// so is a word. A bubble with no stored message yet — the echo of a
+    /// message being answered — says that, and names its number.
+    #[test]
+    fn fork_answers_a_number_it_cannot_take() {
+        let (mut c, _ids) = talk();
+        let loc = c.s.loc;
+        for typed in ["0", "5", "two", "-1"] {
+            assert_eq!(c.run(&format!("/fork {typed}")), None, "{typed}");
+            assert_eq!(
+                c.last_note(),
+                loc.tf("ui.branch.bad_number", &[("arg", typed), ("last", "4")]),
+                "{typed}"
+            );
+        }
+        c.s.push_user_message("q3".into());
+        assert_eq!(c.run("/fork 5"), None);
+        assert_eq!(
+            c.last_note(),
+            loc.tf("ui.branch.not_stored", &[("number", "5")])
+        );
+
+        // No chat at all, and a turn running.
+        let mut bare = Cmd::bare();
+        assert_eq!(bare.run("/fork 1"), None);
+        assert_eq!(bare.last_note(), loc.t("ui.cmd.no_chat"));
+        let (mut c, _) = talk();
+        c.s.begin_generation(gen_id(), None);
+        assert_eq!(c.run("/fork 2"), None);
+        assert_eq!(
+            c.last_note(),
+            loc.tf("ui.cmd.generating", &[("cmd", "/fork")])
+        );
+    }
+
+    /// Bare `/fork` lists the conversation's messages by number, opened on
+    /// the last; `Enter` forks at the selected one, `Esc` closes.
+    #[test]
+    fn bare_fork_lists_the_messages_to_pick_from() {
+        let (mut c, ids) = talk();
+        assert_eq!(c.run("/fork"), None);
+        let popup = c.s.branch_popup.as_ref().expect("the list is open");
+        assert_eq!(popup.picker.selected(), 3, "on the last message");
+        let rows = screen_rows(&mut c.s, 70, 20);
+        for (n, text) in [(1, "q1"), (2, "a1"), (3, "q2"), (4, "a2")] {
+            assert!(
+                rows.iter()
+                    .any(|r| r.contains(&format!("#{n} ")) && r.contains(text)),
+                "#{n}: {rows:?}"
+            );
+        }
+
+        c.key(KeyCode::Up);
+        assert_eq!(c.key(KeyCode::Enter), Some(ChatIntent::ForkAt(ids[2])));
+        assert!(c.s.branch_popup.is_none(), "a pick closes the list");
+
+        c.run("/fork");
+        assert_eq!(c.key(KeyCode::Esc), None);
+        assert!(c.s.branch_popup.is_none());
+    }
+
+    /// `/branch N K` switches message N to the parked variant K; the line's
+    /// own variant, a figure the place does not have, a message with no
+    /// variants and a malformed line are each answered.
+    #[test]
+    fn branch_switches_a_message_to_a_variant_by_its_figures() {
+        let (mut c, ids) = talk();
+        let loc = c.s.loc;
+        let (second, third) = (Uuid::from_u128(22), Uuid::from_u128(23));
+        // Message #3 on the line is variant 1 of 3; two more are parked.
+        c.s.set_branches(BranchView {
+            marks: vec![LineMark {
+                message: ids[2],
+                variant: 1,
+                of: 3,
+            }],
+            parked: vec![parked(second, 3, 2, 3), parked(third, 3, 3, 3)],
+        });
+
+        assert_eq!(c.run("/branch 3 2"), Some(ChatIntent::SwitchBranch(second)));
+        assert_eq!(c.run("/branch 3 3"), Some(ChatIntent::SwitchBranch(third)));
+
+        assert_eq!(c.run("/branch 3 1"), None);
+        assert_eq!(
+            c.last_note(),
+            loc.tf("ui.branch.already", &[("number", "3"), ("variant", "1")])
+        );
+        assert_eq!(c.run("/branch 3 4"), None);
+        assert_eq!(
+            c.last_note(),
+            loc.tf(
+                "ui.branch.bad_variant",
+                &[("number", "3"), ("of", "3"), ("arg", "4")]
+            )
+        );
+        assert_eq!(c.run("/branch 2 1"), None);
+        assert_eq!(
+            c.last_note(),
+            loc.tf("ui.branch.no_variants", &[("number", "2")])
+        );
+        for line in ["/branch 3", "/branch three 2", "/branch 3 2 1"] {
+            assert_eq!(c.run(line), None, "{line}");
+            assert_eq!(c.last_note(), loc.t("ui.branch.usage"), "{line}");
+        }
+    }
+
+    /// Bare `/branch` lists the parked tails with their figures and switches
+    /// to the one picked; with none it says how a branch is made.
+    #[test]
+    fn bare_branch_lists_the_parked_tails() {
+        let (mut c, _ids) = talk();
+        let loc = c.s.loc;
+        assert_eq!(c.run("/branch"), None);
+        assert!(c.s.branch_popup.is_none(), "nothing to list");
+        assert_eq!(c.last_note(), loc.t("ui.branch.none"));
+
+        let (outer, inner) = (Uuid::from_u128(31), Uuid::from_u128(32));
+        let mut nested = parked(inner, 5, 1, 2);
+        nested.depth = 1;
+        c.s.set_branches(BranchView {
+            marks: Vec::new(),
+            parked: vec![parked(outer, 3, 2, 2), nested],
+        });
+        assert_eq!(c.run("/branch"), None);
+        let rows = screen_rows(&mut c.s, 80, 20);
+        let outer_row = rows
+            .iter()
+            .find(|r| r.contains("#3 ‹2/2›"))
+            .unwrap_or_else(|| panic!("{rows:?}"));
+        let inner_row = rows
+            .iter()
+            .find(|r| r.contains("#5 ‹1/2›"))
+            .unwrap_or_else(|| panic!("{rows:?}"));
+        assert!(outer_row.contains("variant 2 of #3"), "{outer_row:?}");
+        // The tail that continues from inside the first stands under it,
+        // indented. Columns, not bytes: the feed under the popup differs from
+        // row to row.
+        let column =
+            |row: &str, tag: &str| crate::shared::wrap::str_width(&row[..row.find(tag).unwrap()]);
+        assert!(
+            column(inner_row, "#5") > column(outer_row, "#3"),
+            "{rows:?}"
+        );
+
+        c.key(KeyCode::Down);
+        assert_eq!(c.key(KeyCode::Enter), Some(ChatIntent::SwitchBranch(inner)));
+        assert!(c.s.branch_popup.is_none());
+    }
+
+    /// A tail parked at the line's end has no bubble to carry a mark, so the
+    /// screen says it in a note that names the way back — once per
+    /// activation, with the figures the tail has.
+    #[test]
+    fn a_fork_at_the_lines_end_is_said_in_a_note() {
+        let (mut c, _ids) = talk();
+        let loc = c.s.loc;
+        let mut tail = parked(Uuid::from_u128(41), 5, 1, 1);
+        tail.at_end = true;
+        tail.bubbles = 6;
+        c.s.set_branches(BranchView {
+            marks: Vec::new(),
+            parked: vec![tail.clone()],
+        });
+        assert_eq!(
+            c.last_note(),
+            loc.tf(
+                "ui.branch.note_one",
+                &[("count", "6"), ("number", "5"), ("variant", "1")]
+            )
+        );
+
+        let mut other = parked(Uuid::from_u128(42), 5, 2, 2);
+        other.at_end = true;
+        c.s.set_branches(BranchView {
+            marks: Vec::new(),
+            parked: vec![tail, other],
+        });
+        assert_eq!(
+            c.last_note(),
+            loc.tf("ui.branch.note_many", &[("count", "2")])
+        );
+    }
+
+    /// A transcript is read-only: both commands are refused there with the
+    /// note that names the parent, like `/takeback`.
+    #[test]
+    fn a_transcript_takes_neither_command() {
+        let mut c = Cmd::new();
+        c.s.set_child_view(Some(crate::entities::subagent::ChildView {
+            parent: c.chat,
+            parent_title: "Про космос".into(),
+            system_message: "Ты — критик.".into(),
+        }));
+        c.s.activate_chat(
+            Uuid::from_u128(77),
+            "Критик".into(),
+            &[Message::user("Оцени X."), Message::assistant("X слаб.")],
+            "",
+            FeedView::default(),
+            None,
+            None,
+        );
+        for line in ["/fork 1", "/branch"] {
+            let before = c.s.feed.len();
+            assert_eq!(c.run(line), None, "{line}");
+            assert_eq!(c.s.feed.len(), before + 1, "{line}: refused with a note");
+            assert!(c.s.branch_popup.is_none(), "{line}");
+        }
+    }
+
+    /// The screen drawn, and the cell a piece of the message `#number`'s tag
+    /// is drawn on.
+    fn tag_cell(c: &mut Cmd, number: u32, piece: &str) -> (u16, u16) {
+        let rows = screen_rows(&mut c.s, 70, 24);
+        let tag = format!("#{number} ");
+        let (y, row) = rows
+            .iter()
+            .enumerate()
+            .find(|(_, r)| r.contains(&tag))
+            .unwrap_or_else(|| panic!("#{number} is not drawn: {rows:?}"));
+        let at = row
+            .find(piece)
+            .unwrap_or_else(|| panic!("{piece:?} in {row:?}"));
+        (crate::shared::wrap::str_width(&row[..at]) as u16, y as u16)
+    }
+
+    /// A click on an arrow of a message's variants mark switches it to the
+    /// neighbouring variant; at the first variant `‹` has nowhere to go; while
+    /// a reply is being written the click is answered like the command.
+    #[test]
+    fn a_click_on_a_marks_arrow_switches_the_variant() {
+        let (mut c, ids) = talk();
+        let loc = c.s.loc;
+        let (second, third) = (Uuid::from_u128(22), Uuid::from_u128(23));
+        c.s.set_branches(BranchView {
+            marks: vec![LineMark {
+                message: ids[2],
+                variant: 1,
+                of: 3,
+            }],
+            parked: vec![parked(second, 3, 2, 3), parked(third, 3, 3, 3)],
+        });
+
+        let (x, y) = tag_cell(&mut c, 3, "›");
+        assert_eq!(
+            click(&mut c.s, x, y),
+            Some(ChatIntent::SwitchBranch(second))
+        );
+        let (x, y) = tag_cell(&mut c, 3, "‹");
+        let notes = c.s.feed.len();
+        assert_eq!(click(&mut c.s, x, y), None, "nothing before the first");
+        assert_eq!(c.s.feed.len(), notes, "and nothing said");
+
+        c.s.begin_generation(gen_id(), None);
+        let (x, y) = tag_cell(&mut c, 3, "›");
+        assert_eq!(click(&mut c.s, x, y), None);
+        assert_eq!(
+            c.last_note(),
+            loc.tf("ui.cmd.generating", &[("cmd", "/branch")])
+        );
+    }
+
+    /// A click on a message's number writes it into the command in the input
+    /// box when that command takes one — and only then: with a message being
+    /// typed, another command or nothing in the box, the number is not a
+    /// control and the box is left alone. Nothing runs until `Enter`.
+    #[test]
+    fn a_click_on_a_number_writes_it_into_a_command_that_takes_one() {
+        let (mut c, ids) = talk();
+        for (typed, expected) in [
+            ("/fork", "/fork 2"),
+            ("/fork 4", "/fork 2"),
+            ("/branch", "/branch 2"),
+            ("/branch 3 1", "/branch 2 1"),
+            // Not a command that takes a message's number: left as typed.
+            ("/copy last", "/copy last"),
+            ("see message", "see message"),
+            ("", ""),
+        ] {
+            c.s.input.set_text(typed);
+            let (x, y) = tag_cell(&mut c, 2, "#2");
+            assert_eq!(click(&mut c.s, x, y), None, "{typed:?}: nothing runs");
+            assert_eq!(c.s.input.text(), expected, "{typed:?}");
+        }
+
+        // `Enter` then runs the command the click completed.
+        c.s.input.set_text("");
+        type_str(&mut c.s, "/fork");
+        let (x, y) = tag_cell(&mut c, 2, "#2");
+        click(&mut c.s, x, y);
+        assert_eq!(c.key(KeyCode::Enter), Some(ChatIntent::ForkAt(ids[1])));
+    }
+
+    /// The list answers the mouse like every list over the chat: a click
+    /// selects a row and a double click is its `Enter`.
+    #[test]
+    fn a_double_click_in_the_list_picks_its_row() {
+        use ratatui::crossterm::event::MouseButton;
+        let (mut c, ids) = talk();
+        c.run("/fork");
+        screen_rows(&mut c.s, 70, 24);
+        let (x, y) =
+            c.s.branch_popup
+                .as_ref()
+                .and_then(|p| p.picker.cell_of(1))
+                .expect("the second row is drawn");
+        let t0 = std::time::Instant::now();
+        let down = mouse_at(MouseEventKind::Down(MouseButton::Left), x + 2, y);
+        assert_eq!(c.s.handle_mouse_at(down, t0), None);
+        assert_eq!(
+            c.s.branch_popup.as_ref().map(|p| p.picker.selected()),
+            Some(1),
+            "a click selects"
+        );
+        assert_eq!(
+            c.s.handle_mouse_at(down, t0 + std::time::Duration::from_millis(120)),
+            Some(ChatIntent::ForkAt(ids[1]))
+        );
+        assert!(c.s.branch_popup.is_none());
+    }
+}

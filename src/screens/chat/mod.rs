@@ -22,6 +22,7 @@ use uuid::Uuid;
 
 use crate::entities::attachment::AttachmentInfo;
 use crate::entities::chat::{ChatSummary, FeedView};
+use crate::entities::chat_branch::{BranchInfo, BranchView};
 use crate::entities::message::Message;
 use crate::entities::message_image::ImageInfo;
 use crate::entities::profile::{CharacterNames, Profile, ProfileSummary};
@@ -45,8 +46,11 @@ use crate::widgets::help_dialog::{HelpContext, HelpSection};
 use crate::widgets::impersonation_preview;
 use crate::widgets::input_box::{FieldGesture, InputBox};
 use crate::widgets::local_server_picker::{LocalServerAction, LocalServerPickerState};
-use crate::widgets::message_feed::{FeedMessage, FeedRole, MessageFeed};
+use crate::widgets::message_feed::{
+    FeedMessage, FeedRole, MessageFeed, Tap, last_number, number_of, numbered_item,
+};
 use crate::widgets::profile_list::{ProfileListAction, ProfileListState};
+use crate::widgets::row_picker::{PickerRow, RowPickerAction, RowPickerState};
 use crate::widgets::status_bar::{self, EscTarget};
 
 /// The chat's "Shortcuts" section (`F1`): one row per key this screen's
@@ -121,6 +125,22 @@ pub type SettingsSnapshot = (
 );
 
 /// A user intent that `app` executes (translates into an `AppCommand`).
+/// The list `/fork` and `/branch` open when typed bare: the picker and what
+/// each of its rows stands for.
+struct BranchPopup {
+    picker: RowPickerState,
+    picks: Vec<BranchPick>,
+}
+
+/// What `Enter` on a row of [`BranchPopup`] does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BranchPick {
+    /// Fork at the message that shows this number.
+    Fork(u32),
+    /// Switch to the parked variant that starts with this message.
+    Switch(Uuid),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChatIntent {
     Quit,
@@ -131,6 +151,12 @@ pub enum ChatIntent {
     ContinueLast,
     /// Delete the last exchange; the user's text returns to the input box (`Ctrl+E`).
     DeleteLastExchange,
+    /// Fork the conversation at the bubble that shows this message
+    /// (`/fork N`, docs/research/chat-branches.md §3.6).
+    ForkAt(Uuid),
+    /// Put the parked variant that starts with this message on the line
+    /// (`/branch N K`, a click on a variants mark; research §3.6–§3.7).
+    SwitchBranch(Uuid),
     Cancel,
     /// Write a message on the user's behalf (impersonation, `Ctrl+U`). `seed` —
     /// text already typed (the model continues it). See spec §11.8.
@@ -678,6 +704,14 @@ pub struct ChatScreen {
     emoji: Option<EmojiPickerState>,
     /// The open `chat://` reference picker (`Ctrl+L`). See spec §11.3.
     chat_links: Option<ChatLinkPickerState>,
+    /// The open list of `/fork` or `/branch` typed bare: the conversation's
+    /// messages to fork at, or the chat's branches to switch to
+    /// (docs/research/chat-branches.md §3.6).
+    branch_popup: Option<BranchPopup>,
+    /// The open conversation's branches (`AppEvent::Branches`): the marks its
+    /// bubbles carry and its parked tails — what `/branch` lists and resolves
+    /// against (docs/research/chat-branches.md §3.6–§3.7).
+    branches: BranchView,
     /// The open *Local servers* list: a local Ollama or LM Studio that
     /// answered, at the start of a chat with no engine or for `/local`
     /// (docs/research/local-servers.md, stage 2).
@@ -857,6 +891,8 @@ impl ChatScreen {
             emoji: None,
             emoji_last: 0,
             chat_links: None,
+            branch_popup: None,
+            branches: BranchView::default(),
             local_servers: None,
             feed_has_risky: false,
             full_redraw: false,

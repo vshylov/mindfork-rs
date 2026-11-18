@@ -30,6 +30,7 @@
 mod attachments;
 mod background;
 mod background_runs;
+mod branches;
 mod bridge;
 mod bridge_task;
 mod bridge_voice;
@@ -1077,6 +1078,8 @@ impl Orchestrator {
             AppCommand::RegenerateLast => self.handle_regenerate(),
             AppCommand::ContinueLast => self.handle_continue(),
             AppCommand::DeleteLastExchange => self.handle_delete_last(),
+            AppCommand::ForkAt { message } => self.handle_fork_at(message),
+            AppCommand::SwitchBranch { first } => self.handle_switch_branch(first),
             AppCommand::NewChat { profile_id } => self.handle_new_chat(profile_id),
             AppCommand::SwitchChat(id) => self.handle_switch(id),
             AppCommand::CancelFollowup(id) => self.handle_cancel_followup(id),
@@ -1877,10 +1880,14 @@ impl Orchestrator {
         if chat.feed_view.flipped.is_empty() {
             return;
         }
+        // The parked branches are the chat's too: a block folded in a tail
+        // that is off the line is as it was left when the tail returns
+        // (docs/research/chat-branches.md §3.4).
         let live: std::collections::HashSet<Uuid> = chat
             .messages
             .iter()
             .chain(chat.children().flat_map(|run| run.messages.iter()))
+            .chain(chat.branch_messages())
             .map(|m| m.id)
             .chain(filed)
             .collect();
@@ -2021,6 +2028,7 @@ impl Orchestrator {
         };
         self.active_id = Some(id);
         let _ = self.evt_tx.send(event);
+        self.emit_branches();
         self.emit_character_names();
         self.emit_attachments();
         self.emit_staged_images();

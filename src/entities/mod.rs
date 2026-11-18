@@ -2,6 +2,7 @@
 
 pub mod attachment;
 pub mod chat;
+pub mod chat_branch;
 pub mod chat_file;
 pub mod followup;
 pub mod live_turn;

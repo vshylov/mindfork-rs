@@ -14,5 +14,6 @@ pub mod local_server_picker;
 pub mod logo;
 pub mod message_feed;
 pub mod profile_list;
+pub mod row_picker;
 pub mod status_bar;
 pub mod token_counter;

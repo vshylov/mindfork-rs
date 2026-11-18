@@ -5,6 +5,22 @@
 use super::render::centered_rect;
 use super::*;
 
+impl BranchPopup {
+    /// The key legend the list was opened with — what its smallest window is
+    /// measured by.
+    pub(super) fn footer(&self) -> &'static str {
+        match self.picks.first() {
+            Some(BranchPick::Switch(_)) => "ui.branch.pick.footer_branch",
+            _ => "ui.branch.pick.footer_fork",
+        }
+    }
+}
+
+/// The first line of `text` that has something on it.
+fn first_line(text: &str) -> Option<&str> {
+    text.lines().map(str::trim).find(|l| !l.is_empty())
+}
+
 impl ChatScreen {
     /// Opens the suggestions popup for the misspelled word under the cursor (if any).
     pub(super) fn open_suggestions(&mut self) {
@@ -202,6 +218,121 @@ impl ChatScreen {
                     return None;
                 }
                 Some(ChatIntent::OpenChatLink(id))
+            }
+        }
+    }
+
+    /// `/fork` typed bare (docs/research/chat-branches.md §3.6): the
+    /// conversation's messages, each with its number, to pick the one to
+    /// continue from — the route for a window too narrow to draw the numbers,
+    /// and for a number nobody remembers. It opens on the last message: a
+    /// fork is usually a few messages back.
+    pub(super) fn open_fork_picker(&mut self) {
+        let glyphs = self.palette.glyphs();
+        let mut rows: Vec<PickerRow> = Vec::new();
+        let mut picks: Vec<BranchPick> = Vec::new();
+        for number in 1..=last_number(&self.feed) {
+            let Some(item) = numbered_item(&self.feed, number) else {
+                continue;
+            };
+            let who = match item.role {
+                FeedRole::User => glyphs.user_icon,
+                FeedRole::Assistant => glyphs.assistant_icon,
+                FeedRole::System | FeedRole::Note => glyphs.system_icon,
+            };
+            rows.push(PickerRow {
+                lead: format!("#{number} {who}"),
+                text: first_line(&item.text)
+                    .or_else(|| item.tools.first().map(|t| t.name.as_str()))
+                    .unwrap_or("…")
+                    .to_string(),
+                trail: String::new(),
+            });
+            picks.push(BranchPick::Fork(number));
+        }
+        if rows.is_empty() {
+            self.push_note(self.loc.t("ui.branch.no_messages"));
+            return;
+        }
+        let last = rows.len() - 1;
+        self.branch_popup = Some(BranchPopup {
+            picker: RowPickerState::new(
+                self.loc.t("ui.branch.pick.title_fork").to_string(),
+                "ui.branch.pick.footer_fork",
+                rows,
+                last,
+            ),
+            picks,
+        });
+    }
+
+    /// `/branch` typed bare (research §3.6): the chat's parked tails in tree
+    /// order — a tail, then the tails that continue from inside it, indented —
+    /// each with the number and the variant it would have on the line, its
+    /// first line, its size and when it was last written to.
+    pub(super) fn open_branch_picker(&mut self) {
+        let detached = self.loc.t("ui.branch.pick.detached");
+        let rows: Vec<PickerRow> = self
+            .branches
+            .parked
+            .iter()
+            .map(|b| {
+                let indent = "  ".repeat(usize::from(b.depth));
+                let lead = if b.detached {
+                    format!("{indent}{detached}")
+                } else {
+                    format!("{indent}#{} ‹{}/{}›", b.number, b.variant, b.of)
+                };
+                PickerRow {
+                    lead,
+                    text: if b.preview.is_empty() {
+                        "…".to_string()
+                    } else {
+                        b.preview.clone()
+                    },
+                    trail: format!(
+                        "{} · {}",
+                        self.loc
+                            .tf("ui.branch.pick.count", &[("count", &b.bubbles.to_string())]),
+                        b.at.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M")
+                    ),
+                }
+            })
+            .collect();
+        let picks = self
+            .branches
+            .parked
+            .iter()
+            .map(|b| BranchPick::Switch(b.first))
+            .collect();
+        self.branch_popup = Some(BranchPopup {
+            picker: RowPickerState::new(
+                self.loc.t("ui.branch.pick.title_branch").to_string(),
+                "ui.branch.pick.footer_branch",
+                rows,
+                0,
+            ),
+            picks,
+        });
+    }
+
+    /// Handles a key in the list of `/fork` or `/branch`: `Enter` forks at the
+    /// selected message or switches to the selected branch, `Esc` closes.
+    pub(super) fn handle_branch_popup_key(&mut self, key: KeyEvent) -> Option<ChatIntent> {
+        let popup = self.branch_popup.as_mut()?;
+        match popup.picker.on_key(key) {
+            RowPickerAction::None => None,
+            RowPickerAction::Cancel => {
+                self.branch_popup = None;
+                None
+            }
+            RowPickerAction::Pick(row) => {
+                let pick = popup.picks.get(row).copied();
+                self.branch_popup = None;
+                match pick? {
+                    BranchPick::Fork(number) => self.fork_at_number(number),
+                    BranchPick::Switch(first) => Some(ChatIntent::SwitchBranch(first)),
+                }
             }
         }
     }
