@@ -291,6 +291,64 @@ fn a_deleted_exchange_is_a_detail_not_a_lost_message() {
     );
 }
 
+/// A fork with nothing written after it: the same ids, some of them moved
+/// from the line into a parked branch. No message is lost on either side, the
+/// archive is as it was, and the difference is named for what it is.
+#[test]
+fn a_fork_is_a_detail_not_a_lost_message() {
+    assert_one_detail(
+        |chat| {
+            let cut = chat.messages.len() - 1;
+            assert!(chat.fork_at(cut, chat.modified_at));
+        },
+        Detail::Branches,
+    );
+}
+
+/// A fork and another way written from it: the other side holds every message
+/// this one holds — the old continuation is parked there — and one more.
+/// *Ahead*, not *diverged*, as a regenerated reply is.
+#[test]
+fn a_fork_continued_is_ahead_not_diverged() {
+    let pair = pair();
+    let mut chat = busy(&pair.there);
+    let cut = chat.messages.len() - 1;
+    assert!(chat.fork_at(cut, chrono::Utc::now()));
+    chat.push_message(Message::assistant("another way"));
+    save(&pair.there, &chat);
+
+    let c = pair.compared();
+    assert_eq!(chat_shape(&c.chats), [1, 0, 0, 0, 1, 0, 0]);
+    assert_eq!(
+        (c.chats.ahead_there[0].here, c.chats.ahead_there[0].there),
+        (0, 1)
+    );
+    assert_eq!(c.verdict, Verdict::ThereHasAll);
+}
+
+/// A copy that lost a branch — what an older build would have done to the
+/// file without the schema stamp — holds fewer messages, and says so: the side
+/// with the branch is ahead by what the branch holds.
+#[test]
+fn a_copy_without_a_branch_is_behind_the_one_that_has_it() {
+    let pair = pair();
+    let mut chat = busy(&pair.there);
+    let cut = chat.messages.len() - 1;
+    assert!(chat.fork_at(cut, chrono::Utc::now()));
+    save(&pair.there, &chat);
+    let mut stripped = chat.clone();
+    stripped.branches.clear();
+    save(&pair.here.paths, &stripped);
+
+    let c = pair.compared();
+    assert_eq!(chat_shape(&c.chats), [1, 0, 0, 0, 1, 0, 0]);
+    assert_eq!(
+        (c.chats.ahead_there[0].here, c.chats.ahead_there[0].there),
+        (0, 1)
+    );
+    assert_ne!(c.here.fingerprint, c.there.fingerprint);
+}
+
 #[test]
 fn notes_are_lined_up_by_id_and_ordered_by_their_own_time() {
     let pair = pair();

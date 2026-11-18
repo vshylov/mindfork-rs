@@ -470,7 +470,13 @@ fn play(theme: Theme, lang: Lang, background: CodeBlockBackground) -> Reel {
             .any(|c| matches!(c, AppCommand::SendMessage(text) if *text == question.text)),
         "Enter did not send the typed question: {asked:?}"
     );
-    d.event(AppEvent::UserMessage(question.text.clone()), 250);
+    d.event(
+        AppEvent::UserMessage {
+            text: question.text.clone(),
+            id: None,
+        },
+        250,
+    );
     d.event(
         AppEvent::GenerationStarted {
             generation_id: id,

@@ -263,14 +263,17 @@ impl Orchestrator {
     /// window it was about to read is unread, and the ordinary cadence makes
     /// it due again at the next landing. Reflection's watermark and stamp
     /// are restored and the chat saved the way the advance was; a chat gone
-    /// meanwhile is left alone. A counter is **added back**, since the
+    /// meanwhile is left alone. The watermark is given back **no higher than
+    /// it stands**: a fork while the task was out lowered it to its cut
+    /// (docs/research/chat-branches.md §3.4), and the index the spawn started
+    /// from may name a message the line no longer holds. A counter is **added back**, since the
     /// landings during the run incremented it legitimately and the sum is
     /// what it would read had the spawn never happened.
     fn give_back(&mut self, kind: BackgroundKind, window: Window) {
         match window {
             Window::Reflection { chat, upto, at } => {
                 let found = self.chats.iter_mut().find(|c| c.id == chat).map(|c| {
-                    c.reflected_upto = upto;
+                    c.reflected_upto = upto.map(|u| c.reflected_upto.map_or(u, |now| now.min(u)));
                     c.reflected_at = at;
                 });
                 if found.is_some() {

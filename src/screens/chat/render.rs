@@ -195,6 +195,9 @@ impl ChatScreen {
             self.chat_links
                 .as_ref()
                 .map(|_| ChatLinkPickerState::min_size(loc)),
+            self.branch_popup
+                .as_ref()
+                .map(|p| RowPickerState::min_size(p.footer(), loc)),
             self.local_servers
                 .as_ref()
                 .map(|_| LocalServerPickerState::min_size(loc)),
@@ -378,6 +381,7 @@ impl ChatScreen {
             && self.suggest.is_none()
             && self.emoji.is_none()
             && self.chat_links.is_none()
+            && self.branch_popup.is_none()
             && self.local_servers.is_none()
             && self.confirm.is_none()
             && self.tool_confirm.is_none();
@@ -469,6 +473,12 @@ impl ChatScreen {
         if let Some(picker) = &mut self.chat_links {
             dim_background(frame, &self.palette);
             picker.render(frame, frame.area(), &self.palette, self.loc);
+        }
+        if let Some(popup) = &mut self.branch_popup {
+            dim_background(frame, &self.palette);
+            popup
+                .picker
+                .render(frame, frame.area(), &self.palette, self.loc);
         }
         if let Some(list) = &mut self.local_servers {
             dim_background(frame, &self.palette);

@@ -144,6 +144,8 @@ impl ChatScreen {
             ),
             UiCommand::Copy => self.typed_copy(&argument),
             UiCommand::Regen | UiCommand::Takeback => self.typed_destructive(command, alias),
+            UiCommand::Fork => self.typed_fork(&argument, alias),
+            UiCommand::Branch => self.typed_branch(&argument, alias),
             UiCommand::Continue => self.typed_continue(alias),
             UiCommand::Impersonate => self.typed_impersonate(argument, alias),
             UiCommand::Greeting => self.typed_greeting(&argument),
@@ -447,6 +449,180 @@ impl ChatScreen {
             'e'
         };
         self.handle_ctrl_shortcut(chord).flatten()
+    }
+
+    /// `/fork [N]` — the conversation continues from message N, and what
+    /// followed is kept as a branch (docs/research/chat-branches.md §3.6).
+    /// The number is resolved **here**, against the feed as it is drawn: the
+    /// intent carries the id of the message the numbered bubble shows, so what
+    /// the person saw as `#N` is what is acted on, whatever a live feed's
+    /// count has drifted to. Where the cut falls, and whether anything follows
+    /// it, is the orchestrator's to say.
+    fn typed_fork(&mut self, argument: &str, alias: &'static str) -> Option<ChatIntent> {
+        if self.generating {
+            return self.busy_note(alias);
+        }
+        if self.active_chat.is_none() {
+            return self.note("ui.cmd.no_chat");
+        }
+        if argument.is_empty() {
+            self.open_fork_picker();
+            return None;
+        }
+        let number = self.message_number(argument)?;
+        self.fork_at_number(number)
+    }
+
+    /// The fork at the message that shows `#number`.
+    pub(super) fn fork_at_number(&mut self, number: u32) -> Option<ChatIntent> {
+        match numbered_item(&self.feed, number).map(|m| m.message_ids.first().copied()) {
+            Some(Some(message)) => Some(ChatIntent::ForkAt(message)),
+            // Drawn, and not in the chat yet: the echo of a message being
+            // answered, a reply that was not kept.
+            Some(None) => {
+                let text = self
+                    .loc
+                    .tf("ui.branch.not_stored", &[("number", &number.to_string())]);
+                self.push_note(&text);
+                None
+            }
+            None => self.no_such_message(&number.to_string()),
+        }
+    }
+
+    /// A message's number as typed: 1 or more, and one the feed shows. A
+    /// refusal names the numbers there are.
+    fn message_number(&mut self, typed: &str) -> Option<u32> {
+        match typed.parse::<u32>() {
+            Ok(n) if n >= 1 && n <= last_number(&self.feed) => Some(n),
+            _ => {
+                self.no_such_message(typed);
+                None
+            }
+        }
+    }
+
+    fn no_such_message(&mut self, typed: &str) -> Option<ChatIntent> {
+        let last = last_number(&self.feed);
+        let text = if last == 0 {
+            self.loc.t("ui.branch.no_messages").to_string()
+        } else {
+            self.loc.tf(
+                "ui.branch.bad_number",
+                &[("arg", typed), ("last", &last.to_string())],
+            )
+        };
+        self.push_note(&text);
+        None
+    }
+
+    /// `/branch [N K]` — the chat's branches (research §3.6): bare, the list
+    /// of them; `N K`, message N switched to its variant K. The variants of a
+    /// place are the ones the orchestrator sent with the activation
+    /// (`AppEvent::Branches`), so the figure typed is the figure the mark on
+    /// the message shows.
+    fn typed_branch(&mut self, argument: &str, alias: &'static str) -> Option<ChatIntent> {
+        if self.generating {
+            return self.busy_note(alias);
+        }
+        if self.active_chat.is_none() {
+            return self.note("ui.cmd.no_chat");
+        }
+        if argument.is_empty() {
+            if self.branches.is_empty() {
+                return self.note("ui.branch.none");
+            }
+            self.open_branch_picker();
+            return None;
+        }
+        let mut words = argument.split_whitespace();
+        let (Some(n), Some(k), None) = (words.next(), words.next(), words.next()) else {
+            return self.note("ui.branch.usage");
+        };
+        let (Ok(number), Ok(variant)) = (n.parse::<u32>(), k.parse::<u16>()) else {
+            return self.note("ui.branch.usage");
+        };
+        self.switch_to_variant(number, variant)
+    }
+
+    /// The switch of message `#number` to its variant `variant`. A place's
+    /// variants are the tails parked at it and, where the line continues past
+    /// it, the line's own — which is the one in front of the person already.
+    pub(super) fn switch_to_variant(&mut self, number: u32, variant: u16) -> Option<ChatIntent> {
+        let shown = number.to_string();
+        let here: Vec<&BranchInfo> = self
+            .branches
+            .parked
+            .iter()
+            .filter(|b| b.depth == 0 && !b.detached && b.number == number)
+            .collect();
+        let Some(of) = here.first().map(|b| b.of) else {
+            let text = self
+                .loc
+                .tf("ui.branch.no_variants", &[("number", shown.as_str())]);
+            self.push_note(&text);
+            return None;
+        };
+        if let Some(target) = here.iter().find(|b| b.variant == variant) {
+            return Some(ChatIntent::SwitchBranch(target.first));
+        }
+        let text = if (1..=of).contains(&variant) {
+            // Not parked, and one of the place's variants: the line's own.
+            self.loc.tf(
+                "ui.branch.already",
+                &[
+                    ("number", shown.as_str()),
+                    ("variant", &variant.to_string()),
+                ],
+            )
+        } else {
+            self.loc.tf(
+                "ui.branch.bad_variant",
+                &[
+                    ("number", shown.as_str()),
+                    ("of", &of.to_string()),
+                    ("arg", &variant.to_string()),
+                ],
+            )
+        };
+        self.push_note(&text);
+        None
+    }
+
+    /// A click on the tag a message's row ends with (research §3.7, F4).
+    /// `Some` — the click was the tag's, with the intent it made, if any;
+    /// `None` — the tag takes no click now, and the click is the feed's own.
+    ///
+    /// - An arrow of a variants mark switches the message to the neighbouring
+    ///   variant; at either end of the variants it does nothing.
+    /// - A number is written into the command in the input box when that
+    ///   command takes a message's number, as its first argument — where there
+    ///   is none, or in place of the one there — and nothing runs until
+    ///   `Enter`. With anything else in the box a number is not a control.
+    pub(super) fn tapped(&mut self, tap: Tap) -> Option<Option<ChatIntent>> {
+        match tap {
+            Tap::Number(number) => {
+                if self.impersonation.is_some() {
+                    return None;
+                }
+                let text = ui_command::with_message_number(&self.input.text(), number)?;
+                self.input.set_text(&text);
+                self.mark_input_changed();
+                Some(None)
+            }
+            Tap::Variant { message, step } => {
+                if self.generating {
+                    return Some(self.busy_note("/branch"));
+                }
+                let mark = self.branches.marks.iter().find(|m| m.message == message)?;
+                let target = i32::from(mark.variant) + i32::from(step);
+                if !(1..=i32::from(mark.of)).contains(&target) {
+                    return Some(None);
+                }
+                let number = number_of(&self.feed, message)?;
+                Some(self.switch_to_variant(number, target as u16))
+            }
+        }
     }
 
     /// `/continue` — resume the last interrupted reply (spec §6.4). The screen

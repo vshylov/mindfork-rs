@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (38)
+## Entries (39)
 
 - Post-M9: persisting the input-box draft in the chat file (done)
 - Post-M9: persisting deleted exchanges in the chat file (`Ctrl+E`/`Ctrl+R`) (done)
@@ -50,6 +50,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a big entry compressed on many threads, its AE-2 written here (done)
 - Post-M9: a cargo install keeps its data in the user folder (done)
 - Post-M9: the fold's stored keys read entry by entry; `MouseMode` in the ledger (done)
+- Post-M9: branches inside a chat — the line, the parked tails, `/fork` and `/branch` (done)
 
 ### Post-M9: persisting the input-box draft in the chat file (done)
 - **Unsaved input-box text is stored on the chat and restored on
@@ -2119,3 +2120,128 @@ in the files this release writes, and neither was in the stored-enum ledger
 wrong field and a good one reads the two good keys. `"flipped": 5` reads as none. A chat
 file whose view holds an unknown kind reads, keeping the rest. **A control run:**
 with `deserialize_with` removed, the test fails. **4975 green.**
+
+### Post-M9: branches inside a chat — the line, the parked tails, `/fork` and `/branch` (done)
+
+**What.** Stage 2 of [docs/research/chat-branches.md](../research/chat-branches.md), on
+`feat/chat-branches`; the decision is [ADR 0015](../decisions/0015-chat-branches.md). A
+conversation can be continued from a message in its middle, and what followed is kept
+as a branch of the same chat. Until now only the end of a conversation could be
+changed, and what `Ctrl+E` or `Ctrl+R` removed went to an archive nothing reads.
+
+**The model** (`entities/chat_branch.rs`). The chat stays a line: `chat.messages` is the
+conversation in front of the person. `chat.branches` holds the tails that left it, each
+with the id of the last message it shares with the line it left. Nothing that reads
+`messages` was changed.
+- A **fork** cuts the line at a bubble's edge and parks the tail. One rule places the
+  cut: after a fork the person speaks next — after a reply, before the person's own
+  message (whose text returns to the box), before a note row.
+- A **switch** puts a parked tail back and parks what it displaces. A tail anchored
+  inside another is reached through it: the outer one is brought in first and split
+  around the inner.
+- A variant is named by its first message, and the variants of a place are ordered by
+  their first message's time, so a figure survives every switch.
+- A parked tail keeps the summary and the reflection watermark in force when it left. On
+  the line a summary whose boundary left is dropped and the watermark is lowered to the
+  cut. **The watermark's clamp on read was not enough for a deep fork**: with it at 40
+  and a fork at 10, the new line's messages up to 40 would never have been reflected on.
+- A tail whose anchor names nothing, and a ring of tails, are kept, listed as detached
+  and never switched to.
+
+**Storage.** Chats 8 → 9, a stamp (`chat_to_v9`). The field is additive in shape, and
+the policy exempts such a field; this one takes a step for what an older build does
+with it — it writes the file back without the branches at its first save. A chat file
+now has three lists of messages, and a walk names them in one place:
+`Chat::stored_messages_mut` for the typed walks, `chat_steps::message_lists_mut` for
+the steps, which the two steps that walk messages now go through. `ParkCause` is in
+the ledger at 9. The golden `chat_v8_deleted_archive.json` was written by 0.27.0's own
+writer, before the entity was touched.
+
+**The orchestrator** (`orchestrator/branches.rs`) tells the rest of the app what a
+take-back tells it, by the take-back's calls: the feed rebuilt, a background run whose
+record left the line cancelled, a follow-up planned in what left cancelled. A landing
+finds a run's record in a parked tail as it finds one in the archive. A fold in a
+parked tail survives. A watermark given back to a stopped reflection no longer rises
+past a fork's cut.
+
+**The screen.**
+- `/fork N` resolves N against the feed as drawn and sends the id of the message the
+  bubble carries; bare, a list of the messages. `/branch N K` switches, bare lists the
+  parked tails in tree order. Both lists are one widget (`widgets/row_picker.rs`).
+- A bubble with other variants carries `‹2/3›` before its number; the mark is checked
+  in the render cache beside the number, so a switch rebuilds the blocks it changed.
+- A click on an arrow switches. A click on a number writes it into a command that
+  takes one (`UiCommand::takes_message_number`) and into nothing else — the owner's
+  decision F4.
+- A fork at the line's end has no bubble for a mark, so it is said in a note that
+  names the way back.
+
+**`mindfork stats`.** The summary read a chat's line and its archive and nothing else,
+so two copies that differed only in a parked branch were *identical* to `--compare` —
+the answer a person deletes the other copy on. The parked tails are now in the
+projection: counted on a line of their own, in a chat's identity (left out where there
+are none, so a copy with no branch keeps its fingerprint), and in the ids a comparison
+works on. A fork with nothing after it is a detail named `branches`; a fork continued is
+*ahead*; a copy that lost a branch is behind by what it held.
+
+**Three defects the pty run found** (`mindfork demo`, the screen read with pyte), each
+with green tests before it:
+1. **A message sent in the session could not be forked at.** Its echo had no id until
+   the chat was opened again, so `/fork N` answered "not in the chat yet" — for the
+   commonest fork there is. `AppEvent::UserMessage` now carries the stored message's id.
+2. **The line's own continuation at a fork showed no mark.** The branches were sent
+   with an activation, and sending a message is not one. They are sent again when a
+   message is stored and when a turn lands, in a chat that has branches.
+3. **A take-back or a regeneration after a fork could archive a branch's anchor**,
+   leaving the branch with no place to return to. Where a branch continues from what
+   is removed, the removed messages are parked with their cause
+   (`Chat::park_if_anchored`). Stage 3 makes parking the rule; this is the part the
+   tree cannot do without. A greeting is not swapped in a chat that has a branch.
+
+**Tests** (+59, **5044 green**, 325 `#[ignore]`):
+- **The model:** the cut by kind of message; fork and switch back restore the line
+  message for message; nested tails; figures across switches; the summary and the
+  watermark on both sides of a cut; detached tails; the stored shape.
+- **Storage:** the fixture holds nothing a chat drops; the stamp touches nothing else;
+  a file with a branch is a newer version to a reader at 8 — a round trip cannot show
+  the loss; the walker visits all three lists; a root as 0.27.0 left it, end to end.
+- **The orchestrator:** fork and switch with their events and answers; ignored where a
+  take-back is; follow-ups; folds; the index; a refund after a fork; the three defects.
+- **The screen and the feed:** both commands and every refusal; both lists, by keys
+  and by a double click; the mark and its targets read back from the drawn buffer; the
+  number into a command, and into nothing else.
+- **The wire:** a line a fork ends on a tool result — between a reply's first bubble
+  and its follow-up — on all four clients, each beside its builder.
+- `chat_read` pages the line of a chat that has a branch.
+- **The summary:** the counts and the printed line; a fork as a detail, a fork
+  continued as ahead, a copy without a branch as behind.
+
+**Live, GO** (`a_forked_line_is_asked_from_what_it_holds_e2e_live`): two facts planted,
+both compacted behind the boundary, a fork at the second fact's message — before the
+boundary — then the line asked.
+- **Gemma 4 E2B Q8 on llama.cpp, CPU** (70 s): the summary held the password; after the
+  fork the answer was `UNKNOWN`; the first fact was answered from the prefix; the first
+  turn after the fork read 56 of 110 prompt tokens from the cache; the new line
+  compacted in its turn; after the switch back the password was answered again.
+- **`google/gemini-3.5-flash` through OpenRouter** (41 s): the same answers; the cache
+  read 0 of 84, logged and not asserted.
+- **Control, red:** with the parked tail left on the line the same question was
+  answered with the password, and the smoke failed there.
+
+**The pty run:** `/fork 4`, the note, `/branch` and its list, `/branch 5 1` back;
+`/fork 5` on a message just sent, the text back in the box, the resend, `‹2/2› #5`,
+a click on `‹` and on `›`; a click on `#5` with `/fork` in the box.
+
+**The owner's look** (Windows Terminal over SSH): the mark beside the number reads
+well, and the two lists are convenient.
+
+**Going back, checked with 0.27.0 built from its tag** (1 min 58 s, each binary beside
+a `defaults.json` of mode `path`): this build stamps a root 0.27.0 wrote and makes one
+`pre-migrate-*.zip`; after a fork in it, 0.27.0 stops with *"created by a newer version
+of mindfork (schema 9, supported 8)"*, naming the chat file, whose bytes are unchanged;
+0.27.0 restores the pre-migration backup with no warning and starts on it.
+
+**Not in this stage:** `Ctrl+R` and `Ctrl+E` as branches by rule (stage 3); a read of
+a line that says the chat has branches, and a tool that reads them (stage 4); search
+across parked tails; the accent on the numbers while a command is in the box, which
+was proposed with F4 and not decided.

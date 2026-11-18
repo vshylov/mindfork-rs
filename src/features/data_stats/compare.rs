@@ -108,6 +108,9 @@ pub enum Detail {
     StoredFiles,
     /// The same ids, but not in the same place: an exchange deleted on one side.
     Deletions,
+    /// The same ids, but not on the same side of the line: a fork or a switch
+    /// made on one side (docs/research/chat-branches.md).
+    Branches,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -279,11 +282,17 @@ fn copy_info(copy: &DataStats, snapshot: Option<String>) -> CopyInfo {
     }
 }
 
-/// `id → length` over a chat's live **and** deleted messages. An entry that
-/// does not read as `<id>:<length>` (a hand-edited snapshot) is left out.
+/// `id → length` over a chat's live, deleted **and** parked messages — every
+/// message the file holds, wherever it stands. An entry that does not read as
+/// `<id>:<length>` (a hand-edited snapshot) is left out.
 fn held(row: &ChatRow) -> BTreeMap<&str, usize> {
     let mut held = BTreeMap::new();
-    for entry in row.message_index.iter().chain(&row.deleted_index) {
+    for entry in row
+        .message_index
+        .iter()
+        .chain(&row.deleted_index)
+        .chain(&row.branch_index)
+    {
         if let Some((id, length)) = entry.rsplit_once(':')
             && let Ok(length) = length.parse::<usize>()
         {
@@ -310,14 +319,19 @@ fn later(here: &ChatRow, there: &ChatRow) -> Option<Side> {
 }
 
 fn details(here: &ChatRow, there: &ChatRow) -> Vec<Detail> {
-    let moved =
-        here.message_index != there.message_index || here.deleted_index != there.deleted_index;
+    // The archive is told apart from the line by what left for it; the
+    // branches by what stands in them. A fork changes the line and the
+    // branches and leaves the archive alone, so it reads as branches only.
+    let archived = here.deleted_index != there.deleted_index;
+    let branched = here.branch_index != there.branch_index;
+    let moved = archived || (here.message_index != there.message_index && !branched);
     [
         (Detail::Title, here.title != there.title),
         (Detail::DeletedMark, here.deleted != there.deleted),
         (Detail::Attachments, here.attachments != there.attachments),
         (Detail::StoredFiles, here.stored_files != there.stored_files),
         (Detail::Deletions, moved),
+        (Detail::Branches, branched),
     ]
     .into_iter()
     .filter_map(|(detail, differs)| differs.then_some(detail))
@@ -327,7 +341,7 @@ fn details(here: &ChatRow, there: &ChatRow) -> Vec<Detail> {
 impl ChatDiff {
     /// A chat that exists on one side only.
     fn lone(row: &ChatRow, side: Side) -> Self {
-        let rows = row.message_index.len() + row.deleted_index.len();
+        let rows = row.message_index.len() + row.deleted_index.len() + row.branch_index.len();
         let (messages_here, messages_there, here, there) = match side {
             Side::Here => (Some(row.messages), None, rows, 0),
             Side::There => (None, Some(row.messages), 0, rows),
@@ -839,6 +853,7 @@ fn details_text(diff: &ChatDiff, loc: &Locale) -> String {
             Detail::Attachments => loc.t("cli.stats.cmp.what.attachments"),
             Detail::StoredFiles => loc.t("cli.stats.cmp.what.stored_files"),
             Detail::Deletions => loc.t("cli.stats.cmp.what.deletions"),
+            Detail::Branches => loc.t("cli.stats.cmp.what.branches"),
         })
         .collect();
     let later = match diff.later {

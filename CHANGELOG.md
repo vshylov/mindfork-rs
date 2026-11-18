@@ -21,6 +21,45 @@ split by subsystem.
   the chat, and `/copy last N` counts the same messages. The number is not part of the
   text: a selection does not take it and a copy does not hold it. The model's name
   beside the assistant's header gives way to it in a narrow window.
+- **Branches: continue a conversation from any message.** `/fork N` goes back to
+  message N and keeps what followed as a branch of the same chat — nothing is lost and
+  nothing is copied. At a reply of the assistant the conversation continues after it;
+  at your own message its text returns to the box, to be written again. `/fork` alone
+  lists the messages to pick from.
+- **Switch between branches.** A message that has other variants shows which one it
+  is before its number, `‹2/3› #11`. `/branch N K` switches message N to variant K,
+  `/branch` alone lists every branch, and with the mouse a click on `‹` or `›` goes to
+  the neighbouring variant. Coming back to a branch restores the conversation as you
+  left it.
+- **A click on a message's number writes it into `/fork` or `/branch`** when one of
+  them is in the box, and nothing runs until `Enter`.
+- The assistant reads the conversation in front of you: a branch you left is not in
+  its request and not in what its tools find. What it did outside the conversation —
+  notes, files, changes to your project — stays as it is.
+- **`mindfork stats` counts the messages kept in branches**, on a line of its own, and
+  `--compare` tells a fork from a loss: a copy where you forked and went another way is
+  *ahead*, a copy missing a branch is behind by what the branch held. A copy with no
+  branches keeps the fingerprint it had.
+
+### Changed
+
+- **`Ctrl+E` and `Ctrl+R` keep what a branch continues from.** Taking back or redoing
+  the exchange a branch was forked from parks it as a branch too, so the branch can
+  still be returned to.
+
+### Data
+
+- **Chat files move to schema 9** for the branches a chat may now hold: 0.27.0 would
+  open such a chat, show its conversation, and write the file back without its
+  branches the first time it saved it. With the new version stamped it refuses the data
+  as a newer version's instead. The step changes nothing in a file but its version, and
+  the start backs every chat up first, as for every step.
+- **Checked with 0.27.0 built from its tag.** On data this version wrote — a chat with a
+  branch — it stops at start with *"Data (…) was created by a newer version of mindfork
+  (schema 9, supported 8)"*, naming the chat file, and changes nothing in it. To go
+  back, restore the backup made before the step (`backups/pre-migrate-….zip`) with
+  0.27.0: it restores it with no warning and reads the chat in it — what you wrote
+  since, branches included, is not in it.
 
 ## [0.27.0] — 2026-11-16
 

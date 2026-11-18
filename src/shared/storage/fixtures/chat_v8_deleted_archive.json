@@ -1,0 +1,102 @@
+{
+  "v": 8,
+  "id": "8e2b1c3d-4f5a-4b6c-9d7e-8f9a0b1c2d3e",
+  "profile_id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+  "title": "A reply taken back and one redone",
+  "created_at": "2026-11-16T10:00:00Z",
+  "modified_at": "2026-11-16T10:20:00Z",
+  "system_message": "You are an assistant.",
+  "character_names": {
+    "user": "",
+    "assistant": "",
+    "system": ""
+  },
+  "messages": [
+    {
+      "id": "d0000000-0000-0000-0000-000000000001",
+      "role": "user",
+      "text": "Which of the three should I take?",
+      "timestamp": "2026-11-16T10:00:00Z",
+      "is_markdown": true
+    },
+    {
+      "id": "d0000000-0000-0000-0000-000000000002",
+      "role": "assistant",
+      "text": "Three options: a, b and c.",
+      "thoughts": "Weigh the three.",
+      "timestamp": "2026-11-16T10:01:00Z",
+      "is_markdown": true
+    },
+    {
+      "id": "d0000000-0000-0000-0000-000000000003",
+      "role": "user",
+      "text": "And if I had to pick one today?",
+      "timestamp": "2026-11-16T10:05:00Z",
+      "is_markdown": true
+    },
+    {
+      "id": "d0000000-0000-0000-0000-000000000006",
+      "role": "assistant",
+      "text": "Then b: it costs the least to undo.",
+      "timestamp": "2026-11-16T10:12:00Z",
+      "is_markdown": true
+    }
+  ],
+  "draft": "",
+  "feed_view": {
+    "thoughts": false,
+    "tools": false,
+    "flipped": [
+      {
+        "thoughts": "d0000000-0000-0000-0000-000000000002"
+      }
+    ]
+  },
+  "deleted": [
+    {
+      "deleted_at": "2026-11-16T10:11:00Z",
+      "messages": [
+        {
+          "id": "d0000000-0000-0000-0000-000000000004",
+          "role": "assistant",
+          "text": "Take a.",
+          "timestamp": "2026-11-16T10:06:00Z",
+          "is_markdown": true
+        }
+      ],
+      "draft": "half a thought",
+      "cause": "Regenerate"
+    },
+    {
+      "deleted_at": "2026-11-16T10:09:00Z",
+      "messages": [
+        {
+          "id": "d0000000-0000-0000-0000-000000000007",
+          "role": "user",
+          "text": "Never mind the third.",
+          "timestamp": "2026-11-16T10:07:00Z",
+          "is_markdown": true
+        },
+        {
+          "id": "d0000000-0000-0000-0000-000000000008",
+          "role": "assistant",
+          "text": "Dropped.",
+          "timestamp": "2026-11-16T10:08:00Z",
+          "is_markdown": true
+        }
+      ],
+      "draft": "",
+      "cause": "DeleteExchange"
+    }
+  ],
+  "reflected_upto": 2,
+  "reflected_at": "2026-11-16T10:04:00Z",
+  "compaction": {
+    "summary": "The person is choosing between three options.",
+    "upto": 2,
+    "boundary_id": "d0000000-0000-0000-0000-000000000003",
+    "compacted_at": "2026-11-16T10:10:00Z",
+    "rolls": 1
+  },
+  "is_hidden": false
+}

@@ -157,6 +157,11 @@ a checkout with a recent stable Rust. On a rented GPU box or in a container, the
   list, read, search and change files inside it — never above it. `F4` shows
   every change as a diff, with one key to put a file back; build/run/test are
   exact command lines you set, which it cannot extend.
+- **A conversation that branches.** Go back to any message and continue from it
+  (`/fork N`): what followed is kept as a branch of the same chat, not copied and
+  not lost. A message that went more than one way says so — `‹2/3›` — and
+  `/branch`, or a click, moves between them. The assistant reads only the
+  conversation in front of you.
 - **A real TUI.** Markdown with tables and LaTeX, Mermaid drawn as text
   graphics, streamed "thoughts" in a foldable block, images in and out, search
   across every conversation, spellcheck, emoji, mouse, themes — over your

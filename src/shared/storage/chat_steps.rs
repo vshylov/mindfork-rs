@@ -1,5 +1,13 @@
 //! Chat-file migration steps (ADR 0006; the registry is [`super::schema`]).
 //!
+//! **8 → 9** (`chat_to_v9`): no shape change — the stamp of the first schema
+//! in which a chat file may hold `branches`, the tails of the conversation
+//! that are off the line (docs/research/chat-branches.md §3.2).
+//!
+//! **A step that visits messages visits every list of them**, through
+//! [`message_lists_mut`]: the line, the parked branches and the `deleted`
+//! archive.
+//!
 //! **7 → 8** (`chat_to_v8`): no shape change — the stamp of the first schema
 //! in which a run's `kind` may read `story`.
 //!
@@ -109,6 +117,59 @@ pub(super) fn chat_to_v8(mut v: Value) -> Result<Value> {
     Ok(v)
 }
 
+/// `chats/<id>.json` 8 → 9: no shape change, and not the stamp of a new enum
+/// value like the four before it. 9 is the first schema in which a chat file
+/// may hold `branches` — the tails a fork cut from the line and a switch
+/// displaced (docs/research/chat-branches.md §3.1–§3.2, spec §5.1).
+///
+/// The field is additive in shape: a new key with a default, skipped when
+/// empty. It takes a step all the same, for what an older binary does with a
+/// file that holds it. 0.27.0 parses such a file — an unknown key is not an
+/// error — shows the line, and **writes the file back without the branches**
+/// at its first save, which a typed draft is enough to cause. Nothing says so:
+/// whole stretches of conversation the person meant to return to are gone
+/// with no refusal and no line in the log. Stamped, the file is refused by its
+/// version before it is parsed, and the start says the data is a newer
+/// version's.
+///
+/// Every file is stamped, whether or not it has a branch: a file stamped only
+/// once it has one would be read by an older binary until the day of the
+/// first fork ([`chat_to_v5`]'s reasoning). The settings take no stamp — they
+/// hold nothing of this — so this one answers for a root downgraded in place
+/// as well as for a chat file copied by hand.
+pub(super) fn chat_to_v9(mut v: Value) -> Result<Value> {
+    v["v"] = json!(9);
+    Ok(v)
+}
+
+/// Every list of messages a chat file holds, for a step that changes
+/// messages: the line (`messages`), the parked branches' tails
+/// (`branches[].messages`) and the archive's (`deleted[].messages`). One
+/// function, so that a step cannot visit two of the three — the `branches`
+/// list arrived with schema 9, long after the steps that walk the other two
+/// were written, and a step that follows their example without it would leave
+/// a parked tail in the old shape (docs/lessons.md §8, "a rule kept where the
+/// data is stored").
+fn message_lists_mut(v: &mut Value) -> Vec<&mut Vec<Value>> {
+    let Some(chat) = v.as_object_mut() else {
+        return Vec::new();
+    };
+    let mut lists: Vec<&mut Vec<Value>> = Vec::new();
+    for (key, value) in chat.iter_mut() {
+        match key.as_str() {
+            "messages" => lists.extend(value.as_array_mut()),
+            "branches" | "deleted" => {
+                let holders = value.as_array_mut().into_iter().flatten();
+                lists.extend(
+                    holders.filter_map(|h| h.get_mut("messages").and_then(Value::as_array_mut)),
+                );
+            }
+            _ => {}
+        }
+    }
+    lists
+}
+
 /// `chats/<id>.json` 3 → 4: a run title the old cap cut gets its tail back.
 ///
 /// Every title used to be shortened to [`OLD_TITLE_CAP`] characters **as it
@@ -130,15 +191,8 @@ pub(super) fn chat_to_v8(mut v: Value) -> Result<Value> {
 /// from. Dialogue runs too — their `A ↔ B` title is built from labels that may
 /// be a localized default, which a `shared` step cannot reproduce.
 pub(super) fn chat_to_v4(mut v: Value) -> Result<Value> {
-    if let Some(messages) = v.get_mut("messages").and_then(Value::as_array_mut) {
+    for messages in message_lists_mut(&mut v) {
         restore_run_titles(messages);
-    }
-    if let Some(deleted) = v.get_mut("deleted").and_then(Value::as_array_mut) {
-        for exchange in deleted {
-            if let Some(messages) = exchange.get_mut("messages").and_then(Value::as_array_mut) {
-                restore_run_titles(messages);
-            }
-        }
     }
     v["v"] = json!(4);
     Ok(v)
@@ -219,15 +273,8 @@ pub(super) fn chat_to_v2(mut v: Value) -> Result<Value> {
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
-    if let Some(messages) = v.get_mut("messages").and_then(Value::as_array_mut) {
+    for messages in message_lists_mut(&mut v) {
         synthesize_runs(&chat_id, messages);
-    }
-    if let Some(deleted) = v.get_mut("deleted").and_then(Value::as_array_mut) {
-        for exchange in deleted {
-            if let Some(messages) = exchange.get_mut("messages").and_then(Value::as_array_mut) {
-                synthesize_runs(&chat_id, messages);
-            }
-        }
     }
     v["v"] = json!(2);
     Ok(v)
@@ -473,6 +520,105 @@ mod tests {
         assert_eq!(
             written["messages"][1]["tool_calls"][0]["subagent"]["kind"],
             json!("story")
+        );
+    }
+
+    /// A chat file as 0.27.0 wrote it: `v = 8`, with everything that names a
+    /// place on the line — a reply regenerated and an exchange taken back in
+    /// the `deleted` archive, the list the branches stand beside; a summary
+    /// and its boundary; the reflection watermark; a block folded by a click.
+    const V8_CHAT: &str = include_str!("fixtures/chat_v8_deleted_archive.json");
+
+    #[test]
+    fn the_v8_fixture_holds_nothing_a_chat_drops() {
+        let fixture: Value = serde_json::from_str(V8_CHAT).unwrap();
+        let chat: Chat = serde_json::from_value(fixture.clone()).unwrap();
+        assert_eq!(chat.v, 8);
+        let read_back = serde_json::to_value(&chat).unwrap();
+        assert_eq!(
+            super::super::schema::dropped_paths(&fixture, &read_back),
+            Vec::<String>::new()
+        );
+    }
+
+    /// 8 → 9 is the version and nothing else, and a second pass finds nothing
+    /// to do. The file gains no key: `branches` is one a chat file may hold
+    /// from now on, and does once the line is forked.
+    #[test]
+    fn the_branches_stamp_is_v9_and_touches_nothing_else() {
+        let before: Value = serde_json::from_str(V8_CHAT).unwrap();
+        let after = chat_to_v9(before.clone()).unwrap();
+        assert_eq!(after["v"], json!(9));
+        let mut restamped = after.clone();
+        restamped["v"] = json!(8);
+        assert_eq!(restamped, before, "every other value is where it was");
+        assert_eq!(chat_to_v9(after.clone()).unwrap(), after);
+
+        let mut chat: Chat = serde_json::from_value(after).unwrap();
+        assert!(chat.branches.is_empty());
+        assert!(chat.fork_at(2, chat.modified_at));
+        let written = serde_json::to_value(&chat).unwrap();
+        assert_eq!(written["branches"][0]["cause"], json!("fork"));
+        assert_eq!(
+            written["branches"][0]["messages"].as_array().unwrap().len(),
+            2
+        );
+        assert_eq!(written["messages"].as_array().unwrap().len(), 2);
+    }
+
+    /// The walker every step goes through names all three lists of a chat
+    /// file, in a file that holds each — and nothing else that happens to be
+    /// called `messages`, a run's transcript among them.
+    #[test]
+    fn a_steps_walk_visits_the_line_the_branches_and_the_archive() {
+        let mut v = json!({
+            "messages": [{"text": "line", "tool_calls": [
+                {"subagent": {"messages": [{"text": "transcript"}]}}
+            ]}],
+            "branches": [
+                {"after": "x", "messages": [{"text": "parked 1"}]},
+                {"messages": [{"text": "parked 2"}, {"text": "parked 3"}]},
+                {"after": "y"}
+            ],
+            "deleted": [{"messages": [{"text": "archived"}]}],
+            "draft": "messages"
+        });
+        let mut seen: Vec<String> = message_lists_mut(&mut v)
+            .into_iter()
+            .flat_map(|list| list.iter())
+            .map(|m| m["text"].as_str().unwrap().to_string())
+            .collect();
+        seen.sort();
+        assert_eq!(
+            seen,
+            ["archived", "line", "parked 1", "parked 2", "parked 3"]
+        );
+        assert!(message_lists_mut(&mut json!([])).is_empty());
+        assert!(message_lists_mut(&mut json!({"messages": "not a list"})).is_empty());
+    }
+
+    /// The two steps that change messages reach a parked tail. No file at
+    /// their schemas holds one — the walk is tested where it is written, not
+    /// where it will first matter.
+    #[test]
+    fn the_steps_that_change_messages_reach_a_parked_tail() {
+        let old_call = json!({
+            "id": "00000000-0000-0000-0000-000000000010",
+            "role": "assistant", "text": "", "timestamp": "2026-01-01T00:00:00Z",
+            "tool_calls": [{"id": "a", "name": "call_subagent",
+                            "arguments": {"message": "do it"}, "result": "done"}]
+        });
+        let v = json!({
+            "id": "00000000-0000-0000-0000-000000000009",
+            "messages": [],
+            "branches": [{"messages": [old_call]}]
+        });
+        let out = chat_to_v2(v).unwrap();
+        assert!(
+            out["branches"][0]["messages"][0]["tool_calls"][0]
+                .get("subagent")
+                .is_some(),
+            "{out}"
         );
     }
 

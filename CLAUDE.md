@@ -59,6 +59,7 @@ Two rules that follow from that:
 | adopting an **architectural decision** | [docs/decisions/](docs/decisions/) — write a new ADR (list below) |
 | **planning a track** | AGENTS.md §1 · prior art in [docs/research/](docs/research/) (pre-decision) and [docs/history/](docs/history/) (finished plans) |
 | working on the **code workspace** — the project attached to a chat | architecture §8, §10 · spec §9.12 · [docs/journal/tools.md](docs/journal/tools.md) · the finished plan [docs/history/code-workspace.md](docs/history/code-workspace.md) |
+| working on **branches** — a fork, a switch, the parked tails | [docs/research/chat-branches.md](docs/research/chat-branches.md) · ADR 0015 · spec §11.7 · [docs/journal/storage.md](docs/journal/storage.md) |
 | working on **Fabula**, the story engine — its database, the writer, the story tools | [docs/history/fabula.md](docs/history/fabula.md) (the plan) · [docs/research/fabula-engine.md](docs/research/fabula-engine.md) (the design) · ADR 0014 · [docs/journal/stories.md](docs/journal/stories.md) |
 | installing, running, configuring the engine | [docs/install.md](docs/install.md) |
 | what is left to do | [docs/roadmap.md](docs/roadmap.md) |
@@ -71,7 +72,8 @@ multi-provider inference · 0005 Python sandbox as a `wasmer`/WASIX sidecar ·
 neutral import format · 0008 API keys with machine-bound encryption · 0009
 message speech (TTS) · 0010 the subagent as a nested turn · 0011 the
 directed dialogue as a scripted multi-context run · 0012 concurrent tool calls
-in a round · 0013 the messenger bridge · 0014 the Fabula story engine.
+in a round · 0013 the messenger bridge · 0014 the Fabula story engine · 0015
+branches inside a chat.
 
 ## Key architectural decisions
 
@@ -189,8 +191,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-11-18, version 0.27.0)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **4985 unit tests
-green, 324 `#[ignore]`** (live smokes + real-clipboard round trips + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **5044 unit tests
+green, 325 `#[ignore]`** (live smokes + real-clipboard round trips + the
 screenshot-dump and demo-reel regenerators).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -202,12 +204,12 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
-- **Branches inside a chat — stage 1 of 4** (2026-11-18): a fork at a chosen message
+- **Branches inside a chat — stages 1–2 of 4** (2026-11-18): a fork at a chosen message
   as a tree inside the chat — the line stays `chat.messages`, the tails that left it are
-  kept beside it; `/fork N`, `/branch`. Built: every message's number, `#12`, at the
-  right end of its header's row
+  kept beside it (ADR 0015; chats 8 → 9). `/fork N`, `/branch`, `‹2/3› #11` on a
+  message's header, clicks. Live **GO**, Gemma 4 and Gemini
   ([docs/research/chat-branches.md](docs/research/chat-branches.md),
-  [docs/journal/ui-feed.md](docs/journal/ui-feed.md)).
+  [docs/journal/storage.md](docs/journal/storage.md)).
 - **One block folded, part of a chat copied — track complete** (2026-11-15, two
   stages): a click on a block's pill folds it alone, kept in the chat as exceptions
   `Ctrl+T`/`Ctrl+O` forget; `/copy first|last [N]` counts the chat card's bubbles, a

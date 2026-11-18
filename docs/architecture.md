@@ -30,7 +30,9 @@ sources of truth:
   [0013](decisions/0013-messenger-bridge.md) — the messenger bridge: a seat of
   its own for a turn whose chat is not on screen, Telegram first; and
   [0014](decisions/0014-fabula-story-engine.md) — Fabula, a multi-agent story
-  engine inside mindfork, used from the chat through tools (in progress, [fabula.md](history/fabula.md));
+  engine inside mindfork, used from the chat through tools (in progress, [fabula.md](history/fabula.md)); and
+  [0015](decisions/0015-chat-branches.md) — branches inside a chat: the line,
+  and the tails kept beside it;
 - **[docs/install.md](install.md)** — install/run, engine, env.
 
 > Terminology: **engine** = the inference provider behind the `EngineBackend`
@@ -215,6 +217,11 @@ src/
 │  │  │                     settings edits (a series of edits → one restart)
 │  │  ├─ generation.rs      send/regenerate/delete exchange + the agentic-loop task
 │  │  ├─ chats.rs           chat list (new/switch/rename/clone/copy/delete) + draft
+│  │  ├─ branches.rs        a fork and a switch of the open chat's line (ADR 0015):
+│  │  │                     the take-back's guards, then the take-back's calls —
+│  │  │                     the feed rebuilt, orphaned runs and follow-ups
+│  │  │                     cancelled; `emit_branches` with every activation,
+│  │  │                     `refresh_branches` when the line grows
 │  │  ├─ compaction.rs      history compression (`/compact` and the automatic
 │  │  │                     trigger): one single-turn roll (the title.rs shape —
 │  │  │                     its text comes back on a typed channel), the boundary
@@ -509,7 +516,10 @@ src/
 │  │                        a message's number at the right end of its row
 │  │                        (`numbers` over `FeedMessage::is_numbered`, drawn by
 │  │                        `push_number` in the block's wrap, checked in the
-│  │                        cache beside the fingerprint; spec §11.3);
+│  │                        cache beside the fingerprint; spec §11.3), with the
+│  │                        variants mark before it (`set_variants`, `RowTag`) and
+│  │                        the tag's click targets (`Tap`, `tap_at` — the fold
+│  │                        map's arithmetic);
 │  │                        drawn bordered or bare (`FeedFrame`, spec §11.1.1);
 │  │                        the border carries the token counter at its bottom
 │  │                        right corner (`fit_counter`, spec §11.3);
@@ -521,6 +531,9 @@ src/
 │  │                        the cells painted, the text copied, a word and a line
 │  │                        (`FeedRows` — tested on rows without drawing them)
 │  ├─ chat_link_picker.rs   the Ctrl+L overlay over a chat's `chat://` references
+│  ├─ row_picker.rs         a list of one-line rows to pick one from: what `/fork`
+│  │                        and `/branch` open bare — the conversation's messages,
+│  │                        the chat's parked branches (spec §11.7)
 │  ├─ local_server_picker.rs the *Local servers* list: a row per server and model, Enter picks, Esc closes
 │  │                        (spec §11.3) — the profile-picker shape: snapshot in,
 │  │                        ChatLinkAction out
@@ -882,6 +895,10 @@ src/
 │  ├─ chat.rs               Chat, ChatSummary, CharacterNames, Chat::from_profile, draft,
 │  │                        FeedView (per-chat collapse state of the feed's foldable blocks:
 │  │                        two flags plus the blocks a click flipped, named by FoldKey)
+│  ├─ chat_branch.rs        Branch/ParkCause — a tail of the conversation off the
+│  │                        line (ADR 0015); `Chat::fork_cut`/`fork_at`/`switch_to`
+│  │                        (pure), `park_if_anchored`, `branch_view` → BranchView
+│  │                        (the line's variants marks, the parked tails in tree order)
 │  ├─ chat_file.rs          ChatFile/FileOrigin — a file stored with a chat (bytes in
 │  │                        data/files/<chat-id>/): a call's output, one adopted at
 │  │                        startup, an original /file attach kept, or a picture
@@ -2946,8 +2963,10 @@ different rates; `settings.json` is at **7**, the chat files at **6**,
   `detect` + a `steps` chain), the `Assessment` verdict (`UpToDate`/`Migrate`/
   `Downgrade`), a registry.
 - **`shared/storage/chat_steps.rs`** — the chat-file steps themselves
-  (`chat_to_v2` … `chat_to_v7`), kept out of the registry file because a step is a page of
-  logic with a golden fixture (`storage/fixtures/`), not a line in a table.
+  (`chat_to_v2` … `chat_to_v9`), kept out of the registry file because a step is a page of
+  logic with a golden fixture (`storage/fixtures/`), not a line in a table. A step
+  that changes messages reaches every list of them through `message_lists_mut` —
+  the line, the parked branches' tails (ADR 0015) and the `deleted` archive's.
 - **`features/data_migration.rs`** — orchestration: file I/O, gates,
   pre-migration backup, control-parse. `run(paths, loc)` is called from
   `main.rs` **before** opening storage (for both the TUI and the CLI
@@ -3066,7 +3085,24 @@ Invariants:
   `external`-at-DeepSeek setup 0.20.0's manual names) and
   `fixtures/chat_v5_external_deepseek.json`, by
   `run_stamps_a_root_of_the_version_before_the_deepseek_mode`, and by
-  `a_file_holding_the_deepseek_mode_is_a_newer_version_to_the_previous_schema`.
+  `a_file_holding_the_deepseek_mode_is_a_newer_version_to_the_previous_schema`;
+- **`chat_to_v9` is a stamp for a field, not for a value** (ADR 0015):
+  `Chat.branches` is additive in shape and takes a step for what an older
+  build does with a file that holds it — it parses the file, skips the key,
+  and writes the file back without the branches at its first save. The
+  exemption of an additive field (§8 of ADR 0006) rests on what ignoring it
+  costs, and here that is the conversation. Pinned by the golden
+  `fixtures/chat_v8_deleted_archive.json` (a chat as 0.27.0 wrote it, with
+  everything that names a place on the line), by
+  `run_stamps_a_root_of_the_version_before_branches`, and by
+  `a_chat_with_a_branch_is_a_newer_version_to_a_reader_at_schema_8` — a round
+  trip through today's reader cannot show the loss, the older reader has to
+  be asked. **A chat file has three lists of messages** since then — the
+  line, `branches[].messages`, `deleted[].messages` — and a walk names them in
+  one place: `Chat::stored_messages_mut` for the typed walks (a run's record
+  wherever its exchange went, a clone's fresh ids), `chat_steps::message_lists_mut`
+  for the steps, which `a_steps_walk_visits_the_line_the_branches_and_the_archive`
+  holds to all three.
 
 The SQLite branch (`db/mod.rs::migrate`, version-aware): `baseline_ddl`
 (`CREATE … IF NOT EXISTS`) runs **every time** — an additive mechanism for

@@ -30,7 +30,7 @@ pub const SETTINGS_SCHEMA: u32 = 7;
 /// Schema version of `profiles.json`.
 pub const PROFILES_SCHEMA: u32 = 1;
 /// Schema version of a chat file `chats/<id>.json`.
-pub const CHAT_SCHEMA: u32 = 8;
+pub const CHAT_SCHEMA: u32 = 9;
 /// SQLite schema version (`PRAGMA user_version`). The DB migration runner is in
 /// [`crate::shared::storage::db`] (baseline 0→1 + steps in transactions).
 pub const DB_SCHEMA: u32 = 1;
@@ -374,6 +374,11 @@ const CHAT_STEPS: &[Step] = &[
         summary: "chat files may carry story runs (RunKind::Story)",
         apply: super::chat_steps::chat_to_v8,
     },
+    Step {
+        to: 9,
+        summary: "chat files may hold branches, the tails off the line",
+        apply: super::chat_steps::chat_to_v9,
+    },
 ];
 
 pub fn chat_artifact() -> JsonArtifact {
@@ -516,20 +521,21 @@ mod tests {
         // budget that has to cover reasoning, the version that lets a mode
         // name the OpenRouter gateway, the one that lets an effort read
         // `max`, the self-model cap left at 0.9.4's default, then the version
-        // that lets a mode name DeepSeek's API); chats took seven (the sub-agent
+        // that lets a mode name DeepSeek's API); chats took eight (the sub-agent
         // transcripts, the dialogue-run stamp, spec §9.13, the cut run titles,
         // spec §11.2, the same `max` stamp, the same `deepseek` stamp, the one
-        // that lets a stored file be a generated picture, spec §9.15, then the
-        // one that lets a run be a story's, docs/history/fabula.md §4); profiles are
-        // still dormant.
+        // that lets a stored file be a generated picture, spec §9.15, the
+        // one that lets a run be a story's, docs/history/fabula.md §4, then the
+        // one that lets a chat hold branches, docs/research/chat-branches.md
+        // §3.2); profiles are still dormant.
         let settings = settings_artifact();
         assert_eq!(settings.current, 7);
         let reached: Vec<u32> = settings.steps.iter().map(|s| s.to).collect();
         assert_eq!(reached, [2, 3, 4, 5, 6, 7]);
         let chats = chat_artifact();
-        assert_eq!(chats.current, 8);
+        assert_eq!(chats.current, 9);
         let reached: Vec<u32> = chats.steps.iter().map(|s| s.to).collect();
-        assert_eq!(reached, [2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(reached, [2, 3, 4, 5, 6, 7, 8, 9]);
         let profiles = profiles_artifact();
         assert_eq!(profiles.current, 1);
         assert!(profiles.steps.is_empty());
@@ -799,6 +805,38 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The reason for the chat files' stamp at 9, from the other side. A file
+    /// with a parked branch is, to the reader 0.27.0 ships, a **newer
+    /// version** — refused before it is parsed. Without the stamp that reader
+    /// would parse it, skip the key it does not know, and write the file back
+    /// without the branch at its first save. A round trip through today's
+    /// reader cannot show this; the older reader has to be asked
+    /// (docs/lessons.md §8).
+    #[test]
+    fn a_chat_with_a_branch_is_a_newer_version_to_a_reader_at_schema_8() {
+        let profile = crate::entities::profile::Profile::new("A", "s");
+        let mut chat = crate::entities::chat::Chat::from_profile(&profile, "t");
+        chat.messages = vec![
+            crate::entities::message::Message::user("q"),
+            crate::entities::message::Message::assistant("a"),
+        ];
+        assert!(chat.fork_at(0, chat.modified_at));
+        let stored = serde_json::to_value(&chat).unwrap();
+        assert!(stored.get("branches").is_some());
+        assert_eq!(chat_artifact().assess(&stored), Assessment::UpToDate);
+        assert_eq!(
+            reader_at(chat_artifact(), 8).assess(&stored),
+            Assessment::Downgrade { from: CHAT_SCHEMA }
+        );
+        // A chat nobody forked is stamped all the same: the stamp is the
+        // schema's, not the branch's.
+        let plain = crate::entities::chat::Chat::from_profile(&profile, "t");
+        assert_eq!(
+            reader_at(chat_artifact(), 8).assess(&serde_json::to_value(&plain).unwrap()),
+            Assessment::Downgrade { from: CHAT_SCHEMA }
+        );
     }
 
     /// `settings.json` as 0.19.0 wrote it for an installation begun on

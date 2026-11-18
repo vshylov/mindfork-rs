@@ -75,6 +75,17 @@ pub struct Chat {
     /// spec §9.7.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub files: Vec<ChatFile>,
+    /// The tails of the conversation that are off the line: what a fork cut
+    /// from [`Chat::messages`] and what a switch displaced, each anchored to
+    /// the last message it shares with the line it left
+    /// ([`crate::entities::chat_branch`], docs/research/chat-branches.md §3.1).
+    /// `messages` stays the conversation in front of the person, so nothing
+    /// that reads it knows of these. A chat with no branch writes no key — but
+    /// the field is **not** additive in ADR 0006's sense: a reader that skips
+    /// it writes the file back without it, so it arrives with schema 9
+    /// (`chat_steps::chat_to_v9`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub branches: Vec<crate::entities::chat_branch::Branch>,
     /// Deleted exchanges (`Ctrl+E`/`Ctrl+R`). Stored in the chat file only for
     /// **manual** recovery (editing JSON) in rare cases where something important
     /// was deleted; not used by the UI and not restored automatically.
@@ -376,6 +387,7 @@ impl Chat {
             children_expanded: false,
             attachments: Vec::new(),
             files: Vec::new(),
+            branches: Vec::new(),
             deleted: Vec::new(),
             compaction: None,
             reflected_upto: None,
@@ -409,7 +421,8 @@ impl Chat {
     }
 
     /// Whether the chat holds no conversation content at all: no messages, no
-    /// deleted-exchange tombstones (restorable content), no compaction summary.
+    /// deleted-exchange tombstones (restorable content), no parked branch, no
+    /// compaction summary.
     /// Such a chat — the first-launch default one included — does not bind its
     /// profile to the scaffold language (axis A, spec §10): everything
     /// language-bearing it carries (default title, the system-message copy) is
@@ -417,7 +430,10 @@ impl Chat {
     /// sampling override deliberately don't count: they are the user's, not
     /// the agent's — the same rule that keeps RAG documents out of the lock.
     pub fn is_pristine(&self) -> bool {
-        self.messages.is_empty() && self.deleted.is_empty() && self.compaction.is_none()
+        self.messages.is_empty()
+            && self.deleted.is_empty()
+            && self.branches.is_empty()
+            && self.compaction.is_none()
     }
 
     /// Records a deleted exchange (`Ctrl+E`/`Ctrl+R`) into the `deleted` collection
@@ -514,14 +530,25 @@ impl Chat {
             .find(|r| r.id == id)
     }
 
-    /// [`Self::child_mut`] over the live messages **and** the deleted
-    /// archive: where a background run lands when the exchange that started
-    /// it was taken back while it was out (spec §9.3.2,
-    /// docs/research/background-subagents.md fork F8).
-    pub fn child_mut_including_deleted(&mut self, id: Uuid) -> Option<&mut SubagentRun> {
+    /// Every message list the chat file holds — the line, the parked
+    /// branches and the deleted archive — for the walks that are about the
+    /// file rather than the conversation: a transcript's record wherever its
+    /// exchange went, a clone's fresh ids. Named in one place so that a walk
+    /// cannot visit two of the three (docs/research/chat-branches.md §3.2).
+    fn stored_messages_mut(&mut self) -> impl Iterator<Item = &mut Message> {
         self.messages
             .iter_mut()
+            .chain(self.branches.iter_mut().flat_map(|b| b.messages.iter_mut()))
             .chain(self.deleted.iter_mut().flat_map(|d| d.messages.iter_mut()))
+    }
+
+    /// [`Self::child_mut`] over everything the file holds — the live
+    /// messages, the parked branches **and** the deleted archive: where a
+    /// background run lands when the exchange that started it left the line
+    /// while it was out, taken back or parked by a fork (spec §9.3.2,
+    /// docs/research/background-subagents.md fork F8).
+    pub fn child_mut_including_deleted(&mut self, id: Uuid) -> Option<&mut SubagentRun> {
+        self.stored_messages_mut()
             .flat_map(|m| m.tool_calls.iter_mut())
             .filter_map(|r| r.subagent.as_deref_mut())
             .find(|r| r.id == id)
@@ -530,13 +557,11 @@ impl Chat {
     /// Gives every sub-agent transcript a fresh id — what a **clone** must do,
     /// since the copied messages carry the transcripts along and two chats
     /// answering to one `chat://` prefix would make the reference ambiguous
-    /// (docs/research/subagent-chats.md §3.6). The archive's are re-id'd too;
-    /// they are copied with the rest.
+    /// (docs/research/subagent-chats.md §3.6). The parked branches' and the
+    /// archive's are re-id'd too; they are copied with the rest.
     pub fn reid_children(&mut self) {
         let runs = self
-            .messages
-            .iter_mut()
-            .chain(self.deleted.iter_mut().flat_map(|d| d.messages.iter_mut()))
+            .stored_messages_mut()
             .flat_map(|m| m.tool_calls.iter_mut())
             .filter_map(|r| r.subagent.as_deref_mut());
         for run in runs {

@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 use crate::app::events::{AppEvent, ToolDecision};
 use crate::entities::chat::DeletedCause;
+use crate::entities::chat_branch::ParkCause;
 use crate::entities::message::{
     Message, MessageFinish, MessageMetadata, MessageRole, ToolCallRecord,
 };
@@ -393,15 +394,24 @@ impl Orchestrator {
 
         // Add the user's message to the history and echo it in the feed. The UI
         // cleared the input box on send — also clear the chat's saved draft.
+        let sent;
         {
             let Some(chat) = self.chat_mut(active_id) else {
                 return;
             };
-            chat.push_message(Message::user(&text).with_images(images));
+            let message = Message::user(&text).with_images(images);
+            sent = message.id;
+            chat.push_message(message);
             chat.draft.clear();
         }
         self.mark_dirty(active_id);
-        let _ = self.evt_tx.send(AppEvent::UserMessage(text));
+        let _ = self.evt_tx.send(AppEvent::UserMessage {
+            text,
+            id: Some(sent),
+        });
+        // The message may be the line's own continuation at a place a branch
+        // is parked: its bubble then carries a variants mark.
+        self.refresh_branches(active_id);
 
         if !unnamed.is_empty() {
             self.park_turn(active_id, backend, unnamed);
@@ -479,11 +489,16 @@ impl Orchestrator {
                 return; // no user message — nothing to regenerate
             };
             // Save what's deleted (the assistant's reply + the round's tool messages)
-            // and the input draft, for manual recovery (spec §11.7).
-            let draft = chat.draft.clone();
-            let removed = chat.messages.split_off(idx + 1);
-            chat.record_deleted(removed, draft, DeletedCause::Regenerate);
-            chat.modified_at = chrono::Utc::now();
+            // and the input draft, for manual recovery (spec §11.7) — unless a
+            // parked branch continues from the reply: then it is parked too, so
+            // that branch still has a place to return to.
+            let now = chrono::Utc::now();
+            if !chat.park_if_anchored(idx + 1, ParkCause::Regenerate, now) {
+                let draft = chat.draft.clone();
+                let removed = chat.messages.split_off(idx + 1);
+                chat.record_deleted(removed, draft, DeletedCause::Regenerate);
+            }
+            chat.modified_at = now;
         }
         self.mark_dirty(active_id);
         self.activate(active_id); // rebuild the feed without the old reply
@@ -680,11 +695,15 @@ impl Orchestrator {
             };
             // Save what's deleted (the user message + the assistant's reply) and the
             // input draft BEFORE returning the user's text to the field — for manual
-            // recovery (spec §11.7).
-            let draft = chat.draft.clone();
-            let removed = chat.messages.split_off(idx);
-            chat.record_deleted(removed, draft, DeletedCause::DeleteExchange);
-            chat.modified_at = chrono::Utc::now();
+            // recovery (spec §11.7) — unless a parked branch continues from the
+            // exchange: then it is parked too (see `handle_regenerate`).
+            let now = chrono::Utc::now();
+            if !chat.park_if_anchored(idx, ParkCause::Takeback, now) {
+                let draft = chat.draft.clone();
+                let removed = chat.messages.split_off(idx);
+                chat.record_deleted(removed, draft, DeletedCause::DeleteExchange);
+            }
+            chat.modified_at = now;
         }
         self.mark_dirty(active_id);
         self.activate(active_id); // rebuild the feed without the deleted exchange
@@ -1463,6 +1482,10 @@ impl Orchestrator {
                 chat_id: res.chat_id,
                 messages: turn_rows,
             });
+            // What landed may be the line's continuation at a place a branch
+            // is parked — a turn a notification woke has no sent message
+            // before it to say so.
+            self.refresh_branches(res.chat_id);
         }
         // A background run that ended while this turn ran: its notification
         // goes after the turn's rows, and the assistant may be woken on it

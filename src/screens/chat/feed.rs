@@ -99,6 +99,8 @@ impl ChatScreen {
         self.refresh_known_chats();
         // The reference picker lists the *previous* chat's links.
         self.chat_links = None;
+        // So does a list of its messages or its branches.
+        self.branch_popup = None;
         // A selection points into the previous chat's rows — and a block of
         // the new one that happens to match by fingerprint would keep it.
         self.feed_view.clear_selection();
@@ -183,16 +185,25 @@ impl ChatScreen {
         self.mark_input_changed();
     }
 
+    /// The echo of a message with no stored one behind it — what a test of
+    /// the feed pushes.
+    #[cfg(test)]
     pub fn push_user_message(&mut self, text: String) {
+        self.echo_user_message(text, None);
+    }
+
+    /// The echo of the message the person sent (`AppEvent::UserMessage`),
+    /// carrying the stored message's id: the bubble is that message from its
+    /// first frame, so a fork can be made at it without opening the chat again
+    /// (docs/research/chat-branches.md §3.6).
+    pub fn echo_user_message(&mut self, text: String, id: Option<Uuid>) {
         self.feed.push(FeedMessage {
             role: FeedRole::User,
             text,
             thoughts: String::new(),
             tools: Vec::new(),
             streaming: false,
-            // The echo carries no id — the domain message is the orchestrator's;
-            // the feed picks the ids up on the next activation.
-            message_ids: Vec::new(),
+            message_ids: id.into_iter().collect(),
             // A user message has no model behind it, in the feed or on disk.
             model: None,
             voice: None,
@@ -719,6 +730,40 @@ impl ChatScreen {
         }
         if changed {
             self.mark_feed_changed();
+        }
+    }
+
+    /// The open conversation's branches (`AppEvent::Branches`, sent with every
+    /// activation): what `/branch` lists and resolves against
+    /// (docs/research/chat-branches.md §3.6–§3.7).
+    ///
+    /// A tail parked at the line's **end** has no bubble to carry a mark: the
+    /// line stops on the message it continues from. That is the state a fork
+    /// leaves until the person writes, so it is said in a note — derived from
+    /// the branches, hence drawn again whenever the chat is opened in that
+    /// state, and naming the command that returns.
+    pub fn set_branches(&mut self, view: BranchView) {
+        self.branches = view;
+        self.feed_view.set_variants(&self.branches.marks);
+        self.mark_feed_changed();
+        let at_end: Vec<&BranchInfo> = self.branches.parked.iter().filter(|b| b.at_end).collect();
+        let note = match at_end.as_slice() {
+            [] => None,
+            [only] => Some(self.loc.tf(
+                "ui.branch.note_one",
+                &[
+                    ("count", &only.bubbles.to_string()),
+                    ("number", &only.number.to_string()),
+                    ("variant", &only.variant.to_string()),
+                ],
+            )),
+            many => Some(
+                self.loc
+                    .tf("ui.branch.note_many", &[("count", &many.len().to_string())]),
+            ),
+        };
+        if let Some(text) = note {
+            self.push_note(&text);
         }
     }
 

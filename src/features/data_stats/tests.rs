@@ -11,6 +11,7 @@ use chrono::TimeZone;
 use super::*;
 use crate::entities::attachment::{AttachMode, Attachment};
 use crate::entities::chat::{Chat, DeletedExchange, visible_message_count};
+use crate::entities::chat_branch::{Branch, ParkCause};
 use crate::entities::chat_file::{ChatFile, FileOrigin};
 use crate::entities::message::Message;
 use crate::entities::message_image::MessageImage;
@@ -84,6 +85,19 @@ fn hidden_chat(profile: &Profile) -> Chat {
     ];
     chat.workspace = Some(Workspace::new("/code/project"));
     chat.is_hidden = true;
+    // A branch parked in it: another way the conversation went from its first
+    // message — counted on its own, and not among the chat's messages.
+    chat.branches = vec![Branch {
+        after: Some(chat.messages[0].id),
+        messages: vec![
+            message(Message::assistant("oldest"), at(1, 11)),
+            message(Message::user("and then"), at(1, 12)),
+        ],
+        parked_at: at(1, 13),
+        cause: ParkCause::Fork,
+        compaction: None,
+        reflected_upto: None,
+    }];
     chat.modified_at = at(5, 0);
     chat
 }
@@ -133,6 +147,8 @@ fn expected_chats() -> ChatTotals {
         message_rows: 8,
         deleted_messages: 2,
         deleted_exchanges: 1,
+        parked_messages: 2,
+        parked_branches: 1,
         attachments: 2,
         stored_files: 1,
         images: 1,
@@ -360,6 +376,7 @@ fn the_text_names_every_figure_and_the_file_it_could_not_read() {
         "Chats:             2 (deleted: 1)",
         "Messages:          6 (in deleted chats: 2; stored rows: 8)",
         "Deleted messages:  2 (exchanges: 1)",
+        "Branch messages:   2 (branches: 1)",
         "Attached files:    2",
         "Stored files:      1",
         "Images:            1",

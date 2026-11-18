@@ -18,6 +18,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use uuid::Uuid;
 
 use crate::entities::chat::{FeedView, FoldKey};
+use crate::entities::chat_branch::LineMark as VariantMark;
 use crate::entities::message::{Message, MessageRole};
 use crate::entities::profile::CharacterNames;
 use crate::features::tools::present::{self, ToolBlock};
@@ -379,6 +380,16 @@ pub struct MessageFeed {
     /// screen — what [`MessageFeed::fold_at`] answers a click against, like
     /// [`Self::link_hits`] (docs/research/block-fold-and-partial-copy.md §3.5).
     fold_hits: Vec<FoldHit>,
+    /// Where the row-end tags of the **last drawn frame** sit on screen — a
+    /// message's number and the arrows of its variants mark: what
+    /// [`MessageFeed::tap_at`] answers a click against, like
+    /// [`Self::fold_hits`] (docs/research/chat-branches.md §3.7).
+    tap_hits: Vec<TapCell>,
+    /// Which variant of its place a bubble of the line is, by the bubble's
+    /// first message: `(variant, of)` for the bubbles that have other variants
+    /// parked ([`MessageFeed::set_variants`]). Drawn before the bubble's
+    /// number, `‹2/3› #11`.
+    variants: std::collections::HashMap<Uuid, (u16, u16)>,
     /// Cache of rendered lines, one block per message (see [`CachedBlock`]).
     /// Index = message position. `build_lines` is called on every dirty frame
     /// (streaming, scrolling) and would re-run markdown+syntect over the WHOLE
@@ -599,6 +610,8 @@ struct CachedBlock {
     /// the entry beside the fingerprint: a block is rebuilt when the messages
     /// above it change in count.
     number: Option<u32>,
+    /// The bubble's variants mark, drawn before the number — checked like it.
+    variant: Option<(u16, u16)>,
     lines: Vec<Line<'static>>,
     /// One per row of `lines`: what of it is the rail, and whether it
     /// continues the line above — what a selection needs and the bare `Line`
@@ -613,6 +626,9 @@ struct CachedBlock {
     /// map is made of. Recorded while the block is built, as `links` are,
     /// because only the build knows which spans are a pill.
     pills: Vec<PillHit>,
+    /// Where the block's row-end tag is in its rows ([`TapHit`]): the number
+    /// and the arrows of the variants mark.
+    taps: Vec<TapHit>,
     /// How many of `lines` the role header occupies — the highlight pass skips
     /// them. Recorded here because the header's height is only known while the
     /// block is built: it is normally one line, but a long custom role name can
@@ -725,6 +741,8 @@ impl MessageFeed {
             engine_missing: false,
             link_hits: Vec::new(),
             fold_hits: Vec::new(),
+            tap_hits: Vec::new(),
+            variants: std::collections::HashMap::new(),
             cache: Vec::new(),
             cache_key: None,
             pending_focus: None,
@@ -788,6 +806,27 @@ impl MessageFeed {
     /// *where* verbatim history resumes.
     pub fn set_compaction(&mut self, compaction: Option<(Uuid, String)>) {
         self.compaction = compaction;
+    }
+
+    /// Sets the variants marks of the line's bubbles
+    /// (`AppEvent::Branches`, docs/research/chat-branches.md §3.7). A mark is
+    /// a property of a block's place like its number, so it is checked beside
+    /// the block's fingerprint and not in [`CacheKey`]: a fork or a switch
+    /// rebuilds the blocks whose mark changed, and no other.
+    pub fn set_variants(&mut self, marks: &[VariantMark]) {
+        self.variants = marks
+            .iter()
+            .map(|m| (m.message, (m.variant, m.of)))
+            .collect();
+    }
+
+    /// What a click at this terminal cell is on, as last drawn: a message's
+    /// number, or an arrow of its variants mark — `None` anywhere else.
+    pub fn tap_at(&self, col: u16, row: u16) -> Option<Tap> {
+        self.tap_hits
+            .iter()
+            .find(|h| h.row == row && (h.start..h.end).contains(&col))
+            .map(|h| h.tap)
     }
 
     /// Sets the address book a `chat://` reference resolves against — the
@@ -1455,6 +1494,11 @@ impl MessageFeed {
         } else {
             visible_fold_hits(&self.cache, inner, self.scroll)
         };
+        self.tap_hits = if placeholder {
+            Vec::new()
+        } else {
+            visible_tap_hits(&self.cache, inner, self.scroll)
+        };
         // The selection is read against the same frame (research §5.3).
         self.drawn = (!placeholder).then(|| {
             let mut starts = Vec::with_capacity(self.cache.len());
@@ -1633,6 +1677,10 @@ impl MessageFeed {
             let place = BlockPlace {
                 at_boundary: boundary == Some(idx),
                 number,
+                variant: item
+                    .message_ids
+                    .first()
+                    .and_then(|id| self.variants.get(id).copied()),
             };
             self.refresh_cached_block(idx, item, palette, width, opts, loc, place);
             // The block goes in query-free; the highlight is applied to the
@@ -1689,10 +1737,12 @@ impl MessageFeed {
             .then(|| self.compaction.as_ref().map(|(id, _)| *id))
             .flatten();
         let folds = fold_state(item, &self.view, boundary);
-        let hit = self
-            .cache
-            .get(idx)
-            .is_some_and(|c| c.fingerprint == fp && c.folds == folds && c.number == place.number);
+        let hit = self.cache.get(idx).is_some_and(|c| {
+            c.fingerprint == fp
+                && c.folds == folds
+                && c.number == place.number
+                && c.variant == place.variant
+        });
         if !hit {
             // The block's rows are about to be made anew: a selection in them
             // no longer points at what it took.
@@ -1716,11 +1766,14 @@ impl MessageFeed {
                 &self.known_chats,
                 self.show_model_name,
                 place.number,
+                place.variant,
             );
             let cb = CachedBlock {
                 fingerprint: fp,
                 folds,
                 number: place.number,
+                variant: place.variant,
+                taps: built.taps,
                 lines: built.lines,
                 facts: built.facts,
                 links: built.links,
@@ -1914,12 +1967,17 @@ fn build_message_block(
     known_chats: &[Uuid],
     show_model: bool,
     number: Option<u32>,
+    variant: Option<(u16, u16)>,
 ) -> BuiltBlock {
     // Content width under the rail (rail = 2 columns).
     let inner = width.saturating_sub(RAIL.chars().count()).max(1);
     let rail = rail_of(item.role, marked, palette);
-    let number = number.map(|n| format!("#{n}"));
-    // What the number takes of its row: itself, a column before it and the
+    // The tag the message's row ends with: its number, and before it the
+    // variants mark where the bubble has other variants parked — `‹2/3› #11`
+    // (docs/research/chat-branches.md §3.7).
+    let tag = number.map(|n| RowTag::new(n, variant));
+    let number = tag.as_ref().map(RowTag::text);
+    // What the tag takes of its row: itself, a column before it and the
     // margin after it.
     let reserved = number
         .as_deref()
@@ -2032,6 +2090,7 @@ fn build_message_block(
     // rows continue a line.
     let mut facts: Vec<RowFact> = Vec::new();
     let mut pills: Vec<PillHit> = Vec::new();
+    let mut taps: Vec<TapHit> = Vec::new();
     if let Some((boundary, summary)) = compaction {
         let mut divider = Body::default();
         let key = FoldKey::Summary(boundary);
@@ -2094,6 +2153,13 @@ fn build_message_block(
                 && let Some((text, _)) = number
             {
                 fact.tail = push_number(&mut wrapped, text, inner, palette);
+                if fact.tail > 0
+                    && let Some(tag) = &tag
+                {
+                    // The tag ends where the margin begins, the rail counted.
+                    let end = usize::from(lead) + inner - NUMBER_MARGIN;
+                    taps.extend(tag.taps(out.len(), end, item.message_ids.first().copied()));
+                }
             }
             out.push(prepend_rail(wrapped, &rail));
             facts.push(fact);
@@ -2113,6 +2179,7 @@ fn build_message_block(
         content_from,
         links,
         pills,
+        taps,
     }
 }
 
@@ -2220,6 +2287,59 @@ fn visible_fold_hits(cache: &[CachedBlock], inner: Rect, scroll: usize) -> Vec<F
     hits
 }
 
+/// What a click on the tag a message's row ends with does
+/// (docs/research/chat-branches.md §3.7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tap {
+    /// An arrow of a variants mark, `‹` (`step` −1) or `›` (+1): the
+    /// neighbouring variant of the bubble that starts with `message`.
+    Variant { message: Uuid, step: i8 },
+    /// A message's number.
+    Number(u32),
+}
+
+/// A tag's target in a built block: its row there and its columns in the
+/// panel's content (the rail included), half-open — like [`PillHit`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TapHit {
+    row: usize,
+    start: u16,
+    end: u16,
+    tap: Tap,
+}
+
+/// A tag's target on the screen, in terminal cells — [`MessageFeed::tap_hits`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TapCell {
+    row: u16,
+    start: u16,
+    end: u16,
+    tap: Tap,
+}
+
+/// The row-end tags of the rows on screen, in terminal cells — the fold map's
+/// arithmetic ([`visible_fold_hits`]) over [`CachedBlock::taps`].
+fn visible_tap_hits(cache: &[CachedBlock], inner: Rect, scroll: usize) -> Vec<TapCell> {
+    let mut hits = Vec::new();
+    let mut at = 0usize;
+    let rows = scroll..scroll + inner.height as usize;
+    for block in cache {
+        for tap in &block.taps {
+            let abs = at + tap.row;
+            if rows.contains(&abs) {
+                hits.push(TapCell {
+                    row: inner.y + (abs - scroll) as u16,
+                    start: inner.x + tap.start,
+                    end: inner.x + tap.end,
+                    tap: tap.tap,
+                });
+            }
+        }
+        at += block.lines.len();
+    }
+    hits
+}
+
 /// One freshly built block, before it enters the cache.
 struct BuiltBlock {
     lines: Vec<Line<'static>>,
@@ -2231,6 +2351,8 @@ struct BuiltBlock {
     links: Vec<Uuid>,
     /// See [`CachedBlock::pills`].
     pills: Vec<PillHit>,
+    /// See [`CachedBlock::taps`].
+    taps: Vec<TapHit>,
 }
 
 /// Draws every **resolvable** `chat://` address in one unwrapped line in the
@@ -2668,6 +2790,61 @@ fn push_number(row: &mut Line<'static>, text: &str, inner: usize, palette: &Pale
     (number + gap.saturating_sub(own)) as u16
 }
 
+/// The tag a message's row ends with: its number, and before it the variants
+/// mark of a bubble whose place has other variants parked.
+struct RowTag {
+    number: u32,
+    variant: Option<(u16, u16)>,
+}
+
+impl RowTag {
+    fn new(number: u32, variant: Option<(u16, u16)>) -> Self {
+        Self { number, variant }
+    }
+
+    fn mark(&self) -> Option<String> {
+        self.variant.map(|(k, of)| format!("‹{k}/{of}›"))
+    }
+
+    fn number_text(&self) -> String {
+        format!("#{}", self.number)
+    }
+
+    /// As drawn: `‹2/3› #11`, or `#11`.
+    fn text(&self) -> String {
+        match self.mark() {
+            Some(mark) => format!("{mark} {}", self.number_text()),
+            None => self.number_text(),
+        }
+    }
+
+    /// The tag's click targets on block row `row`, the tag ending before
+    /// column `end`: the number, and the two arrows of a mark — which name
+    /// the bubble by its first message, `first`, so a bubble with no stored
+    /// message yet has none.
+    fn taps(&self, row: usize, end: usize, first: Option<Uuid>) -> Vec<TapHit> {
+        let hit = |start: usize, end: usize, tap: Tap| TapHit {
+            row,
+            start: start as u16,
+            end: end as u16,
+            tap,
+        };
+        let number = wrap::str_width(&self.number_text());
+        let mut taps = vec![hit(end - number, end, Tap::Number(self.number))];
+        if let (Some(mark), Some(message)) = (self.mark(), first) {
+            let width = wrap::str_width(&mark);
+            let start = end - number - 1 - width;
+            taps.push(hit(start, start + 1, Tap::Variant { message, step: -1 }));
+            taps.push(hit(
+                start + width - 1,
+                start + width,
+                Tap::Variant { message, step: 1 },
+            ));
+        }
+        taps
+    }
+}
+
 /// The number of each feed item, in order: the messages of the conversation
 /// counted from 1, `None` for what is not one ([`FeedMessage::is_numbered`]).
 fn numbers(messages: &[FeedMessage]) -> impl Iterator<Item = Option<u32>> + '_ {
@@ -2680,6 +2857,30 @@ fn numbers(messages: &[FeedMessage]) -> impl Iterator<Item = Option<u32>> + '_ {
     })
 }
 
+/// The feed item that shows `#number` — what a command that names a message
+/// by its number acts on (docs/research/chat-branches.md §3.6): the screen
+/// resolves the number here, against what it draws, and sends the id of the
+/// message the item carries.
+pub fn numbered_item(messages: &[FeedMessage], number: u32) -> Option<&FeedMessage> {
+    messages
+        .iter()
+        .zip(numbers(messages))
+        .find_map(|(m, n)| (n == Some(number)).then_some(m))
+}
+
+/// The number `item` shows in `messages`, when it is one of them and numbered.
+pub fn number_of(messages: &[FeedMessage], first_message: Uuid) -> Option<u32> {
+    messages
+        .iter()
+        .zip(numbers(messages))
+        .find_map(|(m, n)| (m.message_ids.first() == Some(&first_message)).then_some(n)?)
+}
+
+/// The last number the feed shows; 0 when it holds no message.
+pub fn last_number(messages: &[FeedMessage]) -> u32 {
+    numbers(messages).flatten().last().unwrap_or(0)
+}
+
 /// Where a block stands in the feed — what its build needs beyond the item
 /// itself, and what its cache entry is checked against.
 #[derive(Clone, Copy)]
@@ -2688,6 +2889,9 @@ struct BlockPlace {
     at_boundary: bool,
     /// The message's number ([`numbers`]).
     number: Option<u32>,
+    /// Which variant of its place the bubble is, when the place has others
+    /// parked ([`MessageFeed::set_variants`]).
+    variant: Option<(u16, u16)>,
 }
 
 /// A message's rail: the glyph and its colour. The colour says the role — and
@@ -7317,6 +7521,7 @@ mod tests {
             &[],
             true,
             number,
+            None,
         )
     }
 
@@ -7592,5 +7797,117 @@ mod tests {
         let row = screen.iter().find(|r| r.contains("#1")).unwrap();
         let after = row[row.find("#1").unwrap() + 2..].trim();
         assert!(after.chars().count() <= 1, "{row:?}");
+    }
+
+    // ---- The variants mark and the tag's click targets (research §3.7) ----
+
+    /// A bubble whose place has other variants parked carries its figure
+    /// before its number, and the tag is chrome whole: one tail, nothing of it
+    /// copied.
+    #[test]
+    fn a_bubble_with_variants_carries_its_mark_before_the_number() {
+        let m = msg(FeedRole::User, "вопрос", "");
+        let plain = block(&m, 40, Some(11));
+        let built = build_message_block(
+            &m,
+            &Palette::default(),
+            40,
+            &FeedView::default(),
+            markdown::RenderOpts::default(),
+            ru(),
+            &CharacterNames::default(),
+            false,
+            None,
+            &[],
+            true,
+            Some(11),
+            Some((2, 3)),
+        );
+        let row = rows(&built.lines)[0].clone();
+        assert!(row.ends_with(" ‹2/3› #11"), "{row:?}");
+        assert_eq!(wrap::str_width(&row), 40 - NUMBER_MARGIN);
+        assert_eq!(copied(&built), copied(&plain));
+        assert_eq!(built.lines.len(), plain.lines.len());
+
+        // The targets: the number, then the two arrows, on the header's row.
+        let end = (40 - NUMBER_MARGIN) as u16;
+        let message = m.message_ids[0];
+        assert_eq!(
+            built.taps,
+            vec![
+                TapHit {
+                    row: 0,
+                    start: end - 3,
+                    end,
+                    tap: Tap::Number(11)
+                },
+                TapHit {
+                    row: 0,
+                    start: end - 9,
+                    end: end - 8,
+                    tap: Tap::Variant { message, step: -1 }
+                },
+                TapHit {
+                    row: 0,
+                    start: end - 5,
+                    end: end - 4,
+                    tap: Tap::Variant { message, step: 1 }
+                },
+            ]
+        );
+        // With no mark the number is the tag's one target.
+        assert_eq!(plain.taps.len(), 1);
+        assert_eq!(plain.taps[0].tap, Tap::Number(11));
+        // And a row with no room for the tag has none.
+        assert!(block(&m, 6, Some(11)).taps.is_empty());
+    }
+
+    /// Through the whole render: a click on a cell of the tag is answered
+    /// against the frame that was drawn; a mark set after the first frame
+    /// redraws the block it is on, and that one alone.
+    #[test]
+    fn a_tag_is_found_under_the_pointer_as_it_was_drawn() {
+        let messages = numbered(3);
+        let marked = messages[1].message_ids[0];
+        let mut feed = MessageFeed::new();
+        let before = visible(&mut feed, &messages, 40, 14);
+        assert!(!before.iter().any(|r| r.contains('‹')), "{before:?}");
+
+        feed.set_variants(&[VariantMark {
+            message: marked,
+            variant: 1,
+            of: 2,
+        }]);
+        let screen = visible(&mut feed, &messages, 40, 14);
+        let (y, row) = screen
+            .iter()
+            .enumerate()
+            .find(|(_, r)| r.contains("‹1/2› #2"))
+            .unwrap_or_else(|| panic!("the mark is not drawn: {screen:?}"));
+        let column = |tag: &str| wrap::str_width(&row[..row.find(tag).unwrap()]) as u16;
+        let y = y as u16;
+        assert_eq!(
+            feed.tap_at(column("‹"), y),
+            Some(Tap::Variant {
+                message: marked,
+                step: -1
+            })
+        );
+        assert_eq!(
+            feed.tap_at(column("›"), y),
+            Some(Tap::Variant {
+                message: marked,
+                step: 1
+            })
+        );
+        assert_eq!(feed.tap_at(column("#2"), y), Some(Tap::Number(2)));
+        assert_eq!(feed.tap_at(column("#2") + 1, y), Some(Tap::Number(2)));
+        // Between the mark and the number, on the figure, and on the header's
+        // text: nothing.
+        assert_eq!(feed.tap_at(column("#2") - 1, y), None);
+        assert_eq!(feed.tap_at(column("1/2"), y), None);
+        assert_eq!(feed.tap_at(column("ВЫ"), y), None);
+        // The other bubbles keep their numbers, and gained no mark.
+        assert_eq!(screen.iter().filter(|r| r.contains('‹')).count(), 1);
     }
 }

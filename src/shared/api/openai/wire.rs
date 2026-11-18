@@ -1231,6 +1231,26 @@ mod tests {
     use crate::entities::sampling::{ReasoningEffort, SamplingConfig};
     use crate::shared::api::contract::ApiMessage;
 
+    /// A fork can end the line on a tool result — between a reply's first
+    /// bubble and its follow-up — with the person's message next
+    /// (`shared::api::forked_line_tests`).
+    #[test]
+    fn a_line_cut_after_a_tool_result_takes_the_persons_message_next() {
+        use crate::shared::api::forked_line_tests::{assert_in_order, forked_line};
+        let json =
+            serde_json::to_value(build_chat_request(&forked_line(), false, None, false)).unwrap();
+        let roles: Vec<&str> = json["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["role"].as_str().unwrap())
+            .collect();
+        assert_eq!(roles, ["system", "user", "assistant", "tool", "user"]);
+        assert_eq!(json["messages"][2]["tool_calls"][0]["id"], "call-1");
+        assert_eq!(json["messages"][3]["tool_call_id"], "call-1");
+        assert_in_order(&json["messages"]);
+    }
+
     #[test]
     fn omits_stop_and_none_fields() {
         let req = ChatRequest {

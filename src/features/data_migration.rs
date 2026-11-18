@@ -673,11 +673,60 @@ mod tests {
             "the settings take no step"
         );
         let mut chat = read(paths.chat_file(id));
-        assert_eq!(chat["v"], json!(8));
+        // Stamped 8, and on to wherever the chain ends now.
+        assert_eq!(chat["v"], json!(schema::CHAT_SCHEMA));
         chat["v"] = json!(7);
         let before: Value = serde_json::from_str(chat_before).unwrap();
         assert_eq!(chat, before, "the chat holds what it held");
         assert_eq!(pre_migrate_manifest(&paths).schemas.chat, 7);
+
+        run(&paths, ru()).unwrap();
+        assert_eq!(pre_migrate_backups(&paths), 1);
+    }
+
+    /// A root as 0.27.0 left it — settings at 7, a chat at 8 with a reply
+    /// regenerated and an exchange taken back in its `deleted` archive —
+    /// through the real registry: the chat alone is backed up and stamped 9,
+    /// the first schema in which a chat may hold branches
+    /// (docs/research/chat-branches.md §3.2); the settings need no step, since
+    /// they hold nothing of this; nothing moves — the archive stays the
+    /// archive, no record of it becomes a branch — and the next start finds
+    /// nothing to do. The backup records the chat at 8, what 0.27.0 restores
+    /// without the "newer version" warning.
+    #[test]
+    fn run_stamps_a_root_of_the_version_before_branches() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::with_root(dir.path());
+        let mut settings_before: Value =
+            serde_json::from_str(include_str!("../shared/storage/fixtures/settings_v6.json"))
+                .unwrap();
+        settings_before["schema_version"] = json!(7);
+        write(
+            &paths.settings_file(),
+            &serde_json::to_string_pretty(&settings_before).unwrap(),
+        );
+        write(&paths.profiles_file(), "[]");
+        let id = "8e2b1c3d-4f5a-4b6c-9d7e-8f9a0b1c2d3e";
+        let chat_before = include_str!("../shared/storage/fixtures/chat_v8_deleted_archive.json");
+        write(&paths.chat_file(id), chat_before);
+
+        run(&paths, ru()).unwrap();
+
+        let read = |path: PathBuf| -> Value {
+            serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap()
+        };
+        assert_eq!(
+            read(paths.settings_file()),
+            settings_before,
+            "the settings take no step"
+        );
+        let mut chat = read(paths.chat_file(id));
+        assert_eq!(chat["v"], json!(9));
+        assert!(chat.get("branches").is_none(), "no key is added");
+        chat["v"] = json!(8);
+        let before: Value = serde_json::from_str(chat_before).unwrap();
+        assert_eq!(chat, before, "the chat holds what it held");
+        assert_eq!(pre_migrate_manifest(&paths).schemas.chat, 8);
 
         run(&paths, ru()).unwrap();
         assert_eq!(pre_migrate_backups(&paths), 1);
@@ -999,7 +1048,7 @@ mod tests {
         run(&paths, ru()).unwrap();
     }
 
-    /// A chat at the schema before the last step, as 0.23.1 wrote it.
+    /// A chat below the current schema, as 0.23.1 wrote it.
     const CHAT_AT_7: &str =
         include_str!("../shared/storage/fixtures/chat_v7_background_dialogue.json");
     const CHAT_AT_7_ID: &str = "7d1a0b2c-3e4f-4a5b-8c6d-7e8f9a0b1c2d";
@@ -1219,6 +1268,10 @@ mod tests {
                 include_str!("../shared/storage/fixtures/chat_v6_sandbox_file.json"),
             ),
             ("v7", CHAT_AT_7),
+            (
+                "v8",
+                include_str!("../shared/storage/fixtures/chat_v8_deleted_archive.json"),
+            ),
         ] {
             let v: Value = serde_json::from_str(raw).unwrap();
             assert!(

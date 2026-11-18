@@ -88,6 +88,17 @@ pub enum AppCommand {
     /// message that triggered it); the user's text is restored into the input box
     /// (`RestoreInput`).
     DeleteLastExchange,
+    /// Fork the open conversation at the bubble that shows `message`
+    /// (`/fork N`, docs/research/chat-branches.md §3.6): what followed is
+    /// parked as a branch, and the person's own message, when the fork is at
+    /// one, returns to the input box (`RestoreInput`). The screen resolves N to
+    /// the id of a message the numbered bubble carries, so what the person saw
+    /// numbered is what is acted on.
+    ForkAt { message: Uuid },
+    /// Put a parked variant of the open conversation on the line
+    /// (`/branch N K`, a click on a variants mark; research §3.6–§3.7):
+    /// `first` is the variant's first message, which names it.
+    SwitchBranch { first: Uuid },
     /// Cancel the current generation.
     Cancel,
     /// Write a message on the user's behalf (impersonation, `Ctrl+U`). `seed` —
@@ -398,6 +409,8 @@ impl AppCommand {
             | AppCommand::Impersonate { .. }
             // Changes what the conversation stores.
             | AppCommand::DeleteLastExchange
+            | AppCommand::ForkAt { .. }
+            | AppCommand::SwitchBranch { .. }
             | AppCommand::SwapGreeting { .. }
             // Ends a background run: its record lands as cancelled.
             | AppCommand::StopSubagentRun { .. }
@@ -624,6 +637,11 @@ pub enum AppEvent {
         /// round in progress. `None` otherwise.
         live_turn: Option<Box<LiveTurn>>,
     },
+    /// The open conversation's branches (docs/research/chat-branches.md
+    /// §3.7): the marks its bubbles carry and its parked tails. Sent with
+    /// every activation, after `ChatActivated` — a chat with none and a
+    /// transcript send an empty one, so the previous chat's do not linger.
+    Branches(Box<crate::entities::chat_branch::BranchView>),
     /// A running sub-agent transcript filed a round while it is the open
     /// conversation (docs/subagent-live.md §3.4): the messages to append to
     /// the feed. Guarded by `id` — a round for another conversation is dropped.
@@ -640,8 +658,13 @@ pub enum AppEvent {
     /// discarded or rewrote a line (spec §9.13) — so appending cannot express
     /// it: the feed is rebuilt from this full replacement. Guarded by `id`.
     TranscriptReset { id: Uuid, messages: Vec<Message> },
-    /// The user's message was accepted (an echo for the feed).
-    UserMessage(String),
+    /// The user's message was accepted (an echo for the feed). `id` — the
+    /// stored message's, so the echo is the message from its first frame: a
+    /// command that names a message by its number acts on the id its bubble
+    /// carries (`/fork N`, docs/research/chat-branches.md §3.6), and an echo
+    /// without one could not be forked at until the chat was opened again.
+    /// `None` only where no message is stored behind the echo — the demo reel.
+    UserMessage { text: String, id: Option<Uuid> },
     /// Restore text into the input box (after deleting the last exchange). A non-empty
     /// existing input isn't overwritten — the text is prepended to it (UI), with a
     /// separating space when neither boundary has its own.

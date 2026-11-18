@@ -33,6 +33,7 @@ use serde_json::Value;
 use super::{CHAT_SCHEMA, DB_SCHEMA, PROFILES_SCHEMA, SETTINGS_SCHEMA};
 use crate::entities::attachment::AttachMode;
 use crate::entities::chat::DeletedCause;
+use crate::entities::chat_branch::ParkCause;
 use crate::entities::chat_file::FileOrigin;
 use crate::entities::message::{MessageFinish, MessageRole};
 use crate::entities::profile::BridgeChannel;
@@ -259,6 +260,14 @@ pub(super) fn ledgers() -> Vec<Ledger> {
             1 => [
                 DeleteExchange = "DeleteExchange", Regenerate = "Regenerate",
                 Rewrite = "Rewrite",
+            ],
+        }),
+        // What took a parked branch off the line. All four arrive with the
+        // field that holds them, at the 8→9 stamp (`chat_steps::chat_to_v9`).
+        ledger!(ParkCause in Chats {
+            9 => [
+                Fork = "fork", Switch = "switch", Regenerate = "regenerate",
+                Takeback = "takeback",
             ],
         }),
         // `dialogue` is what the 2→3 step is for.

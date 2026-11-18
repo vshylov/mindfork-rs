@@ -327,6 +327,8 @@ fn map_chat(c: &ImChat, profile_id: Uuid, loc: &Locale) -> Result<Chat> {
         // Nor stored files: their bytes live beside the chat file this format does not
         // carry.
         files: Vec::new(),
+        // Nor branches: the format holds one line of conversation.
+        branches: Vec::new(),
         deleted: Vec::new(),
         compaction: None,
         reflected_upto: None,
