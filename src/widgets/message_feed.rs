@@ -165,6 +165,24 @@ impl FeedMessage {
         }
     }
 
+    /// Whether this item is a message of the conversation, and so takes a
+    /// number (docs/research/chat-branches.md §3.5): the person's and the
+    /// assistant's bubbles — the echo and the reply being written among them,
+    /// which are about to be stored — and a note row a stored message stands
+    /// behind (a task notification, a director's line). The screen's own
+    /// notes and a transcript's persona are not messages.
+    ///
+    /// Over a feed projected from stored messages this is every item, so the
+    /// numbers are the ranks of `entities::chat::visible_rows` — what the chat
+    /// card counts and `/copy last N` takes.
+    pub fn is_numbered(&self) -> bool {
+        match self.role {
+            FeedRole::User | FeedRole::Assistant => true,
+            FeedRole::Note => !self.message_ids.is_empty(),
+            FeedRole::System => false,
+        }
+    }
+
     /// Projects a domain message (used to rebuild the feed on chat activation).
     /// System and tool messages are dropped (`None`): tool calls are shown as
     /// blocks inside the assistant's message (`tool_calls`), not separately.
@@ -576,6 +594,11 @@ struct CachedBlock {
     /// click on one pill changes this, not [`CacheKey`], so the one block it
     /// folded is rebuilt and no other.
     folds: u64,
+    /// The message's number, drawn into its first row ([`numbers`]). A
+    /// property of the item's place in the feed, not of the item, so it rides
+    /// the entry beside the fingerprint: a block is rebuilt when the messages
+    /// above it change in count.
+    number: Option<u32>,
     lines: Vec<Line<'static>>,
     /// One per row of `lines`: what of it is the rail, and whether it
     /// continues the line above — what a selection needs and the bare `Line`
@@ -1606,8 +1629,12 @@ impl MessageFeed {
         let boundary = self.boundary_index(messages);
         let mut lines: Vec<Line<'static>> = Vec::new();
         let mut found: Vec<usize> = Vec::new();
-        for (idx, item) in messages.iter().enumerate() {
-            self.refresh_cached_block(idx, item, palette, width, opts, loc, boundary == Some(idx));
+        for ((idx, item), number) in messages.iter().enumerate().zip(numbers(messages)) {
+            let place = BlockPlace {
+                at_boundary: boundary == Some(idx),
+                number,
+            };
+            self.refresh_cached_block(idx, item, palette, width, opts, loc, place);
             // The block goes in query-free; the highlight is applied to the
             // *clones* below, which is what keeps it out of the cache.
             let at = lines.len();
@@ -1619,10 +1646,12 @@ impl MessageFeed {
             if let Some(query) = self.highlight.as_deref()
                 && (self.highlight_scope == HighlightScope::WholeFeed || self.marker == Some(idx))
             {
-                let from = at + self.cache[idx].content_from;
+                let block = &self.cache[idx];
+                let from = at + block.content_from;
                 // `lines[from..]` is this block's tail: later blocks are not
                 // appended yet, so the slice cannot reach them.
-                highlight_block_tail(&mut lines, from, query, palette, &mut found);
+                let facts = &block.facts[block.content_from..];
+                highlight_block_tail(&mut lines, from, facts, query, palette, &mut found);
             }
         }
         self.matches = found;
@@ -1636,12 +1665,13 @@ impl MessageFeed {
     /// Recomputes message `idx`'s block in the render cache when its fingerprint
     /// no longer matches; an unchanged message keeps its cached block as-is.
     ///
-    /// `at_boundary` — this block is where verbatim history resumes, so it is
-    /// preceded by the compaction divider. Passed as a flag rather than as the
-    /// summary itself so the caller doesn't have to hold a borrow of `self`
-    /// across the `&mut self` call; the text is read here. The summary rides
-    /// [`CacheKey`], so a changed one clears the cache and the block is rebuilt —
-    /// the fingerprint (a property of the *message*) stays out of it.
+    /// `place.at_boundary` — this block is where verbatim history resumes, so
+    /// it is preceded by the compaction divider. Passed as a flag rather than
+    /// as the summary itself so the caller doesn't have to hold a borrow of
+    /// `self` across the `&mut self` call; the text is read here. The summary
+    /// rides [`CacheKey`], so a changed one clears the cache and the block is
+    /// rebuilt — the fingerprint (a property of the *message*) stays out of it.
+    /// So does `place.number`, which is checked beside it.
     #[allow(clippy::too_many_arguments)]
     fn refresh_cached_block(
         &mut self,
@@ -1651,17 +1681,18 @@ impl MessageFeed {
         width: usize,
         opts: markdown::RenderOpts,
         loc: &'static Locale,
-        at_boundary: bool,
+        place: BlockPlace,
     ) {
         let fp = message_fingerprint(item);
-        let boundary = at_boundary
+        let boundary = place
+            .at_boundary
             .then(|| self.compaction.as_ref().map(|(id, _)| *id))
             .flatten();
         let folds = fold_state(item, &self.view, boundary);
         let hit = self
             .cache
             .get(idx)
-            .is_some_and(|c| c.fingerprint == fp && c.folds == folds);
+            .is_some_and(|c| c.fingerprint == fp && c.folds == folds && c.number == place.number);
         if !hit {
             // The block's rows are about to be made anew: a selection in them
             // no longer points at what it took.
@@ -1684,10 +1715,12 @@ impl MessageFeed {
                 summary,
                 &self.known_chats,
                 self.show_model_name,
+                place.number,
             );
             let cb = CachedBlock {
                 fingerprint: fp,
                 folds,
+                number: place.number,
                 lines: built.lines,
                 facts: built.facts,
                 links: built.links,
@@ -1718,17 +1751,27 @@ impl MessageFeed {
 fn highlight_block_tail(
     lines: &mut [Line<'static>],
     from: usize,
+    facts: &[RowFact],
     query: &str,
     palette: &Palette,
     found: &mut Vec<usize>,
 ) {
     for (i, line) in lines[from..].iter_mut().enumerate() {
+        // A message's number is the last span of the row it ends
+        // ([`push_number`]) and no part of the message: a query of its digits
+        // must not light it, or count it as a match.
+        let number = facts
+            .get(i)
+            .is_some_and(|f| f.tail > 0)
+            .then(|| line.spans.pop())
+            .flatten();
         // One entry per occurrence, in document order: a single line
         // can hold several, and next/prev steps through matches, not
         // lines.
         for _ in 0..highlight_line(line, query, palette) {
             found.push(from + i);
         }
+        line.spans.extend(number);
     }
 }
 
@@ -1746,6 +1789,19 @@ struct Body {
     /// Which spans of which lines are a foldable block's pill — the click
     /// target (docs/research/block-fold-and-partial-copy.md §3.4–§3.5).
     pills: Vec<PillMark>,
+    /// The line whose first row ends on the message's number, when one is
+    /// drawn (docs/research/chat-branches.md §3.5).
+    numbered: Option<NumberedLine>,
+}
+
+/// The line of a [`Body`] that carries the message's number.
+#[derive(Clone, Copy)]
+struct NumberedLine {
+    line: usize,
+    /// The line is the message's own text — a note row has no header — so it
+    /// is wrapped again, narrower, when its first row leaves the number no
+    /// room. A header is fitted before it gets here and is never rewrapped.
+    reflow: bool,
 }
 
 /// A pill in a [`Body`]: the spans of one of its lines a click folds the block
@@ -1841,7 +1897,9 @@ fn wrapped_marks(prefix: usize, first: LineMark) -> impl Fn(usize) -> LineMark {
 /// the block (see [`push_compaction_boundary`]). `known_chats` — the address
 /// book a `chat://` reference is resolved against ([`style_chat_links`]).
 /// `show_model` — whether the assistant's header carries the model name
-/// (`interface.show_model_name`, spec §11.3).
+/// (`interface.show_model_name`, spec §11.3). `number` — the message's number
+/// ([`numbers`]), drawn at the right end of the row that opens it: the
+/// header's, or a note's first (docs/research/chat-branches.md §3.5).
 #[allow(clippy::too_many_arguments)]
 fn build_message_block(
     item: &FeedMessage,
@@ -1855,10 +1913,17 @@ fn build_message_block(
     compaction: Option<(Uuid, &str)>,
     known_chats: &[Uuid],
     show_model: bool,
+    number: Option<u32>,
 ) -> BuiltBlock {
     // Content width under the rail (rail = 2 columns).
     let inner = width.saturating_sub(RAIL.chars().count()).max(1);
     let rail = rail_of(item.role, marked, palette);
+    let number = number.map(|n| format!("#{n}"));
+    // What the number takes of its row: itself, a column before it and the
+    // margin after it.
+    let reserved = number
+        .as_deref()
+        .map_or(0, |n| 1 + wrap::str_width(n) + NUMBER_MARGIN);
     // Build the message body without a rail, at width `inner`.
     let mut body = Body::default();
     // Where the message's own content starts, i.e. past the role header. The
@@ -1870,30 +1935,36 @@ fn build_message_block(
     match item.role {
         FeedRole::User => {
             let voice = item.voice.map(|s| voice_mark(s, loc));
-            body.push(role_header(
-                &format!(
-                    "{} {}",
-                    glyphs.user_icon,
-                    role_name(names.user_name(), "ui.feed.role.user", loc)
-                ),
+            let role = format!(
+                "{} {}",
+                glyphs.user_icon,
+                role_name(names.user_name(), "ui.feed.role.user", loc)
+            );
+            push_header(
+                &mut body,
+                &role,
                 palette.user_soft,
                 voice.as_deref(),
                 palette,
-            ));
+                header_room(&role, inner, reserved),
+            );
             content_from = body.len();
             push_body(&mut body, item, palette, inner, opts);
         }
         FeedRole::Assistant => {
-            body.push(role_header(
-                &format!(
-                    "{} {}",
-                    glyphs.assistant_icon,
-                    role_name(names.assistant_name(), "ui.feed.role.assistant", loc)
-                ),
+            let role = format!(
+                "{} {}",
+                glyphs.assistant_icon,
+                role_name(names.assistant_name(), "ui.feed.role.assistant", loc)
+            );
+            push_header(
+                &mut body,
+                &role,
                 palette.assistant_soft,
                 item.model.as_deref().filter(|_| show_model),
                 palette,
-            ));
+                header_room(&role, inner, reserved),
+            );
             content_from = body.len();
             let key = thoughts_key(item);
             push_thoughts(
@@ -1910,20 +1981,32 @@ fn build_message_block(
         // The persona of a sub-agent transcript: headed like a role, body as
         // prose, on the muted rail a note uses — it is context, not a turn.
         FeedRole::System => {
-            body.push(role_header(
-                &format!(
-                    "{} {}",
-                    glyphs.system_icon,
-                    role_name(names.system_name(), "ui.feed.role.system", loc)
-                ),
+            let role = format!(
+                "{} {}",
+                glyphs.system_icon,
+                role_name(names.system_name(), "ui.feed.role.system", loc)
+            );
+            push_header(
+                &mut body,
+                &role,
                 palette.muted,
                 None,
                 palette,
-            ));
+                header_room(&role, inner, reserved),
+            );
             content_from = body.len();
             push_body(&mut body, item, palette, inner, opts);
         }
-        FeedRole::Note => push_body(&mut body, item, palette, inner, opts),
+        // A note has no header: its number ends its own first row.
+        FeedRole::Note => {
+            push_body(&mut body, item, palette, inner, opts);
+            if reserved > 0 && body.len() > 0 {
+                body.numbered = Some(NumberedLine {
+                    line: 0,
+                    reflow: true,
+                });
+            }
+        }
     }
     // If the body already ends on a blank line (a railed gap after a tool card),
     // don't add the railless inter-message separator — otherwise a double gap.
@@ -1958,6 +2041,7 @@ fn build_message_block(
             lines: divider_lines,
             marks: divider_marks,
             pills: divider_pills,
+            ..
         } = divider;
         for (i, (line, mark)) in divider_lines.into_iter().zip(divider_marks).enumerate() {
             let targets = pill_columns(&divider_pills, i, &line);
@@ -1976,6 +2060,7 @@ fn build_message_block(
         lines: body_lines,
         marks: body_marks,
         pills: body_pills,
+        numbered,
     } = body;
     for (i, (mut line, mark)) in body_lines.into_iter().zip(body_marks).enumerate() {
         if i == content_from {
@@ -1988,11 +2073,30 @@ fn build_message_block(
         // (`chat://` + 8 hex) and a narrow panel splits it across two rows,
         // where a per-row scan would no longer see it whole.
         links.extend(style_chat_links(&mut line, known_chats, palette));
-        let rows = wrap::wrap_line(&line, inner);
+        let mut rows = wrap::wrap_line(&line, inner);
+        // The message's number, when this is the line that carries it.
+        let number = number
+            .as_deref()
+            .zip(numbered.filter(|n| n.line == i))
+            .map(|(text, at)| (text, at.reflow));
+        if let Some((_, true)) = number
+            && rows
+                .first()
+                .is_some_and(|r| text_cols(r) + reserved > inner)
+            && inner >= reserved + NUMBERED_NOTE_MIN_COLS
+        {
+            rows = wrap::wrap_line(&line, inner - reserved);
+        }
         place_pills(&mut pills, &targets, &rows, out.len(), lead);
-        for (k, wrapped) in rows.into_iter().enumerate() {
+        for (k, mut wrapped) in rows.into_iter().enumerate() {
+            let mut fact = RowFact::of_piece(lead, mark, k);
+            if k == 0
+                && let Some((text, _)) = number
+            {
+                fact.tail = push_number(&mut wrapped, text, inner, palette);
+            }
             out.push(prepend_rail(wrapped, &rail));
-            facts.push(RowFact::of_piece(lead, mark, k));
+            facts.push(fact);
         }
     }
     // A header-only block never reaches the index above.
@@ -2425,15 +2529,165 @@ fn voice_mark(seconds: u32, loc: &'static Locale) -> String {
 /// of the bubble, and a second line would cost a row in every assistant message.
 /// Muted and unbolded, like the "thoughts" pill — it answers a question the
 /// reader asks occasionally, so it must not compete with the role itself.
-fn role_header(text: &str, color: Color, model: Option<&str>, palette: &Palette) -> Line<'static> {
+///
+/// `room` — the columns the header's own text may take when the message's
+/// number ends its row ([`header_room`]); `None` — no number is drawn and the
+/// header is the one drawn before numbers existed. With a number the row is
+/// shared role-first: the role's name is whole, the number has its place, and
+/// the second text gets what is left — whole, or cut with its "…", or, with
+/// less than [`HEADER_NOTE_MIN_COLS`] left, not drawn (spec §11.3).
+fn role_header(
+    text: &str,
+    color: Color,
+    model: Option<&str>,
+    palette: &Palette,
+    room: Option<usize>,
+) -> Line<'static> {
     let mut spans = vec![Span::styled(
         text.to_string(),
         Style::new().fg(color).add_modifier(Modifier::BOLD),
     )];
     if let Some(model) = model.filter(|m| !m.is_empty()) {
-        spans.push(Span::styled(format!("  {model}"), palette.muted_style()));
+        let shown = match room {
+            None => Some(model.to_string()),
+            Some(room) => {
+                let left = room.saturating_sub(wrap::str_width(text) + HEADER_NOTE_GAP.len());
+                (wrap::str_width(model) <= left || left >= HEADER_NOTE_MIN_COLS)
+                    .then(|| wrap::truncate_to_width(model, left).0)
+            }
+        };
+        if let Some(shown) = shown.filter(|m| !m.is_empty()) {
+            spans.push(Span::styled(
+                format!("{HEADER_NOTE_GAP}{shown}"),
+                palette.muted_style(),
+            ));
+        }
     }
     Line::from(spans)
+}
+
+/// What stands between a role's name and the text after it on a header's row.
+const HEADER_NOTE_GAP: &str = "  ";
+
+/// The least a cut model name is worth drawing: three of its characters and
+/// the mark of the cut. With less room it is left out.
+const HEADER_NOTE_MIN_COLS: usize = 4;
+
+/// The least width a numbered note's text is wrapped to. In a panel too narrow
+/// to leave that beside the number, the note keeps the row and has no number.
+const NUMBERED_NOTE_MIN_COLS: usize = 8;
+
+/// Pushes a role's header onto `body` and, when its row has room for the
+/// message's number (`room`, [`header_room`]), names it as the line that
+/// carries one.
+fn push_header(
+    body: &mut Body,
+    role: &str,
+    color: Color,
+    model: Option<&str>,
+    palette: &Palette,
+    room: Option<usize>,
+) {
+    if room.is_some() {
+        body.numbered = Some(NumberedLine {
+            line: body.len(),
+            reflow: false,
+        });
+    }
+    body.push(role_header(role, color, model, palette, room));
+}
+
+/// The columns a header's own text has on a row `inner` wide that ends on the
+/// message's number, which takes `reserved` of them. `None` when no number is
+/// drawn: the message has none, or its role's name leaves it no room — the
+/// name is owed its place first.
+fn header_room(role: &str, inner: usize, reserved: usize) -> Option<usize> {
+    (reserved > 0 && wrap::str_width(role) + reserved <= inner).then(|| inner - reserved)
+}
+
+/// The width of a row's text, in the columns the feed's wrap counts, less the
+/// whitespace it ends on: the wrap keeps the whitespace it broke at on the
+/// upper row and lets it run past the edge ([`wrap::wrap_ranges`]), so a row's
+/// whole width says nothing about the room after its text.
+fn text_cols(row: &Line<'_>) -> usize {
+    let chars: Vec<char> = row.spans.iter().flat_map(|s| s.content.chars()).collect();
+    let text = chars
+        .iter()
+        .rposition(|c| !c.is_whitespace())
+        .map_or(0, |last| last + 1);
+    wrap::display_width(&chars[..text])
+}
+
+/// Takes the whitespace `row` ends on off it and returns its width.
+fn trim_row_end(row: &mut Line<'static>) -> usize {
+    let mut trimmed = 0;
+    while let Some(last) = row.spans.last_mut() {
+        let kept = last.content.trim_end().len();
+        trimmed += wrap::str_width(&last.content[kept..]);
+        if kept == 0 {
+            row.spans.pop();
+            continue;
+        }
+        if kept < last.content.len() {
+            last.content = last.content[..kept].to_string().into();
+        }
+        break;
+    }
+    trimmed
+}
+
+/// The columns left empty between a message's number and the right edge of
+/// the feed's content (the owner's decision, 2026-11-18): the number does not
+/// touch the border or the scrollbar on it.
+const NUMBER_MARGIN: usize = 1;
+
+/// Ends `row` on the message's number `text`, [`NUMBER_MARGIN`] short of the
+/// right edge of a row `inner` wide, and returns the row's tail
+/// ([`RowFact::tail`]): the number and the padding before it. A row whose text
+/// leaves no room for a column of padding, the number and the margin is left
+/// as it is, and the answer is 0.
+///
+/// The whitespace the row ended on — what the wrap broke at, which a copy
+/// joins the next row by — is redrawn as the first of the padding and stays
+/// the row's content: the tail starts after it. Where the number leaves room
+/// for less of it than there was, the row keeps what fits, a column at least.
+///
+/// The number is the row's **last span**: [`highlight_block_tail`] takes it
+/// off by that before it looks for a query.
+fn push_number(row: &mut Line<'static>, text: &str, inner: usize, palette: &Palette) -> u16 {
+    let used = text_cols(row);
+    let number = wrap::str_width(text);
+    if used + 1 + number + NUMBER_MARGIN > inner {
+        return 0;
+    }
+    let own = trim_row_end(row);
+    let gap = inner - NUMBER_MARGIN - used - number;
+    row.spans.push(Span::raw(" ".repeat(gap)));
+    row.spans
+        .push(Span::styled(text.to_string(), palette.muted_style()));
+    (number + gap.saturating_sub(own)) as u16
+}
+
+/// The number of each feed item, in order: the messages of the conversation
+/// counted from 1, `None` for what is not one ([`FeedMessage::is_numbered`]).
+fn numbers(messages: &[FeedMessage]) -> impl Iterator<Item = Option<u32>> + '_ {
+    let mut last = 0u32;
+    messages.iter().map(move |m| {
+        m.is_numbered().then(|| {
+            last += 1;
+            last
+        })
+    })
+}
+
+/// Where a block stands in the feed — what its build needs beyond the item
+/// itself, and what its cache entry is checked against.
+#[derive(Clone, Copy)]
+struct BlockPlace {
+    /// Verbatim history resumes here: the compaction divider is drawn above.
+    at_boundary: bool,
+    /// The message's number ([`numbers`]).
+    number: Option<u32>,
 }
 
 /// A message's rail: the glyph and its colour. The colour says the role — and
@@ -7044,5 +7298,299 @@ mod tests {
         draw_with(&mut term, &mut feed, &msgs, &Palette::default());
         assert!(screen_has(&term, "краткое резюме"));
         assert!(!screen_has(&term, "мысль раз"), "the thoughts stay folded");
+    }
+
+    // ---- Message numbers (docs/research/chat-branches.md §3.5) ----
+
+    /// One block built on its own: its rows, and the facts beside them.
+    fn block(item: &FeedMessage, width: usize, number: Option<u32>) -> BuiltBlock {
+        build_message_block(
+            item,
+            &Palette::default(),
+            width,
+            &FeedView::default(),
+            markdown::RenderOpts::default(),
+            ru(),
+            &CharacterNames::default(),
+            false,
+            None,
+            &[],
+            true,
+            number,
+        )
+    }
+
+    /// A built block as the selection reads it.
+    struct Built<'a>(&'a BuiltBlock);
+
+    impl FeedRows for Built<'_> {
+        fn block_count(&self) -> usize {
+            1
+        }
+        fn row_count(&self, _block: usize) -> usize {
+            self.0.lines.len()
+        }
+        fn row(&self, _block: usize, row: usize) -> (&Line<'static>, RowFact) {
+            (&self.0.lines[row], self.0.facts[row])
+        }
+    }
+
+    /// What a copy of the whole block takes.
+    fn copied(built: &BuiltBlock) -> String {
+        let last = built.lines.len() - 1;
+        feed_selection::text(
+            &Built(built),
+            FeedPoint::new(0, 0, 0),
+            FeedPoint::new(0, last, u16::MAX),
+        )
+    }
+
+    /// A number is a message's rank among the bubbles the chat card counts
+    /// (`entities::chat::visible_message_count`) — at every prefix of the
+    /// history `bubble_count_agrees_with_the_list_counter` walks, so the last
+    /// number on screen is the card's count and N in `/copy last N` counts
+    /// the same things.
+    #[test]
+    fn the_numbers_of_a_feed_are_the_ranks_the_chat_card_counts() {
+        use crate::entities::chat::visible_message_count;
+        use crate::entities::message::{Message, MessageRole};
+
+        let mut followup = Message::assistant("Ещё одно.");
+        followup.new_bubble = true;
+        let messages = [
+            Message::assistant("Приветствие."),
+            Message::user("вопрос"),
+            Message::assistant(""),
+            Message::new(MessageRole::Tool, "результат"),
+            Message::assistant("Ответ."),
+            followup,
+            Message::new(MessageRole::System, "инструкция"),
+            Message::user("ещё вопрос"),
+        ];
+        for upto in 0..=messages.len() {
+            let feed = FeedMessage::from_messages(&messages[..upto]);
+            let count = visible_message_count(&messages[..upto]) as u32;
+            assert_eq!(
+                numbers(&feed).collect::<Vec<_>>(),
+                (1..=count).map(Some).collect::<Vec<_>>(),
+                "the numbers and the card disagree at prefix {upto}"
+            );
+        }
+    }
+
+    /// What is not a message of the conversation takes no number and no place
+    /// in the count: a transcript's persona and the screen's own notes. The
+    /// echo and the reply being written have no stored message yet and are
+    /// numbered — they are about to be one.
+    #[test]
+    fn the_screens_notes_and_a_persona_take_no_number() {
+        use crate::entities::message::{Message, MessageRole};
+        let stored = FeedMessage::from_message(&Message::new(MessageRole::System, "Режиссёр"))
+            .expect("a system row is a note");
+        let mut echo = msg(FeedRole::User, "вопрос", "");
+        echo.message_ids.clear();
+        let mut live = msg(FeedRole::Assistant, "", "");
+        live.message_ids.clear();
+        live.streaming = true;
+        let feed = [
+            FeedMessage::system("персона"),
+            echo,
+            FeedMessage::note("служебная"),
+            stored,
+            live,
+        ];
+        assert_eq!(
+            numbers(&feed).collect::<Vec<_>>(),
+            vec![None, Some(1), None, Some(2), Some(3)]
+        );
+    }
+
+    /// The number stands at the right end of the header's row, and the padding
+    /// and the number are the row's tail. With no number the header is the one
+    /// drawn before numbers existed.
+    #[test]
+    fn a_message_number_ends_its_headers_row() {
+        let m = msg(FeedRole::Assistant, "ответ", "");
+        let bare = block(&m, 40, None);
+        let header = rows(&bare.lines)[0].clone();
+        assert!(header.ends_with("АССИСТЕНТ"), "{header:?}");
+        assert_eq!(bare.facts[0].tail, 0);
+
+        let built = block(&m, 40, Some(10));
+        let row = rows(&built.lines)[0].clone();
+        assert!(row.starts_with(&header), "{row:?}");
+        assert!(row.ends_with(" #10"), "{row:?}");
+        assert_eq!(
+            wrap::str_width(&row),
+            40 - NUMBER_MARGIN,
+            "a column short of the panel's edge"
+        );
+        assert_eq!(
+            usize::from(built.facts[0].tail),
+            wrap::str_width(&row) - wrap::str_width(&header),
+            "everything past the header's text is the tail"
+        );
+        assert_eq!(
+            built.lines.len(),
+            bare.lines.len(),
+            "the number costs no row"
+        );
+        assert_eq!(copied(&built), copied(&bare), "and is not copied");
+    }
+
+    /// The header's row is shared role-first: the role's name whole, then the
+    /// number, then the model's name — whole, cut with its mark, or left out.
+    /// A row the role's name fills has no number, and is drawn as before.
+    #[test]
+    fn a_headers_row_is_shared_role_first() {
+        let mut m = msg(FeedRole::Assistant, "ответ", "");
+        m.model = Some("gemini-4-hydrogen-preview".into());
+        let header = |width| rows(&block(&m, width, Some(10)).lines)[0].clone();
+
+        let wide = header(60);
+        assert!(wide.contains("  gemini-4-hydrogen-preview "), "{wide:?}");
+        assert!(wide.ends_with(" #10"), "{wide:?}");
+
+        // 30 columns: 28 under the rail, 5 for the number with its column
+        // before and its margin after, 11 for the role, 2 for the gap — 10
+        // left for the name.
+        let cut = header(30);
+        assert!(cut.contains("  gemini-4-… "), "{cut:?}");
+        assert!(cut.ends_with(" #10"), "{cut:?}");
+        assert_eq!(wrap::str_width(&cut), 30 - NUMBER_MARGIN);
+
+        // 20 columns leave the name none: it is left out, not cut to "…".
+        let dropped = header(20);
+        assert!(
+            !dropped.contains("gemini") && !dropped.contains('…'),
+            "{dropped:?}"
+        );
+        assert!(dropped.ends_with(" #10"), "{dropped:?}");
+
+        // 14 columns: the role's name and the number do not both fit, so the
+        // number goes and the header is what it was — the name wrapped under it.
+        let narrow = block(&m, 14, Some(10));
+        let all = rows(&narrow.lines).join("\n");
+        assert!(!all.contains("#10"), "{all:?}");
+        assert!(all.contains("gemini"), "{all:?}");
+        assert!(narrow.facts.iter().all(|f| f.tail == 0));
+        assert_eq!(all, rows(&block(&m, 14, None).lines).join("\n"));
+    }
+
+    /// A note with a stored message behind it has no header, so its number
+    /// ends its own first row. A first row the text fills is wrapped again,
+    /// narrower — and a copy still takes the text as it was written, the
+    /// whitespace at the wrap included.
+    #[test]
+    fn a_stored_note_is_numbered_on_its_first_row() {
+        let mut short = FeedMessage::note("Режиссёр: закругляйтесь");
+        short.message_ids = vec![Uuid::new_v4()];
+        let built = block(&short, 40, Some(7));
+        let row = rows(&built.lines)[0].clone();
+        assert!(row.starts_with("▌ Режиссёр: закругляйтесь "), "{row:?}");
+        assert!(row.ends_with(" #7"), "{row:?}");
+        assert_eq!(wrap::str_width(&row), 40 - NUMBER_MARGIN);
+        assert_eq!(copied(&built), "Режиссёр: закругляйтесь");
+
+        // Thirty-eight columns under the rail, and a first row of thirty-seven:
+        // the number needs four of them.
+        let text = "раз два три четыре пять шесть семь да восемь девять десять";
+        let mut long = FeedMessage::note(text);
+        long.message_ids = vec![Uuid::new_v4()];
+        let plain = block(&long, 40, None);
+        assert!(
+            wrap::str_width(rows(&plain.lines)[0].trim_end()) + 4 > 40,
+            "the control: unnumbered, the first row leaves the number no room"
+        );
+        let built = block(&long, 40, Some(7));
+        let drawn = rows(&built.lines);
+        assert!(drawn[0].ends_with(" #7"), "{drawn:?}");
+        assert_eq!(wrap::str_width(&drawn[0]), 40 - NUMBER_MARGIN);
+        assert!(drawn[1..].iter().all(|r| !r.contains('#')), "{drawn:?}");
+        assert_eq!(
+            copied(&built),
+            text,
+            "the wrap's whitespace is still the text's"
+        );
+
+        // The screen's own note: no number, and no row of it changes.
+        let service = FeedMessage::note(text);
+        assert_eq!(rows(&block(&service, 40, None).lines), rows(&plain.lines));
+    }
+
+    /// A query of a number's digits lights the message's text and not its
+    /// number, which is no part of the message — and is not counted as a
+    /// match. The control names no tail and finds the number too.
+    #[test]
+    fn a_number_is_not_a_search_match() {
+        let palette = Palette::default();
+        let mut note = FeedMessage::note("порт 1234 открыт");
+        note.message_ids = vec![Uuid::new_v4()];
+        let built = block(&note, 40, Some(123));
+        assert!(rows(&built.lines)[0].ends_with(" #123"));
+
+        let mut lines = built.lines.clone();
+        let mut found = Vec::new();
+        highlight_block_tail(&mut lines, 0, &built.facts, "123", &palette, &mut found);
+        assert_eq!(found, vec![0], "the text's one match");
+        let number = lines[0].spans.last().expect("the number's span");
+        assert_eq!(number.content, "#123");
+        assert_eq!(number.style, palette.muted_style(), "not lit");
+
+        let untold = vec![RowFact::default(); built.facts.len()];
+        let mut lines = built.lines.clone();
+        let mut found = Vec::new();
+        highlight_block_tail(&mut lines, 0, &untold, "123", &palette, &mut found);
+        assert_eq!(found, vec![0, 0], "the control: the number is found too");
+    }
+
+    /// A block's number is not in its fingerprint — it is a property of its
+    /// place — so the cache checks it beside: a block whose message did not
+    /// change is rebuilt when the count above it does.
+    #[test]
+    fn a_block_is_rebuilt_when_its_number_changes() {
+        let mut feed = MessageFeed::new();
+        let user = msg(FeedRole::User, "вопрос", "");
+        let service = FeedMessage::note("заметка");
+        let mut stored = FeedMessage::note("заметка");
+        stored.message_ids = vec![Uuid::new_v4()];
+        let header = |rows: &[String]| {
+            rows.iter()
+                .find(|r| r.contains("ВЫ"))
+                .cloned()
+                .expect("the person's header")
+        };
+
+        let first =
+            rows(&feed.build_lines(&[service, user.clone()], &Palette::default(), 40, ru()));
+        assert!(header(&first).ends_with(" #1"), "{first:?}");
+        assert!(!first[0].contains('#'), "the screen's note has no number");
+
+        let second = rows(&feed.build_lines(&[stored, user], &Palette::default(), 40, ru()));
+        assert!(second[0].ends_with(" #1"), "{second:?}");
+        assert!(header(&second).ends_with(" #2"), "{second:?}");
+    }
+
+    /// Through the whole render: every message of the feed carries its number
+    /// in one column, at the panel's right edge.
+    #[test]
+    fn the_numbers_stand_in_one_column_at_the_feeds_right_edge() {
+        let mut feed = MessageFeed::new();
+        let screen = visible(&mut feed, &numbered(3), 40, 14);
+        let columns: Vec<usize> = (1..=3)
+            .map(|n| {
+                let tag = format!("#{n}");
+                let row = screen
+                    .iter()
+                    .find(|r| r.contains("ВЫ") && r.contains(&tag))
+                    .unwrap_or_else(|| panic!("no header with {tag}: {screen:?}"));
+                wrap::str_width(&row[..row.find(&tag).unwrap()])
+            })
+            .collect();
+        assert_eq!(columns, vec![columns[0]; 3], "{screen:?}");
+        // Nothing but the panel's own edge stands to the right of a number.
+        let row = screen.iter().find(|r| r.contains("#1")).unwrap();
+        let after = row[row.find("#1").unwrap() + 2..].trim();
+        assert!(after.chars().count() <= 1, "{row:?}");
     }
 }

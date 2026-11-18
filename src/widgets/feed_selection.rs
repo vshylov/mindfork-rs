@@ -45,6 +45,11 @@ pub struct RowFact {
     /// wrap and padded it (a code block, squared off for its background), so
     /// its trailing whitespace is padding, and `n` spaces stood at the break.
     pub glue: Option<u8>,
+    /// Columns of chrome the row ends with — a message's number at the right
+    /// end of its header's row, with the padding that puts it there
+    /// (docs/research/chat-branches.md §3.5). Like [`Self::lead`]: never
+    /// painted, never copied. 0 on every other row.
+    pub tail: u16,
 }
 
 impl RowFact {
@@ -58,12 +63,14 @@ impl RowFact {
                 lead: rail + mark.prefix,
                 soft: mark.continues,
                 glue: mark.glue,
+                tail: 0,
             }
         } else {
             Self {
                 lead: rail,
                 soft: true,
                 glue: None,
+                tail: 0,
             }
         }
     }
@@ -144,22 +151,32 @@ fn glyphs(line: &Line<'_>) -> (String, Vec<Glyph>) {
     (text, out)
 }
 
-/// The glyphs of the row's content — past its lead — that meet `from..=to`.
-fn taken(glyphs: &[Glyph], fact: RowFact, from: u16, to: u16) -> impl Iterator<Item = &Glyph> {
+/// The glyphs of the row's content: past its lead and before its tail, which
+/// is counted back from the row's last drawn cell.
+fn content(glyphs: &[Glyph], fact: RowFact) -> impl DoubleEndedIterator<Item = &Glyph> {
+    let limit = glyphs
+        .last()
+        .map_or(0, Glyph::end)
+        .saturating_sub(fact.tail);
     glyphs
         .iter()
-        .filter(move |g| g.col >= fact.lead && g.meets(from, to))
+        .filter(move |g| g.col >= fact.lead && g.col < limit)
+}
+
+/// The glyphs of the row's content that meet `from..=to`.
+fn taken(glyphs: &[Glyph], fact: RowFact, from: u16, to: u16) -> impl Iterator<Item = &Glyph> {
+    content(glyphs, fact).filter(move |g| g.meets(from, to))
 }
 
 /// The columns a selection paints on one row: `from..=to` (the row's part of
-/// the selection) less the lead, and less the row's trailing whitespace — a
+/// the selection) less the lead and the tail, and less the content's trailing
+/// whitespace — a
 /// code block's padding and the space at a wrap stay unpainted, so the
 /// highlight ends on the row's last glyph (research §5.4). Half-open; `None`
 /// when nothing on the row is painted.
 pub fn painted(line: &Line<'_>, fact: RowFact, from: u16, to: u16) -> Option<Range<u16>> {
     let (_, glyphs) = glyphs(line);
-    let content_end = glyphs
-        .iter()
+    let content_end = content(&glyphs, fact)
         .rev()
         .find(|g| g.class != CharClass::Space)
         .map(Glyph::end)?;
@@ -170,13 +187,12 @@ pub fn painted(line: &Line<'_>, fact: RowFact, from: u16, to: u16) -> Option<Ran
 }
 
 /// The columns of a row's text: from past its lead to the end of its last
-/// glyph that is not whitespace. `None` for a row with nothing on it — a blank
+/// glyph that is not whitespace, the tail left out. `None` for a row with nothing on it — a blank
 /// row, the separator under a message. A double or a triple click selects only
 /// where it lands on these; beside the text it is a plain click.
 pub fn content_cols(line: &Line<'_>, fact: RowFact) -> Option<Range<u16>> {
     let (_, glyphs) = glyphs(line);
-    let end = glyphs
-        .iter()
+    let end = content(&glyphs, fact)
         .rev()
         .find(|g| g.class != CharClass::Space)
         .map(Glyph::end)?;
@@ -292,7 +308,7 @@ pub fn text(rows: &impl FeedRows, start: FeedPoint, end: FeedPoint) -> String {
 pub fn word_bounds(rows: &impl FeedRows, p: FeedPoint) -> (FeedPoint, FeedPoint) {
     let (line, fact) = rows.row(p.block, p.row);
     let (_, glyphs) = glyphs(line);
-    let content: Vec<&Glyph> = glyphs.iter().filter(|g| g.col >= fact.lead).collect();
+    let content: Vec<&Glyph> = content(&glyphs, fact).collect();
     let Some(at) = content
         .iter()
         .rposition(|g| g.col <= p.col)
@@ -379,16 +395,19 @@ mod tests {
         lead: 2,
         soft: false,
         glue: None,
+        tail: 0,
     };
     const SOFT: RowFact = RowFact {
         lead: 2,
         soft: true,
         glue: None,
+        tail: 0,
     };
     const BARE: RowFact = RowFact {
         lead: 0,
         soft: false,
         glue: None,
+        tail: 0,
     };
 
     /// A railed row: the rail in a span of its own, as the feed draws it.
@@ -491,6 +510,7 @@ mod tests {
             lead: 2,
             soft: true,
             glue: Some(n),
+            tail: 0,
         };
         let r = rows(vec![vec![
             (railed("cargo test     "), RAILED),
@@ -541,6 +561,33 @@ mod tests {
         assert_eq!(content_cols(&line, RAILED), Some(2..8));
         assert_eq!(content_cols(&blank, RAILED), None);
         assert_eq!(content_cols(&Line::from(""), BARE), None);
+    }
+
+    /// A header's row ends on its message's number: the padding and the
+    /// number are the row's tail — not painted, not copied, not a word a
+    /// double click takes (docs/research/chat-branches.md §3.5).
+    #[test]
+    fn a_rows_tail_is_chrome_like_its_rail() {
+        // Columns: rail 0-1, `ASSISTANT` 2-10, padding 11-16, `#12` 17-19.
+        let numbered = RowFact { tail: 9, ..RAILED };
+        let header = || railed("ASSISTANT      #12");
+        let r = rows(vec![vec![
+            (header(), numbered),
+            (railed("the reply"), RAILED),
+        ]]);
+        assert_eq!(
+            text(&r, pt(0, 0, 0), pt(0, 1, u16::MAX)),
+            "ASSISTANT\nthe reply",
+            "a copy across the header holds no number"
+        );
+        assert_eq!(text(&r, pt(0, 0, 14), pt(0, 0, u16::MAX)), "");
+        assert_eq!(painted(&header(), numbered, 0, u16::MAX), Some(2..11));
+        assert_eq!(painted(&header(), numbered, 12, u16::MAX), None);
+        assert_eq!(content_cols(&header(), numbered), Some(2..11));
+        // On the number, as past a row's end: the row's last run.
+        assert_eq!(word_bounds(&r, pt(0, 0, 18)), (pt(0, 0, 2), pt(0, 0, 10)));
+        // The same row with no tail named reads to its end — the control.
+        assert_eq!(content_cols(&header(), RAILED), Some(2..20));
     }
 
     #[test]
