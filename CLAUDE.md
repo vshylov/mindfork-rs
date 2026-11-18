@@ -187,9 +187,9 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-11-16, version 0.27.0)
+## Status (2026-11-18, version 0.27.0)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **4975 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **4985 unit tests
 green, 324 `#[ignore]`** (live smokes + real-clipboard round trips + the
 screenshot-dump and demo-reel regenerators).
 
@@ -202,6 +202,12 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **Branches inside a chat — stage 1 of 4** (2026-11-18): a fork at a chosen message
+  as a tree inside the chat — the line stays `chat.messages`, the tails that left it are
+  kept beside it; `/fork N`, `/branch`. Built: every message's number, `#12`, at the
+  right end of its header's row
+  ([docs/research/chat-branches.md](docs/research/chat-branches.md),
+  [docs/journal/ui-feed.md](docs/journal/ui-feed.md)).
 - **One block folded, part of a chat copied — track complete** (2026-11-15, two
   stages): a click on a block's pill folds it alone, kept in the chat as exceptions
   `Ctrl+T`/`Ctrl+O` forget; `/copy first|last [N]` counts the chat card's bubbles, a
@@ -387,15 +393,6 @@ being recent is dropped, not shortened.
   reads its password from the raw JSON
   ([docs/research/settings-typed-parse.md](docs/research/settings-typed-parse.md),
   spec §12.2, [docs/journal/storage.md](docs/journal/storage.md)).
-- **Colour modes and user themes — track complete** (2026-09-28). Two passes over the
-  finished frame (`ui::finish_frame`): `full` paints the theme's canvas, `mono` strips
-  every colour and attribute — reverse video kept for a selection and a search match, a
-  glyph for whatever else styling alone said. `NO_COLOR` starts the app in `mono` unless
-  a mode was chosen. A theme of the user's is `data/themes/<name>.json`: named colours
-  kept, the rest fitted to the contrast floors (`shared/user_theme.rs`, `mindfork themes
-  export|check`). Measured on Windows 11's console host; other terminals are a look
-  ([docs/history/theme-modes.md](docs/history/theme-modes.md), spec §11.6,
-  [docs/journal/ui-feed.md](docs/journal/ui-feed.md)).
 - **A headless launch (no TTY) exits with code 2** and a one-line reason — the
   TUI cannot be run from an agent's shell; how it *looks* needs a real terminal
   and a person. What a console *holds* can be measured on Windows:

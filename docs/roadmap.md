@@ -395,7 +395,8 @@ effort tiers and Fabula — have all closed
   ([image-generation.md](history/image-generation.md) F8).
 - **Branches inside a chat — a fork at a chosen message** — **researched**
   2026-11-18 ([chat-branches.md](research/chat-branches.md)), every fork decided
-  by the owner the same day; nothing is built. The chat stays a line with the
+  by the owner the same day; **stage 1 of four is built** — the numbers on the
+  messages' headers. The chat stays a line with the
   tails that left it kept beside it; messages are numbered on their headers,
   `/fork N` forks at one and `/branch` switches. `Ctrl+E`/`/takeback` edits the
   last exchange and `/clone` copies a whole chat today; there is no fork at a

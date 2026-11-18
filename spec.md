@@ -3732,6 +3732,37 @@ this?"*; this screen answers *"where exactly, and take me there."*
   → `gemma-4-31B_q4_0-it`); an org-qualified id (`meta-llama/Llama-3-8B`) is left
   alone. An engine that cannot say still shows nothing. See
   docs/research/external-model-name.md.
+- **A message's number at the right end of its row** — `#12`, muted and
+  unbolded like the model's name, always shown (no setting;
+  [docs/research/chat-branches.md](docs/research/chat-branches.md) §3.5, the
+  first stage of the branches track, whose commands will take it).
+  - **What is counted:** the messages of the conversation as the feed draws
+    them — the rule of the chat card's count ([11.2](#112-the-chat-list-an-overlay))
+    and of `/copy first|last N` (`entities::chat::visible_rows`): the person's
+    and the assistant's bubbles, the rounds of one reply as one, and a note row
+    a stored message stands behind (a task notification, a director's line in a
+    dialogue transcript). The screen's own notes and a transcript's persona are
+    not messages and take neither a number nor a place in the count
+    (`FeedMessage::is_numbered`). So the last number in a chat opened from the
+    list is the count on its card. The echo of a sent message and the reply
+    being written take the next numbers at once.
+  - **Where:** at the end of the header's row, one column short of the panel's
+    edge (`NUMBER_MARGIN`), so it does not touch the border or the scrollbar. A
+    numbered note has no header: the number ends its own first row, and a first
+    row its text fills is wrapped narrower to leave it room.
+  - **The row is shared role-first:** the role's name is whole, the number has
+    its place, and the model's name (or a voice note's mark) gets what is left —
+    whole, cut with its "…", or, with fewer than four columns, not drawn. A row
+    the role's name fills has no number and is the header drawn before numbers
+    existed; so is a note in a panel too narrow to leave its text eight columns
+    beside the number.
+  - **The number is chrome,** like the rail: `RowFact::tail` names the columns a
+    row ends with that a selection never paints and a copy never takes, and the
+    in-feed search does not light or count it (`highlight_block_tail`).
+  - **The render cache:** a number is a property of a block's place, not of its
+    message, so it is checked beside the fingerprint (`CachedBlock::number`) —
+    a block is rebuilt when the count of messages above it changes, and no
+    other.
 - **The header's row is shared title-first.** The chat's title and the model
   caption stand on the feed's top border, and the title is owed half that row —
   or all of itself, when it is shorter. The caption is shown in the widest form

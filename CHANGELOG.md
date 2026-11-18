@@ -14,6 +14,14 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Added
+
+- **Messages are numbered.** Every message of a conversation shows its number, `#12`,
+  at the right end of its header — the last one is the count the chat list shows for
+  the chat, and `/copy last N` counts the same messages. The number is not part of the
+  text: a selection does not take it and a copy does not hold it. The model's name
+  beside the assistant's header gives way to it in a narrow window.
+
 ## [0.27.0] — 2026-11-16
 
 **The mouse works on every screen.** The app now takes the mouse itself:

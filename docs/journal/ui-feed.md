@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (60)
+## Entries (61)
 
 - Post-M9: mouse-wheel feed scrolling (done)
 - Post-M9: own markdown renderer (tables + LaTeX + theme) (done)
@@ -72,6 +72,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: one block folded by a click on its pill, kept in the chat (done)
 - Post-M9: the status bar's height is the bar at rest's — a chip that comes and goes costs a hint (done)
 - Post-M9: a reply written in this session folds too (done)
+- Post-M9: a message's number at the right end of its row (done)
 
 ### Post-M9: mouse-wheel feed scrolling (done)
 - **The mouse wheel scrolls the feed** on par with `PageUp/PageDown`. `ratatui::init()`
@@ -3700,3 +3701,92 @@ the reply's `▾ thinking`, click.
 - The pill moved down a row after folding. The reply is the chat's last, so the shorter
   feed was clamped to the view: §3.4's known case, and the reason a second click in the
   same cell hit the role header.
+
+### Post-M9: a message's number at the right end of its row (done)
+
+**What.** Stage 1 of [docs/research/chat-branches.md](../research/chat-branches.md), on
+`feat/message-numbers`. Every message of a conversation carries its number, `#12`, muted,
+at the right end of its header's row. It is the handle the track's commands will take
+(`/fork N`, stage 2), and it is already what `/copy last N` counts. Always shown, with no
+setting (the owner's decision D3), and one column short of the panel's edge, so it does
+not touch the border or the scrollbar on it (the owner's, during the stage).
+
+**What is counted.** The messages of the conversation as the feed draws them
+(`FeedMessage::is_numbered`): the person's and the assistant's bubbles and a note row a
+stored message stands behind — a task notification, a director's line. The screen's own
+notes and a transcript's persona take no number and no place in the count. Over a feed
+projected from stored messages that is every item, so the numbers are the ranks of
+`entities::chat::visible_rows` and the last one is the count on the chat's card; a test
+holds the two together at every prefix of the history the card's own test walks.
+
+**Where a number is made.** The feed counts its items each frame (`numbers`) and hands
+each block its number. The research's first draft put a field on `FeedMessage`, filled by
+`from_messages`. Five places build a feed item outside that projection — the echo, the
+reply being written, a follow-up bubble, a bubble re-opened after a note, the landed
+turn's re-keying, which projects the turn's rows alone — and each would have had to know
+the count. Counting where the list is whole needs none of them to.
+
+A live feed can be ahead of the chat: a bubble the screen drew and the chat did not keep
+— the echo of a refused send, a reply a note split in two that a reload stitches into
+one — takes a number until the chat is opened again. That existed before as a difference
+in shape; the number makes it visible. So stage 2's commands will resolve N on the
+screen, to the id of the message the numbered bubble carries, and not send the number
+(research §3.6).
+
+**The row.**
+- A header's row is shared role-first (`header_room`, `role_header`): the role's name
+  whole, then the number, then the model's name or a voice note's mark — whole, cut with
+  its "…", or, with fewer than four columns left, not drawn.
+- A row the role's name fills has no number, and is byte for byte the header drawn
+  before numbers.
+- A numbered note has no header, so the number ends its own first row. A first row the
+  text fills is wrapped again, narrower by the number's place; in a panel that would
+  leave the text fewer than eight columns the note keeps the row and has no number.
+
+**The wrap's whitespace.** `wrap::wrap_ranges` keeps the whitespace it broke at on the
+upper row and lets it run past the edge, and a copy joins the rows back by it. So
+`push_number` measures the row's text without it (`text_cols`), takes it off
+(`trim_row_end`) and redraws it as the first of the padding, where it stays the row's
+content: the tail starts after it. Measured the plain way, a full first row "had no room"
+with its last column blank. Recorded in docs/lessons.md §5.
+
+**Chrome.** `RowFact` named the chrome a row starts with (`lead`). It gained `tail`, the
+columns a row ends with that are not its text: the number and the padding before it. The
+selection's arithmetic reads a row's content through one function (`content`): past the
+lead, before the tail. A selection is not painted on a number, a copy does not hold it,
+and a double click on it is a plain click, as beside any row's text. The
+in-feed search takes the number's span off a row before it looks for the query, so a
+query of its digits neither lights it nor counts as a match.
+
+**The cache.** A number is a property of a block's place, not of its message: it stays
+out of the fingerprint and rides the cache entry beside it (`CachedBlock::number`,
+`BlockPlace`). A block is rebuilt when the count of messages above it changes, and no
+other block is.
+
+**Tests** (ten new):
+- **The count:** the numbers equal `visible_rows`' ranks at every prefix; the screen's
+  notes and a persona take none, the echo and the reply being written do.
+- **The row:** the number's column and the row's tail; the header with no number
+  unchanged; the model's name whole, cut and dropped by width; a row too narrow, equal
+  to the unnumbered one.
+- **A note:** numbered on its first row; a full first row rewrapped, and the copy still
+  the text as written; the screen's own note untouched.
+- **The selection:** a tail is not painted, not copied, not a word.
+- **The search:** one match, the number's style as it was — and a control that names no
+  tail and finds two.
+- **The cache:** the same message at the same index under another count is redrawn.
+- **The screen:** a live turn goes on from the stored numbers, a pushed note takes none.
+- **A control run:** the cache's check of the number and the row's tail taken out made
+  four tests fail.
+
+**4985 green**, clippy and fmt clean. Pure UI: no live run against a model is due. The
+demo's chat pictures were redrawn (two dumps, their PNG and SVG); no other picture's dump
+moved.
+
+**The pty run** (`mindfork demo`, the screen read with pyte, 100×46):
+- the showcase chat's four messages carry `#1`–`#4`, each a column short of the border;
+- `Enter` sends the draft: the echo is `#5` and the reply being written `#6` from its
+  first frame.
+
+**The owner's look** (Windows Terminal over SSH, the Russian interface, a real chat with
+the model's name on the header): the numbers read well as they are.

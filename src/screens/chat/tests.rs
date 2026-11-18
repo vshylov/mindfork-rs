@@ -218,6 +218,46 @@ fn the_streaming_bubbles_of_a_turn_carry_its_model() {
     assert!(s.feed.last().unwrap().model.is_none());
 }
 
+/// A live turn goes on from the stored conversation's numbers: the echo and
+/// the reply being written take the next two, and a note the screen pushed
+/// between them takes none (docs/research/chat-branches.md §3.5).
+#[test]
+fn a_live_turn_continues_the_feeds_numbers() {
+    let mut s = ChatScreen::new();
+    s.set_server_status(ready_statuses());
+    s.activate_chat(
+        gen_id(),
+        "Чат".into(),
+        &[
+            Message::user("первый вопрос"),
+            Message::assistant("первый ответ"),
+        ],
+        "",
+        FeedView::default(),
+        None,
+        None,
+    );
+    s.push_user_message("второй вопрос".into());
+    s.push_note("заметка экрана");
+    let id = gen_id();
+    s.begin_generation(id, None);
+    s.push_chunk(id, "второй ответ");
+
+    let rows = screen_rows(&mut s, 60, 24);
+    let row_with = |text: &str| {
+        rows.iter()
+            .find(|r| r.contains(text))
+            .unwrap_or_else(|| panic!("{text:?} is not on the screen: {rows:?}"))
+    };
+    for n in 1..=4 {
+        row_with(&format!("#{n}"));
+    }
+    assert!(!rows.iter().any(|r| r.contains("#5")), "{rows:?}");
+    assert!(!row_with("заметка экрана").contains('#'));
+    // The numbers are on the headers' rows, not beside the text.
+    assert!(!row_with("второй ответ").contains('#'));
+}
+
 #[test]
 fn live_rewrite_discards_partial_text() {
     // Live: partial incorrect text → rewrite → the rewritten reply.
