@@ -658,8 +658,13 @@ pub enum AppEvent {
     /// discarded or rewrote a line (spec §9.13) — so appending cannot express
     /// it: the feed is rebuilt from this full replacement. Guarded by `id`.
     TranscriptReset { id: Uuid, messages: Vec<Message> },
-    /// The user's message was accepted (an echo for the feed).
-    UserMessage(String),
+    /// The user's message was accepted (an echo for the feed). `id` — the
+    /// stored message's, so the echo is the message from its first frame: a
+    /// command that names a message by its number acts on the id its bubble
+    /// carries (`/fork N`, docs/research/chat-branches.md §3.6), and an echo
+    /// without one could not be forked at until the chat was opened again.
+    /// `None` only where no message is stored behind the echo — the demo reel.
+    UserMessage { text: String, id: Option<Uuid> },
     /// Restore text into the input box (after deleting the last exchange). A non-empty
     /// existing input isn't overwritten — the text is prepended to it (UI), with a
     /// separating space when neither boundary has its own.

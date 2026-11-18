@@ -127,7 +127,7 @@ pub(super) fn apply_event(
         AppEvent::EngineSamplingFields(fields) => {
             apply_engine_sampling_fields(screen, active, fields)
         }
-        AppEvent::UserMessage(text) => screen.push_user_message(text),
+        AppEvent::UserMessage { text, id } => screen.echo_user_message(text, id),
         AppEvent::RestoreInput(text) => screen.restore_input(text),
         AppEvent::Branches(view) => screen.set_branches(*view),
         AppEvent::GenerationStarted {

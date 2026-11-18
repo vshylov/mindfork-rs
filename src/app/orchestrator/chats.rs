@@ -129,11 +129,14 @@ impl Orchestrator {
             .map(String::as_str)
             .filter(|g| !g.trim().is_empty())
             .collect();
-        let only_a_greeting = match chat.messages.as_slice() {
-            [] => true,
-            [one] => one.role == crate::entities::message::MessageRole::Assistant,
-            _ => false,
-        };
+        // A chat with a parked branch has been written in: a branch may
+        // continue from the greeting, which a swap would replace.
+        let only_a_greeting = chat.branches.is_empty()
+            && match chat.messages.as_slice() {
+                [] => true,
+                [one] => one.role == crate::entities::message::MessageRole::Assistant,
+                _ => false,
+            };
         let event = if greetings.is_empty() {
             Err(notice("ui.greeting.none"))
         } else if !only_a_greeting {

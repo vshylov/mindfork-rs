@@ -7596,6 +7596,16 @@ mod branch_commands {
         );
     }
 
+    /// A message sent in this session is forked at like one opened from the
+    /// list: its echo carries the stored message's id from its first frame.
+    #[test]
+    fn fork_takes_a_message_sent_in_this_session() {
+        let (mut c, _ids) = talk();
+        let sent = Uuid::from_u128(55);
+        c.s.echo_user_message("q3".into(), Some(sent));
+        assert_eq!(c.run("/fork 5"), Some(ChatIntent::ForkAt(sent)));
+    }
+
     /// Bare `/fork` lists the conversation's messages by number, opened on
     /// the last; `Enter` forks at the selected one, `Esc` closes.
     #[test]

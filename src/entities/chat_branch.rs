@@ -77,11 +77,12 @@ pub enum ParkCause {
     Fork,
     /// A switch to another variant displaced it.
     Switch,
-    /// `Ctrl+R` replaced the reply. Written from the track's third stage on.
-    #[allow(dead_code)]
+    /// `Ctrl+R` replaced the reply. Until the track's third stage makes this
+    /// the rule, only where a branch continues from what was replaced
+    /// ([`Chat::park_if_anchored`]).
     Regenerate,
-    /// `Ctrl+E` took the exchange back. Written from the track's third stage on.
-    #[allow(dead_code)]
+    /// `Ctrl+E` took the exchange back. Until the third stage, only where a
+    /// branch continues from it.
     Takeback,
 }
 
@@ -214,6 +215,30 @@ impl Chat {
         }
         self.park_from(cut, ParkCause::Fork, now);
         true
+    }
+
+    /// A take-back or a regeneration is about to remove `messages[cut..]`:
+    /// when a parked tail continues from a message in there, the removed
+    /// messages are **parked** instead, and the answer is `true`.
+    ///
+    /// The `deleted` archive is where such a removal goes (spec §11.7), and
+    /// what it holds is gone to every reader. A tail anchored on a message
+    /// that went there could never be put back on the line: its place would
+    /// no longer exist. Parked, the removed messages are a tail like any
+    /// other, the tail that continues from them is reached through it, and
+    /// nothing the person kept is cut loose (docs/research/chat-branches.md
+    /// §3.10 makes parking the rule for every take-back; this is the part of
+    /// it the tree cannot do without).
+    pub fn park_if_anchored(&mut self, cut: usize, cause: ParkCause, now: DateTime<Utc>) -> bool {
+        let leaving: HashSet<Uuid> = self.messages.iter().skip(cut).map(|m| m.id).collect();
+        let anchored = self
+            .branches
+            .iter()
+            .any(|b| b.after.is_some_and(|a| leaving.contains(&a)));
+        if anchored {
+            self.park_from(cut, cause, now);
+        }
+        anchored
     }
 
     /// Takes `messages[cut..]` off the line and parks it with what was in
@@ -987,6 +1012,47 @@ mod tests {
             .unwrap();
         assert_ne!(parked.id, run_id);
         assert!(!chat.is_pristine());
+    }
+
+    /// A take-back or a regeneration removes the line's end. Where a parked
+    /// tail continues from a message in what is removed, the removed messages
+    /// are parked too — so that tail still has a place, and is reached through
+    /// them. Where none does, nothing is parked and the caller archives as it
+    /// always did.
+    #[test]
+    fn a_removed_tail_a_branch_continues_from_is_parked_not_archived() {
+        let mut chat = three_exchanges();
+        let original = chat.messages.clone();
+        let q3 = original[4].id;
+        // Fork at a2: the tail q3 a3 continues from it.
+        assert!(chat.fork_at(4, t(10)));
+
+        // A regeneration of a2 removes it — the anchor.
+        assert!(chat.park_if_anchored(3, ParkCause::Regenerate, t(11)));
+        assert_sound(&chat);
+        assert_eq!(texts(&chat.messages), ["q1", "a1", "q2"]);
+        let regenerated = chat
+            .branches
+            .iter()
+            .find(|b| b.cause == ParkCause::Regenerate)
+            .expect("the replaced reply is parked");
+        assert_eq!(texts(&regenerated.messages), ["a2"]);
+        assert_eq!(regenerated.after, Some(original[2].id));
+        assert!(chat.deleted.is_empty());
+
+        // The new reply is written; the old line is still whole behind it.
+        chat.messages.push(reply("a2 again", 12));
+        let view = chat.branch_view();
+        assert!(view.parked.iter().all(|b| !b.detached), "{view:?}");
+        chat.switch_to(q3, t(13)).unwrap();
+        assert_sound(&chat);
+        assert_eq!(chat.messages, original);
+
+        // Nothing continues from the last exchange: nothing is parked.
+        let mut chat = three_exchanges();
+        assert!(!chat.park_if_anchored(4, ParkCause::Takeback, t(10)));
+        assert_eq!(chat.messages.len(), 6);
+        assert!(chat.branches.is_empty());
     }
 
     /// What a list shows of a tail: the first line with text, and a reply

@@ -185,16 +185,25 @@ impl ChatScreen {
         self.mark_input_changed();
     }
 
+    /// The echo of a message with no stored one behind it — what a test of
+    /// the feed pushes.
+    #[cfg(test)]
     pub fn push_user_message(&mut self, text: String) {
+        self.echo_user_message(text, None);
+    }
+
+    /// The echo of the message the person sent (`AppEvent::UserMessage`),
+    /// carrying the stored message's id: the bubble is that message from its
+    /// first frame, so a fork can be made at it without opening the chat again
+    /// (docs/research/chat-branches.md §3.6).
+    pub fn echo_user_message(&mut self, text: String, id: Option<Uuid>) {
         self.feed.push(FeedMessage {
             role: FeedRole::User,
             text,
             thoughts: String::new(),
             tools: Vec::new(),
             streaming: false,
-            // The echo carries no id — the domain message is the orchestrator's;
-            // the feed picks the ids up on the next activation.
-            message_ids: Vec::new(),
+            message_ids: id.into_iter().collect(),
             // A user message has no model behind it, in the feed or on disk.
             model: None,
             voice: None,

@@ -157,6 +157,21 @@ impl Orchestrator {
         let _ = self.evt_tx.send(AppEvent::Branches(Box::new(view)));
     }
 
+    /// Sends the open chat's branches again after its line **grew** without an
+    /// activation — a message was sent, a turn landed. The line's continuation
+    /// at a place a tail is parked gets its variants mark with its first
+    /// message, and a tail that stood at the line's end no longer does. A chat
+    /// with no branch sends nothing: its screen holds none to correct.
+    pub(super) fn refresh_branches(&self, chat_id: Uuid) {
+        let branched = self
+            .chats
+            .iter()
+            .any(|c| c.id == chat_id && !c.branches.is_empty());
+        if branched && self.active_id == Some(chat_id) {
+            self.emit_branches();
+        }
+    }
+
     fn notice(&self, key: &str) {
         let _ = self
             .evt_tx

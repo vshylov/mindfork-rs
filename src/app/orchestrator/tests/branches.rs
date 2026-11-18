@@ -382,3 +382,207 @@ fn a_refund_after_a_fork_does_not_raise_the_watermark_past_the_cut() {
     );
     assert_eq!(orch.chats[0].reflected_upto, Some(4));
 }
+
+/// A message sent in this session can be forked at without opening the chat
+/// again: its echo carries the stored message's id, which is what `/fork N`
+/// sends. The fork is at the person's own message, so its text returns to the
+/// input box and the exchange is parked whole — on disk too, at schema 9.
+#[tokio::test]
+async fn a_message_sent_in_this_session_can_be_forked_at() {
+    let backend = Arc::new(MockBackend::scripted(vec![
+        ChatChunk::Text("ответ".into()),
+        ChatChunk::Finished(FinishReason::Stop),
+    ])) as Arc<dyn EngineBackend>;
+    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(Some(backend));
+    let root = _d.path().to_path_buf();
+    let active = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    let AppEvent::ChatActivated { id: chat_id, .. } = active else {
+        unreachable!()
+    };
+
+    cmd_tx
+        .send(AppCommand::SendMessage("первый вопрос".into()))
+        .unwrap();
+    let echo = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::UserMessage { .. }))
+        .await
+        .unwrap();
+    let AppEvent::UserMessage { text, id } = echo else {
+        unreachable!()
+    };
+    assert_eq!(text, "первый вопрос");
+    let sent = id.expect("the echo names the stored message");
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+        .await
+        .unwrap();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatList(_)))
+        .await
+        .unwrap();
+
+    cmd_tx.send(AppCommand::ForkAt { message: sent }).unwrap();
+    let restore = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::RestoreInput(_)))
+        .await
+        .unwrap();
+    assert!(matches!(restore, AppEvent::RestoreInput(t) if t == "первый вопрос"));
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let reopened = Storage::open(Paths::with_root(&root)).unwrap();
+    let chat = reopened.json().load_chat(chat_id).unwrap().unwrap();
+    assert_eq!(chat.v, crate::shared::storage::schema::CHAT_SCHEMA);
+    assert!(chat.messages.is_empty(), "{:?}", chat.messages);
+    assert!(chat.deleted.is_empty(), "a fork archives nothing");
+    assert_eq!(chat.branches.len(), 1);
+    let tail = &chat.branches[0];
+    assert_eq!(tail.after, None, "the tail starts the chat");
+    assert_eq!(tail.cause, ParkCause::Fork);
+    assert_eq!(tail.messages[0].id, sent);
+    assert_eq!(tail.messages[1].text, "ответ");
+}
+
+/// A message sent at a place a branch is parked is the line's own variant of
+/// that place: the branches are sent again with it, and its bubble carries
+/// the mark — no activation happens when a message is sent. A regeneration
+/// of the reply a branch continues from parks it rather than archive it, so
+/// the branch is still reached.
+#[tokio::test]
+async fn the_line_growing_at_a_fork_refreshes_the_marks() {
+    let backend = Arc::new(MockBackend::scripted(vec![
+        ChatChunk::Text("ответ".into()),
+        ChatChunk::Finished(FinishReason::Stop),
+    ])) as Arc<dyn EngineBackend>;
+    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch(Some(backend));
+    let root = _d.path().to_path_buf();
+    let active = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    let AppEvent::ChatActivated { id: chat_id, .. } = active else {
+        unreachable!()
+    };
+    let send = |text: &str| {
+        cmd_tx
+            .send(AppCommand::SendMessage(text.to_string()))
+            .unwrap()
+    };
+    let sent_id = |e: AppEvent| match e {
+        AppEvent::UserMessage { id, .. } => id.expect("a stored message"),
+        _ => unreachable!(),
+    };
+
+    send("первый вопрос");
+    let first = sent_id(
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::UserMessage { .. }))
+            .await
+            .unwrap(),
+    );
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+        .await
+        .unwrap();
+    cmd_tx.send(AppCommand::ForkAt { message: first }).unwrap();
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::RestoreInput(_)))
+        .await
+        .unwrap();
+
+    // Another way from the same place.
+    send("другой вопрос");
+    let second = sent_id(
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::UserMessage { .. }))
+            .await
+            .unwrap(),
+    );
+    let branches = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Branches(_)))
+        .await
+        .unwrap();
+    let AppEvent::Branches(view) = branches else {
+        unreachable!()
+    };
+    assert_eq!(view.marks.len(), 1, "{view:?}");
+    assert_eq!(
+        (
+            view.marks[0].message,
+            view.marks[0].variant,
+            view.marks[0].of
+        ),
+        (second, 2, 2)
+    );
+    assert!(
+        !view.parked[0].at_end,
+        "the line has its own continuation now"
+    );
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+        .await
+        .unwrap();
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    let reopened = Storage::open(Paths::with_root(&root)).unwrap();
+    let chat = reopened.json().load_chat(chat_id).unwrap().unwrap();
+    assert_eq!(chat.messages[0].id, second);
+    assert_eq!(chat.branches[0].messages[0].id, first);
+}
+
+/// A greeting is swapped only in a chat that holds nothing else, and a chat
+/// with a parked branch holds something: a branch may continue from the
+/// greeting, which a swap would replace under it.
+#[test]
+fn a_chat_with_a_branch_does_not_swap_its_greeting() {
+    let (_d, mut orch, mut rx) = bare_orch_rx();
+    let mut profile = Profile::new("P", "sys");
+    profile.greeting = Some("Здравствуйте!".into());
+    profile.alternate_greetings = vec!["Привет!".into()];
+    let mut chat = Chat::from_profile(&profile, "t");
+    chat.push_message(Message::assistant("Здравствуйте!"));
+    chat.push_message(Message::user("вопрос"));
+    let greeting = chat.messages[0].id;
+    assert!(chat.fork_at(1, chrono::Utc::now()));
+    let chat_id = chat.id;
+    orch.profiles.push(profile);
+    orch.chats.push(chat);
+    orch.active_id = Some(chat_id);
+
+    orch.handle_swap_greeting(None);
+    assert_eq!(
+        notices(&drain(&mut rx)),
+        [orch.ui_locale().t("ui.greeting.started")]
+    );
+    assert_eq!(orch.chats[0].messages[0].id, greeting);
+    assert_eq!(orch.chats[0].branches[0].after, Some(greeting));
+}
+
+/// A take-back of the exchange a branch continues from parks the exchange
+/// instead of archiving it: the archive is where what is gone goes, and a
+/// branch anchored on a message there would have no place to return to. The
+/// branch is then reached through the parked exchange, and a switch to it
+/// puts the whole conversation back.
+#[test]
+fn a_take_back_of_an_exchange_a_branch_continues_from_parks_it() {
+    let (_d, mut orch, mut rx, chat, ids) = forkable();
+    orch.handle_fork_at(ids[3]);
+    drain(&mut rx);
+
+    orch.handle_delete_last();
+    assert_eq!(line(&orch, chat), ["q1", "a1"]);
+    let stored = orch.chats[0].clone();
+    assert!(stored.deleted.is_empty(), "nothing is archived");
+    let causes: Vec<ParkCause> = stored.branches.iter().map(|b| b.cause).collect();
+    assert_eq!(causes, [ParkCause::Fork, ParkCause::Takeback]);
+    assert!(stored.branch_view().parked.iter().all(|b| !b.detached));
+    let events = drain(&mut rx);
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, AppEvent::RestoreInput(t) if t == "q2")),
+        "the take-back still hands the text back"
+    );
+
+    orch.handle_switch_branch(ids[4]);
+    assert_eq!(line(&orch, chat), ["q1", "a1", "q2", "a2", "q3", "a3"]);
+    assert!(orch.chats[0].branches.is_empty());
+
+    // With no branch continuing from it, a take-back archives as it always did.
+    orch.handle_delete_last();
+    assert_eq!(orch.chats[0].deleted.len(), 1);
+    assert!(orch.chats[0].branches.is_empty());
+}
