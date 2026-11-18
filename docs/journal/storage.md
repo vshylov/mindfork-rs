@@ -2232,6 +2232,9 @@ boundary — then the line asked.
 `/fork 5` on a message just sent, the text back in the box, the resend, `‹2/2› #5`,
 a click on `‹` and on `›`; a click on `#5` with `/fork` in the box.
 
+**The owner's look** (Windows Terminal over SSH): the mark beside the number reads
+well, and the two lists are convenient.
+
 **Going back, checked with 0.27.0 built from its tag** (1 min 58 s, each binary beside
 a `defaults.json` of mode `path`): this build stamps a root 0.27.0 wrote and makes one
 `pre-migrate-*.zip`; after a fork in it, 0.27.0 stops with *"created by a newer version
