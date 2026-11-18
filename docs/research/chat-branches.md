@@ -9,6 +9,12 @@ number alone, and only into a command that takes one (§3.7). **Stage 1 is built
 (2026-11-18, `feat/message-numbers`): the numbers on the messages' rows (§3.5;
 [docs/journal/ui-feed.md](../journal/ui-feed.md)). It changed two things in this
 document: where a number is made (§3.5), and what a command does with one (§3.6).
+**Stage 2 is built** (2026-11-18, `feat/chat-branches`): the tree, `/fork`, `/branch`,
+the variants mark and the mouse ([ADR 0015](../decisions/0015-chat-branches.md),
+[docs/journal/storage.md](../journal/storage.md)). Live **GO** on Gemma 4 and Gemini.
+What it changed here is marked "as built" in §3.1, §3.6 and §3.10: a tail keeps no
+draft; the note after a fork is an ordinary note; and a take-back of what a branch
+continues from had to park it already, ahead of stage 3.
 
 The roadmap holds two neighbouring ideas (docs/roadmap.md): "regeneration with
 variations" and "editing any message, not just the last, with history branching".
@@ -167,9 +173,6 @@ pub struct Branch {
     /// The tail. Never empty.
     pub messages: Vec<Message>,
     pub parked_at: DateTime<Utc>,
-    /// What the input box held, when the operation that parked the tail
-    /// replaced it (`DeletedExchange::draft`'s rule).
-    pub draft: String,
     /// What took the tail off the line.
     pub cause: ParkCause,         // Fork | Switch | Regenerate | Takeback
     /// The summary and the reflection watermark in force when it was parked.
@@ -188,6 +191,10 @@ pub struct Branch {
 - **A parked tail is the line as it was left.** Returning to it restores the
   conversation the person walked away from, to its last message, with no "last
   active child" bookkeeping.
+- **A tail keeps no draft** (as built). The first draft of this section gave it one,
+  on `DeletedExchange`'s rule. A fork is typed as a command, so what the box held at
+  that moment is the command; and a switch does not replace the box's text. The
+  person's text stays where they typed it.
 - **The line cannot be corrupted by the tree.** It is a plain list. A tail whose
   anchor is missing — a hand-edited file — is still a readable list of messages: it
   is kept, logged, listed as detached and never dropped. A walk from a tail to the
@@ -359,10 +366,15 @@ branch (§8).
 - `0`, a number past the end and a token that is not a number are answered with
   the valid range.
 - After a fork a note under the last message says what was kept and how to return:
-  the count of messages in the parked continuation and `/branch`. It is derived
-  from the chat's state — the line ends on a message that tails are anchored to —
-  so it is drawn again when the chat is reopened, and goes when the person sends a
-  message.
+  the count of messages in the parked continuation and the `/branch N K` that puts
+  it back. It is derived from the chat's state — the line ends on a message that
+  tails are anchored to — so it is drawn again when the chat is reopened. As built
+  it is an ordinary note of the screen: it stays above the next message for the
+  session, like any other, and is not there at the next opening.
+- **A message sent in the session is forked at like any other** (found by the
+  stage's pty run): its echo carries the stored message's id from its first frame.
+  Without it the commonest fork — at the message just sent — was refused until the
+  chat was opened again.
 
 **`/branch`** — the chat's branches.
 
@@ -446,6 +458,13 @@ reply that saved a note is replaced, the note stays.
 
 Decided by the owner: after the tree is in, a regeneration and a take-back park
 their tail as a branch instead of archiving it.
+
+**One part of this could not wait for the stage** (found by stage 2's pty run). A
+take-back or a regeneration after a fork can remove the message a parked tail
+continues from; in the archive that message is gone, and the tail has no place to
+return to. So stage 2 already parks the removed messages **where a branch continues
+from them** (`Chat::park_if_anchored`), with the cause below, and archives as before
+everywhere else. Stage 3 drops the condition.
 
 - `Ctrl+R` parks the old reply (`cause = Regenerate`); the new reply is variant 2
   of that place, and `‹1/2›` returns to the old one. That is the roadmap's
@@ -547,9 +566,10 @@ Each stage is a branch and a pull request of its own.
    the small-window gate (spec §11.1.1). The chat's screen dumps were regenerated.
    Pure UI: no live run against a model; a pty run of `mindfork demo`, and the
    owner's look in Windows Terminal.
-2. **The tree** (`feat/chat-branches`). §3.1–§3.4 and §3.6–§3.7: `Branch`, the
-   stamp with its fixture, the two operations, `/fork`, `/branch`, the mark, the
-   hooks of §3.4.
+2. **The tree** (`feat/chat-branches`) — **built 2026-11-18**, live **GO** on
+   Gemma 4 (llama.cpp) and on Gemini through the gateway, the control red.
+   §3.1–§3.4 and §3.6–§3.7: `Branch`, the stamp with its fixture, the two
+   operations, `/fork`, `/branch`, the mark, the hooks of §3.4.
    - Unit tests: the invariants of §3.3; nested forks; the summary and the
      watermark across a fork before and after the boundary; a silent task landing
      after a fork; a clone of a chat with branches; a file with branches is "a

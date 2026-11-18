@@ -145,6 +145,26 @@ last number is the count the chat list shows for the chat, and `/copy last N`
 counts the same messages. The number is not part of the text: a selection does
 not take it.
 
+**Branches.** `/fork N` continues the conversation from message N and keeps what
+followed as a branch of the same chat. At a reply of the assistant the
+conversation goes on after it; at your own message its text returns to the box,
+so you can write it again — the way to change a message in the middle. `/fork`
+alone lists the messages to pick from.
+
+A message that has other variants shows which one it is before its number:
+`‹2/3› #11` is the second of three ways the conversation went from there.
+`/branch N K` switches message N to variant K, `/branch` alone lists every
+branch of the chat, and with the mouse a click on `‹` or `›` goes to the
+neighbouring variant. Coming back to a branch restores the conversation as you
+left it. A click on a number writes it into `/fork` or `/branch` when one of
+them is in the box.
+
+A fork changes the conversation and nothing else. Notes the assistant saved,
+files it wrote and changes it made to your project stay as they are; `F4` still
+shows and reverts what it did to the project. The assistant itself reads only
+the conversation in front of you: a branch you left is not in its request and
+not in what its tools find.
+
 In the chat list, `Ctrl+F` switches between searching titles and searching
 message content; `Ctrl+G` then opens the matching messages themselves.
 
@@ -1004,6 +1024,8 @@ the keys for itself:
 | `/copy first [N]` · `/copy last [N]` | — | copy only the first or the last N messages (one without N), as the conversation shows them, without the chat's title |
 | `/autotitle` | `Ctrl+R` in the list | have the model title this chat |
 | `/regen` · `/retry` · `/takeback` | `Ctrl+R` · `Ctrl+E` | regenerate the last reply / take back the last exchange |
+| `/fork [N]` | — | continue the conversation from message N, keeping what followed as a branch; alone, a list of the messages to pick from |
+| `/branch [N K]` | click `‹` `›` | switch message N to its variant K; alone, the list of the chat's branches |
 | `/continue` | — | resume the last interrupted reply from where it stopped — local and external engines, Gemini, and Claude up to the 4.5 generation; DeepSeek in the `deepseek` mode, in a conversation without tool calls; through OpenRouter or another gateway, only Gemini models and Claude up to 4.5 |
 | `/impersonate [text]` | `Ctrl+U` | the model writes your next message, continuing the text you give it |
 | `/greeting [N]` | — | in a chat that holds only its greeting: the profile's next greeting, or the `N`th — a character card's other openings |
