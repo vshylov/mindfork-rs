@@ -1051,6 +1051,37 @@ mod tests {
         );
     }
 
+    /// A fork can end the line on a tool result — between a reply's first
+    /// bubble and its follow-up — with the person's message next
+    /// (`shared::api::forked_line_tests`).
+    #[test]
+    fn a_line_cut_after_a_tool_result_takes_the_persons_message_next() {
+        use crate::shared::api::forked_line_tests::{assert_in_order, forked_line};
+        let json = serde_json::to_value(build_request(&forked_line(), "gemini-x")).unwrap();
+        let contents = json["contents"].as_array().unwrap();
+        let call = contents
+            .iter()
+            .position(|c| {
+                c["parts"]
+                    .as_array()
+                    .is_some_and(|p| p.iter().any(|part| part.get("functionCall").is_some()))
+            })
+            .expect("the call");
+        assert_eq!(contents[call]["role"], "model");
+        // The response turn comes immediately after the call's.
+        let after = &contents[call + 1];
+        assert_eq!(after["role"], "user");
+        assert!(
+            after["parts"][0].get("functionResponse").is_some(),
+            "{after}"
+        );
+        assert!(
+            contents[call + 1..].iter().all(|c| c["role"] == "user"),
+            "nothing of the model's follows the cut: {json}"
+        );
+        assert_in_order(&json["contents"]);
+    }
+
     #[test]
     fn adjacent_tool_results_merge_into_one_user_content() {
         let r = base_req(vec![

@@ -554,6 +554,33 @@ mod tests {
     use crate::shared::api::contract::{ApiMessage, ApiToolCall, ThinkingBlock, ToolSchema};
     use crate::shared::api::effort::CarriesEffort;
 
+    /// A fork can end the line on a tool result — between a reply's first
+    /// bubble and its follow-up — with the person's message next
+    /// (`shared::api::forked_line_tests`).
+    #[test]
+    fn a_line_cut_after_a_tool_result_takes_the_persons_message_next() {
+        use crate::shared::api::forked_line_tests::{assert_in_order, forked_line};
+        let json = serde_json::to_value(build_request(&forked_line(), "gpt-x", false)).unwrap();
+        let kinds: Vec<&str> = json["input"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["type"].as_str().unwrap_or("message"))
+            .collect();
+        let call = kinds.iter().position(|k| *k == "function_call").unwrap();
+        assert_eq!(kinds[call + 1], "function_call_output", "{kinds:?}");
+        assert_eq!(
+            json["input"][call + 1]["call_id"],
+            json["input"][call]["call_id"]
+        );
+        assert_eq!(kinds.last(), Some(&"message"), "{kinds:?}");
+        assert_eq!(
+            json["input"].as_array().unwrap().last().unwrap()["role"],
+            "user"
+        );
+        assert_in_order(&json["input"]);
+    }
+
     fn base_req(messages: Vec<ApiMessage>) -> ChatRequest {
         ChatRequest {
             continue_final: false,

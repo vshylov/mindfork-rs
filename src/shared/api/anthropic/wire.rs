@@ -946,6 +946,36 @@ mod tests {
         assert_eq!(json["max_tokens"], DEFAULT_MAX_TOKENS);
     }
 
+    /// A fork can end the line on a tool result — between a reply's first
+    /// bubble and its follow-up — with the person's message next
+    /// (`shared::api::forked_line_tests`).
+    #[test]
+    fn a_line_cut_after_a_tool_result_takes_the_persons_message_next() {
+        use crate::shared::api::forked_line_tests::{assert_in_order, forked_line};
+        let json = serde_json::to_value(build_request(&forked_line(), "claude-x", false)).unwrap();
+        let messages = json["messages"].as_array().unwrap();
+        let call = messages
+            .iter()
+            .position(|m| {
+                m["content"]
+                    .as_array()
+                    .is_some_and(|c| c.iter().any(|b| b["type"] == "tool_use"))
+            })
+            .expect("the call");
+        assert_eq!(messages[call]["role"], "assistant");
+        // The result opens the turn after the call: a `tool_result` that is not
+        // first in its turn is refused.
+        let after = &messages[call + 1];
+        assert_eq!(after["role"], "user");
+        assert_eq!(after["content"][0]["type"], "tool_result");
+        assert_eq!(after["content"][0]["tool_use_id"], "call-1");
+        assert!(
+            messages[call + 1..].iter().all(|m| m["role"] == "user"),
+            "nothing of the assistant's follows the cut: {json}"
+        );
+        assert_in_order(&json["messages"]);
+    }
+
     #[test]
     fn tool_calls_become_tool_use_and_results_merge_into_user() {
         // assistant(tool_use) → tool → tool: two results merge into one user.

@@ -1167,6 +1167,37 @@ mod tests {
     /// given. Without the scheme strip this falls through the id rung into
     /// title matching and answers "unknown" (docs/research/chat-uri-links.md
     /// §3, gap 4).
+    /// `chat_read` reads a conversation's line: a branch parked in that chat
+    /// is not part of what it pages, as it is not part of what the person sees
+    /// there (docs/research/chat-branches.md §3.8).
+    #[tokio::test]
+    async fn read_pages_the_line_and_not_a_parked_branch() {
+        let (_d, storage, mut ctx) = ctx_with_refs(vec![]);
+        let (a, mut chat) = seed_chat(
+            &storage,
+            ctx.profile_id,
+            "рыбалка",
+            &["щука клюёт на живца", "а пароль от лодки — ЗАНЗИБАР-42"],
+        );
+        ctx.other_chats = Arc::from(vec![a.clone()]);
+        // One page for the whole of it: the test is about what is read, not
+        // how it is paged.
+        ctx.history_page_tokens = 4000;
+        let reference = serde_json::json!({ "chat": short_id(a.id) });
+        let before = ChatRead
+            .invoke(&ctx, reference.clone())
+            .await
+            .unwrap()
+            .result;
+        assert!(before.contains("ЗАНЗИБАР-42"), "the control: {before}");
+
+        assert!(chat.fork_at(1, chat.modified_at));
+        storage.json().save_chat(&chat).unwrap();
+        let out = ChatRead.invoke(&ctx, reference).await.unwrap().result;
+        assert!(out.contains("щука"), "{out}");
+        assert!(!out.contains("ЗАНЗИБАР-42"), "{out}");
+    }
+
     #[tokio::test]
     async fn read_accepts_its_own_chat_uri() {
         let (_d, storage, mut ctx) = ctx_with_refs(vec![]);

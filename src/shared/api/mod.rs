@@ -38,6 +38,11 @@ mod dialogue_probe;
 #[cfg(test)]
 pub(crate) mod cache_probe_tests;
 
+// A line a fork cut after a tool result, as each wire sends it
+// (docs/research/chat-branches.md §6).
+#[cfg(test)]
+pub(crate) mod forked_line_tests;
+
 // The one-shot SSE server the clients' stream tests share.
 #[cfg(test)]
 pub(crate) mod sse_stub;
