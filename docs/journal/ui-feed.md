@@ -3788,4 +3788,5 @@ moved.
 - `Enter` sends the draft: the echo is `#5` and the reply being written `#6` from its
   first frame.
 
-How the muted number reads beside the header in Windows Terminal is the owner's look.
+**The owner's look** (Windows Terminal over SSH, the Russian interface, a real chat with
+the model's name on the header): the numbers read well as they are.
