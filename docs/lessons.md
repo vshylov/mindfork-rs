@@ -1964,6 +1964,16 @@ tick (`SPINNER_STEP`, asserted at compile time against `TICK`).
 
 ---
 
+**A wrapped row's width is not the room after its text: the wrap keeps the whitespace
+it broke at on the upper row and lets it run past the edge.** `wrap::wrap_ranges`
+ends a row on the spaces of its break so that the next starts on a word, and a copy
+joins the rows back by them. Whatever is placed at a row's right end — a message's
+number was the first — has to measure the row's text without that whitespace
+(`text_cols`) and keep it as the row's content when it redraws the gap, or one of two
+things happens: the row "has no room" though its last columns are blank, or the copy
+of a wrapped paragraph glues two words together.
+— *a message's number at the right end of its row*.
+
 ## 6. Windows and cross-platform
 
 **On wlroots, X11 sees the Wayland clipboard only through a focused X window.** sway

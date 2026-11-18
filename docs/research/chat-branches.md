@@ -5,7 +5,10 @@ was written (§5.1). **Forks F1–F5 decided by the owner the same day** (§5.2)
 and F5 as recommended; F1 as recommended, with a stage of its own added, in which a
 tool that reads a chat's line says the chat has branches and a separate tool reads
 them (§3.8, stage 4 in §6); and F4 the other way — a click on a number writes the
-number alone, and only into a command that takes one (§3.7). Nothing is built.
+number alone, and only into a command that takes one (§3.7). **Stage 1 is built**
+(2026-11-18, `feat/message-numbers`): the numbers on the messages' rows (§3.5;
+[docs/journal/ui-feed.md](../journal/ui-feed.md)). It changed two things in this
+document: where a number is made (§3.5), and what a command does with one (§3.6).
 
 The roadmap holds two neighbouring ideas (docs/roadmap.md): "regeneration with
 variations" and "editing any message, not just the last, with history branching".
@@ -280,27 +283,43 @@ handles, followed — for a switch — by an append.
   changes numbers only past its cut, and the variants of one place carry one
   number. A command names a message of the line in front of the person, so a
   number is never ambiguous where it is used.
-- **Where it is made:** `FeedMessage` gains `number: Option<u32>`, filled by
-  `FeedMessage::from_messages`, which merges rounds exactly where `visible_rows`
-  does. A service note with no stored message behind it has none. The bubble being
-  written takes the next number from the screen that opens it.
-- **Where it is drawn:** at the right end of the header's row, muted and unbolded
-  like the model's name (spec §11.3):
+- **Where it is made** (as built): the feed counts its own items each frame
+  (`numbers` over `FeedMessage::is_numbered`) — the person's and the assistant's
+  bubbles and a note with a stored message behind it; the screen's own notes and a
+  transcript's persona take none. `FeedMessage::from_messages` merges rounds
+  exactly where `visible_rows` does, so over a chat opened from the list the
+  numbers are `visible_rows`' ranks; a test holds the two together at every prefix.
+  The first draft of this section put a field on `FeedMessage`, filled by the
+  projection. Five places build a feed item outside it — the echo, the reply being
+  written, a follow-up bubble, a bubble re-opened after a note, the landed turn's
+  re-keying, which projects the turn's rows alone — and each would have had to know
+  the count.
+- **What a live feed shows.** The echo and the reply being written take the next
+  numbers at once. A bubble the screen drew and the chat did not keep takes one
+  too, until the chat is opened again: the echo of a send that was refused, a reply
+  a note split in two that a reload stitches into one. Rare, and the reason a
+  command does not send a number (§3.6).
+- **Where it is drawn:** at the end of the header's row, one column short of the
+  panel's edge (the owner's decision, during stage 1), muted and unbolded like the
+  model's name (spec §11.3):
 
   ```
-  ▌ ✦ ASSISTANT  gemini-4-hydrogen                                        #10
+  ▌ ✦ ASSISTANT  gemini-4-hydrogen                                       #10
   ```
 
   A note row that has a stored message — a task notification, a director's line —
-  has no header, so its number stands at the right end of its first row. Without
-  it the numbers on screen would skip.
+  has no header, so its number ends its own first row; a first row the text fills
+  is wrapped narrower. Without it the numbers on screen would skip.
 - **Width:** the role's name is owed its place, then the number, then the model's
-  name, which is cut with its "…" or dropped. A row too narrow for the role and the
-  number drops the number; `/fork` bare still reaches every message (§3.6).
+  name, which is cut with its "…" or, with fewer than four columns left, dropped. A
+  row too narrow for the role and the number drops the number; `/fork` bare still
+  reaches every message (§3.6).
 - **Selection and copy:** the number is chrome. `RowFact` (`widgets/feed_selection.rs`)
-  names only leading chrome today (`lead`); it gains the trailing columns, so a
-  selection is never painted on a number and a copy never takes it.
-- **The render cache:** the number enters the message's fingerprint.
+  named only leading chrome (`lead`); it gained the trailing columns (`tail`), so a
+  selection is never painted on a number and a copy never takes it. The in-feed
+  search does not light or count it either.
+- **The render cache:** the number is a property of a block's place, not of its
+  message, so it stays out of the fingerprint and is checked beside it.
 - **Always on** (the owner's decision): no setting. Every picture of the feed
   changes once — the committed screen dumps and the generated demo.
 - A sub-agent transcript is numbered the same way; `/fork` is refused there.
@@ -309,6 +328,13 @@ handles, followed — for a switch — by an append.
 
 Both are rows of the registry in `features/ui_command.rs`, on the help overlay's
 "Commands" tab.
+
+**A command resolves its number on the screen** (found in stage 1, §3.5): the
+screen looks up the bubble that shows `#N` and sends the id of the message it
+carries, not the number. What the person sees numbered is then what the command
+acts on, whatever a live feed's count has drifted to; a bubble with no stored
+message yet is answered with a note. `/copy first|last N` is not of this kind: it
+counts from an end of the stored conversation and names no message.
 
 **`/fork N`** — the conversation continues from message N.
 
@@ -514,12 +540,13 @@ their tail as a branch instead of archiving it.
 
 Each stage is a branch and a pull request of its own.
 
-1. **The numbers** (`feat/message-numbers`). §3.5 and nothing of the tree: the
-   number on the header and on a note row, the width rule, the trailing chrome, the
-   fingerprint. Tests: the numbers of a feed equal `visible_rows`' ranks; a copy of
-   a selection across a header holds no number; the small-window gate
-   (spec §11.1.1). The screen dumps and the demo are regenerated. Pure UI: no live
-   run against a model; the owner's look in Windows Terminal.
+1. **The numbers** (`feat/message-numbers`) — **built 2026-11-18.** §3.5 and
+   nothing of the tree: the number on the header and on a note row, the width rule,
+   the trailing chrome, the cache. Tests: the numbers of a feed equal
+   `visible_rows`' ranks; a copy of a selection across a header holds no number;
+   the small-window gate (spec §11.1.1). The chat's screen dumps were regenerated.
+   Pure UI: no live run against a model; a pty run of `mindfork demo`, and the
+   owner's look in Windows Terminal.
 2. **The tree** (`feat/chat-branches`). §3.1–§3.4 and §3.6–§3.7: `Branch`, the
    stamp with its fixture, the two operations, `/fork`, `/branch`, the mark, the
    hooks of §3.4.

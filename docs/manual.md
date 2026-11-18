@@ -140,6 +140,11 @@ picks one by a prefix). `F2` renames the open chat, `Ctrl+D` clones it, `F5`
 copies the whole conversation to the clipboard, and `/export md|json` writes it
 to a file — the `json` form can be imported back.
 
+Every message carries its number, `#12`, at the right end of its header. The
+last number is the count the chat list shows for the chat, and `/copy last N`
+counts the same messages. The number is not part of the text: a selection does
+not take it.
+
 In the chat list, `Ctrl+F` switches between searching titles and searching
 message content; `Ctrl+G` then opens the matching messages themselves.
 

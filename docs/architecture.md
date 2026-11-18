@@ -506,13 +506,18 @@ src/
 │  │                        the model name on the assistant's header
 │  │                        (`FeedMessage.model` ← `MessageMetadata.model`,
 │  │                        `set_show_model_name` → CacheKey, spec §11.3);
+│  │                        a message's number at the right end of its row
+│  │                        (`numbers` over `FeedMessage::is_numbered`, drawn by
+│  │                        `push_number` in the block's wrap, checked in the
+│  │                        cache beside the fingerprint; spec §11.3);
 │  │                        drawn bordered or bare (`FeedFrame`, spec §11.1.1);
 │  │                        the border carries the token counter at its bottom
 │  │                        right corner (`fit_counter`, spec §11.3);
 │  │                        the feed's own text selection (`press`/`drag`/
 │  │                        `release`/`autoscroll`, `selected_text`; §10 below)
 │  ├─ feed_selection.rs     the arithmetic of that selection: `FeedPoint` (block,
-│  │                        row, column), `RowFact` (the rail's width, a soft wrap),
+│  │                        row, column), `RowFact` (the rail's width, a soft wrap,
+│  │                        the tail a message's number takes),
 │  │                        the cells painted, the text copied, a word and a line
 │  │                        (`FeedRows` — tested on rows without drawing them)
 │  ├─ chat_link_picker.rs   the Ctrl+L overlay over a chat's `chat://` references
@@ -4358,8 +4363,10 @@ spec §11.3; docs/research/mouse-always-captured.md §5.3–§5.4). The invarian
 rests on: **every row a cached block holds is a row as drawn** — the block builder
 wraps every row to the panel's width, the compaction divider included, and `render`
 draws them as they are (the second wrap is left to the empty feed's placeholder).
-Beside each row the block keeps a `RowFact` — the chrome's width and whether the row
-continues the line above — made in the builder's wrap loop from the `LineMark`s
+Beside each row the block keeps a `RowFact` — the chrome's width at the row's start
+(`lead`) and at its end (`tail`: a message's number and the padding before it,
+spec §11.3) and whether the row continues the line above — made in the builder's
+wrap loop from the `LineMark`s
 the line's builder handed it (`Body`: a quote's `> ` from the markdown `Writer`,
 the gutters and indents of thoughts, the summary and tool cards, the rows those
 builders wrapped themselves; `shared::markdown::render_marked`). A code block's
