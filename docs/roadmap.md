@@ -394,13 +394,21 @@ effort tiers and Fabula — have all closed
   spec §9.10). Image generation would make it worth more
   ([image-generation.md](history/image-generation.md) F8).
 - **Branches inside a chat — a fork at a chosen message** — **researched**
-  2026-11-18 ([chat-branches.md](research/chat-branches.md)); five decisions are
-  the owner's, forks F1–F5 are open. The chat stays a line with the tails that
-  left it kept beside it; messages are numbered on their headers, `/fork N` forks
-  at one and `/branch` switches. `Ctrl+E`/`/takeback` edits the last exchange and
-  `/clone` copies a whole chat today; there is no fork at a chosen message. Its
-  third stage keeps a regenerated or taken-back reply as a variant to return to,
-  where today it is only archived.
+  2026-11-18 ([chat-branches.md](research/chat-branches.md)), every fork decided
+  by the owner the same day; nothing is built. The chat stays a line with the
+  tails that left it kept beside it; messages are numbered on their headers,
+  `/fork N` forks at one and `/branch` switches. `Ctrl+E`/`/takeback` edits the
+  last exchange and `/clone` copies a whole chat today; there is no fork at a
+  chosen message. Its third stage keeps a regenerated or taken-back reply as a
+  variant to return to, where today it is only archived; its fourth tells the
+  assistant's tools that a chat has branches and adds a tool that reads them.
+- **Editing a message in place (`/edit N`)** — **idea** (the owner's,
+  2026-11-18). A message's text is changed where it stands: nothing under it is
+  removed and no branch is made — for a typo. Not the fork above, which writes
+  the message again and keeps what followed as a branch. It needs that track's
+  message numbers. Unexamined: what an edit under existing replies does to the
+  request's cached prefix, to the search index and to a summary that covers the
+  message.
 - **Regeneration with variations** — **idea**. Not just `Ctrl+R`/`/regen` with
   the same request: different sampling, or several response variants generated
   at once. Keeping the replaced reply to return to is the track above.

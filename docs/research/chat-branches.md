@@ -1,8 +1,11 @@
 # Research: branches inside a chat — a fork at a chosen message
 
 **Status:** research (2026-11-18). Five decisions were taken by the owner before it
-was written (§5.1). **Forks F1–F5 are open** (§5.2), each with a recommendation.
-Nothing is built.
+was written (§5.1). **Forks F1–F5 decided by the owner the same day** (§5.2): F2, F3
+and F5 as recommended; F1 as recommended, with a stage of its own added, in which a
+tool that reads a chat's line says the chat has branches and a separate tool reads
+them (§3.8, stage 4 in §6); and F4 the other way — a click on a number writes the
+number alone, and only into a command that takes one (§3.7). Nothing is built.
 
 The roadmap holds two neighbouring ideas (docs/roadmap.md): "regeneration with
 variations" and "editing any message, not just the last, with history branching".
@@ -28,7 +31,8 @@ The owner asked for three things to be thought through:
 - **Nothing that reads `chat.messages` changes.** The request, compression,
   reflection, the feed, search, export and the tools go on reading a linear
   conversation. That is also the answer to what the assistant sees: the line in
-  front of the person, by construction (§3.8).
+  front of the person, by construction (§3.8). A later stage lets a tool that
+  reads a line say that the chat has branches, and adds a tool that reads them.
 - **A fork is a take-back that keeps what it took** (§3.3). `Ctrl+E` and `Ctrl+R`
   already cut the line's end and store it in `chat.deleted`. A fork does the same
   cut anywhere, stores the tail with its anchor, and can put it back. Everything a
@@ -40,13 +44,16 @@ The owner asked for three things to be thought through:
 - **Two commands** (§3.6): `/fork N` forks at message N, `/branch` lists the
   chat's branches and switches between them. After a fork the next thing in the
   conversation is the person's message.
+- **The mouse** (§3.7): `‹` and `›` on a message with variants switch between
+  them, and a click on a number writes that number into a command that takes one.
 - **A fork forks the conversation, not the world** (§3.9). Notes, the self-model,
   the chat's files and the attached project stay as they are. The model is not told
   about a fork.
 - **One schema step**, chats 8 → 9, a stamp (§3.2, F3): an older build would drop
   the branches at its first save.
-- **Three stages** (§6): the numbers; the tree with `/fork` and `/branch`; then
-  `Ctrl+R` and `Ctrl+E` kept as branches.
+- **Four stages** (§6): the numbers; the tree with `/fork` and `/branch`;
+  `Ctrl+R` and `Ctrl+E` kept as branches; the branches told to the assistant's
+  tools, with a reader.
 
 ## 2. What the code does today
 
@@ -313,7 +320,10 @@ Both are rows of the registry in `features/ui_command.rs`, on the help overlay's
 
 The rule behind the table: **after a fork, the next thing in the conversation is
 the person's message.** On the person's own message that is `/takeback` at any
-depth, and editing a message in the middle of a conversation is this case.
+depth: the message is written again, and what followed it is kept as a branch. It
+is not an edit in place. `/edit N`, if it is added, is a different command: it
+changes a message's text where it stands, removes nothing under it and makes no
+branch (§8).
 
 - `/fork` with no number opens a list of the line's messages — number, role, first
   line — to pick one with the arrows and `Enter`. It is the route when the window
@@ -344,7 +354,22 @@ depth, and editing a message in the middle of a conversation is this case.
 - With the mouse captured, `‹` and `›` take a click and switch to the neighbouring
   variant. They are the only route that needs no command; they are drawn in the
   stage that makes them work.
-- A click on a number writes `/fork N` into the input box and runs nothing (F4).
+- **A click on a number writes that number, and nothing else, into a command that
+  takes one** (F4, the owner's decision). When the input box holds a command whose
+  argument is a message's number — `/fork`, `/branch` — a click on `#10` sets that
+  argument to `10`: written where there is none, replacing the one that is there.
+  Nothing runs until `Enter`. With anything else in the box — nothing, a message
+  being typed, another command — a number takes no click, and the press is the
+  feed's own.
+- **Which commands those are is a column of the registry**
+  (`features/ui_command.rs`): a row says that its first argument is a message's
+  number. A command added later joins by its row, not by a list kept at the click.
+- **Proposed with the decision, not part of it: a number looks like a target while
+  it is one.** The rule of the captured mouse is that what takes a click looks like
+  it, and nothing else does. So while such a command is in the box the numbers are
+  drawn in the accent colour — by a paint pass over the visible rows, on the
+  trailing columns `RowFact` names (§3.5), not by a rebuild of the render cache,
+  which a keystroke must not cost.
 
 ### 3.8 What the assistant sees
 
@@ -367,10 +392,16 @@ Why this, and not the tree:
   holds up to there. The exception is a fork that leaves a summary behind (§3.4):
   the verbatim prefix replaces the summary block, once.
 
-If a need appears — "compare this with what you answered in the other branch" — it
-is a reader of its own on `chat_read`'s pattern, off by default, addressing a
-variant the way `/branch N K` does (F1). The model supports it; this track does not
-build it.
+**A stage of its own makes the branches known to the tools** (F1, the owner's
+decision; stage 4 in §6). Two things, together:
+
+- a tool that reads a chat's line says that the chat has branches;
+- a separate tool reads them — "compare this with what you answered in the other
+  branch" is its use.
+
+The line stays what every existing tool reads and searches. A parked tail is
+reached only through the reader, by a call that names it. D5 stands beside this: a
+fork still puts nothing into the prompt.
 
 ### 3.9 A fork does not rewind the world
 
@@ -437,36 +468,47 @@ their tail as a branch instead of archiving it.
   tree (§3.10).
 - **D5.** The model is told nothing about a fork.
 
-### 5.2 Open
+### 5.2 Decided by the owner the same day
 
 - **F1 — what the assistant's tools reach.**
   - (a) **The line in front of the person only.**
   - (b) (a), and later an opt-in reader of a named variant, if a need appears.
   - (c) The whole tree, through the existing search tools.
-  - **Recommended: (a) now, (b) when asked for** (§3.8).
+  - Recommended: (a) now, (b) when asked for (§3.8).
+  - **Owner's decision 2026-11-18: (a) — and (b) not on demand but as a stage of
+    this track:** a tool that reads the line says that the chat has branches, and a
+    separate tool reads them (stage 4 in §6).
 - **F2 — `/fork N` on the person's own message.**
   - (a) **The cut is before it and its text goes to the input box.**
   - (b) The cut is after it and a new reply is generated at once.
   - (c) Two commands: `/fork N` for (b), `/edit N` for (a).
-  - **Recommended: (a).** One rule covers every kind of message (§3.6), and sending
+  - Recommended: (a). One rule covers every kind of message (§3.6), and sending
     the text unchanged gives (b).
+  - **Owner's decision 2026-11-18: (a).** And (c) misnamed its second command:
+    `/edit N`, if it is added, edits a message in place — the messages under it are
+    not removed and no branch is made; it is for a typo (§8).
 - **F3 — the storage.**
   - (a) **`branches` beside `messages`, and the schema stamp 8 → 9.**
   - (b) `branches` with no stamp, as other additive fields are. An older build
     then drops the branches in silence.
   - (c) Anchors on `chat.deleted`'s records (§4).
-  - **Recommended: (a).**
+  - Recommended: (a).
+  - **Owner's decision 2026-11-18: (a)** — there is no doing without the schema
+    step.
 - **F4 — the mouse on a number.**
-  - (a) **A click writes `/fork N` into the input box; nothing runs until `Enter`.**
+  - (a) A click writes `/fork N` into the input box; nothing runs until `Enter`.
   - (b) A number takes no click; the mouse switches variants (`‹`, `›`) and nothing
     else.
-  - **Recommended: (a).**
+  - Recommended: (a).
+  - **Owner's decision 2026-11-18: neither.** A click writes the message's number
+    alone, and only when the input box holds a command that takes one (§3.7).
 - **F5 — a background run or a pending follow-up in a tail being parked.**
   - (a) **Cancelled, as a take-back cancels them today.**
   - (b) The run goes on and lands in the parked tail without a notification; the
     follow-up waits until the tail is back on the line.
-  - **Recommended: (a).** A notification has to land on a line, and the one it
+  - Recommended: (a). A notification has to land on a line, and the one it
     belongs to is not in front of anyone.
+  - **Owner's decision 2026-11-18: (a).**
 
 ## 6. Stages, tests, the live check
 
@@ -498,11 +540,28 @@ Each stage is a branch and a pull request of its own.
    the two keys park with their causes; `behavior_markers` over tails and old
    records; `rewrite_current_message` still archives. Live: a reflection after a
    regeneration reads the signal.
+4. **The branches told to the tools, and a reader** (`feat/branch-reader`). F1's
+   second half (§3.8). Its design is an addendum to this document, with forks of
+   its own, before any code. What it has to settle:
+   - which reads say that a chat has branches — `chat_read` over another chat's
+     line, `history_read` over the open chat's compressed part — and whether a
+     search hit says it too;
+   - what is said: the number of branches, and the reader's name only on a turn
+     that offers the reader — the rule by which the summary block names
+     `history_read` (S12, spec §9.4);
+   - the reader: a variant addressed the way `/branch N K` addresses it, paged
+     like `chat_read`; whether it reaches the open chat's own parked tails or
+     other chats' only; whether it is on by default;
+   - whether a search reaches a parked tail at all.
 
-The documentation of each stage follows AGENTS.md §4: spec §5.1, §11.3, §11.7 and
-§12.2, architecture §7 and §10, the manual and README's command tables, the help
-overlay, CHANGELOG (Added; **Data** for the stamp), and the journal
-(ui-feed.md for stage 1, storage.md for stages 2 and 3).
+   Live, go/no-go: a model told of branches by a read reads one when asked to
+   compare, and leaves them alone when not asked.
+
+The documentation of each stage follows AGENTS.md §4: spec §5.1, §9.11, §11.3,
+§11.7 and §12.2, architecture §7, §8 and §10, the manual and README's command
+tables, the help overlay, CHANGELOG (Added; **Data** for the stamp), and the
+journal (ui-feed.md for stage 1, storage.md for stages 2 and 3, tools.md for
+stage 4).
 
 ## 7. Risks
 
@@ -531,7 +590,10 @@ overlay, CHANGELOG (Added; **Data** for the stamp), and the journal
 - `/copy N..M`, `chat://` addresses of a message by number.
 - Importing every branch of a ChatGPT, Claude or DeepSeek export
   (cloud-chat-import.md F4).
-- A reader of a parked variant for the assistant (F1 (b)).
+- **`/edit N`** — changing a message's text where it stands: nothing under it is
+  removed and no branch is made; for a typo (the owner's definition, 2026-11-18).
+  A command of its own if it is added, not a spelling of `/fork N`. It would use
+  stage 1's numbers and the registry column of §3.7.
 - `/fork` from the messenger bridge.
 - Restoring a forked message's images to the input box: `/fork N` returns the text,
   as `/takeback` does.
