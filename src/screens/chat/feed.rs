@@ -218,6 +218,7 @@ impl ChatScreen {
     /// is on. See spec §11.3.
     pub fn begin_generation(&mut self, generation_id: Uuid, model: Option<String>) {
         self.begin_turn(generation_id, model);
+        self.drop_standing_branch_note();
         self.feed.push(FeedMessage {
             role: FeedRole::Assistant,
             text: String::new(),
@@ -742,12 +743,23 @@ impl ChatScreen {
     /// leaves until the person writes, so it is said in a note — derived from
     /// the branches, hence drawn again whenever the chat is opened in that
     /// state, and naming the command that returns.
+    ///
+    /// The branches are sent again whenever the line moved or grew, so the
+    /// note is said **once where it stands**: one that already stands after
+    /// the conversation's last message is not repeated. And it is not said
+    /// **while a turn is being written here**: the line's end is about to
+    /// move, and a note pushed under a streaming bubble would split the reply
+    /// in two — the next chunk opens a bubble below whatever ends the feed.
+    /// That is the chat re-opened in the middle of a regeneration, whose
+    /// replaced reply is parked at the line's end until the new one lands.
+    /// What the turn lands is followed by the branches again, and the note is
+    /// said then if it is still true.
     pub fn set_branches(&mut self, view: BranchView) {
         self.branches = view;
         self.feed_view.set_variants(&self.branches.marks);
         self.mark_feed_changed();
         let at_end: Vec<&BranchInfo> = self.branches.parked.iter().filter(|b| b.at_end).collect();
-        let note = match at_end.as_slice() {
+        self.branch_note = match at_end.as_slice() {
             [] => None,
             [only] => Some(self.loc.tf(
                 "ui.branch.note_one",
@@ -762,8 +774,39 @@ impl ChatScreen {
                     .tf("ui.branch.note_many", &[("count", &many.len().to_string())]),
             ),
         };
-        if let Some(text) = note {
+        if let Some(text) = self.branch_note.clone()
+            && !self.generating
+            && self.standing_branch_note().is_none()
+        {
             self.push_note(&text);
+        }
+    }
+
+    /// Where the note [`Self::set_branches`] said for the branches as they
+    /// are now stands, when it does: among the screen's own notes after the
+    /// conversation's last message — an error or a notice said since may
+    /// follow it.
+    fn standing_branch_note(&self) -> Option<usize> {
+        let text = self.branch_note.as_deref()?;
+        self.feed
+            .iter()
+            .enumerate()
+            .rev()
+            .take_while(|(_, m)| m.role == FeedRole::Note && !m.is_numbered())
+            .find_map(|(at, m)| (m.text == text).then_some(at))
+    }
+
+    /// A turn that starts right under the note "what followed is kept as a
+    /// branch" is writing that place's continuation: the reply it lands will
+    /// carry the variants mark on its header, which says the same and returns
+    /// to the branch by a click. So the note leaves — it would otherwise stand
+    /// between a question and its new answer after every `Ctrl+R`
+    /// (docs/research/chat-branches.md §3.10). A turn that lands nothing
+    /// leaves the line where it was, and the branches sent after it say the
+    /// note again.
+    fn drop_standing_branch_note(&mut self) {
+        if let Some(at) = self.standing_branch_note() {
+            self.feed.remove(at);
         }
     }
 

@@ -655,9 +655,9 @@ async fn quit_lands_every_run_cancelled() {
 }
 
 /// Taking back the exchange that started a run ends the run; it lands onto
-/// the archived copy of its record and announces nothing.
+/// the parked copy of its record and announces nothing.
 #[tokio::test]
-async fn taking_back_the_exchange_ends_its_run_in_the_archive() {
+async fn taking_back_the_exchange_ends_its_run_on_the_parked_branch() {
     let backend = KeyedRecorder::new(
         vec![
             ("", vec![start("c1"), text("started it")]),
@@ -676,12 +676,13 @@ async fn taking_back_the_exchange_ends_its_run_in_the_archive() {
 
     let chat = load(dir.path(), chat_id);
     assert!(chat.messages.is_empty(), "{:?}", chat.messages);
-    let run = chat.deleted[0]
+    assert!(chat.deleted.is_empty());
+    let run = chat.branches[0]
         .messages
         .iter()
         .flat_map(|m| m.tool_calls.iter())
         .find_map(|r| r.subagent.as_deref())
-        .expect("the run on the archived record");
+        .expect("the run on the parked record");
     assert_eq!(run.outcome, Some(RunOutcome::Cancelled));
 }
 

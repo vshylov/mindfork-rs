@@ -86,10 +86,13 @@ pub struct Chat {
     /// (`chat_steps::chat_to_v9`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub branches: Vec<crate::entities::chat_branch::Branch>,
-    /// Deleted exchanges (`Ctrl+E`/`Ctrl+R`). Stored in the chat file only for
-    /// **manual** recovery (editing JSON) in rare cases where something important
-    /// was deleted; not used by the UI and not restored automatically.
-    /// See spec §11.7.
+    /// The archive of what left the conversation for good. Stored in the chat
+    /// file only for **manual** recovery (editing JSON); not used by the UI and
+    /// not restored automatically. It grows by one thing: a reply the
+    /// assistant itself replaced (`rewrite_current_message`). `Ctrl+E` and
+    /// `Ctrl+R` wrote here until they began to park their tail as a branch
+    /// ([`Self::branches`], docs/research/chat-branches.md §3.10); the records
+    /// they left stay, and are still read as a signal. See spec §11.7.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub deleted: Vec<DeletedExchange>,
     /// The background auto-reflection watermark index: how many leading `messages`
@@ -323,20 +326,23 @@ impl FeedView {
     }
 }
 
-/// A snapshot of a deleted exchange (`Ctrl+E`/`Ctrl+R`). This is **not** a message
-/// but a container: the deleted messages + the input-box draft at the time of
+/// A snapshot of what was removed from the conversation — a reply the assistant
+/// rewrote, or, in a file written before `Ctrl+E`/`Ctrl+R` parked their tail as
+/// a branch, the exchange one of them removed. This is **not** a message but a
+/// container: the deleted messages + the input-box draft at the time of
 /// deletion. There's no UI restore — the object exists only for manual JSON edits.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeletedExchange {
     /// The moment of deletion (a reference point when manually searching for a
     /// record).
     pub deleted_at: DateTime<Utc>,
-    /// The deleted messages. For `Ctrl+E` (deleting an exchange) — the user
-    /// message and the assistant's reply; for `Ctrl+R` (regeneration) — the
-    /// assistant's reply (and the round's related tool messages).
+    /// The deleted messages. For a rewrite — the replaced reply and its tool
+    /// message; in an old record of `Ctrl+E` — the user message and the
+    /// assistant's reply, of `Ctrl+R` — the assistant's reply (and the round's
+    /// related tool messages).
     pub messages: Vec<Message>,
-    /// The input box's content at the time of deletion — before the deleted user
-    /// message's text was restored into it (`Ctrl+E`) or a new turn began (`Ctrl+R`).
+    /// The input box's content at the time of deletion, in an old record of the
+    /// two keys; empty for a rewrite, which happens with nobody typing.
     pub draft: String,
     /// What triggered the deletion — a behavioral signal about the interlocutor (or
     /// the agent itself). Auto-reflection reads it as indirect evidence ("regenerated
@@ -346,13 +352,18 @@ pub struct DeletedExchange {
 }
 
 /// The reason an exchange was deleted — a behavioral signal for auto-reflection (§stage 4).
+///
+/// The first two values are **read, no longer written**: the keys they name
+/// park their tail as a branch, whose cause carries the same signal
+/// (`ParkCause::{Takeback, Regenerate}`). They stay so that a file written
+/// earlier parses, and so that its records are still counted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DeletedCause {
     /// `Ctrl+E` — the interlocutor deleted the exchange (didn't like the reply /
-    /// changed their mind about asking).
+    /// changed their mind about asking). Old records only.
     DeleteExchange,
     /// `Ctrl+R` — the interlocutor regenerated the reply (the reply probably wasn't
-    /// good enough).
+    /// good enough). Old records only.
     Regenerate,
     /// `rewrite_current_message` — the assistant itself rewrote its reply (a signal
     /// about its own behavior, not attributed to the interlocutor).
@@ -436,11 +447,11 @@ impl Chat {
             && self.compaction.is_none()
     }
 
-    /// Records a deleted exchange (`Ctrl+E`/`Ctrl+R`) into the `deleted` collection
-    /// for manual recovery. An empty message set is ignored. The new entry is
-    /// inserted at the **front** of the collection (recent deletions are faster to
-    /// find). `modified_at` is **not** touched here — the truncation operations
-    /// themselves update it.
+    /// Records removed messages (a reply the assistant rewrote) into the
+    /// `deleted` collection for manual recovery. An empty message set is
+    /// ignored. The new entry is inserted at the **front** of the collection
+    /// (recent deletions are faster to find). `modified_at` is **not** touched
+    /// here — the operation that removed them updates it.
     pub fn record_deleted(&mut self, messages: Vec<Message>, draft: String, cause: DeletedCause) {
         if messages.is_empty() {
             return;

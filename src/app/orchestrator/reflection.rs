@@ -16,6 +16,7 @@ use chrono::{DateTime, Utc};
 
 use crate::app::events::BackgroundKind;
 use crate::entities::chat::{Chat, DeletedCause};
+use crate::entities::chat_branch::ParkCause;
 use crate::entities::message::{Message, MessageRole};
 use crate::entities::profile::ToolId;
 use crate::entities::sampling::SamplingConfig;
@@ -44,7 +45,7 @@ const REFLECT_TIMEOUT: Duration = Duration::from_secs(120);
 /// returns ids of user-facing notes "about the interlocutor" (still hiding self-notes),
 /// so reflection can link an observation "about self" with a fact "about the
 /// interlocutor" (`note_link` self↔user). See docs/history/narrative-as-notes.md.
-const REFLECT_TOOL_IDS: &[&str] = &[
+pub(super) const REFLECT_TOOL_IDS: &[&str] = &[
     self_model::GET_SELF_MODEL_ID,
     self_model::UPDATE_SELF_MODEL_ID,
     self_model::UPDATE_USER_MODEL_ID,
@@ -81,24 +82,37 @@ pub(super) fn reflect_window(messages: &[Message], reflected_upto: Option<usize>
     (wm, count)
 }
 
-/// A summary of behavioral signals over the reflection window (deletions with
-/// `deleted_at > since`): how many times the interlocutor regenerated/deleted a reply
-/// (indirect evidence the "reply didn't land") and how many times the assistant itself
-/// rewrote a reply. `None` if there are no signals. Gives reflection real behavior
-/// instead of just self-descriptions. Entries with no cause (old ones) aren't counted.
-/// A pure function — testable.
+/// A summary of behavioral signals over the reflection window: how many times the
+/// interlocutor regenerated a reply or took an exchange back (indirect evidence the
+/// "reply didn't land") and how many times the assistant itself rewrote a reply.
+/// `None` if there are no signals. Gives reflection real behavior instead of just
+/// self-descriptions.
+///
+/// The two keys park what they cut as a branch, so the interlocutor's signals are
+/// the **tails parked under their causes** since `since`
+/// (docs/research/chat-branches.md §3.10) — together with the records the same
+/// keys left in the `deleted` archive before they did, which a chat written
+/// earlier still holds. A reply the person switched back to is on the line again
+/// and has no record: going back to a reply is not a sign it did not land. A fork
+/// and a switch are not signals either. The assistant's own rewrites are in the
+/// archive, as they always were; its entries with no cause (old ones) aren't
+/// counted. A pure function — testable.
 pub(super) fn behavior_markers(
     chat: &Chat,
     since: Option<DateTime<Utc>>,
     loc: &crate::shared::i18n::Locale,
 ) -> Option<String> {
+    // Before the last reflection — already accounted for.
+    let in_window = |at: DateTime<Utc>| since.is_none_or(|s| at > s);
     let (mut regen, mut del, mut rewrite) = (0u32, 0u32, 0u32);
-    for d in &chat.deleted {
-        if let Some(s) = since
-            && d.deleted_at <= s
-        {
-            continue; // before the last reflection — already accounted for
+    for b in chat.branches.iter().filter(|b| in_window(b.parked_at)) {
+        match b.cause {
+            ParkCause::Regenerate => regen += 1,
+            ParkCause::Takeback => del += 1,
+            ParkCause::Fork | ParkCause::Switch => {}
         }
+    }
+    for d in chat.deleted.iter().filter(|d| in_window(d.deleted_at)) {
         match d.cause {
             Some(DeletedCause::Regenerate) => regen += 1,
             Some(DeletedCause::DeleteExchange) => del += 1,
@@ -411,6 +425,60 @@ mod tests {
         // No signals → None.
         let empty = Chat::from_profile(&p, "t2");
         assert!(behavior_markers(&empty, None, ru()).is_none());
+    }
+
+    /// The two keys park what they cut, so their signal is the parked tails'
+    /// causes — counted together with the records the same keys left in the
+    /// archive of a chat written before they did. A fork and a switch are the
+    /// person moving about the conversation, not a reply that did not land.
+    #[test]
+    fn behavior_markers_count_the_tails_the_two_keys_parked() {
+        use crate::entities::chat::DeletedExchange;
+        use crate::entities::chat_branch::{Branch, ParkCause};
+        use crate::entities::profile::Profile;
+        use chrono::{Duration, Utc};
+
+        let p = Profile::new("P", "s");
+        let mut chat = Chat::from_profile(&p, "t");
+        let base = Utc::now();
+        let tail = |at, cause| Branch {
+            after: None,
+            messages: vec![Message::assistant("x")],
+            parked_at: at,
+            cause,
+            compaction: None,
+            reflected_upto: None,
+        };
+        chat.branches = vec![
+            tail(base - Duration::hours(1), ParkCause::Regenerate),
+            tail(base - Duration::hours(2), ParkCause::Takeback),
+            tail(base - Duration::hours(2), ParkCause::Takeback),
+            tail(base - Duration::hours(1), ParkCause::Fork),
+            tail(base - Duration::hours(1), ParkCause::Switch),
+            // Before the last reflection: read already.
+            tail(base - Duration::days(5), ParkCause::Regenerate),
+        ];
+        // What an earlier build left of the same key.
+        chat.deleted = vec![DeletedExchange {
+            deleted_at: base - Duration::hours(3),
+            messages: vec![Message::assistant("x")],
+            draft: String::new(),
+            cause: Some(DeletedCause::Regenerate),
+        }];
+
+        let out = behavior_markers(&chat, Some(base - Duration::hours(4)), ru()).unwrap();
+        assert!(out.contains("перегенерировал твой ответ ×2"), "{out}");
+        assert!(out.contains("удалил обмен ×2"), "{out}");
+        // Nothing since the last reflection but a fork and a switch: no signal.
+        assert!(behavior_markers(&chat, Some(base - Duration::minutes(90)), ru()).is_some());
+        chat.branches
+            .retain(|b| matches!(b.cause, ParkCause::Fork | ParkCause::Switch));
+        assert!(behavior_markers(&chat, Some(base - Duration::minutes(90)), ru()).is_none());
+        // With no window every record is read.
+        chat.branches
+            .push(tail(base - Duration::days(5), ParkCause::Regenerate));
+        let all = behavior_markers(&chat, None, ru()).unwrap();
+        assert!(all.contains("перегенерировал твой ответ ×2"), "{all}");
     }
 
     #[test]

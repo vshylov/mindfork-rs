@@ -7,12 +7,13 @@
 //!
 //! **To everything outside the chat file, a fork and a switch are the
 //! truncation it already handles** — followed, for a switch, by an append. So
-//! both go through the calls `Ctrl+E` and `Ctrl+R` make
-//! ([`Orchestrator::after_line_moved`]): the feed is rebuilt, a background run
-//! whose record left the line is cancelled, a pending follow-up planned in
-//! what left is cancelled. Nothing here is a filter added for branches: the
-//! request, the tools' snapshots and the full-text index read
-//! `chat.messages`, which is the line.
+//! both go through the calls `Ctrl+E` and `Ctrl+R` make, and those two keys
+//! park what they cut by the same operation
+//! ([`Orchestrator::after_line_moved`], `generation.rs`): the feed is rebuilt,
+//! a background run whose record left the line is cancelled, a pending
+//! follow-up planned in what left is cancelled. Nothing here is a filter
+//! added for branches: the request, the tools' snapshots and the full-text
+//! index read `chat.messages`, which is the line.
 
 use uuid::Uuid;
 
@@ -132,9 +133,10 @@ impl Orchestrator {
         }
     }
 
-    /// What the rest of the app is told when the line's tail changed under a
-    /// fork or a switch — the calls a take-back makes, in its order.
-    fn after_line_moved(&mut self, chat_id: Uuid) {
+    /// What the rest of the app is told when the line's tail left it — under
+    /// a fork, a switch, `Ctrl+R` or `Ctrl+E`, which are one truncation to
+    /// everything outside the chat file.
+    pub(super) fn after_line_moved(&mut self, chat_id: Uuid) {
         self.mark_dirty(chat_id);
         // Rebuilds the feed, and sends the chat's branches with it.
         self.activate(chat_id);

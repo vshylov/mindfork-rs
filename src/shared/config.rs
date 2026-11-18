@@ -2249,9 +2249,12 @@ pub struct InterfaceSettings {
     /// Base names of the selected dictionaries (e.g. `en_US`, `ru_RU`). Empty —
     /// use all found in the directory.
     pub selected_dictionaries: Vec<String>,
-    /// Ask for confirmation before regenerating (`Ctrl+R`) and deleting the
-    /// last exchange (`Ctrl+E`) — both operations are irreversible in the UI. Off
-    /// by default (the shortcuts fire immediately). See spec §11.7.
+    /// Ask for confirmation before regenerating (`Ctrl+R`) and taking back the
+    /// last exchange (`Ctrl+E`). Both take what is written off the conversation
+    /// and keep it as a branch (docs/research/chat-branches.md §3.10), so the
+    /// question is about an unintended key, not about a loss; the field keeps
+    /// the name it had while they discarded. Off by default (the shortcuts fire
+    /// immediately). See spec §11.7.
     pub confirm_destructive_keys: bool,
     /// Compatibility mode for old terminal emulators (conhost Windows 10
     /// and the like): instead of emoji and rare Unicode characters — glyphs from a

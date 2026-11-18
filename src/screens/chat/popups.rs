@@ -477,9 +477,8 @@ pub(super) fn render_suggest(
     );
 }
 
-/// Draws the modal confirmation popup for an irreversible operation
-/// The modal confirmation popup for a destructive chat action (`Ctrl+R`,
-/// `Ctrl+E`, `/profile delete`, `/self clear`).
+/// The modal confirmation popup for a chat action that is asked about first
+/// (`Ctrl+R`, `Ctrl+E`, `/profile delete`, `/self clear`).
 ///
 /// The drawing lives in [`crate::shared::ui::confirm_prompt`], shared with the
 /// changes screen's revert question; what stays here is *which* question, since
