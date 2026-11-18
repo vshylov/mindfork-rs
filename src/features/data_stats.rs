@@ -152,6 +152,13 @@ pub struct ChatTotals {
     /// Bubbles in the `deleted[]` archive (`Ctrl+E`, `Ctrl+R`, a rewrite).
     pub deleted_messages: usize,
     pub deleted_exchanges: usize,
+    /// Bubbles in the parked branches (`branches[]`, a fork or a switch) and
+    /// how many tails hold them (docs/research/chat-branches.md). A snapshot
+    /// taken before branches existed reads as none.
+    #[serde(default)]
+    pub parked_messages: usize,
+    #[serde(default)]
+    pub parked_branches: usize,
     /// `/file attach` attachments.
     pub attachments: usize,
     /// Files stored with chats (`files/<chat-id>/`).
@@ -277,6 +284,12 @@ pub struct ChatRow {
     /// The same for the `deleted[]` archive. A regenerated reply lives on
     /// here, which is why regenerating reads as *ahead* and not as *diverged*.
     pub deleted_index: Vec<String>,
+    /// The same for the parked branches (`branches[]`). A fork moves messages
+    /// from the line to here without dropping one, which is why a copy that
+    /// forked reads as *ahead* of the one that did not. Absent from a snapshot
+    /// taken before branches existed, and from a chat with none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub branch_index: Vec<String>,
 }
 
 /// What a comparison treats as one chat's identity — and therefore what the
@@ -292,6 +305,11 @@ struct ChatIdentity<'a> {
     stored_files: usize,
     message_index: &'a [String],
     deleted_index: &'a [String],
+    /// Left out where there is none, so a chat with no branch hashes what it
+    /// hashed before branches existed and its copy's fingerprint does not
+    /// move with the update.
+    #[serde(skip_serializing_if = "<[String]>::is_empty")]
+    branch_index: &'a [String],
 }
 
 impl ChatRow {
@@ -304,6 +322,7 @@ impl ChatRow {
             stored_files: self.stored_files,
             message_index: &self.message_index,
             deleted_index: &self.deleted_index,
+            branch_index: &self.branch_index,
         }
     }
 }
@@ -398,6 +417,10 @@ struct ChatLite {
     files: Vec<IgnoredAny>,
     #[serde(default)]
     deleted: Vec<DeletedLite>,
+    /// The tails off the line (`Chat::branches`, schema 9). Counted like the
+    /// archive — a list of message lists — and never as part of `messages`.
+    #[serde(default)]
+    branches: Vec<DeletedLite>,
     #[serde(default)]
     workspace: Option<WorkspaceLite>,
     #[serde(default)]
@@ -566,6 +589,7 @@ impl Tally {
         let t = &mut self.totals;
         let messages = bubbles(&chat.messages);
         let deleted_messages: usize = chat.deleted.iter().map(|d| bubbles(&d.messages)).sum();
+        let parked_messages: usize = chat.branches.iter().map(|b| bubbles(&b.messages)).sum();
         let last_message_at = chat.messages.iter().filter_map(|m| m.timestamp).max();
         let (run_count, run_messages) = runs(&chat.messages);
 
@@ -578,6 +602,8 @@ impl Tally {
         }
         t.deleted_messages += deleted_messages;
         t.deleted_exchanges += chat.deleted.len();
+        t.parked_messages += parked_messages;
+        t.parked_branches += chat.branches.len();
         t.attachments += chat.attachments.len();
         t.stored_files += chat.files.len();
         t.images += chat.messages.iter().map(|m| m.images.len()).sum::<usize>();
@@ -609,6 +635,11 @@ impl Tally {
                 .deleted
                 .iter()
                 .flat_map(|d| index(&d.messages))
+                .collect(),
+            branch_index: chat
+                .branches
+                .iter()
+                .flat_map(|b| index(&b.messages))
                 .collect(),
         });
     }
@@ -1068,6 +1099,16 @@ fn table_rows(stats: &DataStats, loc: &Locale) -> Vec<(String, String)> {
                 &[
                     ("total", &n(c.deleted_messages)),
                     ("exchanges", &n(c.deleted_exchanges)),
+                ],
+            ),
+        ),
+        (
+            "cli.stats.label.parked_messages",
+            loc.tf(
+                "cli.stats.val.parked_messages",
+                &[
+                    ("total", &n(c.parked_messages)),
+                    ("branches", &n(c.parked_branches)),
                 ],
             ),
         ),

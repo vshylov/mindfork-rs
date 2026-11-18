@@ -2176,6 +2176,14 @@ past a fork's cut.
 - A fork at the line's end has no bubble for a mark, so it is said in a note that
   names the way back.
 
+**`mindfork stats`.** The summary read a chat's line and its archive and nothing else,
+so two copies that differed only in a parked branch were *identical* to `--compare` —
+the answer a person deletes the other copy on. The parked tails are now in the
+projection: counted on a line of their own, in a chat's identity (left out where there
+are none, so a copy with no branch keeps its fingerprint), and in the ids a comparison
+works on. A fork with nothing after it is a detail named `branches`; a fork continued is
+*ahead*; a copy that lost a branch is behind by what it held.
+
 **Three defects the pty run found** (`mindfork demo`, the screen read with pyte), each
 with green tests before it:
 1. **A message sent in the session could not be forked at.** Its echo had no id until
@@ -2190,7 +2198,7 @@ with green tests before it:
    (`Chat::park_if_anchored`). Stage 3 makes parking the rule; this is the part the
    tree cannot do without. A greeting is not swapped in a chat that has a branch.
 
-**Tests** (+56, **5041 green**, 325 `#[ignore]`):
+**Tests** (+59, **5044 green**, 325 `#[ignore]`):
 - **The model:** the cut by kind of message; fork and switch back restore the line
   message for message; nested tails; figures across switches; the summary and the
   watermark on both sides of a cut; detached tails; the stored shape.
@@ -2205,6 +2213,8 @@ with green tests before it:
 - **The wire:** a line a fork ends on a tool result — between a reply's first bubble
   and its follow-up — on all four clients, each beside its builder.
 - `chat_read` pages the line of a chat that has a branch.
+- **The summary:** the counts and the printed line; a fork as a detail, a fork
+  continued as ahead, a copy without a branch as behind.
 
 **Live, GO** (`a_forked_line_is_asked_from_what_it_holds_e2e_live`): two facts planted,
 both compacted behind the boundary, a fork at the second fact's message — before the

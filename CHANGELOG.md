@@ -36,6 +36,10 @@ split by subsystem.
 - The assistant reads the conversation in front of you: a branch you left is not in
   its request and not in what its tools find. What it did outside the conversation —
   notes, files, changes to your project — stays as it is.
+- **`mindfork stats` counts the messages kept in branches**, on a line of its own, and
+  `--compare` tells a fork from a loss: a copy where you forked and went another way is
+  *ahead*, a copy missing a branch is behind by what the branch held. A copy with no
+  branches keeps the fingerprint it had.
 
 ### Changed
 

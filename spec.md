@@ -6219,19 +6219,26 @@ holds everything the other has · the other holds everything this one has · eac
 holds something the other lacks — then a count line per family and the lists behind
 every non-zero count. The rules:
 
-- **A chat is compared by the ids of its messages, live and deleted together**, never
-  by its counts or dates. If every id the other side holds is held here too, this
+- **A chat is compared by the ids of its messages — live, deleted and parked in
+  branches, together** — never by its counts or dates. If every id the other side holds is held here too, this
   side is *ahead*; if each side holds an id the other lacks, the chat *diverged* —
   continued on two machines from one base, which `(count, last message)` reports as
   "newer there" while losing what was written here. A false "this copy has
   everything" is the one answer the command must never give: it is the answer a user
   deletes the other copy on. A regenerated or rewritten reply keeps its id in
   `deleted[]`, which nothing prunes, so regenerating reads as *ahead*, not as a
-  divergence. `/continue` is the one operation that changes a message under its id
+  divergence. A fork moves messages from the line into `branches[]` without
+  dropping one ([11.7](#117-keybindings-preliminary)), so a copy that forked and
+  went another way is *ahead* too, and a copy that lost a branch is behind by what
+  the branch held. `/continue` is the one operation that changes a message under its id
   ([§6.4](#64-cancellation-regeneration-continuation-deletion)); it only appends, so the longer text is
   the later one.
 - **The same ids with a different title, deleted mark, attachment or stored-file
-  count, or live/deleted split are *details***, listed with what differs. Which side
+  count, live/deleted split, or split between the line and the branches are
+  *details***, listed with what differs. The summary counts the messages in
+  branches on a line of its own, never among the chat's messages; a chat with no
+  branch has the identity it had before branches existed, so its copy's fingerprint
+  does not move with the update. Which side
   changed later is said only when `modified_at` differs — a rename does not move it,
   and the output does not pretend to know.
 - **Notes, knowledge-base sources and self-models are edited in place** and have no
