@@ -2347,6 +2347,8 @@ no note between the question and it; a click on `‹` — "Switched: message #4 
 the draft, the note names `/branch 3 1`; `/branch` — the exchange as `#3 ‹1/1›` with
 the regenerated reply under it as `#4 ‹2/2›`; a new message from there — `‹2/2› #3`.
 
+**The owner's look** (Windows Terminal over SSH): both keys work as intended.
+
 **Not in this stage:** a read of a line that says the chat has branches, and a tool
 that reads them (stage 4); removing a branch — every `Ctrl+R` and `Ctrl+E` now adds a
 row to `/branch`, and nothing takes one away.
