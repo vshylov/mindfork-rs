@@ -163,7 +163,10 @@ A fork changes the conversation and nothing else. Notes the assistant saved,
 files it wrote and changes it made to your project stay as they are; `F4` still
 shows and reverts what it did to the project. The assistant itself reads only
 the conversation in front of you: a branch you left is not in its request and
-not in what its tools find.
+not in what its tools find. So do `F5`, `/copy`, `/export` and the searches: they
+take the conversation in front of you, and a word said only in a branch is found
+once that branch is the one you are in. A backup takes the chat whole, branches
+included.
 
 In the chat list, `Ctrl+F` switches between searching titles and searching
 message content; `Ctrl+G` then opens the matching messages themselves.
