@@ -14,7 +14,11 @@ the variants mark and the mouse ([ADR 0015](../decisions/0015-chat-branches.md),
 [docs/journal/storage.md](../journal/storage.md)). Live **GO** on Gemma 4 and Gemini.
 What it changed here is marked "as built" in §3.1, §3.6 and §3.10: a tail keeps no
 draft; the note after a fork is an ordinary note; and a take-back of what a branch
-continues from had to park it already, ahead of stage 3.
+continues from had to park it already, ahead of stage 3. **Stage 3 is built**
+(2026-11-18, `feat/regen-as-branch`): `Ctrl+R` and `Ctrl+E` park what they cut, by
+rule, and reflection reads its signal from the parked tails. Live **GO** on Gemma 4
+and Gemini, the control red. What it found is in §3.10: the note of a tail at the
+line's end has to stay out of a regeneration's way, and to be said once.
 
 The roadmap holds two neighbouring ideas (docs/roadmap.md): "regeneration with
 variations" and "editing any message, not just the last, with history branching".
@@ -462,9 +466,10 @@ their tail as a branch instead of archiving it.
 **One part of this could not wait for the stage** (found by stage 2's pty run). A
 take-back or a regeneration after a fork can remove the message a parked tail
 continues from; in the archive that message is gone, and the tail has no place to
-return to. So stage 2 already parks the removed messages **where a branch continues
-from them** (`Chat::park_if_anchored`), with the cause below, and archives as before
-everywhere else. Stage 3 drops the condition.
+return to. So stage 2 already parked the removed messages **where a branch continued
+from them**, with the cause below, and archived as before everywhere else. Stage 3
+dropped the condition: both keys call `Chat::park_tail`, the cut a fork makes, under
+their own cause.
 
 - `Ctrl+R` parks the old reply (`cause = Regenerate`); the new reply is variant 2
   of that place, and `‹1/2›` returns to the old one. That is the roadmap's
@@ -479,6 +484,41 @@ everywhere else. Stage 3 drops the condition.
   `deleted` records. A reply the person switched back to is on the line and is not
   counted — going back to a reply is not a sign it did not land.
 - `chat.deleted` stops growing except by rewrites; its old records stay, anchorless.
+
+**As built** (stage 3):
+
+- **The two keys are a fork's cut and a fork's hooks.** `handle_regenerate` and
+  `handle_delete_last` call `Chat::park_tail` and then `after_line_moved`, the call a
+  fork and a switch make: one truncation to everything outside the chat file, in one
+  place.
+- **The box's draft is not kept with the tail**, as a fork's is not (§3.1). A
+  `DeletedExchange` held it "for manual recovery"; the text handed back by `Ctrl+E` is
+  put in front of what the box holds, so nothing typed leaves the box.
+- **A regeneration must not show the note of §3.6.** While the new reply is being
+  written, the replaced one is a tail at the line's end — the state the note is
+  derived from — so every `Ctrl+R` drew "what followed is kept as a branch" between a
+  question and its new answer, and left it there after the answer landed with its
+  mark. The screen now drops that note when a turn **starts right under it**: the reply
+  being written is that place's continuation and will carry the mark. A turn that
+  lands nothing leaves the line on the question, so the orchestrator sends the
+  branches again at such a landing and the note is said then.
+- **The note is said once where it stands.** With the branches sent at more moments —
+  an activation, the line growing, a turn ending with nothing — the screen checks its
+  own notes after the conversation's last message for the note it would say, and does
+  not repeat it. A note with a message under it is left as it was said.
+- **And never under a reply being written.** A chat re-opened in the middle of a
+  regeneration is activated with the replaced reply at the line's end and the new one
+  half streamed. A note pushed then ends the feed under the streaming bubble, and the
+  next chunk opens a second bubble below it. The screen says no such note while a turn
+  is running in the chat.
+- **What a regeneration is told to reflection is read at the reflection, not at the
+  key**: a reply regenerated and then switched back to before the next reflection
+  leaves no record, and is not counted. A reply regenerated, reflected on, and switched
+  back to afterwards was counted once, which is what happened.
+- **The strings stopped saying "delete" and "irreversible"**: the help, the two
+  confirmation questions, and the setting — *Confirm regenerate / take back*. The
+  config field keeps its name, `interface.confirm_destructive_keys`: a rename is a
+  settings step for a label.
 
 ## 4. Rejected
 
@@ -583,10 +623,15 @@ Each stage is a branch and a pull request of its own.
      not return a parked message; the token counter's cache share holds on the
      first turn after a fork; a fork before the summary's boundary sends the full
      prefix and compacts again. Gemma 4 locally and one cloud wire.
-3. **`Ctrl+R` and `Ctrl+E` as branches** (`feat/regen-as-branch`). §3.10. Tests:
-   the two keys park with their causes; `behavior_markers` over tails and old
-   records; `rewrite_current_message` still archives. Live: a reflection after a
-   regeneration reads the signal.
+3. **`Ctrl+R` and `Ctrl+E` as branches** (`feat/regen-as-branch`) — **built
+   2026-11-18.** §3.10. Tests: the two keys park with their causes, in the chat and
+   through the orchestrator's events; `behavior_markers` over tails and old records,
+   and a reply switched back to; `rewrite_current_message` still archives; a
+   background run taken back lands on the parked copy; the screen's note is said once
+   and gives way to a turn that starts under it. A pty run of `mindfork demo`: `Ctrl+R`,
+   the mark, a click back, `Ctrl+E`, the list. **Live, go/no-go:** a reflection after a
+   regeneration is told "regenerated your reply ×1" on its way to a real engine, and
+   lands with that line in its prompt.
 4. **The branches told to the tools, and a reader** (`feat/branch-reader`). F1's
    second half (§3.8). Its design is an addendum to this document, with forks of
    its own, before any code. What it has to settle:
@@ -614,9 +659,12 @@ stage 4).
 
 - **The chat file grows.** A parked tail keeps its messages whole, images
   included. `deleted` has the same property today and no bound either.
-- **Two containers hold archived messages** until stage 3 narrows `deleted` to
-  rewrites. The helper of §3.2 is what keeps a later migration from visiting only
-  one.
+- **Two containers hold messages that are off the line**: `branches`, and `deleted`,
+  which stage 3 narrowed to rewrites and to what earlier versions wrote. The helper of
+  §3.2 is what keeps a later migration from visiting only one.
+- **The branch list grows with every `Ctrl+R` and `Ctrl+E`** (stage 3). Each is one
+  row of `/branch`, and nothing removes a branch (§8). A chat edited that way a
+  hundred times has a hundred rows; the list scrolls, and the rows are in tree order.
 - **A landing by index after the line moved** (§3.4) is the kind of defect that
   shows only with a background task in flight. It gets a test per task, not a
   shared guard added afterwards.

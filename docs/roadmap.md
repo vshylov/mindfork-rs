@@ -395,15 +395,16 @@ effort tiers and Fabula — have all closed
   ([image-generation.md](history/image-generation.md) F8).
 - **Branches inside a chat — a fork at a chosen message** — **researched**
   2026-11-18 ([chat-branches.md](research/chat-branches.md)), every fork decided
-  by the owner the same day; **stages 1 and 2 of four are built** — the numbers
-  on the messages' headers, then the tree itself with `/fork` and `/branch`
-  ([ADR 0015](decisions/0015-chat-branches.md)). The chat stays a line with the
-  tails that left it kept beside it; messages are numbered on their headers,
-  `/fork N` forks at one and `/branch` switches. `Ctrl+E`/`/takeback` edits the
-  last exchange and `/clone` copies a whole chat today; there is no fork at a
-  chosen message. Its third stage keeps a regenerated or taken-back reply as a
-  variant to return to, where today it is only archived; its fourth tells the
-  assistant's tools that a chat has branches and adds a tool that reads them.
+  by the owner the same day; **stages 1–3 of four are built** — the numbers
+  on the messages' headers, the tree itself with `/fork` and `/branch`
+  ([ADR 0015](decisions/0015-chat-branches.md)), then `Ctrl+R` and `Ctrl+E`
+  keeping what they cut as a branch. The chat stays a line with the tails that
+  left it kept beside it; messages are numbered on their headers, `/fork N` forks
+  at one and `/branch` switches; a regenerated reply is a variant of its message,
+  and an exchange taken back is a branch to return to. **Left:** the fourth
+  stage, which tells the assistant's tools that a chat has branches and adds a
+  tool that reads them — its design is an addendum to the research document, with
+  forks of its own.
 - **Editing a message in place (`/edit N`)** — **idea** (the owner's,
   2026-11-18). A message's text is changed where it stands: nothing under it is
   removed and no branch is made — for a typo. Not the fork above, which writes
@@ -413,7 +414,8 @@ effort tiers and Fabula — have all closed
   message.
 - **Regeneration with variations** — **idea**. Not just `Ctrl+R`/`/regen` with
   the same request: different sampling, or several response variants generated
-  at once. Keeping the replaced reply to return to is the track above.
+  at once. The replaced reply is kept as a variant to return to already (`‹1/2›`,
+  the track above).
 - **`chat://` addresses — leftovers** ([chat-uri-links.md](research/chat-uri-links.md),
   spec §9.11, §11.3; the track is closed) — **deferred**: message- and
   page-level addresses (`chat://<id>/p3`) — `chat_search` names the page,

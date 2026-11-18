@@ -62,10 +62,17 @@ and every test that builds a chat.
    build loses when it ignores such a field, and here that is the conversation: it
    would write the file back without the branches at its first save. The stamp makes
    it refuse the data as a newer version's instead.
-8. **A removal of what a branch continues from parks it.** `Chat.deleted` is where
-   what is gone goes. A take-back or a regeneration that would move a branch's anchor
-   there parks the removed messages instead, so the branch is still reached through
-   them. (The track's third stage makes parking the rule for every take-back.)
+8. **`Ctrl+E` and `Ctrl+R` park what they cut.** `Chat.deleted` is where what is
+   gone goes, and a branch anchored on a message there could never return to the
+   line — so the tree's first build already parked a removal of what a branch
+   continued from. The track's third stage (2026-11-18) made it the rule: both keys
+   are a fork's cut at the line's last exchange, under causes of their own
+   (`Regenerate`, `Takeback`), and the replaced reply is the first variant of its
+   place. `Chat.deleted` grows only by a reply the assistant itself rewrote — its own
+   draft, not a continuation the person may return to. **Reflection's behavioural
+   signal moved with the causes**: it counts the tails parked under those two since
+   it last ran, plus the archive's older records; a reply the person switched back to
+   leaves none.
 
 ## Alternatives rejected
 

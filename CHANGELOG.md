@@ -43,9 +43,18 @@ split by subsystem.
 
 ### Changed
 
-- **`Ctrl+E` and `Ctrl+R` keep what a branch continues from.** Taking back or redoing
-  the exchange a branch was forked from parks it as a branch too, so the branch can
-  still be returned to.
+- **`Ctrl+R` keeps the reply it replaces.** A regenerated reply is a new variant of
+  the same message — `‹2/2›` on its header — and `‹` brings the previous one back;
+  `/branch` lists them all. Before, the old reply went into an archive in the chat's
+  file that nothing in the app could show or return.
+- **`Ctrl+E` keeps the exchange it takes back**, as a branch of the chat. Your text
+  still returns to the input box, and a note under the conversation names the command
+  that returns to the exchange.
+- The setting that asks before these two keys is now *Confirm regenerate / take back*
+  (it is still off by default), and its questions say what is kept.
+- **Self-reflection reads the same signals from the branches**: a reply regenerated and
+  an exchange taken back still tell it that a reply did not land. A reply you went back
+  to is no longer counted as one.
 
 ### Data
 

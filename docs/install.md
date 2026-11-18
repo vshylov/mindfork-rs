@@ -193,10 +193,11 @@ Opened"*; choose **Done**, not *Move to Trash*. Then *System Settings → Privac
   app. iTerm2 is the other way round: Page Up/Down reach the app, and with
   `Shift` they scroll iTerm2. In Terminal.app a link in the conversation opens
   with Cmd+double-click — a single Cmd+click does nothing.
-- **Ghostty** sends Cmd+→ as `Ctrl+E`, which deletes the last exchange (your
-  message returns to the input), Cmd+← as `Ctrl+A` (select all) and
-  Cmd+Backspace as `Ctrl+U` (write a message as you). Either turn on *Settings
-  → Interface → Confirm regenerate / delete*, or turn those keys off in
+- **Ghostty** sends Cmd+→ as `Ctrl+E`, which takes the last exchange back (your
+  message returns to the input, the exchange stays as a branch), Cmd+← as
+  `Ctrl+A` (select all) and Cmd+Backspace as `Ctrl+U` (write a message as you).
+  Either turn on *Settings → Interface → Confirm regenerate / take back*, or turn
+  those keys off in
   `~/.config/ghostty/config` — the shell then loses them too:
 
   ```

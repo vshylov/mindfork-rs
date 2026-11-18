@@ -191,8 +191,8 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-11-18, version 0.27.0)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **5044 unit tests
-green, 325 `#[ignore]`** (live smokes + real-clipboard round trips + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **5052 unit tests
+green, 326 `#[ignore]`** (live smokes + real-clipboard round trips + the
 screenshot-dump and demo-reel regenerators).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -204,10 +204,11 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
-- **Branches inside a chat — stages 1–2 of 4** (2026-11-18): a fork at a chosen message
+- **Branches inside a chat — stages 1–3 of 4** (2026-11-18): a fork at a chosen message
   as a tree inside the chat — the line stays `chat.messages`, the tails that left it are
   kept beside it (ADR 0015; chats 8 → 9). `/fork N`, `/branch`, `‹2/3› #11` on a
-  message's header, clicks. Live **GO**, Gemma 4 and Gemini
+  message's header, clicks; `Ctrl+R`/`Ctrl+E` park what they cut. Live **GO**, Gemma 4
+  and Gemini
   ([docs/research/chat-branches.md](docs/research/chat-branches.md),
   [docs/journal/storage.md](docs/journal/storage.md)).
 - **One block folded, part of a chat copied — track complete** (2026-11-15, two
