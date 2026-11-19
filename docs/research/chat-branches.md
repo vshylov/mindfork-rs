@@ -18,7 +18,9 @@ continues from had to park it already, ahead of stage 3. **Stage 3 is built**
 (2026-11-18, `feat/regen-as-branch`): `Ctrl+R` and `Ctrl+E` park what they cut, by
 rule, and reflection reads its signal from the parked tails. Live **GO** on Gemma 4
 and Gemini, the control red. What it found is in §3.10: the note of a tail at the
-line's end has to stay out of a regeneration's way, and to be said once.
+line's end has to stay out of a regeneration's way, and to be said once. **Stage 4
+is designed, not built** (2026-11-19): §9 is its addendum, and its forks G1–G5
+(§9.6) wait for the owner.
 
 The roadmap holds two neighbouring ideas (docs/roadmap.md): "regeneration with
 variations" and "editing any message, not just the last, with history branching".
@@ -634,13 +636,14 @@ Each stage is a branch and a pull request of its own.
    lands with that line in its prompt.
 4. **The branches told to the tools, and a reader** (`feat/branch-reader`). F1's
    second half (§3.8). Its design is an addendum to this document, with forks of
-   its own, before any code. What it has to settle:
+   its own, before any code — **written 2026-11-19, §9; the forks G1–G5 are
+   open.** What it had to settle:
    - which reads say that a chat has branches — `chat_read` over another chat's
      line, `history_read` over the open chat's compressed part — and whether a
      search hit says it too;
    - what is said: the number of branches, and the reader's name only on a turn
      that offers the reader — the rule by which the summary block names
-     `history_read` (S12, spec §9.4);
+     `history_read` (spec §6.7);
    - the reader: a variant addressed the way `/branch N K` addresses it, paged
      like `chat_read`; whether it reaches the open chat's own parked tails or
      other chats' only; whether it is on by default;
@@ -692,3 +695,273 @@ stage 4).
 - `/fork` from the messenger bridge.
 - Restoring a forked message's images to the input box: `/fork N` returns the text,
   as `/takeback` does.
+
+## 9. Stage 4: the branches told to the tools, and a reader
+
+An addendum (2026-11-19), written before any code, as §6 asks. F1 set the frame
+(§3.8): every existing tool goes on reading the line; a read of a line says that
+the chat has branches; a separate tool reads them. Below is the design inside that
+frame and the forks it leaves, **G1–G5** (§9.6). **Nothing here is built.**
+
+### 9.1 What stands today
+
+- **Three paths read a conversation's text.** `history_read` pages the open chat's
+  folded part, and is offered only while the chat has one (spec §6.7).
+  `chat_read` pages another chat's line, read from its file; it is off by default, a
+  switch of the profile. The two searches, `history_search` and `chat_search`, run
+  over the full-text index, which holds the lines' messages and no parked row.
+- **No tool reaches a parked tail, and none says there is one.** A sub-agent
+  transcript whose exchange is in a tail is out of reach too: `Chat::children`, which
+  the cross-chat snapshot is built from, walks the line.
+- **What a take-back removes became reachable in principle with stage 3.** Before
+  it, the exchange went to `chat.deleted`, which no tool reads (§2.5); since it, the
+  exchange is a parked tail. A reader of tails is the first tool that could return
+  what a person took back.
+- **The request carries no message numbers.** `#11` is drawn by the feed (§3.5); the
+  model does not know which of the messages in front of it is the eleventh.
+- **The open chat's file can be behind the chat in memory** (a save is deferred),
+  and a message carries its images inline. So the open chat's tails have to reach a
+  tool the way its folded part does — a snapshot made for the turn, rendered to text
+  (`ToolContext::history`) — not by a read of the file and not as a copy of the
+  messages.
+
+### 9.2 The notice
+
+**A read of a line that has parked tails beside it says so, in one line under its
+header.**
+
+- **Where:** `history_read`, for the open chat, and `chat_read`, for another one
+  (G1).
+- **On every page.** A search hit sends a read straight to page 3, and a tool
+  remembers nothing of what it said a call ago.
+- **What it says:** how many there are, what they are, that they are no part of what
+  was just read, and what can be done about it. With the reader on the turn, under
+  `chat_read`:
+
+  > This conversation also has 3 parked branches - continuations the person set
+  > aside, which are not in this transcript. `branch_read` with chat
+  > "chat://a1b2c3d4" lists them; read one only when the person asks about another
+  > branch or variant.
+
+  Under `history_read` the call is named without a chat. The last clause is the
+  rule of §3.8 said where it applies: a fork means "continue as if what followed
+  had not been said", so a branch is read on request, not on the way to an answer.
+- **Without the reader on the turn** the reader is not named — a result never
+  points at a tool the turn does not have (the rule the summary block follows for
+  `history_read`, `inject_compaction`). Whether anything is said at all then is G4.
+- **The count is every parked tail**, nested ones included, whatever parked it.
+  Since stage 3 a chat whose replies were redone has many, most of them one reply
+  long; the notice does not sort them, the reader's list does.
+- **Nothing enters the prompt; D5 stands.** In a chat with nothing folded no tool
+  reads the open chat's line, so there the model learns of branches from the
+  person's words, or from the reader's own answer when it is asked to look.
+
+### 9.3 The reader: `branch_read`
+
+One tool with three optional parameters — `branch`, `page`, `chat`. One and not a
+list/read pair: a schema is paid for in every request of a turn that offers it.
+
+**Without `branch`: the list.** The parked tails in the order `/branch` lists them
+— a tail, then the tails that continue from inside it — one entry each:
+
+```
+[Parked branches of this conversation: 3. They are not part of the conversation in front of you.]
+
+1. Branch "11/1" - message #11, variant 1 of 2. A reply replaced by a regeneration, 2026-11-18. Messages: 1.
+   Continues after: "User: and the password for the boat?"
+   Begins: "Assistant: The password is ZANZIBAR-42."
+
+2. Branch "5/1" - message #5, variant 1 of 2. Set aside by a fork, 2026-11-17. Messages: 6.
+   ...
+
+3. Branch "5/1 > 7/1" - inside branch "5/1": message #7, variant 1 of 2. An exchange the person took back, 2026-11-17. Messages: 2.
+   ...
+
+To read one, call branch_read with its branch value. The person brings a branch back with the /branch command.
+```
+
+- **The entry quotes the place.** "Continues after" is the first line of the last
+  message the tail shares with the line it left; "Begins" is the tail's own first
+  line (`BranchInfo::preview`). The number alone would tell the model nothing
+  (§9.1); the quotes are what let it find the place in what it holds.
+- **The cause is said in words** — a fork, a switch, a reply replaced by a
+  regeneration, an exchange taken back. "Taken back" is information the model
+  should have before it quotes from the tail.
+
+**With `branch`: one tail, as a transcript.** The tail's messages through the
+renderer `chat_read` and `history_read` share (`HistoryView`): the speakers' text
+and the tool calls with their results, no thoughts, no images. Its header repeats
+the entry — address, cause, date, the "continues after" quote — and the page count.
+
+**An address is what `/branch N K` takes**, written `N/K`: the number the tail's
+first bubble has on its line, and its variant among the variants of that place.
+
+- It is the figure the mark on a message shows (`‹1/2› #11`) and the pair the
+  person types, so "variant 1 of message 11" in the person's words is `11/1` in a
+  call.
+- It means the same before and after a switch: the variants of a place are ordered
+  by their first message's time (§3.1). `N/K` that names the variant standing on
+  the line is answered with exactly that — it is the conversation in front of the
+  model.
+- A tail inside another tail is addressed by the path from the line,
+  `5/1 > 7/1`. `/branch N K` does not reach such a tail (the list does); the
+  reader has to, because a fork above a redone reply makes every one of its variants
+  nested. The list prints each address whole, to be copied.
+- A detached tail (§3.1) is listed last, marked, and addressed by its place among
+  the detached.
+- The parse reads the integers and pairs them, so `11/1`, `11 1` and `#11 ‹1/2›`
+  are one address.
+
+**`page`** pages the list and a transcript alike, by `compaction.page_tokens`
+through `paginate` — the cutter `chat_read` and `attachment_read` use. A list of a
+hundred redone replies is several pages, each naming their count.
+
+**With `chat`: another conversation's branches** (G2). The reference is resolved
+against the turn's cross-chat snapshot by `chat_read`'s resolver — id prefix, exact
+title, title substring, an ambiguity reported with the candidates — and the file is
+loaded under `chat_read`'s guards (the profile, hidden). That snapshot exists only
+on a turn that offers `chat_search` or `chat_read`: crossing conversations stays
+those tools' consent, and the reader adds none of its own.
+
+**Every answer says what is possible next** (docs/lessons.md §4):
+
+| The call | The answer |
+|---|---|
+| no tails in the conversation | none are parked; all of it is in front of the model (or: `chat_read` reads all of it) |
+| an address that names nothing | the addresses there are, or the call that lists them |
+| the line's own variant | it is the line |
+| a page past the end | the real page count |
+| `chat` on a turn with no cross-chat snapshot | other conversations are not readable in this profile; without `chat` the tool reads this conversation's branches |
+| `chat` naming a sub-agent transcript | a transcript has no branches |
+
+### 9.4 Where it is offered, and its snapshot
+
+- **A row of the tool catalog**, group *Conversation*, beside `chat_read`; marked
+  concurrent, as the other reads are. Whether a profile has it without asking is
+  G3.
+- **Withheld from a sub-agent**, as `history_read` is: the branches are the
+  parent's conversation. A background turn and a reflection have tool lists of
+  their own and do not hold it.
+- **`ToolContext::branches`** — the open chat's parked tails as of the turn's
+  start: each with its address, its `BranchInfo`, its cause and date, the anchor's
+  first line and its rendered transcript. Built by the orchestrator, and only for a
+  turn that offers the reader in a chat that has tails — the rule the folded part's
+  render follows. A turn cannot fork or switch (both are refused while a reply is
+  being written), so the snapshot is not stale within it.
+- **Another chat's tails are read from its file** at the call, as its line is.
+- **Nothing is stored.** No field, no schema step, no setting besides the tool's
+  row in the profile's list.
+
+### 9.5 What it does not do
+
+- **It does not search** (G5). A tail is found by the list.
+- **It does not switch.** Bringing a branch back is the person's, with `/branch`;
+  the list's last line names the command so the model can say it.
+- **It does not reach `chat.deleted`** — rewrites, and what versions before stage 3
+  recorded. That archive stays outside every tool.
+- **The existing reads and searches are unchanged** but for the notice: the line
+  is still all they return.
+
+### 9.6 Forks
+
+- **G1 — which answers say that a chat has branches.**
+  - (a) **The two reads of a line: `history_read` and `chat_read`.**
+  - (b) (a), and the searches — `chat_search` on a conversation's group, and
+    `history_search` under its header.
+  - (c) `chat_read` only.
+  - Recommended: (a). A search says where something is said and sends the model to
+    a read, which carries the notice. Said on a search as well, it reaches a model
+    that has just found nothing on the line and names the branches as the place to
+    look further — the opposite of what a fork asks for (§3.8). (c) leaves the open
+    chat's own read silent for no reason.
+- **G2 — what the reader reaches.**
+  - (a) The open chat's branches only.
+  - (b) **The open chat's, and another chat's on a turn that also offers
+    `chat_read`.**
+  - Recommended: (b). Under (a) the notice of `chat_read` names branches no call
+    can read, or is dropped there and G1 shrinks to `history_read`.
+- **G3 — whether a profile has the reader without asking.**
+  - (a) **Off: a row of the profile's tools the person switches on**, as
+    `chat_search` and `chat_read` are; once on, offered on every turn.
+  - (b) On, and offered on every turn.
+  - (c) On, and offered only while there is a branch to read — the rule of
+    `history_read`.
+  - Recommended: (a).
+    - A parked tail is outside the boundary every tool has kept — what the person
+      sees in a feed (§2.5) — and the tools that cross a boundary of that kind are
+      a deliberate switch. Since stage 3 a tail is also what a person took back or
+      had redone: with the reader on by default, `Ctrl+E` stops meaning "unsaid"
+      in every profile at once.
+    - (c) tells the model of a chat's first fork by a tool that appears with it —
+      D5 by another road — and the tool list is part of the prefix a prompt cache
+      keys on, on every wire, so the first `Ctrl+R` in a chat would be sent with
+      nothing cached (expected from how the wires cache; not measured).
+    - (b) puts the schema, some 150–200 tokens by the size of `chat_read`'s, into
+      every request of every chat, branches or none; a small local window pays
+      most.
+    - Against (a): the feature is found in the settings, and until then an
+      assistant asked about "the other branch" says it sees none.
+- **G4 — the notice on a turn without the reader** (every turn of a profile that
+  has not switched it on, under G3 (a)).
+  - (a) **Nothing is said.**
+  - (b) The count is said, and that the branches cannot be read from here: the
+    person switches to one with `/branch`.
+  - Recommended: (a). Since stage 3 most chats that were ever corrected have
+    parked tails; a line about them on every page of every read, with nothing the
+    model can do about it, is a line it passes on to the person unasked. (b) is
+    the honest one in another sense: a transcript that is not the whole chat says
+    so.
+- **G5 — search in parked tails.**
+  - (a) **None; the list, with each tail's first line, is how a tail is found.**
+  - (b) The reader takes a `query`: the tails of one conversation scanned for the
+    words by the rule the other searches use, each hit naming its branch and page.
+  - (c) The index holds parked rows, and `chat_search`/`history_search` return
+    them marked.
+  - Recommended: (a) now, (b) when it is asked for. (c) is what F1 decided against.
+    (b) needs no index and changes nothing of (a); it starts to matter in a chat
+    with dozens of redone replies, where "the variant in which you proposed X" is
+    not found by thirty first lines.
+
+**Decided in this addendum without a fork** — said here so that an objection has a
+place: one tool and not a pair; the name `branch_read`; the address `N/K` with a
+path for nested tails; the notice on every page; the count as every parked tail;
+nothing stored.
+
+### 9.7 Tests and the live check
+
+- **The notice:** `chat_read` over a chat with tails says the count and, with the
+  reader on the turn, the call; over a chat with none it says nothing;
+  `history_read` likewise; without the reader, what G4 decides.
+- **The reader:** the list in `/branch`'s order with `/branch`'s figures; a read of
+  `N/K` returns the tail and not the line; the line's own variant; a nested
+  address; an address that names nothing; pages tile a tail; an address read
+  before and after a switch names the same text or the line.
+- **`chat`:** resolved as `chat_read` resolves; another profile's chat and a hidden
+  one refused; answered without the cross-chat snapshot.
+- **The catalog and the turn:** optional or default as G3 decides; withheld from a
+  sub-agent; the snapshot built only where the reader is offered and tails exist;
+  the request of a chat with branches holds nothing about them, schema aside (D5).
+- **Live, go/no-go** — Gemma 4 locally and one cloud wire:
+  1. *Reads when asked.* A chat whose redone reply holds a marker the line does
+     not; asked to compare with the previous variant, the turn calls `branch_read`
+     and its answer has the marker.
+  2. *Leaves them alone when not asked.* The same chat, an unrelated question: no
+     call. A `Ctrl+R` with the reader on: no call.
+  3. *Told by a read.* Asked about another chat, the turn reads it with
+     `chat_read` and is told of its branches; it goes no further unasked, and
+     reads one with `chat` when asked.
+  4. *The control:* with the snapshot left empty, check 1 fails.
+
+### 9.8 Risks
+
+- **A model that reads tails uninvited** brings back what a fork cut. The notice
+  and the description both say when to read; check 2 measures it on a small model;
+  an opt-in (G3 (a)) bounds who is exposed to it.
+- **What was taken back becomes readable** in a profile that has the reader on.
+  The settings' description of the tool says so in those words.
+- **The snapshot renders every tail at the start of every turn that offers the
+  reader.** The folded part is rendered the same way and is usually larger; if a
+  chat with many long tails shows otherwise, a tail is rendered at its first call.
+- **A long list** — a hundred redone replies — is paged, and a model asked for "the
+  previous variant" has to pick it by date and first line. G5 (b) is the remedy if
+  that proves hard.
