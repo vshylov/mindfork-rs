@@ -563,7 +563,7 @@ The whole conversation is sent on every request, so a long chat eventually stops
 - **The roll** is one independent single-turn request (no history, no tools, reasoning muted — the `title.rs` shape), fed a digest of the newly-covered range **including tool activity**: tool results are persisted in history, replayed on every turn and invisible in the feed, so they are the largest hidden cost in a long chat. Rolling (`summarize(previous + next chunk)`) is not merely cheaper than re-summarizing everything — it is the only shape that always fits, since the summarizer has the same context limit as the chat that overflowed.
 - **The length limit lives in the prompt, in words**, with `max_tokens` only as a safety net far above it. Measured: a bare token cap does not shorten a summary, it truncates one mid-sentence, and given room the summary **grows with every roll** — a stated limit plus an instruction to drop what later parts superseded fixes both.
 - **The block** is prepended to `system` right after the persona, ordered by volatility (persona → summary → attachments → self-model). Its header is in the **profile** language (axis A), marks the content as DATA rather than instructions, and **names the two read-back tools below** — a block that describes a situation without saying what is possible is what sends a model improvising.
-- **What the summary dropped is still reachable.** A summary is lossy by construction, so two tools page back into the folded range: **`history_read`** walks it page by page (`compaction.page_tokens`), numbered from 1 with the total stated, so the model can walk `1..M` and *know* it read everything; **`history_search`** finds where to look and returns fragments with their page numbers, so the pair composes — search says *where*, reading guarantees *everything*. Search runs over the full-text index the application already keeps (`cache.db`, [§5.2](#52-data-storage)), not over embeddings: an embedding server is separate and routinely unconfigured (ADR 0002), while the local user with a small window is exactly who compression exists for — and a trigram index matches substrings, so `8823` finds `ZARYA-8823`, identifiers being the first thing a summary loses. The query's words follow `chat_search`'s rules ([§9.11](#911-cross-chat-search-chat_search-and-chat_read)): all of them in one message, a two-character word as a whole word (walked over the folded range's blocks when no long word narrows it), a word found nowhere in the range dropped and named, words that never meet answered with their counts. Both reach **only this conversation's own older messages**, which the user is looking at in the feed, so neither is gated; they are offered to the model **only while a folded range exists**, which is the same condition that puts the block in the prompt. The block names them only when the turn really offers them — a profile can switch the two tools off, and naming a tool the model does not have is a dead end rather than a hint.
+- **What the summary dropped is still reachable.** A summary is lossy by construction, so two tools page back into the folded range: **`history_read`** walks it page by page (`compaction.page_tokens`), numbered from 1 with the total stated, so the model can walk `1..M` and *know* it read everything; **`history_search`** finds where to look and returns fragments with their page numbers, so the pair composes — search says *where*, reading guarantees *everything*. Search runs over the full-text index the application already keeps (`cache.db`, [§5.2](#52-data-storage)), not over embeddings: an embedding server is separate and routinely unconfigured (ADR 0002), while the local user with a small window is exactly who compression exists for — and a trigram index matches substrings, so `8823` finds `ZARYA-8823`, identifiers being the first thing a summary loses. The query's words follow `chat_search`'s rules ([§9.11](#911-cross-chat-search-chat_search-and-chat_read)): all of them in one message, a two-character word as a whole word (walked over the folded range's blocks when no long word narrows it), a word found nowhere in the range dropped and named, words that never meet answered with their counts. Both reach **only this conversation's own older messages**, which the user is looking at in the feed, so neither is gated; they are offered to the model **only while a folded range exists**, which is the same condition that puts the block in the prompt. The block names them only when the turn really offers them — a profile can switch the two tools off, and naming a tool the model does not have is a dead end rather than a hint. A page of `history_read` says, under its header, that the conversation has parked branches — on a turn that offers their reader, and only there ([9.17](#917-reading-parked-branches-branch_read)).
 - **The trigger** — a compaction starts by itself once the next turn's prompt would reach `compaction.threshold_pct` (default 75%) of the resolved context window; `/compact` runs one on demand at any time. The remaining quarter is the headroom that lets the user keep typing while the background roll works, and it doubles as the reply reserve — there is deliberately no second knob for that. `0%` means "manual only".
 - **The roll streams on the budget's silent lane** ([6.3](#63-client-side-agentic-loop)): one of the app's own requests at a time, priced like a turn's round and waiting for room beside an open reply or run rather than overfilling the pool with it — the roll is the one silent request sized by the conversation, and it fires exactly when the conversation is at its largest (measured: [docs/research/silent-tasks-budget.md](docs/research/silent-tasks-budget.md) §3.1). At a landing it is asked for right after the title and **ahead** of the reflection and consolidation loops, since the lane runs its queue in the order asked and the roll is the one task that protects the next turn. A turn that does not fit beside the roll's stream displaces it ([6.3](#63-client-side-agentic-loop)): the roll is made again from the same plan after the turn, and the fragment its first stream left is never stored as the summary. A roll **stopped** from the tasks screen ([11.10](#1110-the-tasks-screen-f7)) lands as cancelled: the `/compact` the user typed is answered with one notice, an automatic roll says nothing and is planned again at the next landing if the conversation is still over the threshold. At a **quit** the roll is heard like the loops ([17.6](#176-auto-reflection-background)): one still streaming lands cancelled at once, and one that had just finished — its summary unread when the quit came — is applied before the exit flush rather than dropped ([docs/research/quit-settle-roll-and-cap.md](docs/research/quit-settle-roll-and-cap.md)). The roll's prompt is also the session's **coldest** — the summarizer's own system prompt, a digest that never repeats — so its stream's `timings` ride its result (`CompactResult.prefill`) and are offered to the slow-prefill rule of [3.4](#34-managing-the-server-lifecycle) after the roll's own landing, whatever the landing made of the text; a stream that ended short carries none, and the rule's one note per server session decides ([docs/research/roll-timings.md](docs/research/roll-timings.md)).
 - **Which token number** — the **exact** `usage.prompt_tokens` the server reported for the turn's last round, plus what was generated on top of it, and nothing else. The client-side byte estimate is not a fallback here: its error **changes sign** by content type (it overestimates Russian prose by 68% while *under*estimating code by 20% and JSON tool results by 7%), i.e. it is unsafe exactly on the tool-heavy chats that overflow first. A provider that reports no usage therefore leaves the automatic trigger inactive rather than acting on a guess.
@@ -836,10 +836,11 @@ Semantics and signatures — as in attempt #1 (section 9.3 of its specification)
 | `rewrite_current_message` | `{}` | **Control** (opt., off by default) — discard the current (in-progress) message and write it again. See [9.3.3](#933-conversation-control-tools). |
 | `chat_search` | `{ query, top_k? }` | **Optional, off by default** — full-text search across the *other* chats of the profile, grouped by conversation with page addresses. See [9.11](#911-cross-chat-search-chat_search-and-chat_read). |
 | `chat_read` | `{ chat, page? }` | **Optional, off by default** — read another conversation of the profile as a paged transcript. See [9.11](#911-cross-chat-search-chat_search-and-chat_read). |
+| `branch_read` | `{ branch?, page?, chat? }` | **Optional, off by default** — the list of a conversation's parked branches, or one of them as a paged transcript: the one tool that reaches a parked tail. See [9.17](#917-reading-parked-branches-branch_read). |
 | `followup_plan` | `{ when, weekday, about }` | **Companion** — plan a return to this conversation about something the person said; offered only while the profile's *Follow-ups* switch is on. See [9.3.6](#936-follow-ups-the-companion-plans). |
 | `followup_cancel` | `{ id }` | **Companion** — cancel one of this conversation's pending follow-ups. See [9.3.6](#936-follow-ups-the-companion-plans). |
 
-**Concurrent-marked** (`Tool::concurrent()`, [9.2](#92-the-tool-contract); the loop's segments, [6.3](#63-client-side-agentic-loop)) — the readers that hold nothing and change nothing: `fs_read`/`fs_list`, `code_read`/`code_grep`/`code_list`, `attachment_read`/`attachment_search`, `chat_search`/`chat_read`, `history_read`/`history_search`, `get_self_model`/`get_sampling`/`get_llm_name`/`get_llm_history`, and `fetch_url`. Not marked, by name: `web_search` (the keyless chain's throttling under concurrent requests is unmeasured), `note_recall` (it writes vectors inside a read), `youtube_watch`, `python_exec`, `code_edit`/`code_write`/`code_build`/`code_run`/`code_test`, every MCP tool, `call_subagent`/`run_dialogue`, the control pair, and every writer. A registry test pins the marked set to this list and that none of it is dangerous ([9.8](#98-confirmation-for-dangerous-tool-calls)).
+**Concurrent-marked** (`Tool::concurrent()`, [9.2](#92-the-tool-contract); the loop's segments, [6.3](#63-client-side-agentic-loop)) — the readers that hold nothing and change nothing: `fs_read`/`fs_list`, `code_read`/`code_grep`/`code_list`, `attachment_read`/`attachment_search`, `chat_search`/`chat_read`, `branch_read`, `history_read`/`history_search`, `get_self_model`/`get_sampling`/`get_llm_name`/`get_llm_history`, and `fetch_url`. Not marked, by name: `web_search` (the keyless chain's throttling under concurrent requests is unmeasured), `note_recall` (it writes vectors inside a read), `youtube_watch`, `python_exec`, `code_edit`/`code_write`/`code_build`/`code_run`/`code_test`, every MCP tool, `call_subagent`/`run_dialogue`, the control pair, and every writer. A registry test pins the marked set to this list and that none of it is dangerous ([9.8](#98-confirmation-for-dangerous-tool-calls)).
 
 > **Embedding lifecycle**: a **dedicated** embedding server is used (ADR 0002) — a separate process on its own port, started at launch and kept alive; if not configured, RAG returns a clear error. See [decision #4](#161-accepted-decisions).
 >
@@ -874,7 +875,7 @@ Since the inference server doesn't provide built-in web search, we implement it 
 - **Purpose**: delegate a task — or get a **second opinion** — to a **subagent**: the same model under a system message the main agent composes, with an optional display `name` for the persona. The response differs from the agent's own point of view, which (by hypothesis) increases self-awareness and quality; with tools, the subagent can also *do* the work it is asked. Design and the decided forks: [docs/research/subagent-chats.md](docs/research/subagent-chats.md), [ADR 0010](docs/decisions/0010-subagent-nested-turn.md).
 - **A loop-executed tool.** Like the conversation-control pair ([9.3.3](#933-conversation-control-tools-send_followup_message--rewrite_current_message)), the `Tool` impl exists for the schema, the catalog and the profile toggle; the agentic loop ([6.3](#63-client-side-agentic-loop)) recognises the name and runs the subagent itself — after the disabled gate and the confirmation gate ([9.8](#98-confirmation-for-dangerous-tool-calls)), inside the turn's cancellation, with a tool card and a record like any call. A tool sees only `ToolContext`; the registry, the confirmation channel and the UI sender a tool-using subagent needs live in the loop.
 - **A nested turn.** The subagent is a child agentic loop of the same type as the turn's own, sharing the turn's engine, registry, confirmation round trip (a dangerous call inside the run asks the user exactly as outside; "allow for this turn" covers both), generation id and limits. It has its own request — `system = system_message`, one user message = `message` — its own context, round counters and a child cancellation token, and a **muted** event stream: nothing of it reaches the parent's bubble except the token counter, which continues the parent's — and a quiet status-bar chip, *"subagent «name» · round N · tool"*, reported around the muted sink at each round's start and each tool's entry and cleared when the run ends, so a parent turn parked inside a delegation for minutes never reads as a stuck "generating" (docs/lessons.md §4). The chip is worded by the screen in the interface language, guarded by the generation id, and goes with the turn. **The transcript is visible while it runs** ([docs/history/subagent-live.md](docs/history/subagent-live.md)): the generation task reports its progress to the orchestrator on the same channel the result travels (so progress and result arrive in order) — each filed round of the parent and of the subagent, the run's start (its id minted up front and kept by the landed record) and its end — and the orchestrator mirrors the turn in an in-flight table that every transcript path resolves through. So a running run is a row of the list under its parent, marked *running*, with its count growing as rounds file; it opens read-only with the rounds so far and grows as more file; it can be renamed (the title lands on the record as a manual one); and moving between the parent and that transcript — either way — **does not cancel the turn**, the one exception to "a switch cancels" ([11.2](#112-the-chat-list-an-overlay)). Nothing of this is persisted: the mirror is dropped at landing, and a crash loses the turn as before. **The subagent's text streams into its open transcript** (history plan §8): its loop's stream — text, thoughts, tool cards, its own token count — travels to the orchestrator as progress on the same channel as its filed rounds (so it can never arrive out of order with them), is kept as the round in progress, and is forwarded to the screen under the run's own stream id while the transcript is the open conversation; a transcript opened mid-round starts with what has already streamed.
-- **What it gets.** The turn's effective tool set **minus** `call_subagent` and `start_subagent` (no nesting — a loop below the top refuses the names regardless of the set), `history_read`/`history_search` (the *parent's* folded history) and the self-model family with its injection (the profile persona's identity, not the subagent's). The turn's environment otherwise: the same attached files (`attachment_read`/`attachment_search`, under the parent's index), the same project and change journal (`code_*` edits show in the parent's `F4`), notes, RAG, web, Python, `fs_*`, MCP, the control tools; its system prompt carries the parent's attachment and workspace blocks. **Never the parent's messages** — the main agent decides what to pass.
+- **What it gets.** The turn's effective tool set **minus** `call_subagent` and `start_subagent` (no nesting — a loop below the top refuses the names regardless of the set), `history_read`/`history_search` (the *parent's* folded history), `branch_read` (the parent's parked branches, [9.17](#917-reading-parked-branches-branch_read)) and the self-model family with its injection (the profile persona's identity, not the subagent's). The turn's environment otherwise: the same attached files (`attachment_read`/`attachment_search`, under the parent's index), the same project and change journal (`code_*` edits show in the parent's `F4`), notes, RAG, web, Python, `fs_*`, MCP, the control tools; its system prompt carries the parent's attachment and workspace blocks. **Never the parent's messages** — the main agent decides what to pass.
 - **Effects** go to the chat they describe: `set_system_message`/`set_sampling` to the run, an attachment a tool produced to the parent (and into both loops' snapshots).
 - **The transcript** — the persona, `User(message)` and the run's rounds exactly as any chat stores them — lives **on the call's `ToolCallRecord`** (`subagent: SubagentRun`, [5.1](#51-core-entities-entities)), inside the parent's file: it is part of the exchange that made it, travels with it into `Chat.deleted` on `Ctrl+E`/`Ctrl+R`, is hidden with the parent, and is ignored by request replay (a request with a stored run is byte-identical to one without). It carries a title (the `name`, else the first line of `message`, until a person or the model names it — **the automatic titling fires at landing** for every run with a substantive reply, under *either* `interface.auto_title` point, since a transcript's question and reply arrive together; `Off` is quiet, and a hand-named run is left alone, [11.2](#112-the-chat-list-an-overlay)), an outcome (`completed`/`cancelled`/`timed_out`/`failed`/`round_limit`), the tokens it cost, and an id for a `chat://` reference ([11.3](#113-the-message-feed)).
 - **The result** the main agent gets: the subagent's final reply, then one line naming the transcript's `chat://` address and — when the run did not complete — why. The run lands on the record together with the turn; until the list snapshot carries it, the address in the card is plain text (the "resolves or it is not a reference" rule).
@@ -2148,7 +2149,10 @@ this in another chat"). Design and the decided forks —
   a hit names the page a read returns. `chat` resolves by short-id prefix,
   then exact title, then title substring; several matches report the
   ambiguity with the candidates' addresses, and an unknown reference points
-  back at `chat_search`.
+  back at `chat_search`. What it pages is the conversation's **line**: a branch
+  parked in that chat is not in the transcript, and a page says that there are
+  some — on a turn that offers their reader, and only there
+  ([9.17](#917-reading-parked-branches-branch_read)).
 - **Scope** is a turn snapshot (`ToolContext::other_chats`), built in one
   place (`snapshot_other_chats`): the current profile's chats only (§9.5),
   the **current chat excluded** (its visible half is the model's own context;
@@ -2855,6 +2859,70 @@ they like, or asks for changes.
 - **A quit** lands the run at once from its mirror, cancelled, with a line naming
   the call it was in. Nothing restarts by itself: the next run resumes from the
   first step no run finished (the Fabula spec §9).
+
+### 9.17. Reading parked branches: `branch_read`
+
+Every other tool reads a conversation's **line**
+([11.7](#117-keybindings-preliminary)): the request, the folded part behind
+`history_read`, another chat's transcript behind `chat_read`, the full-text index
+behind the searches. The tails that left the line — a fork's, a reply that was
+regenerated, an exchange that was taken back — are reached through this tool alone,
+by a call that names one. Design and the decided forks —
+[docs/research/chat-branches.md](docs/research/chat-branches.md) §9.
+
+- **Off by default** (`enabled_by_default = false`), a switch of the profile's
+  tools, offered on every turn of a profile that has it. A parked tail is outside
+  what the person sees in a feed, which is the boundary the other tools keep, and
+  since `Ctrl+R` and `Ctrl+E` park what they cut it is also what a person had
+  redone or took back. The switch says so in the settings: a tool's row can carry a
+  note for the bottom panel (`Tool::ui_note`), and this one's does. It is not gated
+  on the chat having branches: a tool that appears with a chat's first fork would
+  tell the model of the fork ([11.7](#117-keybindings-preliminary): nothing about a fork
+  enters the prompt) and would change the tool list the cached prefix begins with.
+- **`branch_read {}` lists** the parked tails in the order `/branch` lists them —
+  a tail, then the tails that continue from inside it. An entry gives the tail's
+  address, the message number and variant it stands for, what parked it in words
+  (a fork, a switch, a regenerated reply, an exchange taken back), the date, its
+  size, and two quotes: the first line of the last message it shares with the line
+  it left, and its own first line. The request carries no message numbers, so the
+  quotes are what place a tail in the conversation the model holds.
+- **`branch_read { branch }` reads one tail** as a transcript — the renderer and
+  the pager of `chat_read` (`HistoryView`, `compaction.page_tokens`). `page` pages
+  a transcript and the list alike.
+- **An address is what `/branch N K` takes**, written `N/K`: the number the tail's
+  first bubble has on its line and its variant among the variants of that place —
+  the figure of a message's mark. It means the same before and after a switch
+  (the variants of a place are ordered by their first message's time). A tail
+  inside another is addressed by the path from the line, `5/1 > 7/1`, which
+  `/branch N K` does not reach and the list prints whole; a detached tail by its
+  place among the detached, `0/1`. An address is read as its integers in pairs,
+  so the separators do not matter.
+- **`chat` reads another conversation's branches**, resolved against the
+  cross-chat snapshot as `chat_read` resolves and loaded under the same guards
+  ([9.11](#911-cross-chat-search-chat_search-and-chat_read)). That snapshot exists
+  only on a turn that offers `chat_search` or `chat_read`: crossing conversations
+  stays their consent, and without it the answer says what the tool reads without
+  `chat`.
+- **The open chat's tails are a turn snapshot** (`ToolContext::branches`, a
+  `BranchShelf`), rendered when the turn starts — for a turn that offers the
+  reader, in a chat that has tails: the rule the folded part follows. A turn cannot
+  fork or switch, so the snapshot is not stale within it.
+- **The notice.** A page of `history_read` or of `chat_read` over a line that has
+  parked tails says so in one line under its header: how many, that they are not
+  in what was read, the call that lists them, and to read one only when the user
+  asks about another branch or variant. It is said **only on a turn that offers
+  the reader** — it names it — and on every page, since a search hit sends a read
+  to a page of its own. The searches say nothing of branches and find nothing in
+  them.
+- **Every answer says what is possible next**: no tails ("all of it is in front of
+  you"), an address that names nothing (the addresses there are), the variant that
+  stands on the line ("it is the conversation in front of you") or inside a tail
+  ("part of branch …"), a page past the end (the real count), `chat` without the
+  snapshot, a sub-agent transcript (it has no branches).
+- **Withheld from a sub-agent**, like the read-back pair: the branches are the
+  parent's conversation, and the child's reads name no reader. It does not reach
+  `Chat.deleted`, does not search, and does not switch — that is the person's,
+  with `/branch`, which the list names.
 
 ## 10. AI-companion profiles
 
@@ -4488,7 +4556,9 @@ section and subsection), `Esc` — cancel.
   meaning** (`features/tools/meta.rs`: Introspection / Memory and Knowledge /
   Outside World / Files / Utilities / Subagent / Conversation Control /
   Self-Model) with a short inline description and an "on/total" count in the group
-  header. A tool that's **disabled by a global gate** (web/python/files) but
+  header. A built-in tool whose switch is a consent says what it lets the assistant
+  reach in the bottom panel (`branch_read`, [9.17](#917-reading-parked-branches-branch_read)).
+  A tool that's **disabled by a global gate** (web/python/files) but
   enabled in the profile is marked in the warning color with a "disabled
   globally" hint — honestly showing that it's unavailable to the model.
 - **Interface**: the *Appearance* group (**colour mode** and theme — see below,
@@ -5428,11 +5498,14 @@ same chat ([docs/research/chat-branches.md](docs/research/chat-branches.md)).
   it left, and gets them back: a summary whose boundary left with the tail describes
   what the line no longer holds and goes with it ([6.7](#67-history-compression-rolling-summary)),
   and the watermark is lowered to the cut, so the new line is reflected on from there.
-- **The assistant reads the line.** No tool reaches a parked tail: the request is
-  built from `messages`, `history_read`/`history_search` cover the line's compressed
-  part, `chat_search`/`chat_read` the other chats' lines
+- **The assistant reads the line.** The request is built from `messages`,
+  `history_read`/`history_search` cover the line's compressed part,
+  `chat_search`/`chat_read` the other chats' lines
   ([9.11](#911-cross-chat-search-chat_search-and-chat_read)). Nothing about a fork
-  enters the prompt.
+  enters the prompt. A parked tail is reached by one tool, `branch_read`, which a
+  profile has only when the person switched it on; with it on, a read of a line
+  says that branches stand beside it
+  ([9.17](#917-reading-parked-branches-branch_read)).
 - **A fork forks the conversation, not the world.** Notes, the self-model, the chat's
   files and the attached project are as they are.
 - **`Ctrl+E` and `Ctrl+R` park what they cut** (above), by the operation a fork uses

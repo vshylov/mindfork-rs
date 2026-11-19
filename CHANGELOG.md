@@ -36,6 +36,14 @@ split by subsystem.
 - The assistant reads the conversation in front of you: a branch you left is not in
   its request and not in what its tools find. What it did outside the conversation —
   notes, files, changes to your project — stays as it is.
+- **The assistant can read a branch when you ask it to.** A new optional tool,
+  `branch_read`, lists a chat's branches and reads one — "compare this with what you
+  answered before I regenerated". It is **off by default**, a switch among the
+  profile's tools (Settings → Profiles → *Conversation control*), because a branch is
+  also a reply you had regenerated or an exchange you took back; the switch says so.
+  With it on, the assistant is also told when a conversation it reads has branches;
+  with it off, it is told nothing about them. With the tools for other conversations
+  on, it reads another chat's branches too.
 - **`mindfork stats` counts the messages kept in branches**, on a line of its own, and
   `--compare` tells a fork from a loss: a copy where you forked and went another way is
   *ahead*, a copy missing a branch is behind by what the branch held. A copy with no

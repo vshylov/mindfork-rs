@@ -393,18 +393,6 @@ effort tiers and Fabula — have all closed
   a tool's card ([multimodal-images.md §5](research/multimodal-images.md),
   spec §9.10). Image generation would make it worth more
   ([image-generation.md](history/image-generation.md) F8).
-- **Branches inside a chat — a fork at a chosen message** — **researched**
-  2026-11-18 ([chat-branches.md](research/chat-branches.md)), every fork decided
-  by the owner the same day; **stages 1–3 of four are built** — the numbers
-  on the messages' headers, the tree itself with `/fork` and `/branch`
-  ([ADR 0015](decisions/0015-chat-branches.md)), then `Ctrl+R` and `Ctrl+E`
-  keeping what they cut as a branch. The chat stays a line with the tails that
-  left it kept beside it; messages are numbered on their headers, `/fork N` forks
-  at one and `/branch` switches; a regenerated reply is a variant of its message,
-  and an exchange taken back is a branch to return to. **Left:** the fourth
-  stage, which tells the assistant's tools that a chat has branches and adds a
-  tool that reads them — its design is an addendum to the research document, with
-  forks of its own.
 - **Editing a message in place (`/edit N`)** — **idea** (the owner's,
   2026-11-18). A message's text is changed where it stands: nothing under it is
   removed and no branch is made — for a typo. Not the fork above, which writes
@@ -474,6 +462,14 @@ effort tiers and Fabula — have all closed
 
 ### Chats, search and data
 
+- **Search in parked branches** — **idea**. A word said only in a branch is
+  found by nobody until that branch is on the line: the chat list's search and
+  `Ctrl+F` hold the line, and so do the assistant's searches. Two halves. The
+  person's: a hit that opens the chat on that branch. The assistant's: a `query`
+  on `branch_read` that scans one conversation's tails, with no index — it starts
+  to matter in a chat with dozens of regenerated replies
+  ([chat-branches.md](research/chat-branches.md) §8, §9.6 G5 (b)). Removing a
+  branch and a mark of branches on the chat card are left by the same track.
 - **Importing chats exported from ChatGPT, Claude, Gemini, Grok and DeepSeek**
   — **idea**, researched 2026-10-25, forks decided by the owner the same day
   ([cloud-chat-import.md](research/cloud-chat-import.md) §7). The decisions:
@@ -766,6 +762,18 @@ down.
 An index, newest first — one line per track, with the release that shipped it
 and where its story is told. What a track left open is a bullet above, under
 its area.
+
+- **Branches inside a chat** — unreleased (2026-11-19), research and four stages. A
+  fork at a chosen message as a tree inside the chat: the chat stays a line, with
+  the tails that left it kept beside it. Messages are numbered on their headers,
+  `/fork N` forks at one and `/branch` switches; `Ctrl+R` and `Ctrl+E` keep what
+  they cut — a regenerated reply is a variant of its message, an exchange taken
+  back a branch to return to; and an optional tool, `branch_read`, lets the
+  assistant read a branch when asked, with a read of a line saying that branches
+  stand beside it. Live GO on every stage
+  ([chat-branches.md](research/chat-branches.md),
+  [ADR 0015](decisions/0015-chat-branches.md),
+  [journal/storage.md](journal/storage.md), [journal/tools.md](journal/tools.md)).
 
 - **One block folded, part of a chat copied** — unreleased (2026-11-15), research and
   two stages: what the roadmap's per-message collapse and copy had left once the

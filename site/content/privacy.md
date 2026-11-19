@@ -2,11 +2,11 @@
 # Generated from PRIVACY.md by tools/site_legal_pages.py - do not edit.
 title = "Privacy policy"
 description = "What mindfork keeps on your machine, what leaves it and only on which setting of yours, and what reaches its author — which is nothing."
-updated = "2026-11-12"
+updated = "2026-11-19"
 template = "doc.html"
 +++
 
-Effective **2026-11-12**. It covers three things that are easy to confuse: the
+Effective **2026-11-19**. It covers three things that are easy to confuse: the
 **mindfork application**, the website **mindfork.io**, and the project's
 presence on **GitHub**. They have very different answers, so they are kept
 apart below.
@@ -554,6 +554,10 @@ next, as a picture you attached does.
   own data and program folders stay out of their reach either way;
 - **MCP plugins** — the master switch and the per-profile one, both;
 - **cross-chat search** for the assistant (`chat_search`, `chat_read`);
+- the assistant's **reading of a chat's branches** (`branch_read`) — what you
+  left behind by going back to a message, the replies you had regenerated and the
+  exchanges you took back. They stay in the chat's file (§2); until you turn this
+  on, none of them is sent to your model and it is told nothing about them;
 - the **self-model tools** — and with them the injection of the self-model into
   the system prompt;
 - **reflection** and the consolidation passes;

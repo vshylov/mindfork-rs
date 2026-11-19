@@ -8,7 +8,9 @@
 [src/app/orchestrator/branches.rs](../../src/app/orchestrator/branches.rs)
 (`handle_fork_at`, `handle_switch_branch`),
 [src/shared/storage/chat_steps.rs](../../src/shared/storage/chat_steps.rs)
-(`chat_to_v9`, `message_lists_mut`). Related:
+(`chat_to_v9`, `message_lists_mut`), and — the reader of point 9 —
+[src/features/tools/branches.rs](../../src/features/tools/branches.rs)
+(`BranchRead`, `BranchShelf`). Related:
 [ADR 0006](0006-data-schema-versioning.md) (the bump policy this decision reads
 one way for one field).
 
@@ -55,8 +57,8 @@ and every test that builds a chat.
    none needs one: the line is all it ever sees.
 6. **The assistant reads the line.** The request, the tools' snapshots and the
    full-text index are built from `messages`. Nothing about a fork enters the
-   prompt. (Making a read of a line say that a chat has branches, and a tool that
-   reads them, is a later stage of the track.)
+   prompt. (A read of a line that says a chat has branches, and the tool that
+   reads them, are point 9.)
 7. **The field takes a schema step, 8 → 9, though it is additive in shape.** ADR
    0006 §8 exempts a new field with a default. The exemption rests on what an older
    build loses when it ignores such a field, and here that is the conversation: it
@@ -73,6 +75,16 @@ and every test that builds a chat.
    signal moved with the causes**: it counts the tails parked under those two since
    it last ran, plus the archive's older records; a reply the person switched back to
    leaves none.
+9. **A parked tail is read by one tool, which the person switches on.** The
+   track's fourth stage (2026-11-19). `branch_read` lists a conversation's parked
+   tails and reads one as a transcript, addressed as `/branch N K` addresses it; a
+   read of a line — `history_read`, `chat_read` — says that branches stand beside
+   it. Both only in a profile that has the tool, and it is off by default: a tail
+   is outside what the person sees in a feed, and since point 8 it holds what they
+   took back. The tool is not gated on the chat having branches: appearing with
+   the first fork, it would tell the model of the fork (point 6) and change the
+   tool list a cached prefix begins with. The searches hold the line only, as
+   before.
 
 ## Alternatives rejected
 
@@ -97,7 +109,8 @@ and every test that builds a chat.
   `Chat::stored_messages_mut`; migration steps through `chat_steps::message_lists_mut`.
   A walk that names the lists itself is the defect to look for in review.
 - The person's own search does not reach a parked tail: a word said only in a branch
-  is found once that branch is on the line. So is the assistant's.
+  is found once that branch is on the line. So is the assistant's; what it can do
+  is read a tail it was asked about, where the profile has `branch_read`.
 - A fork does not rewind what the conversation did outside itself — notes, the
   self-model, the chat's files, the attached project.
 - A live feed can number a bubble the chat did not keep. A command that names a

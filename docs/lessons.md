@@ -2377,6 +2377,14 @@ rescanned, so a placeholder inside a value cannot expand — retiring several ha
 call sites that had been working around the old behaviour.
 — *hardening i18n (single-pass tf, gates, observability, export)*.
 
+**One argument list for a family of templates panics on the member that names fewer.**
+Three shapes of one list entry — plain, nested, detached — were filled from a shared
+list, and the one that has no number to show failed the assertion above the first time
+it was drawn. It is a debug assertion, so a shape no test draws ships as a line with
+nothing wrong in a release build and a panic in the next person's `cargo test`. Give each
+template the arguments it names, and each shape a test that draws it.
+— *branches told to the tools, and a reader*.
+
 **A localized *document* is a file, not a bundle key** — and it needs a structural gate.
 A legal notice or any long text belongs next to its original as a file the language picks
 (`credits::license_text`), never inside `locales/*.json`, where it is unreviewable,
@@ -3047,6 +3055,15 @@ right answer to a story the fixture had not meant to tell. Anchor such a convers
 to local dates (the evening of the day before yesterday, the interview yesterday) so
 it means the same thing at any hour the smoke runs.
 — *follow-ups the companion plans*.
+
+**A smoke that asserts which tool a model used must not offer a shorter way to the
+answer.** The check was "asked where the dock is in another chat, the turn reads it with
+`chat_read`" — and the notice under that read was the thing under test. With `chat_search`
+in the profile's set, Gemma 4 31B answered from a search hit, correctly, and never read
+the line: the smoke failed on a model doing its job. Offer the tool under test and tools
+that have nothing to do with the question; a tool that also answers it turns the
+assertion into a guess about the model's taste.
+— *branches told to the tools, and a reader*.
 
 ## 10. CI and infrastructure
 

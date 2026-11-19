@@ -19,8 +19,11 @@ continues from had to park it already, ahead of stage 3. **Stage 3 is built**
 rule, and reflection reads its signal from the parked tails. Live **GO** on Gemma 4
 and Gemini, the control red. What it found is in §3.10: the note of a tail at the
 line's end has to stay out of a regeneration's way, and to be said once. **Stage 4
-is designed, not built** (2026-11-19): §9 is its addendum, and its forks G1–G5
-(§9.6) wait for the owner.
+is built** (2026-11-19, `feat/branch-reader`): §9 is its design, written before the
+code, with its forks G1–G5 (§9.6) decided by the owner the same day, all five as
+recommended — the optional tool `branch_read`, and the line a read of a chat's line
+carries when branches stand beside it. Live **GO** on Gemma 4 31B and on Gemini, the
+control red; what the build found is §9.9. **The track is complete.**
 
 The roadmap holds two neighbouring ideas (docs/roadmap.md): "regeneration with
 variations" and "editing any message, not just the last, with history branching".
@@ -66,9 +69,9 @@ The owner asked for three things to be thought through:
   about a fork.
 - **One schema step**, chats 8 → 9, a stamp (§3.2, F3): an older build would drop
   the branches at its first save.
-- **Four stages** (§6): the numbers; the tree with `/fork` and `/branch`;
-  `Ctrl+R` and `Ctrl+E` kept as branches; the branches told to the assistant's
-  tools, with a reader.
+- **Four stages** (§6), all built: the numbers; the tree with `/fork` and
+  `/branch`; `Ctrl+R` and `Ctrl+E` kept as branches; the branches told to the
+  assistant's tools, with a reader (§9).
 
 ## 2. What the code does today
 
@@ -634,10 +637,11 @@ Each stage is a branch and a pull request of its own.
    the mark, a click back, `Ctrl+E`, the list. **Live, go/no-go:** a reflection after a
    regeneration is told "regenerated your reply ×1" on its way to a real engine, and
    lands with that line in its prompt.
-4. **The branches told to the tools, and a reader** (`feat/branch-reader`). F1's
-   second half (§3.8). Its design is an addendum to this document, with forks of
-   its own, before any code — **written 2026-11-19, §9; the forks G1–G5 are
-   open.** What it had to settle:
+4. **The branches told to the tools, and a reader** (`feat/branch-reader`) —
+   **built 2026-11-19**, live **GO** on Gemma 4 31B and Gemini through the gateway,
+   the control red (§9.9). F1's second half (§3.8). Its design is an addendum to
+   this document, with forks of its own, written before any code (§9; the forks
+   G1–G5 decided the same day). What it had to settle:
    - which reads say that a chat has branches — `chat_read` over another chat's
      line, `history_read` over the open chat's compressed part — and whether a
      search hit says it too;
@@ -701,9 +705,10 @@ stage 4).
 An addendum (2026-11-19), written before any code, as §6 asks. F1 set the frame
 (§3.8): every existing tool goes on reading the line; a read of a line says that
 the chat has branches; a separate tool reads them. Below is the design inside that
-frame and the forks it leaves, **G1–G5** (§9.6). **Nothing here is built.**
+frame and the forks it left, **G1–G5** (§9.6), which the owner decided the same
+day, each as recommended.
 
-### 9.1 What stands today
+### 9.1 What stood before it
 
 - **Three paths read a conversation's text.** `history_read` pages the open chat's
   folded part, and is offered only while the chat has one (spec §6.7).
@@ -809,8 +814,8 @@ first bubble has on its line, and its variant among the variants of that place.
   nested. The list prints each address whole, to be copied.
 - A detached tail (§3.1) is listed last, marked, and addressed by its place among
   the detached.
-- The parse reads the integers and pairs them, so `11/1`, `11 1` and `#11 ‹1/2›`
-  are one address.
+- The parse reads the integers and pairs them, so `11/1`, `11 1` and `#11/1` are
+  one address, and the separator of a path does not matter.
 
 **`page`** pages the list and a transcript alike, by `compaction.page_tokens`
 through `paginate` — the cutter `chat_read` and `attachment_read` use. A list of a
@@ -874,12 +879,14 @@ those tools' consent, and the reader adds none of its own.
     that has just found nothing on the line and names the branches as the place to
     look further — the opposite of what a fork asks for (§3.8). (c) leaves the open
     chat's own read silent for no reason.
+  - **Owner's decision 2026-11-19: (a).**
 - **G2 — what the reader reaches.**
   - (a) The open chat's branches only.
   - (b) **The open chat's, and another chat's on a turn that also offers
     `chat_read`.**
   - Recommended: (b). Under (a) the notice of `chat_read` names branches no call
     can read, or is dropped there and G1 shrinks to `history_read`.
+  - **Owner's decision 2026-11-19: (b).**
 - **G3 — whether a profile has the reader without asking.**
   - (a) **Off: a row of the profile's tools the person switches on**, as
     `chat_search` and `chat_read` are; once on, offered on every turn.
@@ -901,6 +908,7 @@ those tools' consent, and the reader adds none of its own.
       most.
     - Against (a): the feature is found in the settings, and until then an
       assistant asked about "the other branch" says it sees none.
+  - **Owner's decision 2026-11-19: (a).**
 - **G4 — the notice on a turn without the reader** (every turn of a profile that
   has not switched it on, under G3 (a)).
   - (a) **Nothing is said.**
@@ -911,6 +919,7 @@ those tools' consent, and the reader adds none of its own.
     model can do about it, is a line it passes on to the person unasked. (b) is
     the honest one in another sense: a transcript that is not the whole chat says
     so.
+  - **Owner's decision 2026-11-19: (a).**
 - **G5 — search in parked tails.**
   - (a) **None; the list, with each tail's first line, is how a tail is found.**
   - (b) The reader takes a `query`: the tails of one conversation scanned for the
@@ -921,6 +930,7 @@ those tools' consent, and the reader adds none of its own.
     (b) needs no index and changes nothing of (a); it starts to matter in a chat
     with dozens of redone replies, where "the variant in which you proposed X" is
     not found by thirty first lines.
+  - **Owner's decision 2026-11-19: (a).**
 
 **Decided in this addendum without a fork** — said here so that an objection has a
 place: one tool and not a pair; the name `branch_read`; the address `N/K` with a
@@ -941,7 +951,9 @@ nothing stored.
 - **The catalog and the turn:** optional or default as G3 decides; withheld from a
   sub-agent; the snapshot built only where the reader is offered and tails exist;
   the request of a chat with branches holds nothing about them, schema aside (D5).
-- **Live, go/no-go** — Gemma 4 locally and one cloud wire:
+- **Live, go/no-go** — Gemma 4 31B and a Gemini model, both through a cloud key
+  (the owner, 2026-11-19: no local model for this check — the machine the track is
+  built on has 8 GB of memory):
   1. *Reads when asked.* A chat whose redone reply holds a marker the line does
      not; asked to compare with the previous variant, the turn calls `branch_read`
      and its answer has the marker.
@@ -958,10 +970,55 @@ nothing stored.
   and the description both say when to read; check 2 measures it on a small model;
   an opt-in (G3 (a)) bounds who is exposed to it.
 - **What was taken back becomes readable** in a profile that has the reader on.
-  The settings' description of the tool says so in those words.
+  The settings say so under the tool's switch (§9.9).
 - **The snapshot renders every tail at the start of every turn that offers the
   reader.** The folded part is rendered the same way and is usually larger; if a
   chat with many long tails shows otherwise, a tail is rendered at its first call.
 - **A long list** — a hundred redone replies — is paged, and a model asked for "the
   previous variant" has to pick it by date and first line. G5 (b) is the remedy if
   that proves hard.
+
+### 9.9 As built (2026-11-19)
+
+Built as designed; what the build added or found:
+
+- **The switch needed somewhere to say what it is.** A built-in tool's row in the
+  profile's list had a label of a few words and nothing else — the panel under the
+  list was the MCP tools' alone. `Tool::ui_note` gives a tool a sentence for that
+  panel, and `branch_read`'s names the regenerated replies and the taken-back
+  exchanges, and says that while it is off the assistant is told nothing.
+- **`history_read` reads the notice off the snapshot.** The shelf of the open
+  chat's tails is in the context only on a turn that offers the reader in a chat
+  that has tails, so its presence is the whole condition. `chat_read` reads another
+  chat's file and needs the turn's answer as a flag of its own
+  (`ToolContext::branch_reader`).
+- **A sub-agent's context drops both.** Its tool set already leaves the reader out;
+  its `chat_read` must then not name it. The test that holds this fails without the
+  two lines that do it.
+- **The list often answers by itself.** A regenerated reply is a tail one message
+  long, and the entry's "Begins" quote is that message's first line. Asked what the
+  earlier variant said, Gemma 4 31B answered from the list in one call; Gemini read
+  the tail as well.
+- **Live** (`a_parked_branch_is_read_when_asked_and_left_alone_when_not_e2e_live`),
+  on `google/gemma-4-31b-it` and `google/gemini-3.5-flash` through the gateway,
+  the reader on beside `chat_read`, `calculate` and `current_time`:
+  1. an unrelated question and a `Ctrl+R` on its reply — no call to the reader, and
+     the parked reply in no request;
+  2. "look at the earlier variant of that reply" — `branch_read`, and the parked
+     password in the answer;
+  3. "read my other conversation and tell me where the dock is" — `chat_read`, the
+     notice under it, and no call to the reader; then "that conversation has a
+     branch I set aside…" — `branch_read` with `chat`, and the tail's word in the
+     answer.
+
+  **GO** on both, 14 s and 23 s. **The control:** with the snapshot left out of the
+  turn, check 2 fails on the model's own words — "I couldn't find any alternative
+  variants of that reply" — and so does the deterministic test of the same path.
+- **Two things the live run taught about the smoke, not the feature.** With
+  `chat_search` among the tools a model answers "where is the dock" from a search
+  hit and never reads the line — correctly; the notice under test is the read's, so
+  the smoke offers `chat_read` alone (docs/lessons.md §9). And the Gemini API's
+  OpenAI-compatible endpoint refuses the `thinking` field the generic client sends,
+  so both models were reached through the gateway.
+- **The settings' pictures were regenerated**: the sidebar's count of the profile's
+  rows is one more.

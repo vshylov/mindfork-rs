@@ -59,7 +59,7 @@ Two rules that follow from that:
 | adopting an **architectural decision** | [docs/decisions/](docs/decisions/) — write a new ADR (list below) |
 | **planning a track** | AGENTS.md §1 · prior art in [docs/research/](docs/research/) (pre-decision) and [docs/history/](docs/history/) (finished plans) |
 | working on the **code workspace** — the project attached to a chat | architecture §8, §10 · spec §9.12 · [docs/journal/tools.md](docs/journal/tools.md) · the finished plan [docs/history/code-workspace.md](docs/history/code-workspace.md) |
-| working on **branches** — a fork, a switch, the parked tails | [docs/research/chat-branches.md](docs/research/chat-branches.md) · ADR 0015 · spec §11.7 · [docs/journal/storage.md](docs/journal/storage.md) |
+| working on **branches** — a fork, a switch, the parked tails, their reader | [docs/research/chat-branches.md](docs/research/chat-branches.md) · ADR 0015 · spec §11.7, §9.17 · [docs/journal/storage.md](docs/journal/storage.md) |
 | working on **Fabula**, the story engine — its database, the writer, the story tools | [docs/history/fabula.md](docs/history/fabula.md) (the plan) · [docs/research/fabula-engine.md](docs/research/fabula-engine.md) (the design) · ADR 0014 · [docs/journal/stories.md](docs/journal/stories.md) |
 | installing, running, configuring the engine | [docs/install.md](docs/install.md) |
 | what is left to do | [docs/roadmap.md](docs/roadmap.md) |
@@ -189,10 +189,10 @@ Backend selection: `MINDFORK_ENGINE_URL` (external, any OpenAI server) OR
 rented instead of hosted — `python tools/e2e_hf.py run`, see
 `docs/history/remote-e2e-hf.md`.
 
-## Status (2026-11-18, version 0.27.0)
+## Status (2026-11-19, version 0.27.0)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **5052 unit tests
-green, 326 `#[ignore]`** (live smokes + real-clipboard round trips + the
+The **M0–M9** plan is done, plus extensive post-M9 work — **5075 unit tests
+green, 327 `#[ignore]`** (live smokes + real-clipboard round trips + the
 screenshot-dump and demo-reel regenerators).
 
 **This list is pointers, not summaries.** One line per track, newest first: what
@@ -204,11 +204,11 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
-- **Branches inside a chat — stages 1–3 of 4** (2026-11-18): a fork at a chosen message
-  as a tree inside the chat — the line stays `chat.messages`, the tails that left it are
-  kept beside it (ADR 0015; chats 8 → 9). `/fork N`, `/branch`, `‹2/3› #11` on a
-  message's header, clicks; `Ctrl+R`/`Ctrl+E` park what they cut. Live **GO**, Gemma 4
-  and Gemini
+- **Branches inside a chat — track complete** (2026-11-19, four stages): a fork at a
+  chosen message as a tree inside the chat — the line stays `chat.messages`, the tails
+  that left it are kept beside it (ADR 0015; chats 8 → 9). `/fork N`, `/branch`,
+  `‹2/3› #11` on a message's header, clicks; `Ctrl+R`/`Ctrl+E` park what they cut;
+  `branch_read` (off) reads a branch when asked. Live **GO**, Gemma 4 and Gemini
   ([docs/research/chat-branches.md](docs/research/chat-branches.md),
   [docs/journal/storage.md](docs/journal/storage.md)).
 - **One block folded, part of a chat copied — track complete** (2026-11-15, two
