@@ -6854,6 +6854,8 @@ branches, and a separate tool reads them.
 - **A pty run of `mindfork demo`**: the settings' search finds `branch_read`, its row
   reads `[ ]  read the chat's parked branches`, and the note stands in the panel under
   the list.
+- **The owner's look** (2026-11-19, Windows Terminal over SSH): the switch, its note
+  and the reader in a chat of their own work as intended.
 - **Docs.** Spec §9.17 (new), §9.3, §9.3.2, §6.7, §9.11, §11.6, §11.7; architecture §3
   and §8; ADR 0015 point 9; the manual; CHANGELOG; the roadmap (the track closed, search
   in parked branches left as an idea). Unit tests 5075 green, 327 `#[ignore]`.
