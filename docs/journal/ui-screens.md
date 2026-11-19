@@ -4162,6 +4162,9 @@ line and switches nothing**.
   the chat with `‹2/2› #6` in view and the note under it, the line as it was; `Esc`
   goes back to the results, and from them to the list still filtered by the word,
   which holds the two chats matched only in branches.
+- **The owner's look** (2026-11-19, Windows Terminal over SSH): the setting, the
+  branches' groups in the results and the open on the line with its note work as
+  intended.
 - **The settings' pictures were regenerated**: the Interface section is one row
   longer.
 - **Docs.** The research's §10.9; spec §5.2, §9.17, §11.2, §11.2.1, §11.6, §11.7;
