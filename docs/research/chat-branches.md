@@ -26,7 +26,9 @@ carries when branches stand beside it. Live **GO** on Gemma 4 31B and on Gemini,
 control red; what the build found is §9.9. **The track is complete.** **§10 is an
 addendum of the same day**: search in parked branches, which the owner asked for
 when the track closed — the design of its two halves, written before any code, with
-its forks H1–H3 (§10.5) open.
+its forks H1–H3 (§10.5) decided by the owner the same day: H1 and H2 as recommended,
+and H3 the other way — a hit in a parked branch opens the chat on its line and names
+the branch, and the switch stays the person's.
 
 The roadmap holds two neighbouring ideas (docs/roadmap.md): "regeneration with
 variations" and "editing any message, not just the last, with history branching".
@@ -1032,7 +1034,7 @@ An addendum (2026-11-19), written before any code. The owner asked for it the da
 the track closed: a word said only in a parked tail should be findable — as an
 option, off by default in the settings. §8 and G5 (b) left it as two halves, the
 person's search and the assistant's. Below is the design of both and the forks it
-leaves, **H1–H3** (§10.5).
+left, **H1–H3** (§10.5), which the owner decided the same day.
 
 ### 10.1 What stood before it
 
@@ -1118,7 +1120,14 @@ on, a search by content also finds the messages of parked tails.
   transcript's is, naming the tail — its address, what parked it, the date. A chat
   none of whose own messages match still heads its branches' groups, by the rule
   its transcripts follow.
-- **`Enter` on such a hit** is H3.
+- **`Enter` on such a hit opens the chat on its line and switches nothing** (H3,
+  the owner's decision). The feed is put where the branch leaves the line — on the
+  message that carries the variants mark, or, for a tail inside another parked
+  tail, where the outermost tail of its path leaves. A note names the branch by
+  the address `/branch` lists it under and says how to bring it onto the line: a
+  click on the mark, `/branch N K`, or the list `/branch` opens for a nested one.
+  A detached tail (§3.1) has no place on the line: the chat opens at its end and
+  the note says the branch is kept in the chat's file and cannot be brought back.
 - **The chat list's content filter** (`Ctrl+F`) keeps a chat whose only match is
   in a parked tail. `Enter` on it opens the chat on its line, as a plain switch
   does, with a note: the match is in a parked branch, its address, and that
@@ -1153,6 +1162,7 @@ Each a branch and a pull request, in this order.
   - Recommended: (a). They are the two halves the roadmap's idea names, they share
     no code, and neither changes the other: the assistant's needs no index, the
     person's gives the assistant nothing.
+  - **Owner's decision 2026-11-19: (a).**
 - **H2 — where the assistant's search lives.**
   - (a) **A tool of its own, `branch_search`: a row of the profile's tools, off.**
   - (b) A `query` parameter of `branch_read` — G5 (b) as §9.6 wrote it. No switch
@@ -1169,6 +1179,7 @@ Each a branch and a pull request, in this order.
       that switched it on; (b) costs a third of that.
     - (c) is what F1 decided against: a search of the line that returns what a
       fork cut.
+  - **Owner's decision 2026-11-19: (a).**
 - **H3 — what `Enter` does on a hit in a parked branch** (the results screen).
   - (a) **It switches the chat to that branch and puts the feed on the message**,
     the match highlighted. A note says which variant now stands on the line and
@@ -1189,6 +1200,9 @@ Each a branch and a pull request, in this order.
     - (b) leaves the switch to the person: two steps, the match is not marked
       after the second, and a nested tail takes several switches. (c) is one more
       key at every hit.
+  - **Owner's decision 2026-11-19: (b).** A search is a look, and a look changes
+    nothing in the chat: which variant the conversation continues from stays what
+    the person set with `/branch` or the mark.
 
 **Decided in this addendum without a fork** — said here so that an objection has a
 place:
@@ -1219,8 +1233,10 @@ place:
 - **The person's search:** with the setting off, a word said only in a tail finds
   nothing, on the screen and in the list; with it on, the screen shows the tail's
   group under its chat with `/branch`'s address, and the list keeps the chat;
-  `Enter` as H3 decides, the refusals included; results that went stale under a
-  switch open by where the message stands now.
+  `Enter` on a parked hit leaves the chat's line and its tails as they were, puts
+  the feed where the branch leaves the line and says the branch's address — for a
+  tail on the line's own messages, a nested one and a detached one; a hit whose
+  message came onto the line since the search opens on that message.
 
 ### 10.7 Risks
 
@@ -1229,11 +1245,12 @@ place:
   the switch is off.
 - **A snippet from an exchange the person took back** reaches the model in a
   profile that has the search on. The settings say so under its switch.
-- **A look that changes the conversation** (H3 (a)): after `Enter` the chat stands
-  on another variant, and the next message continues from it. The note says it and
-  names the way back.
-- **Results that went stale.** The screen holds a snapshot; a switch made from it
-  moves messages between the line and the tails. A hit is opened by where its
-  message stands at that moment, not by the group it was drawn in.
+- **A hit that is two steps from its text** (H3 (b)): the feed stands where the
+  branch leaves the line, and the match itself is shown only by the snippet until
+  the person switches. The note's address is what makes the second step one
+  command.
+- **Results that went stale.** The screen holds a snapshot, and the person may
+  switch a branch and come back to it. A hit is opened by where its message stands
+  at that moment — on the line, or in a tail — not by the group it was drawn in.
 - **The index grows** by the text of the parked tails — in a chat whose replies
   were often redone, by a multiple of its last exchange.
