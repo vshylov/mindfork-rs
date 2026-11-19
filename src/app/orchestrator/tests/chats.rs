@@ -1063,3 +1063,14 @@ fn a_swapped_greeting_is_shown_from_its_first_row() {
     assert_eq!(orch.chats[0].messages[0].text, "Привет!");
     assert_eq!(next_landing(&mut rx), Some((id, FeedLanding::Top)));
 }
+
+/// A refresh is the activation of a delivery (docs/research/feed-landing.md
+/// §3.6): the open chat's feed rebuilt with a **hold**, which the screen
+/// answers by touching nothing of the person's.
+#[test]
+fn a_refresh_rebuilds_the_feed_with_a_hold() {
+    let (_d, mut orch, mut rx, chat) = bare_with_chat(vec![Message::user("раз")]);
+    orch.active_id = Some(chat);
+    orch.refresh(chat);
+    assert_eq!(next_landing(&mut rx), Some((chat, FeedLanding::Hold)));
+}

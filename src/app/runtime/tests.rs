@@ -1592,6 +1592,60 @@ fn the_way_back_from_a_reference_is_the_row_it_was_followed_from() {
     assert_eq!(frame(&mut h), left, "the frame that was left");
 }
 
+/// A turn the app started on a notice reaches the screen as one nobody asked
+/// for (`AppEvent::GenerationStarted::woken`): a reader elsewhere in the
+/// conversation keeps their rows, where every turn's start used to send the
+/// feed to its last row. A turn that was asked for still does
+/// (docs/research/feed-landing.md §3.6).
+#[test]
+fn a_woken_turns_start_leaves_a_reader_where_they_are() {
+    use crate::entities::message::Message;
+    let mut h = Harness::new();
+    let chat = uuid::Uuid::new_v4();
+    let messages: Vec<Message> = (0..40)
+        .map(|i| Message::user(format!("реплика-{i}")))
+        .collect();
+    h.apply(AppEvent::ChatActivated {
+        id: chat,
+        title: "чат".into(),
+        messages,
+        draft: String::new(),
+        feed_view: FeedView::default(),
+        landing: FeedLanding::Tail,
+        compaction: None,
+        child: None,
+        live_turn: None,
+    });
+    // The feed's rows, less the border column the scrollbar is drawn on.
+    let rows = |h: &mut Harness| -> Vec<String> {
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        term.draw(|f| h.screen.render(f)).unwrap();
+        let buf = term.backend().buffer().clone();
+        (1..18)
+            .map(|y| (0..79).map(|x| buf[(x, y)].symbol()).collect())
+            .collect()
+    };
+    let tail = rows(&mut h);
+    h.feed(Event::Key(KeyEvent::new(
+        KeyCode::PageUp,
+        KeyModifiers::NONE,
+    )));
+    let reading = rows(&mut h);
+    assert_ne!(reading, tail, "precondition: scrolled away from the tail");
+
+    let started = |woken: bool| AppEvent::GenerationStarted {
+        generation_id: uuid::Uuid::new_v4(),
+        model: None,
+        continuation: false,
+        woken,
+    };
+    h.apply(started(true));
+    assert_eq!(rows(&mut h), reading, "a woken turn moved nothing");
+
+    h.apply(started(false));
+    assert_ne!(rows(&mut h), reading, "a turn asked for is shown");
+}
+
 /// Leaving by an ordinary route drops the way back — the same funnel and the
 /// same rule the search half obeys.
 #[test]
@@ -3600,6 +3654,7 @@ fn a_landed_turn_makes_the_reply_just_written_foldable() {
             generation_id: turn,
             model: None,
             continuation: false,
+            woken: false,
         },
         AppEvent::ToolCall {
             generation_id: turn,

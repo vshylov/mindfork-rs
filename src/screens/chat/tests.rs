@@ -785,6 +785,217 @@ fn a_note_after_the_activation_does_not_cancel_the_landing() {
     }
 }
 
+/// The feed's rows of a 40x14 frame, less the border column the scrollbar's
+/// thumb is drawn on: a feed that grew has a shorter thumb.
+fn feed_body(s: &mut ChatScreen) -> Vec<String> {
+    screen_rows(s, 40, 14)
+        .iter()
+        .map(|r| r.chars().take(39).collect())
+        .collect()
+}
+
+/// What arrives in the open chat by itself — a background run's result, a
+/// follow-up, rows from the messenger — is delivered by a rebuild of the
+/// feed (docs/research/feed-landing.md §2.2, §3.6). A reader elsewhere in the
+/// conversation keeps the rows they are reading, where the rebuild used to
+/// send them to the last row; and a note above those rows, which a rebuild
+/// drops, does not shift them.
+#[test]
+fn a_refresh_leaves_a_reader_on_the_rows_they_are_reading() {
+    let mut s = ChatScreen::new();
+    let id = gen_id();
+    let mut messages = replies("реплика");
+    open_at(&mut s, id, &messages, FeedLanding::Tail);
+    screen_rows(&mut s, 40, 14);
+    s.feed_view.scroll_up(14);
+    let reading = feed_body(&mut s);
+    assert!(!s.feed_view.is_following(), "precondition: scrolled away");
+
+    messages.push(Message::assistant("пришло само"));
+    open_at(&mut s, id, &messages, FeedLanding::Hold);
+    assert_eq!(feed_body(&mut s), reading, "the rows did not move");
+    assert!(!s.feed_view.is_following());
+    assert!(
+        s.feed.iter().any(|m| m.text == "пришло само"),
+        "and the feed holds what arrived"
+    );
+
+    // The same with a note standing above the view when the rows arrive: the
+    // rebuild drops it, and the rows under the reader stay where they are.
+    let mut s = ChatScreen::new();
+    let mut messages = replies("реплика");
+    open_at(&mut s, id, &messages[..2], FeedLanding::Tail);
+    s.push_note("заметка");
+    for m in &messages[2..] {
+        s.echo_user_message(m.text.clone(), Some(m.id));
+    }
+    screen_rows(&mut s, 40, 14);
+    s.feed_view.scroll_up(6);
+    let reading = feed_body(&mut s);
+    assert!(
+        !reading.iter().any(|r| r.contains("заметка")),
+        "precondition: the note is above the view: {reading:?}"
+    );
+    messages.push(Message::assistant("пришло само"));
+    open_at(&mut s, id, &messages, FeedLanding::Hold);
+    assert_eq!(
+        feed_body(&mut s),
+        reading,
+        "the note took no row of the view"
+    );
+}
+
+/// A feed that follows its tail still does after a refresh, and shows what
+/// arrived.
+#[test]
+fn a_refresh_of_a_feed_at_its_tail_shows_what_arrived() {
+    let mut s = ChatScreen::new();
+    let id = gen_id();
+    let mut messages = replies("реплика");
+    open_at(&mut s, id, &messages, FeedLanding::Tail);
+    screen_rows(&mut s, 40, 14);
+
+    messages.push(Message::assistant("пришло само"));
+    open_at(&mut s, id, &messages, FeedLanding::Hold);
+    let rows = screen_rows(&mut s, 40, 14);
+    assert!(s.feed_view.is_following());
+    assert!(rows.iter().any(|r| r.contains("пришло само")), "{rows:?}");
+}
+
+/// A refresh touches nothing of the person's: the in-feed search stays open
+/// on its query, a jump's mark stays on its message, and the input box keeps
+/// its text, its cursor and its undo history — whatever draft the activation
+/// carries (research §3.6). An activation of the same chat used to close the
+/// search, drop the mark and reload the box.
+#[test]
+fn a_refresh_keeps_the_search_the_mark_and_the_input_box() {
+    let mut s = ChatScreen::new();
+    let id = gen_id();
+    let mut messages = replies("реплика");
+    let marked = messages[4].id;
+    open_at(&mut s, id, &messages, focus_on(marked));
+    screen_rows(&mut s, 40, 14);
+    assert_eq!(s.feed_view.marker(), Some(4));
+
+    // A message being typed, the cursor in its middle.
+    for c in "черновик".chars() {
+        s.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+    }
+    s.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+    s.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+    let cursor = s.input.cursor();
+    // The search opened over it.
+    s.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
+    for c in "реплика".chars() {
+        s.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+    }
+    screen_rows(&mut s, 40, 14);
+    let matches = s.feed_view.match_position().map(|(_, of)| of);
+    assert_eq!(matches, Some(12), "precondition: a match in every message");
+
+    messages.push(Message::assistant("реплика сама"));
+    s.activate_chat(
+        id,
+        "Чат".into(),
+        &messages,
+        "черн",
+        FeedView::default(),
+        FeedLanding::Hold,
+        None,
+    );
+    screen_rows(&mut s, 40, 14);
+
+    assert!(s.search.is_some(), "the search field is still open");
+    assert_eq!(
+        s.feed_view.match_position().map(|(_, of)| of),
+        Some(13),
+        "and counts what arrived"
+    );
+    assert_eq!(s.feed_view.marker(), Some(4), "the mark is on its message");
+    assert_eq!(s.input.text(), "черновик", "not the stored draft");
+    assert_eq!(s.input.cursor(), cursor, "the cursor where it was");
+    assert!(s.input.undo(), "the undo history is the box's own");
+}
+
+/// The input box is loaded from a chat's draft **when the chat changes**, and
+/// by no activation of the chat that is already open — a regeneration, a
+/// variant switch, a take-back all rebuild the feed under a box the person
+/// may be typing in.
+#[test]
+fn the_input_box_is_loaded_only_when_the_chat_changes() {
+    let mut s = ChatScreen::new();
+    let (here, there) = (gen_id(), gen_id());
+    let messages = replies("реплика");
+    let open = |s: &mut ChatScreen, id: Uuid, draft: &str, landing: FeedLanding| {
+        s.activate_chat(
+            id,
+            "Чат".into(),
+            &messages,
+            draft,
+            FeedView::default(),
+            landing,
+            None,
+        );
+    };
+    open(&mut s, here, "первый", FeedLanding::Tail);
+    assert_eq!(
+        s.input.text(),
+        "первый",
+        "a chat that opens brings its draft"
+    );
+
+    s.handle_key(KeyEvent::new(KeyCode::Char('!'), KeyModifiers::NONE));
+    s.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE));
+    let cursor = s.input.cursor();
+    for landing in [
+        FeedLanding::Tail,
+        FeedLanding::Top,
+        FeedLanding::Reveal {
+            message: messages[3].id,
+        },
+        FeedLanding::Hold,
+    ] {
+        open(&mut s, here, "устарело", landing.clone());
+        assert_eq!(s.input.text(), "первый!", "{landing:?}");
+        assert_eq!(s.input.cursor(), cursor, "{landing:?}");
+    }
+
+    open(&mut s, there, "второй", FeedLanding::Tail);
+    assert_eq!(s.input.text(), "второй", "another chat's draft is loaded");
+    // A hold for a chat that was not the open one has nothing to hold.
+    open(&mut s, here, "снова первый", FeedLanding::Hold);
+    assert_eq!(s.input.text(), "снова первый");
+    assert!(s.feed_view.is_following(), "and it opens at its tail");
+}
+
+/// A turn the app started on a notice scrolls into view only for a feed that
+/// was following its tail; a turn the person asked for always does
+/// (research §3.6).
+#[test]
+fn a_woken_turn_does_not_take_a_reader_to_the_tail() {
+    let mut s = ChatScreen::new();
+    open_at(&mut s, gen_id(), &replies("реплика"), FeedLanding::Tail);
+    screen_rows(&mut s, 40, 14);
+    s.feed_view.scroll_up(12);
+    screen_rows(&mut s, 40, 14);
+
+    s.begin_woken_generation(gen_id(), None);
+    assert!(
+        !s.feed_view.is_following(),
+        "a reader stays where they read"
+    );
+    assert!(s.generating, "the turn is running all the same");
+
+    s.begin_generation(gen_id(), None);
+    assert!(s.feed_view.is_following(), "a turn asked for is shown");
+
+    s.begin_woken_generation(gen_id(), None);
+    assert!(
+        s.feed_view.is_following(),
+        "and a feed at its tail follows it"
+    );
+}
+
 /// The view's first row held for a reveal is the **open chat's**: a reveal
 /// that arrives with another chat's activation has nothing to hold, and the
 /// bubble goes to the first row.

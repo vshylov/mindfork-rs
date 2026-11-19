@@ -1190,6 +1190,7 @@ impl Orchestrator {
             generation_id: id,
             model: model_name.clone(),
             continuation: continuation.is_some(),
+            woken,
         };
         // The confirmation channel for this turn (fork F8). The sender is kept
         // next to the turn id so a reply arriving for an older turn — the user
@@ -1395,7 +1396,7 @@ impl Orchestrator {
         if silent {
             self.mark_dirty(res.chat_id);
             if self.active_id == Some(res.chat_id) {
-                self.activate(res.chat_id);
+                self.refresh(res.chat_id);
             }
         }
         if res.messages.is_empty() && res.effects.is_empty() && res.deleted.is_empty() {
@@ -1558,7 +1559,7 @@ impl Orchestrator {
         self.maybe_auto_consolidate(res.chat_id);
         self.maybe_auto_self_consolidate(res.chat_id);
         if silent && self.active_id == Some(res.chat_id) {
-            self.activate(res.chat_id);
+            self.refresh(res.chat_id);
         }
         if let Some(text) = woken_reply {
             self.notify_unasked(res.chat_id, super::notify::Unasked::Reply(&text));
@@ -1607,7 +1608,7 @@ impl Orchestrator {
             return;
         };
         if self.active_id == Some(chat_id) {
-            self.activate(chat_id);
+            self.refresh(chat_id);
         }
         self.answer_seat(seat, reply);
     }

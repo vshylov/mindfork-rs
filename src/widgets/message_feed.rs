@@ -1252,10 +1252,41 @@ impl MessageFeed {
         }
     }
 
-    /// Test accessor: whether the feed is following the tail (scrolled to bottom).
-    #[cfg(test)]
-    pub(crate) fn is_following(&self) -> bool {
+    /// Whether the feed is following its tail: at its last row, and staying
+    /// there as content arrives.
+    pub fn is_following(&self) -> bool {
         self.follow
+    }
+
+    /// Whether a request for where the view stands is waiting for the frame
+    /// that applies it ([`Self::pending`]).
+    pub fn awaits_frame(&self) -> bool {
+        self.pending.is_some()
+    }
+
+    /// The message a jump's mark is on — the first of its bubble — in the feed
+    /// the mark indexes. Read before that feed is rebuilt in place, and given
+    /// back to [`Self::remark`] after.
+    pub fn marked(&self, messages: &[FeedMessage]) -> Option<Uuid> {
+        messages.get(self.marker?)?.message_ids.first().copied()
+    }
+
+    /// Puts a jump's mark back on its message in a feed rebuilt in place — a
+    /// refresh of the open chat (docs/research/feed-landing.md §3.6). The mark
+    /// is a feed index, and the rebuild dropped the feed's notes, so the
+    /// message is found again by id. A mark whose message is gone goes, and
+    /// the jump's highlight with it; an in-feed search's highlight is the
+    /// whole feed's and stays. The view's tie to a feed item is dropped: the
+    /// caller restores a place if the view had one.
+    pub fn remark(&mut self, messages: &[FeedMessage], marked: Option<Uuid>) {
+        self.marker = marked.and_then(|id| block_of(messages, id));
+        if self.marker.is_none() && self.highlight_scope == HighlightScope::MarkedOnly {
+            self.highlight = None;
+        }
+        // A landing still waiting for its frame keeps the item it named.
+        if self.pending.is_none() {
+            self.anchor = None;
+        }
     }
 
     /// Test accessor: the current scroll offset in visual rows.

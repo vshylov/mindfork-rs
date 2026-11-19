@@ -134,7 +134,8 @@ pub(super) fn apply_event(
             generation_id,
             model,
             continuation,
-        } => apply_generation_started(screen, generation_id, model, continuation),
+            woken,
+        } => apply_generation_started(screen, generation_id, model, continuation, woken),
         AppEvent::Chunk {
             generation_id,
             text,
@@ -335,9 +336,12 @@ fn apply_generation_started(
     generation_id: Uuid,
     model: Option<String>,
     continuation: bool,
+    woken: bool,
 ) {
     if continuation {
         screen.begin_continuation(generation_id, model);
+    } else if woken {
+        screen.begin_woken_generation(generation_id, model);
     } else {
         screen.begin_generation(generation_id, model);
     }

@@ -1907,6 +1907,16 @@ impl Orchestrator {
         self.activate_at(id, FeedLanding::Tail);
     }
 
+    /// Rebuilds the open chat's feed because the chat **got rows by itself**
+    /// — a background run's result, a follow-up, rows from the messenger, a
+    /// reply that chose silence. The person opened nothing, so nothing of
+    /// theirs is touched: [`FeedLanding::Hold`] (docs/research/feed-landing.md
+    /// §3.6). An activation used to deliver these, and sent a reader to the
+    /// feed's last row with the input box reloaded under their cursor.
+    fn refresh(&mut self, id: Uuid) {
+        self.activate_at(id, FeedLanding::Hold);
+    }
+
     /// [`Self::activate`] with where the feed stands once it is rebuilt
     /// (docs/research/feed-landing.md §3.2): a search hit's message
     /// ([`AppCommand::OpenChatAt`]), a reference's first row, the message

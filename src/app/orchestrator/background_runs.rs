@@ -314,7 +314,7 @@ impl Orchestrator {
         }
         self.mark_dirty(chat_id);
         if open {
-            self.activate(chat_id);
+            self.refresh(chat_id);
         }
         self.emit_chat_list();
         self.maybe_wake(chat_id);

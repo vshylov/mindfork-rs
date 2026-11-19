@@ -482,6 +482,7 @@ fn play(theme: Theme, lang: Lang, background: CodeBlockBackground) -> Reel {
             generation_id: id,
             model: None,
             continuation: false,
+            woken: false,
         },
         400,
     );

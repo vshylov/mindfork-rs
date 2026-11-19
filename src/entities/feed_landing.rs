@@ -60,4 +60,13 @@ pub enum FeedLanding {
     /// Where the person was: the way back from a followed reference
     /// (research §3.5).
     Place(FeedPlace),
+    /// Nothing of the person's is touched: the open chat got rows by itself —
+    /// a background run's result, a follow-up, rows from the messenger, a
+    /// reply that chose silence — and the feed is rebuilt to show them
+    /// (research §3.6). A feed that follows its tail still does; one that does
+    /// not keeps the rows it shows; the in-feed search, the selection, a
+    /// jump's mark, the open lists and the input box stay as they are. For a
+    /// chat that is not the open one there is nothing to hold, and it is
+    /// [`Self::Tail`].
+    Hold,
 }

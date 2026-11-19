@@ -197,6 +197,8 @@ impl Orchestrator {
             generation_id: id,
             model: self.effective_model_name(),
             continuation: false,
+            // The person pressed send; the turn waits for the paste's name.
+            woken: false,
         });
         self.gen_state.begin(id, cancel.clone());
         let tx = self.name_tx.clone();

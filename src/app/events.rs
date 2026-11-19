@@ -732,6 +732,13 @@ pub enum AppEvent {
         /// bubble for streaming instead of pushing a fresh one, and appends
         /// with no separator — the seam is the model's own.
         continuation: bool,
+        /// The app started the turn on a notice — a background run's result,
+        /// a follow-up come due — and nobody pressed anything
+        /// (`GenSpawn::woken`). Its bubble scrolls into view only if the feed
+        /// was following its tail: a reader elsewhere in the conversation is
+        /// not sent to its end by a turn they did not ask for
+        /// (docs/research/feed-landing.md §3.6).
+        woken: bool,
     },
     /// A delta of the reply's main text.
     Chunk { generation_id: Uuid, text: String },
