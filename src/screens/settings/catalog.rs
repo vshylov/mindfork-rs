@@ -1997,6 +1997,12 @@ impl SettingsScreen {
                 )
                 .describe(loc.t("ui.settings.desc.confirm_keys")),
                 row(
+                    FieldId::ISearchBranches,
+                    loc.t("ui.settings.field.search_branches"),
+                    FieldKind::Toggle(i.search_parked_branches),
+                )
+                .describe(loc.t("ui.settings.desc.search_branches")),
+                row(
                     FieldId::IAutoTitle,
                     loc.t("ui.settings.field.auto_title"),
                     FieldKind::Choice(auto_title_label(i.auto_title, loc)),

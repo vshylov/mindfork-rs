@@ -28,8 +28,9 @@ use uuid::Uuid;
 
 use crate::app::events::AppEvent;
 use crate::entities::chat::Chat;
+use crate::entities::chat_branch::branch_address;
 use crate::entities::message::{Message, MessageRole};
-use crate::features::chat_search::{self, SearchGroup, SearchHit};
+use crate::features::chat_search::{self, BranchTag, SearchGroup, SearchHit};
 use crate::features::chat_search_sort::SortMode;
 use crate::shared::storage::Storage;
 use crate::shared::storage::cache::{IndexScope, IndexedMessage, MessageHit};
@@ -49,11 +50,21 @@ impl Orchestrator {
     /// floor, or the search itself failed — answers `None`, i.e. "do not
     /// filter". A failure is logged, never raised as an `AppEvent::Error`: a
     /// half-typed query is not an error the user should be shown a popup about.
+    ///
+    /// With *Search in parked branches* on, a chat matched only in a parked
+    /// tail is in the answer too, under its own id (research §10.3).
     pub(super) fn handle_search_chats(&self, query: String) {
         let chat_ids = match crate::features::chat_search::to_fts_query(&query) {
             None => None,
             Some(fts) => match self.storage.cache().search_chats(&fts) {
-                Ok(ids) => Some(ids),
+                Ok(mut ids) => {
+                    for id in self.parked_chats(&fts) {
+                        if !ids.contains(&id) {
+                            ids.push(id);
+                        }
+                    }
+                    Some(ids)
+                }
                 Err(err) => {
                     // The length, not the text: what a user searched their
                     // conversations for is message text, which PRIVACY.md §6
@@ -110,7 +121,57 @@ impl Orchestrator {
         } else {
             cache.count_matching_messages(&fts).unwrap_or(hits.len())
         };
-        (self.group_hits(hits, query, sort), total)
+        // The parked tails' messages, when the person asked for them: a query
+        // and a cap of their own, under the same honest count.
+        let (parked, parked_total) = self.parked_hits(&fts);
+        (
+            self.group_hits(hits, parked, query, sort),
+            total + parked_total,
+        )
+    }
+
+    /// Whether the person's search also reads the parked tails
+    /// (`interface.search_parked_branches`, off by default).
+    fn searches_parked(&self) -> bool {
+        self.config.interface.search_parked_branches
+    }
+
+    /// The chats with a parked message matching `fts`; none while the setting
+    /// is off, or when the query fails (logged — the line's answer stands).
+    fn parked_chats(&self, fts: &str) -> Vec<Uuid> {
+        if !self.searches_parked() {
+            return Vec::new();
+        }
+        self.storage
+            .cache()
+            .search_parked_chats(fts)
+            .inspect_err(|err| {
+                tracing::warn!(error = %format!("{err:#}"),
+                    "chat content search over parked branches failed");
+            })
+            .unwrap_or_default()
+    }
+
+    /// The parked messages matching `fts`, capped, and how many match in all.
+    fn parked_hits(&self, fts: &str) -> (Vec<MessageHit>, usize) {
+        if !self.searches_parked() {
+            return (Vec::new(), 0);
+        }
+        let cache = self.storage.cache();
+        let hits = match cache.search_parked(fts, chat_search::HIT_CAP) {
+            Ok(hits) => hits,
+            Err(err) => {
+                tracing::warn!(error = %format!("{err:#}"),
+                    "message content search over parked branches failed");
+                return (Vec::new(), 0);
+            }
+        };
+        let total = if hits.len() < chat_search::HIT_CAP {
+            hits.len()
+        } else {
+            cache.count_parked(fts).unwrap_or(hits.len())
+        };
+        (hits, total)
     }
 
     /// Buckets hits into conversations **in the order the chat list is
@@ -130,13 +191,29 @@ impl Orchestrator {
     /// showing a result that cannot be opened is worse than showing one fewer.
     /// The same goes for a transcript the file no longer holds (its exchange
     /// was taken back).
-    fn group_hits(&self, hits: Vec<MessageHit>, query: &str, sort: SortMode) -> Vec<SearchGroup> {
+    ///
+    /// `parked` — the hits in the chats' parked tails (empty unless the
+    /// person's search reads them). A tail's hits are a group of their own
+    /// under the chat's, after its transcripts', in `/branch`'s order
+    /// ([`branch_groups`]); a chat matched only there heads them as it heads
+    /// its transcripts.
+    fn group_hits(
+        &self,
+        hits: Vec<MessageHit>,
+        parked: Vec<MessageHit>,
+        query: &str,
+        sort: SortMode,
+    ) -> Vec<SearchGroup> {
         let mut by_scope: HashMap<(Uuid, Option<Uuid>), Vec<MessageHit>> = HashMap::new();
         for hit in hits {
             by_scope
                 .entry((hit.chat_id, hit.sub_id))
                 .or_default()
                 .push(hit);
+        }
+        let mut parked_by_chat: HashMap<Uuid, Vec<MessageHit>> = HashMap::new();
+        for hit in parked {
+            parked_by_chat.entry(hit.chat_id).or_default().push(hit);
         }
 
         let mut chats: Vec<&Chat> = self
@@ -145,6 +222,7 @@ impl Orchestrator {
             .filter(|c| !c.is_hidden)
             .filter(|c| {
                 by_scope.contains_key(&(c.id, None))
+                    || parked_by_chat.contains_key(&c.id)
                     || c.children()
                         .any(|r| by_scope.contains_key(&(c.id, Some(r.id))))
             })
@@ -162,6 +240,7 @@ impl Orchestrator {
             groups.push(make_group(
                 chat.id,
                 None,
+                None,
                 &chat.title,
                 &chat.messages,
                 own,
@@ -172,6 +251,7 @@ impl Orchestrator {
                     groups.push(make_group(
                         run.id,
                         Some(chat.id),
+                        None,
                         &run.title,
                         &run.messages,
                         hits,
@@ -179,8 +259,46 @@ impl Orchestrator {
                     ));
                 }
             }
+            if let Some(hits) = parked_by_chat.remove(&chat.id) {
+                groups.extend(branch_groups(chat, hits, query));
+            }
         }
         groups
+    }
+
+    /// The earliest parked message of the chat `id` matching `query`, by the
+    /// order `/branch` lists the tails in and then by its place in its tail —
+    /// what `Enter` in the chat list's content mode falls back to when the
+    /// line holds no match (research §10.3). `None` while the person's search
+    /// does not read the parked tails, for a transcript, or when nothing
+    /// parked matches.
+    pub(super) fn first_parked_match(&self, id: Uuid, query: &str) -> Option<Uuid> {
+        if !self.searches_parked() {
+            return None;
+        }
+        let fts = chat_search::to_fts_query(query)?;
+        let chat = self.chats.iter().find(|c| c.id == id)?;
+        let ids = self
+            .storage
+            .cache()
+            .parked_matches_in_chat(&fts, id)
+            .inspect_err(|err| {
+                tracing::warn!(chat = %id, error = %format!("{err:#}"),
+                    "resolving the first parked match in a chat failed");
+            })
+            .ok()?;
+        let view = chat.branch_view();
+        ids.into_iter()
+            .filter_map(|message| {
+                let (tail, at) = chat.branches.iter().find_map(|b| {
+                    let at = b.messages.iter().position(|m| m.id == message)?;
+                    Some((b.first()?, at))
+                })?;
+                let listed = view.parked.iter().position(|info| info.first == tail)?;
+                Some(((listed, at), message))
+            })
+            .min()
+            .map(|(_, message)| message)
     }
 
     /// The earliest message of the conversation `id` matching `query`, in real
@@ -245,12 +363,61 @@ impl Orchestrator {
     }
 }
 
+/// The groups of a chat's parked hits: one per tail that holds some, in the
+/// order `/branch` lists the tails, titled by the tail's address
+/// (research §10.3).
+///
+/// Which tail a message is in is resolved **here**, from the chat, and not
+/// stored in the index: a switch that splits a tail then moves no row. A hit
+/// whose message is not in a tail any more — the index lags a save by a
+/// moment — is dropped, as a hit whose chat is gone is.
+fn branch_groups(chat: &Chat, hits: Vec<MessageHit>, query: &str) -> Vec<SearchGroup> {
+    let tail_of: HashMap<Uuid, Uuid> = chat
+        .branches
+        .iter()
+        .filter_map(|b| Some((b.first()?, b)))
+        .flat_map(|(first, b)| b.messages.iter().map(move |m| (m.id, first)))
+        .collect();
+    let mut by_tail: HashMap<Uuid, Vec<MessageHit>> = HashMap::new();
+    for hit in hits {
+        if let Some(first) = tail_of.get(&hit.message_id) {
+            by_tail.entry(*first).or_default().push(hit);
+        }
+    }
+    let view = chat.branch_view();
+    view.parked
+        .iter()
+        .zip(view.paths())
+        .filter_map(|(info, path)| {
+            let hits = by_tail.remove(&info.first)?;
+            let branch = chat
+                .branches
+                .iter()
+                .find(|b| b.first() == Some(info.first))?;
+            Some(make_group(
+                chat.id,
+                Some(chat.id),
+                Some(BranchTag {
+                    cause: branch.cause,
+                    parked_at: branch.parked_at,
+                    detached: info.detached,
+                }),
+                &branch_address(&path),
+                &branch.messages,
+                hits,
+                query,
+            ))
+        })
+        .collect()
+}
+
 /// One results group: the conversation's hits in its real message order,
 /// snippets built. `id` is the chat's or the transcript's; `parent` is set for
-/// a transcript.
+/// a transcript, and for a parked branch (`branch`), whose `id` is its chat's.
 fn make_group(
     id: Uuid,
     parent: Option<Uuid>,
+    branch: Option<BranchTag>,
     title: &str,
     messages: &[Message],
     mut hits: Vec<MessageHit>,
@@ -261,6 +428,7 @@ fn make_group(
     SearchGroup {
         chat_id: id,
         parent,
+        branch,
         title: title.to_string(),
         hits: hits
             .into_iter()
@@ -280,25 +448,33 @@ fn make_group(
 
 /// The messages of a chat as the index stores them: the chat's own with no
 /// `sub_id`, then every sub-agent transcript's with its run id — all under
-/// the parent's `chat_id`, since they share its file (spec §9.3.2, §11.2.1).
+/// the parent's `chat_id`, since they share its file (spec §9.3.2, §11.2.1) —
+/// and then the messages of its parked tails, marked so: they go to tables of
+/// their own, which the person's search reads when it is asked to and no
+/// tool's ever does (docs/research/chat-branches.md §10.3). They are indexed
+/// whatever the setting says, so the switch acts at once in both directions.
+/// A transcript whose exchange is parked is not: `children()` is the line's.
 ///
 /// Stage 1 indexes `message.text` only (fork F3): `thoughts` and tool-call
 /// JSON would inflate the index and match on words the user never wrote.
 /// Messages with nothing to index are skipped — a whitespace-only message
 /// (a cancelled stream, a tool turn) carries no searchable content.
 fn indexed_messages(chat: &Chat) -> Vec<IndexedMessage> {
-    let own = chat.messages.iter().map(|m| (None, m));
+    let own = chat.messages.iter().map(|m| (None, false, m));
     let runs = chat
         .children()
-        .flat_map(|run| run.messages.iter().map(move |m| (Some(run.id), m)));
+        .flat_map(|run| run.messages.iter().map(move |m| (Some(run.id), false, m)));
+    let parked = chat.branch_messages().map(|m| (None, true, m));
     own.chain(runs)
-        .filter(|(_, m)| !m.text.trim().is_empty())
-        .map(|(sub_id, m)| IndexedMessage {
+        .chain(parked)
+        .filter(|(_, _, m)| !m.text.trim().is_empty())
+        .map(|(sub_id, parked, m)| IndexedMessage {
             id: m.id,
             sub_id,
             role: role_str(m.role).to_string(),
             ts: m.timestamp.to_rfc3339(),
             text: m.text.clone(),
+            parked,
         })
         .collect()
 }
@@ -722,5 +898,41 @@ mod tests {
         assert_eq!(indexed[0].text, "видимый ответ");
         assert_eq!(indexed[0].role, "assistant");
         assert!(!indexed[0].ts.is_empty());
+    }
+
+    /// A chat's parked tails are indexed too, apart from its line: a pass over
+    /// a file that has a branch writes the tail's messages to the parked
+    /// tables — whatever the person's setting says, so the switch acts at
+    /// once — and leaves them out of every search of the lines
+    /// (docs/research/chat-branches.md §10.3).
+    #[test]
+    fn a_chats_parked_tails_are_indexed_apart_from_its_line() {
+        use crate::entities::chat_branch::ParkCause;
+        let (_d, storage) = storage();
+        let mut chat = chat_with(&["а пароль от лодки?", "пароль — ЗАНЗИБАР-42"]);
+        assert!(chat.park_tail(1, ParkCause::Regenerate, chrono::Utc::now()));
+        chat.push_message(Message::assistant("не помню"));
+        storage.json().save_chat(&chat).unwrap();
+
+        let rows = indexed_messages(&chat);
+        let parked: Vec<&str> = rows
+            .iter()
+            .filter(|m| m.parked)
+            .map(|m| m.text.as_str())
+            .collect();
+        assert_eq!(parked, ["пароль — ЗАНЗИБАР-42"]);
+        assert_eq!(rows.iter().filter(|m| !m.parked).count(), 2);
+
+        assert_eq!(reconcile(&storage).0, 1);
+        let cache = storage.cache();
+        let word = chat_search::to_fts_query("занзибар").unwrap();
+        assert!(cache.search_chats(&word).unwrap().is_empty());
+        assert_eq!(cache.search_parked_chats(&word).unwrap(), vec![chat.id]);
+
+        // Hidden, the chat leaves both.
+        chat.is_hidden = true;
+        storage.json().save_chat(&chat).unwrap();
+        reconcile(&storage);
+        assert!(cache.search_parked_chats(&word).unwrap().is_empty());
     }
 }

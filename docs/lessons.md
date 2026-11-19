@@ -2621,6 +2621,18 @@ budget) counts only what the first knows. A test that restores one file and keep
 other finds it; a round trip of both does not.
 — *Fabula PR 7, stories in mindfork's data*.
 
+**A row that some readers must never return goes in a table of its own, not behind a
+column.** The search index had seven queries over one table, the assistant's searches
+among them, when the messages of parked branches — replies the person had regenerated,
+exchanges they took back — were added for the person's own search. As a `parked` column
+they would have needed a `WHERE` in each of the seven, and in the eighth somebody writes
+next year; the one that forgot it would have handed an assistant what a fork cut, with
+every test of the other six green. In a table no existing query names, there is nothing
+to forget: the boundary is the schema's. Give the two tables one shape, and the code
+that writes them stays one function. The test is then one assertion per old query over
+a word only the new rows say.
+— *the person's search finds what is in a parked branch*.
+
 ## 9. Live runs and model behaviour
 
 **A wait for "the task is not running" is met by the moment before the task

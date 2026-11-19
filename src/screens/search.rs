@@ -24,7 +24,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use uuid::Uuid;
 
-use crate::features::chat_search::{SearchGroup, Snippet};
+use crate::entities::chat_branch::ParkCause;
+use crate::features::chat_search::{BranchTag, SearchGroup, Snippet};
 use crate::screens::awaited_chat::AwaitedChat;
 use crate::shared::i18n::Locale;
 use crate::shared::keys;
@@ -259,11 +260,23 @@ impl SearchScreen {
         None
     }
 
+    /// Whether the selected hit is in a parked branch — what `Enter` then
+    /// opens is the chat where the branch leaves it, and the footer says so.
+    fn selected_in_branch(&self) -> bool {
+        self.groups
+            .iter()
+            .flat_map(|g| g.hits.iter().map(move |_| g.branch.is_some()))
+            .nth(self.selected)
+            .unwrap_or(false)
+    }
+
     /// Builds the logical rows: a chat header per group, then its hits, with a
     /// blank line between groups. A sub-agent transcript's group sits right
     /// under its parent's, its header indented with a `└` — the chat list's
     /// tree, in the results (spec §11.2.1); a parent with no hits of its own
-    /// is a header saying "0 matches" that navigation never lands on.
+    /// is a header saying "0 matches" that navigation never lands on. A parked
+    /// branch's group sits there the same way, titled by the branch's address
+    /// with what parked it and when.
     fn rows(&self) -> Vec<(Line<'static>, Row)> {
         let p = &self.palette;
         let loc = self.loc;
@@ -277,16 +290,20 @@ impl SearchScreen {
                 Some(_) => "  └ ".to_string(),
                 None => format!("{} ", p.glyphs().title_marker),
             };
+            let (title, about) = match &group.branch {
+                Some(tag) => (
+                    loc.tf("ui.search.branch", &[("address", &group.title)]),
+                    format!(" · {}", branch_about(tag, loc)),
+                ),
+                None => (group.title.clone(), String::new()),
+            };
             rows.push((
                 Line::from(vec![
                     Span::styled(marker, p.accent_style()),
-                    Span::styled(
-                        group.title.clone(),
-                        Style::new().fg(p.text).add_modifier(Modifier::BOLD),
-                    ),
+                    Span::styled(title, Style::new().fg(p.text).add_modifier(Modifier::BOLD)),
                     Span::styled(
                         format!(
-                            "  {}",
+                            "{about}  {}",
                             loc.tf("ui.search.matches", &[("n", &group.hits.len().to_string())])
                         ),
                         p.muted_style(),
@@ -328,7 +345,12 @@ impl SearchScreen {
         let mut hk: Vec<(&'static str, &'static str, bool)> =
             vec![("↑↓ PgUp/Dn Home/End", loc.t("ui.search.hk.select"), false)];
         if !self.hits().is_empty() {
-            hk.push(("Enter", loc.t("ui.search.hk.open"), false));
+            let open = if self.selected_in_branch() {
+                "ui.search.hk.open_branch"
+            } else {
+                "ui.search.hk.open"
+            };
+            hk.push(("Enter", loc.t(open), false));
         }
         hk.extend([
             ("F1", loc.t("ui.search.hk.help"), false),
@@ -529,6 +551,27 @@ fn role_label(role: &str, loc: &'static Locale) -> String {
     }
 }
 
+/// What a parked branch's header says after its address: what parked it, the
+/// day, and that it is detached when it is.
+fn branch_about(tag: &BranchTag, loc: &Locale) -> String {
+    let cause = loc.t(match tag.cause {
+        ParkCause::Fork => "ui.search.branch.cause.fork",
+        ParkCause::Switch => "ui.search.branch.cause.switch",
+        ParkCause::Regenerate => "ui.search.branch.cause.regenerate",
+        ParkCause::Takeback => "ui.search.branch.cause.takeback",
+    });
+    let day = tag
+        .parked_at
+        .with_timezone(&chrono::Local)
+        .format("%Y-%m-%d");
+    let mut about = format!("{cause} · {day}");
+    if tag.detached {
+        about.push_str(" · ");
+        about.push_str(loc.t("ui.branch.pick.detached"));
+    }
+    about
+}
+
 /// The stored RFC 3339 timestamp as a local date/time; an unparsable one is
 /// shown as stored (the index is derived data — it must not be able to blank a
 /// row).
@@ -575,6 +618,7 @@ mod tests {
         let groups = vec![
             SearchGroup {
                 parent: None,
+                branch: None,
                 chat_id: Uuid::new_v4(),
                 title: "Первый чат".into(),
                 hits: vec![
@@ -584,6 +628,7 @@ mod tests {
             },
             SearchGroup {
                 parent: None,
+                branch: None,
                 chat_id: Uuid::new_v4(),
                 title: "Второй чат".into(),
                 hits: vec![hit("третье сообщение про МАРКЕР", "маркер")],
@@ -631,12 +676,14 @@ mod tests {
         let groups = vec![
             SearchGroup {
                 parent: None,
+                branch: None,
                 chat_id: parent,
                 title: "Родитель".into(),
                 hits: vec![],
             },
             SearchGroup {
                 parent: Some(parent),
+                branch: None,
                 chat_id: child,
                 title: "Критик".into(),
                 hits: vec![hit("сообщение про МАРКЕР внутри", "маркер")],
@@ -675,6 +722,95 @@ mod tests {
         );
         let dumped = dump(&mut s, 60, 12);
         assert!(dumped.contains("└ Критик"), "{dumped}");
+    }
+
+    /// A parked branch's hits (*Search in parked branches*) are drawn as a
+    /// transcript's are — under their chat, branched with `└` — the header
+    /// naming the branch by its address, what parked it and the day. `Enter`
+    /// on such a hit asks for the **chat** with the parked message, and the
+    /// footer says what that opens: the place the branch leaves, not the
+    /// message (docs/research/chat-branches.md §10.3).
+    #[test]
+    fn a_parked_branchs_group_sits_under_its_chat_and_says_what_enter_opens() {
+        use chrono::TimeZone;
+        let chat = Uuid::new_v4();
+        let parked_at = chrono::Local
+            .with_ymd_and_hms(2026, 11, 18, 12, 0, 0)
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let tag = |cause, detached| {
+            Some(BranchTag {
+                cause,
+                parked_at,
+                detached,
+            })
+        };
+        let groups = vec![
+            SearchGroup {
+                parent: None,
+                branch: None,
+                chat_id: chat,
+                title: "Лодка".into(),
+                hits: vec![hit("на линии тоже МАРКЕР", "маркер")],
+            },
+            SearchGroup {
+                parent: Some(chat),
+                branch: tag(ParkCause::Regenerate, false),
+                chat_id: chat,
+                title: "6/1".into(),
+                hits: vec![hit("в ветке был МАРКЕР", "маркер")],
+            },
+            SearchGroup {
+                parent: Some(chat),
+                branch: tag(ParkCause::Fork, true),
+                chat_id: chat,
+                title: "0/1".into(),
+                hits: vec![hit("и в потерянной МАРКЕР", "маркер")],
+            },
+        ];
+        let mut s = SearchScreen::new("маркер".into(), groups, 3, Palette::default(), ru());
+        let lines: Vec<String> = s
+            .rows()
+            .iter()
+            .map(|(l, _)| {
+                l.spans
+                    .iter()
+                    .map(|sp| sp.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect();
+        assert_eq!(lines.len(), 6, "no spacer before a branch: {lines:?}");
+        assert_eq!(
+            lines[2],
+            "  └ ветка 6/1 · перегенерированный ответ · 2026-11-18  совпадений: 1"
+        );
+        assert_eq!(
+            lines[4],
+            "  └ ветка 0/1 · отложена форком · 2026-11-18 · без опоры  совпадений: 1"
+        );
+
+        let enter = |s: &SearchScreen| -> &'static str {
+            s.hints()
+                .into_iter()
+                .find(|(k, _, _)| *k == "Enter")
+                .map(|(_, label, _)| label)
+                .unwrap()
+        };
+        // On the line's hit: the message. On a branch's: where it leaves.
+        assert_eq!(enter(&s), "открыть на сообщении");
+        s.handle_key(key(KeyCode::Down));
+        assert_eq!(enter(&s), "открыть там, где отходит ветка");
+        assert_eq!(
+            s.handle_key(key(KeyCode::Enter)),
+            Some(SearchIntent::OpenHit {
+                chat,
+                message: s.groups[1].hits[0].message_id,
+                query: "маркер".into(),
+            }),
+            "the chat is what opens; the orchestrator places the message"
+        );
+        let dumped = dump(&mut s, 80, 14);
+        assert!(dumped.contains("└ ветка 6/1"), "{dumped}");
     }
 
     /// Navigation is over hits, so a chat header between two hits is stepped

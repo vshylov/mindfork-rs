@@ -166,6 +166,70 @@ impl BranchView {
     pub fn is_empty(&self) -> bool {
         self.parked.is_empty()
     }
+
+    /// The address of every parked tail, in [`Self::parked`]'s order: the
+    /// `(number, variant)` of each place from the line down to the tail — one
+    /// pair for a tail that continues from the line, the path through the
+    /// tails that hold it for one inside another. A detached tail has no
+    /// place to be named by, and is `(0, n)`: its turn among the detached.
+    ///
+    /// Tree order is what makes this one pass: a row's parent is the nearest
+    /// row above it that is one level out.
+    pub fn paths(&self) -> Vec<BranchPath> {
+        let mut trail: Vec<BranchPath> = Vec::new();
+        let mut detached = 0u16;
+        self.parked
+            .iter()
+            .map(|info| {
+                if info.detached {
+                    detached += 1;
+                    return vec![(0, detached)];
+                }
+                trail.truncate(usize::from(info.depth));
+                let mut path = trail.last().cloned().unwrap_or_default();
+                path.push((info.number, info.variant));
+                trail.push(path.clone());
+                path
+            })
+            .collect()
+    }
+
+    /// The address of the tail that starts with `first`, when one is parked.
+    pub fn path_of(&self, first: Uuid) -> Option<BranchPath> {
+        let at = self.parked.iter().position(|info| info.first == first)?;
+        self.paths().into_iter().nth(at)
+    }
+}
+
+/// A parked tail's address: the `(number, variant)` of every place from the
+/// line down to it ([`BranchView::paths`]). The last pair is what
+/// `/branch N K` takes for a tail that continues from the line.
+pub type BranchPath = Vec<(u32, u16)>;
+
+/// An address as it is written wherever a branch is named — the assistant's
+/// tools, a search result, a note: `11/1`, and `5/1 > 7/1` for a tail inside
+/// another.
+pub fn branch_address(path: &[(u32, u16)]) -> String {
+    path.iter()
+        .map(|(number, variant)| format!("{number}/{variant}"))
+        .collect::<Vec<_>>()
+        .join(" > ")
+}
+
+/// Where a parked message stands, for something that found it and has to show
+/// the person where it is without moving the line ([`Chat::parked_place`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParkedPlace {
+    /// The first message of the tail that holds it — the tail's name.
+    pub first: Uuid,
+    /// The message of the line to look at: the one that stands where the
+    /// tail — or, for a tail inside another, the outermost tail on its way
+    /// to the line — leaves it, which is the bubble the variants mark is
+    /// drawn on; the line's last message when the tail continues from the
+    /// line's end. `None` — the tail is detached, or the line is empty.
+    pub leaves_at: Option<Uuid>,
+    /// The tail's anchor reaches no message of the line.
+    pub detached: bool,
 }
 
 /// Where a tail's anchor stands.
@@ -342,6 +406,48 @@ impl Chat {
     /// `deleted` archive is not among them: what it holds is gone.
     pub fn branch_messages(&self) -> impl Iterator<Item = &Message> {
         self.branches.iter().flat_map(|b| b.messages.iter())
+    }
+
+    /// Where the parked message `message` stands; `None` when no parked tail
+    /// holds it — it is on the line, or not the chat's at all. Changes
+    /// nothing: the walk to the line is [`Self::switch_to`]'s, without the
+    /// switch.
+    pub fn parked_place(&self, message: Uuid) -> Option<ParkedPlace> {
+        let holder = self
+            .branches
+            .iter()
+            .position(|b| b.messages.iter().any(|m| m.id == message))?;
+        let first = self.branches[holder].first()?;
+        let detached = ParkedPlace {
+            first,
+            leaves_at: None,
+            detached: true,
+        };
+        let mut seen = HashSet::from([holder]);
+        let mut at = holder;
+        let cut = loop {
+            match self.home(self.branches[at].after) {
+                Home::Line(cut) => break cut,
+                Home::Nowhere => return Some(detached),
+                Home::Tail { branch, .. } => {
+                    // A ring of tails — a file edited by hand — ends the walk
+                    // (research §3.1).
+                    if !seen.insert(branch) {
+                        return Some(detached);
+                    }
+                    at = branch;
+                }
+            }
+        };
+        Some(ParkedPlace {
+            first,
+            leaves_at: self
+                .messages
+                .get(cut)
+                .or_else(|| self.messages.last())
+                .map(|m| m.id),
+            detached: false,
+        })
     }
 
     fn on_line(&self, id: Uuid) -> bool {
@@ -784,6 +890,87 @@ mod tests {
                 },
             ]
         );
+    }
+
+    /// A tail is addressed by the places from the line down to it, and a
+    /// parked message is placed without moving anything: the tail that holds
+    /// it, and the message of the line that stands where that tail — or the
+    /// outermost tail on its way to the line — leaves it.
+    #[test]
+    fn a_parked_message_is_addressed_and_placed_without_a_switch() {
+        let mut chat = three_exchanges();
+        let original = chat.messages.clone();
+        assert!(chat.fork_at(4, t(10)));
+        chat.messages.extend([user("q3'", 11), reply("a3'", 12)]);
+        assert!(chat.fork_at(2, t(20)));
+        chat.messages.extend([user("q2''", 21), reply("a2''", 22)]);
+        let before = chat.clone();
+
+        let view = chat.branch_view();
+        assert_eq!(view.paths(), vec![vec![(3, 1)], vec![(3, 1), (5, 1)]]);
+        let addresses: Vec<String> = view.paths().iter().map(|p| branch_address(p)).collect();
+        assert_eq!(addresses, ["3/1", "3/1 > 5/1"]);
+        assert_eq!(view.path_of(original[4].id), Some(vec![(3, 1), (5, 1)]));
+        assert_eq!(view.path_of(original[5].id), None, "not a tail's first");
+
+        // a2 is in the tail that continues from the line after a1: the line's
+        // own variant of that place is q2''.
+        let standing = chat.messages[2].id;
+        assert_eq!(
+            chat.parked_place(original[3].id),
+            Some(ParkedPlace {
+                first: original[2].id,
+                leaves_at: Some(standing),
+                detached: false,
+            })
+        );
+        // a3 is in the tail inside it — named by its own first message, and
+        // looked at where the outer tail leaves the line.
+        assert_eq!(
+            chat.parked_place(original[5].id),
+            Some(ParkedPlace {
+                first: original[4].id,
+                leaves_at: Some(standing),
+                detached: false,
+            })
+        );
+        // A message of the line, and one that is not the chat's.
+        assert_eq!(chat.parked_place(chat.messages[0].id), None);
+        assert_eq!(chat.parked_place(Uuid::new_v4()), None);
+        assert_eq!(chat, before, "a look moves nothing");
+
+        // A tail that continues from the line's end: there is no variant
+        // standing there, so the place to look at is the line's last message.
+        let mut fresh = three_exchanges();
+        assert!(fresh.fork_at(4, t(10)));
+        let last = fresh.messages.last().unwrap().id;
+        let parked = fresh.branches[0].messages[1].id;
+        assert_eq!(
+            fresh.parked_place(parked).and_then(|p| p.leaves_at),
+            Some(last)
+        );
+
+        // A detached tail is named and has no place; so is a ring of tails.
+        let mut lost = three_exchanges();
+        lost.branches.push(Branch {
+            after: Some(Uuid::new_v4()),
+            messages: vec![user("lost", 30)],
+            parked_at: t(31),
+            cause: ParkCause::Fork,
+            compaction: None,
+            reflected_upto: None,
+        });
+        let id = lost.branches[0].messages[0].id;
+        assert_eq!(
+            lost.parked_place(id),
+            Some(ParkedPlace {
+                first: id,
+                leaves_at: None,
+                detached: true,
+            })
+        );
+        assert_eq!(lost.branch_view().paths(), vec![vec![(0, 1)]]);
+        assert_eq!(branch_address(&[(0, 1)]), "0/1");
     }
 
     /// A variant's figure is its place among the variants by their first

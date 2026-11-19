@@ -1297,6 +1297,30 @@ fn interface_has_model_name_toggle() {
     assert!(field_desc(&s, FieldId::IModelName).is_some());
 }
 
+/// *Search in parked branches* is a setting of the app — the person's search
+/// is not a profile's — in the "Behavior" group, off until switched on, and
+/// described: what it finds, and that `Enter` on such a match switches
+/// nothing (docs/research/chat-branches.md §10.3).
+#[test]
+fn interface_has_the_search_in_parked_branches_toggle() {
+    let mut s = screen();
+    let rows = s.interface_fields();
+    let row = rows
+        .iter()
+        .find(|r| r.id == FieldId::ISearchBranches)
+        .expect("the row is in the Interface section");
+    assert!(
+        matches!(row.kind, FieldKind::Toggle(false)),
+        "off by default"
+    );
+    match s.toggle_field(FieldId::ISearchBranches) {
+        Some(SettingsIntent::SaveConfig(c)) => assert!(c.interface.search_parked_branches),
+        other => panic!("expected SaveConfig, got {other:?}"),
+    }
+    let desc = field_desc(&s, FieldId::ISearchBranches).expect("the toggle is described");
+    assert!(!desc.is_empty());
+}
+
 /// The token counter's two notes are toggles of their own (spec §11.3,
 /// §11.6): on by default, and each one turned off leaves the other alone.
 #[test]

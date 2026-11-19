@@ -30,9 +30,10 @@
 //! **`branch_search`** finds the tail that says a word, where the list shows
 //! first lines: the words of a query matched against the text of every parked
 //! message of one conversation, by the rule the other searches use
-//! ([`QueryWords`]). It scans — the full-text index holds no parked row for a
-//! tool to find — and a hit names its tail's address and the page of that
-//! tail's transcript, which is what the reader takes.
+//! ([`QueryWords`]). It scans — the full-text index keeps the parked rows in
+//! tables that are the person's search's alone, which no tool's query reads
+//! (`shared/storage/cache`) — and a hit names its tail's address and the page
+//! of that tail's transcript, which is what the reader takes.
 //!
 //! **Both are off by default** (`enabled_by_default` = `false`), each a switch
 //! of its own: since `Ctrl+R` and `Ctrl+E` park what they cut, a tail is also
@@ -49,7 +50,7 @@ use chrono::{DateTime, Utc};
 
 use crate::entities::attachment::paginate;
 use crate::entities::chat::Chat;
-use crate::entities::chat_branch::ParkCause;
+use crate::entities::chat_branch::{BranchPath, ParkCause, branch_address as address};
 use crate::entities::message::{Message, MessageRole};
 use crate::entities::profile::ToolId;
 use crate::features::chat_search::{
@@ -86,10 +87,6 @@ const KNOWN_CAP: usize = 12;
 
 /// How many candidates an ambiguous `chat` reference lists at most.
 const AMBIGUOUS_CAP: usize = 6;
-
-/// A tail's address: the `(number, variant)` of every place from the line
-/// down to the tail — one pair for a tail that continues from the line.
-pub type BranchPath = Vec<(u32, u16)>;
 
 /// One parked tail, as the reader lists and reads it.
 pub struct ParkedBranch {
@@ -149,30 +146,15 @@ impl BranchShelf {
     /// The shelf of `chat`'s parked tails; `None` when it has none.
     pub fn of(chat: &Chat, loc: &Locale) -> Option<Self> {
         let view = chat.branch_view();
-        // The path of the tail last listed at each depth: a row's parent is the
-        // nearest row above it that is one level out, which is what tree order
-        // means (`Chat::branch_view`).
-        let mut trail: Vec<BranchPath> = Vec::new();
-        let mut detached = 0u16;
         let branches: Vec<ParkedBranch> = view
             .parked
             .iter()
-            .filter_map(|info| {
+            .zip(view.paths())
+            .filter_map(|(info, path)| {
                 let branch = chat
                     .branches
                     .iter()
                     .find(|b| b.first() == Some(info.first))?;
-                let path = if info.detached {
-                    // No place to name it by: its turn among the detached.
-                    detached += 1;
-                    vec![(0, detached)]
-                } else {
-                    trail.truncate(usize::from(info.depth));
-                    let mut path = trail.last().cloned().unwrap_or_default();
-                    path.push((info.number, info.variant));
-                    trail.push(path.clone());
-                    path
-                };
                 Some(ParkedBranch {
                     path,
                     of: info.of,
@@ -828,15 +810,6 @@ fn bad_page(loc: &Locale, page: usize, total: usize) -> ToolOutcome {
         "tool.branch_read.bad_page",
         &[("page", &page.to_string()), ("total", &total.to_string())],
     ))
-}
-
-/// An address as the list prints it and a call hands it back: `11/1`, and
-/// `5/1 > 7/1` for a tail inside another.
-fn address(path: &[(u32, u16)]) -> String {
-    path.iter()
-        .map(|(number, variant)| format!("{number}/{variant}"))
-        .collect::<Vec<_>>()
-        .join(" > ")
 }
 
 /// The address of the tail a nested tail is inside; `None` for a tail that

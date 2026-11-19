@@ -345,6 +345,7 @@ mod tests {
                 role: format!("{:?}", m.role).to_lowercase(),
                 ts: m.timestamp.to_rfc3339(),
                 text: m.text.clone(),
+                parked: false,
             })
             .collect();
         ctx.storage

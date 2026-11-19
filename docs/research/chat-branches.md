@@ -31,6 +31,9 @@ and H3 the other way — a hit in a parked branch opens the chat on its line and
 the branch, and the switch stays the person's. **Its first stage is built**
 (2026-11-19, `feat/branch-search`): the assistant's search, `branch_search`. Live
 **GO** on Gemma 4 31B and on Gemini, the control red; what the build found is §10.8.
+**Its second stage is built** (2026-11-19, `feat/branch-search-screen`): the person's
+search — the setting, the index's parked tables, the results screen and the chat
+list. No model takes part; what the build found is §10.9.
 
 The roadmap holds two neighbouring ideas (docs/roadmap.md): "regeneration with
 variations" and "editing any message, not just the last, with history branching".
@@ -1299,3 +1302,49 @@ Built as designed; what the build changed or found:
   model reports that it found none, and the deterministic test of the same path
   fails.
 - **The settings' pictures were regenerated**: the profile's list is one row longer.
+
+### 10.9 As built: the person's search (2026-11-19)
+
+Built as §10.3 designed it, with H3 as the owner decided; what the build added or
+found:
+
+- **The address moved to the entity.** The reader built a tail's path and wrote it
+  out in `features/tools`; the results' header and the note needed the same figure.
+  `BranchView::paths`, `BranchView::path_of` and `branch_address` are the chat
+  entity's now, and the tools call them. One address, three readers: the assistant,
+  the search's header, the note.
+- **Where a look lands: `Chat::parked_place`.** The walk from a tail to the line is
+  `switch_to`'s, without the switch: the tail that holds the message, and the
+  message of the line that stands where the outermost tail on its way leaves it —
+  the bubble the variants mark is drawn on. A tail that continues from the line's
+  end has no variant standing there; the place is then the line's last message.
+- **One shape for the two tables.** `parked` has a `sub_id` nothing sets, so that
+  it is `messages` column for column and one diff writes both. A message that a
+  regeneration or a switch moves between the line and a tail leaves one table and
+  enters the other in the chat's one transaction; what did not move is not
+  rewritten.
+- **A jump is always answered.** A detached tail gives the feed nothing to stand on,
+  and a plain switch to the chat already open is a no-op — but the results screen
+  stays up until its chat is activated. An open of a parked hit activates the chat
+  whether or not there is a focus.
+- **Stale results are resolved at the open, whatever the setting says.** The place
+  of a message is looked up when `Enter` is pressed. So a hit found on the line and
+  parked since — a regeneration made while the results were stashed — opens where
+  its branch leaves and is named, where it used to land at the chat's end in
+  silence; and a hit found in a branch that has come onto the line since opens on
+  its own message.
+- **The list's `Enter` needed a first parked match.** `OpenChatAtFirstMatch` lands
+  on the line's first match; a chat the filter kept for a branch alone has none. It
+  takes the first parked one by `/branch`'s order and then by its place in its tail,
+  and opens as a hit of the results screen does.
+- **The hint says what `Enter` opens.** On a branch's hit the footer reads "open
+  where the branch leaves": the message under the cursor is not where the feed will
+  stand.
+- **No model, a pty instead.** The built binary on a seeded data root: nothing found
+  with the setting off; the row found by the settings' own search and switched on;
+  the branch's group under its chat, a nested one under its path; `Enter` with the
+  line, the mark and the note in view, and the chat's file unchanged; back to the
+  results and to the list, still filtered, with the chats matched only in branches.
+- **What the track leaves** (roadmap): a read-only view of a parked branch, so that
+  a hit can be read in place; `Ctrl+F` in a chat saying how many matches its
+  branches hold; removing a branch; a mark of branches on the chat card.

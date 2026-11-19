@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (77)
+## Entries (78)
 
 - Post-M9: full-screen chat list window + auto-title (done)
 - Post-M9: edit/regenerate the last reply (done)
@@ -89,6 +89,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the notes screen, `/notes` (done)
 - Post-M9: a persona written into the settings reaches the open chat; `/system` (done)
 - Post-M9: the help's `/profile system` line names the chats not yet begun (done)
+- Post-M9: the person's search finds what is in a parked branch (done)
 
 ### Post-M9: full-screen chat list window + auto-title (done)
 - **The chat list window (`Ctrl+L`) is now full-screen** (`widgets/chat_list.rs`):
@@ -4078,3 +4079,94 @@ line ("in new chats") stays — a greeting does not reach a chat already created
 
 A text change in two locale bundles: no live run needed. The help's own gates (every row's
 key present in every bundle, no unsubstituted placeholder) run in the suite.
+
+### Post-M9: the person's search finds what is in a parked branch (done)
+
+The second of two stages of "search in parked branches"
+([docs/research/chat-branches.md](../research/chat-branches.md) §10; the first, the
+assistant's `branch_search`, is in [tools.md](tools.md)). The owner asked for the
+search to be optional and off by default in the settings, and decided the fork this
+stage turned on (H3, 2026-11-19): a hit in a parked branch **opens the chat on its
+line and switches nothing**.
+
+- **The setting**: *Search in parked branches* (`interface.search_parked_branches`,
+  Settings → Interface → Behavior), off. The app's, not a profile's — the search it
+  widens crosses the profiles' chats as the list does. An additive field: no schema
+  step. It is the person's search only; the assistant's is a switch among a
+  profile's tools.
+- **The index** (`cache.db`, `CACHE_SCHEMA` 2 → 3; the file rebuilds itself). The
+  messages of the chats' parked tails go to tables of their own, `parked` and
+  `parked_fts`, of one shape with `messages`, so one diff (`diff_rows`) writes both
+  in the chat's one transaction. **Not a column on `messages`**: seven queries read
+  that table, the tools' among them, and a parked row would then be one forgotten
+  `WHERE` away from an assistant's search — what F1 decided against. In a table no
+  existing query names, the boundary is the schema's. `IndexedMessage::parked` says
+  which table a message is for; `indexed_messages` adds `Chat::branch_messages`.
+- **Indexed whatever the setting says**, so the switch acts at once both ways, with
+  no pass over the chats. The index is derived, stays out of a backup, and holds
+  nothing the chat's file does not.
+- **A row knows its chat and its message, not its branch.** Which tail a message is
+  in, that tail's address and its place in `/branch`'s order are resolved by the
+  orchestrator from the chat it holds (`branch_groups`), as a hit's position in its
+  conversation already is. A switch that splits a tail then moves no row.
+- **The address became the entity's.** The reader's tool built a tail's path
+  (`5/1 > 7/1`) and wrote it out itself; the search's header and the note need the
+  same figure. `BranchView::paths`, `BranchView::path_of` and `branch_address` are in
+  `entities/chat_branch.rs` now, and the tools use them.
+- **The results screen** (`Ctrl+G`, `/search`): a tail's hits are a group under the
+  chat's, after its own hits and its transcripts', in `/branch`'s order —
+  `└ branch 6/1 · a regenerated reply · 2026-11-18`, a detached one marked. A chat
+  matched only in a branch heads its branches' groups with "matches: 0", as it heads
+  its transcripts'. The parked search has a cap of its own; "showing N of M" counts
+  both. `SearchGroup::branch` carries what the header says; the group's `chat_id` is
+  the chat's, since the chat is what such a hit opens.
+- **`Enter`** (`Orchestrator::open_at_parked`, `Chat::parked_place`): the chat opens
+  on its line, the feed on the message that stands where the tail leaves it — the
+  bubble with the variants mark; for a tail inside another, where the outermost tail
+  on its way to the line leaves — and a note names the branch and the way to it:
+  `/branch N K` for a tail that continues from the line, the list `/branch` opens for
+  a nested one. A detached tail has no place: the chat is activated all the same —
+  the screen that asked is waiting for it, the open chat included — and the note says
+  the branch cannot be brought back. No query rides with the focus: the message
+  looked at is not the one that matched. The footer's hint reads "open where the
+  branch leaves" while such a hit is selected.
+- **Opened by where the message stands then**, not by the group it was drawn in: the
+  results are a snapshot, and the person may switch a branch and come back to them.
+  This runs whatever the setting says — a hit found on the line and parked since by a
+  regeneration used to land at the chat's tail in silence.
+- **The chat list's content filter** keeps a chat matched only in a branch. `Enter`
+  there has no message of the line to land on; it opens the chat where the first such
+  branch (in `/branch`'s order) leaves the line, with the same note. The list picks a
+  chat, not a branch, so it switches none.
+- **Unchanged, and said so**: `Ctrl+F` in a chat matches what is drawn; a sub-agent
+  transcript whose exchange is parked is out of the index, as it is out of the chat
+  list; the assistant's searches read the lines whatever the setting says.
+- **Tests.** The index: a parked message is found by the four parked queries and by
+  none of the seven that existed — one assertion per query, the short-word scan
+  among them; a message moves between the tables in one write and what did not move
+  is not rewritten; a hidden or forgotten chat loses its parked rows; the cap and the
+  honest count; the orphan check covers both pairs. The reconciliation: a file with a
+  branch is indexed apart from its line. The orchestrator: off — nothing, on the
+  screen and in the list; on — the branch's group under the chat with `/branch`'s
+  address, nested and detached tails in order; `Enter` leaves the line and the tails
+  as they were and focuses the standing variant, for a tail on the line, a nested and
+  a detached one, the open chat included; the list's `Enter`; a hit that came onto the
+  line since. `chat_search` over an index that holds a parked row: nothing. The
+  screen: the header, the hint. The settings: the row, off, described. The entity:
+  paths, addresses, places, and that a look moves nothing.
+- **No live run with a model: none takes part.** A pty run of the built binary on a
+  seeded data root instead: with the setting off `/search zanzibar` finds nothing;
+  the settings' search finds the row, `Space` switches it on; the same search then
+  shows `◆ boat  matches: 0` / `└ branch 6/1 · a regenerated reply · …  matches: 1`
+  and, for a chat forked above its redone reply, `└ branch 3/1 > 6/1`; `Enter` opens
+  the chat with `‹2/2› #6` in view and the note under it, the line as it was; `Esc`
+  goes back to the results, and from them to the list still filtered by the word,
+  which holds the two chats matched only in branches.
+- **The owner's look** (2026-11-19, Windows Terminal over SSH): the setting, the
+  branches' groups in the results and the open on the line with its note work as
+  intended.
+- **The settings' pictures were regenerated**: the Interface section is one row
+  longer.
+- **Docs.** The research's §10.9; spec §5.2, §9.17, §11.2, §11.2.1, §11.6, §11.7;
+  architecture §3; ADR 0015 point 11; the manual; CHANGELOG; the roadmap (done, and
+  what the track leaves); docs/lessons.md §8. Unit tests 5104 green, 328 `#[ignore]`.

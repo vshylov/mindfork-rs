@@ -28,6 +28,15 @@
 //!   `(message_id, text_hash)` reduces a streaming save to **one** row deleted and
 //!   re-inserted. See [`CacheDb::index_chat`].
 //!
+//! **The parked tails have tables of their own** (`parked`, `parked_fts` —
+//! docs/research/chat-branches.md §10.3). A chat's branches — what a fork, a
+//! regeneration or a take-back set aside — are searched only by the person,
+//! and only when they switched that on; every tool reads the lines. Kept in
+//! `messages` behind a column, a parked row would be one forgotten `WHERE`
+//! away from an assistant's search. In a table no existing query names, that
+//! boundary is the schema's. The two tables have one shape, so one diff
+//! ([`CacheDb::index_chat`]) writes both.
+//!
 //! **FSD.** Query escaping (research §4) is pure logic and lives in `features`,
 //! which `shared` may not depend on. So [`CacheDb::search_chats`] takes an
 //! **already-escaped** FTS5 query, and `app` — which may use both — calls
@@ -46,7 +55,7 @@ use uuid::Uuid;
 /// mismatch in either direction is answered by wiping the file — unlike
 /// `data.db` there is nothing here worth migrating, so this constant is bumped
 /// freely whenever the schema changes.
-pub const CACHE_SCHEMA: u32 = 2;
+pub const CACHE_SCHEMA: u32 = 3;
 
 /// One message as it goes into the index. `role`/`ts` are unused by stage 1's
 /// chat-list filter; they are stored because stage 2's message-level screen
@@ -67,6 +76,11 @@ pub struct IndexedMessage {
     pub ts: String,
     /// The indexed text. Stage 1 indexes `message.text` only (fork F3).
     pub text: String,
+    /// The message is in a parked tail of the chat, not on its line: it goes
+    /// to the parked tables, which only the person's search reads (module
+    /// doc). Never set together with `sub_id` — a transcript whose exchange
+    /// is parked is out of the index, as it is out of the chat list.
+    pub parked: bool,
 }
 
 /// One matching message, as [`CacheDb::search_messages`] returns it: everything
@@ -177,7 +191,10 @@ impl CacheDb {
     }
 
     /// Brings one chat's index in line with `messages`, and records the file
-    /// state it was built from.
+    /// state it was built from. `messages` is all of the file that is indexed:
+    /// the line's messages and its transcripts', and the parked tails'
+    /// ([`IndexedMessage::parked`]), which are written to tables of their own
+    /// by the same diff.
     ///
     /// Diffs at **message level** on `(message_id, text_hash)`: a row whose text
     /// is unchanged is left untouched, so a streaming save that appends to the
@@ -256,54 +273,11 @@ impl CacheDb {
             }
         }
 
-        // What is indexed for this chat right now: message_id → (rowid, hash).
-        let existing: HashMap<String, (i64, i64)> = {
-            let mut stmt =
-                tx.prepare("SELECT message_id, id, text_hash FROM messages WHERE chat_id = ?1")?;
-            stmt.query_map(params![chat], |r| {
-                Ok((r.get::<_, String>(0)?, (r.get::<_, i64>(1)?, r.get(2)?)))
-            })?
-            .collect::<rusqlite::Result<HashMap<_, _>>>()?
-        };
-
-        let mut seen: HashSet<String> = HashSet::with_capacity(messages.len());
-        for msg in messages {
-            let message_id = msg.id.to_string();
-            // A malformed chat with a repeated message id would otherwise violate
-            // UNIQUE(chat_id, message_id) and leave it unindexed entirely. This is
-            // derived data — tolerate the input and keep the first occurrence.
-            if !seen.insert(message_id.clone()) {
-                continue;
-            }
-            let hash = text_hash(&msg.text);
-            match existing.get(&message_id) {
-                Some((_, old)) if *old == hash => continue, // unchanged — leave the row alone
-                Some((rowid, _)) => {
-                    tx.execute("DELETE FROM messages WHERE id = ?1", params![rowid])?;
-                }
-                None => {}
-            }
-            tx.execute(
-                "INSERT INTO messages(chat_id, sub_id, message_id, text_hash, role, ts, text)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![
-                    chat,
-                    msg.sub_id.map(|id| id.to_string()),
-                    message_id,
-                    hash,
-                    msg.role,
-                    msg.ts,
-                    msg.text
-                ],
-            )?;
-        }
-
-        // Messages that disappeared (history truncation: Ctrl+E / regenerate).
-        for (message_id, (rowid, _)) in &existing {
-            if !seen.contains(message_id) {
-                tx.execute("DELETE FROM messages WHERE id = ?1", params![rowid])?;
-            }
-        }
+        // The line and the parked tails, each against its own table. A message
+        // a switch or a regeneration moved between them leaves one and enters
+        // the other here, in this one transaction.
+        diff_rows(&tx, LINE, &chat, messages.iter().filter(|m| !m.parked))?;
+        diff_rows(&tx, PARKED, &chat, messages.iter().filter(|m| m.parked))?;
 
         tx.execute(
             "INSERT INTO indexed_chats(chat_id, mtime_ms, size) VALUES (?1, ?2, ?3)
@@ -322,6 +296,7 @@ impl CacheDb {
         let tx = conn.transaction()?;
         let chat = chat_id.to_string();
         tx.execute("DELETE FROM messages WHERE chat_id = ?1", params![chat])?;
+        tx.execute("DELETE FROM parked WHERE chat_id = ?1", params![chat])?;
         tx.execute(
             "DELETE FROM indexed_chats WHERE chat_id = ?1",
             params![chat],
@@ -588,6 +563,103 @@ impl CacheDb {
         Ok((hits, total))
     }
 
+    /// The chats that have a **parked** message matching an already-escaped
+    /// FTS5 query — the parked half of [`Self::search_chats`], for the
+    /// person's search with *Search in parked branches* on (research §10.3).
+    /// A chat's own id: a parked tail is no conversation of its own.
+    pub fn search_parked_chats(&self, fts_query: &str) -> Result<Vec<Uuid>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT p.chat_id
+             FROM parked_fts f
+             JOIN parked p ON p.id = f.rowid
+             WHERE parked_fts MATCH ?1",
+        )?;
+        let ids = (|| -> rusqlite::Result<Vec<Uuid>> {
+            stmt.query_map(params![fts_query], |r| {
+                Ok(parse_uuid(r.get::<_, String>(0)?))
+            })?
+            .collect()
+        })()
+        .with_context(|| format!("full-text query {fts_query:?} over parked messages"))?;
+        Ok(ids)
+    }
+
+    /// The parked messages matching an already-escaped FTS5 query, at most
+    /// `limit` — the parked half of [`Self::search_messages`], ordered the
+    /// same way. Which tail of its chat a hit is in is not stored: the caller
+    /// resolves it from the chat, as it resolves a hit's position on a line.
+    pub fn search_parked(&self, fts_query: &str, limit: usize) -> Result<Vec<MessageHit>> {
+        self.parked_where(fts_query, None, limit)
+    }
+
+    /// One chat's parked messages matching the query — unlimited, since one
+    /// chat is bounded: what "open this chat at its first match" falls back
+    /// to when the line holds none ([`Self::matching_messages_in_chat`]).
+    pub fn parked_matches_in_chat(&self, fts_query: &str, chat_id: Uuid) -> Result<Vec<Uuid>> {
+        Ok(self
+            .parked_where(fts_query, Some(chat_id), usize::MAX)?
+            .into_iter()
+            .map(|hit| hit.message_id)
+            .collect())
+    }
+
+    /// The one body under the two parked searches.
+    fn parked_where(
+        &self,
+        fts_query: &str,
+        chat_id: Option<Uuid>,
+        limit: usize,
+    ) -> Result<Vec<MessageHit>> {
+        let scope = if chat_id.is_some() {
+            " AND p.chat_id = ?2"
+        } else {
+            ""
+        };
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT p.chat_id, p.message_id, p.role, p.ts, p.text
+             FROM parked_fts f
+             JOIN parked p ON p.id = f.rowid
+             WHERE parked_fts MATCH ?1{scope}
+             ORDER BY p.chat_id, p.id
+             LIMIT {}",
+            // SQLite's own "no limit"; a `usize::MAX` does not fit its integer.
+            i64::try_from(limit).unwrap_or(-1)
+        ))?;
+        let mut values: Vec<rusqlite::types::Value> = vec![fts_query.to_string().into()];
+        values.extend(chat_id.map(|id| id.to_string().into()));
+        let hits = (|| -> rusqlite::Result<Vec<MessageHit>> {
+            stmt.query_map(rusqlite::params_from_iter(values.iter()), |r| {
+                Ok(MessageHit {
+                    chat_id: parse_uuid(r.get::<_, String>(0)?),
+                    sub_id: None,
+                    message_id: parse_uuid(r.get::<_, String>(1)?),
+                    role: r.get(2)?,
+                    ts: r.get(3)?,
+                    text: r.get(4)?,
+                })
+            })?
+            .collect()
+        })()
+        .with_context(|| format!("full-text message query {fts_query:?} over parked messages"))?;
+        Ok(hits)
+    }
+
+    /// How many parked messages the query matches in all — the parked half of
+    /// [`Self::count_matching_messages`].
+    pub fn count_parked(&self, fts_query: &str) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let n: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM parked_fts WHERE parked_fts MATCH ?1",
+                params![fts_query],
+                |r| r.get(0),
+            )
+            .with_context(|| format!("full-text message count {fts_query:?} over parked"))?;
+        Ok(n as usize)
+    }
+
     /// Number of indexed messages. Test-only for now — nothing in the app reads
     /// it, and gating it (rather than allowing dead code) keeps the module
     /// honest about what is actually wired. Lift the gate if a diagnostic ever
@@ -598,6 +670,84 @@ impl CacheDb {
         let n: i64 = conn.query_row("SELECT count(*) FROM messages", [], |r| r.get(0))?;
         Ok(n as usize)
     }
+}
+
+/// The table of the lines' messages (and their transcripts').
+const LINE: &str = "messages";
+/// The table of the parked tails' messages (module doc).
+const PARKED: &str = "parked";
+
+/// Brings one chat's rows of `table` in line with `rows` — the message-level
+/// diff of [`CacheDb::index_chat`], which the two tables share because they
+/// have one shape.
+///
+/// A row whose text is unchanged is left where it is; a changed one is
+/// deleted and re-inserted, so the FTS index follows through the table's
+/// triggers alone; a row whose message is no longer in `rows` goes.
+fn diff_rows<'m>(
+    tx: &rusqlite::Transaction<'_>,
+    table: &str,
+    chat: &str,
+    rows: impl Iterator<Item = &'m IndexedMessage>,
+) -> Result<()> {
+    // What is indexed for this chat right now: message_id → (rowid, hash).
+    let existing: HashMap<String, (i64, i64)> = {
+        let mut stmt = tx.prepare(&format!(
+            "SELECT message_id, id, text_hash FROM {table} WHERE chat_id = ?1"
+        ))?;
+        stmt.query_map(params![chat], |r| {
+            Ok((r.get::<_, String>(0)?, (r.get::<_, i64>(1)?, r.get(2)?)))
+        })?
+        .collect::<rusqlite::Result<HashMap<_, _>>>()?
+    };
+
+    let mut seen: HashSet<String> = HashSet::new();
+    for msg in rows {
+        let message_id = msg.id.to_string();
+        // A malformed chat with a repeated message id would otherwise violate
+        // UNIQUE(chat_id, message_id) and leave it unindexed entirely. This is
+        // derived data — tolerate the input and keep the first occurrence.
+        if !seen.insert(message_id.clone()) {
+            continue;
+        }
+        let hash = text_hash(&msg.text);
+        match existing.get(&message_id) {
+            Some((_, old)) if *old == hash => continue, // unchanged — leave the row alone
+            Some((rowid, _)) => {
+                tx.execute(
+                    &format!("DELETE FROM {table} WHERE id = ?1"),
+                    params![rowid],
+                )?;
+            }
+            None => {}
+        }
+        tx.execute(
+            &format!(
+                "INSERT INTO {table}(chat_id, sub_id, message_id, text_hash, role, ts, text)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
+            ),
+            params![
+                chat,
+                msg.sub_id.map(|id| id.to_string()),
+                message_id,
+                hash,
+                msg.role,
+                msg.ts,
+                msg.text
+            ],
+        )?;
+    }
+
+    // Messages that disappeared (history truncation: Ctrl+E / regenerate).
+    for (message_id, (rowid, _)) in &existing {
+        if !seen.contains(message_id) {
+            tx.execute(
+                &format!("DELETE FROM {table} WHERE id = ?1"),
+                params![rowid],
+            )?;
+        }
+    }
+    Ok(())
 }
 
 /// The conversation id of an indexed row, as SQL: the transcript's when the
@@ -655,6 +805,10 @@ fn migrate(conn: &Connection) -> Result<()> {
 /// triggers are the standard external-content pair; there is no `AFTER UPDATE`
 /// trigger because [`CacheDb::index_chat`] never updates `text` — it deletes and
 /// re-inserts.
+///
+/// `parked` and `parked_fts` are the same pair for the messages of the chats'
+/// parked tails (module doc). `parked.sub_id` is there so that the two tables
+/// have one shape and one diff writes both; nothing sets it.
 fn baseline_ddl(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS indexed_chats (
@@ -690,6 +844,34 @@ fn baseline_ddl(conn: &Connection) -> Result<()> {
 
          CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
              INSERT INTO messages_fts(messages_fts, rowid, text)
+             VALUES ('delete', old.id, old.text);
+         END;
+
+         CREATE TABLE IF NOT EXISTS parked (
+             id         INTEGER PRIMARY KEY,
+             chat_id    TEXT NOT NULL,
+             sub_id     TEXT,
+             message_id TEXT NOT NULL,
+             text_hash  INTEGER NOT NULL,
+             role       TEXT NOT NULL,
+             ts         TEXT NOT NULL,
+             text       TEXT NOT NULL,
+             UNIQUE(chat_id, message_id)
+         );
+
+         CREATE VIRTUAL TABLE IF NOT EXISTS parked_fts USING fts5(
+             text,
+             content='parked',
+             content_rowid='id',
+             tokenize='trigram'
+         );
+
+         CREATE TRIGGER IF NOT EXISTS parked_ai AFTER INSERT ON parked BEGIN
+             INSERT INTO parked_fts(rowid, text) VALUES (new.id, new.text);
+         END;
+
+         CREATE TRIGGER IF NOT EXISTS parked_ad AFTER DELETE ON parked BEGIN
+             INSERT INTO parked_fts(parked_fts, rowid, text)
              VALUES ('delete', old.id, old.text);
          END;",
     )?;
@@ -778,6 +960,7 @@ mod tests {
             role: "user".into(),
             ts: "2026-07-29T10:00:00Z".into(),
             text: text.into(),
+            parked: false,
         }
     }
 
@@ -817,20 +1000,181 @@ mod tests {
     ///   content table, which is the failure mode here.
     fn orphan_fts_rows(db: &CacheDb) -> i64 {
         let conn = db.conn.lock().unwrap();
-        let orphans: i64 = conn
-            .query_row(
-                "SELECT count(*) FROM messages_fts_docsize d
-                 LEFT JOIN messages m ON m.id = d.id
-                 WHERE m.id IS NULL",
-                [],
-                |r| r.get(0),
-            )
+        // Both pairs — the lines' and the parked tails' — by the same check.
+        [LINE, PARKED]
+            .into_iter()
+            .map(|table| {
+                let orphans: i64 = conn
+                    .query_row(
+                        &format!(
+                            "SELECT count(*) FROM {table}_fts_docsize d
+                             LEFT JOIN {table} m ON m.id = d.id
+                             WHERE m.id IS NULL"
+                        ),
+                        [],
+                        |r| r.get(0),
+                    )
+                    .unwrap();
+                conn.execute_batch(&format!(
+                    "INSERT INTO {table}_fts({table}_fts, rank) VALUES('integrity-check', 1);"
+                ))
+                .expect("the FTS index must match the content table");
+                orphans
+            })
+            .sum()
+    }
+
+    fn parked_msg(text: &str) -> IndexedMessage {
+        IndexedMessage {
+            parked: true,
+            ..msg(text)
+        }
+    }
+
+    fn parked_count(db: &CacheDb) -> i64 {
+        let conn = db.conn.lock().unwrap();
+        conn.query_row("SELECT count(*) FROM parked", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    /// The boundary the tools rest on (research §10.3): a message of a parked
+    /// tail is in tables of its own, and **no query that existed before them
+    /// returns it** — one assertion per query, over a word only the tail says.
+    /// The parked queries find it, and find nothing of the line.
+    #[test]
+    fn a_parked_message_is_found_by_the_parked_queries_and_by_no_other() {
+        let db = cache();
+        let (chat, other) = (Uuid::new_v4(), Uuid::new_v4());
+        let on_line = msg("пароля я не помню, ИИ тоже");
+        let parked = parked_msg("пароль — ЗАНЗИБАР-42, сказал ИБ");
+        db.index_chat(chat, 1, 1, &[on_line.clone(), parked.clone()])
             .unwrap();
-        conn.execute_batch(
-            "INSERT INTO messages_fts(messages_fts, rank) VALUES('integrity-check', 1);",
-        )
-        .expect("the FTS index must match the content table");
-        orphans
+        db.index_chat(other, 1, 1, &[msg("про занзибар на линии другого чата")])
+            .unwrap();
+        assert_eq!(db.message_count().unwrap(), 2);
+        assert_eq!(parked_count(&db), 1);
+
+        let word = "\"занзибар-42\"";
+        let scope = [chat];
+        assert!(db.search_chats(word).unwrap().is_empty());
+        assert!(db.search_messages(word, 10).unwrap().is_empty());
+        assert_eq!(db.count_matching_messages(word).unwrap(), 0);
+        assert!(
+            db.matching_messages_in_chat(word, IndexScope::Chat(chat))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(db.search_messages_in(word, &scope, 10).unwrap().is_empty());
+        assert_eq!(db.count_matching_messages_in(word, &scope).unwrap(), 0);
+        // The scan for a short word, which reads rows and not the FTS index.
+        let (hits, total) = db
+            .scan_messages_in(&["ИБ".to_string()], &scope, 10, |_| true)
+            .unwrap();
+        assert!(hits.is_empty() && total == 0, "{hits:?}");
+        // The line's own short word is still found by it.
+        let (hits, _) = db
+            .scan_messages_in(&["ИИ".to_string()], &scope, 10, |_| true)
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+
+        // The parked half: the chat, the message, the count.
+        assert_eq!(db.search_parked_chats(word).unwrap(), vec![chat]);
+        let hits = db.search_parked(word, 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(
+            (hits[0].chat_id, hits[0].sub_id, hits[0].message_id),
+            (chat, None, parked.id)
+        );
+        assert_eq!(hits[0].text, parked.text);
+        assert_eq!(db.count_parked(word).unwrap(), 1);
+        assert_eq!(
+            db.parked_matches_in_chat(word, chat).unwrap(),
+            vec![parked.id]
+        );
+        assert!(db.parked_matches_in_chat(word, other).unwrap().is_empty());
+        // And nothing of a line: one word is on this chat's line, the other
+        // on the other chat's as well as in this chat's tail.
+        let line_only = "\"помню\"";
+        assert!(db.search_parked_chats(line_only).unwrap().is_empty());
+        assert_eq!(db.count_parked(line_only).unwrap(), 0);
+        assert_eq!(
+            db.search_parked_chats("\"занзибар\"").unwrap(),
+            vec![chat],
+            "the other chat's line is not parked"
+        );
+    }
+
+    /// A switch, a regeneration, a take-back: a message leaves the line for a
+    /// tail, or comes back. One write moves its row between the tables, and
+    /// neither index keeps a trace of where it was.
+    #[test]
+    fn a_message_moves_between_the_line_and_a_tail_in_one_write() {
+        let db = cache();
+        let chat = Uuid::new_v4();
+        let kept = msg("первый вопрос");
+        let moved = msg("ответ с маркером КЕСТРЕЛЬ");
+        let word = "\"кестрель\"";
+
+        db.index_chat(chat, 1, 1, &[kept.clone(), moved.clone()])
+            .unwrap();
+        assert_eq!(db.search_chats(word).unwrap(), vec![chat]);
+        assert!(db.search_parked_chats(word).unwrap().is_empty());
+        let rows = rowids(&db, chat);
+
+        // Regenerated: the reply is parked, another stands on the line.
+        let parked = IndexedMessage {
+            parked: true,
+            ..moved.clone()
+        };
+        let fresh = msg("другой ответ");
+        db.index_chat(chat, 2, 2, &[kept.clone(), fresh.clone(), parked])
+            .unwrap();
+        assert!(db.search_chats(word).unwrap().is_empty());
+        assert_eq!(db.search_parked_chats(word).unwrap(), vec![chat]);
+        assert_eq!(
+            rowids(&db, chat).get(&kept.id),
+            rows.get(&kept.id),
+            "what did not move was not rewritten"
+        );
+        assert_eq!(orphan_fts_rows(&db), 0);
+
+        // Switched back: the two trade places.
+        let parked = IndexedMessage {
+            parked: true,
+            ..fresh.clone()
+        };
+        db.index_chat(chat, 3, 3, &[kept.clone(), moved.clone(), parked])
+            .unwrap();
+        assert_eq!(db.search_chats(word).unwrap(), vec![chat]);
+        assert!(db.search_parked_chats(word).unwrap().is_empty());
+        assert_eq!(db.search_parked_chats("\"другой\"").unwrap(), vec![chat]);
+        assert_eq!(orphan_fts_rows(&db), 0);
+    }
+
+    /// A chat that is hidden or gone takes its parked rows with it; and the
+    /// parked search is capped under an honest count, as the line's is.
+    #[test]
+    fn parked_rows_die_with_their_chat_and_are_capped_under_an_honest_count() {
+        let db = cache();
+        let (gone, hidden, kept) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        for chat in [gone, hidden, kept] {
+            let tails: Vec<IndexedMessage> = (0..3)
+                .map(|n| parked_msg(&format!("вариант {n}")))
+                .collect();
+            db.index_chat(chat, 1, 1, &tails).unwrap();
+        }
+        let word = "\"вариант\"";
+        assert_eq!(db.count_parked(word).unwrap(), 9);
+        assert_eq!(db.search_parked(word, 4).unwrap().len(), 4);
+
+        db.forget_chat(gone).unwrap();
+        // A hidden chat is recorded with no messages (the reconciliation's
+        // way of dropping it without forgetting its file).
+        db.index_chat(hidden, 2, 2, &[]).unwrap();
+        assert_eq!(db.search_parked_chats(word).unwrap(), vec![kept]);
+        assert_eq!(db.count_parked(word).unwrap(), 3);
+        assert_eq!(parked_count(&db), 3);
+        assert_eq!(orphan_fts_rows(&db), 0);
     }
 
     #[test]
@@ -1132,6 +1476,7 @@ mod tests {
             role: "assistant".into(),
             ts: "2026-07-29T10:00:00+00:00".into(),
             text: "первое упоминание маркера".into(),
+            parked: false,
         };
         let b = msg("второе упоминание маркера");
         db.index_chat(one, 1, 1, &[a.clone(), b.clone(), msg("ничего")])

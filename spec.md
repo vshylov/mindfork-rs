@@ -412,7 +412,7 @@ Two-tier (as in attempt #1):
    - `followups(id, profile_id, chat_id, about, due_at, created_at, state, closed_at)` — the returns a companion planned, `pending` → `delivered` or `cancelled` ([§9.3.6](#936-follow-ups-the-companion-plans)). Not in the chat file: a chat holds what was said, this what is still to come.
    - **Per-profile isolation** — a mandatory `WHERE profile_id = ?` on every notes/RAG query (a repository invariant).
 
-**Plus a disposable third file, `cache.db`** — the full-text index behind searching chats by content (`Ctrl+F` in the chat list, [§11.2](#112-the-chat-list-an-overlay)). It is deliberately **not** a third tier of user data: everything in it is derived from `chats/*.json`, and that changes the rules. It carries none of the schema-versioning machinery of [§12.2](#122-schema-versioning-and-migration), because a version mismatch or a corrupt file is answered by *deleting the file and rebuilding*, never by a migration step and never by refusing to start — a disposable index must not be able to block startup. So deleting it is a **supported repair** rather than data loss, and it is **excluded from backups** ([§12.3](#123-backup-and-deletion) — the archive's include list is an allowlist of user data), so a restore lands without an index and rebuilds it. It is kept in step by the sole writer of chats: the orchestrator indexes a chat right after saving it, and a startup pass reconciles whatever changed outside the app (import, restore, a hand-edited file, a deleted cache).
+**Plus a disposable third file, `cache.db`** — the full-text index behind searching chats by content (`Ctrl+F` in the chat list, [§11.2](#112-the-chat-list-an-overlay)). It holds the text of the chats' **lines** and their sub-agent transcripts, and — in tables of their own (`parked`, `parked_fts`; `CACHE_SCHEMA` 3) — the text of their **parked branches**, which only the person's search reads, and only with *Search in parked branches* on ([§11.2.1](#1121-the-message-level-search-screen)): no query a tool runs names those tables, so what a fork cut cannot come back through an assistant's search by a forgotten filter. It is deliberately **not** a third tier of user data: everything in it is derived from `chats/*.json`, and that changes the rules. It carries none of the schema-versioning machinery of [§12.2](#122-schema-versioning-and-migration), because a version mismatch or a corrupt file is answered by *deleting the file and rebuilding*, never by a migration step and never by refusing to start — a disposable index must not be able to block startup. So deleting it is a **supported repair** rather than data loss, and it is **excluded from backups** ([§12.3](#123-backup-and-deletion) — the archive's include list is an allowlist of user data), so a restore lands without an index and rebuilds it. It is kept in step by the sole writer of chats: the orchestrator indexes a chat right after saving it, and a startup pass reconciles whatever changed outside the app (import, restore, a hand-edited file, a deleted cache).
 
 **Soft delete**: `is_hidden` on chats and profiles; hiding a profile cascades to hide its chats and excludes its notes/RAG from result sets (`WHERE is_hidden = 0`). There's no hard delete.
 
@@ -2917,7 +2917,9 @@ and §10.2 (the search).
   message; words that never meet are answered with their counts, and a word no
   tail says is dropped and named. What is matched is each parked message's text —
   the tool results among them, as the index holds a line's — but **by a scan, with
-  no index**: the full-text index holds no parked row for a tool to find. The hits
+  no index**: the full-text index keeps the parked rows in tables that are the
+  person's search's alone ([§5.2](#52-data-storage)), and no tool's query reads
+  them. The hits
   come grouped by tail, in the list's order — the tail's address, what parked it
   and the date, then each hit with its role, date, the **page** of the tail's
   transcript it is on and a fragment around the match — capped by `top_k` (5,
@@ -3394,6 +3396,11 @@ A direct requirement from the task:
   opens at the tail, exactly like a plain switch. Title mode keeps the historical
   plain switch, and the `Ctrl+G` hint is shown only in content mode — an advertised
   key that is a no-op is worse than a missing hint.
+- **With *Search in parked branches* on** ([§11.2.1](#1121-the-message-level-search-screen)),
+  content mode also keeps a chat matched only in one of its parked branches. `Enter`
+  on it has no message of the line to land on, so the chat opens where the first such
+  branch leaves the line, with the note a hit in a branch gets — and nothing is
+  switched: the list picks a chat, not a branch.
 - **Two sort modes**: by creation date and by last-modified date (toggled with a key; the active mode is indicated).
 - **List navigation**: `↑`/`↓` — one row, `PageUp`/`PageDown` — one page (a fixed step, since the list height is only known at render time), `Home`/`End` — to the first/last chat.
   **The window follows the selection, it is not dragged by it**: the selection
@@ -3608,6 +3615,44 @@ this?"*; this screen answers *"where exactly, and take me there."*
   "0 matches" header navigation steps over — so a transcript is never shown
   orphaned. `Enter` on a transcript's hit opens the **transcript** (read-only,
   §11.3) on that message.
+- **Parked branches are groups too, when the person asks for them**
+  ([11.7](#117-keybindings-preliminary); docs/research/chat-branches.md §10.3).
+  A setting of the app, **off by default** — *Search in parked branches*
+  (`interface.search_parked_branches`; Settings → Interface → Behavior): with it
+  on, the search by content also finds the messages of a chat's parked branches —
+  what followed a message the person forked at, the replies they had regenerated,
+  the exchanges they took back. It is the app's and not a profile's: the search it
+  widens crosses the profiles' chats, as the list does. It is the person's search
+  only — what the assistant may find in a branch is a switch among a profile's
+  tools ([9.17](#917-parked-branches-branch_read-and-branch_search)).
+  - **The index holds the parked messages whatever the setting says**, in tables
+    of their own ([§5.2](#52-data-storage)), so the switch acts at once, both
+    ways. A row knows its chat and its message, not its place in the tree: which
+    branch a message is in, that branch's address and its place in `/branch`'s
+    order are resolved by the orchestrator from the chat it holds, as a hit's
+    position in its conversation is.
+  - **A branch's hits are a group under the chat's**, after the chat's own hits
+    and its transcripts', in the order `/branch` lists the branches: the header
+    branched with `└` and reading `branch 6/1 · a regenerated reply · 2026-11-18`
+    — the address `/branch` and the assistant's tools use (`5/1 > 7/1` for a
+    branch inside another, `0/1` for a detached one, which is marked), what
+    parked it, the day. A chat none of whose own messages match heads its
+    branches as it heads its transcripts. The parked search has a cap of its own,
+    and the "showing N of M" line counts both.
+  - **`Enter` on such a hit opens the chat on its line and switches nothing.**
+    The feed is put where the branch leaves the line — on the message that
+    carries the variants mark; for a branch inside another, where the outermost
+    branch on its way to the line leaves — and a note names the branch and says
+    how to bring it in front: `/branch N K` for a branch that continues from the
+    line, the list `/branch` opens for one inside another. A detached branch has
+    no place on the line: the chat opens all the same and the note says the
+    branch is kept in the chat's file and cannot be brought back. The footer's
+    `Enter` hint says "open where the branch leaves" while such a hit is
+    selected. A search is a look, and a look changes nothing in the chat: which
+    variant the conversation continues from stays what the person set.
+  - **A hit is opened by where its message stands at that moment**
+    (`Chat::parked_place`), not by the group it was drawn in: the results are a
+    snapshot, and a branch may have been switched since.
 - **One hit** = a muted `role · date` prefix plus a **snippet** — an excerpt of the
   message centred on the first match, with the matched spans drawn in the accent
   color. Snippets are built in Rust from the text the index already stores, not by
@@ -4602,7 +4647,8 @@ section and subsection), `Esc` — cancel.
   (**the mouse** — `mouse`, `app` | `terminal`, `app` by default,
   the legacy terminal mode keeping it with the terminal and the row saying so,
   §11.3; **the line-break key** — `newline_key`, auto by default, §11.5; confirming
-  `Ctrl+R`/`Ctrl+E`; **automatic chat titling** — after the user's
+  `Ctrl+R`/`Ctrl+E`; **search in parked branches** — `search_parked_branches`, off
+  by default, §11.2.1; **automatic chat titling** — after the user's
   message / after the assistant's reply (default) / off, §11.2), *Conversation
   copy (F5)* (what's included), *Notifications* (the terminal escape — OSC 777
   by default, OSC 9 or off — the bell, a ntfy topic and its token, whether the
@@ -5534,6 +5580,12 @@ same chat ([docs/research/chat-branches.md](docs/research/chat-branches.md)).
   a word — each of which a profile has only when the person switched it on; with
   the reader on, a read of a line says that branches stand beside it
   ([9.17](#917-parked-branches-branch_read-and-branch_search)).
+- **The person's search finds a branch when asked to.** `F5`, `/copy`, `/export`
+  and `Ctrl+F` in a chat take the conversation in front of the person. The search
+  by content — the chat list's filter, `Ctrl+G`, `/search` — does too, until
+  *Search in parked branches* is switched on in the settings; then a match in a
+  parked branch is shown as that branch's, and opening it opens the chat on its
+  line and names the branch ([11.2.1](#1121-the-message-level-search-screen)).
 - **A fork forks the conversation, not the world.** Notes, the self-model, the chat's
   files and the attached project are as they are.
 - **`Ctrl+E` and `Ctrl+R` park what they cut** (above), by the operation a fork uses
