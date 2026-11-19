@@ -2,6 +2,7 @@
 //! module (fixtures in mod.rs). See docs/history/refactoring-god-objects.md, stage 3.
 
 use super::*;
+use crate::entities::chat_branch::{LineMark, ParkCause};
 
 #[test]
 fn effective_sampling_resolves_three_tiers() {
@@ -431,6 +432,24 @@ async fn regenerate_replaces_last_assistant_message() {
     assert_eq!(chat.messages[0].text, "вопрос");
     assert_eq!(chat.messages[1].role, MessageRole::Assistant);
     assert_eq!(chat.messages[1].text, "второй");
+    // The replaced reply is kept as a branch — the first variant of its place,
+    // the new reply the second — and nothing went to the archive (spec §11.7).
+    assert!(chat.deleted.is_empty(), "{:?}", chat.deleted);
+    assert_eq!(chat.branches.len(), 1);
+    let parked = &chat.branches[0];
+    assert_eq!(parked.cause, ParkCause::Regenerate);
+    assert_eq!(parked.after, Some(chat.messages[0].id));
+    assert_eq!(parked.messages.len(), 1);
+    assert_eq!(parked.messages[0].text, "первый");
+    let view = chat.branch_view();
+    assert_eq!(
+        view.marks,
+        [LineMark {
+            message: chat.messages[1].id,
+            variant: 2,
+            of: 2
+        }]
+    );
 }
 
 #[tokio::test]
@@ -468,19 +487,24 @@ async fn delete_last_exchange_restores_user_text() {
     cmd_tx.send(AppCommand::Quit).unwrap();
     handle.await.unwrap();
 
-    // The exchange is deleted entirely (a default chat with no greeting → empty).
+    // The exchange left the line entirely (a default chat with no greeting → empty).
     let reopened = Storage::open(Paths::with_root(&root)).unwrap();
     let chat = reopened.json().load_chat(chat_id).unwrap().unwrap();
     assert!(chat.messages.is_empty(), "{:?}", chat.messages);
-    // The deleted exchange is saved for manual recovery (the user's message +
-    // the assistant's reply); the input draft was empty (spec §11.7).
-    assert_eq!(chat.deleted.len(), 1);
-    let removed = &chat.deleted[0];
-    assert_eq!(removed.messages.len(), 2);
-    assert_eq!(removed.messages[0].role, MessageRole::User);
-    assert_eq!(removed.messages[0].text, "забудь это");
-    assert_eq!(removed.messages[1].role, MessageRole::Assistant);
-    assert_eq!(removed.draft, "");
+    // It is kept as a branch that starts the chat (the user's message + the
+    // assistant's reply), one switch away; the archive holds nothing
+    // (spec §11.7).
+    assert!(chat.deleted.is_empty(), "{:?}", chat.deleted);
+    assert_eq!(chat.branches.len(), 1);
+    let parked = &chat.branches[0];
+    assert_eq!(parked.cause, ParkCause::Takeback);
+    assert_eq!(parked.after, None);
+    assert_eq!(parked.messages.len(), 2);
+    assert_eq!(parked.messages[0].role, MessageRole::User);
+    assert_eq!(parked.messages[0].text, "забудь это");
+    assert_eq!(parked.messages[1].role, MessageRole::Assistant);
+    let view = chat.branch_view();
+    assert!(view.parked[0].at_end && !view.parked[0].detached);
 }
 
 #[tokio::test]
@@ -1201,7 +1225,10 @@ async fn rewrite_tool_discards_partial_and_saves_it() {
     assert_eq!(chat.messages[0].role, MessageRole::User);
     assert_eq!(chat.messages[1].role, MessageRole::Assistant);
     assert_eq!(chat.messages[1].text, "Правильный ответ.");
-    // The discarded (incorrect) reply + its tool message are saved for recovery.
+    // The discarded (incorrect) reply + its tool message are saved for recovery
+    // — in the archive, not as a branch: the replaced text was the assistant's
+    // own draft, not a continuation the person may return to (research §3.10).
+    assert!(chat.branches.is_empty(), "{:?}", chat.branches);
     assert_eq!(chat.deleted.len(), 1);
     let discarded = &chat.deleted[0].messages;
     assert_eq!(discarded[0].role, MessageRole::Assistant);
@@ -1216,7 +1243,7 @@ async fn rewrite_tool_discards_partial_and_saves_it() {
 /// hang reads as broken infrastructure instead of a broken promise. Measured while
 /// mutation-testing the note below: with its `send` removed the test ran past ten
 /// minutes; bounded, it fails in five seconds.
-async fn wait_for_bounded<F: Fn(&AppEvent) -> bool>(
+pub(super) async fn wait_for_bounded<F: Fn(&AppEvent) -> bool>(
     rx: &mut UnboundedReceiver<AppEvent>,
     what: &str,
     pred: F,

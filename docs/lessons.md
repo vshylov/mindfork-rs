@@ -342,9 +342,16 @@ with bare `wait_for` for the status of a restart, its mutant made the restart ne
 happen, and the run stopped there; killing the hung process to let the run go on
 recorded the mutant as *survived*, since a killed process prints no `FAILED`. On a
 paused clock a bound costs nothing — the timeout fires the moment the runtime is idle.
+**A sixth**, with no mutant involved: a new test's scripted engine gave its second
+reply to the title request the first exchange fires, so the regeneration under test
+was handed the third script — an error — and a bare `wait_for` for its landing sat
+until the run's own limit. A scripted engine is read by **every** request the app
+makes, not only the turn's: start such a test from `no_auto_cfg`, and bound the waits
+so the next surprise is a failure with a name.
 — *engine failures stop being silent*, *a tool's images reach the model through a
 gateway*, *whether a gateway's model takes images comes from its catalogue*, *a chat
-whose history carries images, on an engine that takes none*.
+whose history carries images, on an engine that takes none*, *`Ctrl+R` and `Ctrl+E`
+keep what they cut as a branch*.
 
 **A paused clock fast-forwards an idle runtime, and real I/O is idle.** A test paused
 tokio's clock to make ten minutes of a monitor's polling free, against a real TCP stub.
@@ -2595,6 +2602,17 @@ other finds it; a round trip of both does not.
 — *Fabula PR 7, stories in mindfork's data*.
 
 ## 9. Live runs and model behaviour
+
+**A wait for "the task is not running" is met by the moment before the task
+started.** A smoke waited for the task list to say that no reflection was running,
+and quit. The list it read had been sent *before* the reflection was spawned; the quit
+then stopped the reflection in flight, which gives its window back — so the run ended
+with "the reflection wrote nothing", exactly what a weak model would have produced,
+and the stored chat showed no trace that a reflection had ever been due. A state that
+is also the state at rest proves nothing: wait for the rising edge first (running),
+then for the fall. The same goes for "the server is idle", "nothing is pending" and
+"the queue is empty".
+— *`Ctrl+R` and `Ctrl+E` keep what they cut as a branch*.
 
 **A smoke about what the model is shown must also look at the shape of what it
 says.** Every image smoke asserted on the files, the image count and the notes the

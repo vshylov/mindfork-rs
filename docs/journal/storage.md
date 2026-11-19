@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (39)
+## Entries (40)
 
 - Post-M9: persisting the input-box draft in the chat file (done)
 - Post-M9: persisting deleted exchanges in the chat file (`Ctrl+E`/`Ctrl+R`) (done)
@@ -51,6 +51,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a cargo install keeps its data in the user folder (done)
 - Post-M9: the fold's stored keys read entry by entry; `MouseMode` in the ledger (done)
 - Post-M9: branches inside a chat — the line, the parked tails, `/fork` and `/branch` (done)
+- Post-M9: `Ctrl+R` and `Ctrl+E` keep what they cut as a branch (done)
 
 ### Post-M9: persisting the input-box draft in the chat file (done)
 - **Unsaved input-box text is stored on the chat and restored on
@@ -2245,3 +2246,109 @@ of mindfork (schema 9, supported 8)"*, naming the chat file, whose bytes are unc
 a line that says the chat has branches, and a tool that reads them (stage 4); search
 across parked tails; the accent on the numbers while a command is in the box, which
 was proposed with F4 and not decided.
+
+### Post-M9: `Ctrl+R` and `Ctrl+E` keep what they cut as a branch (done)
+
+**What.** Stage 3 of [docs/research/chat-branches.md](../research/chat-branches.md)
+(§3.10), on `feat/regen-as-branch`. A regeneration and a take-back used to put what
+they removed into `chat.deleted`, an archive no screen shows and nothing returns from.
+Both now park it as a branch of the chat: the replaced reply is the first variant of
+its place and `‹` on the new reply's header returns to it; the exchange taken back is
+one `/branch` away. Stage 2 had already had to do this where a branch continued from
+what was removed (`park_if_anchored`); the condition is gone.
+
+**The change is small because stage 2 made the two keys a fork's special case.**
+- `Chat::park_tail(cut, cause, now)` is the one parking operation: `fork_at` is it with
+  `ParkCause::Fork`, `Ctrl+R` with `Regenerate` at the cut after the last user-side
+  row, `Ctrl+E` with `Takeback` at that row. Both causes were in the ledger since
+  schema 9, so the stage takes no step.
+- `handle_regenerate` and `handle_delete_last` call it and then `after_line_moved` —
+  what a fork and a switch call. Their own copies of that sequence are removed.
+- `chat.deleted` now grows by one thing: a reply the assistant rewrote
+  (`rewrite_current_message`), which was its own draft and not a continuation the
+  person may return to. `DeletedCause::{Regenerate, DeleteExchange}` are read and no
+  longer written; the records of a chat written earlier stay, anchorless.
+- The box's draft is not kept with the tail, as a fork's is not: `restore_input` puts
+  the text `Ctrl+E` hands back in front of what the box holds.
+
+**Reflection's signal moved with the causes.** `behavior_markers` counts the tails
+parked under `Regenerate` and `Takeback` since reflection last ran, plus the archive's
+records of the same keys, plus the rewrites. A reply the person switched back to is on
+the line again and has no record, so going back to a reply is not read as "it did not
+land"; a fork and a switch never are. The prompt's wording is unchanged.
+
+**Found by running it** (a pty run of `mindfork demo`, before any of this was written
+down):
+1. **The note of a tail at the line's end stood between a question and its new
+   answer.** While the new reply is being written the replaced one is exactly the
+   state that note is derived from, so every `Ctrl+R` drew "what followed is kept as a
+   branch" under the question, and it stayed there after the answer landed with its
+   mark. The screen drops the note when a turn starts right under it
+   (`drop_standing_branch_note`): the reply being written is that place's
+   continuation.
+2. **A regeneration that lands nothing then said nothing** of the reply it had
+   parked. `handle_done`'s path for a turn that landed nothing sends the branches
+   again, and the note is said then.
+3. **With the branches sent at more moments, the note could be said twice.**
+   `set_branches` looks for the note it would say among its own notes after the
+   conversation's last message, and does not repeat it.
+4. **Found on re-reading the change, not by a run** — the demo's engine answers faster
+   than a pty script can leave the chat: a chat re-opened while its regeneration is
+   streaming is activated with the replaced reply at the line's end, so the note was
+   pushed under the half-written bubble, and the next chunk — which goes to whatever
+   ends the feed, or opens a bubble if that is not one — split the reply in two. No
+   note is said while a turn is being written in the chat.
+
+**Strings.** The help, the two confirmation questions and the setting no longer say
+"delete" or "irreversible": *Confirm regenerate / take back*, "the previous reply stays
+as a variant of it", "the exchange stays as a branch". The config field keeps its
+name, `interface.confirm_destructive_keys`; renaming it is a settings step for a
+label.
+
+**Tests.** 5044 → 5052, 325 → 326 `#[ignore]`. In the chat: both causes, the mark on
+the new reply, a take-back of an exchange whose reply was regenerated, the round trip
+back. Through the orchestrator's events: a regeneration's branches at the activation
+(at the line's end, no mark), at the landing (`‹2/2›`), after a turn the engine failed
+before a word (the same branches, sent again), and the switch back; a take-back
+against `/fork` at the same message; a background run taken back landing on the
+parked copy; a rewrite still archived. Reflection: the parked tails' causes with a
+window, the old records beside them, a reply switched back to, and the request a
+reflection sends after a regeneration. The screen: the note said once, dropped by a
+turn that starts under it, said again after a turn that landed nothing, kept above a
+message, and not said under a reply being written.
+
+A test of mine hung instead of failing: a scripted engine's second reply went to the
+title request the first exchange fires, so the regeneration got the third script — an
+error — and the wait for its landing never ended. `no_auto_cfg` exists for this, and
+the waits are bounded now (`wait_for_bounded`), so the next one fails by name.
+
+**Live, GO** (`a_reflection_after_a_regeneration_reads_the_signal_e2e_live`): one
+exchange, `Ctrl+R`, a second exchange that makes the reflection due (cadence 2), with
+every request recorded on its way to the engine.
+- **Gemma 4 E2B Q8 on llama.cpp, CPU** (171 s): no request held the signal before the
+  reflection; the reflection's did — "regenerated your reply ×1", in the profile's
+  Russian — and it landed with an observation that names it: the person regenerated
+  the reply, which points to dissatisfaction with the previous one.
+- **`google/gemini-3.5-flash` through OpenRouter** (28 s): the same; the observation
+  says the person "quickly regenerates replies that are overloaded with detail", and
+  the interlocutor's traits were filled in.
+- **Control, red:** with the tails left out of `behavior_markers` the live smoke fails
+  at "no request told the model of the regeneration", and the unit test of the
+  reflection's request fails with it.
+
+The first live run failed for a reason of its own: the smoke quit on a task list
+that said "no reflection running" from *before* the reflection was spawned, and a quit
+stops a reflection and gives its window back. It now waits for "running" and then for
+"not running".
+
+**The pty run:** `Ctrl+R` on the demo chat's last reply — `‹2/2› #4` on the new one,
+no note between the question and it; a click on `‹` — "Switched: message #4 is variant
+1 of 2"; `Ctrl+E` — the line ends on `#2`, the question is back in the box in front of
+the draft, the note names `/branch 3 1`; `/branch` — the exchange as `#3 ‹1/1›` with
+the regenerated reply under it as `#4 ‹2/2›`; a new message from there — `‹2/2› #3`.
+
+**The owner's look** (Windows Terminal over SSH): both keys work as intended.
+
+**Not in this stage:** a read of a line that says the chat has branches, and a tool
+that reads them (stage 4); removing a branch — every `Ctrl+R` and `Ctrl+E` now adds a
+row to `/branch`, and nothing takes one away.

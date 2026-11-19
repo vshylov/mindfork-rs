@@ -7797,6 +7797,143 @@ mod branch_commands {
         (crate::shared::wrap::str_width(&row[..at]) as u16, y as u16)
     }
 
+    /// The note for a tail parked at the line's end is said once where it
+    /// stands: the branches are sent again whenever the line moved or a turn
+    /// ended, and an error said since does not make the note new.
+    #[test]
+    fn the_note_of_a_tail_at_the_lines_end_is_said_once() {
+        let (mut c, _ids) = talk();
+        let loc = c.s.loc;
+        let at_end = || BranchView {
+            marks: Vec::new(),
+            parked: vec![BranchInfo {
+                at_end: true,
+                ..parked(Uuid::from_u128(31), 5, 1, 1)
+            }],
+        };
+        let note = loc.tf(
+            "ui.branch.note_one",
+            &[("count", "2"), ("number", "5"), ("variant", "1")],
+        );
+        let said = |c: &Cmd| c.s.feed.iter().filter(|m| m.text == note).count();
+
+        c.s.set_branches(at_end());
+        assert_eq!(c.last_note(), note);
+        c.s.set_branches(at_end());
+        assert_eq!(said(&c), 1, "the same branches, sent again");
+        c.s.push_error("engine is busy");
+        c.s.set_branches(at_end());
+        assert_eq!(said(&c), 1, "the note still stands under the error");
+
+        // The line continued past it: the place has a bubble and a mark now,
+        // and the note above the bubble is left as it was said.
+        c.s.push_user_message("q3".into());
+        c.s.set_branches(BranchView::default());
+        assert_eq!(said(&c), 1);
+        // A later tail at the new end is another place: said under it.
+        c.s.set_branches(at_end());
+        assert_eq!(said(&c), 2);
+        assert_eq!(c.last_note(), note);
+    }
+
+    /// `Ctrl+R` parks the reply it replaces, and for the moment the new one is
+    /// being written that reply stands at the line's end. The turn that starts
+    /// right under the note takes its place — the reply will carry the mark —
+    /// so no note stands between a question and its new answer. A turn that
+    /// landed nothing leaves the line on the question, and the note is said
+    /// again. A note with the person's message under it is not at the turn's
+    /// start, and stays.
+    #[test]
+    fn a_turn_that_starts_under_the_branch_note_takes_its_place() {
+        let (mut c, _ids) = talk();
+        let loc = c.s.loc;
+        let at_end = || BranchView {
+            marks: Vec::new(),
+            parked: vec![BranchInfo {
+                at_end: true,
+                bubbles: 1,
+                ..parked(Uuid::from_u128(31), 4, 1, 1)
+            }],
+        };
+        let note = loc.tf(
+            "ui.branch.note_one",
+            &[("count", "1"), ("number", "4"), ("variant", "1")],
+        );
+        let said = |c: &Cmd| c.s.feed.iter().filter(|m| m.text == note).count();
+
+        // The regeneration: the feed is rebuilt, the branches say the old
+        // reply is parked at the end, and the turn starts.
+        c.s.set_branches(at_end());
+        assert_eq!(said(&c), 1);
+        let turn = gen_id();
+        c.s.begin_generation(turn, None);
+        assert_eq!(said(&c), 0, "the reply being written is that place");
+        let last = c.s.feed.last().unwrap();
+        assert!(last.role == FeedRole::Assistant && last.streaming);
+
+        // The engine failed before a word: the error is said, the turn ends,
+        // and the branches sent after it say the note again.
+        c.s.push_error("engine is busy");
+        c.s.finish_generation(turn, FinishReason::Error, false);
+        c.s.set_branches(at_end());
+        assert_eq!(said(&c), 1);
+        assert_eq!(c.last_note(), note);
+
+        // `/fork` at the person's message, then the message written again:
+        // the note is above the echo, not at the turn's start.
+        c.s.push_user_message("q3".into());
+        c.s.begin_generation(gen_id(), None);
+        assert_eq!(said(&c), 1);
+    }
+
+    /// The chat re-opened in the middle of a regeneration: the replaced reply
+    /// is parked at the line's end and the new one is half written. A note
+    /// pushed then would end the feed under the streaming bubble, and the next
+    /// chunk would open a second bubble below it — one reply in two pieces. So
+    /// nothing is said while a turn is being written here; the branches that
+    /// follow the turn's end say it, if it is still true.
+    #[test]
+    fn the_branch_note_is_not_said_under_a_reply_being_written() {
+        let (mut c, _ids) = talk();
+        let loc = c.s.loc;
+        let at_end = || BranchView {
+            marks: Vec::new(),
+            parked: vec![BranchInfo {
+                at_end: true,
+                bubbles: 1,
+                ..parked(Uuid::from_u128(31), 4, 1, 1)
+            }],
+        };
+        let note = loc.tf(
+            "ui.branch.note_one",
+            &[("count", "1"), ("number", "4"), ("variant", "1")],
+        );
+        let said = |c: &Cmd| c.s.feed.iter().filter(|m| m.text == note).count();
+
+        let turn = gen_id();
+        c.s.begin_generation(turn, None);
+        c.s.push_chunk(turn, "half of");
+        c.s.set_branches(at_end());
+        assert_eq!(said(&c), 0);
+        c.s.push_chunk(turn, " the reply");
+        let bubbles = |c: &Cmd| {
+            c.s.feed
+                .iter()
+                .filter(|m| m.role == FeedRole::Assistant && m.streaming)
+                .count()
+        };
+        assert_eq!(bubbles(&c), 1, "the reply is one bubble");
+        assert_eq!(c.s.feed.last().unwrap().text, "half of the reply");
+        // The parked reply is still what `/branch` lists and switches to.
+        assert_eq!(c.s.branches.parked.len(), 1);
+
+        // The turn ended with nothing stored: the line is where it was.
+        c.s.finish_generation(turn, FinishReason::Error, false);
+        c.s.set_branches(at_end());
+        assert_eq!(said(&c), 1);
+        assert_eq!(c.last_note(), note);
+    }
+
     /// A click on an arrow of a message's variants mark switches it to the
     /// neighbouring variant; at the first variant `‹` has nowhere to go; while
     /// a reply is being written the click is answered like the command.

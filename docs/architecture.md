@@ -215,13 +215,15 @@ src/
 │  │  ├─ save_queue.rs      SaveQueue: debounced queue for deferred chat saves
 │  │  ├─ restart_queue.rs   RestartQueue: debounces server (re)starts on engine
 │  │  │                     settings edits (a series of edits → one restart)
-│  │  ├─ generation.rs      send/regenerate/delete exchange + the agentic-loop task
+│  │  ├─ generation.rs      send/regenerate/take back an exchange (both park what
+│  │  │                     they cut — `Chat::park_tail`) + the agentic-loop task
 │  │  ├─ chats.rs           chat list (new/switch/rename/clone/copy/delete) + draft
 │  │  ├─ branches.rs        a fork and a switch of the open chat's line (ADR 0015):
-│  │  │                     the take-back's guards, then the take-back's calls —
-│  │  │                     the feed rebuilt, orphaned runs and follow-ups
-│  │  │                     cancelled; `emit_branches` with every activation,
-│  │  │                     `refresh_branches` when the line grows
+│  │  │                     the take-back's guards, then `after_line_moved`, which
+│  │  │                     `Ctrl+R`/`Ctrl+E` call too — the feed rebuilt, orphaned
+│  │  │                     runs and follow-ups cancelled; `emit_branches` with
+│  │  │                     every activation, `refresh_branches` when the line
+│  │  │                     grows or a turn ends with nothing landed
 │  │  ├─ compaction.rs      history compression (`/compact` and the automatic
 │  │  │                     trigger): one single-turn roll (the title.rs shape —
 │  │  │                     its text comes back on a typed channel), the boundary
@@ -897,7 +899,8 @@ src/
 │  │                        two flags plus the blocks a click flipped, named by FoldKey)
 │  ├─ chat_branch.rs        Branch/ParkCause — a tail of the conversation off the
 │  │                        line (ADR 0015); `Chat::fork_cut`/`fork_at`/`switch_to`
-│  │                        (pure), `park_if_anchored`, `branch_view` → BranchView
+│  │                        (pure), `park_tail` (the cut `Ctrl+R`/`Ctrl+E` share with
+│  │                        a fork, under their own cause), `branch_view` → BranchView
 │  │                        (the line's variants marks, the parked tails in tree order)
 │  ├─ chat_file.rs          ChatFile/FileOrigin — a file stored with a chat (bytes in
 │  │                        data/files/<chat-id>/): a call's output, one adopted at
@@ -3995,14 +3998,20 @@ doesn't bump the chat up in the list). Note auto-consolidation (below) stayed
 on an in-memory counter, but got the same fix: reset only on actual spawn.
 
 **Behavioral signals about the interlocutor in the digest** (stage 4):
-`Ctrl+R` (regeneration = "the reply didn't work"), `Ctrl+E` (deleting an
-exchange), and rewrite rounds are already archived into `Chat.deleted` — now
-tagged with `DeletedCause`. `behavior_markers(chat, since)` (where `since` =
-the previous `reflected_at`) counts these deletions within the window and
-appends a "Behavioral signals about the interlocutor: …" block to the digest
-— reflection gets **actual behavior**, not just self-descriptions
-(regeneration/deletion are attributed to the interlocutor, rewrite — to the
-agent's own behavior; entries without a `cause` — old ones — aren't counted).
+`Ctrl+R` (regeneration = "the reply didn't work") and `Ctrl+E` (taking an
+exchange back) park what they cut as a branch under their own `ParkCause`
+(ADR 0015; docs/research/chat-branches.md §3.10), and a rewrite round is
+archived into `Chat.deleted` under `DeletedCause::Rewrite`.
+`behavior_markers(chat, since)` (where `since` = the previous `reflected_at`)
+counts, within the window, the tails parked under `Regenerate`/`Takeback`
+together with the records the same keys left in `Chat.deleted` before they
+parked (a chat written up to 0.27 holds them), and the rewrites; it appends a
+"Behavioral signals about the interlocutor: …" block to the digest —
+reflection gets **actual behavior**, not just self-descriptions
+(regeneration/take-back are attributed to the interlocutor, rewrite — to the
+agent's own behavior; archive entries without a `cause` — old ones — aren't
+counted). A reply the person **switched back to** is on the line again and has
+no record, so it is not counted; a fork and a switch are not signals.
 
 **Background task observability** (stage 5): reflection and consolidation
 are silent background tasks, so their failures are easy to miss (a stale
@@ -5216,7 +5225,7 @@ The architecture is designed to be testable without a server/GPU/network:
   `profile_id` (negative tests), soft delete/cascade, atomicity, kNN.
 - **The orchestrator** — no UI or model: the state machine, races (spamming
   Send, Stop→Send, dropping by `generation_id`), the agentic loop,
-  `max_tool_rounds`, sampling priorities, "delete the last exchange" logic.
+  `max_tool_rounds`, sampling priorities, "take back the last exchange" logic.
 - **UI** — pure logic: applying an `AppEvent` sequence to the projection,
   markdown/LaTeX rendering, pure functions (`chunk_batch`,
   `format_conversation`, `rag_command::parse`, word wrap).

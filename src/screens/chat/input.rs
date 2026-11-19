@@ -176,7 +176,7 @@ impl ChatScreen {
                     .then_some(ChatIntent::OpenSettings),
             ),
             'n' => Some(self.request_new_chat()),
-            // Regenerate / delete the last exchange (only while not
+            // Regenerate / take back the last exchange (only while not
             // generating). See spec §11.7.
             'r' if self.refuse_read_only("Ctrl+R") => Some(None),
             'e' if self.refuse_read_only("Ctrl+E") => Some(None),
@@ -1153,10 +1153,10 @@ impl ChatScreen {
             || crate::features::exit_command::parse(&text, self.loc).is_some()
     }
 
-    /// Triggers an irreversible operation (`Ctrl+R`/`Ctrl+E`): either returns
-    /// the intent right away, or — if confirmation is enabled — opens a
-    /// modal popup. During generation, both operations are ignored (as
-    /// before). See spec §11.7.
+    /// Triggers one of the two keys that take the conversation's end off the
+    /// line (`Ctrl+R`/`Ctrl+E`): either returns the intent right away, or — if
+    /// confirmation is enabled — opens a modal popup. During generation, both
+    /// operations are ignored (as before). See spec §11.7.
     pub(super) fn trigger_destructive(&mut self, action: ConfirmAction) -> Option<ChatIntent> {
         if self.generating {
             return None;

@@ -456,10 +456,10 @@ impl Orchestrator {
         }
     }
 
-    /// Regenerates the last assistant reply (spec §11.7): deletes everything after
-    /// the last user message (the old reply + tool messages) and starts generation
-    /// again from the same request. The feed is rebuilt via a re-emit of
-    /// `ChatActivated`. Ignored during generation.
+    /// Regenerates the last assistant reply (spec §11.7): everything after the
+    /// last user message (the old reply + tool messages) leaves the line as a
+    /// branch, and generation starts again from the same request. The feed is
+    /// rebuilt via a re-emit of `ChatActivated`. Ignored during generation.
     pub(super) fn handle_regenerate(&mut self) {
         if !self.gen_state.is_idle() || self.seat_holds_open_chat() {
             return;
@@ -488,25 +488,18 @@ impl Orchestrator {
             else {
                 return; // no user message — nothing to regenerate
             };
-            // Save what's deleted (the assistant's reply + the round's tool messages)
-            // and the input draft, for manual recovery (spec §11.7) — unless a
-            // parked branch continues from the reply: then it is parked too, so
-            // that branch still has a place to return to.
+            // The reply being replaced (with its rounds' tool messages) is
+            // kept as a branch: the first variant of its place, which the
+            // mark on the new reply's header returns to (spec §11.7,
+            // docs/research/chat-branches.md §3.10). Nothing to park — the
+            // reply never arrived — is still a regeneration.
             let now = chrono::Utc::now();
-            if !chat.park_if_anchored(idx + 1, ParkCause::Regenerate, now) {
-                let draft = chat.draft.clone();
-                let removed = chat.messages.split_off(idx + 1);
-                chat.record_deleted(removed, draft, DeletedCause::Regenerate);
-            }
+            chat.park_tail(idx + 1, ParkCause::Regenerate, now);
             chat.modified_at = now;
         }
-        self.mark_dirty(active_id);
-        self.activate(active_id); // rebuild the feed without the old reply
-        self.emit_chat_list();
-        // A background run whose exchange just left the live messages ends
-        // with it (research fork F8).
-        self.cancel_orphaned_background_runs(active_id);
-        self.cancel_orphaned_followups(active_id);
+        // The feed is rebuilt without the old reply, and a background run or
+        // a follow-up planned in it ends with it (research forks F8, F5).
+        self.after_line_moved(active_id);
         // A reply to a notice is redone as the turn it was: nobody typed it, so it
         // may again choose silence (spec §9.3.6) or be re-asked when empty.
         let woken = self
@@ -661,10 +654,10 @@ impl Orchestrator {
         carries_tool_calls(chat.messages.get(sent_from..).unwrap_or_default())
     }
 
-    /// Deletes the last exchange: the assistant's reply together with the user
-    /// message that triggered it (spec §11.7). The user's text is returned to the
-    /// input box (`RestoreInput`) so it can be edited and resent.
-    /// Ignored during generation.
+    /// Takes the last exchange back: the assistant's reply together with the
+    /// user message that triggered it leave the line as a branch (spec §11.7).
+    /// The user's text is returned to the input box (`RestoreInput`) so it can
+    /// be edited and resent. Ignored during generation.
     pub(super) fn handle_delete_last(&mut self) {
         if !self.gen_state.is_idle() || self.seat_holds_open_chat() {
             return;
@@ -693,23 +686,15 @@ impl Orchestrator {
             } else {
                 chat.messages[idx].text.clone()
             };
-            // Save what's deleted (the user message + the assistant's reply) and the
-            // input draft BEFORE returning the user's text to the field — for manual
-            // recovery (spec §11.7) — unless a parked branch continues from the
-            // exchange: then it is parked too (see `handle_regenerate`).
+            // The exchange is kept as a branch — `/fork N` at the person's
+            // last message, under its own cause (spec §11.7, research §3.10).
+            // What the input box holds stays in the box: the text handed back
+            // below is put in front of it.
             let now = chrono::Utc::now();
-            if !chat.park_if_anchored(idx, ParkCause::Takeback, now) {
-                let draft = chat.draft.clone();
-                let removed = chat.messages.split_off(idx);
-                chat.record_deleted(removed, draft, DeletedCause::DeleteExchange);
-            }
+            chat.park_tail(idx, ParkCause::Takeback, now);
             chat.modified_at = now;
         }
-        self.mark_dirty(active_id);
-        self.activate(active_id); // rebuild the feed without the deleted exchange
-        self.emit_chat_list();
-        self.cancel_orphaned_background_runs(active_id);
-        self.cancel_orphaned_followups(active_id);
+        self.after_line_moved(active_id);
         let _ = self.evt_tx.send(AppEvent::RestoreInput(user_text));
     }
 
@@ -1394,6 +1379,11 @@ impl Orchestrator {
             }
         }
         if res.messages.is_empty() && res.effects.is_empty() && res.deleted.is_empty() {
+            // The line is where the turn found it. After a regeneration that
+            // is a line ending on the question, with the replaced reply parked
+            // behind it — said again, now that no reply is on its way to carry
+            // the mark (research §3.10).
+            self.refresh_branches(res.chat_id);
             // A turn that landed nothing still ends the wait of a result
             // that arrived meanwhile (docs/research/background-subagents.md §4.4).
             self.land_pending_runs(res.chat_id);

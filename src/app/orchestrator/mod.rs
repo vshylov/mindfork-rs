@@ -1859,8 +1859,9 @@ impl Orchestrator {
         )
     }
 
-    /// Drops the feed's flipped blocks (`FeedView::flipped`) whose message a
-    /// take-back or a regeneration removed — at activation, the one place every
+    /// Drops the feed's flipped blocks (`FeedView::flipped`) whose message the
+    /// chat no longer holds — a reply the assistant rewrote; what a take-back
+    /// or a regeneration cut is parked, and kept — at activation, the one place every
     /// path passes, so the stored set does not collect dead keys
     /// (docs/research/block-fold-and-partial-copy.md §3.3). A transcript's flips
     /// are its parent's, as its flags are, so the parent's set is checked

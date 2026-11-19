@@ -77,16 +77,17 @@ pub enum AppCommand {
     /// the failure streak untouched, the window skipped; a kind with no
     /// task running is ignored (docs/research/stop-silent-task.md §3).
     StopBackgroundTask { kind: BackgroundKind },
-    /// Regenerate the last assistant reply: delete everything after the last
-    /// user message and restart generation from the same request.
+    /// Regenerate the last assistant reply: everything after the last user
+    /// message leaves the line as a branch, and generation restarts from the
+    /// same request.
     RegenerateLast,
     /// Resume the last interrupted assistant reply in place (`/continue`,
     /// spec §6.4): prefill the trailing partial and append what arrives into
     /// the same message; a tool-result tail resumes the agentic loop instead.
     ContinueLast,
-    /// Delete the last exchange (the assistant's reply together with the user
-    /// message that triggered it); the user's text is restored into the input box
-    /// (`RestoreInput`).
+    /// Take back the last exchange (the assistant's reply together with the user
+    /// message that triggered it): it leaves the line as a branch, and the
+    /// user's text is restored into the input box (`RestoreInput`).
     DeleteLastExchange,
     /// Fork the open conversation at the bubble that shows `message`
     /// (`/fork N`, docs/research/chat-branches.md §3.6): what followed is

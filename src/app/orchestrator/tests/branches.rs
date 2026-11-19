@@ -69,6 +69,17 @@ fn activated(events: &[AppEvent]) -> (Vec<String>, BranchView) {
     (feed, branches)
 }
 
+/// Every set of branches the events carry, in the order they were sent.
+fn branch_views(events: &[AppEvent]) -> Vec<BranchView> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            AppEvent::Branches(view) => Some((**view).clone()),
+            _ => None,
+        })
+        .collect()
+}
+
 fn notices(events: &[AppEvent]) -> Vec<String> {
     events
         .iter()
@@ -523,6 +534,117 @@ async fn the_line_growing_at_a_fork_refreshes_the_marks() {
     assert_eq!(chat.branches[0].messages[0].id, first);
 }
 
+/// `Ctrl+R` keeps the reply it replaces as a branch (research §3.10). While
+/// the new reply is on its way the old one stands at the line's end, behind
+/// the question; once the new one lands it is variant 2 of that place and
+/// carries the mark, with no activation in between. A regeneration that lands
+/// nothing leaves the line on the question — and the branches are sent again,
+/// so the screen can say where the replaced reply is. A switch returns to it.
+#[tokio::test]
+async fn a_regeneration_keeps_the_replaced_reply_as_a_variant() {
+    let reply = |text: &str| {
+        vec![
+            ChatChunk::Text(text.into()),
+            ChatChunk::Finished(FinishReason::Stop),
+        ]
+    };
+    let backend = Arc::new(MockBackend::sequence(vec![
+        reply("первый"),
+        reply("второй"),
+        vec![
+            ChatChunk::Error {
+                message: "overloaded_error: Overloaded".into(),
+                transient: true,
+            },
+            ChatChunk::Finished(FinishReason::Error),
+        ],
+    ])) as Arc<dyn EngineBackend>;
+    // No title is asked for: its request would take a reply of the script.
+    let (_d, cmd_tx, mut evt_rx, handle) = spawn_orch_cfg(Some(backend), no_auto_cfg());
+    let root = _d.path().to_path_buf();
+    let active = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    // Bounded: a step that stops sending its event fails here by name.
+    use super::generation::wait_for_bounded as within;
+    let AppEvent::ChatActivated { id: chat_id, .. } = active else {
+        unreachable!()
+    };
+    let branches = |e: AppEvent| match e {
+        AppEvent::Branches(view) => *view,
+        _ => unreachable!(),
+    };
+    let is_branches = |e: &AppEvent| matches!(e, AppEvent::Branches(_));
+    let is_landed = |e: &AppEvent| matches!(e, AppEvent::TurnLanded { .. });
+
+    cmd_tx
+        .send(AppCommand::SendMessage("вопрос".into()))
+        .unwrap();
+    let landed = within(&mut evt_rx, "the first reply", is_landed).await;
+    let AppEvent::TurnLanded { messages, .. } = landed else {
+        unreachable!()
+    };
+    let first = messages[0].id;
+
+    cmd_tx.send(AppCommand::RegenerateLast).unwrap();
+    // The activation that rebuilt the feed without the old reply: it is
+    // parked at the line's end, and no bubble carries a mark yet.
+    let view = branches(within(&mut evt_rx, "the activation's branches", is_branches).await);
+    assert!(view.marks.is_empty(), "{view:?}");
+    assert_eq!(view.parked.len(), 1);
+    assert!(view.parked[0].at_end);
+    assert_eq!(view.parked[0].first, first);
+    // The new reply landed: the mark is on it.
+    let landed = within(&mut evt_rx, "the second reply", is_landed).await;
+    let AppEvent::TurnLanded { messages, .. } = landed else {
+        unreachable!()
+    };
+    let second = messages[0].id;
+    let view = branches(within(&mut evt_rx, "the landing's branches", is_branches).await);
+    assert_eq!(
+        view.marks
+            .iter()
+            .map(|m| (m.message, m.variant, m.of))
+            .collect::<Vec<_>>(),
+        [(second, 2, 2)]
+    );
+    assert_eq!((view.parked[0].variant, view.parked[0].of), (1, 2));
+    assert!(!view.parked[0].at_end);
+
+    // A regeneration the engine fails before a word: nothing lands, and the
+    // line stays on the question with both replies parked behind it.
+    cmd_tx.send(AppCommand::RegenerateLast).unwrap();
+    let view = branches(within(&mut evt_rx, "the second activation", is_branches).await);
+    assert_eq!(view.parked.iter().filter(|b| b.at_end).count(), 2);
+    within(&mut evt_rx, "the failed turn's end", |e| {
+        matches!(e, AppEvent::Finished { .. })
+    })
+    .await;
+    let again = branches(within(&mut evt_rx, "the branches after it", is_branches).await);
+    assert_eq!(again, view, "said again once the turn ended with nothing");
+
+    // Back to the first reply.
+    cmd_tx.send(AppCommand::SwitchBranch { first }).unwrap();
+    within(&mut evt_rx, "the switch's notice", |e| {
+        matches!(e, AppEvent::Notice(_))
+    })
+    .await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let reopened = Storage::open(Paths::with_root(&root)).unwrap();
+    let chat = reopened.json().load_chat(chat_id).unwrap().unwrap();
+    let texts: Vec<&str> = chat.messages.iter().map(|m| m.text.as_str()).collect();
+    assert_eq!(texts, ["вопрос", "первый"]);
+    assert!(chat.deleted.is_empty(), "{:?}", chat.deleted);
+    let parked: Vec<(&str, ParkCause)> = chat
+        .branches
+        .iter()
+        .map(|b| (b.messages[0].text.as_str(), b.cause))
+        .collect();
+    assert_eq!(parked, [("второй", ParkCause::Regenerate)]);
+}
+
 /// A greeting is swapped only in a chat that holds nothing else, and a chat
 /// with a parked branch holds something: a branch may continue from the
 /// greeting, which a swap would replace under it.
@@ -551,11 +673,9 @@ fn a_chat_with_a_branch_does_not_swap_its_greeting() {
     assert_eq!(orch.chats[0].branches[0].after, Some(greeting));
 }
 
-/// A take-back of the exchange a branch continues from parks the exchange
-/// instead of archiving it: the archive is where what is gone goes, and a
-/// branch anchored on a message there would have no place to return to. The
-/// branch is then reached through the parked exchange, and a switch to it
-/// puts the whole conversation back.
+/// A take-back of the exchange a branch continues from parks the exchange,
+/// as a take-back of any exchange does: the branch is then reached through
+/// the parked exchange, and a switch to it puts the whole conversation back.
 #[test]
 fn a_take_back_of_an_exchange_a_branch_continues_from_parks_it() {
     let (_d, mut orch, mut rx, chat, ids) = forkable();
@@ -580,9 +700,83 @@ fn a_take_back_of_an_exchange_a_branch_continues_from_parks_it() {
     orch.handle_switch_branch(ids[4]);
     assert_eq!(line(&orch, chat), ["q1", "a1", "q2", "a2", "q3", "a3"]);
     assert!(orch.chats[0].branches.is_empty());
+}
 
-    // With no branch continuing from it, a take-back archives as it always did.
+/// `Ctrl+E` is `/fork N` at the person's last message under a name of its
+/// own (research §3.10): the exchange is parked, never archived; its text
+/// comes back; the screen is sent the branch, which stands at the line's end;
+/// and a switch to it restores the conversation with nothing left parked.
+#[test]
+fn a_take_back_keeps_the_exchange_as_a_branch() {
+    let (_d, mut orch, mut rx, chat, ids) = forkable();
+
     orch.handle_delete_last();
-    assert_eq!(orch.chats[0].deleted.len(), 1);
+    assert_eq!(line(&orch, chat), ["q1", "a1", "q2", "a2"]);
+    let stored = &orch.chats[0];
+    assert!(stored.deleted.is_empty(), "nothing is archived");
+    assert_eq!(stored.branches.len(), 1);
+    assert_eq!(stored.branches[0].cause, ParkCause::Takeback);
+    assert_eq!(stored.branches[0].after, Some(ids[3]));
+    let events = drain(&mut rx);
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, AppEvent::RestoreInput(t) if t == "q3"))
+    );
+    let view = branch_views(&events).pop().expect("the branches are sent");
+    assert_eq!(view.parked.len(), 1);
+    assert!(view.parked[0].at_end);
+    assert_eq!((view.parked[0].number, view.parked[0].bubbles), (5, 2));
+
+    // The same fork by its command lands in the same place.
+    let (_d2, mut by_command, _rx2, forked, fork_ids) = forkable();
+    by_command.handle_fork_at(fork_ids[4]);
+    assert_eq!(line(&by_command, forked), line(&orch, chat));
+    assert_eq!(by_command.chats[0].branches[0].after, Some(fork_ids[3]));
+
+    orch.handle_switch_branch(ids[4]);
+    assert_eq!(line(&orch, chat), ["q1", "a1", "q2", "a2", "q3", "a3"]);
     assert!(orch.chats[0].branches.is_empty());
+}
+
+/// What reflection reads as "the reply did not land" is the tails the two
+/// keys parked (research §3.10). A reply the person **switched back to** is on
+/// the line again and leaves no record: going back to a reply is not that
+/// sign — and neither is the switch that displaced the other variant.
+#[test]
+fn a_reply_switched_back_to_is_not_a_signal_for_reflection() {
+    use crate::app::orchestrator::reflection::behavior_markers;
+    let (_d, mut orch, mut rx, chat, ids) = forkable();
+    let loc = orch.ui_locale();
+    assert!(behavior_markers(&orch.chats[0], None, loc).is_none());
+
+    // What `Ctrl+R` does to the chat, without the engine: the reply is
+    // parked under its cause and another is written in its place.
+    let now = chrono::Utc::now();
+    assert!(orch.chats[0].park_tail(5, ParkCause::Regenerate, now));
+    orch.chats[0].push_message(Message::assistant("a3 again"));
+    let signal = behavior_markers(&orch.chats[0], None, loc).expect("a regeneration is read");
+    assert!(
+        signal.contains(&loc.tf("reflect.behavior.regen", &[("n", "1")])),
+        "{signal}"
+    );
+
+    // The person returns to the first reply.
+    orch.handle_switch_branch(ids[5]);
+    drain(&mut rx);
+    assert_eq!(line(&orch, chat), ["q1", "a1", "q2", "a2", "q3", "a3"]);
+    let causes: Vec<ParkCause> = orch.chats[0].branches.iter().map(|b| b.cause).collect();
+    assert_eq!(causes, [ParkCause::Switch]);
+    assert!(behavior_markers(&orch.chats[0], None, loc).is_none());
+
+    // A take-back is read, and a fork is not.
+    orch.handle_delete_last();
+    orch.handle_fork_at(ids[2]);
+    drain(&mut rx);
+    let signal = behavior_markers(&orch.chats[0], None, loc).expect("a take-back is read");
+    assert!(
+        signal.contains(&loc.tf("reflect.behavior.deleted", &[("n", "1")])),
+        "{signal}"
+    );
+    assert!(!signal.contains(&loc.tf("reflect.behavior.regen", &[("n", "1")])));
 }

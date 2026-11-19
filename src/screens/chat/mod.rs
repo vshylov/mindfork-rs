@@ -426,10 +426,12 @@ pub enum ChatIntent {
     },
 }
 
-/// An irreversible operation that requires confirmation in a modal popup.
+/// An operation that is asked about in a modal popup before it runs.
 ///
-/// Two of these are the destructive **keys** (`Ctrl+R`/`Ctrl+E`), raised through
-/// [`ChatScreen::trigger_destructive`] and asked about only when
+/// Two of these are the **keys** that take the conversation's end off the line
+/// (`Ctrl+R`/`Ctrl+E`) — what they take is kept as a branch, so the question
+/// guards against a key pressed by accident, not against a loss. They are
+/// raised through [`ChatScreen::trigger_destructive`] and asked about only when
 /// `interface.confirm_destructive_keys` is on — and never while a turn runs.
 /// The other two are typed routes into another screen's territory (stage 2 of
 /// docs/history/command-only-control.md); their commands set this state
@@ -442,7 +444,7 @@ pub enum ChatIntent {
 enum ConfirmAction {
     /// Regenerate the last reply (`Ctrl+R`).
     Regenerate,
-    /// Delete the last exchange (`Ctrl+E`).
+    /// Take back the last exchange (`Ctrl+E`).
     DeleteExchange,
     /// Delete a companion profile and hide its conversations with it
     /// (`/profile delete <name>`; `Ctrl+D` in the settings screen's "Profiles").
@@ -712,12 +714,18 @@ pub struct ChatScreen {
     /// bubbles carry and its parked tails — what `/branch` lists and resolves
     /// against (docs/research/chat-branches.md §3.6–§3.7).
     branches: BranchView,
+    /// The note said for a tail parked at the line's end, as the branches
+    /// stand now — what tells that note from any other at the feed's end
+    /// (`set_branches`). `None` — every parked tail's place has a continuation
+    /// on the line, and a mark on it.
+    branch_note: Option<String>,
     /// The open *Local servers* list: a local Ollama or LM Studio that
     /// answered, at the start of a chat with no engine or for `/local`
     /// (docs/research/local-servers.md, stage 2).
     local_servers: Option<LocalServerPickerState>,
-    /// The open modal confirmation popup for an irreversible operation
-    /// (`Ctrl+R`/`Ctrl+E`); `None` — the popup is closed. See spec §11.7.
+    /// The open modal confirmation popup ([`ConfirmAction`]: `Ctrl+R`/`Ctrl+E`
+    /// with their setting on, a deletion a command asked for); `None` — the
+    /// popup is closed. See spec §11.7.
     confirm: Option<ConfirmAction>,
     /// A dangerous tool call awaiting the user's answer (spec §9.8). Independent
     /// of [`Self::confirm`]: this one is modal *during* generation.
@@ -893,6 +901,7 @@ impl ChatScreen {
             chat_links: None,
             branch_popup: None,
             branches: BranchView::default(),
+            branch_note: None,
             local_servers: None,
             feed_has_risky: false,
             full_redraw: false,

@@ -159,6 +159,12 @@ neighbouring variant. Coming back to a branch restores the conversation as you
 left it. A click on a number writes it into `/fork` or `/branch` when one of
 them is in the box.
 
+`Ctrl+R` and `Ctrl+E` make branches too. A regenerated reply does not replace
+the old one: the new reply is `‹2/2›`, and `‹` brings the first back. An
+exchange you took back with `Ctrl+E` stays in the chat as a branch, and the
+note under the conversation names the command that returns to it. Nothing
+either key removes is lost.
+
 A fork changes the conversation and nothing else. Notes the assistant saved,
 files it wrote and changes it made to your project stay as they are; `F4` still
 shows and reverts what it did to the project. The assistant itself reads only
@@ -887,8 +893,8 @@ things on different screens. The highlights:
 | `F3` | the self-model screen |
 | `F7` | the tasks screen |
 | `Ctrl+N` | new chat (with a profile picker) |
-| `Ctrl+R` | regenerate the last reply |
-| `Ctrl+E` | take back the last exchange (your text returns to the input box) |
+| `Ctrl+R` | regenerate the last reply; the old one stays as a variant (`‹1/2›`) |
+| `Ctrl+E` | take back the last exchange: your text returns to the input box, the exchange stays as a branch |
 | `Ctrl+U` | impersonation: the model writes your next message |
 | `F5` | copy the conversation to the clipboard |
 | `F6` | on an open background subagent transcript: stop that run |
@@ -960,7 +966,7 @@ things on different screens. The highlights:
 > on (Settings → Profiles → Keyboard) `Alt+Enter` and the other `Alt` chords work too.
 > A link there opens with Cmd+double-click. iTerm2 and Ghostty take `Shift+Enter`; in
 > iTerm2, `Shift`+Page Up/Down scroll iTerm2 rather than the conversation. In Ghostty, Cmd+→ arrives as `Ctrl+E`, which
-> deletes the last exchange: turn on *Confirm regenerate / delete* (Settings →
+> takes the last exchange back: turn on *Confirm regenerate / take back* (Settings →
 > Interface), or Ghostty's keys off ([install.md](install.md#macos-apple-silicon--a-preview)).
 > The `F` keys need `fn`.
 
@@ -1026,7 +1032,7 @@ the keys for itself:
 | `/rename [title]` · `/clone` · `/copy` | `F2` · `Ctrl+D` · `F5` | this chat: rename, clone, copy the conversation |
 | `/copy first [N]` · `/copy last [N]` | — | copy only the first or the last N messages (one without N), as the conversation shows them, without the chat's title |
 | `/autotitle` | `Ctrl+R` in the list | have the model title this chat |
-| `/regen` · `/retry` · `/takeback` | `Ctrl+R` · `Ctrl+E` | regenerate the last reply / take back the last exchange |
+| `/regen` · `/retry` · `/takeback` | `Ctrl+R` · `Ctrl+E` | regenerate the last reply / take back the last exchange; what either takes off the conversation stays as a branch |
 | `/fork [N]` | — | continue the conversation from message N, keeping what followed as a branch; alone, a list of the messages to pick from |
 | `/branch [N K]` | click `‹` `›` | switch message N to its variant K; alone, the list of the chat's branches |
 | `/continue` | — | resume the last interrupted reply from where it stopped — local and external engines, Gemini, and Claude up to the 4.5 generation; DeepSeek in the `deepseek` mode, in a conversation without tool calls; through OpenRouter or another gateway, only Gemini models and Claude up to 4.5 |

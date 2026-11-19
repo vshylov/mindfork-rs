@@ -83,7 +83,7 @@ Why TUI: the interface ends up fast, predictable, and portable; the application 
 - **State-ownership discipline**: the orchestrator is the sole owner of `Chat`; tools read an immutable snapshot and never mutate the chat directly; a unidirectional UI ↔ backend data flow; `generation_id` guards against stale streaming events; the `Idle/Generating/Cancelling` state machine.
 - EOS handling **by token id**, not by substring; no string stop sequences by default.
 - The tool roster and `call_subagent` semantics (second opinion, no nesting allowed).
-- Chat operations: create, rename, clone, (soft-)delete, regenerate the last response, delete the last message (with the text returned to the input box), edit a message in place.
+- Chat operations: create, rename, clone, (soft-)delete, regenerate the last response, take back the last exchange (with the text returned to the input box), edit a message in place.
 - Per-profile sampling override priority (`Chat.sampling_override` → `Profile.default_sampling` → global default).
 - Soft delete (`is_hidden`), portable storage next to the binary, a backup on save, single-instance enforcement, spellcheck (en_US, en_GB, ru_RU).
 
@@ -369,7 +369,7 @@ pub struct Branch {
     pub after: Option<Uuid>,                // the last message it shares with the line it left; None — it starts the chat
     pub messages: Vec<Message>,             // never empty; its first message names the variant
     pub parked_at: DateTime<Utc>,
-    pub cause: ParkCause,                   // Fork | Switch | Regenerate | Takeback
+    pub cause: ParkCause,                   // Fork | Switch | Regenerate (Ctrl+R) | Takeback (Ctrl+E); the last two are reflection's signal (§17.6)
     pub compaction: Option<Compaction>,     // the summary in force when it left, to have again on return (§6.7)
     pub reflected_upto: Option<usize>,      // the reflection watermark in force when it left
 }
@@ -522,16 +522,16 @@ loop:
 ### 6.4. Cancellation, regeneration, continuation, deletion
 
 - **Cancellation**: a `CancellationToken` aborts the current HTTP stream; the partial response is kept; the chat goes `Cancelling → Idle`.
-- **Regenerating the last response**: delete the last assistant message (and any tool messages from that turn) and repeat the request with the same context (a new seed, if a random seed is enabled).
+- **Regenerating the last response**: the last assistant message (and any tool messages from that turn) leaves the line — kept as a branch, the first variant of its place ([§11.7](#117-keybindings-preliminary)) — and the request is repeated with the same context (a new seed, if a random seed is enabled).
 - **Continuing a response** (`/continue`, [§11.7](#117-commands); design and measurements — [docs/research/continue-generation.md](docs/research/continue-generation.md)): the history is re-sent with the partial as its **trailing assistant message** and the engine continues it **in place** (assistant prefill). Everything that arrives appends into the same `Message` — same id, same bubble, no separator; the seam is the model's own.
   - **Eligibility** is read off the tail. An assistant message with visible text whose recorded end state (`MessageMetadata.finish`: `stop`/`length`/`cancelled`/`error`; additive — older messages read as absent) is an interruption — or absent — is continued via prefill. A tail of **tool results** (a turn interrupted between rounds) resumes the agentic loop instead: an ordinary next round, no prefill. A reply that ended in `stop`, a thoughts-only fragment (no provider can resume a reasoning trace over a chat API), an unsupported mode, and a subagent transcript are each refused with a note naming the route that works.
   - **Capability is per mode — and, for Anthropic, per model** (`ServerMode::supports_continuation`, the `supported_sampling_fields` pattern). Managed/external: llama.cpp continues a trailing assistant message by default; the wire also sends `continue_final_message: true` + `add_generation_prompt: false` (vLLM's explicit opt-in, ignored by llama.cpp builds that predate it) and `chat_template_kwargs {"enable_thinking": false}` — resuming a visible reply must not re-open reasoning, and on older llama.cpp builds the kwarg lifts the prefill-vs-thinking rejection. **Gemini** continues a trailing `model` turn (measured live; undocumented, so the probe stays in the smoke set — the wire adds nothing). **Anthropic** continues on models up to the **4.5 generation** and rejects from 4.6 on — the gate is an allowlist by version read off the model id, refusing what it cannot parse; the continuation request drops the extended-thinking block (prefill and thinking are incompatible) and right-trims the trailing prefill in the wire copy (Anthropic rejects trailing whitespace — the stored message keeps its bytes). **OpenAI** never continues a trailing assistant message and **Grok** measurably restarts — both refuse (research §2, §7.1). **DeepSeek's API** does not continue either: given a cut on `/v1`, it answers `400` ("the `reasoning_content` in the thinking mode must be passed back") when the request carries tool schemas and thinking is on — the app's request at the default settings — and otherwise with a new reply from the beginning, which the echo filter below hides only when the restart repeats the cut byte for byte. **`external` at DeepSeek's host** refuses — `api.deepseek.com` exactly, case aside (`EngineSettings::supports_continuation`, `is_deepseek_host`) — with a note of its own that names the mode: the general one says that external engines continue. Neither answer says "no prefill", so there is no refusal to learn from, and a proxy in front of DeepSeek is not recognised. **The `deepseek` mode continues**, by DeepSeek's beta prefix completion: the cut goes to `/beta/chat/completions` with `"prefix": true` on the trailing assistant message, with no tool schemas — the route refuses a request carrying them — the thinking switch off and no effort. The route also refuses a history holding a tool call, so the mode resumes a text tail only in a conversation without one (`ServerMode::continues_without_tools_only`): an assistant call or a tool result in what the request carries — the chat's history from the compaction boundary on, and the turn's own rounds — makes `/continue` refuse with a note that says so, and a turn ending after a tool round is not announced as continuable. A tail of tool results is no prefill and resumes as anywhere ([docs/history/deepseek-mode.md](docs/history/deepseek-mode.md) §1, §4.2, fork F2). **An `external` gateway** — an endpoint whose catalogue answered for the configured model, which a llama.cpp never does — is answered per route, not per mode: measured through OpenRouter, only Anthropic ≤ 4.5 and Gemini continue, while OpenAI and every open-weight route restart, and a restart would flow past the echo filter and be stored glued onto the partial. So on a gateway the gate reads the slug's vendor against this same table (`anthropic/…` through the version allowlist, `google/gemini-…`) and refuses everything else with a note of its own; an `external` endpoint that publishes no catalogue continues as before. The catalogue is asked when the engine is applied rather than at the first turn, because `/continue` as the first command after a restart is the command's main case ([docs/history/gateway-images-and-continue.md](docs/history/gateway-images-and-continue.md) §1.3, fork H2). **The `openrouter` mode** is that gateway by name, so its gate reads the slug's vendor against the same table **whether or not the catalogue has answered** — there is no llama.cpp behind this mode for silence to mean — and its request carries neither the explicit pair nor `chat_template_kwargs`: the gateway reads none of them, and whether a trailing assistant message is continued is the routed vendor's doing ([docs/research/openrouter-mode.md](docs/research/openrouter-mode.md) §2.3, §3.5).
   - **The echo**: llama.cpp returns *prefill + continuation*; a byte-prefix filter withholds the echoed seed from the stream (screen, mirror and stored message alike) and passes everything through unchanged the moment the stream diverges from the seed — a non-echoing server loses nothing. Measured live: the concatenation of both turns' streamed chunks equals the stored text byte-for-byte.
   - The continued turn is a full citizen of the agentic loop — the resumed round may call tools, and later rounds file as separate messages, as always. The interruption notes (cancelled, cut-short, and the `length` note this feature added — a length-cut reply used to stop silently) name `/continue` only when it would actually work in the current mode.
 - **A reply the provider's content filter stopped** ends as `FinishReason::Filtered`, whatever the provider calls it — `finish_reason: "content_filter"` on the OpenAI-compatible wire (OpenRouter normalises every route's reason into it), `response.incomplete` with `incomplete_details.reason: "content_filter"` on Responses, `stop_reason: "refusal"` on Anthropic, and on Gemini the finish reasons `SAFETY`, `RECITATION`, `BLOCKLIST`, `PROHIBITED_CONTENT`, `SPII`, `IMAGE_SAFETY` or a `promptFeedback.blockReason`. What arrived before it is kept, and the feed adds one localized note saying why the reply is short; impersonation adds the same kind of note under the draft it leaves in the input box, and a subagent's status line tells the parent model. It is **never continuable** — resuming meets the same filter — and is stored as `stop`, so `/continue` refuses it like any finished reply and the chat format does not change. Tool calls a round produced before a filter reason still run. Before this each provider's fallback arm read the stop as a complete answer — or, on Responses, as a length cut that offered `/continue` into the filter ([docs/research/content-filter-finish.md](docs/research/content-filter-finish.md)).
-- **Deleting the last message**: on request — the **last Assistant message** is deleted along with the **last User message**, and its text is **returned to the input box**; if the box isn't empty, the deleted message's text is **prepended** to what's already there, separated from the draft by a **blank line** (the restored message is a message of its own, not a continuation of the draft). (If the last message is a user message with no reply, only it is deleted, with its text returned.)
+- **Taking the last exchange back**: on request — the **last Assistant message** leaves the line along with the **last User message**, both kept as a branch ([§11.7](#117-keybindings-preliminary)), and the user's text is **returned to the input box**; if the box isn't empty, the deleted message's text is **prepended** to what's already there, separated from the draft by a **blank line** (the restored message is a message of its own, not a continuation of the draft). (If the last message is a user message with no reply, only it is taken back, with its text returned.)
 
-- **A task notification is a user-side row** for both ([9.3.2](#932-call_subagent)): regeneration redoes the reply it woke and keeps the notification; deletion removes the notification together with that reply and returns nothing to the input box.
+- **A task notification is a user-side row** for both ([9.3.2](#932-call_subagent)): regeneration redoes the reply it woke and keeps the notification; a take-back parks the notification together with that reply and returns nothing to the input box.
 
 ### 6.5. Parsing "thoughts" (CoT)
 
@@ -887,7 +887,7 @@ Since the inference server doesn't provide built-in web search, we implement it 
 Unlike ordinary tools (which return a text result without touching the conversation's structure), these are **control-flow** tools: they're recognized by the orchestrator's client-side agentic loop itself (`app/orchestrator/generation.rs`), not by `Tool::invoke`. The `Tool` implementations (`features/tools/control.rs`) exist only for the schema/description/registration/gating. Both are **optional** and **disabled by default**: they're not in `default_tool_ids` (so `reconcile_tools` doesn't enable them), but they are in the `all_tool_ids` catalog — toggles in profile settings. The loop only recognizes them when they're actually enabled in the profile (otherwise it's an ordinary refusal).
 
 - **`send_followup_message`** ("write another message"): the assistant can finish writing its current message, then call the tool — after which it writes a **second reply**, shown as a **separate bubble** right after the first one. Implementation: the loop finalizes the current round's text as a message, adds a tool-result "permission granted", and continues the loop; the next round is the second message. Alternation and inference are standard (`assistant(tool_call) → tool → assistant`), no synthetic user turn is inserted. The "separate bubble" is enforced by the `Message.new_bubble` flag (honored by `from_messages`, which doesn't merge it into the previous assistant block); the control tool's internal tool block is hidden in the feed.
-- **`rewrite_current_message`** ("rewrite my current message"): if, partway through writing, the assistant realizes it answered incorrectly, it calls the tool — the current round's accumulated text is **discarded** (the UI clears the bubble to be rewritten), and the next round writes the message from scratch. During the rewrite round, the request **includes** the prior `assistant(partial + tool_call)` + the tool result (the model sees "you were asked to rewrite"); once done, the discarded assistant message and its tool message **move into `Chat.deleted`** (like `Ctrl+E`/`Ctrl+R`, §11.7) — no longer part of inference/the feed, but preserved for manual recovery via JSON editing.
+- **`rewrite_current_message`** ("rewrite my current message"): if, partway through writing, the assistant realizes it answered incorrectly, it calls the tool — the current round's accumulated text is **discarded** (the UI clears the bubble to be rewritten), and the next round writes the message from scratch. During the rewrite round, the request **includes** the prior `assistant(partial + tool_call)` + the tool result (the model sees "you were asked to rewrite"); once done, the discarded assistant message and its tool message **move into `Chat.deleted`** (the archive of §11.7 — not a branch: the replaced text was the assistant's own draft, not a continuation the person may return to) — no longer part of inference/the feed, but preserved for manual recovery via JSON editing.
 
 Both are subject to `max_tool_rounds` (each call = one round) — a backstop against endless "extra messages"/"rewrites". UI signals — the `AppEvent::AssistantContinue`/`AssistantRewrite` events (the live feed matches a reload from history).
 
@@ -3690,8 +3690,9 @@ this?"*; this screen answers *"where exactly, and take me there."*
   - **A whole-feed toggle forgets its kind's exceptions**, so after `Ctrl+T` or
     `Ctrl+O` every block of the kind is in the new state, and the set stays short.
   - **Storage.** The set is stored as `feed_view.flipped`, an additive field
-    skipped when empty. It is pruned at activation of keys whose message a
-    take-back or a regeneration removed. A transcript's exceptions are its
+    skipped when empty. It is pruned at activation of keys whose message the chat
+    holds neither on its line nor in a branch — a reply the assistant rewrote; a
+    block folded in what `Ctrl+E` or `Ctrl+R` parked keeps its fold. A transcript's exceptions are its
     parent's, as its flags are, and a clone keeps them. It is read **entry by
     entry**: an entry this version cannot read, such as a kind of block a later
     version adds, is dropped with a line in the log, and the chat still reads. A
@@ -4907,9 +4908,9 @@ docs/history/external-api-key.md.
 | `F5` | copy the entire chat conversation to the clipboard (the active chat / the one selected in the list) |
 | `F6` | on the open transcript of a **background** subagent run: stop the run (§9.3.2; `/subagents stop [n]` is the typed route). Anywhere else the key does nothing and is not advertised |
 | `F7` | the tasks screen: every sub-agent and dialogue run across every chat — running with its position, landed with its outcome — and the app's own background work (§11.10; `/tasks` is the typed route). There: `Enter` opens a run's transcript, `P` its chat, `F6` stops a running background run or one of the app's own tasks (`/tasks stop <kind>` is the typed route to the latter); on a companion's follow-up (§9.3.6) `Enter` or `P` opens its conversation and `Del` twice cancels it |
-| `Ctrl+R` | in a chat: regenerate the last response; in the chat list: ask the model to title the selected chat (§11.2) |
+| `Ctrl+R` | in a chat: regenerate the last response — the replaced one stays as a variant (§11.7); in the chat list: ask the model to title the selected chat (§11.2) |
 | `Ctrl+U` | write a message as the user (impersonation, §11.8) |
-| `Ctrl+E` | delete the last exchange (the text is returned to the input box) |
+| `Ctrl+E` | take back the last exchange: the text is returned to the input box, the exchange stays as a branch (§11.7) |
 | `/tts [N\|all\|stop\|pause\|resume]` | speak the chat's messages / stop / pause / resume (§11.9) |
 | `Ctrl+K` | clear all text in the input box (undo it — `Ctrl+Z`) |
 | `Ctrl+Z` / `Ctrl+Y` | undo / redo an input-box edit (coalesced snapshots) |
@@ -5344,18 +5345,38 @@ grows by that unit; the presses are counted on one cell within `MULTI_CLICK` = 5
 (`shared::mouse::ClickCounter` — crossterm reports presses, not clicks). A press in the box ends the
 feed's selection, and the feed's drag ends the box's (§11.3).
 
-**Preserving deleted exchanges (`Ctrl+E`/`Ctrl+R`).** Deleting an exchange (`Ctrl+E`) and
-regenerating the last response (`Ctrl+R`) are irreversible in the UI, but nothing deleted this
-way is lost on disk: each such deletion appends an entry to the
-`Chat.deleted` collection (an array of `DeletedExchange { deleted_at, messages, draft }` in the chat
-file). An entry captures the moment of deletion (`deleted_at`), the deleted messages
-(`Ctrl+E` — the user message and the assistant's response; `Ctrl+R` — the assistant's
-response and the round's tool messages), and `draft` — the input box's contents at the
-moment of deletion (before the user's text is returned, for `Ctrl+E`). New entries are prepended
-to the collection (recent deletions are faster to find). There's no restoration via the UI:
-the collection exists only for **manual** JSON editing in rare cases where
-something important was deleted. The field is only serialized when non-empty
-(`skip_serializing_if`).
+**What `Ctrl+E` and `Ctrl+R` do with what they cut.** Taking the last exchange back
+(`Ctrl+E`) and regenerating the last reply (`Ctrl+R`) take the conversation's end off the
+line, and **both keep it as a branch of the chat** (below;
+[docs/research/chat-branches.md](docs/research/chat-branches.md) §3.10):
+
+- **`Ctrl+R`** parks the reply being replaced — with its rounds' tool messages — under
+  the cause `regenerate`. The new reply is the next variant of that place and carries the
+  mark on its header (`‹2/2›`, [11.3](#113-the-message-feed)); `‹` returns to the old one.
+  While the new reply is being written the old one stands at the line's end, and the
+  note that says so (below) is **not** drawn between the question and its new answer: a
+  turn that starts right under it takes its place. A regeneration that lands nothing
+  leaves the line on the question, and the note is said then.
+- **`Ctrl+E`** parks the exchange — the person's message and what answered it — under
+  the cause `takeback`. It is `/fork N` at the person's last message: the text returns to
+  the input box, in front of whatever the box holds, and the note names the way back.
+- The input box's draft stays in the box; a branch keeps none.
+- **Reflection's signal moved with them.** A reply regenerated and an exchange taken back
+  are read as indirect evidence that a reply did not land
+  ([17.6](#176-auto-reflection-background)): `behavior_markers` counts the tails parked under those two
+  causes since reflection last ran. A reply the person **switched back to** is on the
+  line again and leaves no record — going back to a reply is not that sign — and a fork
+  or a switch is never one.
+
+**The `Chat.deleted` archive** (an array of `DeletedExchange { deleted_at, messages,
+draft, cause }` in the chat file) is where the two keys put what they removed up to
+version 0.27. It now grows by one thing only: a reply the assistant itself replaced
+(`rewrite_current_message`, [9.3.3](#933-conversation-control-tools)) — the replaced text was its
+own draft, not a continuation the person may return to. Records an earlier version
+wrote stay where they are, with no place on the line; they are still counted by
+`behavior_markers`, by their own `cause`. New entries are prepended; there is no
+restoration via the UI — the collection exists only for **manual** JSON editing — and
+the field is only serialized when non-empty (`skip_serializing_if`).
 
 **Branches: a fork at a chosen message (`/fork`, `/branch`).** A conversation can be
 continued from a message in its middle, and what followed is kept as a branch of the
@@ -5393,7 +5414,12 @@ same chat ([docs/research/chat-branches.md](docs/research/chat-branches.md)).
 - **A fork at the line's end has no bubble to carry a mark** — the line stops on the
   message the tail continues from — so the screen says it in a note that names the way
   back (`/branch N K`), derived from the branches and so drawn whenever the chat is
-  opened in that state.
+  opened in that state. The branches are sent again whenever the line moved, grew or a
+  turn ended with nothing, so the note is said **once where it stands**: one that
+  already stands among the screen's notes after the last message is not repeated. It
+  is not said **while a turn is being written** in the chat — the line's end is about
+  to move, and a note under a streaming bubble would split the reply in two; the
+  branches that follow the turn's end say it, if it is still true.
 - **To the rest of the app a fork and a switch are the truncation it already handles.**
   The feed is rebuilt; a background run whose record left the line is cancelled and
   lands on the parked copy; a pending follow-up planned in what left is cancelled; a
@@ -5409,18 +5435,18 @@ same chat ([docs/research/chat-branches.md](docs/research/chat-branches.md)).
   enters the prompt.
 - **A fork forks the conversation, not the world.** Notes, the self-model, the chat's
   files and the attached project are as they are.
-- **A take-back or a regeneration of what a branch continues from parks it** instead
-  of archiving it in `Chat.deleted`: the archive is where what is gone goes, and a
-  branch anchored on a message there could never return to the line. Where no branch
-  continues from what is removed, both archive as before. A greeting is not swapped
-  (`/greeting`) in a chat that has a branch.
+- **`Ctrl+E` and `Ctrl+R` park what they cut** (above), by the operation a fork uses
+  (`Chat::park_tail`): a tail that continued from the exchange is then reached through
+  it. A greeting is not swapped (`/greeting`) in a chat that has a branch.
 - **Ignored where a take-back is**: while a reply is being generated, while a
   messenger's turn holds the chat, and on a sub-agent transcript.
 
-**Confirming `Ctrl+E`/`Ctrl+R` (configurable).** Since both operations are
-irreversible in the UI, they can be protected with a confirmation: the
-`interface.confirm_destructive_keys` setting (the "Interface" section, off by
-default). With the setting on, `Ctrl+R`/`Ctrl+E` don't fire immediately but
+**Confirming `Ctrl+E`/`Ctrl+R` (configurable).** Both operations take what is
+written off the conversation — as a branch, so the question is about a key pressed
+by accident, not about a loss. They can be protected with a confirmation: the
+`interface.confirm_destructive_keys` setting (*Confirm regenerate / take back* in the
+"Interface" section, off by default; the field keeps the name it had while the keys
+discarded). With the setting on, `Ctrl+R`/`Ctrl+E` don't fire immediately but
 open a modal "Confirm" popup (`Enter` — yes, `Esc` — no; `Ctrl+Q`/`F10` still
 quit the application through the popup; other keys are ignored, and the popup stays
 open). With the setting off — the previous instant behavior. Both operations are still
@@ -5696,8 +5722,9 @@ note, not a panic. Contract: `AppCommand::Tts(TtsScope)`/`TtsStop`,
 **Stopping** is centralized in one orchestrator helper (`tts_cancel`): a new `/tts`
 command interrupts the previous one; `/tts stop` stops manually; **per setting** —
 switching chats and starting generation; **unconditionally** (an invariant, not a
-setting) — deleting an exchange (`Ctrl+E`), regenerating (`Ctrl+R`), and deleting a chat:
-the text being spoken no longer exists. While synthesis/playback is in progress,
+setting) — taking an exchange back (`Ctrl+E`), regenerating (`Ctrl+R`), a fork or a
+switch of branches, and deleting a chat: the text being spoken may have just left the
+conversation. While synthesis/playback is in progress,
 a quiet "♪ speaking" chip is shown in the status bar.
 
 **A companion's own voice, and replies spoken as they land**
@@ -6161,8 +6188,9 @@ prints, for the live data or for a backup archive:
 - **messages, counted as the chat list counts them** — the bubbles the feed draws
   ([§11.2](#112-the-chat-list-an-overlay)), through the same rule
   (`visible_row_count`), with the part that sits in deleted chats and the raw number
-  of stored rows next to it; **deleted messages** — the `deleted[]` archive of
-  `Ctrl+E`/`Ctrl+R` ([§11.7](#117-keybindings-preliminary));
+  of stored rows next to it; **deleted messages** — the `deleted[]` archive: the
+  replies the assistant rewrote, and what `Ctrl+E`/`Ctrl+R` removed up to 0.27
+  ([§11.7](#117-keybindings-preliminary));
 - attached files, stored files, images, distinct **projects** and the chats they are
   attached to, sub-agent runs and their messages (not part of the message total, as
   they are not part of the list's);
@@ -6225,9 +6253,9 @@ every non-zero count. The rules:
   continued on two machines from one base, which `(count, last message)` reports as
   "newer there" while losing what was written here. A false "this copy has
   everything" is the one answer the command must never give: it is the answer a user
-  deletes the other copy on. A regenerated or rewritten reply keeps its id in
-  `deleted[]`, which nothing prunes, so regenerating reads as *ahead*, not as a
-  divergence. A fork moves messages from the line into `branches[]` without
+  deletes the other copy on. A rewritten reply keeps its id in `deleted[]` and a
+  regenerated one in `branches[]` (in `deleted[]` in a file written up to 0.27);
+  nothing prunes either, so regenerating reads as *ahead*, not as a divergence. A fork moves messages from the line into `branches[]` without
   dropping one ([11.7](#117-keybindings-preliminary)), so a copy that forked and
   went another way is *ahead* too, and a copy that lost a branch is behind by what
   the branch held. `/continue` is the one operation that changes a message under its id
@@ -6622,7 +6650,7 @@ When `auto_reflect_every > 0`, every N assistant replies a background task
 this is a **mini agentic loop**: the reflection is given the SelfModel tools, and the loop executes
 their calls (writing to `Storage`); up to 6 rounds, with a timeout. The chat/feed **aren't mutated**,
 nothing is streamed to the UI — the reflection is silent. Gates: the feature is enabled, the profile enabled
-the tools, a reflection isn't already running (one at a time), the server is `Ready`, there's enough conversation. Its rounds stream on the session budget's **silent lane** ([§6.3](#63-client-side-agentic-loop)): one of the app's own requests at a time, each round priced and waiting for room beside a turn rather than overfilling the pool with it. A round displaced by a turn is made again with the same request (at most three times, then it holds), and the task's time limit runs over its streaming and tools, not over its waits ([docs/research/silent-preemption.md](docs/research/silent-preemption.md) §4.4–§4.5). A reflection **stopped** from the tasks screen ([§11.10](#1110-the-tasks-screen-f7)) lands as cancelled: the streak untouched, `SelfModelChanged` still announced for what a partial run may have written, and the window it advanced at spawn **given back** — the watermark and stamp restored and saved — when none of its calls had **written** to the profile's memory, so the same replies are reflected on at the next landing; a round that only looked (`get_self_model`, a recall, a note's neighbours) consumes nothing, and once a call has written the advance stands, since its observations from that window are already in the store and a window read twice would write them twice ([docs/research/stop-refunds-window.md](docs/research/stop-refunds-window.md); the fact is the writer's own report, `ToolOutcome.wrote`, [docs/research/acted-by-effect.md](docs/research/acted-by-effect.md)). The two consolidations' counters follow the same rule, added back rather than restored, since the landings during the run were real. **Quitting the app** mid-reflection follows it too, and by the same path: the quit cancels the task and then **listens for its landing** a little longer — a cancelled loop lands on its own, at once from a wait or a stream, and when its round of tools finishes otherwise — so the stop's own decision is made from the loop's exact fact; the roll is heard on its own channel the same way; how long the quit waits is the user's — `tools.quit_settle_secs`, a *Tools* setting beside the other time limits: **no limit by default**, so a task caught mid-tool finishes (each task is bounded by its own run time limit), a number the cap in seconds, zero deciding at once — and a task that has not landed by the cap is decided by where it stands — idle given back, a round of tools still running or a call that wrote kept ([docs/research/quit-waits-for-the-landing.md](docs/research/quit-waits-for-the-landing.md), [quit-settle-roll-and-cap.md](docs/research/quit-settle-roll-and-cap.md), [quit-refunds-window.md](docs/research/quit-refunds-window.md), [acted-by-effect.md](docs/research/acted-by-effect.md) §3.2). Each loop's landing also carries the engine's own timing of its largest prompt — the first round's: its instructions, its tool schemas and the digest, processed cold and whole where a warm server's turns process tens of tokens; or a page summary a tool of a round asked for, [docs/research/page-summary-usage.md](docs/research/page-summary-usage.md) §3.2 — and offers it, whatever the outcome, to the slow-prefill rule of [§3.4](#34-managing-the-server-lifecycle) at the one landing every silent task shares, the roll's included ([docs/research/loop-timings.md](docs/research/loop-timings.md)).
+the tools, a reflection isn't already running (one at a time), the server is `Ready`, there's enough conversation. The digest it reads is the window's conversation plus the window's **behavioural signals** (`behavior_markers`): how many replies the person regenerated and how many exchanges they took back since the last reflection — the tails parked under those causes ([§11.7](#117-keybindings-preliminary)), together with the records the same keys left in `Chat.deleted` up to 0.27 — and, apart from those, how many replies the assistant itself rewrote. A reply the person switched back to is on the line again and is not counted; a fork and a switch never are. Its rounds stream on the session budget's **silent lane** ([§6.3](#63-client-side-agentic-loop)): one of the app's own requests at a time, each round priced and waiting for room beside a turn rather than overfilling the pool with it. A round displaced by a turn is made again with the same request (at most three times, then it holds), and the task's time limit runs over its streaming and tools, not over its waits ([docs/research/silent-preemption.md](docs/research/silent-preemption.md) §4.4–§4.5). A reflection **stopped** from the tasks screen ([§11.10](#1110-the-tasks-screen-f7)) lands as cancelled: the streak untouched, `SelfModelChanged` still announced for what a partial run may have written, and the window it advanced at spawn **given back** — the watermark and stamp restored and saved — when none of its calls had **written** to the profile's memory, so the same replies are reflected on at the next landing; a round that only looked (`get_self_model`, a recall, a note's neighbours) consumes nothing, and once a call has written the advance stands, since its observations from that window are already in the store and a window read twice would write them twice ([docs/research/stop-refunds-window.md](docs/research/stop-refunds-window.md); the fact is the writer's own report, `ToolOutcome.wrote`, [docs/research/acted-by-effect.md](docs/research/acted-by-effect.md)). The two consolidations' counters follow the same rule, added back rather than restored, since the landings during the run were real. **Quitting the app** mid-reflection follows it too, and by the same path: the quit cancels the task and then **listens for its landing** a little longer — a cancelled loop lands on its own, at once from a wait or a stream, and when its round of tools finishes otherwise — so the stop's own decision is made from the loop's exact fact; the roll is heard on its own channel the same way; how long the quit waits is the user's — `tools.quit_settle_secs`, a *Tools* setting beside the other time limits: **no limit by default**, so a task caught mid-tool finishes (each task is bounded by its own run time limit), a number the cap in seconds, zero deciding at once — and a task that has not landed by the cap is decided by where it stands — idle given back, a round of tools still running or a call that wrote kept ([docs/research/quit-waits-for-the-landing.md](docs/research/quit-waits-for-the-landing.md), [quit-settle-roll-and-cap.md](docs/research/quit-settle-roll-and-cap.md), [quit-refunds-window.md](docs/research/quit-refunds-window.md), [acted-by-effect.md](docs/research/acted-by-effect.md) §3.2). Each loop's landing also carries the engine's own timing of its largest prompt — the first round's: its instructions, its tool schemas and the digest, processed cold and whole where a warm server's turns process tens of tokens; or a page summary a tool of a round asked for, [docs/research/page-summary-usage.md](docs/research/page-summary-usage.md) §3.2 — and offers it, whatever the outcome, to the slow-prefill rule of [§3.4](#34-managing-the-server-lifecycle) at the one landing every silent task shares, the roll's included ([docs/research/loop-timings.md](docs/research/loop-timings.md)).
 
 ### 17.7. UI — the self-model screen (`F3`)
 

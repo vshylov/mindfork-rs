@@ -25,10 +25,17 @@
 //! The first turn after the fork logs its cache share. On a local server —
 //! one slot, the same prefix — it must have read some; a cloud's hit is the
 //! provider's routing, logged and not asserted.
+//!
+//! Stage 3 (§3.10) adds a second script,
+//! [`a_reflection_after_a_regeneration_reads_the_signal_e2e_live`]: `Ctrl+R`
+//! parks the reply it replaces instead of archiving it, and the reflection
+//! that follows must still be told of it — and must still land, on a real
+//! model, with that line in its prompt.
 
 use super::*;
 use crate::entities::chat_branch::ParkCause;
 use crate::shared::config::CompactionSettings;
+use crate::shared::i18n::{Lang, locale};
 
 const FIRST: &str = "HERON-17";
 const SECOND: &str = "ZANZIBAR-42";
@@ -335,4 +342,252 @@ async fn a_forked_line_is_asked_from_what_it_holds_e2e_live() {
         stored.messages.len(),
         stored.branches[0].messages.len()
     );
+}
+
+/// A live engine that also keeps every request it was handed — what a
+/// background task asked the model is seen nowhere else: a reflection is
+/// silent, and its prompt is not an event.
+struct Recording {
+    inner: Arc<dyn EngineBackend>,
+    asked: std::sync::Mutex<Vec<String>>,
+}
+
+impl Recording {
+    fn over(inner: Arc<dyn EngineBackend>) -> Arc<Self> {
+        Arc::new(Self {
+            inner,
+            asked: std::sync::Mutex::new(Vec::new()),
+        })
+    }
+
+    /// The line of the first request that holds one of `needles`.
+    fn told_of(&self, needles: &[String]) -> Option<String> {
+        let asked = self.asked.lock().unwrap();
+        asked
+            .iter()
+            .flat_map(|request| request.lines())
+            .find(|line| needles.iter().any(|n| line.contains(n.as_str())))
+            .map(str::to_string)
+    }
+}
+
+#[async_trait::async_trait]
+impl EngineBackend for Recording {
+    async fn chat_stream(
+        &self,
+        req: crate::shared::api::ChatRequest,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> anyhow::Result<crate::shared::api::contract::ChatStream> {
+        let mut told = req.system.clone().unwrap_or_default();
+        for m in &req.messages {
+            told.push('\n');
+            told.push_str(&m.content);
+        }
+        self.asked.lock().unwrap().push(told);
+        self.inner.chat_stream(req, cancel).await
+    }
+
+    async fn context_budget(&self) -> Option<u32> {
+        self.inner.context_budget().await
+    }
+
+    async fn model_capabilities(&self) -> Option<crate::shared::api::contract::ModelCapabilities> {
+        self.inner.model_capabilities().await
+    }
+
+    async fn vision(&self) -> crate::shared::api::contract::VisionSupport {
+        self.inner.vision().await
+    }
+
+    async fn model_id(&self) -> Option<String> {
+        self.inner.model_id().await
+    }
+
+    async fn parallel_slots(&self) -> Option<u32> {
+        self.inner.parallel_slots().await
+    }
+
+    async fn server_kind(&self) -> crate::shared::api::contract::ServerKind {
+        self.inner.server_kind().await
+    }
+
+    async fn enforces_output_schema(&self) -> bool {
+        self.inner.enforces_output_schema().await
+    }
+}
+
+/// The reflection task's state in the app's task list, when an event says it.
+fn reflection_running(event: &AppEvent) -> Option<bool> {
+    let AppEvent::TaskList(list) = event else {
+        return None;
+    };
+    list.app
+        .iter()
+        .find(|t| t.kind == BackgroundKind::Reflection)
+        .map(|t| t.running)
+}
+
+/// `Ctrl+R` keeps the reply it replaces as a branch (research §3.10), and the
+/// behavioural signal reflection reads moved with it: from the `deleted`
+/// archive's records to the parked tails' causes. What only a run against a
+/// real engine shows is the whole path — the key, the parked tail, the
+/// cadence, the prompt — and that a model given that prompt still does the
+/// reflection's work.
+///
+/// 1. An exchange, and **no** reflection yet (the cadence is two replies): a
+///    request that holds the signal now would be a false one.
+/// 2. `Ctrl+R`. The reply is parked under `Regenerate`; nothing is archived.
+/// 3. A second exchange makes the reflection due. Its request — recorded on
+///    the way to the engine — must say the reply was regenerated once.
+/// 4. The reflection lands: the task ends, and what it wrote is printed for
+///    the go/no-go (a model's wording is not asserted).
+#[tokio::test]
+#[ignore = "needs a live engine (MINDFORK_ENGINE_URL)"]
+async fn a_reflection_after_a_regeneration_reads_the_signal_e2e_live() {
+    use crate::features::tools::notes::SELF_NOTE_TAG;
+    let Some(live) = live_backend() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let engine = Recording::over(live);
+    let mut config = no_auto_cfg();
+    config.self_model.auto_reflect_every = 2;
+    let (dir, cmd_tx, mut evt_rx, handle) =
+        spawn_orch_cfg(Some(engine.clone() as Arc<dyn EngineBackend>), config);
+    let root = dir.path().to_path_buf();
+    // The reflection's own tools and no others: the gate it checks is the
+    // profile's, and the conversation's turns need none.
+    let pid = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ProfileList(_)))
+        .await
+        .and_then(|e| match e {
+            AppEvent::ProfileList(ps) => ps.first().map(|p| p.id),
+            _ => None,
+        })
+        .expect("the bootstrap profile");
+    let chat_id = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .and_then(|e| match e {
+            AppEvent::ChatActivated { id, .. } => Some(id),
+            _ => None,
+        })
+        .expect("the bootstrap chat");
+    cmd_tx
+        .send(AppCommand::UpdateProfile {
+            id: pid,
+            edit: Box::new(ProfileEdit {
+                enabled_tools: Some(
+                    crate::app::orchestrator::reflection::REFLECT_TOOL_IDS
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect(),
+                ),
+                ..Default::default()
+            }),
+        })
+        .unwrap();
+    // The signal is worded in the profile's own language, whichever it is.
+    let signals: Vec<String> = [Lang::En, Lang::Ru]
+        .into_iter()
+        .map(|lang| locale(lang).tf("reflect.behavior.regen", &[("n", "1")]))
+        .collect();
+
+    // 1. One exchange: one reply in the window, the reflection not due.
+    turn(
+        &cmd_tx,
+        &mut evt_rx,
+        "I am choosing a name for a small sailing boat. Suggest exactly one name, \
+         in one short sentence.",
+    )
+    .await;
+
+    // 2. The reply did not land: another is asked for.
+    cmd_tx.send(AppCommand::RegenerateLast).unwrap();
+    let mut second = String::new();
+    while let Some(event) = evt_rx.recv().await {
+        match event {
+            AppEvent::Chunk { text, .. } => second.push_str(&text),
+            AppEvent::Finished { reason, .. } => {
+                eprintln!(
+                    "regenerated [{reason:?}] -> {}",
+                    second.trim().chars().take(160).collect::<String>()
+                );
+                break;
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(
+        engine.told_of(&signals),
+        None,
+        "nothing was reflected on yet, so nothing may have been told of the signal"
+    );
+
+    // 3. The second exchange makes the reflection due; it is told.
+    turn(
+        &cmd_tx,
+        &mut evt_rx,
+        "Thanks, that one is better. In one short sentence: why does it suit a boat?",
+    )
+    .await;
+    let mut told = None;
+    for _ in 0..240 {
+        told = engine.told_of(&signals);
+        if told.is_some() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+    let told = told
+        .unwrap_or_else(|| panic!("no request told the model of the regeneration ({signals:?})"));
+    eprintln!("the reflection was told: {told}");
+
+    // 4. It lands. The task list says a reflection is running and then that
+    //    it is not; an earlier list, from before it was spawned, says "not
+    //    running" too, and a quit on that one would stop the reflection and
+    //    give its window back. The limit is for a CPU-only engine.
+    let ended = tokio::time::timeout(std::time::Duration::from_secs(900), async {
+        let mut started = false;
+        while let Some(event) = evt_rx.recv().await {
+            match reflection_running(&event) {
+                Some(true) => started = true,
+                Some(false) if started => return true,
+                _ => {}
+            }
+        }
+        false
+    })
+    .await;
+    assert!(matches!(ended, Ok(true)), "the reflection did not end");
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let storage = Storage::open(Paths::with_root(&root)).unwrap();
+    let model = storage.db().self_model_get(pid).unwrap();
+    let observations = storage
+        .db()
+        .note_list(pid, None, &[SELF_NOTE_TAG.to_string()], None)
+        .unwrap();
+    eprintln!(
+        "the reflection wrote: self-model = {model:#?}\nobservations = {:#?}",
+        observations.iter().map(|n| &n.content).collect::<Vec<_>>()
+    );
+    let stored = storage.json().load_chat(chat_id).unwrap().unwrap();
+    assert!(stored.deleted.is_empty(), "nothing is archived");
+    let causes: Vec<ParkCause> = stored.branches.iter().map(|b| b.cause).collect();
+    assert_eq!(causes, [ParkCause::Regenerate]);
+    assert_eq!(stored.branches[0].after, Some(stored.messages[0].id));
+    // Two exchanges, as the feed draws them: a reply that looked something up
+    // on its way is still one bubble.
+    assert_eq!(
+        crate::entities::chat::visible_message_count(&stored.messages),
+        4,
+        "{:?}",
+        stored
+            .messages
+            .iter()
+            .map(|m| (m.role, m.text.chars().take(40).collect::<String>()))
+            .collect::<Vec<_>>()
+    );
+    assert!(stored.reflected_at.is_some(), "the reflection was spawned");
 }

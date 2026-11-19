@@ -22,6 +22,68 @@ async fn auto_reflect_advances_watermark_on_spawn() {
     assert!(orch.bg_running(BackgroundKind::Reflection));
 }
 
+/// Every text a request carries, joined — what the engine was actually told.
+fn told(req: &crate::shared::api::ChatRequest) -> String {
+    let mut all = req.system.clone().unwrap_or_default();
+    for m in &req.messages {
+        all.push('\n');
+        all.push_str(&m.content);
+    }
+    all
+}
+
+/// The request the reflection of `chat_id` sends, once it is spawned.
+async fn reflection_request(orch: &mut Orchestrator, chat_id: Uuid) -> String {
+    let engine = CapturingBackend::new();
+    orch.engines.backend = Some(engine.clone() as Arc<dyn EngineBackend>);
+    orch.maybe_auto_reflect(chat_id);
+    assert!(orch.bg_running(BackgroundKind::Reflection));
+    for _ in 0..200 {
+        if let Some(req) = engine.last.lock().unwrap().as_ref() {
+            return told(req);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("the reflection never asked the engine");
+}
+
+/// `Ctrl+R` parks the reply it replaces, and that parked tail is the signal
+/// the next reflection is told of — "regenerated your reply ×1" reaches the
+/// engine (docs/research/chat-branches.md §3.10). A reply the person went
+/// back to is on the line again, and the same reflection is told nothing.
+#[tokio::test]
+async fn a_reflection_after_a_regeneration_is_told_of_it() {
+    let marker = |orch: &Orchestrator| {
+        let lang = orch.profiles[0].language;
+        crate::shared::i18n::locale(lang).tf("reflect.behavior.regen", &[("n", "1")])
+    };
+    let regenerate = |orch: &mut Orchestrator| {
+        let now = chrono::Utc::now();
+        let chat = &mut orch.chats[0];
+        let replaced = chat.messages[1].id;
+        assert!(chat.park_tail(1, crate::entities::chat_branch::ParkCause::Regenerate, now));
+        chat.push_message(Message::assistant("добрый день"));
+        replaced
+    };
+
+    let (_d, mut orch, chat_id) = orch_ready_for_reflection();
+    regenerate(&mut orch);
+    let asked = reflection_request(&mut orch, chat_id).await;
+    assert!(asked.contains(&marker(&orch)), "{asked}");
+    assert!(asked.contains("добрый день"), "the new reply is read");
+    assert!(
+        !asked.contains("здравствуй"),
+        "the replaced reply is not: {asked}"
+    );
+
+    // The person returns to the first reply before the reflection runs.
+    let (_d2, mut orch, chat_id) = orch_ready_for_reflection();
+    let replaced = regenerate(&mut orch);
+    orch.handle_switch_branch(replaced);
+    let asked = reflection_request(&mut orch, chat_id).await;
+    assert!(!asked.contains(&marker(&orch)), "{asked}");
+}
+
 #[tokio::test]
 async fn auto_reflect_keeps_watermark_when_server_not_ready() {
     let (_d, mut orch, chat_id) = orch_ready_for_reflection();
