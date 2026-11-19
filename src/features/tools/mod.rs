@@ -12,6 +12,7 @@ mod embed_roles_tests;
 mod gateway_live_tests;
 
 pub mod attachment;
+pub mod branches;
 pub mod calc;
 pub mod chats;
 pub mod code;
@@ -174,6 +175,15 @@ pub struct ToolContext {
     /// (current profile, current chat excluded, hidden dropped), and empty
     /// when the pair is not in the turn's tool set or for background tasks.
     pub other_chats: std::sync::Arc<[chats::ChatRef]>,
+    /// The open chat's parked branches, rendered for `branch_read`
+    /// (spec §9.17). A turn snapshot like `history`, for the same reasons, and
+    /// built by the same rule: only for a turn that offers the reader, in a
+    /// chat that has parked tails. `None` otherwise — which is also what keeps
+    /// `history_read` from naming a reader the turn does not have.
+    pub branches: Option<Arc<branches::BranchShelf>>,
+    /// Whether this turn offers `branch_read`: what `chat_read` asks before it
+    /// says that the conversation it read has branches (research §9.2, G4).
+    pub branch_reader: bool,
     /// Whether an image returned by an MCP tool may be shown to the model
     /// (`config.tools.mcp_images`, fork F3 of docs/research/mcp-tool-images.md).
     /// Off means the result keeps its `[image content omitted]` placeholder — the
@@ -387,6 +397,13 @@ pub struct TurnInfo {
     /// and when the cross-chat tools are not offered). See
     /// [`ToolContext::other_chats`].
     pub other_chats: std::sync::Arc<[chats::ChatRef]>,
+    /// The open chat's parked branches, rendered (a `Chat` snapshot; `None`
+    /// unless the turn offers `branch_read` and the chat has some). See
+    /// [`ToolContext::branches`].
+    pub branches: Option<Arc<branches::BranchShelf>>,
+    /// Whether the turn offers `branch_read`. See
+    /// [`ToolContext::branch_reader`].
+    pub branch_reader: bool,
     /// The chat's attached code project (spec §9.12). See
     /// [`ToolContext::workspace`]; `None` for background turns, which have no
     /// chat and therefore no project.
@@ -443,6 +460,8 @@ impl ToolContext {
             history: turn.history,
             history_page_tokens: params.history_page_tokens,
             other_chats: turn.other_chats,
+            branches: turn.branches,
+            branch_reader: turn.branch_reader,
             workspace: turn.workspace,
             workspace_journal: turn.workspace_journal,
             files_dir: turn.files_dir,
@@ -818,6 +837,14 @@ pub trait Tool: Send + Sync {
     /// enabled manually). See [`default_tool_ids`]/[`all_tool_ids`].
     fn enabled_by_default(&self) -> bool {
         true
+    }
+
+    /// The bundle key of a sentence the settings show under the tool's switch
+    /// while it has the focus — for a tool whose label cannot say what
+    /// switching it on lets the assistant reach. `None` (the default) — the
+    /// label is the whole of it.
+    fn ui_note(&self) -> Option<&'static str> {
+        None
     }
 
     /// Whether a round containing this call spends the `max_tool_rounds` budget
@@ -1245,6 +1272,12 @@ pub fn standard_registry(cfg: &ToolConfig) -> ToolRegistry {
     // the current chat excluded.
     reg.register(Arc::new(chats::ChatSearch));
     reg.register(Arc::new(chats::ChatRead));
+    // Reading the branches parked beside a conversation's line (spec §9.17).
+    // Off by default too: a parked tail is what the person set aside — a fork,
+    // a reply they had redone, an exchange they took back — and it is outside
+    // what any other tool reads. While it is off nothing says a chat has
+    // branches at all.
+    reg.register(Arc::new(branches::BranchRead));
     // Conversation-control tools (optional, gated by the profile's set).
     reg.register(Arc::new(control::SendFollowupMessage));
     reg.register(Arc::new(control::RewriteCurrentMessage));
@@ -1291,6 +1324,7 @@ impl ToolRegistry {
                 enabled_by_default: t.enabled_by_default(),
                 concurrent: t.concurrent(),
                 description: None,
+                note: t.ui_note(),
             })
             .collect()
     }
@@ -1371,6 +1405,10 @@ pub(crate) mod testkit {
             history: None,
             // No other chats by default; tests that need them set `ctx.other_chats`.
             other_chats: std::sync::Arc::from(Vec::new()),
+            // No branches and no reader by default; tests that need them set
+            // `ctx.branches` and `ctx.branch_reader`.
+            branches: None,
+            branch_reader: false,
             workspace: None,
             workspace_journal: None,
             // No stored files and no folder by default; tests that store set both.
@@ -1551,6 +1589,7 @@ mod tests {
             attachment::ATTACHMENT_SEARCH_ID,
             chats::CHAT_SEARCH_ID,
             chats::CHAT_READ_ID,
+            branches::BRANCH_READ_ID,
             history::HISTORY_READ_ID,
             history::HISTORY_SEARCH_ID,
             self_model::GET_SELF_MODEL_ID,

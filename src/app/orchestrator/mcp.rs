@@ -157,6 +157,7 @@ impl McpSlot {
                 // Third-party code: never a member of a concurrent group (`Tool::concurrent`).
                 concurrent: false,
                 description: Some(raw.description.clone()),
+                note: None,
             })
             .collect();
         self.tools = wrapped;

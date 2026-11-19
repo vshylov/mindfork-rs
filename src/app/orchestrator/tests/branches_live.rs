@@ -31,6 +31,11 @@
 //! parks the reply it replaces instead of archiving it, and the reflection
 //! that follows must still be told of it — and must still land, on a real
 //! model, with that line in its prompt.
+//!
+//! Stage 4 (§9) adds a third,
+//! [`a_parked_branch_is_read_when_asked_and_left_alone_when_not_e2e_live`]:
+//! a model handed `branch_read` reads a parked tail when the person asks
+//! about it, and leaves the tails alone when nobody did.
 
 use super::*;
 use crate::entities::chat_branch::ParkCause;
@@ -590,4 +595,248 @@ async fn a_reflection_after_a_regeneration_reads_the_signal_e2e_live() {
             .collect::<Vec<_>>()
     );
     assert!(stored.reflected_at.is_some(), "the reflection was spawned");
+}
+
+/// One turn of the reader's smoke: the reply, and the tools the turn called.
+struct Asked {
+    reply: String,
+    tools: Vec<String>,
+}
+
+impl Asked {
+    fn called(&self, tool: &str) -> bool {
+        self.tools.iter().any(|t| t == tool)
+    }
+}
+
+/// Collects a turn that has already been started — by a message or by
+/// `Ctrl+R` — to its end.
+async fn collect(evt_rx: &mut UnboundedReceiver<AppEvent>, what: &str) -> Asked {
+    let mut out = Asked {
+        reply: String::new(),
+        tools: Vec::new(),
+    };
+    while let Some(event) = evt_rx.recv().await {
+        match event {
+            AppEvent::Chunk { text, .. } => out.reply.push_str(&text),
+            AppEvent::ToolCall { name, .. } => out.tools.push(name),
+            AppEvent::Finished { reason, .. } => {
+                eprintln!(
+                    "turn [{reason:?}] {what:?}\n  tools: {:?}\n  -> {}",
+                    out.tools,
+                    out.reply.trim().chars().take(240).collect::<String>()
+                );
+                break;
+            }
+            AppEvent::Error(message) => eprintln!("  engine note: {message}"),
+            _ => {}
+        }
+    }
+    out
+}
+
+async fn ask(
+    cmd_tx: &UnboundedSender<AppCommand>,
+    evt_rx: &mut UnboundedReceiver<AppEvent>,
+    text: &str,
+) -> Asked {
+    cmd_tx.send(AppCommand::SendMessage(text.into())).unwrap();
+    collect(evt_rx, text).await
+}
+
+/// Stage 4 (research §9): the branches told to the tools, and their reader.
+/// What only a real model shows is the judgement the design rests on — that
+/// a model handed `branch_read` reads a parked tail **when asked to** and
+/// leaves the tails alone when it is not.
+///
+/// The chats are put on disk before the app starts, so the parked words are
+/// the test's own: "boat", whose only reply was redone — the first variant,
+/// with the password, is parked; the one on the line says it does not know —
+/// and "dock", forked after its first exchange, the fuel's berth in the tail.
+///
+/// 1. *Left alone:* an unrelated question, then `Ctrl+R` on its reply. No
+///    call to the reader in either turn.
+/// 2. *Read when asked:* the earlier variant of the reply about the password
+///    is asked for. The turn calls the reader and answers with the password —
+///    which is in no request until the reader's answer brings it.
+/// 3. *Told by a read:* asked what the other chat says about the dock, the
+///    turn reads its line and goes no further — the notice under the read
+///    names the branches, and nobody asked about them. Asked then for the
+///    branch, it reads it and answers from the tail.
+#[tokio::test]
+#[ignore = "needs a live engine (MINDFORK_ENGINE_URL)"]
+async fn a_parked_branch_is_read_when_asked_and_left_alone_when_not_e2e_live() {
+    use crate::features::tools::branches::BRANCH_READ_ID;
+    use crate::features::tools::chats::CHAT_READ_ID;
+    const BERTH: &str = "KESTREL-9";
+    let Some(live) = live_backend() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let hour_ago = |minutes: i64| {
+        chrono::Utc::now() - chrono::Duration::hours(1) + chrono::Duration::minutes(minutes)
+    };
+    let said = |mut m: Message, minutes: i64| {
+        m.timestamp = hour_ago(minutes);
+        m
+    };
+    let boat_id;
+    {
+        let json = crate::shared::storage::JsonStore::new(Paths::with_root(root));
+        let mut profile = Profile::new("Assistant", "You are a helpful assistant.");
+        profile.language = Lang::En;
+        // The reader, the read it reaches another chat through, and two
+        // tools that have nothing to do with either: "left alone" is a choice
+        // only where there is something else to call. No `chat_search`: a
+        // model that has it answers "where is the dock" from a hit, and a
+        // search says nothing of branches (research §9.6, G1) — the notice
+        // under test is the read's.
+        let tools: Vec<String> = [BRANCH_READ_ID, CHAT_READ_ID, "calculate", "current_time"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        profile.enabled_tools = tools.clone();
+        profile.known_tools = tools;
+        json.upsert_profile(&profile).unwrap();
+
+        let mut dock = Chat::from_profile(&profile, "dock");
+        for (i, m) in [
+            Message::user("Where is the dock?"),
+            Message::assistant("The dock is north of the old pier."),
+            Message::user("And where do I get fuel?"),
+            Message::assistant(format!("Fuel is sold at berth {BERTH}.")),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            dock.push_message(said(m, i as i64));
+        }
+        assert!(dock.fork_at(2, hour_ago(10)));
+        dock.modified_at = hour_ago(10);
+        json.save_chat(&dock).unwrap();
+
+        let mut boat = Chat::from_profile(&profile, "boat");
+        boat.push_message(said(
+            Message::user("What is the boat's launch password?"),
+            20,
+        ));
+        boat.push_message(said(
+            Message::assistant(format!("The launch password is {SECOND}.")),
+            21,
+        ));
+        assert!(boat.park_tail(1, ParkCause::Regenerate, hour_ago(22)));
+        boat.push_message(said(
+            Message::assistant("I am sorry, I do not know the launch password."),
+            23,
+        ));
+        boat_id = boat.id;
+        json.save_chat(&boat).unwrap();
+    }
+    let engine = Recording::over(live);
+    let (cmd_tx, mut evt_rx, handle) = spawn_orch_at(
+        root,
+        Some(engine.clone() as Arc<dyn EngineBackend>),
+        no_auto_cfg(),
+    );
+    let activated = wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap();
+    if !matches!(activated, AppEvent::ChatActivated { id, .. } if id == boat_id) {
+        cmd_tx.send(AppCommand::SwitchChat(boat_id)).unwrap();
+        wait_for(
+            &mut evt_rx,
+            |e| matches!(e, AppEvent::ChatActivated { id, .. } if *id == boat_id),
+        )
+        .await
+        .unwrap();
+    }
+
+    // 1. Left alone: nothing in the question is about a branch.
+    let plain = ask(
+        &cmd_tx,
+        &mut evt_rx,
+        "In one short sentence: why do databases have indexes?",
+    )
+    .await;
+    assert!(!plain.reply.trim().is_empty(), "the control turn answered");
+    assert!(
+        !plain.called(BRANCH_READ_ID),
+        "an unrelated question read a branch: {:?}",
+        plain.tools
+    );
+    cmd_tx.send(AppCommand::RegenerateLast).unwrap();
+    let redone = collect(&mut evt_rx, "Ctrl+R").await;
+    assert!(!redone.reply.trim().is_empty(), "the regeneration answered");
+    assert!(
+        !redone.called(BRANCH_READ_ID),
+        "a regeneration read the reply it replaces: {:?}",
+        redone.tools
+    );
+    assert_eq!(
+        engine.told_of(&[SECOND.to_string()]),
+        None,
+        "the parked reply reached a request nobody asked for it in"
+    );
+
+    // 2. Read when asked.
+    let compared = ask(
+        &cmd_tx,
+        &mut evt_rx,
+        "Earlier in this conversation I regenerated your reply about the boat's launch \
+         password. Look at the earlier variant of that reply and tell me what it said.",
+    )
+    .await;
+    assert!(
+        compared.called(BRANCH_READ_ID),
+        "asked for the earlier variant, the turn did not read it: {:?}",
+        compared.tools
+    );
+    assert!(
+        holds(&compared.reply, SECOND),
+        "the earlier variant's password is not in the answer: {}",
+        compared.reply
+    );
+
+    // 3. Told by a read, and no further than asked.
+    let line = ask(
+        &cmd_tx,
+        &mut evt_rx,
+        "I have another conversation titled \"dock\". Read it and tell me in one \
+         sentence where the dock is.",
+    )
+    .await;
+    assert!(line.called(CHAT_READ_ID), "{:?}", line.tools);
+    assert!(
+        !line.called(BRANCH_READ_ID),
+        "told of the other chat's branches, the turn read them unasked: {:?}",
+        line.tools
+    );
+    assert!(
+        line.reply.to_lowercase().contains("north"),
+        "the line's answer: {}",
+        line.reply
+    );
+    assert!(
+        !holds(&line.reply, BERTH),
+        "the parked tail reached the answer: {}",
+        line.reply
+    );
+    let branch = ask(
+        &cmd_tx,
+        &mut evt_rx,
+        "That \"dock\" conversation has a branch I set aside. Read that branch and tell \
+         me where it says fuel is sold.",
+    )
+    .await;
+    assert!(branch.called(BRANCH_READ_ID), "{:?}", branch.tools);
+    assert!(
+        holds(&branch.reply, BERTH),
+        "the other chat's branch is not in the answer: {}",
+        branch.reply
+    );
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
 }

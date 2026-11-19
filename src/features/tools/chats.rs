@@ -102,7 +102,7 @@ impl ChatRef {
     /// How the conversation is named in a result: its title, or — for a
     /// transcript — "sub-agent transcript of «parent»", so the model knows
     /// what kind of conversation it is citing.
-    fn label(&self, loc: &Locale) -> String {
+    pub(super) fn label(&self, loc: &Locale) -> String {
         match &self.parent {
             Some(parent) => loc.tf(
                 "tool.chat_search.child",
@@ -146,26 +146,48 @@ pub fn snapshot_other_chats(chats: &[Chat], profile_id: Uuid, current: Uuid) -> 
         .collect()
 }
 
-/// The messages of the conversation `chat_ref` names, read from disk: a
-/// chat's own, or — for a transcript — the run inside its parent's file.
+/// What `chat_read` pages of a conversation: its messages, and how many
+/// tails are parked beside them.
+struct Transcript {
+    messages: Vec<Message>,
+    /// The chat's parked branches (docs/research/chat-branches.md §9.2) — none
+    /// of them in `messages`. A sub-agent's transcript has none.
+    parked: usize,
+}
+
+/// The file that holds the conversation `chat_ref` names: the chat's own, or
+/// — for a transcript — its parent's.
 ///
 /// Belt and braces under the snapshot: the scope is decided in
 /// [`snapshot_other_chats`], but a file that now says "different profile" or
 /// "hidden" must not be read on the strength of a stale snapshot — it reads
 /// as unloadable (`None`) rather than leak. A chat that has become the
 /// current one is refused the same way; a transcript of the current chat is
-/// fine (it is not in the model's context). A transcript the file no longer
-/// holds — its exchange was taken back — is `None` too.
-fn load_transcript(ctx: &ToolContext, chat_ref: &ChatRef) -> Option<Vec<Message>> {
+/// fine (it is not in the model's context).
+pub(super) fn load_chat(ctx: &ToolContext, chat_ref: &ChatRef) -> Option<Chat> {
     let file_id = chat_ref.parent.as_ref().map_or(chat_ref.id, |p| p.id);
     let chat = ctx.storage.json().load_chat(file_id).ok().flatten()?;
     if chat.profile_id != ctx.profile_id || chat.is_hidden {
         return None;
     }
+    (chat_ref.parent.is_some() || chat.id != ctx.chat_id).then_some(chat)
+}
+
+/// The messages of the conversation `chat_ref` names, read from disk
+/// ([`load_chat`]): a chat's line, or — for a transcript — the run inside its
+/// parent's file. A transcript the file no longer holds on its line — its
+/// exchange was taken back — is `None`.
+fn load_transcript(ctx: &ToolContext, chat_ref: &ChatRef) -> Option<Transcript> {
+    let chat = load_chat(ctx, chat_ref)?;
     match &chat_ref.parent {
-        None if chat.id == ctx.chat_id => None,
-        None => Some(chat.messages),
-        Some(_) => chat.child(chat_ref.id).map(|run| run.messages.clone()),
+        None => Some(Transcript {
+            parked: chat.branches.len(),
+            messages: chat.messages,
+        }),
+        Some(_) => chat.child(chat_ref.id).map(|run| Transcript {
+            messages: run.messages.clone(),
+            parked: 0,
+        }),
     }
 }
 
@@ -173,7 +195,7 @@ fn load_transcript(ctx: &ToolContext, chat_ref: &ChatRef) -> Option<Vec<Message>
 /// uuid. The same string the model cites back to the user and the feed turns
 /// into a link (spec §11.3), so it has a single producer in
 /// [`chat_links`](crate::features::chat_links).
-fn address(id: Uuid) -> String {
+pub(super) fn address(id: Uuid) -> String {
     chat_links::uri(id)
 }
 
@@ -191,7 +213,7 @@ fn no_other_chats(loc: &Locale) -> ToolOutcome {
 }
 
 /// What a `chat` reference resolved to.
-enum Resolved<'a> {
+pub(super) enum Resolved<'a> {
     One(&'a ChatRef),
     Ambiguous(Vec<&'a ChatRef>),
     None,
@@ -207,7 +229,7 @@ enum Resolved<'a> {
 /// The id rung reads **both** forms of the address — `chat://a1b2c3d4` and the
 /// bare `a1b2c3d4` — because a model taught to cite the scheme hands the
 /// scheme back ([`chat_links::hex_needle`]).
-fn resolve<'a>(refs: &'a [ChatRef], needle: &str) -> Resolved<'a> {
+pub(super) fn resolve<'a>(refs: &'a [ChatRef], needle: &str) -> Resolved<'a> {
     let needle = needle.trim();
     if needle.is_empty() {
         return Resolved::None;
@@ -467,7 +489,7 @@ fn render_grouped_hits(
         // does. Best-effort: a chat that fails to load still yields its
         // snippets, just without page numbers.
         let view = load_transcript(ctx, chat_ref)
-            .and_then(|messages| HistoryView::render(&messages, ctx.loc));
+            .and_then(|read| HistoryView::render(&read.messages, ctx.loc));
         body.push_str("\n\n");
         body.push_str(&ctx.loc.tf(
             "tool.chat_search.chat",
@@ -593,8 +615,8 @@ impl Tool for ChatRead {
             }
         };
         let title = chat_ref.label(ctx.loc);
-        // The guards live in `load_transcript` (profile, hidden, current).
-        let Some(messages) = load_transcript(ctx, chat_ref) else {
+        // The guards live in `load_chat` (profile, hidden, current).
+        let Some(Transcript { messages, parked }) = load_transcript(ctx, chat_ref) else {
             return Ok(ToolOutcome::text(
                 ctx.loc
                     .tf("tool.chat_read.unavailable", &[("title", title.as_str())]),
@@ -625,7 +647,7 @@ impl Tool for ChatRead {
                 ],
             )));
         };
-        let header = ctx.loc.tf(
+        let mut header = ctx.loc.tf(
             "tool.chat_read.header",
             &[
                 ("title", title.as_str()),
@@ -634,6 +656,16 @@ impl Tool for ChatRead {
                 ("total", &total.to_string()),
             ],
         );
+        // The branches parked beside this line, said on every page — a search
+        // hit sends a read straight to page 3 — and only on a turn that can
+        // read them: the notice names the reader (research §9.2, G4).
+        if parked > 0 && ctx.branch_reader {
+            header.push('\n');
+            header.push_str(&ctx.loc.tf(
+                "tool.chat_read.branches",
+                &[("n", &parked.to_string()), ("id", &address(chat_ref.id))],
+            ));
+        }
         Ok(ToolOutcome::text(format!("{header}\n{text}")))
     }
 }
@@ -1196,6 +1228,63 @@ mod tests {
         let out = ChatRead.invoke(&ctx, reference).await.unwrap().result;
         assert!(out.contains("щука"), "{out}");
         assert!(!out.contains("ЗАНЗИБАР-42"), "{out}");
+    }
+
+    /// A read of a line with tails parked beside it says so — on every page,
+    /// and only to a turn that can read them: the notice names the reader
+    /// (docs/research/chat-branches.md §9.2, G4).
+    #[tokio::test]
+    async fn read_says_the_conversation_has_branches_to_a_turn_that_can_read_them() {
+        let (_d, storage, mut ctx) = ctx_with_refs(vec![]);
+        let (a, mut chat) = seed_chat(
+            &storage,
+            ctx.profile_id,
+            "рыбалка",
+            &[
+                "щука клюёт на живца ранним утром у камышей",
+                "окунь берёт на блесну ближе к полудню",
+                "а пароль от лодки — ЗАНЗИБАР-42",
+            ],
+        );
+        ctx.other_chats = Arc::from(vec![a.clone()]);
+        ctx.branch_reader = true;
+        let read = |ctx: &super::super::ToolContext, page: usize| {
+            let (ctx, chat) = (ctx.clone(), short_id(a.id));
+            async move {
+                ChatRead
+                    .invoke(&ctx, serde_json::json!({ "chat": chat, "page": page }))
+                    .await
+                    .unwrap()
+                    .result
+            }
+        };
+        // No tail beside the line: nothing to say, reader or not.
+        let plain = read(&ctx, 1).await;
+        assert!(!plain.contains("branch_read"), "{plain}");
+
+        assert!(chat.fork_at(2, chat.modified_at));
+        storage.json().save_chat(&chat).unwrap();
+        let call = format!("branch_read с chat {}", address(a.id));
+        for page in [1, 2] {
+            let out = read(&ctx, page).await;
+            let mut lines = out.lines();
+            let header = lines.next().unwrap();
+            assert!(
+                header.contains(&format!("страница {page} из ")),
+                "the fixture spans several pages: {out}"
+            );
+            let notice = lines.next().unwrap();
+            assert!(notice.contains("отложенные ветки (1)"), "{out}");
+            assert!(notice.contains(&call), "{out}");
+            assert!(!out.contains("ЗАНЗИБАР-42"), "the tail stays unread: {out}");
+        }
+
+        // A turn without the reader is told nothing: the line would name a
+        // tool it does not have.
+        ctx.branch_reader = false;
+        let silent = read(&ctx, 1).await;
+        assert!(!silent.contains("branch_read"), "{silent}");
+        assert!(!silent.contains("ветки"), "{silent}");
     }
 
     #[tokio::test]

@@ -3308,6 +3308,30 @@ fn globally_disabled_tool_is_marked_gated() {
     assert_eq!(web.hint, Some("поиск в интернете"));
 }
 
+/// A built-in tool whose switch is a consent says, under the switch, what it
+/// lets the assistant reach: the label cannot (spec §9.17). A tool with no
+/// such note keeps the panel empty.
+#[test]
+fn a_tool_whose_switch_is_a_consent_says_what_it_reaches() {
+    let mut s = screen();
+    goto_section(&mut s, Section::Profiles);
+    let fields = s.profile_fields();
+    let row_of = |name: &str| {
+        let idx = s.tool_catalog().iter().position(|i| i.id == name).unwrap();
+        fields.iter().find(|r| r.id == FieldId::PTool(idx)).unwrap()
+    };
+    let reader = row_of(crate::features::tools::branches::BRANCH_READ_ID);
+    assert!(
+        matches!(reader.kind, FieldKind::Toggle(false)),
+        "off by default"
+    );
+    assert_eq!(reader.hint, Some("читать отложенные ветки чата"));
+    let note = reader.description.as_deref().expect("the note");
+    assert!(note.contains("отозванные обмены"), "{note}");
+    assert!(note.contains("ничего не сообщается"), "{note}");
+    assert!(row_of("current_time").description.is_none());
+}
+
 #[test]
 fn mcp_tools_extend_profile_toggles_with_honest_gate() {
     use crate::features::tools::meta::{ToolGate, ToolGroup, ToolInfo};
@@ -3328,6 +3352,7 @@ fn mcp_tools_extend_profile_toggles_with_honest_gate() {
             enabled_by_default: false,
             concurrent: false,
             description: Some("Read the complete contents of a file".into()),
+            note: None,
         }],
         servers: Vec::new(),
     });
@@ -4201,6 +4226,7 @@ fn mcp_tool_toggles_share_the_column() {
         enabled_by_default: false,
         concurrent: false,
         description: Some("A server-provided description".into()),
+        note: None,
     };
     s.set_mcp(crate::features::tools::mcp::McpSnapshot {
         tools: vec![
@@ -4938,6 +4964,7 @@ fn the_gate_explanation_is_only_on_gated_tools_and_names_its_section() {
         enabled_by_default: false,
         concurrent: false,
         description: None,
+        note: None,
     };
     s.set_mcp(crate::features::tools::mcp::McpSnapshot {
         tools: vec![mcp_tool],

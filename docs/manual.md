@@ -174,6 +174,16 @@ take the conversation in front of you, and a word said only in a branch is found
 once that branch is the one you are in. A backup takes the chat whole, branches
 included.
 
+If you want the assistant to look at a branch — "compare this with what you
+answered before I regenerated" — switch **`branch_read`** on in the profile's
+tools (`Ctrl+P → Profiles`, the *Conversation control* group; it is off by
+default). It can then list the chat's branches and read one when you ask, by the
+same `N K` you would give `/branch`. That includes the replies you had
+regenerated and the exchanges you took back, which is why it is a switch. With
+the tools for other conversations on as well, it reads another chat's branches
+too. It still does not search branches, and it does not switch them: that stays
+yours.
+
 In the chat list, `Ctrl+F` switches between searching titles and searching
 message content; `Ctrl+G` then opens the matching messages themselves.
 

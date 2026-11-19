@@ -130,6 +130,9 @@ pub struct ToolInfo {
     /// docs/research/plugin-system.md §4.5); for built-in ones — `None` (their
     /// descriptions are LLM-oriented and live in the locale bundles).
     pub description: Option<String>,
+    /// The bundle key of what the settings say under a built-in tool's switch
+    /// when the switch is a consent worth spelling out ([`super::Tool::ui_note`]).
+    pub note: Option<&'static str>,
 }
 
 #[cfg(test)]

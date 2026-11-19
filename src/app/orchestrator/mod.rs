@@ -1816,6 +1816,8 @@ impl Orchestrator {
                 attachments: std::sync::Arc::from(Vec::new()),
                 history: None,
                 other_chats: std::sync::Arc::from(Vec::new()),
+                branches: None,
+                branch_reader: false,
                 // A background turn (reflection, consolidation) runs without a
                 // chat in front of the user, so it has no attached project and
                 // the code tools stay unreachable from it.

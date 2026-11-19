@@ -2308,7 +2308,12 @@ impl SettingsScreen {
                     // The full description of an MCP tool (the server's own text) — in
                     // the bottom panel when focused: mandatory description visibility is an
                     // antidote to tool-poisoning (spec §9.6).
-                    r.description = info.description.clone();
+                    // A built-in tool whose switch is a consent says what it
+                    // lets the assistant reach, in the same panel.
+                    r.description = info
+                        .description
+                        .clone()
+                        .or_else(|| info.note.map(|key| loc.t(key).to_string()));
                     rows.push(r);
                 }
             }

@@ -113,10 +113,21 @@ impl Tool for HistoryRead {
                 &[("page", &page.to_string()), ("total", &total.to_string())],
             )));
         };
-        let header = ctx.loc.tf(
+        let mut header = ctx.loc.tf(
             "tool.history_read.header",
             &[("page", &page.to_string()), ("total", &total.to_string())],
         );
+        // The branches parked beside this conversation's line, said on every
+        // page. The snapshot is there only on a turn that offers their reader
+        // in a chat that has some, so the notice never names an absent tool
+        // (docs/research/chat-branches.md §9.2, G4).
+        if let Some(shelf) = ctx.branches.as_ref() {
+            header.push('\n');
+            header.push_str(&ctx.loc.tf(
+                "tool.history_read.branches",
+                &[("n", &shelf.len().to_string())],
+            ));
+        }
         Ok(ToolOutcome::text(format!("{header}\n{text}")))
     }
 }
@@ -357,6 +368,55 @@ mod tests {
             Message::user("а теперь про другое: планы на релиз"),
             Message::assistant("релиз назначен на КАЛИНА-4417"),
         ]
+    }
+
+    /// A read of the folded part says that branches stand beside the line —
+    /// on every page, and only when the turn was handed their shelf, which is
+    /// a turn that offers their reader (docs/research/chat-branches.md §9.2).
+    #[tokio::test]
+    async fn read_says_the_conversation_has_branches_to_a_turn_that_can_read_them() {
+        use crate::entities::chat::Chat;
+        use crate::entities::chat_branch::ParkCause;
+        use crate::entities::profile::Profile;
+        use crate::features::tools::branches::BranchShelf;
+
+        let msgs = conversation();
+        let (_d, mut ctx) = ctx_with(&msgs, 4);
+        let total = ctx.history.as_ref().unwrap().page_count(PAGE);
+        let read = |ctx: &ToolContext, page: usize| {
+            let ctx = ctx.clone();
+            async move {
+                HistoryRead
+                    .invoke(&ctx, serde_json::json!({ "page": page }))
+                    .await
+                    .unwrap()
+                    .result
+            }
+        };
+        let silent = read(&ctx, 1).await;
+        assert!(!silent.contains("branch_read"), "{silent}");
+
+        // The same conversation with its last reply redone twice.
+        let mut chat = Chat::from_profile(&Profile::new("p", ""), "t");
+        for m in msgs.iter().cloned() {
+            chat.push_message(m);
+        }
+        for _ in 0..2 {
+            let cut = chat.messages.len() - 1;
+            assert!(chat.park_tail(cut, ParkCause::Regenerate, chrono::Utc::now()));
+            chat.push_message(Message::assistant("другой ответ"));
+        }
+        ctx.branches = BranchShelf::of(&chat, locale(Lang::Ru)).map(Arc::new);
+        for page in 1..=total {
+            let out = read(&ctx, page).await;
+            let (header, notice) = {
+                let mut lines = out.lines();
+                (lines.next().unwrap(), lines.next().unwrap())
+            };
+            assert!(header.starts_with("[Свёрнутая часть переписки"), "{out}");
+            assert!(notice.contains("отложенные ветки (2)"), "{out}");
+            assert!(notice.contains("branch_read покажет их список"), "{out}");
+        }
     }
 
     #[tokio::test]

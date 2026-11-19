@@ -677,6 +677,12 @@ src/
 │  │  │                     decided (profile, not this chat, nothing hidden);
 │  │  │                     search over `cache.db` scoped in SQL, reads via the
 │  │  │                     history renderer — spec §9.11
+│  │  ├─ branches.rs        branch_read — the one tool that reaches a parked branch
+│  │  │                     (optional, off by default): the list of a chat's tails
+│  │  │                     and one of them as a paged transcript, addressed as
+│  │  │                     `/branch N K` is. BranchShelf — the open chat's tails
+│  │  │                     rendered per turn; another chat's are read from its
+│  │  │                     file under chats.rs's snapshot and guards — spec §9.17
 │  │  ├─ story.rs           story_status (gate ToolGate::Story = tools.story) and the words a story
 │  │  │                     run's landing is told in: the notification, the question, the stop,
 │  │  │                     the quit — model-facing, so in the profile's language (spec §9.16);
@@ -3276,7 +3282,7 @@ by `ToolGroup` (`Ord`).
 | Awareness      | `start_dialogue` — the same twin for a directed scene (spec §9.13, the same gate): the call returns with the scene's address, the director's closing result arrives as a task notification, and the director's brief is the conversation as it was at the call (`features/tools/dialogue.rs`, `DialogueSpec`) |
 | Awareness      | `story_status` — where the chat's stories stand (spec §9.16, gate `ToolGate::Story` = `tools.story`, off): read-only, from the story files beside a run that may be writing them, with the run's call from the board. The story's runs go out as the third background payload (`orchestrator/story_runs.rs`), started by `story_continue` |
 | Awareness      | `story_create` / `story_continue` — a story driven from the chat (spec §9.16, the same gate): `story_create` stores the canon the call carries as a draft, every problem named, P1 open with no call; `story_continue` is **loop-executed** — the orchestrator reads the person's own rows after the question with one Listener call (never the arguments), records the resolution with its evidence, and starts the next run as the third background payload. Both withheld from a sub-agent |
-| Conversation control | `send_followup_message` / `rewrite_current_message` — **control flow** (optional, off by default): recognized by the agentic loop, not `Tool::invoke`. The same settings group also holds the read-back pair `history_read`/`history_search` (the folded range of *this* chat, offered only while one exists — spec §6.7) and the cross-chat pair `chat_search`/`chat_read` (the profile's *other* chats — **optional, off by default**; spec §9.11) |
+| Conversation control | `send_followup_message` / `rewrite_current_message` — **control flow** (optional, off by default): recognized by the agentic loop, not `Tool::invoke`. The same settings group also holds the read-back pair `history_read`/`history_search` (the folded range of *this* chat, offered only while one exists — spec §6.7) and the cross-chat pair `chat_search`/`chat_read` (the profile's *other* chats — **optional, off by default**; spec §9.11), and `branch_read`, the reader of a chat's parked branches (**optional, off by default**; spec §9.17) |
 | Self-model     | `get_self_model`, `reflect`, `update_self_model`, `update_user_model`, `add_insight` — **optional, off by default**: a per-profile "self-model" in SQLite (description + goals + a model of the interlocutor), written directly through `storage` (not via `ChatEffect`). Observations ("narrative") moved into `@self` notes — they're consolidated by note tools (`consolidate_narrative` was removed). **Details in §9** |
 | Plugins (MCP)  | `mcp__<server>__<tool>` — **dynamic** `McpTool` wrappers around external MCP servers' tools (`features/tools/mcp.rs`; description/schema is a snapshot of the server, per-call timeout + `ctx.cancel` cancellation, result clipping). Not part of the static `CATALOG`: the registry is rebuilt on `McpManager` events (`rebuild_registry`), and the UI catalog rides an `McpSnapshot` inside `AppEvent::Settings`; the `effective_tool_ids` gate is by the `mcp__` prefix + `config.mcp.enabled`. Double opt-in + TOFU catalog pinning. See spec §9.6, ADR 0007 |
 
@@ -3507,6 +3513,23 @@ Implementation notes:
   same `HistoryView` renderer and `compaction.page_tokens` as
   `history_read`, so a search hit's page address is exactly what a read
   returns — spec §9.11.
+- **Branch reader (`branches.rs`)** — every other tool reads a conversation's
+  line, so a parked tail (ADR 0015) is reached by this tool alone. The open
+  chat's tails come as a turn snapshot, `ToolContext::branches`: a
+  `BranchShelf` built in `start_generation` from `Chat::branch_view` — the
+  order and the figures of `/branch` — with each tail rendered through
+  `HistoryView`, and only when the turn offers the tool in a chat that has
+  tails. Rendered rather than cloned or read from disk: a message carries its
+  images inline, and the file can be behind the chat in memory. An address is
+  the path of `(number, variant)` pairs from the line, parsed back as the
+  integers of the text in pairs. With `chat`, the shelf is built at the call
+  from another chat's file, resolved and guarded by `chats.rs`
+  (`resolve`, `load_chat`) — so it works only on a turn that has the
+  cross-chat snapshot. **The notice** is the other half:
+  `ToolContext::branch_reader` says whether the turn offers the tool, and
+  `chat_read` and `history_read` add one line under their header when it does
+  and the line read has tails beside it. A sub-agent's context drops both
+  (`child_spec_with`): the tool is withheld from it — spec §9.17.
 - **RAG** — smart overlapping chunking (`chunk_text`/`chunk_markdown`, sizes
   configurable via `config.rag`/`ChunkParams`); on retrieval, adjacent chunks
   are stitched together by their verbatim overlap (`stitch_hits`). Commands

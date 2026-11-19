@@ -36,7 +36,8 @@ pub const START_SUBAGENT_ID: &str = "start_subagent";
 /// Whether a tool of the turn is **withheld** from a sub-agent
 /// (docs/research/subagent-chats.md §3.3): the nested-run family itself (no
 /// nesting — `run_dialogue` and the background twin included, spec §9.13),
-/// the read-back pair over the *parent's* folded history, and the self-model
+/// the read-back pair over the *parent's* folded history and the reader of
+/// the parent's parked branches, and the self-model
 /// family — the profile persona's identity, which a persona the parent
 /// composed must not write into — and the follow-ups, a return the companion
 /// promises the person in its own conversation (spec §9.3.6), and the two story
@@ -49,6 +50,7 @@ pub fn withheld_from_subagent(id: &str) -> bool {
         || id == super::dialogue::START_DIALOGUE_ID
         || id == super::history::HISTORY_READ_ID
         || id == super::history::HISTORY_SEARCH_ID
+        || id == super::branches::BRANCH_READ_ID
         || super::self_model::is_self_model_tool(id)
         || id == super::followups::FOLLOWUP_PLAN_ID
         || id == super::followups::FOLLOWUP_CANCEL_ID

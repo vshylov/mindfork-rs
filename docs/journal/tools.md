@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (105)
+## Entries (106)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -117,6 +117,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: image generation — stage 2, the phone (done)
 - Post-M9: image generation — stage 3, xAI, the picker and the command (done)
 - Post-M9: a word found nowhere no longer empties a search; two-letter words are searched (done)
+- Post-M9: the branches told to the tools, and a reader (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -6766,3 +6767,95 @@ the track is complete. The full record is §14 there, the contract spec §9.15 a
   `cross_chat_search_answers_from_another_chat_live` and
   `history_read_back_answers_what_the_summary_dropped_live` stay green. Unit tests 4835
   green, 320 `#[ignore]`.
+
+### Post-M9: the branches told to the tools, and a reader (done)
+
+The fourth and last stage of the branches track (docs/research/chat-branches.md §9; the
+tree and what `Ctrl+R`/`Ctrl+E` do with it are in [storage.md](storage.md)). Up to here
+no tool reached a parked tail and none said there was one — the line is all the request,
+the read-back pair, the cross-chat pair and the full-text index hold. The owner's F1
+decision asked for two things on top of that: a read of a line says that the chat has
+branches, and a separate tool reads them.
+
+- **The design came first, as an addendum** (§9 of the research document), with five
+  forks, all decided by the owner as recommended (2026-11-19): which answers say it —
+  the two reads of a line, not the searches (G1); what the reader reaches — the open
+  chat, and another chat on a turn that also crosses conversations (G2); the reader
+  off by default (G3); nothing said on a turn without it (G4); no search in tails (G5).
+- **Why off by default, and why not gated on the chat's state.** A parked tail is
+  outside what the person sees in a feed — the boundary every tool kept — and since
+  stage 3 it is also what they took back with `Ctrl+E` or had redone: with the reader
+  on for everyone, a take-back would stop meaning "unsaid". The `history_read` rule —
+  offered only while there is something to read — was the alternative, and was
+  rejected: a tool that appears with a chat's first fork tells the model of the fork
+  (the owner's D5: nothing about a fork enters the prompt), and the tool list is what a
+  cached prefix begins with, so the first `Ctrl+R` in a chat would go out with nothing
+  cached. So: a per-profile switch like `chat_read`'s, offered on every turn once on.
+- **`branch_read`** (`features/tools/branches.rs`), one tool, three optional parameters.
+  No `branch` — the list, in `/branch`'s order, an entry per tail: its address, the
+  message number and variant, the cause in words, the date, its size, and two quotes —
+  the first line of the last message it shares with the line it left, and its own
+  first line. The quotes are there because the request carries no message numbers: `#11`
+  is the feed's. `branch` — one tail as a transcript, through `HistoryView` and
+  `paginate`, which `chat_read` uses. `chat` — another conversation's, resolved and
+  guarded by `chats.rs` (`resolve`, `load_chat`), and only where the turn has the
+  cross-chat snapshot: crossing conversations stays that pair's consent.
+- **The address is `/branch N K`'s**, written `N/K`, so the person's "variant 1 of
+  message 11" and the call are one figure; it means the same before and after a switch
+  because a place's variants are ordered by their first message's time. A tail inside
+  another — every variant of a redone reply, once the person forks above it — is the
+  path from the line, `5/1 > 7/1`, which `/branch N K` does not reach. Read back as the
+  integers of the text in pairs. A variant that names the text standing on the line, or
+  inside a tail, is answered with where it is instead of "no such branch".
+- **The open chat's tails are a turn snapshot** (`ToolContext::branches`, a
+  `BranchShelf` built in `start_generation`), rendered to text when the turn starts —
+  not cloned, since a message carries its images inline, and not read from the file,
+  which can be behind the chat in memory. Built only for a turn that offers the reader
+  in a chat that has tails.
+- **The notice**: one line under the header of `history_read` and of `chat_read` —
+  how many branches, that they are not in what was read, the call that lists them, and
+  to read one only when the user asks. On every page, since a search hit sends a read
+  to a page of its own; and only on a turn that offers the reader, which it names.
+- **The switch says what it is.** A built-in tool's row had a label and no more; the
+  panel under the list was the MCP tools'. `Tool::ui_note` → `ToolInfo::note` → the
+  settings' bottom panel; `branch_read`'s is the one note there is.
+- **Withheld from a sub-agent**, and its context drops the shelf and the flag, so a
+  child's `chat_read` names no reader it does not have.
+- **Tests.** The reader: the list by `/branch`'s figures, a tail and not the line, the
+  line's own variant, a nested path, a detached and an empty tail, an unknown address
+  among few and among many, an address across a switch, pages of the list and of a
+  tail, another chat through the snapshot, a stale snapshot (another profile, hidden,
+  the open chat), a transcript, the catalogue. The notice in both reads: said on every
+  page, not said without the reader or without tails. Through the orchestrator, on a
+  recording engine: a turn that offers the reader lists, reads, is told by `chat_read`
+  and reads the other chat's — with nothing of a branch in the request; a turn without
+  it is refused and told nothing; a sub-agent is told nothing (control: red without the
+  reset). The settings: the note under the switch.
+- **Found by the tests.** `tf` asserts that every argument is named by its template, and
+  the three shapes of a list entry were filled from one list: the detached one panicked.
+  Each shape now brings its own arguments and has a test that draws it
+  (docs/lessons.md §7). The settings' screen dumps drifted by one — the sidebar counts
+  the profile's rows — and were regenerated with their pictures.
+- **Live — GO** (2026-11-19), `google/gemma-4-31b-it` and `google/gemini-3.5-flash`
+  through the gateway — by the owner's word no local model for this check, the droplet
+  has 8 GB. `a_parked_branch_is_read_when_asked_and_left_alone_when_not_e2e_live`, the
+  chats written to disk first so the parked words are the test's own: an unrelated
+  question and a `Ctrl+R` on it — no call to the reader, the parked reply in no
+  request; "look at the earlier variant of that reply" — `branch_read`, the parked
+  password in the answer; "read my other conversation…" — `chat_read`, the notice, and
+  no further; "…it has a branch I set aside" — `branch_read` with `chat`, the tail's
+  word in the answer. 14 s and 23 s. **Control red**: with the snapshot left out, the
+  model reports "I couldn't find any alternative variants of that reply".
+- **What the live run taught about the smoke.** With `chat_search` in the set, Gemma
+  answered "where is the dock" from a search hit — correctly — and never read the line,
+  so the smoke offers `chat_read` alone (docs/lessons.md §9). The Gemini API's
+  OpenAI-compatible endpoint refused the `thinking` field the generic client sends;
+  the gateway took both models.
+- **A pty run of `mindfork demo`**: the settings' search finds `branch_read`, its row
+  reads `[ ]  read the chat's parked branches`, and the note stands in the panel under
+  the list.
+- **The owner's look** (2026-11-19, Windows Terminal over SSH): the switch, its note
+  and the reader in a chat of their own work as intended.
+- **Docs.** Spec §9.17 (new), §9.3, §9.3.2, §6.7, §9.11, §11.6, §11.7; architecture §3
+  and §8; ADR 0015 point 9; the manual; CHANGELOG; the roadmap (the track closed, search
+  in parked branches left as an idea). Unit tests 5075 green, 327 `#[ignore]`.
