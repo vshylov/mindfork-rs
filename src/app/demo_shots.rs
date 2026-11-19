@@ -13,6 +13,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
+use crate::entities::feed_landing::FeedLanding;
 use crate::entities::profile::CharacterNames;
 use crate::features::demo;
 use crate::screens::chat::ChatScreen;
@@ -168,7 +169,7 @@ pub fn chat_frame(look: Look) -> ShotFrame {
         // showcase, and an empty prompt reads as a screensaver.
         demo::INPUT_DRAFT,
         demo::feed_view(),
-        None,
+        FeedLanding::Tail,
         None,
     );
     screen.show_finished_turn_usage(

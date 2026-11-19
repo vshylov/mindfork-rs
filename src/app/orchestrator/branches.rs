@@ -17,7 +17,7 @@
 
 use uuid::Uuid;
 
-use crate::app::events::AppEvent;
+use crate::app::events::{AppEvent, FeedLanding};
 use crate::entities::chat::visible_message_count;
 use crate::entities::chat_branch::SwitchError;
 
@@ -68,7 +68,7 @@ impl Orchestrator {
                 // Unconditional (not a setting): what is being spoken may have
                 // just left the line.
                 self.stop_tts();
-                self.after_line_moved(active_id);
+                self.after_line_moved(active_id, FeedLanding::Tail);
                 if let Some(text) = restore {
                     let _ = self.evt_tx.send(AppEvent::RestoreInput(text));
                 }
@@ -112,7 +112,10 @@ impl Orchestrator {
             Err(SwitchError::Detached) => self.notice("ui.branch.detached"),
             Ok((number, mark)) => {
                 self.stop_tts();
-                self.after_line_moved(active_id);
+                // The person reads on from the message whose variant they
+                // picked, so the feed shows it — without moving, where its
+                // mark is on the screen (docs/research/feed-landing.md §3.3).
+                self.after_line_moved(active_id, FeedLanding::Reveal { message: first });
                 let loc = self.ui_locale();
                 let number = number.to_string();
                 let text = match mark {
@@ -135,11 +138,13 @@ impl Orchestrator {
 
     /// What the rest of the app is told when the line's tail left it — under
     /// a fork, a switch, `Ctrl+R` or `Ctrl+E`, which are one truncation to
-    /// everything outside the chat file.
-    pub(super) fn after_line_moved(&mut self, chat_id: Uuid) {
+    /// everything outside the chat file. `landing` — where the rebuilt feed
+    /// stands: the tail where the cut is the line's new end, the variant's
+    /// first message after a switch.
+    pub(super) fn after_line_moved(&mut self, chat_id: Uuid, landing: FeedLanding) {
         self.mark_dirty(chat_id);
         // Rebuilds the feed, and sends the chat's branches with it.
-        self.activate(chat_id);
+        self.activate_at(chat_id, landing);
         self.emit_chat_list();
         // A background run whose exchange just left the line ends with it
         // (research F5); it lands on the parked copy of its record.

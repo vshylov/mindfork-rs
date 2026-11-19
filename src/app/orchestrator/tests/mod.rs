@@ -19,6 +19,22 @@ use crate::app::supervisor::MockSupervisor;
 use crate::shared::api::mock::{MockBackend, MockEmbedder};
 use crate::shared::paths::Paths;
 
+/// What a search hit's activation carries: the message the feed is put on and
+/// the query highlighted inside it.
+#[derive(Debug, PartialEq)]
+struct Jump {
+    message: Uuid,
+    query: String,
+}
+
+/// The jump an activation's landing asks for; `None` for every other landing.
+fn jump_of(landing: FeedLanding) -> Option<Jump> {
+    match landing {
+        FeedLanding::Jump { message, query } => Some(Jump { message, query }),
+        _ => None,
+    }
+}
+
 fn test_embedder() -> Arc<dyn Embedder> {
     Arc::new(MockEmbedder::new(16))
 }

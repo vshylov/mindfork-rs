@@ -109,7 +109,7 @@ impl Rig {
             ],
             draft,
             FeedView::default(),
-            None,
+            FeedLanding::Tail,
             None,
         );
         screen.set_chat_list(vec![open, cited]);

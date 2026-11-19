@@ -197,7 +197,7 @@ impl Director {
             history,
             "",
             demo::feed_view(),
-            None,
+            FeedLanding::Tail,
             None,
         );
         let (cmd_tx, cmd_rx) = unbounded_channel();

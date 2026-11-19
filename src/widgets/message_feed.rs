@@ -19,6 +19,7 @@ use uuid::Uuid;
 
 use crate::entities::chat::{FeedView, FoldKey};
 use crate::entities::chat_branch::LineMark as VariantMark;
+use crate::entities::feed_landing::FeedPlace;
 use crate::entities::message::{Message, MessageRole};
 use crate::entities::profile::CharacterNames;
 use crate::features::tools::present::{self, ToolBlock};
@@ -397,11 +398,11 @@ pub struct MessageFeed {
     cache: Vec<CachedBlock>,
     /// Cache key: changing the width/palette/thoughts display resets the whole cache.
     cache_key: Option<CacheKey>,
-    /// A "put the view on this feed item" request, consumed by the next
+    /// A "put the view here" request, consumed by the next
     /// [`MessageFeed::render`]. Deferred by necessity: turning a feed index into
     /// a scroll row needs the block cache built at the current panel width, and
     /// neither exists outside `render` (docs/history/chat-search-stage2.md §1.1).
-    pending_focus: Option<usize>,
+    pending: Option<Pending>,
     /// The feed item the **view position** is tied to, used to re-derive the row
     /// after a rewrap (resize, theme, `Ctrl+T`) invalidates every row offset —
     /// an index survives that, a row does not (§1.5, fork S6).
@@ -473,6 +474,24 @@ pub struct MessageFeed {
     /// (research F6) — the feed scrolls itself then and markdown re-forms the
     /// text as it is written, both moving what a selection points at.
     selectable: bool,
+}
+
+/// Where the next frame puts the view ([`MessageFeed::pending`]), in the
+/// widget's own coordinates: a block is a feed index, a row is counted inside
+/// its block (docs/research/feed-landing.md §3.3–§3.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Pending {
+    /// The block's `row`-th row on the view's first row — a jump (row 0), a
+    /// place restored. A row past the block's end is its last: the block was
+    /// rewrapped since the row was read.
+    Row { block: usize, row: usize },
+    /// The block's first row left where `held` puts the view, when that shows
+    /// it; on the view's first row otherwise. `held` is the view's first row
+    /// before the feed was rebuilt, `None` when it cannot be found again.
+    Reveal {
+        block: usize,
+        held: Option<(usize, usize)>,
+    },
 }
 
 /// The geometry of the last drawn frame ([`MessageFeed::drawn`]).
@@ -745,7 +764,7 @@ impl MessageFeed {
             variants: std::collections::HashMap::new(),
             cache: Vec::new(),
             cache_key: None,
-            pending_focus: None,
+            pending: None,
             anchor: None,
             marker: None,
             highlight: None,
@@ -996,6 +1015,17 @@ impl MessageFeed {
         }
     }
 
+    /// Puts the view on the feed's first row — a conversation opened to be
+    /// read from its start (docs/research/feed-landing.md §3.2). A feed that
+    /// fits the panel is at its last row too, and follows its tail again from
+    /// the next frame.
+    pub fn scroll_to_top(&mut self) {
+        self.scroll = 0;
+        self.follow = false;
+        self.scrolled = true;
+        self.release_anchor();
+    }
+
     /// Puts the view on the feed item holding the domain message `id`: the next
     /// render scrolls to it, and its rail is drawn in the accent color until the
     /// chat changes or another jump replaces it. Returns whether the message was
@@ -1019,13 +1049,93 @@ impl MessageFeed {
         id: Uuid,
         highlight: Option<&str>,
     ) -> bool {
-        let Some(idx) = messages.iter().position(|m| m.message_ids.contains(&id)) else {
+        let Some(idx) = block_of(messages, id) else {
             return false;
         };
-        self.pending_focus = Some(idx);
-        self.anchor = Some(idx);
+        self.land(Pending::Row { block: idx, row: 0 }, idx);
         self.marker = Some(idx);
         self.highlight = highlight.filter(|q| !q.is_empty()).map(str::to_owned);
+        true
+    }
+
+    /// Takes a request for where the next frame puts the view, tied to the
+    /// feed item `anchor` from there on.
+    ///
+    /// **The feed stops following its tail here, not in the frame that
+    /// applies the request.** Between the two, content can arrive on its own —
+    /// the note that says which variant is on the line, or which parked
+    /// branch a hit is in, comes right after the activation that asked — and
+    /// what arrives on its own scrolls a following feed to its end
+    /// ([`Self::scroll_to_bottom_if_following`]), which drops a pending
+    /// request. A feed that has been asked to stand somewhere is not
+    /// following.
+    fn land(&mut self, pending: Pending, anchor: usize) {
+        self.pending = Some(pending);
+        self.anchor = Some(anchor);
+        self.follow = false;
+    }
+
+    /// The view's first row in the frame last drawn, as a place that can be
+    /// found again after the feed is rebuilt (docs/research/feed-landing.md
+    /// §3.4). `messages` is the feed that frame drew.
+    ///
+    /// A block with no message behind it — a note, a transcript's persona, a
+    /// reply still being written — is not a place: the next bubble below that
+    /// has one stands in, at its first row. `None` before the first frame,
+    /// over an empty feed, and where nothing below the view's first row is a
+    /// stored message — the feed's last rows, which the tail already names.
+    pub fn place(&self, messages: &[FeedMessage]) -> Option<FeedPlace> {
+        let drawn = self.drawn.as_ref()?;
+        let (block, row) = drawn.locate(drawn.scroll);
+        if let Some(&message) = messages.get(block).and_then(|m| m.message_ids.first()) {
+            return Some(FeedPlace { message, row });
+        }
+        messages
+            .iter()
+            .skip(block + 1)
+            .find_map(|m| m.message_ids.first())
+            .map(|&message| FeedPlace { message, row: 0 })
+    }
+
+    /// Puts the view back on a place read earlier ([`Self::place`]): the next
+    /// render scrolls to that row of that message's block, and from there the
+    /// view is tied to the message, as after a jump. Nothing is marked — the
+    /// person is back where they were, not somewhere they were sent. `false`
+    /// when the feed does not show the message.
+    pub fn restore_place(&mut self, messages: &[FeedMessage], place: FeedPlace) -> bool {
+        let Some(block) = block_of(messages, place.message) else {
+            return false;
+        };
+        self.land(
+            Pending::Row {
+                block,
+                row: place.row,
+            },
+            block,
+        );
+        true
+    }
+
+    /// Shows the bubble holding the message `id`, whose content has just
+    /// changed under the person — a variant switch (research §3.3). `held` is
+    /// the view's first row from before the feed was rebuilt: the next render
+    /// puts the view back there, and leaves it there when that shows the
+    /// bubble's first row — the mark that was clicked stays under the pointer.
+    /// Where it does not, or the held row is gone, the bubble's first row
+    /// becomes the view's first. Either way the feed stops following its tail
+    /// until the view is at the last row again. `false` when the feed does not
+    /// show the message.
+    pub fn reveal_message(
+        &mut self,
+        messages: &[FeedMessage],
+        id: Uuid,
+        held: Option<FeedPlace>,
+    ) -> bool {
+        let Some(block) = block_of(messages, id) else {
+            return false;
+        };
+        let held = held.and_then(|p| block_of(messages, p.message).map(|b| (b, p.row)));
+        self.land(Pending::Reveal { block, held }, block);
         true
     }
 
@@ -1083,7 +1193,7 @@ impl MessageFeed {
     /// is gone (a chat switch). Cheap here — a rebuilt feed misses every
     /// fingerprint anyway, so the cache was going to be rebuilt regardless.
     pub fn clear_focus(&mut self) {
-        self.pending_focus = None;
+        self.pending = None;
         self.anchor = None;
         self.marker = None;
         self.highlight = None;
@@ -1093,23 +1203,52 @@ impl MessageFeed {
     /// a later rewrap must not pull the view back — but they can still see where
     /// they landed. See [`Self::anchor`] vs [`Self::marker`].
     fn release_anchor(&mut self) {
-        self.pending_focus = None;
+        self.pending = None;
         self.anchor = None;
     }
 
-    /// The feed index the view must be put on **this frame**: a pending jump
+    /// Where the view must be put **this frame**: a pending request
     /// (consumed), or — after a rewrap invalidated every row offset — the
-    /// anchored item. Both can only become a row inside `render` (§1.1).
-    fn take_focus_target(&mut self) -> Option<usize> {
+    /// anchored item's first row. Both can only become a row inside `render`
+    /// (§1.1).
+    fn take_focus_target(&mut self) -> Option<Pending> {
         let rewrapped = std::mem::take(&mut self.cache_reset);
-        if let Some(idx) = self.pending_focus.take() {
-            return Some(idx);
+        if let Some(pending) = self.pending.take() {
+            return Some(pending);
         }
         // Following the tail needs no anchor — the clamp already keeps it there.
         if rewrapped && !self.follow {
-            self.anchor
+            self.anchor.map(|block| Pending::Row { block, row: 0 })
         } else {
             None
+        }
+    }
+
+    /// Where a block's rows begin in the feed's rows as the cache holds them,
+    /// and how many it has. `None` for an index past the feed.
+    fn block_rows(&self, block: usize) -> Option<(usize, usize)> {
+        let rows = self.cache.get(block)?.lines.len();
+        let start = self.cache.iter().take(block).map(|b| b.lines.len()).sum();
+        Some((start, rows))
+    }
+
+    /// The scroll row a pending request comes to, against the cache
+    /// `build_lines` has just filled; `view_h` is the panel's height in rows.
+    fn pending_row(&self, pending: Pending, view_h: usize) -> Option<usize> {
+        match pending {
+            Pending::Row { block, row } => {
+                let (start, rows) = self.block_rows(block)?;
+                Some(start + row.min(rows.saturating_sub(1)))
+            }
+            Pending::Reveal { block, held } => {
+                let (first, _) = self.block_rows(block)?;
+                let held = held
+                    .and_then(|(block, row)| self.pending_row(Pending::Row { block, row }, view_h));
+                Some(match held {
+                    Some(top) if (top..top + view_h).contains(&first) => top,
+                    _ => first,
+                })
+            }
         }
     }
 
@@ -1418,19 +1557,20 @@ impl MessageFeed {
         let view_w = inner.width.max(1) as usize;
         let unwrapped = self.build_lines(messages, palette, view_w, loc);
 
-        // A jump (or an anchor whose rows a rewrap just invalidated) becomes a
-        // scroll row here and nowhere else — the cache it is measured against
-        // only exists after `build_lines` at this width (§1.1).
+        // A jump, a place restored, a reveal (or an anchor whose rows a rewrap
+        // just invalidated) becomes a scroll row here and nowhere else — the
+        // cache it is measured against only exists after `build_lines` at this
+        // width (§1.1).
         //
         // `build_lines` concatenates `cache[i].lines` in order, so the per-block
         // lengths address the stream exactly. The rows are drawn as the blocks
         // hold them — a contract since the feed's selection, which addresses a
         // row as (block, row) (docs/research/mouse-always-captured.md §5.4).
-        let target = self.take_focus_target();
-        let start = target.and_then(|idx| {
-            (idx < self.cache.len())
-                .then(|| self.cache.iter().take(idx).map(|b| b.lines.len()).sum())
-        });
+        // An empty feed has no blocks, so its placeholder takes no request.
+        let view_h = inner.height.max(1) as usize;
+        let target_row = self
+            .take_focus_target()
+            .and_then(|pending| self.pending_row(pending, view_h));
         // The current in-feed match rides the same accumulation: its row is
         // derived here, every frame, never stored — which is what lets it survive
         // a rewrap where a stored offset could not (§1.3).
@@ -1439,12 +1579,8 @@ impl MessageFeed {
             .flatten();
         let placeholder = messages.is_empty();
         let mut lines: Vec<Line> = Vec::with_capacity(unwrapped.len());
-        let mut target_row: Option<usize> = None;
         let mut match_row: Option<usize> = None;
         for (i, line) in unwrapped.into_iter().enumerate() {
-            if start == Some(i) {
-                target_row = Some(lines.len());
-            }
             if match_line == Some(i) {
                 match_row = Some(lines.len());
             }
@@ -1469,7 +1605,6 @@ impl MessageFeed {
         }
 
         let total = lines.len();
-        let view_h = inner.height.max(1) as usize;
         // The tail of the stream is the separator under the last message — a
         // blank row. A bare feed has few rows (spec §11.1.1) and ends on the
         // last line of text instead: the tail it follows is the stream less
@@ -2855,6 +2990,14 @@ fn numbers(messages: &[FeedMessage]) -> impl Iterator<Item = Option<u32>> + '_ {
             last
         })
     })
+}
+
+/// The feed index of the bubble holding the domain message `id` — the
+/// projection's own id mapping ([`FeedMessage::message_ids`]): an agentic
+/// round's messages merge many-to-one, so any of them finds its bubble.
+/// `None` for a message the feed does not show.
+fn block_of(messages: &[FeedMessage], id: Uuid) -> Option<usize> {
+    messages.iter().position(|m| m.message_ids.contains(&id))
 }
 
 /// The feed item that shows `#number` — what a command that names a message
@@ -5325,6 +5468,252 @@ mod tests {
         let rows = visible(&mut feed, &messages, 40, 10);
         assert!(rows.iter().any(|r| r.contains("сообщение-0")), "{rows:?}");
         assert_eq!(feed.scroll_row(), 0);
+    }
+
+    /// A conversation opened to be read from its start
+    /// (docs/research/feed-landing.md §3.2): the first row, and the feed does
+    /// not follow its tail — unless it fits the panel, where the first row and
+    /// the last are one view.
+    #[test]
+    fn scroll_to_top_shows_the_first_row() {
+        let messages = numbered(12);
+        let mut feed = MessageFeed::new();
+        let rows = visible(&mut feed, &messages, 40, 10);
+        assert!(
+            rows.iter().any(|r| r.contains("сообщение-11")) && feed.scroll_row() > 0,
+            "precondition: a new feed is at its tail: {rows:?}"
+        );
+
+        feed.scroll_to_top();
+        let rows = visible(&mut feed, &messages, 40, 10);
+        assert!(rows.iter().any(|r| r.contains("сообщение-0")), "{rows:?}");
+        assert_eq!(feed.scroll_row(), 0);
+        assert!(!feed.is_following(), "read from the start, not watched");
+
+        let short = numbered(1);
+        let mut feed = MessageFeed::new();
+        feed.scroll_to_top();
+        visible(&mut feed, &short, 40, 10);
+        assert!(feed.is_following(), "a feed that fits is at its last row");
+    }
+
+    /// The view's first row is read as a place and found again in a feed
+    /// built anew — another chat was open in between (research §3.4). The
+    /// rows that were on the screen are the rows that come back, a row inside
+    /// a block included, and nothing is marked: the person is where they
+    /// were, not somewhere they were sent.
+    #[test]
+    fn a_place_brings_back_the_rows_that_were_on_the_screen() {
+        let messages = numbered_long(12);
+        let mut feed = MessageFeed::new();
+        visible(&mut feed, &messages, 30, 10);
+        feed.scroll_up(9);
+        let mut before = visible(&mut feed, &messages, 30, 10);
+        let mut place = feed
+            .place(&messages)
+            .expect("a message is on the first row");
+        // Inside a block, not on its first row: the half of a place a jump
+        // never needed.
+        while place.row == 0 {
+            feed.scroll_up(1);
+            before = visible(&mut feed, &messages, 30, 10);
+            place = feed.place(&messages).unwrap();
+        }
+        assert!(!feed.is_following(), "precondition: scrolled away");
+
+        let mut again = MessageFeed::new();
+        assert!(again.restore_place(&messages, place));
+        let after = visible(&mut again, &messages, 30, 10);
+        assert_eq!(after, before, "the same rows, on the same screen rows");
+        assert!(!again.is_following());
+        assert_eq!(again.marker(), None, "nothing is marked");
+        let block = messages
+            .iter()
+            .position(|m| m.message_ids.contains(&place.message));
+        assert_eq!(again.anchor(), block, "a rewrap keeps the message");
+        assert_eq!(again.place(&messages), Some(place), "and it reads back");
+    }
+
+    /// A place taken while the feed followed its tail is the last screenful,
+    /// and restoring it follows the tail again: the clamp, not a flag carried
+    /// across.
+    #[test]
+    fn a_place_at_the_tail_follows_the_tail_again() {
+        let messages = numbered(12);
+        let mut feed = MessageFeed::new();
+        let before = visible(&mut feed, &messages, 40, 10);
+        let place = feed.place(&messages).unwrap();
+
+        let mut again = MessageFeed::new();
+        assert!(again.restore_place(&messages, place));
+        assert_eq!(visible(&mut again, &messages, 40, 10), before);
+        assert!(again.is_following());
+    }
+
+    /// A row read at one width can be past the block's end at another: the
+    /// block's last row then, never the next message's (fork S6 — a row
+    /// inside a block is applied once and clamped, not trusted).
+    #[test]
+    fn a_place_past_its_blocks_end_is_the_blocks_last_row() {
+        let messages = numbered(8);
+        let id = messages[2].message_ids[0];
+        let mut feed = MessageFeed::new();
+        assert!(feed.restore_place(
+            &messages,
+            FeedPlace {
+                message: id,
+                row: 999
+            }
+        ));
+        visible(&mut feed, &messages, 40, 8);
+        let landed = feed.place(&messages).unwrap();
+        assert_eq!(landed.message, id, "still that message");
+        assert!(landed.row < 999);
+
+        feed.scroll_down(1);
+        visible(&mut feed, &messages, 40, 8);
+        assert_eq!(
+            feed.place(&messages),
+            Some(FeedPlace {
+                message: messages[3].message_ids[0],
+                row: 0
+            }),
+            "one row below it the next message begins"
+        );
+    }
+
+    /// What is not a place: a note has no message behind it, so the next
+    /// bubble that has one stands in at its first row; a feed with nothing
+    /// stored below the view's first row has none, and neither has a feed no
+    /// frame has drawn. A message the feed does not show cannot be gone back
+    /// to.
+    #[test]
+    fn a_place_names_a_stored_message_or_nothing() {
+        let mut messages = numbered(8);
+        messages.insert(0, FeedMessage::note("заметка"));
+        let mut feed = MessageFeed::new();
+        assert_eq!(feed.place(&messages), None, "no frame yet");
+        feed.scroll_to_top();
+        visible(&mut feed, &messages, 40, 8);
+        assert_eq!(
+            feed.place(&messages),
+            Some(FeedPlace {
+                message: messages[1].message_ids[0],
+                row: 0
+            })
+        );
+
+        let notes = vec![FeedMessage::note("а"), FeedMessage::note("б")];
+        let mut feed = MessageFeed::new();
+        visible(&mut feed, &notes, 40, 8);
+        assert_eq!(feed.place(&notes), None);
+
+        let gone = FeedPlace {
+            message: Uuid::new_v4(),
+            row: 0,
+        };
+        let mut feed = MessageFeed::new();
+        assert!(!feed.restore_place(&messages, gone));
+        assert!(!feed.reveal_message(&messages, gone.message, None));
+        visible(&mut feed, &messages, 40, 8);
+        assert!(feed.is_following(), "a refused landing left the feed alone");
+    }
+
+    /// A variant switch (research §3.3): the bubble's content changes and its
+    /// first row is on the screen, so the view does not move — the mark that
+    /// was clicked is still under the pointer — though the feed now ends far
+    /// below and no longer follows its tail.
+    #[test]
+    fn reveal_leaves_a_header_on_the_screen_where_it_is() {
+        let mut messages = numbered(12);
+        let mut feed = MessageFeed::new();
+        let before = visible(&mut feed, &messages, 40, 10);
+        let scroll = feed.scroll_row();
+        assert!(feed.is_following(), "precondition: at the tail");
+        let header = before
+            .iter()
+            .position(|r| r.contains("сообщение-11"))
+            .expect("the last bubble is on the screen");
+
+        // The feed rebuilt with another variant in the last bubble's place.
+        let held = feed.place(&messages);
+        let last = messages.len() - 1;
+        messages[last] = msg(FeedRole::User, &"вариант ".repeat(80), "");
+        let id = messages[last].message_ids[0];
+        assert!(feed.reveal_message(&messages, id, held));
+        let after = visible(&mut feed, &messages, 40, 10);
+
+        assert_eq!(feed.scroll_row(), scroll, "the view did not move");
+        assert!(
+            after[header].contains("вариант"),
+            "the variant begins on the row its predecessor did: {after:?}"
+        );
+        // Less the border column: the scrollbar's thumb is drawn on it, and a
+        // longer feed has a shorter one.
+        let body = |rows: &[String]| -> Vec<String> {
+            rows[1..header]
+                .iter()
+                .map(|r| r.chars().take(39).collect())
+                .collect()
+        };
+        assert_eq!(body(&after), body(&before), "the rows above it stand");
+        assert!(!feed.is_following(), "the feed ends below the view now");
+    }
+
+    /// The same switch asked for from elsewhere (`/branch N K` typed at the
+    /// tail): the bubble is not on the screen, so its first row becomes the
+    /// view's first. So it does when the held row is gone, or was never read.
+    #[test]
+    fn reveal_puts_a_header_off_the_screen_on_the_first_row() {
+        let messages = numbered(12);
+        let id = messages[2].message_ids[0];
+        let on_top = Some(FeedPlace {
+            message: id,
+            row: 0,
+        });
+
+        let mut feed = MessageFeed::new();
+        visible(&mut feed, &messages, 40, 10);
+        let held = feed.place(&messages);
+        assert!(feed.reveal_message(&messages, id, held));
+        visible(&mut feed, &messages, 40, 10);
+        assert_eq!(feed.place(&messages), on_top);
+        assert!(!feed.is_following());
+
+        let gone = Some(FeedPlace {
+            message: Uuid::new_v4(),
+            row: 3,
+        });
+        for held in [gone, None] {
+            let mut feed = MessageFeed::new();
+            visible(&mut feed, &messages, 40, 10);
+            assert!(feed.reveal_message(&messages, id, held));
+            visible(&mut feed, &messages, 40, 10);
+            assert_eq!(feed.place(&messages), on_top, "held: {held:?}");
+        }
+    }
+
+    /// A reveal below the view: the bubble is put on the first row, where the
+    /// feed has that many rows under it; near the end the view is the last
+    /// screenful and the bubble is on it.
+    #[test]
+    fn reveal_of_a_bubble_below_the_view_brings_it_up() {
+        let messages = numbered(12);
+        let mut feed = MessageFeed::new();
+        feed.scroll_to_top();
+        visible(&mut feed, &messages, 40, 10);
+        let held = feed.place(&messages);
+        let id = messages[6].message_ids[0];
+        assert!(feed.reveal_message(&messages, id, held));
+        let rows = visible(&mut feed, &messages, 40, 10);
+        assert_eq!(
+            feed.place(&messages),
+            Some(FeedPlace {
+                message: id,
+                row: 0
+            }),
+            "{rows:?}"
+        );
     }
 
     /// In-feed search lights **every** match, unlike a jump (fork F2), and the

@@ -286,21 +286,6 @@ pub struct Snippet {
     pub matches: Vec<Range<usize>>,
 }
 
-/// A "open this chat with the feed on this message" request.
-///
-/// One value rather than two parallel event fields because the halves are one
-/// thought: the query's matches are highlighted **inside the focused message
-/// only** (docs/history/chat-search-stage2.md §4a S3(b)), so a query with no
-/// target has nothing to mean, and a jump carries at most one of these.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FeedFocus {
-    /// The domain message to put the view on.
-    pub message: Uuid,
-    /// The raw search query the jump came from; its matches are highlighted
-    /// inside that message. Empty when there is nothing to highlight.
-    pub query: String,
-}
-
 /// One matching message.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SearchHit {
