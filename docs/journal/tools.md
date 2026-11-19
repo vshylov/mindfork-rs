@@ -6939,6 +6939,8 @@ line and switches nothing.
 - **A pty run of `mindfork demo`**: the settings' search finds `branch_search`, its row
   reads `[ ]  search the chat's parked branches` under the reader's, and its note
   stands in the panel under the list.
+- **The owner's look** (2026-11-19, Windows Terminal over SSH): the switch, its note
+  and the search in a chat of their own work as intended.
 - **Docs.** The research's §10 (new: the design of both halves, the forks, the stages);
   spec §9.17 (now of both tools), §9.3, §9.3.2, §11.6, §11.7; architecture §3 and §8;
   ADR 0015 point 10; the manual; CHANGELOG; PRIVACY (one line, two switches) and the
