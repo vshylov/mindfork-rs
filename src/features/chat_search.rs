@@ -312,18 +312,36 @@ pub struct SearchHit {
     pub snippet: Snippet,
 }
 
+/// What the header of a parked branch's group says beside the address.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BranchTag {
+    /// What took the tail off the line.
+    pub cause: crate::entities::chat_branch::ParkCause,
+    /// When.
+    pub parked_at: chrono::DateTime<chrono::Utc>,
+    /// Its anchor reaches no message of the line: it cannot be brought back.
+    pub detached: bool,
+}
+
 /// The hits of one chat. Results are **grouped by chat** (fork **S2**): with
 /// 163 hits for a common word a flat list needs either grouping or ranking, and
 /// trigram's `bm25` is a weak proxy for relevance (research §5).
 #[derive(Debug, Clone, PartialEq)]
 pub struct SearchGroup {
     /// The conversation's id — a chat's, or a sub-agent transcript's (then
-    /// `parent` is set). Either opens through `AppCommand::OpenChatAt`.
+    /// `parent` is set). Either opens through `AppCommand::OpenChatAt`. For
+    /// the hits of a parked branch it is the **chat's** id: a branch is no
+    /// conversation of its own, and the chat is what such a hit opens.
     pub chat_id: Uuid,
-    /// The chat holding this transcript; `None` for a chat of the list. A
-    /// transcript's group always follows its parent's (spec §11.2.1).
+    /// The chat this group sits under: the one holding the transcript, or
+    /// the one the parked branch is of. `None` for a chat of the list. Such a
+    /// group always follows its parent's (spec §11.2.1).
     #[doc(alias = "sub_id")]
     pub parent: Option<Uuid>,
+    /// Set for the hits of one parked branch of the chat `chat_id`
+    /// (*Search in parked branches*, docs/research/chat-branches.md §10.3):
+    /// `title` is then the branch's address, as `/branch` lists it.
+    pub branch: Option<BranchTag>,
     pub title: String,
     /// In chat order (the orchestrator, which owns the chats, resolves it).
     pub hits: Vec<SearchHit>,

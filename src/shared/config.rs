@@ -2329,6 +2329,13 @@ pub struct InterfaceSettings {
     /// on the token counter — `(cache 97%)`. On by default (spec §11.3,
     /// §11.6, docs/research/cached-tokens.md).
     pub show_cache_share: bool,
+    /// Whether the person's search by content — the chat list's filter, the
+    /// results screen (`Ctrl+G`, `/search`) — also finds the messages of the
+    /// chats' parked branches: what a fork set aside, the replies that were
+    /// regenerated, the exchanges taken back. **Off** by default: a search
+    /// holds the conversations as they stand. The assistant's searches are
+    /// not this setting's (spec §11.2.1, docs/research/chat-branches.md §10.3).
+    pub search_parked_branches: bool,
 }
 
 /// The input box's default row ceiling — the value that was hard-coded before
@@ -2404,6 +2411,7 @@ impl Default for InterfaceSettings {
             newline_key: NewlineKey::default(),
             show_reasoning_tokens: true,
             show_cache_share: true,
+            search_parked_branches: false,
         }
     }
 }
@@ -4400,6 +4408,7 @@ mod tests {
                 newline_key: NewlineKey::CtrlEnter,
                 show_reasoning_tokens: false,
                 show_cache_share: false,
+                search_parked_branches: true,
             },
             ..Default::default()
         };

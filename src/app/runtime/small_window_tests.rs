@@ -338,6 +338,7 @@ fn search(lang: Lang) -> Rig {
     };
     let groups = vec![SearchGroup {
         parent: None,
+        branch: None,
         chat_id: uuid::Uuid::new_v4(),
         title: "A chat".into(),
         hits: vec![hit("one message with the MARKER"), hit("a MARKER again")],

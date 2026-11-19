@@ -312,7 +312,10 @@ src/
 │  │  ├─ search.rs          chat content search (`Ctrl+F` in the list): indexes a
 │  │  │                     chat right after it is saved + the startup reconciliation
 │  │  │                     pass (stat-only walk of `chats/`), and answers a query —
-│  │  │                     escaping it here, since `shared` may not use `features`
+│  │  │                     escaping it here, since `shared` may not use `features`.
+│  │  │                     With `interface.search_parked_branches` on it also asks
+│  │  │                     the parked tables, and groups those hits by branch from
+│  │  │                     the chat it holds (`branch_groups`)
 │  │  ├─ tts.rs             speech synthesis: conversation snapshot → chunks (a
 │  │  │                     message's blocks packed sentence by sentence, 200 → 300
 │  │  │                     → 400 characters, `chunk_utterances`) → synth/playback
@@ -451,7 +454,8 @@ src/
 │  │                        chat is never drawn in between; spec §11.2, §10 below
 │  ├─ search.rs             SearchScreen: message-level content search results (Ctrl+G in
 │  │                        the list's content mode), grouped by chat with a highlighted
-│  │                        snippet; Enter → a jump into the feed, → SearchIntent
+│  │                        snippet — a transcript's and a parked branch's hits as groups
+│  │                        under their chat; Enter → a jump into the feed, → SearchIntent
 │  ├─ tasks.rs              TasksScreen: every sub-agent/dialogue run across every chat —
 │  │                        running with its position, landed with its outcome — and the
 │  │                        app's own silent tasks (F7, /tasks; spec §11.10), → TasksIntent;
@@ -1057,9 +1061,13 @@ src/
    │  │                     (indexed under the parent's chat_id); every query that
    │  │                     names a conversation folds it through
    │  │                     COALESCE(sub_id, chat_id), and `IndexScope` picks one
-   │  │                     level of one file. Derived data, so open() self-heals: a
-   │  │                     corrupt file or a foreign schema is deleted and started
-   │  │                     empty, never migrated
+   │  │                     level of one file. The messages of the chats' parked
+   │  │                     branches sit in tables of their own (`parked`,
+   │  │                     `parked_fts`), written by the same diff and read by the
+   │  │                     person's search alone — no query a tool runs names them.
+   │  │                     Derived data, so open() self-heals: a corrupt file or a
+   │  │                     foreign schema is deleted and started empty, never
+   │  │                     migrated
    │  └─ mod.rs             Storage facade (thread-safe)
    ├─ embed_identity.rs    identity of the embedding model that produced the stored
    │                       vectors: CANARY_TEXT/CANARY_MATCH + EmbedFingerprint
@@ -3534,7 +3542,8 @@ Implementation notes:
   and the line read has tails beside it. **The search** (`BranchSearch`) asks
   the same shelf, or another chat's: `BranchShelf::matching` scans the kept
   texts with `QueryWords::matches` — the rule of the trigram index and of the
-  whole-word check, in Rust, because `cache.db` holds no parked row for a tool
+  whole-word check, in Rust, because `cache.db` keeps the parked rows for the
+  person's search alone, in tables no tool's query reads
   — and `HistoryView::locate` gives each hit the page the reader returns it
   on. It matches a message's text and not its rendered block: a block begins
   with the speaker's label, which a query for "user" would find in every one.

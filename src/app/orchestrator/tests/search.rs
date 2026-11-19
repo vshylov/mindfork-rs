@@ -249,6 +249,7 @@ fn message_search_groups_by_chat_in_list_order_with_titles() {
                 role: "user".into(),
                 ts: "2026-07-29T10:00:00+00:00".into(),
                 text: "призрачный маркер".into(),
+                parked: false,
             }],
         )
         .unwrap();
@@ -594,4 +595,402 @@ fn message_search_follows_the_chat_lists_sort_toggle() {
 
     assert_eq!(by_modified[0].chat_id, old_new, "newest modification first");
     assert_eq!(by_created[0].chat_id, new_old, "newest creation first");
+}
+
+// ---- search in parked branches (docs/research/chat-branches.md §10.3) ----
+
+use crate::entities::chat_branch::{Branch, ParkCause};
+
+/// What a test needs to name in a chat with parked tails.
+struct Parked {
+    chat: Uuid,
+    /// The redone reply, which names the password and is parked.
+    old_reply: Uuid,
+    /// The reply that replaced it — parked too once the chat is forked above.
+    new_reply: Uuid,
+}
+
+/// `q1 a1 q2 a2 q3 a3` a minute apart, with the last reply redone: the old
+/// one, which names the password, is variant 1 of message #6 and is parked;
+/// the new one says it does not remember. With `forked`, the chat is then
+/// forked at its first reply and asked something else, so both replies are in
+/// tails — the old one in a tail inside the forked one.
+fn parked_chat(orch: &mut Orchestrator, title: &str, forked: bool) -> Parked {
+    let at = |minutes: i64| {
+        chrono::Utc::now() - chrono::Duration::hours(2) + chrono::Duration::minutes(minutes)
+    };
+    let said = |mut m: Message, minutes: i64| {
+        m.timestamp = at(minutes);
+        m
+    };
+    let mut chat = Chat::from_profile(&Profile::new("P", "sys"), title);
+    for (i, m) in [
+        Message::user("вопрос один"),
+        Message::assistant("ответ один"),
+        Message::user("вопрос два"),
+        Message::assistant("ответ два"),
+        Message::user("а пароль от лодки?"),
+        Message::assistant("пароль — ЗАНЗИБАР-42"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        chat.push_message(said(m, i as i64));
+    }
+    let old_reply = chat.messages[5].id;
+    assert!(chat.park_tail(5, ParkCause::Regenerate, at(10)));
+    chat.push_message(said(Message::assistant("пароля я не помню"), 11));
+    let new_reply = chat.messages[5].id;
+    if forked {
+        assert!(chat.fork_at(2, at(20)));
+        chat.push_message(said(Message::user("начнём иначе"), 21));
+    }
+    orch.storage.json().save_chat(&chat).unwrap();
+    orch.index_saved_chat(&chat);
+    let id = chat.id;
+    orch.chats.push(chat);
+    Parked {
+        chat: id,
+        old_reply,
+        new_reply,
+    }
+}
+
+/// The ids a content query keeps in the chat list.
+fn list_filter(
+    orch: &Orchestrator,
+    rx: &mut UnboundedReceiver<AppEvent>,
+    query: &str,
+) -> Vec<Uuid> {
+    orch.handle_search_chats(query.into());
+    loop {
+        if let AppEvent::ChatSearchResults { chat_ids, .. } = rx.try_recv().unwrap() {
+            return chat_ids.unwrap();
+        }
+    }
+}
+
+/// What an open sent down: the activation's chat and focus, and the notice
+/// that followed it, if one did.
+fn opened(
+    rx: &mut UnboundedReceiver<AppEvent>,
+) -> (Uuid, Option<crate::app::events::FeedFocus>, Option<String>) {
+    let mut activated = None;
+    let mut notice = None;
+    while let Ok(event) = rx.try_recv() {
+        match event {
+            AppEvent::ChatActivated { id, focus, .. } => activated = Some((id, focus)),
+            AppEvent::Notice(text) => notice = Some(text),
+            _ => {}
+        }
+    }
+    let (id, focus) = activated.expect("the open was answered with an activation");
+    (id, focus, notice)
+}
+
+/// The setting is off unless the person switched it on: a word said only in a
+/// parked tail finds nothing, on the screen and in the list. On, the tail's
+/// hits are a group of their own under the chat's — which heads it even with
+/// no hit of its own — titled by the address `/branch` lists the tail under.
+#[test]
+fn a_word_said_only_in_a_branch_is_found_when_the_person_asks_for_it() {
+    let (_d, mut orch, mut rx) = bare_orch_rx();
+    let boat = parked_chat(&mut orch, "Лодка", false);
+    assert!(
+        !orch.config.interface.search_parked_branches,
+        "off by default"
+    );
+
+    let (groups, total) = message_search(&mut orch, &mut rx, "занзибар");
+    assert!(groups.is_empty() && total == 0, "{groups:?}");
+    assert!(list_filter(&orch, &mut rx, "занзибар").is_empty());
+
+    orch.config.interface.search_parked_branches = true;
+    let (groups, total) = message_search(&mut orch, &mut rx, "занзибар");
+    assert_eq!(total, 1);
+    assert_eq!(groups.len(), 2, "{groups:?}");
+    assert_eq!(
+        (groups[0].chat_id, groups[0].parent, groups[0].hits.len()),
+        (boat.chat, None, 0),
+        "the chat heads its branch"
+    );
+    assert!(groups[0].branch.is_none());
+    let branch = &groups[1];
+    assert_eq!(
+        (branch.chat_id, branch.parent),
+        (boat.chat, Some(boat.chat))
+    );
+    assert_eq!(branch.title, "6/1", "the address `/branch` shows");
+    let tag = branch.branch.expect("a branch's group says so");
+    assert_eq!((tag.cause, tag.detached), (ParkCause::Regenerate, false));
+    let hits: Vec<Uuid> = branch.hits.iter().map(|h| h.message_id).collect();
+    assert_eq!(hits, vec![boat.old_reply]);
+    assert_eq!(list_filter(&orch, &mut rx, "занзибар"), vec![boat.chat]);
+
+    // A word on the line and in the tail: a hit in each, the chat listed once.
+    let (groups, total) = message_search(&mut orch, &mut rx, "парол");
+    assert_eq!(total, 3, "the question, the line's reply, the parked one");
+    assert_eq!(groups[0].hits.len(), 2);
+    assert_eq!(groups[1].hits.len(), 1);
+    assert_eq!(list_filter(&orch, &mut rx, "парол"), vec![boat.chat]);
+
+    // And the address figures are `Chat::branch_view`'s.
+    let chat = orch.chats.iter().find(|c| c.id == boat.chat).unwrap();
+    let view = chat.branch_view();
+    assert_eq!((view.parked[0].number, view.parked[0].variant), (6, 1));
+}
+
+/// Tails come in `/branch`'s order, each under its own address: a tail that
+/// continues from the line, the tail inside it, and a detached one last.
+#[test]
+fn nested_and_detached_tails_are_groups_under_their_addresses() {
+    let (_d, mut orch, mut rx) = bare_orch_rx();
+    orch.config.interface.search_parked_branches = true;
+    let boat = parked_chat(&mut orch, "Лодка", true);
+    {
+        let chat = orch.chats.iter_mut().find(|c| c.id == boat.chat).unwrap();
+        chat.branches.push(Branch {
+            after: Some(Uuid::new_v4()),
+            messages: vec![Message::user("потерянный пароль")],
+            parked_at: chrono::Utc::now(),
+            cause: ParkCause::Fork,
+            compaction: None,
+            reflected_upto: None,
+        });
+        let chat = chat.clone();
+        orch.storage.json().save_chat(&chat).unwrap();
+        orch.index_saved_chat(&chat);
+    }
+
+    // The word for "password": the question and the reply that replaced the
+    // redone one are in the forked tail, the redone reply in the tail inside
+    // it, and the detached tail says it too. Nothing on the line does.
+    let (groups, total) = message_search(&mut orch, &mut rx, "парол");
+    assert_eq!(total, 4);
+    let shape: Vec<(&str, usize, bool)> = groups
+        .iter()
+        .map(|g| {
+            (
+                g.title.as_str(),
+                g.hits.len(),
+                g.branch.is_some_and(|t| t.detached),
+            )
+        })
+        .collect();
+    assert_eq!(
+        shape,
+        [
+            ("Лодка", 0, false),
+            ("3/1", 2, false),
+            ("3/1 > 6/1", 1, false),
+            ("0/1", 1, true),
+        ]
+    );
+    assert_eq!(groups[1].branch.map(|t| t.cause), Some(ParkCause::Fork));
+    // A tail's hits are in the order they were said.
+    let chat = orch.chats.iter().find(|c| c.id == boat.chat).unwrap();
+    let outer = chat
+        .branches
+        .iter()
+        .find(|b| b.messages.iter().any(|m| m.id == boat.new_reply))
+        .unwrap();
+    let question = outer.messages[2].id;
+    let hits: Vec<Uuid> = groups[1].hits.iter().map(|h| h.message_id).collect();
+    assert_eq!(hits, vec![question, boat.new_reply]);
+}
+
+/// `Enter` on a hit in a parked branch (the owner's H3): the chat opens on
+/// its line, the feed where the branch leaves it, a note names the branch by
+/// its address — and **nothing is switched**: the line and the tails are what
+/// they were.
+#[test]
+fn a_hit_in_a_parked_branch_opens_the_chat_on_its_line_and_switches_nothing() {
+    let (_d, mut orch, mut rx) = bare_orch_rx();
+    orch.config.interface.language = crate::shared::i18n::Lang::En;
+    let boat = parked_chat(&mut orch, "Лодка", false);
+    let before = orch
+        .chats
+        .iter()
+        .find(|c| c.id == boat.chat)
+        .cloned()
+        .unwrap();
+
+    orch.handle_open_chat_at(boat.chat, boat.old_reply, "занзибар".into());
+    let (id, focus, notice) = opened(&mut rx);
+    assert_eq!(id, boat.chat);
+    let focus = focus.expect("the feed is put where the branch leaves the line");
+    assert_eq!(
+        focus.message, boat.new_reply,
+        "the line's own variant of that place — the bubble with the mark"
+    );
+    assert_eq!(focus.query, "", "the match is not in the message looked at");
+    assert_eq!(
+        notice.as_deref(),
+        Some(
+            "The match is in parked branch 6/1: variant 1 of message #6. Nothing was \
+             switched. /branch 6 1 brings it in front of you."
+        )
+    );
+    let after = orch.chats.iter().find(|c| c.id == boat.chat).unwrap();
+    assert_eq!(after.messages, before.messages, "the line did not move");
+    assert_eq!(after.branches, before.branches, "nor did a tail");
+
+    // A hit on the line opens on its message, with the query and no note.
+    orch.handle_open_chat_at(boat.chat, boat.new_reply, "помню".into());
+    let (_, focus, notice) = opened(&mut rx);
+    let focus = focus.unwrap();
+    assert_eq!(
+        (focus.message, focus.query.as_str()),
+        (boat.new_reply, "помню")
+    );
+    assert_eq!(notice, None);
+}
+
+/// A tail inside another is looked at where the **outer** tail leaves the
+/// line, and the note sends the person to the list — `/branch N K` does not
+/// reach it. A detached tail has no place: the chat opens all the same — the
+/// screen that asked is waiting for it, the open chat included — and the note
+/// says why the branch cannot come back.
+#[test]
+fn a_hit_in_a_nested_or_a_detached_tail_says_how_it_is_reached() {
+    let (_d, mut orch, mut rx) = bare_orch_rx();
+    orch.config.interface.language = crate::shared::i18n::Lang::En;
+    let boat = parked_chat(&mut orch, "Лодка", true);
+    let lost = Uuid::new_v4();
+    {
+        let chat = orch.chats.iter_mut().find(|c| c.id == boat.chat).unwrap();
+        let mut m = Message::user("потерянный пароль");
+        m.id = lost;
+        chat.branches.push(Branch {
+            after: Some(Uuid::new_v4()),
+            messages: vec![m],
+            parked_at: chrono::Utc::now(),
+            cause: ParkCause::Fork,
+            compaction: None,
+            reflected_upto: None,
+        });
+    }
+    let standing = orch
+        .chats
+        .iter()
+        .find(|c| c.id == boat.chat)
+        .unwrap()
+        .messages[2]
+        .id;
+
+    // The redone reply is in the tail inside the forked one.
+    orch.handle_open_chat_at(boat.chat, boat.old_reply, "занзибар".into());
+    let (_, focus, notice) = opened(&mut rx);
+    assert_eq!(focus.map(|f| f.message), Some(standing));
+    let notice = notice.unwrap();
+    assert!(
+        notice.starts_with("The match is in parked branch 3/1 > 6/1, which continues from inside"),
+        "{notice}"
+    );
+    assert!(notice.contains("the list /branch opens"), "{notice}");
+
+    // The reply that replaced it is in the forked tail itself.
+    orch.handle_open_chat_at(boat.chat, boat.new_reply, "помню".into());
+    let (_, focus, notice) = opened(&mut rx);
+    assert_eq!(focus.map(|f| f.message), Some(standing));
+    assert!(notice.unwrap().contains("/branch 3 1 brings it"));
+
+    // The detached tail — asked for while this very chat is the open one.
+    assert_eq!(orch.active_id, Some(boat.chat));
+    orch.handle_open_chat_at(boat.chat, lost, "потерянный".into());
+    let (id, focus, notice) = opened(&mut rx);
+    assert_eq!((id, focus), (boat.chat, None));
+    let notice = notice.unwrap();
+    assert!(notice.starts_with("The match is in branch 0/1"), "{notice}");
+    assert!(notice.contains("cannot be brought back"), "{notice}");
+    // And from another chat.
+    let (other, _) = indexed_chat(&mut orch, "Другой", &["ничего"]);
+    orch.handle_switch(other);
+    while rx.try_recv().is_ok() {}
+    orch.handle_open_chat_at(boat.chat, lost, "потерянный".into());
+    let (id, focus, notice) = opened(&mut rx);
+    assert_eq!((id, focus), (boat.chat, None));
+    assert!(notice.is_some());
+}
+
+/// `Enter` in the chat list on a chat the filter kept for a match in a
+/// parked branch: with nothing on the line to land on, the chat opens where
+/// that branch leaves it and the note says so. A match on the line still
+/// wins, and with the setting off the list never kept the chat at all — an
+/// open then lands at the tail, as it always did.
+#[test]
+fn the_lists_enter_on_a_chat_matched_only_in_a_branch_says_where() {
+    let (_d, mut orch, mut rx) = bare_orch_rx();
+    orch.config.interface.language = crate::shared::i18n::Lang::En;
+    let boat = parked_chat(&mut orch, "Лодка", false);
+    let (other, _) = indexed_chat(&mut orch, "Другой", &["ничего"]);
+
+    orch.handle_open_chat_at_first_match(boat.chat, "занзибар");
+    let (id, focus, notice) = opened(&mut rx);
+    assert_eq!(
+        (id, focus, notice),
+        (boat.chat, None, None),
+        "off: the tail"
+    );
+
+    orch.config.interface.search_parked_branches = true;
+    orch.handle_switch(other);
+    while rx.try_recv().is_ok() {}
+    orch.handle_open_chat_at_first_match(boat.chat, "занзибар");
+    let (id, focus, notice) = opened(&mut rx);
+    assert_eq!(id, boat.chat);
+    assert_eq!(focus.map(|f| f.message), Some(boat.new_reply));
+    assert!(
+        notice
+            .unwrap()
+            .starts_with("The match is in parked branch 6/1"),
+        "the list's open names the branch"
+    );
+
+    // The word for "password" is on the line too: the line's first match, as
+    // ever.
+    let question = orch
+        .chats
+        .iter()
+        .find(|c| c.id == boat.chat)
+        .unwrap()
+        .messages[4]
+        .id;
+    orch.handle_open_chat_at_first_match(boat.chat, "парол");
+    let (_, focus, notice) = opened(&mut rx);
+    let focus = focus.unwrap();
+    assert_eq!((focus.message, focus.query.as_str()), (question, "парол"));
+    assert_eq!(notice, None);
+}
+
+/// Results are a snapshot: the person may switch a branch and come back to
+/// them. A hit is opened by where its message stands **then** — the reply
+/// that was parked when it was found opens as a message of the line once its
+/// branch is on it, and the one it displaced is then the parked one.
+#[test]
+fn a_hit_is_opened_by_where_its_message_stands_now() {
+    let (_d, mut orch, mut rx) = bare_orch_rx();
+    orch.config.interface.language = crate::shared::i18n::Lang::En;
+    let boat = parked_chat(&mut orch, "Лодка", false);
+    {
+        let chat = orch.chats.iter_mut().find(|c| c.id == boat.chat).unwrap();
+        chat.switch_to(boat.old_reply, chrono::Utc::now()).unwrap();
+    }
+
+    orch.handle_open_chat_at(boat.chat, boat.old_reply, "занзибар".into());
+    let (_, focus, notice) = opened(&mut rx);
+    let focus = focus.unwrap();
+    assert_eq!(
+        (focus.message, focus.query.as_str()),
+        (boat.old_reply, "занзибар")
+    );
+    assert_eq!(notice, None);
+
+    orch.handle_open_chat_at(boat.chat, boat.new_reply, "помню".into());
+    let (_, focus, notice) = opened(&mut rx);
+    assert_eq!(focus.map(|f| f.message), Some(boat.old_reply));
+    assert!(
+        notice.unwrap().contains("parked branch 6/2"),
+        "by time: variant 2"
+    );
 }

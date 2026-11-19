@@ -847,6 +847,9 @@ enum FieldId {
     INewlineKey,
     /// Confirmation before `Ctrl+R`/`Ctrl+E` (irreversible operations).
     IConfirmKeys,
+    /// Whether the search by content also finds messages of parked branches
+    /// (`interface.search_parked_branches`, spec §11.2.1).
+    ISearchBranches,
     /// Copy "thoughts" (CoT) when copying the conversation (`F5`).
     ICopyThoughts,
     /// Copy tool-call parameters when copying the conversation.

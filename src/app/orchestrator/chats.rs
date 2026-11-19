@@ -252,7 +252,70 @@ impl Orchestrator {
     /// `ChatActivated`, carrying the query so the feed can highlight it inside
     /// that message. See docs/history/chat-search-stage2.md §3 and §4a S3(b).
     pub(super) fn handle_open_chat_at(&mut self, chat: Uuid, message: Uuid, query: String) {
+        // Where the message stands **now**, not where the results drew it:
+        // they are a snapshot, and a branch may have been switched since.
+        if self.open_at_parked(chat, message) {
+            return;
+        }
         self.switch_to(chat, Some(FeedFocus { message, query }));
+    }
+
+    /// Opens `chat` for a hit whose message is in one of its **parked
+    /// branches** (*Search in parked branches*, research §10.3, the owner's
+    /// H3): on its line, switching nothing, the feed where the branch leaves
+    /// the line — the bubble that carries the variants mark — and a note that
+    /// names the branch and says how to bring it onto the line. `false` when
+    /// the message is not parked: the caller opens it as any other.
+    ///
+    /// A search is a look, and a look changes nothing in the chat. Which
+    /// variant the conversation continues from stays what the person set.
+    fn open_at_parked(&mut self, chat_id: Uuid, message: Uuid) -> bool {
+        let Some((focus, note)) = self.parked_note(chat_id, message) else {
+            return false;
+        };
+        match focus {
+            Some(_) => self.switch_to(chat_id, focus),
+            // Nothing on the line to stand on (a detached tail). A jump is
+            // still answered, the open chat included: the screen that asked
+            // is waiting for this activation.
+            None if self.active_id == Some(chat_id) => self.activate_focused(chat_id, None),
+            None => self.switch_to(chat_id, None),
+        }
+        let _ = self.evt_tx.send(AppEvent::Notice(note));
+        true
+    }
+
+    /// Where the feed goes for a parked `message` of `chat_id`, and the note
+    /// that says which branch holds it — in the interface's language, by the
+    /// address `/branch` lists the branch under.
+    fn parked_note(&self, chat_id: Uuid, message: Uuid) -> Option<(Option<FeedFocus>, String)> {
+        let chat = self.chats.iter().find(|c| c.id == chat_id)?;
+        let place = chat.parked_place(message)?;
+        let view = chat.branch_view();
+        let path = view.path_of(place.first)?;
+        let address = crate::entities::chat_branch::branch_address(&path);
+        let loc = self.ui_locale();
+        let note = match (place.detached, path.as_slice()) {
+            (true, _) => loc.tf("ui.search.parked.detached", &[("address", &address)]),
+            // Continues from the line: `/branch N K` reaches it.
+            (false, [(number, variant)]) => loc.tf(
+                "ui.search.parked.on_line",
+                &[
+                    ("address", address.as_str()),
+                    ("number", &number.to_string()),
+                    ("variant", &variant.to_string()),
+                ],
+            ),
+            // Inside another parked tail: the list reaches it.
+            (false, _) => loc.tf("ui.search.parked.nested", &[("address", &address)]),
+        };
+        // No query rides along: the message looked at is the line's own
+        // variant of the place, and the match is not in it.
+        let focus = place.leaves_at.map(|message| FeedFocus {
+            message,
+            query: String::new(),
+        });
+        Some((focus, note))
     }
 
     /// Opens a chat on its **first message matching `query`** (`Enter` in the
@@ -266,6 +329,14 @@ impl Orchestrator {
                 message,
                 query: query.to_string(),
             });
+        // Nothing on the line, and the list kept this chat for a match in a
+        // parked branch: open where that branch leaves the line, and say so.
+        if focus.is_none()
+            && let Some(parked) = self.first_parked_match(chat, query)
+            && self.open_at_parked(chat, parked)
+        {
+            return;
+        }
         self.switch_to(chat, focus);
     }
 

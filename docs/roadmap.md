@@ -462,18 +462,17 @@ effort tiers and Fabula — have all closed
 
 ### Chats, search and data
 
-- **Search in parked branches** — **half built**. A word said only in a branch
-  was found by nobody until that branch was on the line: the chat list's search
-  and `Ctrl+F` hold the line, and so do the assistant's searches. Two halves,
-  designed together and decided by the owner on 2026-11-19
-  ([chat-branches.md](research/chat-branches.md) §10). **The assistant's is
-  built**: `branch_search`, an optional tool beside `branch_read`, off by
-  default, scans one conversation's tails with no index. **The person's is
-  next**: a setting, off, with which the search by content (`Ctrl+G`, `/search`,
-  the chat list's filter) also finds parked messages; a hit opens the chat on
-  its line where the branch leaves it and names the branch, and switches
-  nothing. Removing a branch and a mark of branches on the chat card are left
-  by the same track.
+- **Search in parked branches** — **done** (2026-11-19, two stages;
+  [chat-branches.md](research/chat-branches.md) §10). The assistant's:
+  `branch_search`, an optional tool beside `branch_read`, off by default, scans
+  one conversation's tails with no index. The person's: *Search in parked
+  branches*, a setting, off, with which the search by content (`Ctrl+G`,
+  `/search`, the chat list's filter) also finds parked messages; a hit opens
+  the chat on its line where the branch leaves it and names the branch, and
+  switches nothing. **Left as ideas by the same track:** removing a branch; a
+  mark of branches on the chat card; a read-only view of a parked branch, so
+  that a hit could be read in place without a switch; `Ctrl+F` in a chat
+  counting the matches its branches hold.
 - **Importing chats exported from ChatGPT, Claude, Gemini, Grok and DeepSeek**
   — **idea**, researched 2026-10-25, forks decided by the owner the same day
   ([cloud-chat-import.md](research/cloud-chat-import.md) §7). The decisions:
@@ -774,7 +773,8 @@ its area.
   they cut — a regenerated reply is a variant of its message, an exchange taken
   back a branch to return to; and an optional tool, `branch_read`, lets the
   assistant read a branch when asked, with a read of a line saying that branches
-  stand beside it; a second, `branch_search`, finds the branch that says a word.
+  stand beside it; a second, `branch_search`, finds the branch that says a word,
+  and a setting lets the person's own search find what is in a branch.
   Live GO on every stage
   ([chat-branches.md](research/chat-branches.md),
   [ADR 0015](decisions/0015-chat-branches.md),

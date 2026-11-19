@@ -51,6 +51,15 @@ split by subsystem.
   `branch_read`, for the same reason. It searches the branches of one conversation
   and never the conversation in front of you; the assistant's other searches still
   find nothing in a branch.
+- **Your own search can find what is in a branch.** A new setting, **Search in
+  parked branches** (Settings → Interface → Behavior), **off by default**. With it
+  on, the search by content — the chat list's filter, `Ctrl+G`, `/search` — also
+  finds messages in a chat's branches: a reply you regenerated, an exchange you took
+  back, what followed a message you forked at. Such a match is shown under its chat
+  as a branch, named as `/branch` names it (`6/1`). `Enter` opens the chat where that
+  branch leaves the conversation and says which branch holds the match — nothing is
+  switched; `/branch 6 1` brings it in front of you. The search index (`cache.db`)
+  is rebuilt once at the first start, by itself.
 - **`mindfork stats` counts the messages kept in branches**, on a line of its own, and
   `--compare` tells a fork from a loss: a copy where you forked and went another way is
   *ahead*, a copy missing a branch is behind by what the branch held. A copy with no

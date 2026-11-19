@@ -169,10 +169,10 @@ A fork changes the conversation and nothing else. Notes the assistant saved,
 files it wrote and changes it made to your project stay as they are; `F4` still
 shows and reverts what it did to the project. The assistant itself reads only
 the conversation in front of you: a branch you left is not in its request and
-not in what its tools find. So do `F5`, `/copy`, `/export` and the searches: they
-take the conversation in front of you, and a word said only in a branch is found
-once that branch is the one you are in. A backup takes the chat whole, branches
-included.
+not in what its tools find. So do `F5`, `/copy`, `/export` and — until you ask
+otherwise, below — the searches: they take the conversation in front of you, and a
+word said only in a branch is found once that branch is the one you are in. A
+backup takes the chat whole, branches included.
 
 If you want the assistant to look at a branch — "compare this with what you
 answered before I regenerated" — switch **`branch_read`** on in the profile's
@@ -194,6 +194,19 @@ and the assistant's other searches still find nothing in a branch.
 
 In the chat list, `Ctrl+F` switches between searching titles and searching
 message content; `Ctrl+G` then opens the matching messages themselves.
+
+That search finds the conversations as they stand. To find what is in a branch
+as well — a reply you regenerated, an exchange you took back, what followed a
+message you forked at — switch on **Search in parked branches** (`Ctrl+P →
+Interface → Behavior`; off by default). The chat list then keeps a chat that
+matches only in a branch, and `Ctrl+G` and `/search` show such a match under its
+chat as `└ branch 6/1 · a regenerated reply · 2026-11-18` — the same `6/1` that
+`/branch 6 1` takes. `Enter` on it opens the chat where that branch leaves the
+conversation and tells you which branch holds the match; it does not switch to
+it — a search only looks, and the conversation continues from the variant you
+chose. Type the `/branch` the note names when you want the branch in front of
+you. This is your search: what the assistant may find in a branch is its own
+switch, above.
 
 ### Profiles
 

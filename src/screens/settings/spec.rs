@@ -98,6 +98,9 @@ pub(super) fn field_spec(id: FieldId) -> Option<FieldSpec> {
         IConfirmKeys => {
             toggle(|c| c.interface.confirm_destructive_keys = !c.interface.confirm_destructive_keys)
         }
+        ISearchBranches => {
+            toggle(|c| c.interface.search_parked_branches = !c.interface.search_parked_branches)
+        }
         SmProtocol => {
             toggle(|c| c.self_model.maintenance_protocol = !c.self_model.maintenance_protocol)
         }

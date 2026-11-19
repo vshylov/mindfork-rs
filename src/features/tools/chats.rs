@@ -709,6 +709,7 @@ mod tests {
                 role: "user".into(),
                 ts: m.timestamp.to_rfc3339(),
                 text: m.text.clone(),
+                parked: false,
             })
             .collect();
         storage.cache().index_chat(chat.id, 0, 0, &indexed).unwrap();
@@ -826,6 +827,7 @@ mod tests {
                 role: "user".into(),
                 ts: m.timestamp.to_rfc3339(),
                 text: m.text.clone(),
+                parked: false,
             })
             .collect();
         storage
@@ -903,6 +905,67 @@ mod tests {
             out.contains("chat_read"),
             "the hint must name the reader: {out}"
         );
+    }
+
+    /// The index now holds the chats' parked tails for the person's search
+    /// (docs/research/chat-branches.md §10.3). A tool's search is not that
+    /// search: a word only a parked message says is found in no conversation.
+    #[tokio::test]
+    async fn search_finds_nothing_in_a_parked_branch() {
+        let (_d, storage, mut ctx) = ctx_with_refs(vec![]);
+        let (mine, _) = seed_chat(
+            &storage,
+            ctx.profile_id,
+            "лодка",
+            &["пароля от лодки я не помню"],
+        );
+        // The chat's line as `seed_chat` indexed it, and a parked reply
+        // beside it, written to the index as the app writes one.
+        let chat = storage.json().load_chat(mine.id).unwrap().unwrap();
+        let mut rows: Vec<IndexedMessage> = chat
+            .messages
+            .iter()
+            .map(|m| IndexedMessage {
+                id: m.id,
+                sub_id: None,
+                role: "user".into(),
+                ts: m.timestamp.to_rfc3339(),
+                text: m.text.clone(),
+                parked: false,
+            })
+            .collect();
+        rows.push(IndexedMessage {
+            id: Uuid::new_v4(),
+            sub_id: None,
+            role: "assistant".into(),
+            ts: chat.messages[0].timestamp.to_rfc3339(),
+            text: "пароль — ЗАНЗИБАР-42".into(),
+            parked: true,
+        });
+        storage.cache().index_chat(mine.id, 1, 1, &rows).unwrap();
+        ctx.other_chats = Arc::from(vec![mine]);
+
+        let find = |query: &'static str| {
+            let ctx = ctx.clone();
+            async move {
+                ChatSearch
+                    .invoke(&ctx, serde_json::json!({ "query": query }))
+                    .await
+                    .unwrap()
+                    .result
+            }
+        };
+        let parked = find("занзибар").await;
+        assert!(
+            parked.starts_with("Ни один другой разговор этого профиля не содержит такого"),
+            "{parked}"
+        );
+        // The line's own word is still found, and a two-character word of the
+        // parked reply — the scan's road, which reads rows and not the index —
+        // is not.
+        assert!(find("помню").await.contains("лодка"));
+        let short = find("42").await;
+        assert!(!short.contains("ЗАНЗИБАР"), "{short}");
     }
 
     #[tokio::test]
