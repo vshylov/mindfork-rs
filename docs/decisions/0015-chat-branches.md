@@ -85,6 +85,15 @@ and every test that builds a chat.
    the first fork, it would tell the model of the fork (point 6) and change the
    tool list a cached prefix begins with. The searches hold the line only, as
    before.
+10. **A parked word is found by a tool of its own, which scans.** Added after the
+    track closed (2026-11-19). `branch_search` finds the tail that says a query's
+    words — what the reader's list, which shows first lines, cannot — and names
+    the page `branch_read` returns it on. It is a second switch of the profile,
+    off, beside the reader's: the fourth pair of one pattern (`history_*`,
+    `chat_*`, `attachment_*`), not a mode of the reader. It reads the turn's
+    snapshot of the tails, not the full-text index: the index holds the lines,
+    which is what keeps `chat_search` and `history_search` from ever returning
+    what a fork cut. Each of the pair names the other only on a turn that has it.
 
 ## Alternatives rejected
 
@@ -109,8 +118,10 @@ and every test that builds a chat.
   `Chat::stored_messages_mut`; migration steps through `chat_steps::message_lists_mut`.
   A walk that names the lists itself is the defect to look for in review.
 - The person's own search does not reach a parked tail: a word said only in a branch
-  is found once that branch is on the line. So is the assistant's; what it can do
-  is read a tail it was asked about, where the profile has `branch_read`.
+  is found once that branch is on the line. The assistant's searches of a line do
+  not either; what it can do is read a tail it was asked about, where the profile
+  has `branch_read`, and find the tail that says a word, where it has
+  `branch_search`.
 - A fork does not rewind what the conversation did outside itself — notes, the
   self-model, the chat's files, the attached project.
 - A live feed can number a bubble the chat did not keep. A command that names a

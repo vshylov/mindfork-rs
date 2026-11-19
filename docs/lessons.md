@@ -1686,6 +1686,18 @@ Wayland desktop.
 — *the clipboard on GNOME and KDE, and a paste refused for a clipboard that will not
 open*.
 
+**A condition read off the presence of data holds only while one consumer needs that
+data.** `history_read` named `branch_read` whenever the turn's snapshot of the parked
+branches was there — and it was there only on a turn that offered the reader, so its
+presence *was* the condition, and a comment said so. `branch_search` needed the same
+snapshot. Built for a turn that offers the search alone, it would have made a read of the
+folded part name a reader the turn does not have — the defect this section is about,
+arriving through a field nobody changed. When a second consumer starts to need a snapshot,
+find every place that asks "is it there" and give each the question it meant: here, a
+flag for the reader beside the snapshot, and a test for a turn that has the snapshot
+without it.
+— *a search of the parked branches*.
+
 ## 5. Terminal and ratatui rendering
 
 **A bar is one shape, not a row of glyphs per line: shapes antialiased apart do not

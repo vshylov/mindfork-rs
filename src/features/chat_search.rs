@@ -146,6 +146,19 @@ impl QueryWords {
             .all(|w| has_whole_word(text, &w.text))
     }
 
+    /// Does `text` hold every word — a long one as a case-insensitive
+    /// substring, which is what the trigram index answers for it, a short one
+    /// as a whole word? The whole rule in Rust, for a search that has no index
+    /// to ask: `branch_search` scans the parked tails, which the index does
+    /// not hold for the tools (docs/research/chat-branches.md §10.2).
+    pub fn matches(&self, text: &str) -> bool {
+        let folded: Vec<char> = text.chars().map(fold_char).collect();
+        self.0.iter().all(|w| {
+            let token: Vec<char> = w.text.chars().map(fold_char).collect();
+            !find_matches_of(&folded, std::slice::from_ref(&token), w.short).is_empty()
+        })
+    }
+
     /// Case variants of the first short word, for a database prefilter that can
     /// only compare case-sensitively (`instr`); empty when there is no short
     /// word. A short word is at most two characters, so at most four variants.
@@ -908,6 +921,21 @@ mod tests {
         // The long word is the index's business, not this check's.
         assert!(q.short_words_match("SP, ИИ"));
         assert!(QueryWords::parse("новелла").short_words_match("что угодно"));
+    }
+
+    /// The whole rule without the index: a long word anywhere in the text,
+    /// whatever its case, a short one only as a word, and all of them at once.
+    #[test]
+    fn a_text_matches_when_it_holds_every_word_by_its_own_rule() {
+        let q = QueryWords::parse("занзибар ИИ");
+        assert!(q.matches("Пароль — ЗАНЗИБАР-42, так сказал ИИ."));
+        assert!(q.matches("ии: позанзибарим"), "a substring, any case");
+        assert!(!q.matches("ЗАНЗИБАР-42"), "the short word is missing");
+        assert!(!q.matches("ИИ и только"), "the long word is missing");
+        assert!(!q.matches("занзибар и МИИТ"), "a short word inside another");
+        // A query with nothing to search for matches everything; a caller asks
+        // `is_empty` first, as the index's callers do.
+        assert!(QueryWords::parse("a").matches("что угодно"));
     }
 
     #[test]

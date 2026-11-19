@@ -23,7 +23,14 @@ is built** (2026-11-19, `feat/branch-reader`): §9 is its design, written before
 code, with its forks G1–G5 (§9.6) decided by the owner the same day, all five as
 recommended — the optional tool `branch_read`, and the line a read of a chat's line
 carries when branches stand beside it. Live **GO** on Gemma 4 31B and on Gemini, the
-control red; what the build found is §9.9. **The track is complete.**
+control red; what the build found is §9.9. **The track is complete.** **§10 is an
+addendum of the same day**: search in parked branches, which the owner asked for
+when the track closed — the design of its two halves, written before any code, with
+its forks H1–H3 (§10.5) decided by the owner the same day: H1 and H2 as recommended,
+and H3 the other way — a hit in a parked branch opens the chat on its line and names
+the branch, and the switch stays the person's. **Its first stage is built**
+(2026-11-19, `feat/branch-search`): the assistant's search, `branch_search`. Live
+**GO** on Gemma 4 31B and on Gemini, the control red; what the build found is §10.8.
 
 The roadmap holds two neighbouring ideas (docs/roadmap.md): "regeneration with
 variations" and "editing any message, not just the last, with history branching".
@@ -1022,3 +1029,273 @@ Built as designed; what the build added or found:
   so both models were reached through the gateway.
 - **The settings' pictures were regenerated**: the sidebar's count of the profile's
   rows is one more.
+
+## 10. Search in parked branches
+
+An addendum (2026-11-19), written before any code. The owner asked for it the day
+the track closed: a word said only in a parked tail should be findable — as an
+option, off by default in the settings. §8 and G5 (b) left it as two halves, the
+person's search and the assistant's. Below is the design of both and the forks it
+left, **H1–H3** (§10.5), which the owner decided the same day.
+
+### 10.1 What stood before it
+
+- **Nothing that searches reaches a parked tail.** The full-text index (`cache.db`)
+  holds the lines' messages and the transcripts of the lines' sub-agents
+  (`indexed_messages`). The chat list's content filter (`Ctrl+F`), the results
+  screen (`Ctrl+G`, `/search`) and the assistant's `chat_search` and
+  `history_search` all read it. `Ctrl+F` in a chat matches what the feed draws,
+  which is the line.
+- **The reader finds a tail by its first line.** `branch_read` lists the tails,
+  each with the first line of its first message (§9.3). A regenerated reply is a
+  tail one message long, so the list often answers by itself (§9.9); what a tail
+  says past that line is found by reading it. §9.8 named where that stops working:
+  dozens of redone replies, and a question about what one of them proposed.
+- **A switch is what puts a tail in a feed.** There is no view of a parked tail.
+  The person reads one by bringing it onto the line — `/branch`, a click on
+  `‹ ›` — which parks what stood there (§3.3).
+
+### 10.2 The assistant's search: `branch_search`
+
+A tool of its own beside the reader, as `chat_search` stands beside `chat_read` and
+`history_search` beside `history_read` (H2).
+
+- **What it searches:** the parked tails of one conversation — the open one, or
+  with `chat` another one, under the reader's rule for that (§9.3, G2). Never the
+  line: the line is in front of the model, and `history_search` searches its
+  folded part.
+- **It matches the text of the parked messages** — the speakers' and the tool
+  results', which is what the index holds of a line — and names the **page** of
+  the tail's transcript (`HistoryView`) the message is on. The pair then
+  composes as the other pairs do: the search says where, the reader reads it.
+  (The first draft matched the rendered transcript itself; §10.8 says why not.)
+- **The words are matched by the rule the other searches use** (`QueryWords`): a
+  word of three characters or more as a case-insensitive substring, a
+  two-character word as a whole word, every word in one message. When no message
+  holds them all, the answer names the words it dropped, or how often each occurs
+  (`relax_query`).
+- **No index.** The tails are scanned: the open chat's from the turn's snapshot
+  (`ToolContext::branches`, built when the turn offers either tool), another
+  chat's from its file at the call. One conversation's tails are small beside what
+  a model reads in a call. The index stays, for the tools, what F1 made it — the
+  lines (§10.3 keeps the parked rows out of every query a tool runs).
+- **The answer** groups the hits by tail, in the list's order: the tail's address,
+  cause and date, then each hit with its page and a snippet around the match.
+  `top_k` caps the hits and the header says the honest total. The last line names
+  `branch_read` with an address and a page on a turn that has the reader, and is
+  absent otherwise (spec §6.7).
+- **Parameters:** `query`, `top_k`, `chat` — the searches' shared schema and the
+  reader's `chat`.
+- **Where it is offered:** a row of the profile's tools, group *Conversation*,
+  **off**; concurrent; withheld from a sub-agent, as the reader is. Its switch is
+  the consent the reader's is — a snippet is text of a regenerated reply or of an
+  exchange the person took back — and the panel under the row says so
+  (`Tool::ui_note`).
+- **The reader's list names it** on a turn that has both: a branch is found by a
+  word with `branch_search`. The notice of §9.2 stays the reader's: a read of a
+  line says that branches exist only to a turn that can list them.
+- **Every answer says what is possible next** (docs/lessons.md §4): no tails (the
+  reader's two answers); a query of single characters; nothing found, and that the
+  conversation itself was not searched here; `chat` without the cross-chat
+  snapshot; `chat` naming a sub-agent transcript.
+
+### 10.3 The person's search
+
+**One setting of the app, off: *Search in parked branches* (Interface).** With it
+on, a search by content also finds the messages of parked tails.
+
+- **The index holds the parked rows in tables of their own** (`parked`,
+  `parked_fts`; `CACHE_SCHEMA` 2 → 3, and the file rebuilds itself). Not a column
+  on the rows there are: every query that exists goes on reading the lines with no
+  filter to forget. The boundary F1 drew for the tools is then the schema's, not a
+  `WHERE` repeated in seven queries. A chat's parked rows are written by the diff
+  that writes its line's, in one transaction.
+- **They are indexed whatever the setting says.** The switch then acts at once,
+  both ways, with no pass over the chats. The index is derived, stays out of a
+  backup, and holds nothing the chat's file does not.
+- **A row knows its chat and its message, not its place in the tree.** Which tail
+  a message is in, that tail's address and its place in `/branch`'s order are
+  resolved by the orchestrator from the chat it holds — as a hit's position in its
+  conversation already is. A switch that splits a tail (§3.3) then moves no row.
+- **The results screen** (`Ctrl+G`, `/search`) shows a parked tail's hits as a
+  group of its own under its chat's: after the chat's own hits and its
+  transcripts', in `/branch`'s order, the header branched with `└` as a
+  transcript's is, naming the tail — its address, what parked it, the date. A chat
+  none of whose own messages match still heads its branches' groups, by the rule
+  its transcripts follow.
+- **`Enter` on such a hit opens the chat on its line and switches nothing** (H3,
+  the owner's decision). The feed is put where the branch leaves the line — on the
+  message that carries the variants mark, or, for a tail inside another parked
+  tail, where the outermost tail of its path leaves. A note names the branch by
+  the address `/branch` lists it under and says how to bring it onto the line: a
+  click on the mark, `/branch N K`, or the list `/branch` opens for a nested one.
+  A detached tail (§3.1) has no place on the line: the chat opens at its end and
+  the note says the branch is kept in the chat's file and cannot be brought back.
+- **The chat list's content filter** (`Ctrl+F`) keeps a chat whose only match is
+  in a parked tail. `Enter` on it opens the chat on its line, as a plain switch
+  does, with a note: the match is in a parked branch, its address, and that
+  `Ctrl+G` lists the matches. The list picks a chat, not a branch, so it switches
+  none.
+- **Unchanged:** `Ctrl+F` in a chat, which matches what is drawn; the transcripts
+  of sub-agents whose exchange is parked — out of the list, the tasks screen and
+  the address book since §3.4, and out of the index; and the assistant's searches,
+  whatever this setting says.
+
+### 10.4 Stages
+
+Each a branch and a pull request, in this order.
+
+1. **`branch_search`** — the tools only. Live, go/no-go on Gemma 4 31B and a
+   Gemini model through a cloud key:
+   1. a chat with several regenerated replies, one of which holds a marker past
+      its first line; asked which earlier variant mentioned it, the turn calls
+      `branch_search` and the answer has the marker;
+   2. an unrelated question in the same chat: no call;
+   3. *the control:* with the snapshot left empty, check 1 fails.
+2. **The person's search** — the index, the setting, the results screen, the chat
+   list. No model takes part: a pty run of the built app, and the owner's look.
+
+### 10.5 Forks
+
+- **H1 — whose search is built.**
+  - (a) **Both: the assistant's, then the person's**, as the two stages of §10.4,
+    each behind a switch of its own that is off.
+  - (b) The assistant's only (§10.2).
+  - (c) The person's only (§10.3).
+  - Recommended: (a). They are the two halves the roadmap's idea names, they share
+    no code, and neither changes the other: the assistant's needs no index, the
+    person's gives the assistant nothing.
+  - **Owner's decision 2026-11-19: (a).**
+- **H2 — where the assistant's search lives.**
+  - (a) **A tool of its own, `branch_search`: a row of the profile's tools, off.**
+  - (b) A `query` parameter of `branch_read` — G5 (b) as §9.6 wrote it. No switch
+    of its own: a profile that has the reader has the search.
+  - (c) A switch that lets `chat_search` and `history_search` return parked rows,
+    marked (G5 (c)).
+  - Recommended: (a).
+    - It is what was asked for: an option of its own in the settings, off.
+    - It is the fourth pair of one pattern (`history_*`, `chat_*`,
+      `attachment_*`), with the schema the other searches share. Under (b) the
+      reader becomes one tool with four modes — list, read, search, another chat —
+      and a small model has to hold all four.
+    - Its price is a second schema, some 150 tokens in every request of a profile
+      that switched it on; (b) costs a third of that.
+    - (c) is what F1 decided against: a search of the line that returns what a
+      fork cut.
+  - **Owner's decision 2026-11-19: (a).**
+- **H3 — what `Enter` does on a hit in a parked branch** (the results screen).
+  - (a) **It switches the chat to that branch and puts the feed on the message**,
+    the match highlighted. A note says which variant now stands on the line and
+    the `/branch N K` that brings the other back. Where a switch is refused — a
+    reply is being written in that chat, a messenger's turn holds it, the tail is
+    detached — the chat opens on its line and the note says why.
+  - (b) The chat opens on its line, at the place the branch leaves it, and a note
+    names the branch. The person switches, by a click on the mark or `/branch`.
+  - (c) (a), after a question: "switch this chat to branch 11/1?".
+  - Recommended: (a).
+    - In this app a tail is read by bringing it onto the line; the mark `‹ ›` does
+      nothing else. A hit that opens a branch does what a click on the mark does.
+    - Nothing is lost: what stood on the line is parked whole and comes back by
+      one command, which the note names.
+    - Its price: a look changes which variant the conversation continues from; and
+      a switch touches the chat's modification time and ends a follow-up that was
+      pending or a background run still out (§3.4).
+    - (b) leaves the switch to the person: two steps, the match is not marked
+      after the second, and a nested tail takes several switches. (c) is one more
+      key at every hit.
+  - **Owner's decision 2026-11-19: (b).** A search is a look, and a look changes
+    nothing in the chat: which variant the conversation continues from stays what
+    the person set with `/branch` or the mark.
+
+**Decided in this addendum without a fork** — said here so that an objection has a
+place:
+
+- two switches, not one: the assistant's is a row of a profile's tools, the
+  person's is a setting of the app;
+- the person's setting is the app's, not a profile's: the search it widens crosses
+  the profiles' chats as the list does;
+- the parked rows are indexed whatever the setting says, in tables of their own;
+- the chat list's filter keeps a chat matched only in a branch, and switches none;
+- `Ctrl+F` in a chat stays a search of what is drawn;
+- `branch_search` scans one conversation a call, with no index.
+
+### 10.6 Tests
+
+- **`branch_search`:** a word past a tail's first line is found, and the hit names
+  that tail's address and the page `branch_read` then returns it on; the line's
+  messages are never hits; a two-character word matches as a whole word; words
+  that never meet are answered with their counts; `top_k` and the honest total;
+  no tails; `chat` resolved as the reader resolves it, and answered without the
+  cross-chat snapshot; optional and catalogued; withheld from a sub-agent; the
+  snapshot built for a turn that offers the search alone, and then `history_read`
+  says nothing of branches.
+- **The index:** a chat's parked messages land in the parked tables and its line's
+  in the old ones; a switch moves the rows between them in one save; a hidden chat
+  loses both; every query that existed returns no parked row — one test per query,
+  over a fixture whose marker is only in a tail.
+- **The person's search:** with the setting off, a word said only in a tail finds
+  nothing, on the screen and in the list; with it on, the screen shows the tail's
+  group under its chat with `/branch`'s address, and the list keeps the chat;
+  `Enter` on a parked hit leaves the chat's line and its tails as they were, puts
+  the feed where the branch leaves the line and says the branch's address — for a
+  tail on the line's own messages, a nested one and a detached one; a hit whose
+  message came onto the line since the search opens on that message.
+
+### 10.7 Risks
+
+- **A model that searches the branches uninvited** brings back what a fork cut.
+  The description says when to search, as the reader's does; check 2 measures it;
+  the switch is off.
+- **A snippet from an exchange the person took back** reaches the model in a
+  profile that has the search on. The settings say so under its switch.
+- **A hit that is two steps from its text** (H3 (b)): the feed stands where the
+  branch leaves the line, and the match itself is shown only by the snippet until
+  the person switches. The note's address is what makes the second step one
+  command.
+- **Results that went stale.** The screen holds a snapshot, and the person may
+  switch a branch and come back to it. A hit is opened by where its message stands
+  at that moment — on the line, or in a tail — not by the group it was drawn in.
+- **The index grows** by the text of the parked tails — in a chat whose replies
+  were often redone, by a multiple of its last exchange.
+
+### 10.8 As built: the assistant's search (2026-11-19)
+
+Built as designed; what the build changed or found:
+
+- **The text, not the render.** §10.2's first draft matched "what the reader
+  returns". A rendered block begins with the speaker's label, so a query for "user"
+  would match every block of an English profile — and, the words being an AND, drop
+  the assistant's messages that hold the rest. The shelf keeps each parked message's
+  text beside the render; the render is asked only for the page.
+- **The matcher is one function.** `QueryWords::matches`: the index's rule for a
+  word of three characters or more, the whole-word rule for two, all of them in one
+  text. The other searches split those between SQLite and Rust; this one has no
+  index to ask.
+- **A snapshot with a second consumer.** `history_read` read "the turn offers the
+  reader" off the presence of the snapshot (§9.9). Built for a turn that offers the
+  search alone, the snapshot would have made that read name a reader the turn does
+  not have. The condition is now the reader's flag, and a test holds a turn with the
+  snapshot and without the reader (docs/lessons.md §4).
+- **Each tool brings the refusals that name it.** "Call … without `chat`" is said by
+  both tools; the two answers are each tool's own keys, the ones that name no tool
+  are shared.
+- **Without the reader a hit points at the person's command.** The search alone
+  shows a fragment and cannot widen it; its last line then says that the person
+  brings a branch back with `/branch`. For another conversation it says nothing:
+  that command is the open chat's.
+- **Live** (`a_parked_word_is_found_when_asked_and_left_alone_when_not_e2e_live`),
+  `google/gemma-4-31b-it` and `google/gemini-3.5-flash` through the gateway, the
+  search on beside `calculate` and `current_time`, the reader off — with it on a
+  model may list and read instead, and the check is about the search:
+  1. an unrelated question and a `Ctrl+R` on its reply — no search, and the parked
+     call sign in no request;
+  2. "one of the earlier variants mentioned a call sign; find it" — `branch_search`,
+     and the call sign in the answer. Gemma searched for "call sign"; Gemini for
+     "mooring" first — a word of the question that no parked reply says — was told
+     that nothing matches, and searched for "call".
+
+  **GO** on both, 8 s and 14 s. **The control:** with the snapshot built for the
+  reader only, the tool answers that the conversation has no parked branches, the
+  model reports that it found none, and the deterministic test of the same path
+  fails.
+- **The settings' pictures were regenerated**: the profile's list is one row longer.

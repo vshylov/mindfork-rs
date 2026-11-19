@@ -181,8 +181,16 @@ default). It can then list the chat's branches and read one when you ask, by the
 same `N K` you would give `/branch`. That includes the replies you had
 regenerated and the exchanges you took back, which is why it is a switch. With
 the tools for other conversations on as well, it reads another chat's branches
-too. It still does not search branches, and it does not switch them: that stays
-yours.
+too. It does not switch them: that stays yours.
+
+The list shows each branch by its first line. When that is not enough — a reply
+regenerated a dozen times, and you remember that one variant proposed something
+— switch **`branch_search`** on beside it (off by default too, for the same
+reason). The assistant can then search the chat's branches by words when you ask
+— "which earlier variant mentioned the harbour master?" — and is shown the
+fragments that match, each with its branch and page. It searches the branches of
+one conversation; the conversation in front of you is not part of that search,
+and the assistant's other searches still find nothing in a branch.
 
 In the chat list, `Ctrl+F` switches between searching titles and searching
 message content; `Ctrl+G` then opens the matching messages themselves.

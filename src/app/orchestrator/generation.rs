@@ -947,12 +947,16 @@ impl Orchestrator {
         } else {
             Vec::new()
         };
-        // Does this turn offer the reader of parked branches (spec §9.17)? Only
-        // then is the chat's shelf of them rendered below, and only then does a
-        // read of a line say that branches stand beside it.
+        // Does this turn offer the reader of parked branches, or their search
+        // (spec §9.17)? Only then is the chat's shelf of them rendered below;
+        // and only with the reader does a read of a line say that branches
+        // stand beside it.
         let branch_reader = allowed
             .iter()
             .any(|t| t == crate::features::tools::branches::BRANCH_READ_ID);
+        let branch_search = allowed
+            .iter()
+            .any(|t| t == crate::features::tools::branches::BRANCH_SEARCH_ID);
         // The questions the chat's stories wait on, with the person's rows since
         // each was put to them (docs/history/fabula.md §4, PR 9): what `story_continue`
         // reads as an answer, and what the request's reminder line names. Read
@@ -1138,14 +1142,16 @@ impl Orchestrator {
                     })
                     .map(std::sync::Arc::new),
                 other_chats: std::sync::Arc::from(other_chats),
-                // The chat's parked tails, rendered for `branch_read` — by the
-                // rule of the folded range above: only when the turn offers the
-                // tool, and nothing at all in a chat with no branch.
-                branches: branch_reader
+                // The chat's parked tails, rendered for `branch_read` and
+                // `branch_search` — by the rule of the folded range above:
+                // only when the turn offers one of them, and nothing at all in
+                // a chat with no branch.
+                branches: (branch_reader || branch_search)
                     .then(|| crate::features::tools::branches::BranchShelf::of(chat, profile_loc))
                     .flatten()
                     .map(std::sync::Arc::new),
                 branch_reader,
+                branch_search,
                 workspace: workspace.clone(),
                 workspace_journal,
                 files_dir: Some(files_dir),
@@ -4034,10 +4040,12 @@ impl TurnLoop<'_> {
             previous: None,
         };
         ctx.history = None;
-        // Nor the parent's parked branches: their reader is withheld, and a
-        // read of another chat must not name a tool the child does not have.
+        // Nor the parent's parked branches: their reader and their search are
+        // withheld, and a read of another chat must not name a tool the child
+        // does not have.
         ctx.branches = None;
         ctx.branch_reader = false;
+        ctx.branch_search = false;
         ctx.cancel = cancel.clone();
         // Which attached files have an index — the attachment block names
         // `attachment_search` only for those (spec §9.7), same as the parent.

@@ -118,10 +118,10 @@ impl Tool for HistoryRead {
             &[("page", &page.to_string()), ("total", &total.to_string())],
         );
         // The branches parked beside this conversation's line, said on every
-        // page. The snapshot is there only on a turn that offers their reader
-        // in a chat that has some, so the notice never names an absent tool
-        // (docs/research/chat-branches.md §9.2, G4).
-        if let Some(shelf) = ctx.branches.as_ref() {
+        // page — to a turn that offers their reader, which the notice names
+        // (docs/research/chat-branches.md §9.2, G4). The snapshot alone does
+        // not say so: a turn that offers only the search has it too.
+        if let Some(shelf) = ctx.branches.as_ref().filter(|_| ctx.branch_reader) {
             header.push('\n');
             header.push_str(&ctx.loc.tf(
                 "tool.history_read.branches",
@@ -371,8 +371,9 @@ mod tests {
     }
 
     /// A read of the folded part says that branches stand beside the line —
-    /// on every page, and only when the turn was handed their shelf, which is
-    /// a turn that offers their reader (docs/research/chat-branches.md §9.2).
+    /// on every page, and only to a turn that offers their reader, which the
+    /// notice names (docs/research/chat-branches.md §9.2). A turn that offers
+    /// their search alone has the shelf too, and is told nothing.
     #[tokio::test]
     async fn read_says_the_conversation_has_branches_to_a_turn_that_can_read_them() {
         use crate::entities::chat::Chat;
@@ -407,6 +408,12 @@ mod tests {
             chat.push_message(Message::assistant("другой ответ"));
         }
         ctx.branches = BranchShelf::of(&chat, locale(Lang::Ru)).map(Arc::new);
+        ctx.branch_search = true;
+        let search_only = read(&ctx, 1).await;
+        assert!(!search_only.contains("ветки"), "{search_only}");
+        assert!(!search_only.contains("branch_"), "{search_only}");
+
+        ctx.branch_reader = true;
         for page in 1..=total {
             let out = read(&ctx, page).await;
             let (header, notice) = {

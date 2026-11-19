@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (106)
+## Entries (107)
 
 - Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - Post-M9: conversation control tools (followup / rewrite) (done)
@@ -118,6 +118,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: image generation — stage 3, xAI, the picker and the command (done)
 - Post-M9: a word found nowhere no longer empties a search; two-letter words are searched (done)
 - Post-M9: the branches told to the tools, and a reader (done)
+- Post-M9: a search of the parked branches — `branch_search` (done)
 
 ### Post-M9: new tools — files, fetch_url, calculator, date/time (done)
 - **Four new tools** (`features/tools/`), all following the existing `Tool`/
@@ -6859,3 +6860,90 @@ branches, and a separate tool reads them.
 - **Docs.** Spec §9.17 (new), §9.3, §9.3.2, §6.7, §9.11, §11.6, §11.7; architecture §3
   and §8; ADR 0015 point 9; the manual; CHANGELOG; the roadmap (the track closed, search
   in parked branches left as an idea). Unit tests 5075 green, 327 `#[ignore]`.
+
+### Post-M9: a search of the parked branches — `branch_search` (done)
+
+The first of two stages of "search in parked branches"
+([docs/research/chat-branches.md](../research/chat-branches.md) §10), which the owner
+asked for on the day the branches track closed: optional, and off by default in the
+settings. The design covers both halves — the assistant's search, built here, and the
+person's (`Ctrl+G`, `/search`, the chat list's filter), which is next. Its forks H1–H3
+were decided by the owner on 2026-11-19: both halves, as two stages; a tool of its own
+and not a `query` on the reader; and a hit in the person's search opens the chat on its
+line and switches nothing.
+
+- **Why a search at all.** `branch_read`'s list shows each tail by its first line. A
+  regenerated reply is a tail one message long, so the list often answers by itself —
+  until a reply was redone a dozen times and the question is which variant proposed
+  something. Then the model reads every tail, or guesses.
+- **`branch_search`** (`features/tools/branches.rs`): `query`, `top_k` (5, at most
+  20), `chat`. It searches the parked tails of one conversation — the open one from the
+  turn's snapshot, another one from its file under the reader's rule — and never the
+  line. A second switch of the profile, off, with a note of its own under it: a
+  fragment of what the person took back is as much a consent as a page of it.
+- **A tool of its own** (H2), the fourth pair of one pattern — `history_*`, `chat_*`,
+  `attachment_*` — with the schema the other searches share. The other shape, a `query`
+  on the reader, would have had no switch of its own, which is what was asked for, and
+  would have made the reader one tool of four modes.
+- **No index.** `cache.db` holds the lines; that is what keeps `chat_search` and
+  `history_search` from returning what a fork cut, and it is not widened for a tool. The
+  shelf of tails the reader pages (`BranchShelf`) now keeps each parked message's text
+  beside the render, and `BranchShelf::matching` scans it with `QueryWords::matches` —
+  new: the index's rule (three characters or more, a case-insensitive substring) and the
+  whole-word rule for two characters, in one pure function. `relax_query` gives the
+  search the other searches' answers for words that never meet and for a word no tail
+  says.
+- **It matches a message's text, not its rendered block.** The first design matched
+  "what the reader returns". A block begins with the speaker's label, so a query for
+  "user" would have matched every block in an English profile and, under the AND of the
+  words, dropped the assistant's messages that held the rest. The text is what the
+  index holds of a line; the render is asked only for the page
+  (`HistoryView::locate`), and a tool result lands on the page of its call.
+- **A hit**: the tail's address, cause and date as a heading, then role, date, page and
+  a fragment. The page is the one `branch_read` returns the message on — a test reads
+  it back.
+- **Each of the pair names the other only where the turn has both** (spec §6.7). The
+  search names the reader under its hits; without it, the person's `/branch`; for
+  another conversation, nothing. The reader's list names the search. The two refusals
+  that say what a tool does without `chat` name the calling tool, so each tool has its
+  own (`Refusals`).
+- **The snapshot is built for a turn that offers either tool**, and that broke a
+  condition nobody had touched: `history_read` said "this conversation has branches;
+  `branch_read` lists them" whenever the snapshot was there, because only a turn with
+  the reader had one. It now asks for the reader as well (`ToolContext::branch_reader`),
+  and a test holds a turn that has the snapshot without it (docs/lessons.md §4).
+  `ToolContext::branch_search` is the flag the reader's list asks.
+- **Withheld from a sub-agent**, whose context drops the shelf and both flags.
+- **Tests.** The matcher. The search: a word past a tail's first line under the list's
+  address; the page read back through the reader; the line never a hit; a two-character
+  word as a whole word; words apart and a word found nowhere; `top_k`, its ceiling and
+  the honest total; no tails, a query of single characters, an empty one; a tool
+  result; a nested path; another chat through the snapshot, with every refusal naming
+  this tool; the pair's hints with and without each other; the catalogue and the
+  schema; the profile's language. Through the orchestrator: a turn that offers the
+  search alone finds a parked word here and in another chat, is told nothing of a
+  reader, and holds nothing of a branch in its request; a sub-agent is offered neither
+  tool. **Control red**: with the snapshot built for the reader only, that test fails.
+- **Live — GO** (2026-11-19), `google/gemma-4-31b-it` and `google/gemini-3.5-flash`
+  through the gateway. `a_parked_word_is_found_when_asked_and_left_alone_when_not_e2e_live`:
+  a chat written to disk whose one reply was redone four times, each variant opening
+  with a line that says nothing, the third naming a call sign past it. An unrelated
+  question and a `Ctrl+R` on it — no search, the call sign in no request; "one of the
+  earlier variants mentioned a call sign — find it" — `branch_search`, and the call
+  sign in the answer. Gemma asked for "call sign" at once; Gemini for "mooring" first,
+  which no parked reply says, was told so, and asked for "call". 8 s and 14 s. The
+  profile has the search and not the reader: with both, a model may list and read
+  instead, and the assertion is about which tool is called (docs/lessons.md §9).
+  **Control red**: with the snapshot left out, the tool answers that the conversation
+  has no parked branches and the model reports it found none.
+- **A pty run of `mindfork demo`**: the settings' search finds `branch_search`, its row
+  reads `[ ]  search the chat's parked branches` under the reader's, and its note
+  stands in the panel under the list.
+- **The owner's look** (2026-11-19, Windows Terminal over SSH): the switch, its note
+  and the search in a chat of their own work as intended.
+- **Docs.** The research's §10 (new: the design of both halves, the forks, the stages);
+  spec §9.17 (now of both tools), §9.3, §9.3.2, §11.6, §11.7; architecture §3 and §8;
+  ADR 0015 point 10; the manual; CHANGELOG; PRIVACY (one line, two switches) and the
+  pages made from it; the roadmap (half built); docs/lessons.md §4. The settings'
+  pictures were regenerated: the profile has one more row. Unit tests 5090 green,
+  328 `#[ignore]`.

@@ -554,10 +554,11 @@ next, as a picture you attached does.
   own data and program folders stay out of their reach either way;
 - **MCP plugins** — the master switch and the per-profile one, both;
 - **cross-chat search** for the assistant (`chat_search`, `chat_read`);
-- the assistant's **reading of a chat's branches** (`branch_read`) — what you
-  left behind by going back to a message, the replies you had regenerated and the
-  exchanges you took back. They stay in the chat's file (§2); until you turn this
-  on, none of them is sent to your model and it is told nothing about them;
+- the assistant's **reading of a chat's branches, and its search in them**
+  (`branch_read`, `branch_search` — two switches) — what you left behind by going
+  back to a message, the replies you had regenerated and the exchanges you took
+  back. They stay in the chat's file (§2); until you turn one of the two on, none
+  of them is sent to your model and it is told nothing about them;
 - the **self-model tools** — and with them the injection of the self-model into
   the system prompt;
 - **reflection** and the consolidation passes;

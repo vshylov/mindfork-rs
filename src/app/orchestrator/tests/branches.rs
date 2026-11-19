@@ -786,15 +786,20 @@ fn a_reply_switched_back_to_is_not_a_signal_for_reflection() {
 /// only reply was redone — the old one parked, the new one on the line; and
 /// its chat "dock", forked at its first reply. Returns the two chats' ids.
 fn seed_reader(root: &std::path::Path, reader: bool) -> (Uuid, Uuid) {
-    use crate::features::tools::{branches::BRANCH_READ_ID, chats::CHAT_READ_ID};
+    use crate::features::tools::branches::BRANCH_READ_ID;
+    seed_branch_tools(root, if reader { &[BRANCH_READ_ID] } else { &[] })
+}
+
+/// [`seed_reader`] with the tools of the parked branches given by name: the
+/// reader, the search, both or neither, beside `chat_read`.
+fn seed_branch_tools(root: &std::path::Path, branch_tools: &[&str]) -> (Uuid, Uuid) {
+    use crate::features::tools::chats::CHAT_READ_ID;
     let json = crate::shared::storage::JsonStore::new(Paths::with_root(root));
     let mut profile = Profile::new("P", "sys");
     profile.language = crate::shared::i18n::Lang::En;
     let mut tools = crate::features::tools::default_tool_ids();
     tools.push(CHAT_READ_ID.into());
-    if reader {
-        tools.push(BRANCH_READ_ID.into());
-    }
+    tools.extend(branch_tools.iter().map(|id| (*id).into()));
     profile.enabled_tools = tools.clone();
     profile.known_tools = tools;
     json.upsert_profile(&profile).unwrap();
@@ -976,13 +981,84 @@ async fn a_turn_without_the_reader_is_told_of_no_branch() {
     }
 }
 
-/// A sub-agent is not handed the parent's branches: the reader is withheld
-/// from it, so its read of another chat's line names no reader either.
+/// A turn that offers the search and not the reader is handed the tails all
+/// the same, and finds a word a parked reply says — in the open chat and,
+/// through the cross-chat snapshot, in another. Nothing names the reader it
+/// does not have: not a hit, and not a read of another chat's line, which
+/// says of branches only what a turn can list (§10.2).
+#[tokio::test]
+async fn a_turn_that_offers_the_search_alone_finds_a_parked_word() {
+    use super::subagent::{call, text};
+    use crate::features::tools::branches::BRANCH_SEARCH_ID;
+    let dir = tempfile::tempdir().unwrap();
+    let (boat, dock) = seed_branch_tools(dir.path(), &[BRANCH_SEARCH_ID]);
+    let dock_uri = crate::features::chat_links::uri(dock);
+    let (backend, chat) = reader_turn(
+        dir.path(),
+        boat,
+        vec![
+            call("find", "branch_search", r#"{"query":"zanzibar"}"#),
+            call("line", "chat_read", r#"{"chat":"dock"}"#),
+            call(
+                "other",
+                "branch_search",
+                r#"{"query":"berth","chat":"dock"}"#,
+            ),
+            call("list", "branch_read", "{}"),
+            text("done"),
+        ],
+    )
+    .await;
+
+    let results = results(&chat);
+    assert!(
+        results["find"].contains("Branch \"2/1\". A reply replaced by a regeneration"),
+        "{}",
+        results["find"]
+    );
+    assert!(
+        results["find"].contains("ZANZIBAR-42"),
+        "{}",
+        results["find"]
+    );
+    assert!(
+        results["line"].contains("north of the pier"),
+        "{}",
+        results["line"]
+    );
+    assert!(!results["line"].contains("branch"), "{}", results["line"]);
+    assert!(
+        results["other"].contains(&format!(
+            "in the parked branches of the conversation \"dock\" {dock_uri}: 1"
+        )),
+        "{}",
+        results["other"]
+    );
+    assert!(results["other"].contains("SEVEN"), "{}", results["other"]);
+    for id in ["find", "other"] {
+        assert!(!results[id].contains("branch_read"), "{}", results[id]);
+    }
+    // The reader is not on the turn: a call to it reads nothing.
+    assert!(!results["list"].contains("2/1"), "{}", results["list"]);
+
+    let requests = backend.requests();
+    let first = &requests[0];
+    assert!(first.tools.iter().any(|t| t.name == "branch_search"));
+    assert!(!first.tools.iter().any(|t| t.name == "branch_read"));
+    let told = told(first);
+    assert!(!told.contains("ZANZIBAR"), "the parked reply: {told}");
+    assert!(!told.to_lowercase().contains("branch"), "{told}");
+}
+
+/// A sub-agent is not handed the parent's branches: the reader and the search
+/// are withheld from it, so its read of another chat's line names no reader
+/// either.
 #[tokio::test]
 async fn a_sub_agent_is_told_of_no_branch() {
     use super::subagent::{call, text};
+    use crate::features::tools::branches::{BRANCH_READ_ID, BRANCH_SEARCH_ID};
     let dir = tempfile::tempdir().unwrap();
-    let (boat, _dock) = seed_reader(dir.path(), true);
+    let (boat, _dock) = seed_branch_tools(dir.path(), &[BRANCH_READ_ID, BRANCH_SEARCH_ID]);
     let (backend, chat) = reader_turn(
         dir.path(),
         boat,
@@ -1001,8 +1077,10 @@ async fn a_sub_agent_is_told_of_no_branch() {
 
     let requests = backend.requests();
     assert_eq!(requests.len(), 4, "parent, child, child, parent");
-    assert!(requests[0].tools.iter().any(|t| t.name == "branch_read"));
-    assert!(!requests[1].tools.iter().any(|t| t.name == "branch_read"));
+    for tool in ["branch_read", "branch_search"] {
+        assert!(requests[0].tools.iter().any(|t| t.name == tool), "{tool}");
+        assert!(!requests[1].tools.iter().any(|t| t.name == tool), "{tool}");
+    }
     let run = chat
         .messages
         .iter()
