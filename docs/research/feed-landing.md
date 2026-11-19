@@ -1,7 +1,8 @@
 # Research: where the feed stands after a chat is activated
 
 **Status:** research (2026-11-19). Three decisions were taken by the owner before it
-was written (§4.1). Two forks are open and block only stage 3 (§4.3). **Stage 1 is
+was written (§4.1). **Forks F2 and F3 decided by the owner the same day**, both as
+recommended, after the look at stages 1 and 2 that also let F1 stand (§4.2, §4.3). **Stage 1 is
 built** (2026-11-19, `feat/feed-landing`): the three reported cases, finished
 transcripts and `/greeting` from the start
 ([docs/journal/ui-feed.md](../journal/ui-feed.md)). Its run through a pty found one
@@ -314,10 +315,13 @@ for every landing.
 **F1. Where a variant switch leaves the feed.** (a) the message always on the first
 row; (b) not moved when its header is on the screen, on the first row otherwise.
 **(b)**, §3.3. Proposed to the owner with the assessment; D1–D3 answered the questions
-asked and left this as proposed. The owner's look in Windows Terminal is where it is
-confirmed or turned.
+asked and left this as proposed. **The owner's look in Windows Terminal (2026-11-19)
+confirmed it:** everything works as it should.
 
-### 4.3 Open, and blocking stage 3 only
+### 4.3 Decided by the owner, 2026-11-19 — stage 3
+
+**F2: (b)**, the view keeps what is on the screen through a rewrap. **F3: (b)**, a
+search hit lands with its match in view. The options as they stood:
 
 **F2. The view keeps its message through a rewrap after a manual scroll** (§2.4).
 With a place readable from the last frame, a rewrap can restore it. This changes what

@@ -3889,7 +3889,12 @@ Recorded in the research, §3.3; not built around.
 
 **Not built here:** what arrives in the open chat by itself still rebuilds the feed
 through an ordinary activation — the tail, the input box reloaded (research §2.2). That
-is stage 2. The owner's look in Windows Terminal is due.
+is stage 2.
+
+**The owner's look** (Windows Terminal over SSH, the Russian interface, real chats,
+2026-11-19): a variant switched by its arrows, a reference followed and `Esc` back, a
+finished transcript opened — everything works as it should. F1 stands as built: the
+feed does not move when the switched message's header is on the screen.
 
 ### Post-M9: what arrives in the open chat by itself touches nothing of the person's (done)
 
@@ -3955,5 +3960,10 @@ tested four and have no test of their own: reaching them takes a live bot.
 **The pty run** (`mindfork demo`, 100×40): six letters typed, the cursor moved two
 back, an arrow of the variants mark clicked — the next letter lands where the cursor
 was, and `Ctrl+Z` takes it out. Stage 1's 16 checks still pass. Nothing in the demo
-delivers rows by itself, so the refresh is covered by the tests above; **the owner's
-look** is where a real background run or follow-up lands under a reader.
+delivers rows by itself, so the refresh is covered by the tests above.
+
+**The owner's look** (Windows Terminal over SSH, `gpt-6.1-sol`, 2026-11-19): reading
+the middle of a conversation with text typed in the box while the assistant ran a
+dialogue of two characters and wrote its reply. The feed did not go to its last row
+while the dialogue was being generated, nor when the reply was complete. A background
+run's result and a follow-up landing under a reader were not among what was looked at.
