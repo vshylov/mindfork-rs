@@ -780,3 +780,236 @@ fn a_reply_switched_back_to_is_not_a_signal_for_reflection() {
     );
     assert!(!signal.contains(&loc.tf("reflect.behavior.regen", &[("n", "1")])));
 }
+
+/// What is on disk before the app starts, for the reader's tests: a profile
+/// with `chat_read`, and with or without `branch_read`; its chat "boat", whose
+/// only reply was redone — the old one parked, the new one on the line; and
+/// its chat "dock", forked at its first reply. Returns the two chats' ids.
+fn seed_reader(root: &std::path::Path, reader: bool) -> (Uuid, Uuid) {
+    use crate::features::tools::{branches::BRANCH_READ_ID, chats::CHAT_READ_ID};
+    let json = crate::shared::storage::JsonStore::new(Paths::with_root(root));
+    let mut profile = Profile::new("P", "sys");
+    profile.language = crate::shared::i18n::Lang::En;
+    let mut tools = crate::features::tools::default_tool_ids();
+    tools.push(CHAT_READ_ID.into());
+    if reader {
+        tools.push(BRANCH_READ_ID.into());
+    }
+    profile.enabled_tools = tools.clone();
+    profile.known_tools = tools;
+    json.upsert_profile(&profile).unwrap();
+
+    let mut dock = Chat::from_profile(&profile, "dock");
+    for (i, m) in [
+        Message::user("where is the dock"),
+        Message::assistant("north of the pier"),
+        Message::user("and the fuel"),
+        Message::assistant("the fuel is at berth SEVEN"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        dock.push_message(said(m, i as i64));
+    }
+    assert!(dock.fork_at(2, at(10)));
+    dock.modified_at = at(10);
+    json.save_chat(&dock).unwrap();
+
+    let mut boat = Chat::from_profile(&profile, "boat");
+    boat.push_message(said(Message::user("what is the boat's password"), 20));
+    boat.push_message(said(Message::assistant("the password is ZANZIBAR-42"), 21));
+    assert!(boat.park_tail(1, ParkCause::Regenerate, at(22)));
+    boat.push_message(said(Message::assistant("I do not remember it"), 23));
+    json.save_chat(&boat).unwrap();
+    (boat.id, dock.id)
+}
+
+/// One turn in the chat `open` over `scripts`: the engine with every request
+/// it was handed, and the chat as the turn left it on disk.
+async fn reader_turn(
+    root: &std::path::Path,
+    open: Uuid,
+    scripts: Vec<super::subagent::Script>,
+) -> (Arc<super::subagent::ScriptRecorder>, Chat) {
+    use super::generation::wait_for_bounded as within;
+    let backend = super::subagent::ScriptRecorder::new(scripts);
+    let (cmd_tx, mut evt_rx, handle) = spawn_orch_at(
+        root,
+        Some(backend.clone() as Arc<dyn EngineBackend>),
+        no_auto_cfg(),
+    );
+    let activated = within(&mut evt_rx, "the start's activation", |e| {
+        matches!(e, AppEvent::ChatActivated { .. })
+    })
+    .await;
+    if !matches!(activated, AppEvent::ChatActivated { id, .. } if id == open) {
+        cmd_tx.send(AppCommand::SwitchChat(open)).unwrap();
+        within(
+            &mut evt_rx,
+            "the chat's activation",
+            |e| matches!(e, AppEvent::ChatActivated { id, .. } if *id == open),
+        )
+        .await;
+    }
+    cmd_tx
+        .send(AppCommand::SendMessage("compare the two".into()))
+        .unwrap();
+    within(&mut evt_rx, "the turn's end", |e| {
+        matches!(e, AppEvent::Finished { .. })
+    })
+    .await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+    (backend, super::subagent::load(root, open))
+}
+
+/// The results of a chat's tool calls, by the call's id.
+fn results(chat: &Chat) -> std::collections::HashMap<String, String> {
+    chat.messages
+        .iter()
+        .flat_map(|m| m.tool_calls.iter())
+        .map(|r| (r.id.clone(), r.result.clone().unwrap_or_default()))
+        .collect()
+}
+
+/// Everything a request tells the model besides its tools' schemas.
+fn told(request: &crate::shared::api::ChatRequest) -> String {
+    let mut told = request.system.clone().unwrap_or_default();
+    for m in &request.messages {
+        told.push('\n');
+        told.push_str(&m.content);
+    }
+    told
+}
+
+/// A turn that offers `branch_read` is handed the chat's parked tails: the
+/// list, one of them by the address `/branch` shows, and — through the
+/// cross-chat snapshot — another chat's. A read of that other chat's line
+/// says it has branches and names the call. And nothing of this is in the
+/// request: the model is told of a branch by an answer it asked for (D5).
+#[tokio::test]
+async fn a_turn_that_offers_the_reader_reads_the_parked_tails() {
+    use super::subagent::{call, text};
+    let dir = tempfile::tempdir().unwrap();
+    let (boat, dock) = seed_reader(dir.path(), true);
+    let dock_uri = crate::features::chat_links::uri(dock);
+    let (backend, chat) = reader_turn(
+        dir.path(),
+        boat,
+        vec![
+            call("list", "branch_read", "{}"),
+            call("read", "branch_read", r#"{"branch":"2/1"}"#),
+            call("line", "chat_read", r#"{"chat":"dock"}"#),
+            call("other", "branch_read", r#"{"chat":"dock"}"#),
+            text("done"),
+        ],
+    )
+    .await;
+
+    let results = results(&chat);
+    assert!(
+        results["list"].contains("Branch \"2/1\" - message #2, variant 1 of 2"),
+        "{}",
+        results["list"]
+    );
+    assert!(
+        results["read"].contains("ZANZIBAR-42"),
+        "{}",
+        results["read"]
+    );
+    assert!(
+        results["line"].contains(&format!("branch_read with chat {dock_uri} lists them")),
+        "{}",
+        results["line"]
+    );
+    assert!(!results["line"].contains("SEVEN"), "{}", results["line"]);
+    assert!(
+        results["other"].contains(&format!(
+            "[Parked branches of the conversation \"dock\" {dock_uri}: 1;"
+        )),
+        "{}",
+        results["other"]
+    );
+
+    let requests = backend.requests();
+    let first = &requests[0];
+    assert!(first.tools.iter().any(|t| t.name == "branch_read"));
+    let told = told(first);
+    assert!(!told.contains("ZANZIBAR"), "the parked reply: {told}");
+    assert!(!told.to_lowercase().contains("branch"), "{told}");
+}
+
+/// A turn that does not offer the reader is handed nothing: a call to it is
+/// refused, a read of another chat's line says nothing of its branches, and
+/// no request of the turn holds a parked word.
+#[tokio::test]
+async fn a_turn_without_the_reader_is_told_of_no_branch() {
+    use super::subagent::{call, text};
+    let dir = tempfile::tempdir().unwrap();
+    let (boat, _dock) = seed_reader(dir.path(), false);
+    let (backend, chat) = reader_turn(
+        dir.path(),
+        boat,
+        vec![
+            call("list", "branch_read", "{}"),
+            call("line", "chat_read", r#"{"chat":"dock"}"#),
+            text("done"),
+        ],
+    )
+    .await;
+
+    let results = results(&chat);
+    assert!(!results["list"].contains("2/1"), "{}", results["list"]);
+    assert!(
+        results["line"].contains("north of the pier"),
+        "{}",
+        results["line"]
+    );
+    assert!(!results["line"].contains("branch"), "{}", results["line"]);
+    let requests = backend.requests();
+    assert_eq!(requests.len(), 3);
+    for request in &requests {
+        assert!(!request.tools.iter().any(|t| t.name == "branch_read"));
+        let told = told(request);
+        assert!(!told.contains("ZANZIBAR"), "{told}");
+        assert!(!told.contains("SEVEN"), "{told}");
+    }
+}
+
+/// A sub-agent is not handed the parent's branches: the reader is withheld
+/// from it, so its read of another chat's line names no reader either.
+#[tokio::test]
+async fn a_sub_agent_is_told_of_no_branch() {
+    use super::subagent::{call, text};
+    let dir = tempfile::tempdir().unwrap();
+    let (boat, _dock) = seed_reader(dir.path(), true);
+    let (backend, chat) = reader_turn(
+        dir.path(),
+        boat,
+        vec![
+            call(
+                "delegate",
+                "call_subagent",
+                r#"{"name":"Clerk","system_message":"read it","message":"read the dock chat"}"#,
+            ),
+            call("line", "chat_read", r#"{"chat":"dock"}"#),
+            text("it is north of the pier"),
+            text("done"),
+        ],
+    )
+    .await;
+
+    let requests = backend.requests();
+    assert_eq!(requests.len(), 4, "parent, child, child, parent");
+    assert!(requests[0].tools.iter().any(|t| t.name == "branch_read"));
+    assert!(!requests[1].tools.iter().any(|t| t.name == "branch_read"));
+    let run = chat
+        .messages
+        .iter()
+        .flat_map(|m| m.tool_calls.iter())
+        .find_map(|r| r.subagent.as_deref())
+        .expect("the run is on the record");
+    let read = run.messages[1].tool_calls[0].result.as_deref().unwrap();
+    assert!(read.contains("north of the pier"), "{read}");
+    assert!(!read.contains("branch"), "{read}");
+}
