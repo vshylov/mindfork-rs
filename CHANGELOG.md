@@ -74,6 +74,9 @@ split by subsystem.
 - **A finished sub-agent transcript opens at its beginning**: the persona and the
   instruction first. A running one still opens at its end and follows it.
 - A greeting swapped with `/greeting` is shown from its first line.
+- **A search result opens with its match on the screen.** In a message longer than the
+  window the conversation used to open at the message's first line, with the word you
+  searched for somewhere below.
 - **`Ctrl+R` keeps the reply it replaces.** A regenerated reply is a new variant of
   the same message — `‹2/2›` on its header — and `‹` brings the previous one back;
   `/branch` lists them all. Before, the old reply went into an archive in the chat's
@@ -97,6 +100,10 @@ split by subsystem.
   the conversation moves only if you are at its end, and the rest is left alone.
 - Switching a variant, regenerating a reply or taking an exchange back no longer
   resets the cursor and the undo history of the text you are typing.
+- **Resizing the window no longer loses your place.** Scrolled into the middle of a
+  conversation, a resize — or `Ctrl+T`, `Ctrl+O`, a theme — used to leave you on some
+  other message, because the lines above were wrapped anew. The line at the top of the
+  window now stays there, through any number of resizes.
 
 ### Data
 

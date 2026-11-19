@@ -510,7 +510,8 @@ src/
 │  │                        click on its pill (fold_at/toggle_block, its fold state
 │  │                        in its cache entry, not CacheKey), scroll, wrap,
 │  │                        where the view lands — a jump, the first row, a place
-│  │                        restored, a reveal (pending/anchor/marker, §4),
+│  │                        restored, a reveal, a hit, and what a rewrap keeps
+│  │                        (pending/marker, the line on the first row, §4),
 │  │                        in-feed search (Ctrl+F): highlight scope, match list and
 │  │                        next/prev to the matched line — see the invariant in §4,
 │  │                        `chat://` links (known_chats → CacheKey, styled in the
@@ -1587,8 +1588,10 @@ rounded down (docs/research/cached-tokens.md §4.4).
   width, so nothing outside can compute one (see docs/history/chat-search-stage2.md
   §1.1). Both therefore work as **pending requests consumed by the next render**,
   and both re-derive their row on every frame rather than keeping it — which is what
-  lets them survive the rewrap a resize forces. The jump anchors to a *message*
-  (fork S6 refused to store an intra-block offset); in-feed search resolves the
+  lets them survive the rewrap a resize forces. The jump names a *message*
+  (fork S6 refused to store an intra-block offset), and since stage 3 of
+  docs/research/feed-landing.md lands on the match inside it, found by the frame
+  that highlights it; in-feed search resolves the
   *matched line*, which is only affordable because it is re-derived rather than
   stored. Both accumulate the row **through the wrap**, so they stay correct if the
   second wrap ever stops being an identity.
@@ -1646,9 +1649,10 @@ rounded down (docs/research/cached-tokens.md §4.4).
   `MessageFeed::place` turns the view's first row into `FeedPlace { message, row }`
   — the first message id of the bubble holding it and the row inside its block —
   from `DrawnRows`, the frame the reader saw. `restore_place` puts it back as a
-  pending row, clamped to the block, and from there the view is tied to the
-  message by `anchor`: fork S6 refused to *store* a row inside a block because a
-  rewrap changes its height, and this does not store one across a rewrap. A
+  pending row, clamped to the block, applied by one frame: fork S6 refused to
+  *store* a row inside a block because a rewrap changes its height, and this
+  does not store one across a rewrap — from that frame on a rewrap keeps the
+  view as it keeps any other (below). A
   block with no message behind it (a note, a transcript's persona, the reply
   being written) is not a place; the next bubble that has one stands in.
   `ChatScreen::activate_chat` reads the place **before** it replaces the feed
@@ -1674,21 +1678,42 @@ rounded down (docs/research/cached-tokens.md §4.4).
   sends a note right behind two activations (a variant switch, a search hit in a
   parked branch). The screen's own tests applied one event and drew; the pty run
   applied both and found the landing gone.
-- **Anchor and marker are separate fields, deliberately.** A jump sets three:
-  `pending` (consumed by the next render), `anchor` — the feed index the view
-  position is tied to, used to re-derive the row after a rewrap invalidates every
-  row offset (resize, theme, `Ctrl+T`), released by a manual scroll — and `marker`,
+- **A rewrap keeps the view by the line on its first row.** `scroll` is a row
+  number, and a `CacheKey` change (width, palette, `Ctrl+T`, `Ctrl+O`, a setting,
+  a compaction boundary) gives every block other rows. `render` then puts the view
+  back on what the frame last drawn had on its first row (`DrawnRows::top`, a
+  `TopLine`): the logical line that row was a piece of, **named by what the line
+  says** — a hash of its glyphs, whitespace apart (`feed_selection::ink`; a wrap
+  breaks a line at whitespace and moves no glyph), and which of the block's lines
+  that say the same it is. A blank row is named by the next line under it that
+  says something and the rows between, the separator by its distance from the
+  block's end. Two cheaper ways were built first and both failed the pty run of
+  stage 3: a **share of the block's rows** is a row off at a step, and a window
+  dragged by its edge is rewrapped at every width, so the error walks the view
+  away; a **line's number** is defeated by a table above it, which is laid out in
+  other rows at another width. The share is the fallback where a line cannot be
+  told (`rewrapped_row`). The lines are made per block on first use
+  (`CachedBlock::said`, a `OnceCell`), and a frame records its top line only for
+  a feed that is not following its tail: reading every row of a long reply at
+  each chunk of it cost 2.5 ms beside a 10 ms build on a 40K-character reply, and
+  a feed at its tail needs none of it. A jump used to leave an index behind
+  (`anchor`) that did this for the hit alone and was released by a manual scroll;
+  the field is gone.
+- **A search hit lands on its match** (`Pending::Hit`). `focus_message` with a
+  query asks for the block, and the frame that highlights the query has the
+  match rows (`matches`): the message's first row if the first match is on that
+  screenful, the match a third of the view down otherwise.
+- **The marker is a rendering input and where the view stands is not.** A jump
+  sets `pending` (consumed by the next render) and `marker`,
   the accent rail saying where you landed, which **survives scrolling** and is
   dropped only on a chat change or another jump. Only `marker` is in the feed's
-  `CacheKey`, because its color is baked into the cached block. Merging the two was
-  measured and rejected: keying the cache on something a manual scroll clears cost a
+  `CacheKey`, because its color is baked into the cached block. Keying the cache
+  on anything a manual scroll clears was
+  measured and rejected: it cost a
   full markdown+syntect rebuild on the first scroll after a jump (38 ms against
   17 ms on the largest real chat, scaling linearly with chat size) — and since
   `scroll_to_bottom` would have been what cleared it, **every send** would have
-  re-rendered the whole chat. Anchoring to an index rather than a row is what makes
-  a jumped-to position survive a resize; today only tail-following survives one
-  otherwise (`src/app/` has no `Resize` arm — the cache is wiped and `scroll` keeps
-  a stale number that is merely re-clamped). See
+  re-rendered the whole chat. See
   [docs/history/chat-search-stage2.md](history/chat-search-stage2.md) §1.
 - **Input batching.** A large clipboard paste on Windows arrives as ordinary
   character-by-character `KeyEvent`s (crossterm's bracketed paste only works on

@@ -4025,13 +4025,28 @@ this?"*; this screen answers *"where exactly, and take me there."*
   uses; approximate, and only that message — see [§11.2.1](#1121-the-message-level-search-screen)).
   The **mark survives
   scrolling** (that is the point: you read around the hit and can still see it) and is
-  dropped only when the chat changes or another jump replaces it; the **view position**
-  is released as soon as you scroll manually. The highlight moves as one with the mark
+  dropped only when the chat changes or another jump replaces it; the view is yours
+  as soon as you scroll. The highlight moves as one with the mark
   (both set by the jump, both dropped with it), so a query left over from a previous
-  jump cannot light up the wrong message. The position is anchored to the *message*
-  (a feed index), not to a row number, so a rewrap — a resize, a theme change, `Ctrl+T`
-  — returns the view to the message rather than to a stale row. A message the feed
+  jump cannot light up the wrong message. **The view lands with the match on the
+  screen**: on the message's first row when the first highlighted match is on that
+  screenful, and otherwise with that match a third of the view down — in a message
+  taller than the window the word that was searched for used to be below the fold. A
+  match that is not drawn (folded away, or text the renderer transformed) leaves the
+  message's first row. A message the feed
   doesn't show (a `Tool`/`System` one) is a no-op and the chat simply opens at the tail.
+- **A rewrap keeps what is on the screen.** A resize, a theme, `Ctrl+T`, `Ctrl+O`, a
+  new compaction boundary give every block other rows, and the feed's scroll is a row
+  number. A feed at its tail stays at its tail. Anywhere else the view is put back on
+  **the line that was on its first row**, found by what that line says: another width
+  breaks a line into other pieces and leaves its text the text it was, so the line is
+  found again exactly, whatever was laid out anew above it, and a window dragged by
+  its edge through every width comes back to the row it left. A line that cannot be
+  told any more — a table's row at a width that lays the table out differently, a
+  diagram redrawn — falls back to the same share of the way through its block. This
+  used to hold for a jump alone, and only until the first manual scroll: a reader who
+  had scrolled anywhere was shown some other message by a resize or a fold
+  ([docs/research/feed-landing.md](docs/research/feed-landing.md) §3.8).
 - **A subagent transcript opened from the list is read-only** ([§9.3.2](#932-call_subagent),
   docs/research/subagent-chats.md §3.8). It looks like a chat with a system
   message: the persona the parent composed is drawn **first, as a system bubble**
@@ -4156,8 +4171,8 @@ Design record: [docs/history/in-feed-search.md](docs/history/in-feed-search.md).
   not the start of its message: the largest real message is 38,782 characters, so
   message-granular stepping would leave the viewport unmoved. That row is
   **re-derived every render, never stored** — which is what lets it survive a
-  rewrap, and why [§11.2.1](#1121-the-message-level-search-screen)'s anchor can
-  stay message-granular without contradiction.
+  rewrap. A jump from [§11.2.1](#1121-the-message-level-search-screen) lands on
+  its match by the same rule: the row is found by the frame that highlights it.
 - Matching runs over **what is drawn**, which is what lets the counter equal the
   highlights. Two honest consequences: it also finds words inside "thoughts" and
   tool cards, which the full-text index deliberately does not cover, so

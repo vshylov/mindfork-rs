@@ -562,6 +562,19 @@ door. When a funnel's callers start saying "the same, because the feed must be
 rebuilt", the rebuild wants a name of its own before it has six callers.
 — *what arrives in the open chat by itself touches nothing of the person's*.
 
+**An estimate that is applied to its own result is a walk, and one step does not show
+it.** Keeping the view through a rewrap was first "the same share of the way through
+the block": a row off at most, and every test — one resize, a message still on the
+screen — passed. A window dragged by its edge is a resize at every width it passes, each
+starting from the row the last one left, so a row off a step is tens of rows over a
+drag. The fix was to stop estimating: name the row by something the operation does not
+change (what its line says) and find it again. When a function's output is its own next
+input, test it composed with itself many times, and prefer an invariant to a formula.
+The same run gave a second, smaller one: the first form of that test **passed with the
+fix switched off**, because its fixture (one-line messages) made the estimate exact —
+a control run is what said the test proved nothing.
+— *a rewrap keeps the line on the view's first row, and a search hit lands on its match*.
+
 **Instrument traps to know by name.** ratatui's `Buffer` `Debug` prints row content
 **without escaping quotes**, so an assertion containing `"` against
 `format!("{:?}", buffer)` can never match — a render test written that way passed while

@@ -9,6 +9,9 @@ transcripts and `/greeting` from the start
 thing the design had missed (§3.7). **Stage 2 is built** (2026-11-19,
 `feat/feed-refresh`): what arrives by itself is a refresh, the input box is loaded
 only when the chat changes, and a woken turn does not scroll a reader away (§3.6).
+**Stage 3 is built** (2026-11-19, `feat/feed-rewrap`): a rewrap keeps the line on the
+view's first row, and a search hit lands on its match (§3.8, §3.9). **The track is
+complete.**
 
 The owner reported three cases of one complaint: the feed goes to its last row when
 the person was looking somewhere else.
@@ -230,8 +233,8 @@ inside it. The screen turns the block into the first message id of its bubble.
   the tail.
 - **Restored once.** Fork S6 refused to *store* a row inside a block, because a rewrap
   changes the block's height. A place is applied by one `render` and then forgotten:
-  from there the view is tied to the message, as after a jump. A row past the block's
-  end (the window was resized while away) is clamped to its last row.
+  from there a rewrap keeps the view as it keeps any other (§3.8). A row past the
+  block's end (the window was resized while away) is clamped to its last row.
 - Not written to disk. It is session state, like the way back that holds it.
 
 ### 3.5 The way back
@@ -300,6 +303,55 @@ was following, it landed at the tail.
 place and a reveal alike. A test applies the activation, the note and then the frame,
 for every landing.
 
+### 3.8 A rewrap keeps the line on the view's first row (stage 3, F2)
+
+`scroll` is a row number. A resize, a theme, `Ctrl+T`, `Ctrl+O`, a setting or a new
+compaction boundary gives every block other rows, and the number then names other
+text. A feed at its tail is kept by the clamp. For any other, `render` puts the view
+back on what the frame last drawn had on its first row.
+
+**What names that row** was found in three tries, the first two failing the pty run:
+
+1. **The same share of the way through its block** (row 14 of 17 becomes row 17 of
+   21). One row off at a step, in either direction by the rounding. A window dragged
+   by its edge is rewrapped at every width it passes, so the error walks: the view
+   came back from 44 columns to 100 a row above where it left, and would have lost a
+   row at each of the hundreds of widths a drag goes through.
+2. **The number of the logical line** the row is a piece of (`RowFact::soft` says
+   which rows continue the one above). Exact while the block has the lines it had —
+   and the demo's second message has a table, which is laid out in other rows at
+   another width, so the count changed and the mapping fell back to the share.
+3. **What the line says.** A wrap breaks a line at whitespace and moves no glyph, so a
+   hash of the line's glyphs, whitespace apart, is the same at any width
+   (`feed_selection::ink`). The row is named by that, by which of the block's lines
+   that say the same it is, and by its place among the line's pieces. A blank row is
+   named by the next line under it that says something and the rows between; the
+   separator by its distance from the block's end. Found again exactly whatever was
+   laid out anew above it, and through a fold opened or closed elsewhere in the block.
+
+The share of rows stays as the fallback, for a line that cannot be told any more: a
+table's own row at a width that lays the table out differently, a diagram redrawn, a
+block with another number of lines that say the same.
+
+**The cost** is in reading every row of a block. Measured on a 40K-character reply
+(913 rows): 2.5 ms beside a 10 ms build of the block, release. So the lines are made
+per block on first use and kept with the build, and a frame records its top line only
+for a feed that is not following its tail. A reply streaming at the tail pays nothing.
+
+**The jump's own tie is gone.** A search hit used to leave an index behind that
+returned the view to the hit on a rewrap, until the first manual scroll released it.
+The frame's top line does that for the hit and for everything else.
+
+### 3.9 A search hit lands on its match (stage 3, F3)
+
+A jump with a query asks for the block, not a row: the frame that highlights the query
+is the one that knows where the matches are. If the first match is on the screenful
+that starts with the message, the message is shown from its start, as before.
+Otherwise the match is put a third of the view down, with its lead-in above it. A
+match that is not drawn — folded away, or in text the renderer transformed — leaves
+the message's first row. Near the feed's end the view is the last screenful, with the
+match on it (§3.3's limit).
+
 ## 4. Decisions
 
 ### 4.1 Taken by the owner before this was written (2026-11-19)
@@ -339,7 +391,7 @@ it, otherwise the match a few rows below the view's top. Recommended: **(b)**.
 |---|---|---|
 | 1 | `feat/feed-landing` | `FeedLanding` and `FeedPlace`; the widget's first row, a row inside a block and a reveal; the three reported cases; finished transcripts and `/greeting` from the start |
 | 2 | `feat/feed-refresh` | `Hold` for what arrives by itself; the input box loaded only when the chat changes; a woken turn that does not scroll a reader away |
-| 3 | `feat/feed-rewrap` | F2 and F3, as the owner decides |
+| 3 | `feat/feed-rewrap` | F2: a rewrap keeps the line on the view's first row. F3: a search hit lands on its match |
 
 Each stage: unit tests at the widget (rows), the screen (what a frame shows after an
 activation), the runtime (the stash) and the orchestrator (the landing each route

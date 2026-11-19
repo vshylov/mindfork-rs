@@ -951,7 +951,9 @@ things on different screens. The highlights:
 > itself — a background run's result, a follow-up, a message from your phone, the reply
 > the assistant writes to one of these — does not move the conversation unless you are
 > at its end, and leaves the search, a selection and the text you are typing as they
-> are.
+> are. Resizing the window, or folding thoughts and tool calls with `Ctrl+T` and
+> `Ctrl+O`, keeps the line you were on at the top. A search result opens with the word
+> you searched for on the screen, wherever in a long message it is.
 
 > **The mouse.** The wheel scrolls the conversation, a click follows a `chat://`
 > address, and a drag selects text — the app's own selection: a double click takes a

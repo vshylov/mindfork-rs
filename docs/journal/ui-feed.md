@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (63)
+## Entries (64)
 
 - Post-M9: mouse-wheel feed scrolling (done)
 - Post-M9: own markdown renderer (tables + LaTeX + theme) (done)
@@ -75,6 +75,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a message's number at the right end of its row (done)
 - Post-M9: where the feed stands after an activation — a variant switch, a reference, the way back (done)
 - Post-M9: what arrives in the open chat by itself touches nothing of the person's (done)
+- Post-M9: a rewrap keeps the line on the view's first row, and a search hit lands on its match (done)
 
 ### Post-M9: mouse-wheel feed scrolling (done)
 - **The mouse wheel scrolls the feed** on par with `PageUp/PageDown`. `ratatui::init()`
@@ -3967,3 +3968,77 @@ the middle of a conversation with text typed in the box while the assistant ran 
 dialogue of two characters and wrote its reply. The feed did not go to its last row
 while the dialogue was being generated, nor when the reply was complete. A background
 run's result and a follow-up landing under a reader were not among what was looked at.
+
+### Post-M9: a rewrap keeps the line on the view's first row, and a search hit lands on its match (done)
+
+**Stage 3 of [docs/research/feed-landing.md](../research/feed-landing.md)**
+(`feat/feed-rewrap`, stacked on stage 2), the two forks the owner decided after looking
+at stages 1 and 2. **The track is complete.**
+
+**F2 — a rewrap keeps what is on the screen.** The feed's scroll is a row number, and a
+resize, a theme, `Ctrl+T`, `Ctrl+O`, a setting or a new compaction boundary gives every
+block other rows. The view was kept through that for a search hit alone, by an index
+the jump left behind (`anchor`) and the first manual scroll released: a reader who had
+scrolled anywhere was shown some other message. Now `render` puts the view back on what
+the frame last drawn had on its first row, for anyone not at the tail. `anchor` is gone.
+
+**What names that row — three tries, two of them failed by the pty run** (research
+§3.8):
+1. **A share of the block's rows.** A row off at a step. A window dragged by its edge
+   is rewrapped at every width, so the error walks: back from 44 columns to 100 the
+   view stood a row above where it left.
+2. **The number of the logical line** the row is a piece of. Exact — until a table
+   above it is laid out in other rows at another width, which the demo's second
+   message has.
+3. **What the line says**: a hash of its glyphs, whitespace apart
+   (`feed_selection::ink`), with which of the block's lines that say the same it is and
+   the row's place among the line's pieces (`TopLine`). A wrap breaks a line at
+   whitespace and moves no glyph. A blank row is named by the next line under it that
+   says something; the separator by its distance from the block's end. The share is the
+   fallback for a line that cannot be told any more.
+
+**The cost.** Reading every row of a 913-row block is 2.5 ms beside its 10 ms build
+(release, a 40K-character reply). The lines are made per block on first use
+(`CachedBlock::said`, a `OnceCell`) and a frame records its top line only when the feed
+is not following its tail, so a reply streaming at the tail pays nothing. A row with no
+tail is read without measuring it.
+
+**F3 — a search hit lands on its match** (`Pending::Hit`). A jump with a query asks for
+the block; the frame that highlights the query knows the match rows. The first match on
+the screenful that starts with the message: the message from its start, as before.
+Below it: the match a third of the view down. Not drawn at all: the message's start.
+
+**Tests** (12 new):
+- **The widget:** a resize keeps the message a reader scrolled to, there and back;
+  thoughts unfolded above the view move the view down with its message; a rewrap moves
+  neither the tail nor a feed opened at its start after another conversation's frame;
+  the share of a block (`rewrapped_row`); a row found again by what its line says —
+  at another width, with a fold opened above, among lines that say the same, and not
+  found where it says something else; a block's lines say the same at two widths;
+  **a window dragged through 38 widths three times keeps one line on its first row at
+  every one of them**; a hit deep in a long message lands a third of the view down; a
+  hit near the start, a query that matches nothing and no query show the message from
+  its start.
+- **`feed_selection`:** what a row says is its glyphs — the rail, the tail, padding and
+  the break's whitespace are not part of it, and both ways of reading a row agree.
+- **The screen:** `Ctrl+T` twice and two resizes keep a reader's message; a search hit
+  opens with its match on the screen.
+- **Control runs:** with the keeping and the hit landing off, four widget tests fail.
+  The drag test's first form passed with the line mapping off — one-line messages, where
+  the share happens to be exact — and was rewritten around a paragraph over short
+  lines; in that form it fails at the first step (58 columns) without the mapping.
+
+**5144 green**, clippy and fmt clean. Pure UI: no live run against a model is due.
+
+**The pty run** (`mindfork demo`, the window resized through the pty, 18 checks of 18):
+- `/search cache rule`, `Enter` on the hit: the chat opens with the match on the screen,
+  where the message's first row is 28 rows above it;
+- scrolled into the middle, the window taken to 60, 44 and back to 100 columns: the
+  first row is the same line at each, and the row it was at 100;
+- **48 widths in a row, there and back twice**: the first row is still the row it was;
+- `Ctrl+T` twice and `Ctrl+O` twice: the next message below is the same one each time,
+  and the first row is the row it was.
+Stage 1's 16 checks still pass.
+
+**The owner's look** is due: a real window dragged by its edge in Windows Terminal, and
+a search hit in a long reply.
