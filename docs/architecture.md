@@ -509,7 +509,8 @@ src/
 │  │                        per chat (`FeedView`, spec §11.3); one block alone by a
 │  │                        click on its pill (fold_at/toggle_block, its fold state
 │  │                        in its cache entry, not CacheKey), scroll, wrap,
-│  │                        jump to a message (pending_focus/anchor/marker, §4),
+│  │                        where the view lands — a jump, the first row, a place
+│  │                        restored, a reveal (pending/anchor/marker, §4),
 │  │                        in-feed search (Ctrl+F): highlight scope, match list and
 │  │                        next/prev to the matched line — see the invariant in §4,
 │  │                        `chat://` links (known_chats → CacheKey, styled in the
@@ -919,6 +920,9 @@ src/
 │  │                        startup, an original /file attach kept, or a picture
 │  │                        image_generate drew (`generated`, chats 7); the name
 │  │                        sanitizer and versioning
+│  ├─ feed_landing.rs       FeedLanding/FeedPlace — where the feed stands once a chat is
+│  │                        activated, and a row of it that can be found again; what
+│  │                        ChatActivated and OpenChat carry (docs/research/feed-landing.md)
 │  ├─ live_turn.rs          LiveTurn/LivePartial/LiveTool — the generation in flight on a
 │  │                        conversation being activated: what ChatActivated seeds the feed with
 │  ├─ message.rs            Message, MessageRole, ToolCallRecord, MessageMetadata
@@ -1462,7 +1466,10 @@ chat, the `SetDraft` playbook, §11.3 of the spec),
 the chat list — escaping it is the orchestrator's job, so that rule lives in one
 place), `SearchMessages` (the same raw query answered at **message** level — the
 `Ctrl+G` screen), `OpenChatAt { chat, message }` (activate a chat **and put the
-feed on one of its messages** — a jump from a search hit) and
+feed on one of its messages** — a jump from a search hit), `OpenChat { chat,
+landing }` (activate a chat with the feed where the screen asks: the first row
+for a followed `chat://` reference, the place it was followed from on the way
+back) and
 `OpenChatAtFirstMatch { chat, query }` (`Enter` in the list's content mode; the
 orchestrator resolves *which* message, since only it holds both the index and the
 chat and can therefore order the matches by real chat position),
@@ -1497,8 +1504,10 @@ hits carried, since they are capped at `HIT_CAP`; the screen shows "showing N of
 M" rather than truncating silently), `ChatListError`, `CopyToClipboard`,
 `ProfileList`, `Settings`,
 `ChatActivated` (which carries `feed_view` — the chat's stored collapse state,
-the counterpart of `draft` for the view — an optional `focus: Option<Uuid>` — the message to
-put the feed on; `None` for every activation but a jump — and `child: Option<ChildView>`,
+the counterpart of `draft` for the view — `landing: FeedLanding`, where the feed
+stands once it is rebuilt: the tail for an ordinary opening, the first row, a
+message to jump to, a message to show without moving the view, or a place read
+earlier (§4) — and `child: Option<ChildView>`,
 set when the activated "chat" is a subagent transcript, §10), `CharacterNames` (the active chat profile's role names for the
 feed's headers — sent on activation and after a profile edit, §10 of the spec),
 `UserMessage`, `RestoreInput`, `GenerationStarted`, `Chunk`,
@@ -1614,16 +1623,45 @@ rounded down (docs/research/cached-tokens.md §4.4).
   cache is filled by `build_lines`, keyed on width and palette. So "put the view on
   message N" cannot be a scroll setter called from `activate_chat`: it is
   necessarily a **deferred request consumed by the next render**
-  (`pending_focus`). The row is then accumulated *through* the wrap pass rather
-  than read off the cache, so it stays correct if the second pass ever stops being
-  an identity. The link back from a feed position to a `Message` is
+  (`pending`: a row of a block for a jump or a restored place, a reveal for a
+  variant switch). The row is derived from the per-block lengths of the cache
+  `build_lines` has just filled, which address the drawn rows exactly. The link back from a feed position to a `Message` is
   `FeedMessage::message_ids`, recorded inside `from_messages` **at the merge site**:
   that projection folds an agentic round's assistant messages many-to-one and drops
   `Tool`/`System` messages, so the mapping is unrecoverable after the fact (the live
   streaming path pushes `FeedMessage` literals and never goes through
   `from_messages`, so the in-flight bubble has no id by construction).
+- **Every route into an activation says where the feed stands.**
+  `AppEvent::ChatActivated::landing` is a `FeedLanding` (`entities::feed_landing`),
+  and `Orchestrator::activate_at` is the one funnel that sends it; `activate` is
+  that with the tail. A route that knows where the reader should be looking
+  passes it: a search hit its message (`Jump`), a variant switch the variant's
+  first message (`Reveal`), `/greeting` the first row, and the screen's own two —
+  a followed reference (`Top`) and its way back (`Place`) — through
+  `AppCommand::OpenChat`. A transcript that is not running turns `Tail` into
+  `Top` inside the funnel. Before this an activation could ask for a message or
+  got `scroll_to_bottom()`, and three routes that were never decisions ended at
+  the last row (docs/research/feed-landing.md §2.1).
+- **A place is read from the last drawn frame and applied once.**
+  `MessageFeed::place` turns the view's first row into `FeedPlace { message, row }`
+  — the first message id of the bubble holding it and the row inside its block —
+  from `DrawnRows`, the frame the reader saw. `restore_place` puts it back as a
+  pending row, clamped to the block, and from there the view is tied to the
+  message by `anchor`: fork S6 refused to *store* a row inside a block because a
+  rewrap changes its height, and this does not store one across a rewrap. A
+  block with no message behind it (a note, a transcript's persona, the reply
+  being written) is not a place; the next bubble that has one stands in.
+  `ChatScreen::activate_chat` reads the place **before** it replaces the feed
+  when the chat is the one already open, which is what lets a reveal put the
+  view back where it was.
+- **A landing ends tail-following when it is asked for** (`MessageFeed::land`),
+  not in the frame that applies it. Content that arrives on its own scrolls a
+  following feed to its end, which drops a pending request — and the orchestrator
+  sends a note right behind two activations (a variant switch, a search hit in a
+  parked branch). The screen's own tests applied one event and drew; the pty run
+  applied both and found the landing gone.
 - **Anchor and marker are separate fields, deliberately.** A jump sets three:
-  `pending_focus` (consumed by the next render), `anchor` — the feed index the view
+  `pending` (consumed by the next render), `anchor` — the feed index the view
   position is tied to, used to re-derive the row after a rewrap invalidates every
   row offset (resize, theme, `Ctrl+T`), released by a manual scroll — and `marker`,
   the accent rail saying where you landed, which **survives scrolling** and is
@@ -1840,7 +1878,7 @@ Details:
   (`Message::notification`) and wakes the assistant (`maybe_wake`:
   active, idle, the setting on) — or, when the chat is not the open one,
   sets `Chat.unread` (additive) so the list says a result is waiting;
-  `activate_focused` clears it, which makes opening the chat the read. `request::api_messages` sends the row as
+  `activate_at` clears it, which makes opening the chat the read. `request::api_messages` sends the row as
   user text merged into the next user message. `Esc` never reaches a
   run's token; `handle_stop_subagent_run`, `cancel_orphaned_background_runs`
   (delete/regenerate), `cancel_background_runs_of` (a deleted chat) and
@@ -1883,7 +1921,7 @@ Details:
   since the parallel group, spec §9.3.2; a run out in the **background**
   has the same `InflightChild` in a seat of `background_runs` that outlives
   the turn, and `child_any`/`child_mut_any`, `view()`, `forward_child`,
-  `emit_chat_list` and `activate_focused` consult both tables) — created by
+  `emit_chat_list` and `activate_at` consult both tables) — created by
   `start_generation`, fed by `handle_progress` (a step from another
   generation is dropped; **every `Child*` step names its run**), read and
   dropped by `handle_done` (a title given to any running transcript is
@@ -2018,7 +2056,7 @@ Details:
   `Finished { continuable }` tell the screen which bubble to open and which
   interruption note to word; the in-flight mirror carries the same flag so a
   mid-turn rebuild folds the filed round into the seed's view
-  (`activate_focused`) and appends the live partial into the resumed bubble
+  (`activate_at`) and appends the live partial into the resumed bubble
   (`LiveTurn::continues`).
 
 ---
@@ -4264,7 +4302,10 @@ reopened from storage in full and has no screen state to lose. Either way
 `ChatIntent::OpenChatList` consumes it: `Esc` in that chat restores the results
 whole (or switches back to the origin), the next `Esc` goes on to the list
 as before; a chain of followed references therefore steps back one conversation
-and no further. The chat screen learns nothing about searching (FSD: `screens` may not
+and no further. The stash of a reference keeps the **place** the feed was on
+(`Back::Link::place`, `ChatScreen::feed_place`), sent back with `Esc` as
+`OpenChat { landing: Place }` — the chat's id brings back everything but the
+view, which is the screen's. The chat screen learns nothing about searching (FSD: `screens` may not
 depend on `app`) — `OpenChatList` already means "go back" from its point of view,
 and *where* back is, is app-layer knowledge, resolved in `dispatch`. It is cleared by two rules, one for **leaving** and one for **arriving**. Leaving
 runs in **one funnel**, the `ChatActivated` arm of `apply_event`, because that event is
@@ -4572,7 +4613,7 @@ flips the chat, marks it dirty without touching `modified_at` (the
 `SetFeedView` rule), and re-emits the list so an open overlay redraws.
 Opening one goes through the ordinary `SwitchChat`: the orchestrator's single
 resolver `view(id) → ChatView::{Top, Child}` finds a transcript inside its
-parent, `activate_focused` emits `ChatActivated` with `child: Some(ChildView
+parent, `activate_at` emits `ChatActivated` with `child: Some(ChildView
 {parent, parent_title, system_message})`, the transcript's messages and the
 **parent's** `feed_view`, and `active_id` holds the transcript's id. That last
 choice is the read-only mechanism: every orchestrator path that looks the
@@ -4595,7 +4636,7 @@ appends its card with `ChildSummary.running`; `handle_progress` sends
 `AppEvent::TranscriptGrew` for a filed round of the *open* transcript, and
 the screen rebuilds its feed from the `transcript` copy it keeps while a
 transcript is open. `switch_within_turn` exempts the parent ↔ in-flight child
-move from `switch_to`'s cancel; `activate_focused` builds the parent's feed
+move from `switch_to`'s cancel; `activate_at` builds the parent's feed
 from `chat.messages + inflight.rounds` and sets `ChatActivated.live_turn`,
 — `LiveTurn { turn, stream, partial, continues, background }` — which the screen's
 `set_live_turn` turns into a resumed generation on the chat, or, on a

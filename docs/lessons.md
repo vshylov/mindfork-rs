@@ -538,6 +538,20 @@ recognizing on sight: a render test that names a long-standing item as missing i
 usually reporting a layout change.
 — *the code workspace — stage 3*.
 
+**A state applied by the next frame is tested with the events that arrive before that
+frame.** The feed's landing — "stand on this message" — is asked for by an activation
+and becomes a scroll row inside `render`. The orchestrator sends a note right behind
+two of those activations, both events are applied before a frame is drawn, and a note
+scrolls a feed that follows its tail to its end, which dropped the pending request.
+Every screen test applied one event and drew, so the first build passed its tests and
+did nothing in the app; the same sequence had already shipped to `main` for a search hit
+in a parked branch. The pty run found it in its first check. Where the orchestrator
+sends two events for one action, the screen's test applies both before it draws — and a
+request that waits for a frame says, at the place that takes it, what it does to the
+state the events in between read.
+— *where the feed stands after an activation — a variant switch, a reference, the way
+back*.
+
 **Instrument traps to know by name.** ratatui's `Buffer` `Debug` prints row content
 **without escaping quotes**, so an assertion containing `"` against
 `format!("{:?}", buffer)` can never match — a render test written that way passed while

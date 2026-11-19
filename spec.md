@@ -3963,9 +3963,38 @@ this?"*; this screen answers *"where exactly, and take me there."*
   one turn two ways.
 - Contextual message actions: copy thoughts/message/the whole chat; **edit in place** (both user and assistant — a direct requirement); regenerate; delete last.
 - **Scrolling**: `PageUp`/`PageDown` (by `PAGE_SCROLL` lines) and the **mouse wheel** (by `WHEEL_ROWS` lines, `shared::mouse`), with automatic "tail-following" when scrolled to the bottom. Terminal mouse capture is decided by a **setting**, `interface.mouse` (Settings → Interface → Behavior, *Mouse*; [docs/research/mouse-always-captured.md](docs/research/mouse-always-captured.md)): `app`, the default, captures it — the wheel scrolls, the app selects text itself (below) — and the terminal's own selection stays available with its modifier: `Shift` in most terminals, `Option` in iTerm2, `Fn` in Terminal.app (Windows Terminal's two catches: `Shift`+right click pastes, and its copy of a `Shift` selection joins the lines — `Ctrl+Shift+C` keeps them). `terminal` leaves the mouse with the terminal and its native selection — for a terminal with no modifier around capture (VS Code on macOS by default), a screen reader, or a terminal whose reports misbehave. **The legacy terminal mode keeps the mouse with the terminal** whatever the setting says: conhost has no modifier around capture. There is no switch for the session any more: `Ctrl+W`, its status-bar light (`mouse: select`/`mouse: scroll`) and `/mouse` were removed with the default's flip (§5.7 of the research) — the key a browser tab closes the tab on, and a light that only explained a mode the app no longer has; `mindfork keys` keeps its own `Ctrl+W`, the diagnostic's switch. Capture **follows the frame in front**: on wherever the app holds the mouse — every screen and the help dialog answer it since stage 3 (below) — and off on the "window too small" notice, which answers nothing. What is asked for is **button and drag reports in SGR** (`?1000h ?1002h ?1006h`, `shared::mouse::EnableMouseReports`) — not crossterm's `EnableMouseCapture`, which adds every movement (`?1003h`) and the rxvt encoding; on Windows the console is asked through its input mode, and the movement it reports regardless is dropped by the input reader. The wheel and selection share one terminal mouse-reporting mechanism, so "wheel only" can't be enabled separately.
+- **Where the feed stands once a chat is activated** — said by the route that
+  asked, as a landing sent with the activation (`FeedLanding`,
+  [docs/research/feed-landing.md](docs/research/feed-landing.md)). An activation
+  used to have two outcomes — a search hit's message, or the last row — so a
+  variant switch, a followed reference and the way back from one all sent the
+  reader to the bottom.
+  - **The tail**, following it: a chat picked in the list, a new one, a clone,
+    the last chat at startup — and a rebuild after the line's tail was cut
+    (`Ctrl+E`, `Ctrl+R`, `/fork`), where the cut is the new end.
+  - **The first row**: the conversation a `chat://` reference names (below), a
+    subagent transcript that is not running (below), a swapped greeting
+    (`/greeting`).
+  - **A message, marked**: a search hit (*Jumping to a message*, below).
+  - **A message, shown**: the first message of a variant that was just switched
+    to (`/branch N K`, an arrow of the mark, the branches list). **The feed does
+    not move when that message's header is on the screen** — the arrows that
+    were clicked stay under the pointer, so the variants can be clicked through
+    — and the header is brought to the view's first row when it is not. The feed
+    does not scroll past its end: a variant shorter than the one it replaces, at
+    the feed's last rows, moves the header down once, and from there it stays.
+    Nothing is marked; the mark on the header says which variant is on the line.
+  - **A place**: the row the reader was on, for the way back from a followed
+    reference (below).
+
+  A landing ends the feed's following its tail **when it is asked for**, not in
+  the frame that applies it: the note that often comes right behind an
+  activation (which variant is on the line, which parked branch a hit is in)
+  would otherwise scroll a following feed to its end and drop the landing.
 - **Who may scroll to the tail** — split by *who asked*. **User-initiated** actions go
-  to the bottom unconditionally: activating a chat (unless a jump was requested),
-  sending a message, starting a generation. You did it; you want to see the result.
+  to the bottom unconditionally: activating a chat by an ordinary route (a
+  landing above says otherwise for the rest), sending a message, starting a
+  generation. You did it; you want to see the result.
   **Content arriving on its own** — a tool card, a service note, the next round's
   bubble after a follow-up or rewrite — only scrolls **if the view was already
   following the tail**: a reader who has scrolled away (or jumped to a message) must
@@ -3988,7 +4017,10 @@ this?"*; this screen answers *"where exactly, and take me there."*
   docs/research/subagent-chats.md §3.8). It looks like a chat with a system
   message: the persona the parent composed is drawn **first, as a system bubble**
   (headed by the profile's system name, else `SYSTEM`; muted rail) — the one
-  thing a reader of a transcript wants first, and a chat never shows; the
+  thing a reader of a transcript wants first, and a chat never shows. **A
+  transcript that is not running opens on that first row** — it is read, not
+  watched — while a running one opens at its tail and follows it; a search hit
+  inside either still opens on the hit. The
   instruction's header is the **parent persona** (the profile's assistant name,
   else the assistant label — it wrote the instruction), the replies' header the
   subagent's `name`, else `SUBAGENT`; both resolved at activation, so a profile
@@ -4026,9 +4058,15 @@ this?"*; this screen answers *"where exactly, and take me there."*
   key is the route that always works: the *Mouse* setting can leave the mouse
   with the terminal, where no click reaches the app (capture was off by default
   when this was built, which is why the key came first). Following an address
-  is an ordinary chat switch — an address names a conversation, not a message —
-  and **`Esc` retraces it**, back to the conversation the reference was followed
-  from. That is the same one-deep, consumed-on-use back-stack the search screen
+  is a chat switch — an address names a conversation, not a message — and the
+  conversation **opens at its first row**: it is there to be read, from its
+  start. **`Esc` retraces it**, back to the conversation the reference was
+  followed from **and to the row the feed was on** (`Back::Link::place`, read
+  from the frame last drawn: the message on the view's first row and the row
+  inside it) — the reference that was followed is where it was left, and the
+  feed follows its tail again only if it was at its last row. What the feed
+  does not keep across any chat switch is its notes: they are not messages of
+  the chat. That is the same one-deep, consumed-on-use back-stack the search screen
   uses (§11.2.1), and it is dropped by either of two things: **leaving** for a
   different chat by an ordinary route (picking one in the list, `Ctrl+N`, a
   clone), or **arriving** — working in the chat you drilled into. Sending a

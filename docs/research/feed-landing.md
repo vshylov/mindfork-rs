@@ -1,7 +1,11 @@
 # Research: where the feed stands after a chat is activated
 
 **Status:** research (2026-11-19). Three decisions were taken by the owner before it
-was written (§4.1). Two forks are open and block only stage 3 (§4.3).
+was written (§4.1). Two forks are open and block only stage 3 (§4.3). **Stage 1 is
+built** (2026-11-19, `feat/feed-landing`): the three reported cases, finished
+transcripts and `/greeting` from the start
+([docs/journal/ui-feed.md](../journal/ui-feed.md)). Its run through a pty found one
+thing the design had missed (§3.7).
 
 The owner reported three cases of one complaint: the feed goes to its last row when
 the person was looking somewhere else.
@@ -169,7 +173,7 @@ message the feed does not show) falls back to `Tail`, as a jump does today.
 | the chat list, `Ctrl+N`, a clone, the next chat after a delete, the last chat at startup | `Tail` |
 | a search hit, the first match from the chat list, a hit in a parked branch | `Jump` |
 | a followed `chat://` reference: a click, the references list | `Top` |
-| `Esc` back from a followed reference | `Place`, saved when it was followed; `Tail` if the feed was following then |
+| `Esc` back from a followed reference | `Place`, saved when it was followed; `Tail` where the screen had no row to name |
 | a transcript that is not running, by any route that asks for `Tail` (the owner's decision, §4.1) | `Top` |
 | a variant switch: `/branch N K`, a click on the mark, the branches list | `Reveal` of the variant's first message |
 | `/fork N`, `Ctrl+E`, `Ctrl+R` | `Tail`: the cut is the new end |
@@ -200,6 +204,15 @@ pill ([block-fold-and-partial-copy.md](block-fold-and-partial-copy.md) §3.4), a
 resumes when the view is at the last row. A held place that is gone (the view's first
 row was inside the variant that left) counts as "otherwise".
 
+**The feed does not scroll past its end**, and two things follow, both seen in the pty
+run. A variant shorter than the one it replaces, switched to at the feed's last rows,
+leaves fewer rows than the view holds below the header: the header moves down by the
+difference, once, and every switch after that leaves it where it is. And a header in
+the feed's last screenful cannot be the view's first row: "put on the first row" there
+is the last screenful, with the header on it. Keeping the header's row in both cases
+would take a view that can stand below the feed's end, which nothing else in the
+widget allows; not built.
+
 The note the switch writes ("variant 2 of 3 at #11") is appended at the feed's end and
 no longer drags the view there. The mark on the header says the same.
 
@@ -222,7 +235,13 @@ inside it. The screen turns the block into the first message id of its bubble.
 
 `Back::Link { origin, chat }` gains `place: Option<FeedPlace>`, read from the screen
 when the reference is followed. `Esc` sends `OpenChat { chat: origin, landing }` with
-that place, or `Tail` when the feed was following.
+that place. A feed that was following its tail is given its place too, not `Tail`: the
+last screenful restored is the tail again when nothing arrived meanwhile, and the
+reference is still on the screen when something did. `Tail` is for a screen with no
+row to name.
+
+What does not come back is the feed's notes (§2.4): the rows above a note return
+exactly, and the rows below one stand that note's height higher.
 
 Everything else about the stash is unchanged: one step deep, consumed on use, dropped
 by leaving for another chat or by working in the one drilled into (spec §11.3).
@@ -245,6 +264,24 @@ by leaving for another chat or by working in the one drilled into (spec §11.3).
   following.
 
 `Hold` for a chat that is not the open one is `Tail`: there is nothing to hold.
+
+### 3.7 A landing ends the following when it is asked for (found by the pty run)
+
+A landing is asked for by an activation and applied by the next frame. The
+orchestrator sends a note right behind two activations: a switch says which variant is
+on the line, and a search hit in a parked branch names the branch. Both events are
+applied before a frame is drawn. A note scrolls a feed that is following its tail to
+its end (`scroll_to_bottom_if_following`), and that drops a pending request.
+
+So the first build of stage 1 passed every test and did nothing in the app: a click on
+`‹` at the tail was a reveal, then a note, then the tail. The screen's tests applied
+one event and drew. The same sequence was already wrong on `main` for a hit in a
+parked branch, which jumps and then says where the match is: opened from a feed that
+was following, it landed at the tail.
+
+`MessageFeed::land` now ends the following as it takes the request, for a jump, a
+place and a reveal alike. A test applies the activation, the note and then the frame,
+for every landing.
 
 ## 4. Decisions
 

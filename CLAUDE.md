@@ -191,7 +191,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-11-19, version 0.27.0)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **5104 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **5123 unit tests
 green, 328 `#[ignore]`** (live smokes + real-clipboard round trips + the
 screenshot-dump and demo-reel regenerators).
 
@@ -204,6 +204,13 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
+- **Where the feed stands after an activation — stage 1 of 3** (2026-11-19): every
+  route says where (`FeedLanding`, in place of a search hit's focus or the bottom) — a
+  variant switch shows its message without moving the feed, a `chat://` reference
+  opens at the first row, `Esc` returns to the row it was followed from, a finished
+  transcript opens from its start. Pty run **GO**; next, what arrives in the open chat
+  by itself ([docs/research/feed-landing.md](docs/research/feed-landing.md),
+  [docs/journal/ui-feed.md](docs/journal/ui-feed.md)).
 - **Branches inside a chat — track complete** (2026-11-19, four stages): a fork at a
   chosen message as a tree inside the chat — the line stays `chat.messages`, the tails
   that left it are kept beside it (ADR 0015; chats 8 → 9). `/fork N`, `/branch`,
@@ -377,20 +384,6 @@ being recent is dropped, not shortened.
   ([docs/research/small-terminal.md](docs/research/small-terminal.md), spec
   §11.1.1, [docs/journal/ui-feed.md](docs/journal/ui-feed.md),
   [docs/journal/ui-screens.md](docs/journal/ui-screens.md)).
-- **OpenRouter as a provider of its own — track complete** (2026-09-29, four
-  stages, one release). `openrouter` is a mode beside `external`: one key, a dialect
-  on the client (`repetition_penalty`, the lowest listed effort on a muted turn), the
-  key checked before `Ready`, the picker's rows with window and price, attribution
-  behind a switch; `settings.json` 3 → 4. Stage 2 is every embedder's: requests of
-  at most 64 texts, a retry for a cloud, and the guard and the convention applied
-  by every road that installs an embedder. Stage 3: the audio format negotiated per
-  model, the rate read from the answer's label, the voices listed — and a player
-  that no longer trusts a streamed MP3's first frame, in every mode. Stage 4:
-  `video.provider`; an answer with no video tokens is an error; the whole video is
-  read, so a segment is named in words and the ceiling measures the whole. Live
-  **GO**, each stage
-  ([docs/research/openrouter-mode.md](docs/research/openrouter-mode.md) §7, §11–§14,
-  spec §3.4, §9.9, §11.6, §11.9, [docs/journal/engine.md](docs/journal/engine.md)).
 - **A settings file the typed parse refuses ends the start, not the settings** —
   one misspelt value reset the whole config, which the first save wrote over the
   file. The gate parses typed, no reader falls back to the defaults, a backup
