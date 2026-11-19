@@ -87,6 +87,17 @@ split by subsystem.
   an exchange taken back still tell it that a reply did not land. A reply you went back
   to is no longer counted as one.
 
+### Fixed
+
+- **What arrives in the open conversation by itself no longer takes your place.** A
+  background run's result, a follow-up, a message from the messenger, and the reply
+  the assistant starts on any of them used to scroll the conversation to its end
+  wherever you were reading, close the search in it and the open list, and reset the
+  input box: the cursor jumped to the end and `Ctrl+Z` forgot what you had typed. Now
+  the conversation moves only if you are at its end, and the rest is left alone.
+- Switching a variant, regenerating a reply or taking an exchange back no longer
+  resets the cursor and the undo history of the text you are typing.
+
 ### Data
 
 - **Chat files move to schema 9** for the branches a chat may now hold: 0.27.0 would

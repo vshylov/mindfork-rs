@@ -947,6 +947,12 @@ things on different screens. The highlights:
 | `Home` / `End` | a ladder: first the on-screen row, then the whole line |
 | `PageUp` / `PageDown` / wheel | scroll the feed |
 
+> **Where you are reading stays yours.** What arrives in the open conversation by
+> itself — a background run's result, a follow-up, a message from your phone, the reply
+> the assistant writes to one of these — does not move the conversation unless you are
+> at its end, and leaves the search, a selection and the text you are typing as they
+> are.
+
 > **The mouse.** The wheel scrolls the conversation, a click follows a `chat://`
 > address, and a drag selects text — the app's own selection: a double click takes a
 > word, a triple the line, and a drag held above or below the conversation scrolls it.

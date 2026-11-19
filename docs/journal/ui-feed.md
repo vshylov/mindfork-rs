@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (62)
+## Entries (63)
 
 - Post-M9: mouse-wheel feed scrolling (done)
 - Post-M9: own markdown renderer (tables + LaTeX + theme) (done)
@@ -74,6 +74,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: a reply written in this session folds too (done)
 - Post-M9: a message's number at the right end of its row (done)
 - Post-M9: where the feed stands after an activation — a variant switch, a reference, the way back (done)
+- Post-M9: what arrives in the open chat by itself touches nothing of the person's (done)
 
 ### Post-M9: mouse-wheel feed scrolling (done)
 - **The mouse wheel scrolls the feed** on par with `PageUp/PageDown`. `ratatui::init()`
@@ -3889,3 +3890,70 @@ Recorded in the research, §3.3; not built around.
 **Not built here:** what arrives in the open chat by itself still rebuilds the feed
 through an ordinary activation — the tail, the input box reloaded (research §2.2). That
 is stage 2. The owner's look in Windows Terminal is due.
+
+### Post-M9: what arrives in the open chat by itself touches nothing of the person's (done)
+
+**Stage 2 of [docs/research/feed-landing.md](../research/feed-landing.md)**
+(`feat/feed-refresh`, stacked on stage 1). Found while the owner's three cases were
+looked into, and decided into the track (D1).
+
+**The defect.** `activate` was the only way to show the open chat's new rows, so six
+places that are not the person opening anything called it: a background run's result
+(`deliver_notification`), a follow-up come due (`deliver_due_followups`), rows from
+the messenger (`push_bridged`), a messenger's turn landed (`land_seat_reply`), and a
+woken reply that chose silence (`handle_done`, twice). Each got what an opening gets:
+the feed's last row wherever the person was reading, the in-feed search closed, the
+selection and a jump's mark dropped, the open list closed, and the input box reloaded
+from the stored draft — the cursor at the end, the undo history empty. The turn the
+assistant then starts on the notice scrolled to the bottom once more, "because you
+pressed send".
+
+**A refresh.** `FeedLanding::Hold`, sent by `Orchestrator::refresh` from those six
+places. `ChatScreen::activate_chat` answers a hold for the chat already open by
+rebuilding the feed and returning:
+- **the view**: a feed at its tail still follows it; one that is not gets back the
+  place read before the rebuild (`restore_place`), so a note above the view that the
+  rebuild dropped takes no row of it;
+- **a jump's mark**: found again by message id (`MessageFeed::marked`/`remark`);
+- **the in-feed search, the selection, the open lists, the token counter**: not
+  touched. The search's matches are derived every frame, so its count takes in what
+  arrived; the widget drops a selection only where its blocks were rebuilt;
+- a landing no frame has drawn yet is left to its frame.
+
+A hold for a chat that is not the open one is the tail.
+
+**The input box** is loaded from `draft` only when the chat **changes** — for every
+landing, not the hold alone. A variant switch, a regeneration and a take-back rebuild
+the feed under a box the person may be typing in, and the stored draft is that box's
+own text a tick older.
+
+**A woken turn.** `AppEvent::GenerationStarted` gained `woken`.
+`begin_woken_generation` opens the same bubble and scrolls to it only if the feed was
+following. A regenerated woken reply is still shown: the rebuild before it asks for
+the tail.
+
+**Tests** (9 new):
+- **The screen:** a refresh leaves a reader's rows where they are, with and without a
+  note above the view; a feed at its tail shows what arrived; the search (its count
+  one higher), the mark, the box's text, cursor and undo survive a refresh that
+  carries another draft; the box is loaded by no activation of the open chat and by
+  every change of chat; a woken turn's start does not end a reader's place and a
+  turn asked for does.
+- **The orchestrator:** a follow-up due in the open conversation — after the
+  start-up's activation every one is a hold, for a reply and for silence, and the
+  turn is woken, the next typed one is not; a background run's result the same;
+  `refresh` itself.
+- **The runtime:** the woken start through `apply_event`, the frame unchanged.
+- **A control run:** the refresh, the box's rule and the woken scroll each undone —
+  four screen tests fail.
+
+The bridge's two sites (`push_bridged`, `land_seat_reply`) are the same call as the
+tested four and have no test of their own: reaching them takes a live bot.
+
+**5132 green**, clippy and fmt clean. Pure UI: no live run against a model is due.
+
+**The pty run** (`mindfork demo`, 100×40): six letters typed, the cursor moved two
+back, an arrow of the variants mark clicked — the next letter lands where the cursor
+was, and `Ctrl+Z` takes it out. Stage 1's 16 checks still pass. Nothing in the demo
+delivers rows by itself, so the refresh is covered by the tests above; **the owner's
+look** is where a real background run or follow-up lands under a reader.

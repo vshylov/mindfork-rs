@@ -552,6 +552,16 @@ state the events in between read.
 — *where the feed stands after an activation — a variant switch, a reference, the way
 back*.
 
+**A funnel that is the only way to do a second thing gives it every side effect of the
+first.** `activate` opens a chat: the last row, the search closed, the lists closed,
+the input box loaded from the draft. It was also the only way to *rebuild* the open
+chat's feed, so six deliveries — a background run's result, a follow-up, rows from the
+messenger — called it, and each sent a reader to the bottom and reset the cursor in
+the box they were typing in. Nobody wrote that behaviour; the funnel had no other
+door. When a funnel's callers start saying "the same, because the feed must be
+rebuilt", the rebuild wants a name of its own before it has six callers.
+— *what arrives in the open chat by itself touches nothing of the person's*.
+
 **Instrument traps to know by name.** ratatui's `Buffer` `Debug` prints row content
 **without escaping quotes**, so an assertion containing `"` against
 `format!("{:?}", buffer)` can never match — a render test written that way passed while

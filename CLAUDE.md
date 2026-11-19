@@ -191,7 +191,7 @@ rented instead of hosted — `python tools/e2e_hf.py run`, see
 
 ## Status (2026-11-19, version 0.27.0)
 
-The **M0–M9** plan is done, plus extensive post-M9 work — **5123 unit tests
+The **M0–M9** plan is done, plus extensive post-M9 work — **5132 unit tests
 green, 328 `#[ignore]`** (live smokes + real-clipboard round trips + the
 screenshot-dump and demo-reel regenerators).
 
@@ -204,12 +204,14 @@ loaded in full at the start of every session and is capped at 30 000 bytes by
 being recent is dropped, not shortened.
 
 <!-- cyrillic-ok:start -->
-- **Where the feed stands after an activation — stage 1 of 3** (2026-11-19): every
+- **Where the feed stands after an activation — stages 1–2 of 3** (2026-11-19): every
   route says where (`FeedLanding`, in place of a search hit's focus or the bottom) — a
   variant switch shows its message without moving the feed, a `chat://` reference
   opens at the first row, `Esc` returns to the row it was followed from, a finished
-  transcript opens from its start. Pty run **GO**; next, what arrives in the open chat
-  by itself ([docs/research/feed-landing.md](docs/research/feed-landing.md),
+  transcript opens from its start; what arrives in the open chat by itself is a
+  refresh that touches nothing of the person's, the input box included. Pty runs
+  **GO**; stage 3 waits for two forks
+  ([docs/research/feed-landing.md](docs/research/feed-landing.md),
   [docs/journal/ui-feed.md](docs/journal/ui-feed.md)).
 - **Branches inside a chat — track complete** (2026-11-19, four stages): a fork at a
   chosen message as a tree inside the chat — the line stays `chat.messages`, the tails

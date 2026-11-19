@@ -3986,6 +3986,22 @@ this?"*; this screen answers *"where exactly, and take me there."*
     Nothing is marked; the mark on the header says which variant is on the line.
   - **A place**: the row the reader was on, for the way back from a followed
     reference (below).
+  - **A hold**: nothing of the person's is touched. The chat that is open got
+    rows by itself — a background run's result, a follow-up come due, rows from
+    the messenger, a woken reply that chose silence — and its feed is rebuilt to
+    show them (`Orchestrator::refresh`). A feed that follows its tail still
+    does; one that does not keeps the rows it shows, by the place read before
+    the rebuild. The in-feed search stays open on its query, a selection and a
+    jump's mark stay, an open list stays, the token counter keeps the last
+    turn's figures, and the input box is not touched. These deliveries used to
+    be ordinary activations: a reader was sent to the last row, the search was
+    closed, and the box was reloaded under the cursor.
+  - **The input box is loaded from a chat's draft when the chat changes**, and
+    by no activation of the chat that is already open — a hold, a variant
+    switch, a regeneration, a take-back. The box is where that draft is
+    written; the stored copy is its own text a tick older, and loading it back
+    moved the cursor to the end, emptied the undo history and could overwrite
+    a keystroke not sent yet.
 
   A landing ends the feed's following its tail **when it is asked for**, not in
   the frame that applies it: the note that often comes right behind an
@@ -3996,9 +4012,12 @@ this?"*; this screen answers *"where exactly, and take me there."*
   landing above says otherwise for the rest), sending a message, starting a
   generation. You did it; you want to see the result.
   **Content arriving on its own** — a tool card, a service note, the next round's
-  bubble after a follow-up or rewrite — only scrolls **if the view was already
-  following the tail**: a reader who has scrolled away (or jumped to a message) must
-  not be yanked back. Scrolling to the last line resumes following.
+  bubble after a follow-up or rewrite, what a hold delivers (above), and **a turn
+  the app started on a notice** (`AppEvent::GenerationStarted::woken`: nobody
+  pressed anything, so its bubble is not a reason to move) — only scrolls **if the
+  view was already following the tail**: a reader who has scrolled away (or jumped
+  to a message) must not be yanked back. Scrolling to the last line resumes
+  following.
 - **Jumping to a message** (`AppCommand::OpenChatAt` from the search screen, §11.2.1):
   the chat is activated and the feed is positioned on that message, whose rail is
   drawn in the accent color — "this is where you landed" — and **the searched query is

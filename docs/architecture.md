@@ -1506,8 +1506,8 @@ M" rather than truncating silently), `ChatListError`, `CopyToClipboard`,
 `ChatActivated` (which carries `feed_view` — the chat's stored collapse state,
 the counterpart of `draft` for the view — `landing: FeedLanding`, where the feed
 stands once it is rebuilt: the tail for an ordinary opening, the first row, a
-message to jump to, a message to show without moving the view, or a place read
-earlier (§4) — and `child: Option<ChildView>`,
+message to jump to, a message to show without moving the view, a place read
+earlier, or a hold for rows that arrived by themselves (§4) — and `child: Option<ChildView>`,
 set when the activated "chat" is a subagent transcript, §10), `CharacterNames` (the active chat profile's role names for the
 feed's headers — sent on activation and after a profile edit, §10 of the spec),
 `UserMessage`, `RestoreInput`, `GenerationStarted`, `Chunk`,
@@ -1654,6 +1654,20 @@ rounded down (docs/research/cached-tokens.md §4.4).
   `ChatScreen::activate_chat` reads the place **before** it replaces the feed
   when the chat is the one already open, which is what lets a reveal put the
   view back where it was.
+- **A rebuild is not an arrival.** `activate` was the only way to show the open
+  chat's new rows, so a delivery — a background run's result, a follow-up, rows
+  from the messenger, a silent reply taken out — got everything an opening gets:
+  the last row, the search closed, the lists closed, the input box reloaded.
+  `Orchestrator::refresh` is the same funnel with `FeedLanding::Hold`, and
+  `ChatScreen::activate_chat` answers a hold for the chat already open by
+  rebuilding the feed and returning: the view by the place read before the
+  rebuild (a feed at its tail still follows it), a jump's mark found again by
+  message id (`MessageFeed::marked`/`remark` — the rebuild drops the feed's
+  notes, and the mark is an index), the token counter, the search, the selection
+  and the lists as they were. The input box is loaded from `draft` only when
+  the chat **changes**, for every landing. And a turn the app started on a
+  notice says so (`AppEvent::GenerationStarted::woken`), so its bubble scrolls
+  into view only for a feed that was following (`begin_woken_generation`).
 - **A landing ends tail-following when it is asked for** (`MessageFeed::land`),
   not in the frame that applies it. Content that arrives on its own scrolls a
   following feed to its end, which drops a pending request — and the orchestrator

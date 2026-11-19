@@ -5,7 +5,9 @@ was written (§4.1). Two forks are open and block only stage 3 (§4.3). **Stage 
 built** (2026-11-19, `feat/feed-landing`): the three reported cases, finished
 transcripts and `/greeting` from the start
 ([docs/journal/ui-feed.md](../journal/ui-feed.md)). Its run through a pty found one
-thing the design had missed (§3.7).
+thing the design had missed (§3.7). **Stage 2 is built** (2026-11-19,
+`feat/feed-refresh`): what arrives by itself is a refresh, the input box is loaded
+only when the chat changes, and a woken turn does not scroll a reader away (§3.6).
 
 The owner reported three cases of one complaint: the feed goes to its last row when
 the person was looking somewhere else.
@@ -259,9 +261,23 @@ by leaving for another chat or by working in the one drilled into (spec §11.3).
   chat that is already open, whatever its landing: the box is where the draft is
   written, so the stored copy has nothing to add to it. The box is loaded from a
   chat's draft only when the chat changes.
-- **A turn nobody asked for.** `AppEvent::GenerationStarted` gains `asked: bool`. A
-  woken turn sends `false`, and its bubble scrolls into view only if the feed was
-  following.
+- **A turn nobody asked for.** `AppEvent::GenerationStarted` gains `woken: bool`,
+  the orchestrator's own word for a turn it started on a notice. Its bubble scrolls
+  into view only if the feed was following. A regenerated woken reply is woken too,
+  and still shown: the rebuild before it asks for the tail.
+
+As built, three things the list above did not say:
+
+- **The token counter** keeps the last turn's figures through a refresh. An
+  activation clears it because it belongs to the chat that was open; a refresh is the
+  same chat's.
+- **A jump's mark is found again by message id** (`MessageFeed::marked`, `remark`).
+  It is a feed index, and the rebuild drops the feed's notes. In practice no note
+  stands above a mark, since a jump is itself a rebuild; the lookup costs nothing and
+  does not depend on that.
+- **A landing no frame has drawn yet is left alone.** A refresh can arrive between an
+  activation that asked for a landing and its frame; restoring the old view's place
+  then would cancel what was asked.
 
 `Hold` for a chat that is not the open one is `Tail`: there is nothing to hold.
 
