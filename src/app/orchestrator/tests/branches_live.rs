@@ -36,6 +36,11 @@
 //! [`a_parked_branch_is_read_when_asked_and_left_alone_when_not_e2e_live`]:
 //! a model handed `branch_read` reads a parked tail when the person asks
 //! about it, and leaves the tails alone when nobody did.
+//!
+//! The search of parked branches (§10.2) adds a fourth,
+//! [`a_parked_word_is_found_when_asked_and_left_alone_when_not_e2e_live`]:
+//! a model handed `branch_search` finds the variant that said a word no
+//! first line shows, and searches nothing when nobody asked.
 
 use super::*;
 use crate::entities::chat_branch::ParkCause;
@@ -619,7 +624,26 @@ async fn collect(evt_rx: &mut UnboundedReceiver<AppEvent>, what: &str) -> Asked 
     while let Some(event) = evt_rx.recv().await {
         match event {
             AppEvent::Chunk { text, .. } => out.reply.push_str(&text),
-            AppEvent::ToolCall { name, .. } => out.tools.push(name),
+            AppEvent::ToolCall {
+                name,
+                arguments,
+                result,
+                ..
+            } => {
+                // What was asked for and how the answer began: a run's log is
+                // where a second call to one tool is explained.
+                eprintln!(
+                    "  call: {name} {arguments}\n     => {}",
+                    result
+                        .lines()
+                        .next()
+                        .unwrap_or_default()
+                        .chars()
+                        .take(200)
+                        .collect::<String>()
+                );
+                out.tools.push(name);
+            }
             AppEvent::Finished { reason, .. } => {
                 eprintln!(
                     "turn [{reason:?}] {what:?}\n  tools: {:?}\n  -> {}",
@@ -835,6 +859,150 @@ async fn a_parked_branch_is_read_when_asked_and_left_alone_when_not_e2e_live() {
         holds(&branch.reply, BERTH),
         "the other chat's branch is not in the answer: {}",
         branch.reply
+    );
+
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+}
+
+/// The search of parked branches (research §10.2). What only a real model
+/// shows is the same judgement the reader's smoke measures, for the tool that
+/// finds instead of reading: handed `branch_search`, a model searches the
+/// tails **when asked about an earlier variant** and not otherwise.
+///
+/// The chat is put on disk before the app starts: one question, its reply
+/// redone four times. Every variant opens with a line that says nothing, and
+/// the third names a call sign **past that line** — where the reader's list,
+/// which shows first lines, does not reach. The reply on the line knows
+/// nothing.
+///
+/// The profile has the search and not the reader: the assertion is about
+/// which tool is called, and a turn that also had the reader could list the
+/// tails and read them one by one instead (docs/lessons.md §9).
+///
+/// 1. *Left alone:* an unrelated question, then `Ctrl+R` on its reply. No
+///    search in either turn, and the call sign in no request.
+/// 2. *Found when asked:* which earlier variant mentioned a call sign. The
+///    turn searches, and the call sign — which no request held until the
+///    search's answer brought it — is in the reply.
+#[tokio::test]
+#[ignore = "needs a live engine (MINDFORK_ENGINE_URL)"]
+async fn a_parked_word_is_found_when_asked_and_left_alone_when_not_e2e_live() {
+    use crate::features::tools::branches::BRANCH_SEARCH_ID;
+    const CALL_SIGN: &str = "KESTREL-9";
+    let Some(live) = live_backend() else {
+        eprintln!("skip: MINDFORK_ENGINE_URL not set");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let hour_ago = |minutes: i64| {
+        chrono::Utc::now() - chrono::Duration::hours(1) + chrono::Duration::minutes(minutes)
+    };
+    let said = |mut m: Message, minutes: i64| {
+        m.timestamp = hour_ago(minutes);
+        m
+    };
+    let harbour_id;
+    {
+        let json = crate::shared::storage::JsonStore::new(Paths::with_root(root));
+        let mut profile = Profile::new("Assistant", "You are a helpful assistant.");
+        profile.language = Lang::En;
+        // The search, and two tools that have nothing to do with it: "left
+        // alone" is a choice only where there is something else to call.
+        let tools: Vec<String> = [BRANCH_SEARCH_ID, "calculate", "current_time"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        profile.enabled_tools = tools.clone();
+        profile.known_tools = tools;
+        json.upsert_profile(&profile).unwrap();
+
+        let mut harbour = Chat::from_profile(&profile, "harbour");
+        harbour.push_message(said(
+            Message::user("Who should I ask about the mooring fees here?"),
+            0,
+        ));
+        let variants = [
+            "Let me think about this.\n\nYou could ask at the marina office by the gate."
+                .to_string(),
+            "Good question.\n\nThe yacht club's secretary usually knows the fees.".to_string(),
+            format!(
+                "Here is my suggestion.\n\nAsk the harbour master on the radio; her call \
+                 sign is {CALL_SIGN}."
+            ),
+            "A short answer.\n\nThe ferry terminal's desk keeps the price list.".to_string(),
+            "I am sorry, I do not know who handles the mooring fees here.".to_string(),
+        ];
+        for (n, text) in variants.into_iter().enumerate() {
+            let n = n as i64;
+            if n > 0 {
+                assert!(harbour.park_tail(1, ParkCause::Regenerate, hour_ago(2 * n)));
+            }
+            harbour.push_message(said(Message::assistant(text), 2 * n + 1));
+        }
+        assert_eq!(harbour.branches.len(), 4, "four variants are parked");
+        harbour_id = harbour.id;
+        json.save_chat(&harbour).unwrap();
+    }
+    let engine = Recording::over(live);
+    let (cmd_tx, mut evt_rx, handle) = spawn_orch_at(
+        root,
+        Some(engine.clone() as Arc<dyn EngineBackend>),
+        no_auto_cfg(),
+    );
+    wait_for(
+        &mut evt_rx,
+        |e| matches!(e, AppEvent::ChatActivated { id, .. } if *id == harbour_id),
+    )
+    .await
+    .unwrap();
+
+    // 1. Left alone: nothing in the question is about a branch.
+    let plain = ask(
+        &cmd_tx,
+        &mut evt_rx,
+        "In one short sentence: why do databases have indexes?",
+    )
+    .await;
+    assert!(!plain.reply.trim().is_empty(), "the control turn answered");
+    assert!(
+        !plain.called(BRANCH_SEARCH_ID),
+        "an unrelated question searched the branches: {:?}",
+        plain.tools
+    );
+    cmd_tx.send(AppCommand::RegenerateLast).unwrap();
+    let redone = collect(&mut evt_rx, "Ctrl+R").await;
+    assert!(!redone.reply.trim().is_empty(), "the regeneration answered");
+    assert!(
+        !redone.called(BRANCH_SEARCH_ID),
+        "a regeneration searched for the reply it replaces: {:?}",
+        redone.tools
+    );
+    assert_eq!(
+        engine.told_of(&[CALL_SIGN.to_string()]),
+        None,
+        "the parked reply reached a request nobody asked for it in"
+    );
+
+    // 2. Found when asked.
+    let found = ask(
+        &cmd_tx,
+        &mut evt_rx,
+        "Earlier in this conversation I regenerated your reply about the mooring fees \
+         several times. One of the earlier variants mentioned a call sign. Find that \
+         variant and tell me the call sign.",
+    )
+    .await;
+    assert!(
+        found.called(BRANCH_SEARCH_ID),
+        "asked which variant said it, the turn did not search: {:?}",
+        found.tools
+    );
+    assert!(
+        holds(&found.reply, CALL_SIGN),
+        "the call sign is not in the answer: {}",
+        found.reply
     );
 
     cmd_tx.send(AppCommand::Quit).unwrap();

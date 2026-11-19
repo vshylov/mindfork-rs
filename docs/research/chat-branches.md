@@ -28,7 +28,9 @@ addendum of the same day**: search in parked branches, which the owner asked for
 when the track closed — the design of its two halves, written before any code, with
 its forks H1–H3 (§10.5) decided by the owner the same day: H1 and H2 as recommended,
 and H3 the other way — a hit in a parked branch opens the chat on its line and names
-the branch, and the switch stays the person's.
+the branch, and the switch stays the person's. **Its first stage is built**
+(2026-11-19, `feat/branch-search`): the assistant's search, `branch_search`. Live
+**GO** on Gemma 4 31B and on Gemini, the control red; what the build found is §10.8.
 
 The roadmap holds two neighbouring ideas (docs/roadmap.md): "regeneration with
 variations" and "editing any message, not just the last, with history branching".
@@ -1062,10 +1064,11 @@ A tool of its own beside the reader, as `chat_search` stands beside `chat_read` 
   with `chat` another one, under the reader's rule for that (§9.3, G2). Never the
   line: the line is in front of the model, and `history_search` searches its
   folded part.
-- **It matches against what the reader returns:** a tail's rendered transcript
-  (`HistoryView`) — the speakers' text and the tool calls with their results. A
-  hit can then name its **page**, and the pair composes as the other pairs do:
-  the search says where, the reader reads it.
+- **It matches the text of the parked messages** — the speakers' and the tool
+  results', which is what the index holds of a line — and names the **page** of
+  the tail's transcript (`HistoryView`) the message is on. The pair then
+  composes as the other pairs do: the search says where, the reader reads it.
+  (The first draft matched the rendered transcript itself; §10.8 says why not.)
 - **The words are matched by the rule the other searches use** (`QueryWords`): a
   word of three characters or more as a case-insensitive substring, a
   two-character word as a whole word, every word in one message. When no message
@@ -1254,3 +1257,45 @@ place:
   at that moment — on the line, or in a tail — not by the group it was drawn in.
 - **The index grows** by the text of the parked tails — in a chat whose replies
   were often redone, by a multiple of its last exchange.
+
+### 10.8 As built: the assistant's search (2026-11-19)
+
+Built as designed; what the build changed or found:
+
+- **The text, not the render.** §10.2's first draft matched "what the reader
+  returns". A rendered block begins with the speaker's label, so a query for "user"
+  would match every block of an English profile — and, the words being an AND, drop
+  the assistant's messages that hold the rest. The shelf keeps each parked message's
+  text beside the render; the render is asked only for the page.
+- **The matcher is one function.** `QueryWords::matches`: the index's rule for a
+  word of three characters or more, the whole-word rule for two, all of them in one
+  text. The other searches split those between SQLite and Rust; this one has no
+  index to ask.
+- **A snapshot with a second consumer.** `history_read` read "the turn offers the
+  reader" off the presence of the snapshot (§9.9). Built for a turn that offers the
+  search alone, the snapshot would have made that read name a reader the turn does
+  not have. The condition is now the reader's flag, and a test holds a turn with the
+  snapshot and without the reader (docs/lessons.md §4).
+- **Each tool brings the refusals that name it.** "Call … without `chat`" is said by
+  both tools; the two answers are each tool's own keys, the ones that name no tool
+  are shared.
+- **Without the reader a hit points at the person's command.** The search alone
+  shows a fragment and cannot widen it; its last line then says that the person
+  brings a branch back with `/branch`. For another conversation it says nothing:
+  that command is the open chat's.
+- **Live** (`a_parked_word_is_found_when_asked_and_left_alone_when_not_e2e_live`),
+  `google/gemma-4-31b-it` and `google/gemini-3.5-flash` through the gateway, the
+  search on beside `calculate` and `current_time`, the reader off — with it on a
+  model may list and read instead, and the check is about the search:
+  1. an unrelated question and a `Ctrl+R` on its reply — no search, and the parked
+     call sign in no request;
+  2. "one of the earlier variants mentioned a call sign; find it" — `branch_search`,
+     and the call sign in the answer. Gemma searched for "call sign"; Gemini for
+     "mooring" first — a word of the question that no parked reply says — was told
+     that nothing matches, and searched for "call".
+
+  **GO** on both, 8 s and 14 s. **The control:** with the snapshot built for the
+  reader only, the tool answers that the conversation has no parked branches, the
+  model reports that it found none, and the deterministic test of the same path
+  fails.
+- **The settings' pictures were regenerated**: the profile's list is one row longer.

@@ -44,6 +44,13 @@ split by subsystem.
   With it on, the assistant is also told when a conversation it reads has branches;
   with it off, it is told nothing about them. With the tools for other conversations
   on, it reads another chat's branches too.
+- **The assistant can search a chat's branches when you ask it to.** A second
+  optional tool, `branch_search`, finds the branch that says a word — "which earlier
+  variant mentioned the harbour master?" — where the list of branches shows only
+  each one's first line. It is **off by default**, a switch of its own beside
+  `branch_read`, for the same reason. It searches the branches of one conversation
+  and never the conversation in front of you; the assistant's other searches still
+  find nothing in a branch.
 - **`mindfork stats` counts the messages kept in branches**, on a line of its own, and
   `--compare` tells a fork from a loss: a copy where you forked and went another way is
   *ahead*, a copy missing a branch is behind by what the branch held. A copy with no
