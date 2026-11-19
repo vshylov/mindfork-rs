@@ -445,7 +445,7 @@ fn activate_chat_with_focus_puts_the_feed_on_that_message() {
         focus_on(target),
         None,
     );
-    assert_eq!(s.feed_view.anchor(), Some(8));
+    assert!(s.feed_view.awaits_frame(), "the jump waits for its frame");
     assert_eq!(s.feed_view.marker(), Some(8));
     // The jump itself is applied by the next render — the row only exists there
     // (§1.1), so `follow` is still on until a frame is drawn.
@@ -466,7 +466,7 @@ fn activate_chat_with_focus_puts_the_feed_on_that_message() {
         FeedLanding::Tail,
         None,
     );
-    assert_eq!(s.feed_view.anchor(), None);
+    assert!(!s.feed_view.awaits_frame());
     assert_eq!(s.feed_view.marker(), None);
     term.draw(|f| s.render(f)).unwrap();
     assert!(s.feed_view.is_following());
@@ -548,10 +548,9 @@ fn focus_from_another_chat_falls_back_to_the_tail() {
         focus_on(stale),
         None,
     );
-    assert_eq!(
-        s.feed_view.anchor(),
-        None,
-        "an id from another chat must not anchor anything here"
+    assert!(
+        !s.feed_view.awaits_frame(),
+        "an id from another chat must not move anything here"
     );
     assert_eq!(
         s.feed_view.marker(),
@@ -994,6 +993,72 @@ fn a_woken_turn_does_not_take_a_reader_to_the_tail() {
         s.feed_view.is_following(),
         "and a feed at its tail follows it"
     );
+}
+
+/// `Ctrl+T` reshapes every block, and a reader scrolled into the middle of a
+/// conversation stays on the message they were reading
+/// (docs/research/feed-landing.md, fork F2) — where the feed used to keep its
+/// row number, and so showed whatever message that row became.
+#[test]
+fn ctrl_t_keeps_a_reader_on_the_message_they_were_reading() {
+    let mut s = ChatScreen::new();
+    let messages: Vec<Message> = (0..10)
+        .map(|i| {
+            let mut m = Message::assistant(format!("ответ-{i}"));
+            m.thoughts = Some("мысль ".repeat(40));
+            m
+        })
+        .collect();
+    open_at(&mut s, gen_id(), &messages, FeedLanding::Tail);
+    screen_rows(&mut s, 40, 14);
+    s.feed_view.scroll_up(9);
+    screen_rows(&mut s, 40, 14);
+    let reading = s.feed_place().expect("a message is on the first row");
+
+    for _ in 0..2 {
+        s.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL));
+        screen_rows(&mut s, 40, 14);
+        assert_eq!(s.feed_place().map(|p| p.message), Some(reading.message));
+    }
+    // A window made narrower, then wider again: the same.
+    for width in [28, 60] {
+        screen_rows(&mut s, width, 14);
+        assert_eq!(s.feed_place().map(|p| p.message), Some(reading.message));
+    }
+}
+
+/// A search hit opens the chat with the **match** on the screen (research
+/// fork F3): in a message taller than the window it used to open on the
+/// message's first row, the word below the fold.
+#[test]
+fn a_search_hit_opens_with_its_match_on_the_screen() {
+    let mut s = ChatScreen::new();
+    let mut messages = replies("реплика");
+    let long = Message::assistant(format!(
+        "{} жемчуг {}",
+        "вода ".repeat(150),
+        "вода ".repeat(30)
+    ));
+    let hit = long.id;
+    messages[6] = long;
+    open_at(
+        &mut s,
+        gen_id(),
+        &messages,
+        FeedLanding::Jump {
+            message: hit,
+            query: "жемчуг".into(),
+        },
+    );
+    let rows = screen_rows(&mut s, 40, 14);
+    assert!(
+        rows.iter().any(|r| r.contains("жемчуг")),
+        "the match is on the screen: {rows:?}"
+    );
+    let place = s.feed_place().unwrap();
+    assert_eq!(place.message, hit);
+    assert!(place.row > 0, "not the message's first row");
+    assert_eq!(s.feed_view.marker(), Some(6), "and the message is marked");
 }
 
 /// The view's first row held for a reveal is the **open chat's**: a reveal

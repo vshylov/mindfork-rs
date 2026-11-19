@@ -403,21 +403,13 @@ pub struct MessageFeed {
     /// a scroll row needs the block cache built at the current panel width, and
     /// neither exists outside `render` (docs/history/chat-search-stage2.md §1.1).
     pending: Option<Pending>,
-    /// The feed item the **view position** is tied to, used to re-derive the row
-    /// after a rewrap (resize, theme, `Ctrl+T`) invalidates every row offset —
-    /// an index survives that, a row does not (§1.5, fork S6).
-    ///
-    /// Deliberately **not** the same field as [`Self::marker`]: this one is
-    /// cleared by a manual scroll, because once the user has steered away a
-    /// resize must not yank them back to the message.
-    anchor: Option<usize>,
     /// The feed item drawn with the accent rail — "this is where you landed".
     ///
     /// **Survives a manual scroll** (that is the point: you scroll around the
     /// hit to read its context and can still see it), and is only dropped when
-    /// the chat changes or a new jump replaces it. Being separate from
-    /// [`Self::anchor`] is also what keeps it cheap — it is the only one of the
-    /// two in [`CacheKey`], so scrolling no longer invalidates the block cache.
+    /// the chat changes or a new jump replaces it. Being separate from where
+    /// the view stands is also what keeps it cheap — it is in [`CacheKey`] and
+    /// the scroll is not, so scrolling does not invalidate the block cache.
     marker: Option<usize>,
     /// The query whose matches are highlighted **inside the marked message** —
     /// the other half of a jump ("here is the message" / "here is your word in
@@ -449,7 +441,7 @@ pub struct MessageFeed {
     scroll_to_match: bool,
     /// [`MessageFeed::build_lines`] dropped the whole cache on this frame (the
     /// key changed), i.e. every row offset it had produced before is stale.
-    /// Consumed by `render` to re-derive the anchored row. See [`CacheKey`].
+    /// Consumed by `render` to put the view back on what it showed. See [`CacheKey`].
     cache_reset: bool,
     /// Where the rows of the **last drawn frame** sit on screen — what a press,
     /// a drag and the selection's highlight are read against, like the click
@@ -492,6 +484,174 @@ enum Pending {
         block: usize,
         held: Option<(usize, usize)>,
     },
+    /// A search hit in the block: its first row on the view's first when the
+    /// first highlighted match is on the screen that way, and otherwise that
+    /// match a third of the view down — the word that was searched for is what
+    /// the person came to read (docs/research/feed-landing.md, fork F3).
+    Hit { block: usize },
+    /// What was on the view's first row before a rewrap: the block's `row`-th
+    /// row of the `of` it had then, found again among the rows it has now —
+    /// by the line it was a piece of where the frame recorded one and the
+    /// block still has it ([`TopLine`]), by its share of the block otherwise
+    /// ([`rewrapped_row`]; research fork F2).
+    Kept {
+        block: usize,
+        row: usize,
+        of: usize,
+        line: Option<TopLine>,
+    },
+}
+
+/// A logical line of a block: the rows a wrap broke one line into
+/// ([`RowFact::soft`] says which rows continue the one above), and what the
+/// line says. Made with the block and cached beside its rows
+/// ([`CachedBlock::said`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Said {
+    /// Its first row in the block.
+    row: usize,
+    /// How many rows it was broken into.
+    pieces: usize,
+    /// What it says, whitespace apart, hashed ([`feed_selection::ink`]);
+    /// `None` for a line that says nothing — a blank row, the separator.
+    key: Option<u64>,
+}
+
+/// The logical lines of a block's rows.
+fn said(lines: &[Line<'static>], facts: &[RowFact]) -> Vec<Said> {
+    use std::hash::Hasher;
+    let mut out: Vec<Said> = Vec::new();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut inked = 0;
+    for (row, (line, fact)) in lines.iter().zip(facts).enumerate() {
+        // A block's first row begins a line, whatever it says of itself.
+        if row == 0 || !fact.soft {
+            if let Some(last) = out.last_mut() {
+                last.pieces = row - last.row;
+                last.key = (inked > 0).then(|| hasher.finish());
+            }
+            out.push(Said {
+                row,
+                pieces: 1,
+                key: None,
+            });
+            hasher = std::collections::hash_map::DefaultHasher::new();
+            inked = 0;
+        }
+        inked += feed_selection::ink(line, *fact, &mut hasher);
+    }
+    if let Some(last) = out.last_mut() {
+        last.pieces = lines.len() - last.row;
+        last.key = (inked > 0).then(|| hasher.finish());
+    }
+    out
+}
+
+/// What the view's first row is, in terms a rewrap does not change: the line
+/// it is a piece of, named by what the line **says**.
+///
+/// A rewrap breaks a line into other pieces and leaves its text the text it
+/// was, so the line is found again exactly — at another width, and with a
+/// fold opened or closed elsewhere in the block. A share of the block's rows
+/// is a row or so off instead, and a window dragged by its edge is rewrapped
+/// at every width it passes: an error of a row a step walks the view away
+/// from what the person was reading. A line's *number* is no better: a table
+/// above it is laid out in other rows at another width. Both found by the pty
+/// run of stage 3 (docs/research/feed-landing.md, fork F2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TopLine {
+    /// A piece of a line that says something: the `nth` of the block's `of`
+    /// lines that say `key`, and the row's place among its `pieces`.
+    Text {
+        key: u64,
+        nth: usize,
+        of: usize,
+        piece: usize,
+        pieces: usize,
+    },
+    /// A blank row, `above` rows over the next line that says something.
+    /// Blank rows are not rewrapped, so the distance holds.
+    Above {
+        key: u64,
+        nth: usize,
+        of: usize,
+        above: usize,
+    },
+    /// A blank row with only blank rows under it in its block — the
+    /// separator: so many rows from the block's end.
+    FromEnd(usize),
+}
+
+impl TopLine {
+    /// What row `row` is in a block of `rows` rows whose lines are `said`.
+    fn of(said: &[Said], rows: usize, row: usize) -> Option<Self> {
+        let row = row.min(rows.checked_sub(1)?);
+        let i = said.partition_point(|l| l.row <= row).checked_sub(1)?;
+        // Which of the lines that say the same line `j` is, and of how many.
+        let among = |j: usize| {
+            let same = |l: &&Said| l.key == said[j].key;
+            (
+                said[..j].iter().filter(same).count(),
+                said.iter().filter(same).count(),
+            )
+        };
+        if let Some(key) = said[i].key {
+            let (nth, of) = among(i);
+            return Some(Self::Text {
+                key,
+                nth,
+                of,
+                piece: row - said[i].row,
+                pieces: said[i].pieces,
+            });
+        }
+        Some(
+            match (i + 1..said.len()).find_map(|j| said[j].key.map(|key| (j, key))) {
+                Some((j, key)) => {
+                    let (nth, of) = among(j);
+                    Self::Above {
+                        key,
+                        nth,
+                        of,
+                        above: said[j].row - row,
+                    }
+                }
+                None => Self::FromEnd(rows - row),
+            },
+        )
+    }
+
+    /// The row that shows it in the block as rewrapped: `rows` rows, lines
+    /// `said`. `None` where the line cannot be told — it says something else
+    /// now (a table's row at another width), or the block has another number
+    /// of lines that say the same.
+    fn row_in(self, said: &[Said], rows: usize) -> Option<usize> {
+        let find = |key: u64, nth: usize, of: usize| {
+            let mut same = said.iter().filter(|l| l.key == Some(key));
+            (same.clone().count() == of)
+                .then(|| same.nth(nth))
+                .flatten()
+        };
+        match self {
+            Self::Text {
+                key,
+                nth,
+                of,
+                piece,
+                pieces,
+            } => {
+                let line = find(key, nth, of)?;
+                Some(line.row + rewrapped_row(piece, pieces, line.pieces))
+            }
+            Self::Above {
+                key,
+                nth,
+                of,
+                above,
+            } => find(key, nth, of)?.row.checked_sub(above),
+            Self::FromEnd(n) => rows.checked_sub(n),
+        }
+    }
 }
 
 /// The geometry of the last drawn frame ([`MessageFeed::drawn`]).
@@ -507,6 +667,9 @@ struct DrawnRows {
     starts: Vec<usize>,
     /// How many rows the feed has.
     total: usize,
+    /// What the first row drawn is, in terms a rewrap does not change — what
+    /// one puts the view back on ([`TopLine`]).
+    top: Option<TopLine>,
 }
 
 impl DrawnRows {
@@ -521,6 +684,25 @@ impl DrawnRows {
         let block = self.starts.partition_point(|&s| s <= abs).saturating_sub(1);
         (block, abs - self.starts[block])
     }
+
+    /// How many rows the block had in this frame.
+    fn rows_of(&self, block: usize) -> usize {
+        let end = self.starts.get(block + 1).copied().unwrap_or(self.total);
+        end.saturating_sub(self.starts[block])
+    }
+}
+
+/// The row of a block that shows what its `row`-th row showed before a rewrap
+/// took it from `of` rows to `rows`: the same share of the way through it. A
+/// block the rewrap left alone keeps the row exactly; the first row stays the
+/// first and the last the last. Rounded **down**: where a row became two, the
+/// view starts on the first of them and not in the middle of the sentence.
+fn rewrapped_row(row: usize, of: usize, rows: usize) -> usize {
+    if of <= 1 || rows == 0 {
+        return 0;
+    }
+    let (was_last, last) = (of - 1, rows - 1);
+    row.min(was_last) * last / was_last
 }
 
 /// A left-button gesture in the feed: what its press took, and where the
@@ -593,7 +775,7 @@ struct CacheKey {
     /// The marked feed item (a jump target): its rail is drawn in the accent
     /// color, and that color is baked into the cached block — so moving or
     /// clearing the marker has to reset the cache. Only the **marker** belongs
-    /// here; the scroll anchor is not a rendering input.
+    /// here; where the view stands is not a rendering input.
     marker: Option<usize>,
     /// Fingerprint of the address book ([`MessageFeed::known_chats`]): which
     /// `chat://` references resolve — and so which ones are drawn as links — is
@@ -636,6 +818,13 @@ struct CachedBlock {
     /// continues the line above — what a selection needs and the bare `Line`
     /// no longer says (docs/research/mouse-always-captured.md §5.4).
     facts: Vec<RowFact>,
+    /// The block's logical lines and what each says ([`Said`]) — what a
+    /// rewrap finds the view's first row by. Made on first use and kept with
+    /// the build: only the block a reader's view starts in is ever asked, and
+    /// reading every row of a long reply at each chunk of it would be paid by
+    /// a feed that follows its tail and needs none of it (2.5 ms beside a
+    /// 10 ms build, measured on a 40K-character reply).
+    said: std::cell::OnceCell<Vec<Said>>,
     /// The conversations this block links to, in the order they are drawn —
     /// what the reference picker offers (spec §11.3). Recorded while the block
     /// is built, because that is where the addresses are recognised and where
@@ -653,6 +842,13 @@ struct CachedBlock {
     /// block is built: it is normally one line, but a long custom role name can
     /// wrap it, so counting output lines is the only stable answer.
     content_from: usize,
+}
+
+impl CachedBlock {
+    /// The block's logical lines ([`Self::said`]).
+    fn said(&self) -> &[Said] {
+        self.said.get_or_init(|| said(&self.lines, &self.facts))
+    }
 }
 
 impl Default for MessageFeed {
@@ -765,7 +961,6 @@ impl MessageFeed {
             cache: Vec::new(),
             cache_key: None,
             pending: None,
-            anchor: None,
             marker: None,
             highlight: None,
             highlight_scope: HighlightScope::default(),
@@ -981,14 +1176,14 @@ impl MessageFeed {
         self.scroll = self.scroll.saturating_sub(lines);
         self.follow = false;
         self.scrolled = true;
-        self.release_anchor();
+        self.release_pending();
     }
 
     /// Scroll down (turns "follow" back on at the very bottom).
     pub fn scroll_down(&mut self, lines: usize) {
         self.scroll = self.scroll.saturating_add(lines);
         self.scrolled = true;
-        self.release_anchor();
+        self.release_pending();
         // Actual clamping and re-enabling follow — in render (the height is known there).
     }
 
@@ -1000,7 +1195,7 @@ impl MessageFeed {
     /// would also wipe the block cache on every send (see [`Self::marker`]).
     pub fn scroll_to_bottom(&mut self) {
         self.follow = true;
-        self.release_anchor();
+        self.release_pending();
     }
 
     /// Scroll to the tail **only if the view is already following it**.
@@ -1023,7 +1218,7 @@ impl MessageFeed {
         self.scroll = 0;
         self.follow = false;
         self.scrolled = true;
-        self.release_anchor();
+        self.release_pending();
     }
 
     /// Puts the view on the feed item holding the domain message `id`: the next
@@ -1033,8 +1228,8 @@ impl MessageFeed {
     /// another chat) is a no-op.
     ///
     /// Resolving the id lives here, not on the caller: the feed **index** is
-    /// this widget's coordinate system (`scroll`, `cache`, `anchor` and `marker`
-    /// are all keyed by it), the messages are already handed to every other
+    /// this widget's coordinate system (`scroll`, `cache`, a pending request and
+    /// `marker` are all keyed by it), the messages are already handed to every other
     /// entry point (`render`/`build_lines`), and the projection's id mapping
     /// ([`FeedMessage::message_ids`]) is the widget's own contract.
     ///
@@ -1052,14 +1247,18 @@ impl MessageFeed {
         let Some(idx) = block_of(messages, id) else {
             return false;
         };
-        self.land(Pending::Row { block: idx, row: 0 }, idx);
         self.marker = Some(idx);
         self.highlight = highlight.filter(|q| !q.is_empty()).map(str::to_owned);
+        // With a query the view goes to the match, which only the frame that
+        // highlights it can find; without one, to the message's first row.
+        self.land(match self.highlight {
+            Some(_) => Pending::Hit { block: idx },
+            None => Pending::Row { block: idx, row: 0 },
+        });
         true
     }
 
-    /// Takes a request for where the next frame puts the view, tied to the
-    /// feed item `anchor` from there on.
+    /// Takes a request for where the next frame puts the view.
     ///
     /// **The feed stops following its tail here, not in the frame that
     /// applies the request.** Between the two, content can arrive on its own —
@@ -1069,9 +1268,8 @@ impl MessageFeed {
     /// ([`Self::scroll_to_bottom_if_following`]), which drops a pending
     /// request. A feed that has been asked to stand somewhere is not
     /// following.
-    fn land(&mut self, pending: Pending, anchor: usize) {
+    fn land(&mut self, pending: Pending) {
         self.pending = Some(pending);
-        self.anchor = Some(anchor);
         self.follow = false;
     }
 
@@ -1098,21 +1296,18 @@ impl MessageFeed {
     }
 
     /// Puts the view back on a place read earlier ([`Self::place`]): the next
-    /// render scrolls to that row of that message's block, and from there the
-    /// view is tied to the message, as after a jump. Nothing is marked — the
+    /// render scrolls to that row of that message's block, clamped to it — the
+    /// row is only right at the width it was read at. Nothing is marked — the
     /// person is back where they were, not somewhere they were sent. `false`
     /// when the feed does not show the message.
     pub fn restore_place(&mut self, messages: &[FeedMessage], place: FeedPlace) -> bool {
         let Some(block) = block_of(messages, place.message) else {
             return false;
         };
-        self.land(
-            Pending::Row {
-                block,
-                row: place.row,
-            },
+        self.land(Pending::Row {
             block,
-        );
+            row: place.row,
+        });
         true
     }
 
@@ -1135,7 +1330,7 @@ impl MessageFeed {
             return false;
         };
         let held = held.and_then(|p| block_of(messages, p.message).map(|b| (b, p.row)));
-        self.land(Pending::Reveal { block, held }, block);
+        self.land(Pending::Reveal { block, held });
         true
     }
 
@@ -1189,39 +1384,59 @@ impl MessageFeed {
         self.scroll_to_match = true;
     }
 
-    /// Drops the anchor, the marker **and the highlight**: the feed they index
-    /// is gone (a chat switch). Cheap here — a rebuilt feed misses every
-    /// fingerprint anyway, so the cache was going to be rebuilt regardless.
+    /// Drops a pending request, the marker **and the highlight**: the feed
+    /// they index is gone (a chat switch). Cheap here — a rebuilt feed misses
+    /// every fingerprint anyway, so the cache was going to be rebuilt regardless.
     pub fn clear_focus(&mut self) {
         self.pending = None;
-        self.anchor = None;
         self.marker = None;
         self.highlight = None;
     }
 
-    /// Drops the scroll anchor, keeping the marker: the user is steering now, so
-    /// a later rewrap must not pull the view back — but they can still see where
-    /// they landed. See [`Self::anchor`] vs [`Self::marker`].
-    fn release_anchor(&mut self) {
+    /// Drops a request no frame has applied yet, keeping the marker: the user
+    /// is steering now, so the view goes where they scroll it — but they can
+    /// still see where they landed.
+    fn release_pending(&mut self) {
         self.pending = None;
-        self.anchor = None;
     }
 
     /// Where the view must be put **this frame**: a pending request
-    /// (consumed), or — after a rewrap invalidated every row offset — the
-    /// anchored item's first row. Both can only become a row inside `render`
-    /// (§1.1).
+    /// (consumed), or — after a rewrap invalidated every row offset — what was
+    /// on the view's first row before it. Both can only become a row inside
+    /// `render` (§1.1).
+    ///
+    /// **A rewrap keeps what is on the screen** (docs/research/feed-landing.md,
+    /// fork F2). `scroll` is a row number, and a resize, a theme, `Ctrl+T`,
+    /// `Ctrl+O` or a new compaction boundary gives every block other rows: the
+    /// number then names some other text. The frame last drawn says which
+    /// block that row was in and which line of it ([`DrawnRows`]), so the view
+    /// is put back on that line of that block ([`TopLine`]) — or, where the
+    /// line cannot be told any more, as far through the block as it was. This
+    /// used to be done for a jump alone, by an index it left behind and a
+    /// manual scroll released, so a reader who had scrolled anywhere was moved
+    /// by a resize. The row is derived from the last frame at the moment it is
+    /// needed and never stored (fork S6's objection was to storing one).
     fn take_focus_target(&mut self) -> Option<Pending> {
         let rewrapped = std::mem::take(&mut self.cache_reset);
         if let Some(pending) = self.pending.take() {
             return Some(pending);
         }
-        // Following the tail needs no anchor — the clamp already keeps it there.
-        if rewrapped && !self.follow {
-            self.anchor.map(|block| Pending::Row { block, row: 0 })
-        } else {
-            None
+        // Following the tail needs no keeping — the clamp already holds it there.
+        if !rewrapped || self.follow {
+            return None;
         }
+        // `scroll`, not the frame's own: a scroll no frame has drawn yet is in
+        // the old rows too, and so is the first row a new chat was opened at.
+        let drawn = self.drawn.as_ref()?;
+        let at = self.scroll.min(drawn.max_scroll);
+        let (block, row) = drawn.locate(at);
+        Some(Pending::Kept {
+            block,
+            row,
+            of: drawn.rows_of(block),
+            // The line the frame recorded is the line of the row it drew first.
+            line: drawn.top.filter(|_| at == drawn.scroll),
+        })
     }
 
     /// Where a block's rows begin in the feed's rows as the cache holds them,
@@ -1248,6 +1463,36 @@ impl MessageFeed {
                     Some(top) if (top..top + view_h).contains(&first) => top,
                     _ => first,
                 })
+            }
+            Pending::Hit { block } => {
+                let (first, rows) = self.block_rows(block)?;
+                // The matches `build_lines` has just highlighted, as rows of
+                // the feed; a jump's are all inside the block it marked.
+                let hit = self
+                    .matches
+                    .iter()
+                    .copied()
+                    .find(|row| (first..first + rows).contains(row));
+                Some(match hit {
+                    // Below the screenful that starts with the message: the
+                    // match a third of the view down, its lead-in above it.
+                    Some(row) if row >= first + view_h => row - view_h / 3,
+                    // On that screenful — or not drawn at all (folded away,
+                    // or text the renderer transformed): the message's start.
+                    _ => first,
+                })
+            }
+            Pending::Kept {
+                block,
+                row,
+                of,
+                line,
+            } => {
+                let (start, rows) = self.block_rows(block)?;
+                let row = line
+                    .and_then(|line| line.row_in(self.cache[block].said(), rows))
+                    .unwrap_or_else(|| rewrapped_row(row, of, rows));
+                Some(start + row.min(rows.saturating_sub(1)))
             }
         }
     }
@@ -1276,16 +1521,11 @@ impl MessageFeed {
     /// is a feed index, and the rebuild dropped the feed's notes, so the
     /// message is found again by id. A mark whose message is gone goes, and
     /// the jump's highlight with it; an in-feed search's highlight is the
-    /// whole feed's and stays. The view's tie to a feed item is dropped: the
-    /// caller restores a place if the view had one.
+    /// whole feed's and stays.
     pub fn remark(&mut self, messages: &[FeedMessage], marked: Option<Uuid>) {
         self.marker = marked.and_then(|id| block_of(messages, id));
         if self.marker.is_none() && self.highlight_scope == HighlightScope::MarkedOnly {
             self.highlight = None;
-        }
-        // A landing still waiting for its frame keeps the item it named.
-        if self.pending.is_none() {
-            self.anchor = None;
         }
     }
 
@@ -1293,12 +1533,6 @@ impl MessageFeed {
     #[cfg(test)]
     pub(crate) fn scroll_row(&self) -> usize {
         self.scroll
-    }
-
-    /// Test accessor: the feed index the view position is anchored to.
-    #[cfg(test)]
-    pub(crate) fn anchor(&self) -> Option<usize> {
-        self.anchor
     }
 
     /// Test accessor: the feed index drawn with the accent rail.
@@ -1588,8 +1822,8 @@ impl MessageFeed {
         let view_w = inner.width.max(1) as usize;
         let unwrapped = self.build_lines(messages, palette, view_w, loc);
 
-        // A jump, a place restored, a reveal (or an anchor whose rows a rewrap
-        // just invalidated) becomes a scroll row here and nowhere else — the
+        // A jump, a place restored, a reveal (or the view's own first row,
+        // which a rewrap just invalidated) becomes a scroll row here and nowhere else — the
         // cache it is measured against only exists after `build_lines` at this
         // width (§1.1).
         //
@@ -1673,13 +1907,24 @@ impl MessageFeed {
                 starts.push(at);
                 at += block.lines.len();
             }
-            DrawnRows {
+            let mut drawn = DrawnRows {
                 inner,
                 scroll: self.scroll,
                 max_scroll,
                 starts,
                 total,
+                top: None,
+            };
+            // A feed that follows its tail is kept by the clamp, not by a
+            // line: nothing to read for it.
+            if !self.follow {
+                let (block, row) = drawn.locate(self.scroll);
+                drawn.top = self
+                    .cache
+                    .get(block)
+                    .and_then(|b| TopLine::of(b.said(), b.lines.len(), row));
             }
+            drawn
         });
         if placeholder {
             self.selection = None;
@@ -1816,7 +2061,7 @@ impl MessageFeed {
             self.cache.clear();
             self.cache_key = Some(key);
             // Every row offset the previous cache produced is stale — `render`
-            // re-derives the anchored one from this flag.
+            // re-derives the view's from this flag.
             self.cache_reset = true;
             // So is every point of a selection: the rows it named are rewrapped
             // (research F9).
@@ -1940,6 +2185,7 @@ impl MessageFeed {
                 number: place.number,
                 variant: place.variant,
                 taps: built.taps,
+                said: std::cell::OnceCell::new(),
                 lines: built.lines,
                 facts: built.facts,
                 links: built.links,
@@ -5558,10 +5804,6 @@ mod tests {
         assert_eq!(after, before, "the same rows, on the same screen rows");
         assert!(!again.is_following());
         assert_eq!(again.marker(), None, "nothing is marked");
-        let block = messages
-            .iter()
-            .position(|m| m.message_ids.contains(&place.message));
-        assert_eq!(again.anchor(), block, "a rewrap keeps the message");
         assert_eq!(again.place(&messages), Some(place), "and it reads back");
     }
 
@@ -5861,9 +6103,10 @@ mod tests {
         }
     }
 
-    /// A rewrap wipes the cache and changes every row offset, so the anchor is
-    /// the message index, not a row (§1.5, fork S6). Asserted as "the message is
-    /// still in view", not as a row number — the row legitimately changes.
+    /// A rewrap wipes the cache and changes every row offset, so the view is
+    /// put back on the message it showed, not on a row number (§1.5, fork S6).
+    /// Asserted as "the message is still in view", not as a row number — the
+    /// row legitimately changes.
     #[test]
     fn focus_survives_a_resize() {
         let messages = numbered_long(12);
@@ -5877,7 +6120,7 @@ mod tests {
         let narrow = visible(&mut feed, &messages, 30, 10);
         assert!(
             narrow.iter().any(|r| r.contains("сообщение-8")),
-            "after a resize the anchored message must still be in view: {narrow:?}"
+            "after a resize the message jumped to must still be in view: {narrow:?}"
         );
         assert_ne!(
             row_wide,
@@ -5886,35 +6129,44 @@ mod tests {
         );
     }
 
-    /// The split (anchor vs marker): a manual scroll means "I am steering now",
-    /// so the **anchor** goes — but the **marker** stays, because the point of
-    /// marking the message is that you can scroll around it to read its context
-    /// and still see where you landed.
+    /// The split (where the view stands vs the marker): a manual scroll means
+    /// "I am steering now", so a jump no frame has applied yet is dropped — but
+    /// the **marker** stays, because the point of marking the message is that
+    /// you can scroll around it to read its context and still see where you
+    /// landed.
     #[test]
-    fn manual_scroll_releases_the_anchor_but_keeps_the_marker() {
+    fn a_manual_scroll_drops_a_pending_jump_but_keeps_the_marker() {
         let messages = numbered(12);
         for scroll in [
             (|f: &mut MessageFeed| f.scroll_up(2)) as fn(&mut MessageFeed),
             |f: &mut MessageFeed| f.scroll_down(2),
         ] {
+            // After the jump was drawn: the marker outlives the scroll.
             let mut feed = MessageFeed::new();
             feed.focus_message(&messages, messages[9].message_ids[0], None);
             let _ = visible(&mut feed, &messages, 40, 10);
-            assert_eq!(feed.anchor(), Some(9));
+            assert!(!feed.awaits_frame(), "the frame applied the jump");
             assert_eq!(feed.marker(), Some(9));
-
             scroll(&mut feed);
-            assert_eq!(feed.anchor(), None, "a manual scroll releases the anchor");
-            assert_eq!(feed.marker(), Some(9), "but the marker stays put");
+            assert_eq!(feed.marker(), Some(9), "the marker stays put");
             // And the marker is still drawn after the next frame.
             let _ = visible(&mut feed, &messages, 40, 10);
             assert_eq!(feed.marker(), Some(9));
+
+            // Before any frame: the person scrolled first, and the jump is off.
+            let mut feed = MessageFeed::new();
+            feed.focus_message(&messages, messages[9].message_ids[0], None);
+            assert!(feed.awaits_frame());
+            scroll(&mut feed);
+            assert!(!feed.awaits_frame(), "a manual scroll drops the request");
+            assert_eq!(feed.marker(), Some(9), "but the marker stays put");
         }
     }
 
-    /// The other half of the split: once the anchor is released, a rewrap must
-    /// **not** pull the view back to the message. (Before the split this was the
-    /// same field, so a resize after scrolling away yanked you back.)
+    /// The other half of the split: a rewrap must **not** pull the view back
+    /// to the message once the person has scrolled away from it. (The view was
+    /// once tied to the marked message itself, so a resize after scrolling
+    /// away yanked you back.)
     #[test]
     fn resize_after_a_manual_scroll_does_not_jump_back() {
         let messages = numbered_long(12);
@@ -5939,6 +6191,325 @@ mod tests {
         assert_eq!(feed.marker(), Some(8), "the marker still survives");
     }
 
+    /// A rewrap keeps what a reader **scrolled to** (docs/research/feed-landing.md,
+    /// fork F2). `scroll` is a row number, and at another width that number is
+    /// some other message: the view used to be kept for a jump alone, and a
+    /// reader who had scrolled anywhere by hand was moved by a resize.
+    #[test]
+    fn a_resize_keeps_the_message_a_reader_scrolled_to() {
+        let messages = numbered_long(12);
+        let mut feed = MessageFeed::new();
+        visible(&mut feed, &messages, 60, 10);
+        feed.scroll_up(12);
+        visible(&mut feed, &messages, 60, 10);
+        let before = feed
+            .place(&messages)
+            .expect("a message is on the first row");
+        let row_wide = feed.scroll_row();
+        assert!(!feed.is_following(), "precondition: scrolled away");
+
+        visible(&mut feed, &messages, 26, 10);
+        let after = feed.place(&messages).unwrap();
+        assert_eq!(
+            after.message, before.message,
+            "the message on the first row is the one that was there"
+        );
+        assert_ne!(
+            feed.scroll_row(),
+            row_wide,
+            "the rewrap moved its row — otherwise the test proves nothing"
+        );
+
+        // And back: the same message again.
+        visible(&mut feed, &messages, 60, 10);
+        assert_eq!(feed.place(&messages).unwrap().message, before.message);
+    }
+
+    /// The same for the two keys that reshape every block: thoughts unfolded
+    /// above the view (`Ctrl+T`) add rows there, and the reader stays on the
+    /// message they were reading.
+    #[test]
+    fn unfolding_thoughts_above_the_view_keeps_the_message_on_the_screen() {
+        let thoughts = "мысль ".repeat(40);
+        let messages: Vec<FeedMessage> = (0..10)
+            .map(|i| msg(FeedRole::Assistant, &format!("ответ-{i}"), &thoughts))
+            .collect();
+        let mut feed = MessageFeed::new();
+        visible(&mut feed, &messages, 40, 10);
+        feed.scroll_up(8);
+        visible(&mut feed, &messages, 40, 10);
+        let before = feed.place(&messages).unwrap();
+        let rows = feed.scroll_row();
+
+        feed.toggle_thoughts();
+        visible(&mut feed, &messages, 40, 10);
+        assert_eq!(feed.place(&messages).unwrap().message, before.message);
+        assert!(
+            feed.scroll_row() > rows,
+            "the blocks above grew, and the view went down with its message"
+        );
+
+        feed.toggle_thoughts();
+        visible(&mut feed, &messages, 40, 10);
+        assert_eq!(feed.place(&messages).unwrap().message, before.message);
+    }
+
+    /// What a rewrap does not touch: a feed at its tail still follows it, and a
+    /// conversation opened at its first row stays there though the frame last
+    /// drawn was another conversation's, scrolled somewhere.
+    #[test]
+    fn a_rewrap_moves_neither_the_tail_nor_a_feed_opened_at_its_start() {
+        let messages = numbered_long(12);
+        let mut feed = MessageFeed::new();
+        visible(&mut feed, &messages, 60, 10);
+        visible(&mut feed, &messages, 26, 10);
+        assert!(feed.is_following(), "the tail through a resize");
+
+        feed.scroll_up(9);
+        visible(&mut feed, &messages, 26, 10);
+        assert!(
+            feed.scroll_row() > 0,
+            "precondition: the last frame is mid-feed"
+        );
+        // Another conversation, opened at its start; its rows are other rows.
+        let other = numbered(9);
+        feed.clear_focus();
+        feed.scroll_to_top();
+        feed.set_show_model_name(true);
+        visible(&mut feed, &other, 26, 10);
+        assert_eq!(feed.scroll_row(), 0);
+    }
+
+    /// The share of the way through a block: exact where the block kept its
+    /// rows, the first row the first and the last the last where it did not.
+    #[test]
+    fn a_rewrapped_row_is_the_same_share_of_its_block() {
+        for row in 0..7 {
+            assert_eq!(rewrapped_row(row, 7, 7), row, "an untouched block");
+        }
+        assert_eq!(rewrapped_row(0, 9, 30), 0);
+        assert_eq!(rewrapped_row(8, 9, 30), 29);
+        assert_eq!(rewrapped_row(4, 9, 17), 8, "the middle stays the middle");
+        assert_eq!(rewrapped_row(20, 21, 3), 2);
+        assert_eq!(rewrapped_row(10, 21, 3), 1);
+        assert_eq!(rewrapped_row(5, 9, 12), 6, "rounded down: 6.9 is row 6");
+        assert_eq!(
+            rewrapped_row(99, 9, 30),
+            29,
+            "a row past the block is its last"
+        );
+        assert_eq!(rewrapped_row(3, 1, 12), 0);
+        assert_eq!(rewrapped_row(3, 5, 0), 0);
+    }
+
+    /// A block's lines from `(pieces, what it says)`: 0 says nothing.
+    fn lines_of(lines: &[(usize, u64)]) -> (Vec<Said>, usize) {
+        let mut row = 0;
+        let said = lines
+            .iter()
+            .map(|&(pieces, key)| {
+                let line = Said {
+                    row,
+                    pieces,
+                    key: (key != 0).then_some(key),
+                };
+                row += pieces;
+                line
+            })
+            .collect();
+        (said, row)
+    }
+
+    /// Where row `row` of the block `was` is in the block `now`.
+    fn found(was: &[(usize, u64)], row: usize, now: &[(usize, u64)]) -> Option<usize> {
+        let (was, rows) = lines_of(was);
+        let (now, now_rows) = lines_of(now);
+        TopLine::of(&was, rows, row)?.row_in(&now, now_rows)
+    }
+
+    /// A row is a piece of a line, and the line is found again by what it
+    /// says — at another width, where it and the lines above it are broken
+    /// into other pieces, and with lines added or taken away above it.
+    #[test]
+    fn a_row_is_found_again_by_what_its_line_says() {
+        // A header, a paragraph in three pieces, a blank row, a line, the separator.
+        let was = [(1, 7), (3, 11), (1, 0), (1, 13), (1, 0)];
+        // The same block: every row is itself.
+        for row in 0..7 {
+            assert_eq!(found(&was, row, &was), Some(row), "row {row}");
+        }
+        // Narrower: the paragraph in six pieces. Its first piece is its first,
+        // its second of three a third of the way in, the line below it is
+        // where it now is, and the blank row above that line is above it.
+        let narrow = [(1, 7), (6, 11), (1, 0), (1, 13), (1, 0)];
+        assert_eq!(found(&was, 1, &narrow), Some(1));
+        assert_eq!(found(&was, 2, &narrow), Some(3));
+        assert_eq!(found(&was, 5, &narrow), Some(8));
+        assert_eq!(found(&was, 4, &narrow), Some(7), "the blank row over it");
+        assert_eq!(
+            found(&was, 6, &narrow),
+            Some(9),
+            "the separator, from the end"
+        );
+        // And back, from a line's first piece: exactly where it was.
+        assert_eq!(found(&narrow, 8, &was), Some(5));
+        assert_eq!(found(&narrow, 1, &was), Some(1));
+
+        // A fold opened above: four lines more, and the line is still found —
+        // where a line's number, or a share of the rows, would point elsewhere.
+        let unfolded = [
+            (1, 7),
+            (1, 21),
+            (2, 22),
+            (1, 23),
+            (1, 0),
+            (3, 11),
+            (1, 0),
+            (1, 13),
+            (1, 0),
+        ];
+        assert_eq!(found(&was, 5, &unfolded), Some(10));
+        assert_eq!(found(&unfolded, 10, &was), Some(5));
+
+        // Two lines that say the same are told apart by their order...
+        let twice = [(1, 5), (1, 0), (1, 5), (1, 9)];
+        let twice_narrow = [(2, 5), (1, 0), (2, 5), (1, 9)];
+        assert_eq!(found(&twice, 2, &twice_narrow), Some(3));
+        // ...and not told at all once there is another number of them.
+        assert_eq!(found(&twice, 2, &[(1, 5), (1, 9)]), None);
+        // A line that says something else now is not found.
+        assert_eq!(
+            found(&was, 5, &[(1, 7), (3, 11), (1, 0), (2, 99), (1, 0)]),
+            None
+        );
+        // A row past the block is its last; a block with no rows has none.
+        assert_eq!(found(&was, 99, &was), Some(6));
+        assert_eq!(found(&[], 0, &was), None);
+    }
+
+    /// The lines of real rows: a wrapped paragraph is one line that says the
+    /// same at two widths, and the separator under a message says nothing.
+    #[test]
+    fn a_blocks_lines_say_the_same_at_any_width() {
+        let messages = numbered_long(1);
+        let palette = Palette::default();
+        let mut feed = MessageFeed::new();
+        let _ = feed.build_lines(&messages, &palette, 60, ru());
+        let wide = feed.cache[0].said().to_vec();
+        let _ = feed.build_lines(&messages, &palette, 24, ru());
+        let narrow = feed.cache[0].said().to_vec();
+
+        let keys = |said: &[Said]| said.iter().map(|l| l.key).collect::<Vec<_>>();
+        assert_eq!(
+            keys(&wide),
+            keys(&narrow),
+            "the same lines, saying the same"
+        );
+        assert!(
+            narrow.iter().map(|l| l.pieces).sum::<usize>()
+                > wide.iter().map(|l| l.pieces).sum::<usize>(),
+            "in more pieces"
+        );
+        assert_eq!(wide.last().unwrap().key, None, "the separator says nothing");
+        assert!(wide[0].key.is_some() && wide[0].key != wide[1].key);
+    }
+
+    /// A window dragged by its edge is rewrapped at every width it passes. The
+    /// view is kept by the line on its first row, which no width changes: at
+    /// every width that line is the first row, and the view comes back to the
+    /// row it left. A share of the block's rows is not that — a long paragraph
+    /// above takes more rows at a narrow width and the short lines under it do
+    /// not, so the share points into the paragraph — and an error at every
+    /// step walks the view away (found by the pty run of stage 3).
+    #[test]
+    fn a_window_dragged_through_many_widths_keeps_the_line_on_its_first_row() {
+        let mut messages = numbered(8);
+        let body = format!(
+            "{}\n\nпервая строка\n\nвторая строка\n\nтретья строка\n\n{}",
+            "длинный абзац ".repeat(30),
+            "хвост абзаца ".repeat(30)
+        );
+        messages[3] = msg(FeedRole::Assistant, &body, "");
+        let id = messages[3].message_ids[0];
+        let mut feed = MessageFeed::new();
+        // Put the view on the short line in the middle of the block.
+        assert!(feed.focus_message(&messages, id, None));
+        let mut rows = visible(&mut feed, &messages, 62, 10);
+        while !rows[1].contains("вторая строка") {
+            feed.scroll_down(1);
+            rows = visible(&mut feed, &messages, 62, 10);
+            assert!(!feed.is_following(), "the line is in the feed: {rows:?}");
+        }
+        let (left, row) = (rows, feed.scroll_row());
+
+        for _ in 0..3 {
+            for width in (24..62).rev().chain(25..=62) {
+                let rows = visible(&mut feed, &messages, width, 10);
+                assert!(
+                    rows[1].contains("вторая строка"),
+                    "at {width} columns the first row is {:?}",
+                    rows[1]
+                );
+            }
+        }
+        assert_eq!(feed.scroll_row(), row, "the row it left");
+        assert_eq!(visible(&mut feed, &messages, 62, 10), left);
+    }
+
+    /// A long message whose only match is far below its start, as the feed's
+    /// `block`-th of a dozen.
+    fn with_a_deep_match(block: usize, word: &str) -> Vec<FeedMessage> {
+        let mut messages = numbered(12);
+        let body = format!("{} {word} {}", "вода ".repeat(120), "вода ".repeat(20));
+        messages[block] = msg(FeedRole::Assistant, &body, "");
+        messages
+    }
+
+    /// A search hit lands with its **match** on the screen (research fork F3).
+    /// The view used to be put on the message's first row, and in a message
+    /// taller than the window the word that was searched for was below it.
+    #[test]
+    fn a_hit_deep_in_a_long_message_lands_with_the_match_on_the_screen() {
+        let messages = with_a_deep_match(5, "жемчуг");
+        let id = messages[5].message_ids[0];
+        let mut feed = MessageFeed::new();
+        assert!(feed.focus_message(&messages, id, Some("жемчуг")));
+        let rows = visible(&mut feed, &messages, 40, 12);
+        let at = rows
+            .iter()
+            .position(|r| r.contains("жемчуг"))
+            .unwrap_or_else(|| panic!("the match is on the screen: {rows:?}"));
+        // Ten rows of feed inside the border: the match a third of them down.
+        assert_eq!(at, 1 + 10 / 3, "{rows:?}");
+        let place = feed.place(&messages).unwrap();
+        assert_eq!(place.message, id, "still inside the message that was hit");
+        assert!(place.row > 0, "and not at its start");
+        assert_eq!(feed.marker(), Some(5));
+
+        // A resize after it keeps the view inside that message (fork F2).
+        visible(&mut feed, &messages, 30, 12);
+        assert_eq!(feed.place(&messages).unwrap().message, id);
+    }
+
+    /// Where the match is on the screenful that starts with the message, the
+    /// message is shown from its start, as before — and so it is where no
+    /// match is drawn at all, or the jump carries no query.
+    #[test]
+    fn a_hit_near_the_start_shows_the_message_from_its_start() {
+        let messages = with_a_deep_match(5, "жемчуг");
+        let id = messages[5].message_ids[0];
+        let start = Some(FeedPlace {
+            message: id,
+            row: 0,
+        });
+        for query in [Some("вода"), Some("нет такого слова"), None] {
+            let mut feed = MessageFeed::new();
+            assert!(feed.focus_message(&messages, id, query));
+            visible(&mut feed, &messages, 40, 12);
+            assert_eq!(feed.place(&messages), start, "{query:?}");
+        }
+    }
+
     /// The marked message is marked by its rail (fork S3 — mark the whole
     /// message, no in-content highlighting); others keep their role color.
     #[test]
@@ -5961,10 +6532,10 @@ mod tests {
         assert_ne!(palette.accent, palette.user, "the marker must be visible");
     }
 
-    /// Only the marker is a rendering input, so scrolling — which releases the
-    /// anchor — must **not** invalidate the block cache. This is the whole point
-    /// of the split: with one shared field the first scroll after a jump
-    /// re-ran markdown+syntect over the entire chat.
+    /// Only the marker is a rendering input, so scrolling must **not**
+    /// invalidate the block cache. This is the whole point of the split: with
+    /// one shared field the first scroll after a jump re-ran markdown+syntect
+    /// over the entire chat.
     #[test]
     fn scrolling_after_a_jump_does_not_invalidate_the_cache() {
         let palette = Palette::default();
@@ -5980,10 +6551,7 @@ mod tests {
 
         feed.scroll_up(3);
         let _ = feed.build_lines(&messages, &palette, 40, ru());
-        assert!(
-            !feed.cache_reset,
-            "releasing the anchor must not wipe the block cache"
-        );
+        assert!(!feed.cache_reset, "a scroll must not wipe the block cache");
 
         // ...while moving the marker legitimately does (the rail color is baked in).
         feed.focus_message(&messages, messages[2].message_ids[0], None);
@@ -5998,7 +6566,7 @@ mod tests {
         let messages = numbered(12);
         let mut feed = MessageFeed::new();
         assert!(!feed.focus_message(&messages, Uuid::new_v4(), None));
-        assert_eq!(feed.anchor(), None);
+        assert!(!feed.awaits_frame());
         assert_eq!(feed.marker(), None);
         let _ = visible(&mut feed, &messages, 40, 10);
         assert!(feed.is_following(), "the feed stays on the tail");
@@ -6011,13 +6579,14 @@ mod tests {
     /// the marked message, so it would otherwise light up whatever lands at that
     /// index in the next chat.
     #[test]
-    fn clear_focus_drops_anchor_marker_and_highlight() {
+    fn clear_focus_drops_the_request_the_marker_and_the_highlight() {
         let messages = numbered(6);
         let mut feed = MessageFeed::new();
         feed.focus_message(&messages, messages[3].message_ids[0], Some("сообщение"));
         assert!(feed.highlight.is_some());
+        assert!(feed.awaits_frame());
         feed.clear_focus();
-        assert_eq!(feed.anchor(), None);
+        assert!(!feed.awaits_frame());
         assert_eq!(feed.marker(), None);
         assert_eq!(feed.highlight, None);
     }
