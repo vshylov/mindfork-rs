@@ -211,7 +211,7 @@ impl ActiveScreen {
 ///
 /// The chat screen knows nothing about any of this (FSD: `screens` may not depend
 /// on `app`). [`ChatIntent::OpenChatList`] already means "go back" from its point
-/// of view; what that resolves to is decided in [`dispatch`].
+/// of view; what that resolves to is decided in [`dispatch()`].
 enum Back {
     /// Back to the hits the chat was opened from. The **screen itself** is
     /// stashed, not the query: re-running the search would lose the selection

@@ -11,9 +11,10 @@
 //! begun, `GenerationStarted` sent — so the screen shows it starting, `Esc` stops it,
 //! and nothing else starts beside it.
 //!
-//! Whether a name is still taken is one board's to say ([`NameBoard`]): a name lands
-//! only on an image still waiting for it, and a turn that stops waiting settles the
-//! rest. Every failure is quiet (F9) — the image keeps the name it was staged under.
+//! Whether a name is still taken is one board's to say
+//! ([`crate::features::image_name::NameBoard`]): a name lands only on an image still
+//! waiting for it, and a turn that stops waiting settles the rest. Every failure is
+//! quiet (F9) — the image keeps the name it was staged under.
 
 use std::sync::Arc;
 

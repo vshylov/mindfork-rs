@@ -201,7 +201,7 @@ impl Db {
 
 /// Runs `f` inside a savepoint — released when it succeeds, rolled back when
 /// it fails. A savepoint rather than a transaction because it nests: a test
-/// fixture may already hold one open around a seed ([`Db::batch`]).
+/// fixture may already hold one open around a seed (`Db::batch`).
 fn in_savepoint<T>(conn: &Connection, f: impl FnOnce() -> Result<T>) -> Result<T> {
     conn.execute_batch("SAVEPOINT self_model")?;
     match f() {

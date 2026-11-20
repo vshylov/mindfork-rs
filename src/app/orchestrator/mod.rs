@@ -574,7 +574,7 @@ pub(super) fn image_gen_slot(config: &AppConfig) -> crate::shared::image_gen::Im
 
 /// Builds the tool registry from the configuration (`config.tools`).
 /// `sandbox_dir` — the Python sandbox directory (`data/sandbox/`, from
-/// [`Paths`]) for Wasmer mode.
+/// [`crate::shared::paths::Paths`]) for Wasmer mode.
 fn build_registry(
     config: &AppConfig,
     sandbox_dir: std::path::PathBuf,
@@ -897,7 +897,7 @@ struct Orchestrator {
     /// A registry of "silent" background-task slots (auto-reflection/
     /// consolidation): one slot per [`BackgroundKind`] — a "running" flag
     /// (cancellation token) + a failure streak. Lifecycle — in
-    /// [`background`](self::background). Reflection cadence is tracked by the
+    /// [`background`]. Reflection cadence is tracked by the
     /// `Chat.reflected_upto` watermark (survives a restart), not by a field here.
     bg: HashMap<BackgroundKind, BgSlot>,
     /// A single outcome channel for "silent" background tasks (`(kind, Ok/Err(reason))` → loop).

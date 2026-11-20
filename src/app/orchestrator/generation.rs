@@ -2473,8 +2473,9 @@ struct TokenReport {
 
 /// One agentic loop's state: the turn's own, or a sub-agent's run inside it.
 /// Moved verbatim out of [`spawn_generation`]'s async block (Sonar S3776): the
-/// loop itself is [`Self::run`], one tool round is [`Self::tool_round`], one call
-/// — [`Self::execute_call`] / [`Self::resolve_call_result`]. The struct follows
+/// loop itself is [`Self::run`], one tool round is [`Self::tool_round`], its calls
+/// — [`Self::execute_round`] / [`Self::resolve_round`], one call's result —
+/// [`Self::resolve_call_result`]. The struct follows
 /// the module's parameter-struct pattern ([`GenSpawn`], [`ConfirmGate`]); it
 /// still never touches `Chat` — results go back through [`GenResult`].
 struct TurnLoop<'a> {

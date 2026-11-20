@@ -182,7 +182,8 @@ pub(super) struct EngineManager {
 
 impl EngineManager {
     /// Creates a manager with no servers raised (statuses `NotConfigured`, the embedder —
-    /// [`UnavailableEmbedder`]). Servers are raised by the subsequent `apply_*` calls.
+    /// [`crate::shared::api::contract::UnavailableEmbedder`]). Servers are raised by the
+    /// subsequent `apply_*` calls.
     pub(super) fn new(
         supervisor: Arc<dyn ServerSupervisor>,
         status_tx: UnboundedSender<ServerStatus>,

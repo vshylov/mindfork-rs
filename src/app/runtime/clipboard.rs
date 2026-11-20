@@ -17,7 +17,7 @@ use crate::shared::osc52::{self, Osc52Mode};
 
 /// Reads the system clipboard's text (lazily creating the client). `None` if the clipboard
 /// is unavailable/empty/non-text. Used only on Windows to restore
-/// emoji in a paste (see [`reconcile_paste`]).
+/// emoji in a paste (see [`super::input::reconcile_paste`]).
 #[cfg(windows)]
 pub(super) fn read_clipboard_text(slot: &mut Option<arboard::Clipboard>) -> Option<String> {
     if slot.is_none() {
@@ -30,7 +30,7 @@ pub(super) fn read_clipboard_text(slot: &mut Option<arboard::Clipboard>) -> Opti
 /// `Ctrl+V` handler: with no image on the clipboard the key must still do what the help
 /// overlay has always promised it does.
 ///
-/// Separate from [`read_clipboard_text`], which is Windows-only and exists for a
+/// Separate from `read_clipboard_text`, which is Windows-only and exists for a
 /// different job (reconstructing a paste's lost supplementary-plane characters).
 pub(super) fn clipboard_text(slot: &mut Option<arboard::Clipboard>) -> Option<String> {
     if slot.is_none() {
@@ -337,7 +337,7 @@ impl CopyReport {
     /// The outcome in the few words the chat's status bar has room for (and
     /// whether it is an error): the chip a copy leaves there for a few seconds
     /// (docs/research/mouse-always-captured.md F10). The same verdicts as
-    /// [`Self::message`] — which the chat list's notice keeps, with its advice
+    /// [`Self::message_of`] — which the chat list's notice keeps, with its advice
     /// — and a failure's cause goes to the log, where a cut chip cannot lose it.
     ///
     /// A copy sent over OSC 52 reads `copied (OSC 52)` (the owner's decision,

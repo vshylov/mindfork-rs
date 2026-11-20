@@ -1,5 +1,6 @@
 //! Application configuration and (re)launching the inference/embedding servers through
-//! [`ServerSupervisor`]. The orchestrator is the sole writer of `settings.json`.
+//! [`crate::app::supervisor::ServerSupervisor`]. The orchestrator is the sole writer of
+//! `settings.json`.
 
 use crate::app::events::AppEvent;
 use crate::shared::config::{AppConfig, CloudProvider, ImpersonationMode, ServerMode};
@@ -422,14 +423,12 @@ impl Orchestrator {
     /// recovery up on its own.
     ///
     /// Called after every status update, so a relaunch that fails simply produces the
-    /// next `Disconnected` and the next attempt, until [`RestartBudget`] stops it. A
-    /// launch that fails *synchronously* (a missing model file — the preflight check;
+    /// next `Disconnected` and the next attempt, until `RestartBudget` (in `engines`)
+    /// stops it. A launch that fails *synchronously* (a missing model file — the preflight check;
     /// a port a stranger holds) is skipped: retrying it would be pointless until the
     /// settings change. It posts no status of its own, but another server's report
     /// used to bring it here all the same — a refused launch was "relaunched" and
     /// refused again until the budget ran out. See docs/server-health-monitoring.md, F4.
-    ///
-    /// [`RestartBudget`]: super::engines::RestartBudget
     pub(super) fn relaunch_dead_managed_servers(&mut self) {
         let loc = self.ui_locale();
         let now = std::time::Instant::now();

@@ -5,7 +5,7 @@
 //! locale bundles — the chat screen (`screens/chat/popups.rs`) reads it directly.
 //!
 //! The [`COMPONENTS`] list is kept in sync with `Cargo.toml`'s direct
-//! dependencies by the gate test [`tests::components_cover_direct_dependencies`]
+//! dependencies by the gate test `tests::components_cover_direct_dependencies`
 //! — mirroring how the logo glyph table is checked against the SVG asset
 //! (`widgets/logo.rs`). Licenses are cross-checked against `cargo metadata`
 //! (crates' SPDX identifiers).
@@ -17,7 +17,7 @@ use crate::shared::i18n::Lang;
 /// App brand name (as in the wordmark logo and on crates.io). The binary and
 /// the crate are both named after it (`[[bin]]` and `package.name` in
 /// `Cargo.toml`, held by the gate test
-/// [`tests::the_binary_is_named_after_the_brand`]); what keeps the project name
+/// `tests::the_binary_is_named_after_the_brand`); what keeps the project name
 /// `mindfork-rs` is the repository, the Linux package and the files on disk.
 /// See docs/research/binary-rename.md.
 pub const APP_NAME: &str = "mindfork";
@@ -97,7 +97,7 @@ pub const LICENSE_TEXT: &str = include_str!("../../LICENSE");
 /// `LICENSE.ru.md` there is exactly what makes one report "Other". Plain text
 /// with **no markdown**, like the file it translates: the "License" tab reflows
 /// paragraphs and would print a `#` verbatim (gate test
-/// [`tests::the_russian_license_is_paragraphs_only`]).
+/// `tests::the_russian_license_is_paragraphs_only`).
 pub const LICENSE_TEXT_RU: &str = include_str!("../../docs/legal/LICENSE.ru.txt");
 
 /// The disclaimer covering model output, third-party models/providers and the

@@ -194,7 +194,7 @@ fn load_transcript(ctx: &ToolContext, chat_ref: &ChatRef) -> Option<Transcript> 
 /// The address shown next to a conversation — `chat://` plus a prefix of the
 /// uuid. The same string the model cites back to the user and the feed turns
 /// into a link (spec §11.3), so it has a single producer in
-/// [`chat_links`](crate::features::chat_links).
+/// [`chat_links`].
 pub(super) fn address(id: Uuid) -> String {
     chat_links::uri(id)
 }

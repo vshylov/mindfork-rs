@@ -368,7 +368,7 @@ impl<'a> RenderOpts<'a> {
 
     /// The columns of an `area_width`-wide box that hold text: past the
     /// border and the `❯` prompt column — or, bare, past the prompt and the
-    /// tag ([`Self::tag_width`]). One source for [`InputBox::content_rows`]
+    /// tag ([`Self::tag_columns`]). One source for [`InputBox::content_rows`]
     /// and [`InputBox::render`]: the layer above measures the field's height
     /// with the first, the widget wraps with the second, and a text width
     /// that differed between them by a column would make the field grow one
@@ -509,7 +509,7 @@ impl InputBox {
     }
 
     /// Number of logical lines. Field height is now computed by
-    /// [`Self::visual_line_count`] (accounts for wrapping); the method is kept
+    /// [`Self::content_rows`] (accounts for wrapping); the method is kept
     /// as a natural companion and for tests.
     #[allow(dead_code)]
     pub fn line_count(&self) -> usize {
@@ -1012,7 +1012,7 @@ impl InputBox {
     /// → the end of the text, past the row's end → the end of the row. Before
     /// the first render (`last_area == None`) or a click outside the area — a
     /// no-op (`false`). Doesn't touch the selection — that's managed by
-    /// [`Self::mouse_press`]/[`Self::mouse_drag`]. Resets undo coalescing (like
+    /// [`Self::mouse_press_by`]/[`Self::mouse_drag`]. Resets undo coalescing (like
     /// navigation). See track stage D.
     fn place_cursor_at(&mut self, mx: u16, my: u16) -> bool {
         let Some(area) = self.last_area else {
@@ -1107,7 +1107,8 @@ impl InputBox {
         self.mouse_press_by(mx, my, SelectUnit::Char)
     }
 
-    /// [`Self::mouse_press`] by `unit`, the click count: a double press
+    /// A press by `unit`, the click count: a single press places the cursor and
+    /// starts an empty selection ([`Self::place_cursor_at`]), a double press
     /// selects the run under the pointer — the box's own word boundaries
     /// ([`wrap::run_at`]) — and a triple the logical line, at once; a drag
     /// after either grows by it (research F5).

@@ -1104,7 +1104,7 @@ async fn wait_for_exit(exited: &Option<ChildExit>) -> &ChildExit {
 /// immediately, no child processes, no network, no background probes (the
 /// statuses are true by construction, there is nothing to probe). Isolation
 /// from the real data root is the caller's job: `main` boots it on a
-/// throwaway root. Unlike [`MockSupervisor`] it carries no test machinery —
+/// throwaway root. Unlike `MockSupervisor` it carries no test machinery —
 /// no call counters, no unavailability switches.
 pub struct DemoSupervisor {
     backend: Arc<dyn EngineBackend>,

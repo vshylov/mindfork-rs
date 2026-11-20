@@ -1,5 +1,6 @@
-# CI: lints (source language + doc links + fmt + clippy) on Linux + tests on
-# Linux, Windows and macOS + clippy over the code only Windows and macOS compile
+# CI: lints (source language + doc links + fmt + clippy + rustdoc) on Linux +
+# tests on Linux, Windows and macOS + clippy and rustdoc over the code only
+# Windows and macOS compile
 # + SonarQube Cloud analysis (advisory) on Linux.
 # The toolchain comes from rust-toolchain.toml (a pin, release-engineering.md F4).
 # #[ignore] smokes (engine/network/live model) without env variables are silently skipped —
@@ -111,7 +112,7 @@ jobs:
           fi
 
   lint:
-    name: Lints (source language + fmt + clippy)
+    name: Lints (source language + fmt + clippy + rustdoc)
     runs-on: ubuntu-latest
     # Measured over 291 runs: p50 1.1 min, max 5.2 — with the cache warm. A cold
     # clippy over all targets is a few minutes more, hence the room.
@@ -298,6 +299,21 @@ jobs:
         run: cargo fmt --check
       - name: Clippy (all targets, warnings = errors)
         run: cargo clippy --all-targets -- -D warnings
+      # Rustdoc's own lints: a doc link (`[`Item`]`) that no longer names an
+      # item — renamed, moved, out of scope, or compiled only under
+      # `cfg(test)` — and stray HTML in a doc comment. Clippy and `cargo test`
+      # never look at either, so 61 had accumulated by 2026-11-20
+      # (docs/journal/quality.md). A binary crate documents its private items,
+      # so this covers every doc comment, not just a public API. Most of the
+      # dependencies' check-mode metadata is the clippy step's; tokio and the
+      # crates above it are checked again, without `--all-targets`' dev
+      # features. Measured: 15 s here, 26 s on macOS, 18 s on Windows.
+      # `RUSTDOCFLAGS` is set on the step, not the job: rust-cache hashes
+      # `RUST*` variables into its key.
+      - name: Rustdoc (doc links resolve, warnings = errors)
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps
 
   test:
     name: Tests (${{ matrix.os }})
@@ -413,6 +429,13 @@ jobs:
       - name: Clippy (the macOS-only code)
         if: runner.os == 'macOS' && github.event_name == 'pull_request'
         run: cargo clippy --all-targets -- -D warnings
+      # The same code's doc comments, for the `lint` job's reason (see the
+      # rustdoc step there): rustdoc on Linux never sees them.
+      - name: Rustdoc (the macOS-only code)
+        if: runner.os == 'macOS' && github.event_name == 'pull_request'
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps
 
   # Clippy over the code only Windows compiles — `#[cfg(windows)]`: the DPAPI
   # secrets, the Job Object around a spawned tree, the console, the keyboard
@@ -434,7 +457,7 @@ jobs:
   # and would cost ~0.5 GB in a cache store already at its 10 GB limit
   # (docs/journal/ci.md, "the Windows-only code is linted").
   clippy-windows:
-    name: Clippy (the Windows-only code)
+    name: Clippy + rustdoc (the Windows-only code)
     needs: changes
     # The `test` job's two guards (see the comment there), plus the event.
     if: >-
@@ -451,6 +474,12 @@ jobs:
         run: rustup show
       - name: Clippy (all targets, warnings = errors)
         run: cargo clippy --all-targets -- -D warnings
+      # The same code's doc comments, for the `lint` job's reason (see the
+      # rustdoc step there): rustdoc on Linux never sees them.
+      - name: Rustdoc (doc links resolve, warnings = errors)
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps
 
   # SonarQube Cloud analysis (project `vshylov_mindfork-rs`, configuration in
   # sonar-project.properties). The Sonar Rust analyzer runs `cargo clippy` itself

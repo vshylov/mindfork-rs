@@ -942,8 +942,9 @@ pub fn all_tool_ids() -> Vec<ToolId> {
 /// tools `fs_read`/`fs_write`/`fs_list` (the gate is taken from the tool's
 /// metadata, [`Tool::gate`]). Sampling tools (`get_sampling`/`set_sampling`) are
 /// disabled if the current engine mode has no available parameter at all
-/// (`sampling_provider`, see [`supported_sampling_fields`]) — that's a dynamic gate
-/// by provider, so it's handled separately from the static [`meta::ToolGate`].
+/// (`sampling_provider`, see [`crate::entities::sampling::supported_sampling_fields`]) —
+/// that's a dynamic gate by provider, so it's handled separately from the static
+/// [`meta::ToolGate`].
 /// MCP-server tools (id with the `mcp__` prefix) are gated by `mcp_enabled` **by
 /// prefix**: they're dynamic and absent from the static [`CATALOG`].
 ///

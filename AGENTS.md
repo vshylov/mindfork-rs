@@ -17,7 +17,7 @@ A task isn't considered complete until all of this is done:
 - [ ] for a complex task, there's a **design doc/research**, with forks confirmed
       by the user **before** implementation (§1);
 - [ ] `cargo fmt --check` + `cargo clippy --all-targets -- -D warnings` +
-      `cargo test` — green;
+      `cargo test` + `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` — green;
 - [ ] tests written alongside the code as it's written; functionality touching
       the engine/memory/tools is covered by an `#[ignore]` smoke test and **run
       against a live stack** (§3); for pure UI/refactor — explicitly noted that a
@@ -99,7 +99,9 @@ Code conventions are in [CLAUDE.md §Conventions](CLAUDE.md); key points and
 additions:
 
 - **Before every commit**: `cargo fmt`, `cargo clippy --all-targets -- -D warnings`,
-  `cargo test` — all green.
+  `cargo test` — all green; and `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps`,
+  which CI runs too — a doc link to an item that is gone, out of scope, or exists
+  only under `cfg(test)`/`cfg(windows)` fails it (docs/lessons.md §1).
 - Tests alongside the code (`#[cfg(test)]`) **as you go**, not at the end; a
   real server/model — `#[ignore]` smokes (silently skipped without the needed
   env var).

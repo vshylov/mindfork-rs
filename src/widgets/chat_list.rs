@@ -184,7 +184,8 @@ enum Mode {
     /// word-wise navigation/deletion (`Ctrl+←/→`, `Ctrl+Backspace/Delete`),
     /// `Ctrl+Home/End`, clear/restore (`Ctrl+K`), and clipboard paste "for free". `InputBox`
     /// is large — boxed (clippy::large_enum_variant). `spell_dirty` marks
-    /// that the error highlighting needs recomputing (see [`Self::recheck_rename_spelling`]).
+    /// that the error highlighting needs recomputing (see
+    /// [`ChatListState::recheck_rename_spelling`]).
     Rename {
         id: Uuid,
         input: Box<InputBox>,

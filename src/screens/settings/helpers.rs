@@ -442,7 +442,7 @@ pub(super) fn hearing_url_row(id: FieldId, url: &Option<String>, loc: &'static L
 /// An input field holding a **secret** itself — a cloud API key or the backup
 /// password (not an env-variable name)? Such fields have special behavior: an
 /// empty seed, a masked editor, a commit as a separate intent, and `Del` as
-/// deleting the secret. See [`SettingsScreen::api_key_field_provider`].
+/// deleting the secret. See [`super::SettingsScreen::secret_field_key`].
 pub(super) fn is_secret_field(id: FieldId) -> bool {
     matches!(
         id,
@@ -473,7 +473,7 @@ pub(super) fn api_key_label(name: Option<&str>, loc: &'static Locale) -> String 
     }
 }
 
-/// The same for the env-variable row under it ("<Provider> API key (env)").
+/// The same for the env-variable row under it (`<Provider> API key (env)`).
 pub(super) fn api_key_env_label(name: Option<&str>, loc: &'static Locale) -> String {
     match name {
         Some(n) => loc.tf("ui.settings.field.api_key_env_named", &[("name", n)]),
@@ -481,7 +481,7 @@ pub(super) fn api_key_env_label(name: Option<&str>, loc: &'static Locale) -> Str
     }
 }
 
-/// The optional env row ("<Provider> API key (env, opt.)") — for the slots whose
+/// The optional env row (`<Provider> API key (env, opt.)`) — for the slots whose
 /// provider is fixed by the feature itself (web search, video), so there is no
 /// unnamed case to fall back to.
 pub(super) fn api_key_env_opt_label(name: &str, loc: &'static Locale) -> String {
@@ -835,8 +835,8 @@ pub(super) fn hint_panel_rows(
         .clamp(HINT_MIN_ROWS, cap.max(HINT_MIN_ROWS))
 }
 
-/// An inline hint for a tool disabled by a global gate ("disabled globally:
-/// <switch>"). Shown in warning color.
+/// An inline hint for a tool disabled by a global gate (`disabled globally:
+/// <switch>`). Shown in warning color.
 pub(super) fn gate_hint(gate: ToolGate, loc: &'static Locale) -> &'static str {
     loc.t(match gate {
         ToolGate::Web => "ui.settings.gate.web",
