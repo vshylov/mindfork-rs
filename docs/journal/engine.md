@@ -7577,3 +7577,19 @@ off.
   `a_text_replys_signature_round_trips` first required a signature from every
   model of levels; Gemma 4 has none on its text, so it is required of a
   `gemini-` name only.
+- **Merged**: PR 997, by the owner, 2026-11-20 04:08:45Z, merge commit `a1713a6b`.
+  - The first CI run failed only SonarCloud's gate: 66.0% coverage on new code,
+    against the 80% it requires. The two new smokes sat in `client.rs`'s inline
+    `ignored_smoke`, which CI never runs, so their lines counted as new and
+    uncovered. They moved to `gemini/client/tests/thinking_live.rs`, a path
+    `cargo llvm-cov` leaves out of the report, and the `merge_continuation` test
+    gained the continuation's signature (commit `657f5ef8`). `CI gate` failed with
+    it, as the job that rolls Sonar up; every test job was green on the first run.
+  - On the head that was merged, CI was green in all nine checks. Tests took
+    4 min 29 s on Ubuntu, 3 min 08 s on macOS and 4 min 30 s on Windows; the
+    Windows-only clippy took 5 min 14 s and the lints 1 min 48 s.
+  - SonarCloud's gate passed: no new issues, no hotspots, 95.7% of the new code
+    covered, 0.0% duplicated.
+  - **Not released yet**: the fix waits in `CHANGELOG.md`'s `[Unreleased]`, with
+    two Fixed items and the Data item for `thought_signature`; `v0.28.0` is still
+    the newest release.
