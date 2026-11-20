@@ -1,6 +1,7 @@
 //! The inference engine contract (`EngineBackend`) and its types. Hides the transport
-//! (HTTP to xinfer) behind a trait — testability (mock/replay) and the ability
-//! to swap the transport. See spec §6.1 and docs/xinfer-contract.md §8.
+//! (HTTP to an OpenAI-compatible server or a cloud provider) behind a trait —
+//! testability (mock/replay) and the ability to swap the transport. See spec §6.1
+//! and ADR 0004.
 
 use std::pin::Pin;
 
@@ -658,8 +659,11 @@ impl ThinkingAccumulator {
 /// A stream of reply fragments.
 pub type ChatStream = Pin<Box<dyn Stream<Item = ChatChunk> + Send>>;
 
-/// The inference engine (chat). Implementations: an HTTP client to xinfer
-/// ([`super::openai::OpenAiClient`]) and a mock for tests.
+/// The inference engine (chat). Implementations: an HTTP client to an
+/// OpenAI-compatible server ([`super::openai::OpenAiClient`]), the cloud wires
+/// ([`super::openai::ResponsesClient`], [`super::anthropic::AnthropicClient`],
+/// [`super::gemini::GeminiClient`]), the retrying wrapper
+/// ([`super::retry::RetryBackend`]) and a mock for tests.
 #[async_trait::async_trait]
 pub trait EngineBackend: Send + Sync {
     /// A streaming single-turn request. Cancellation — via `cancel`.

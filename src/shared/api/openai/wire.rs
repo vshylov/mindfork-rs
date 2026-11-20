@@ -1,8 +1,8 @@
-//! Serde types for the xinfer HTTP protocol (`/v1/chat/completions`, `/v1/embeddings`)
-//! and building the request body. Matches docs/xinfer-contract.md §3, §6 exactly.
+//! Serde types for the OpenAI-compatible HTTP protocol (`/v1/chat/completions`,
+//! `/v1/embeddings`) and building the request body. See spec §6.2, §8.
 //!
 //! Invariant: the `stop` field is NOT sent (anti-self-cutoff on EOS text —
-//! see spec §7, docs/xinfer-contract.md §5).
+//! see spec §7).
 
 use serde::{Deserialize, Serialize};
 

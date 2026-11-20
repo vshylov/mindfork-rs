@@ -3,6 +3,13 @@
 **Status:** accepted (2026-06-14). Closes the `[R]` "xinfer embeddings" from
 [plan.md §M5](../history/plan.md).
 
+> **Historical note.** This ADR was written while the engine was `xinfer`. The
+> engine has since become llama.cpp `llama-server` (ADR 0004,
+> [install.md §3](../install.md#3-inference-engine-llamacpp-llama-server)):
+> the embedding server is `llama-server --embeddings` on its own port, and
+> `XinferClient` below is today's `OpenAiClient`. The decision itself — a
+> dedicated embedding server behind its own `Embedder` trait — stands.
+
 **Context:** RAG (`rag_add`/`rag_search`) and semantic `note_recall` need
 embeddings. An OpenAI-compatible server can serve `/v1/embeddings` off the
 **already-loaded chat model**, which technically removes the need for a second
