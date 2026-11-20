@@ -3559,6 +3559,7 @@ mod ignored_smoke {
                 ChatChunk::Text(t) => text.push_str(&t),
                 ChatChunk::Thoughts(t) => thoughts.push_str(&t),
                 ChatChunk::ThoughtsSignature(_)
+                | ChatChunk::TextSignature(_)
                 | ChatChunk::ToolCall(_)
                 | ChatChunk::Usage(_)
                 | ChatChunk::Served(_) => {}

@@ -832,6 +832,7 @@ async fn summarize_text(
                 }
                 ChatChunk::Thoughts(_)
                 | ChatChunk::ThoughtsSignature(_)
+                | ChatChunk::TextSignature(_)
                 | ChatChunk::ToolCall(_)
                 | ChatChunk::Served(_) => {}
             }

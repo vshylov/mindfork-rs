@@ -20,13 +20,16 @@ fn message_to_api(message: &Message, loc: &Locale) -> Option<ApiMessage> {
             ApiMessage::user(user_words(message, loc))
                 .with_images(images_to_api(&message.images, loc)),
         ),
+        // The reply's text signature (Gemini) goes back with it on every later
+        // turn, like a call's does ([`record_to_api`]); other wires ignore it.
         MessageRole::Assistant => {
-            if message.tool_calls.is_empty() {
-                Some(ApiMessage::assistant(&message.text))
+            let api = if message.tool_calls.is_empty() {
+                ApiMessage::assistant(&message.text)
             } else {
                 let calls = message.tool_calls.iter().map(record_to_api).collect();
-                Some(ApiMessage::assistant_tool_calls(&message.text, calls))
-            }
+                ApiMessage::assistant_tool_calls(&message.text, calls)
+            };
+            Some(api.with_thought_signature(message.thought_signature.clone()))
         }
         // A tool result can carry images too (spec §9.10): an MCP screenshot tool is the
         // first producer. Where each provider puts them is its builder's business — the

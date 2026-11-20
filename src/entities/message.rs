@@ -168,6 +168,15 @@ pub struct Message {
     /// as before.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub voice: Option<VoiceMark>,
+    /// The thought signature on an assistant reply's **text** (Gemini 3 and later:
+    /// `thoughtSignature` on the last part of a reply without calls), resent with
+    /// the text on every later turn — not enforced, recommended by Google for the
+    /// reasoning's quality (docs/journal/engine.md, "Gemini 4 takes thinking
+    /// levels"). A call's signature lives on its [`ToolCallRecord`]. Other
+    /// providers — `None`; an opaque token, never shown. Additive (ADR 0006 F12):
+    /// old chats read `None`, and a reply without one serializes as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thought_signature: Option<String>,
 }
 
 /// What is kept of a voice note: how long it was.
@@ -199,6 +208,7 @@ impl Message {
             notification: None,
             followup: false,
             voice: None,
+            thought_signature: None,
         }
     }
 
@@ -352,6 +362,26 @@ mod tests {
                 .unwrap()
                 .contains("thought_signature")
         );
+    }
+
+    /// A reply's text signature is additive (ADR 0006 F12): a message stored
+    /// before it reads `None` and one without it serializes as before; one that
+    /// has it round-trips.
+    #[test]
+    fn reply_thought_signature_is_additive() {
+        let raw = r#"{"id":"00000000-0000-0000-0000-000000000001","role":"assistant","text":"hi","timestamp":"2026-11-20T00:00:00Z"}"#;
+        let old: Message = serde_json::from_str(raw).unwrap();
+        assert!(old.thought_signature.is_none());
+        assert!(
+            !serde_json::to_string(&old)
+                .unwrap()
+                .contains("thought_signature")
+        );
+        let mut signed = Message::assistant("hi");
+        signed.thought_signature = Some("SIG".into());
+        let json = serde_json::to_string(&signed).unwrap();
+        let back: Message = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.thought_signature.as_deref(), Some("SIG"));
     }
 
     /// The end-state field is additive (ADR 0006): a snapshot without it stays

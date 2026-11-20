@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (114)
+## Entries (115)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -126,6 +126,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: an HTTP client on a system with no certificates (done)
 - Post-M9: the guide counts five clouds, and says how each answers about images (done)
 - Post-M9: the token counter on a wire that reports usage on every chunk (done)
+- Post-M9: Gemini 4 takes thinking levels, and a text reply's signature is kept (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -7473,3 +7474,106 @@ off.
     covered, 0.0% duplicated.
   - **Not released yet**: the fix waits in `CHANGELOG.md`'s `[Unreleased]` beside
     949's help line, and `v0.26.2` is still the newest release.
+
+### Post-M9: Gemini 4 takes thinking levels, and a text reply's signature is kept (done)
+
+- **Why** (branch `fix/gemini-4-thinking-and-signatures`). The owner switched a
+  chat from `gemini-4-hydrogen` to `gemini-4-neon` and asked whether two oddities
+  were the app's: a reply that opened with the word `thought` and the model's raw
+  reasoning (in Russian, unsummarized, its last sentence glued to the answer's first with no space after the full stop),
+  and a loose phrase about a von Neumann machine. Both were the model's. The
+  reasoning arrived as an ordinary text part, with no `thought: true`, and the
+  client splits on that flag alone (`client.rs`), never writing the word
+  `thought` itself. The summaries the API normally sends are English with bold
+  headings. Across the owner's chats, `gemini-4-hydrogen` gave 90 replies and no
+  leak, `gemini-4-neon` 6 and one leak, both through the same request shape. The
+  sampling was the server's own: every field `null`, only `maxOutputTokens` and
+  the thinking config sent. Reading the request found two defects of the client's
+  own, neither the cause, and the owner had them fixed.
+- **Defect 1: every model after 3.x was asked as 2.5.** `is_gemini_3` was
+  `model.contains("gemini-3")`, so a `gemini-4-*` name, the `gemini-*-latest`
+  aliases and Gemma 4 all took the 2.5 branch: `thinkingBudget` (`-1` with no
+  effort, 1024/8192/24576 for one, `0` muted). Measured 2026-11-20, one request
+  per model and knob:
+  - the four Gemini 4 models take `thinkingLevel` `high` and `low`, refuse
+    `minimal` (*"Thinking level MINIMAL is not supported for this model"*), and
+    take the budget too, loosely: `thinkingBudget: 0` left `gemini-4-neon`
+    thinking 181 tokens and `-hydrogen` 64;
+  - `gemma-4-31b-it` and `gemma-4-26b-a4b-it` refuse any budget (*"Thinking
+    budget is not supported for this model"*), so every turn with thoughts on
+    was a `400`; they take `includeThoughts` alone, `minimal` (no thoughts) and
+    `high`, and refuse `low` and `medium` with *"Thinking level is not supported
+    for this model"*, naming none;
+  - `gemini-flash-latest` takes levels and refuses `minimal`;
+  - `gemini-2.5-flash` refuses every level and takes the budget.
+
+  **The fix.** `takes_thinking_level` spells the exception: every name but
+  `gemini-2.x`/`1.x` takes levels (`is_gemini_3_pro` is now `is_pro_with_levels`;
+  the video client uses the same pair). A refused level is answered by
+  `wire::instead_of_refused`. A refusal that names a level gets the level above,
+  as on 3.x. One that names none gets no level, with the thoughts still on, at the
+  model's own depth. A further guess at a level could be the next refusal, so the
+  client does not make one. Forks decided by the agent: the exception spelled
+  as the legacy family, not a list of new names (a list goes stale with the next
+  model, docs/lessons.md §3); the unnamed refusal dropping the level, not climbing
+  to `high` (Gemma takes `high`, 2.5 takes nothing).
+- **Defect 2: a text reply's signature was dropped.** Gemini 3 and later sign a
+  reply without calls on its last part. In a stream that is often an empty text
+  part, `{"text":"","thoughtSignature":…}` (`gemini-4-neon`, `-hydrogen`), and the
+  client's empty-text check dropped it with the part. Google's thought-signatures
+  page calls returning it "recommended", says the API "does not strictly enforce
+  validation", and warns that without it "performance may degrade". Measured: the
+  signature taken back on the text part and on a trailing empty one alike; after
+  an edit of the text; across models (hydrogen's to neon, neon's to Gemma 4 and
+  2.5). A forged one is `400 "Corrupted thought signature"` (2.5 ignores it). The
+  thinking page says the same of a switch: resend the previous model's thought
+  blocks, "the backend manages compatibility".
+
+  **The fix.** `ChatChunk::TextSignature(String)`, yielded by the Gemini client for
+  any non-call part that carries one; `RoundOutput::text_signature` keeps the
+  round's last; `Message::thought_signature` (additive, `skip_serializing_if`)
+  holds it for the tool round's message and the final reply, and `merge_continuation`
+  carries it. `ApiMessage::thought_signature` (`with_thought_signature`) is set by
+  `message_to_api` and on the tool round's in-turn message, and `build_contents`
+  puts it on the reply's text part. A reply with no text gets no part made up. The
+  background tool loop, the title, impersonation, the roll, Fabula and the fetch
+  summary ignore the chunk.
+- **Tests**: +8 unit, and the `merge_continuation` test extended. Every model
+  after 2.x takes levels and sends no budget, 2.x
+  keeps the budget. The two refusals are answered by whether they name a level. A
+  reply's signature rides on its text part and on no part made up. The client
+  hands on a trailing empty part's signature and keeps a call's on the call. A
+  refusal naming no level drops it, the second turn at once from the memo. A muted
+  turn on `gemini-4-neon` asks `minimal`, then `low`, with no budget. A reply's
+  text signature is kept on both messages and sent back the next turn, inside the
+  turn as well. The message's field is additive, and a continuation carries the
+  round's signature. +2 `#[ignore]` smokes, in `gemini/client/tests/thinking_live.rs`
+  (a file under `tests/`, which the coverage report leaves out, as CI never runs them):
+  `every_thinking_setting_is_answered` (thoughts on, effort high and low, muted,
+  each answered with the right number) and `a_text_replys_signature_round_trips`.
+  5150 unit tests green, 330 `#[ignore]`.
+- **Smoke — GO** (2026-11-20, Gemini API, the eight smokes of
+  `gemini::client` — `ignored_smoke` and `thinking_live` — per model by
+  `MINDFORK_GEMINI_MODEL`):
+  - `gemini-4-neon`, `gemini-4-hydrogen`, `gemini-3.8-flash`: every setting
+    answered with 391, the muted turn learned `minimal → low`; a text reply
+    signed (864, 444 and 804 characters) and the next turn, carrying it, answered;
+  - `gemma-4-31b-it`: thoughts on, effort high and effort low all answered with
+    thoughts (283, 540, 342 characters), where each was a `400` before, and `low`
+    learned as no level; Gemma signs its calls and not its text;
+  - `gemini-2.5-flash`: 8 of 8, the budget path unchanged, no text signature;
+  - the control is the probe above: the same models asked the old way.
+
+  The first pass found the two smoke defects below; the second, with both fixed,
+  was 8 of 8 on all five models — the text signature again round-tripping on
+  neon, hydrogen and 3.8 (1028, 468 and 924 characters), absent on Gemma and 2.5.
+- **A smoke fixed on the way.** `tool_result_image_takes_the_user_part_fallback`
+  makes up a call for its history with no signature, and every model from 3.x on
+  answers it `400 "Function call is missing a thought_signature"`. It had only
+  been run on 2.5. The call now carries `skip_thought_signature_validator`, the
+  value Google documents for a call injected into the history (accepted by
+  `gemini-4-neon` and 2.5 alike, measured). No production path makes up a call:
+  every unsigned `ApiToolCall` outside the wire is test code. The new
+  `a_text_replys_signature_round_trips` first required a signature from every
+  model of levels; Gemma 4 has none on its text, so it is required of a
+  `gemini-` name only.

@@ -379,6 +379,137 @@ async fn rounds_reporting_on_every_chunk_sum_into_the_turn() {
     handle.await.unwrap();
 }
 
+/// An engine that plays one script per turn request and keeps every turn
+/// request it was handed — for what a later turn *sends back* of an earlier
+/// one. A muted request (the chat's title, after the first turn) gets a word of
+/// its own and takes no script: it would otherwise take the next turn's.
+struct SequenceRecorder {
+    scripts: std::sync::Mutex<std::collections::VecDeque<Vec<ChatChunk>>>,
+    requests: std::sync::Mutex<Vec<crate::shared::api::ChatRequest>>,
+}
+
+#[async_trait::async_trait]
+impl EngineBackend for SequenceRecorder {
+    async fn chat_stream(
+        &self,
+        req: crate::shared::api::ChatRequest,
+        _cancel: tokio_util::sync::CancellationToken,
+    ) -> anyhow::Result<crate::shared::api::contract::ChatStream> {
+        let script = if req.sampling.reasoning_budget == Some(0) {
+            vec![
+                ChatChunk::Text("Title".into()),
+                ChatChunk::Finished(FinishReason::Stop),
+            ]
+        } else {
+            self.requests.lock().unwrap().push(req);
+            self.scripts
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_else(|| vec![ChatChunk::Finished(FinishReason::Stop)])
+        };
+        Ok(Box::pin(futures_util::stream::iter(script)))
+    }
+}
+
+/// A reply's text signature (Gemini: the last part of a reply without calls)
+/// is kept on the message — the tool round's and the final reply's — and the
+/// next turn sends each back with its text. It used to be dropped with the
+/// empty part it came on, so no later turn carried one.
+#[tokio::test]
+async fn a_replys_text_signature_is_kept_and_sent_back_next_turn() {
+    use crate::shared::api::contract::ToolCallDelta;
+    let backend = Arc::new(SequenceRecorder {
+        scripts: std::sync::Mutex::new(std::collections::VecDeque::from([
+            vec![
+                ChatChunk::Text("Saving".into()),
+                ChatChunk::TextSignature("SIG-ROUND".into()),
+                ChatChunk::ToolCall(ToolCallDelta {
+                    thought_signature: Some("SIG-CALL".into()),
+                    index: 0,
+                    id: Some("c1".into()),
+                    name: Some("note_save".into()),
+                    arguments: "{\"content\":\"likes tea\"}".into(),
+                }),
+                ChatChunk::Finished(FinishReason::ToolCalls),
+            ],
+            vec![
+                ChatChunk::Text("391".into()),
+                ChatChunk::TextSignature("SIG-TEXT".into()),
+                ChatChunk::Finished(FinishReason::Stop),
+            ],
+            vec![
+                ChatChunk::Text("ok".into()),
+                ChatChunk::Finished(FinishReason::Stop),
+            ],
+        ])),
+        requests: std::sync::Mutex::new(Vec::new()),
+    });
+    let (dir, cmd_tx, mut evt_rx, handle) =
+        spawn_orch(Some(backend.clone() as Arc<dyn EngineBackend>));
+    let root = dir.path().to_path_buf();
+    let chat_id = match wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap()
+    {
+        AppEvent::ChatActivated { id, .. } => id,
+        _ => unreachable!(),
+    };
+    for words in ["what is 17*23?", "and?"] {
+        cmd_tx.send(AppCommand::SendMessage(words.into())).unwrap();
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+            .await
+            .unwrap();
+        wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatList(_)))
+            .await
+            .unwrap();
+    }
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    let chat = Storage::open(Paths::with_root(&root))
+        .unwrap()
+        .json()
+        .load_chat(chat_id)
+        .unwrap()
+        .unwrap();
+    let signed: Vec<_> = chat
+        .messages
+        .iter()
+        .filter(|m| m.role == MessageRole::Assistant)
+        .map(|m| (m.text.as_str(), m.thought_signature.as_deref()))
+        .collect();
+    assert_eq!(
+        signed,
+        [
+            ("Saving", Some("SIG-ROUND")),
+            ("391", Some("SIG-TEXT")),
+            ("ok", None)
+        ]
+    );
+
+    let requests = backend.requests.lock().unwrap();
+    // The tool round's next request, inside the turn, carries it already.
+    let in_turn: Vec<_> = requests[1]
+        .messages
+        .iter()
+        .filter(|m| m.role == crate::shared::api::contract::ApiRole::Assistant)
+        .map(|m| m.thought_signature.as_deref())
+        .collect();
+    assert_eq!(in_turn, [Some("SIG-ROUND")]);
+    // The next turn sends back both replies' signatures with their text.
+    let next_turn: Vec<_> = requests[2]
+        .messages
+        .iter()
+        .filter(|m| m.role == crate::shared::api::contract::ApiRole::Assistant)
+        .map(|m| (m.content.as_str(), m.thought_signature.as_deref()))
+        .collect();
+    assert_eq!(
+        next_turn,
+        [("Saving", Some("SIG-ROUND")), ("391", Some("SIG-TEXT"))]
+    );
+}
+
 #[tokio::test]
 async fn regenerate_replaces_last_assistant_message() {
     // Two different replies in turn: the original turn gives the first, regeneration gives the second.
@@ -1574,6 +1705,17 @@ fn merge_continuation_appends_in_place_and_keeps_the_model_name() {
         Some("qwen-3.6"),
         "an outgrown partial takes the continuing model's name"
     );
+
+    // The reply ends on the round, and so does its text signature; a round
+    // that brought none leaves the seed's.
+    let mut seed = Message::assistant("Start");
+    seed.thought_signature = Some("SIG-SEED".into());
+    merge_continuation(&mut seed, Message::assistant(" more"));
+    assert_eq!(seed.thought_signature.as_deref(), Some("SIG-SEED"));
+    let mut round = Message::assistant(" end.");
+    round.thought_signature = Some("SIG-ROUND".into());
+    merge_continuation(&mut seed, round);
+    assert_eq!(seed.thought_signature.as_deref(), Some("SIG-ROUND"));
 }
 
 /// What [`interrupted_turn`] hands back: the harness, plus the first turn's

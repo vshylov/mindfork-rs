@@ -1130,6 +1130,18 @@ a provider does not say something, fetch the object where it would say it: the m
 the catalogue, the `/props`.
 — *thinking on the Claude 4.5 generation*.
 
+**A name test for "the new generation" sends every newer one to the old branch —
+test for the old one.** The Gemini wire chose `thinkingLevel` by
+`contains("gemini-3")`, written when 3.x was the newest; Gemini 4 then fell to 2.5's
+`thinkingBudget`, which it takes as a legacy knob and reads loosely, and Gemma 4
+refused it outright. Nothing failed for the owner's model, so nothing showed. Where
+a provider's knob changed once, the generation that will not change any more is the
+legacy one: spell the test as the exception (`gemini-2.x`, `1.x`) and the rule covers
+the next generation by default. Then read the provider's model list and ask each
+family once — twenty requests found Gemma's partial set of levels and its unnamed
+refusal.
+— *Gemini 4 takes thinking levels* ([journal/engine.md](journal/engine.md)).
+
 **A field left out is a value too — the provider's default — and has to be
 measured like one.** xAI refuses `reasoning_effort: "none"`, so in August the
 Grok client was made to leave the field out, and its comment said what that

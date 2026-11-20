@@ -965,7 +965,7 @@ src/
    │  │  ├─ xai_tests.rs        #[cfg(test)]: the xAI client against the same stub — the entry by name, an effort as the model's list has it, a refused parameter
    │  │  └─ responses/          Responses API: ResponsesClient + wire (OpenAI cloud, /v1/responses — reasoning summaries, effort, verbosity;
    │  │                         a schema as `text.format` json_schema, strict; a refusal part ends the turn as filtered)
-   │  ├─ gemini/            native Gemini: client.rs + wire.rs (generateContent, x-goog-api-key — thought summaries, thinkingLevel/Budget, per-tool-call thoughtSignature;
+   │  ├─ gemini/            native Gemini: client.rs + wire.rs (generateContent, x-goog-api-key — thought summaries, thinkingLevel/Budget, thoughtSignature per call and per text reply;
    │  │                     a schema as `responseJsonSchema`, carried beside the knobs as its printed text)
    │  ├─ anthropic/         Anthropic Messages API: client.rs + wire.rs (Claude, /v1/messages; a schema as
    │  │                     `output_config.format` beside the effort; thinking off as `disabled`, or in the
@@ -2010,9 +2010,12 @@ Details:
   `max_tokens`+`thinking`+`reasoning_effort`+`verbosity`.
   **Gemini (native `generateContent`):** `generationConfig.thinkingConfig.
   includeThoughts:true` → parts `{text, thought:true}` → `Thoughts`; depth is
-  `thinkingLevel` (3.x: `minimal/low/medium/high`) or `thinkingBudget` (2.5,
-  tokens), generation inferred from the model name; `reasoning_budget==0` mutes it
-  (2.5 Flash — `0`, 2.5 Pro — minimum `128`, 3.x — `minimal`).
+  `thinkingLevel` (3.x and later: `minimal/low/medium/high`) or `thinkingBudget`
+  (2.5, tokens), generation inferred from the model name — `wire::takes_thinking_level`,
+  true for every name but `gemini-2.x`/`1.x` (Gemini 4, the aliases, Gemma 4);
+  `reasoning_budget==0` mutes it (2.5 Flash — `0`, 2.5 Pro — minimum `128`, later —
+  `minimal`). A refused level is answered by `wire::instead_of_refused`: the level
+  above where the refusal names one, no level where it names none (spec §8.1).
   `usageMetadata.thoughtsTokenCount` → `reasoning_tokens`.
   `supported_sampling_fields(Gemini)` = `temperature`/`top_p`/`top_k`/`max_tokens`/
   `seed`/`frequency_penalty`/`presence_penalty`+`thinking`/`reasoning_effort`.
@@ -2046,7 +2049,15 @@ Details:
   the signature travels through `out.calls`; between generations, through
   persistence (`record_to_api`); `wire::build_contents` resends it alongside
   `functionCall`. Confirmed against live Gemini 3.1 Pro (round trip without
-  `400`).
+  `400`). A reply **without** calls is signed too, on its last part — in a stream
+  an empty text part: the client yields it as `ChatChunk::TextSignature`,
+  `RoundOutput::text_signature` keeps the round's last, and it is persisted on the
+  domain `Message::thought_signature` (additive) and resent on the reply's text
+  part (`ApiMessage::thought_signature`, set by `message_to_api` and on the tool
+  round's in-turn message). Not enforced by the API, recommended for the
+  reasoning's quality; a signature from another Gemini model is accepted, a forged
+  one is a `400` (measured 2026-11-20). The background tool loop (`tool_loop.rs`)
+  and the other consumers ignore the chunk.
 - **Engine failures reach the feed** (spec §6.8). `stream_round` handles both paths
   — the pre-stream `Err` and the in-stream `ChatChunk::Error` — through one
   `engine_error_key`/`engine_error_note` pair, so they cannot describe the same
@@ -2233,7 +2244,7 @@ The **Gemini** cloud runs on native `generateContent` (`GeminiClient`): system �
 top-level `systemInstruction`, `user`/`model` roles (a tool result →
 `functionResponse` in user), a call → `functionCall` (an args object, no
 `call_id`), `thinkingConfig`; the `thoughtSignature` thought signature is
-per-tool-call (persisted). `AnthropicClient` sends only `max_tokens` from
+per-tool-call, and a text reply's on its text (both persisted). `AnthropicClient` sends only `max_tokens` from
 sampling + extended thinking (`thinking`/`reasoning_effort` → adaptive, or a
 budget on the 4.5 generation; Claude 4.x rejects temperature/top_p/top_k, and
 from Opus 4.7 on `budget_tokens` too). The **Grok** cloud

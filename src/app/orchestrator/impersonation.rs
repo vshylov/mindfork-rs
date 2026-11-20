@@ -396,6 +396,7 @@ pub(super) fn spawn_impersonation(
                     }
                     ChatChunk::Thoughts(_)
                     | ChatChunk::ThoughtsSignature(_)
+                    | ChatChunk::TextSignature(_)
                     | ChatChunk::ToolCall(_)
                     | ChatChunk::Served(_) => {}
                     ChatChunk::Finished(r) => {

@@ -255,6 +255,7 @@ async fn run_attempt(
             chunk @ (ChatChunk::Text(_)
             | ChatChunk::Thoughts(_)
             | ChatChunk::ThoughtsSignature(_)
+            | ChatChunk::TextSignature(_)
             | ChatChunk::ToolCall(_)
             | ChatChunk::Finished(_)) => {
                 head.push(chunk);

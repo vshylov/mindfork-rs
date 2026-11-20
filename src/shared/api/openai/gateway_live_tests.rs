@@ -101,7 +101,9 @@ async fn run(client: &OpenAiClient, req: ChatRequest) -> Turn {
             ChatChunk::Served(s) => turn.served = Some(s),
             ChatChunk::Error { message, .. } => turn.failure = Some(message),
             ChatChunk::Finished(reason) => turn.finish = Some(reason),
-            ChatChunk::ThoughtsSignature(_) | ChatChunk::Retry { .. } => {}
+            ChatChunk::ThoughtsSignature(_)
+            | ChatChunk::TextSignature(_)
+            | ChatChunk::Retry { .. } => {}
         }
     }
     turn

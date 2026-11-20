@@ -329,6 +329,7 @@ fn spawn_title(
                             usage = Some(u);
                         }
                         ChatChunk::ThoughtsSignature(_)
+                        | ChatChunk::TextSignature(_)
                         | ChatChunk::ToolCall(_)
                         | ChatChunk::Served(_) => {}
                     }

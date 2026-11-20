@@ -20,7 +20,9 @@ use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use super::{VideoAnswer, VideoConfig, VideoRequest, VideoUnderstanding, error_from};
-use crate::shared::api::gemini::{is_gemini_3, is_gemini_3_pro, level_above, says_level_refused};
+use crate::shared::api::gemini::{
+    is_pro_with_levels, level_above, says_level_refused, takes_thinking_level,
+};
 
 /// Client for `…/models/{model}:generateContent` in video-input mode.
 pub struct GeminiVideo {
@@ -88,7 +90,7 @@ impl GeminiVideo {
         })
     }
 
-    /// The "as little thinking as this model allows" config. Gemini 3.x has no
+    /// The "as little thinking as this model allows" config. Gemini 3.x and later have no
     /// off switch — `minimal` is the floor, and a 3 **Pro** rejects even that, so
     /// it gets `low`; 2.5 takes a zero budget.
     ///
@@ -98,12 +100,12 @@ impl GeminiVideo {
     /// on ([`Self::describe`]).
     fn muted_thinking(&self) -> Value {
         let m = &self.cfg.model;
-        if !is_gemini_3(m) {
+        if !takes_thinking_level(m) {
             return json!({ "thinkingBudget": 0 });
         }
         let level = match self.muted_level.get() {
             Some(learned) => learned,
-            None if is_gemini_3_pro(m) => "low",
+            None if is_pro_with_levels(m) => "low",
             None => "minimal",
         };
         json!({ "thinkingLevel": level })
