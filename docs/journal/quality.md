@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (43)
+## Entries (44)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -55,6 +55,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: SonarQube follow-up — the companion carry's six contexts (done)
 - Post-M9: SonarQube follow-up — B0's session and its two origins (done)
 - Post-M9: SonarQube follow-up — two of the five resolved findings, closed in code (done)
+- Post-M9: rustdoc lints are a gate (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -2190,3 +2191,45 @@ tree (AGENTS.md §3).
   green. No CHANGELOG entry: nothing the user sees changed (AGENTS.md §4). No live run:
   the calculator's tokens and the link gate's verdicts are the same, measured by the unit
   tests and the predicate comparison (AGENTS.md §3).
+
+### Post-M9: rustdoc lints are a gate (done)
+
+- **Found while cleaning up xinfer's leftovers** (PR 999, 2026-11-20): nine comment lines
+  in `src/shared/api` cited `docs/xinfer-contract.md`, deleted in June. `link_check.py`
+  reads Markdown only, and nothing ran rustdoc. The first
+  `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` found **59** warnings: 51 unresolved
+  links, 3 unclosed HTML tags (`"<Provider> API key (env)"` and `<switch>` written as
+  text), 3 links that name both a function and a module (`compare`, `dispatch`) and 2
+  redundant explicit targets. Owner's request: fix CI in a pull request of its own.
+- **What the 51 were**: 18 items that exist but are out of scope at the link (fixed with
+  a full path or a reference definition); 14 renames and removals (`execute_call` is now
+  `execute_round`/`resolve_round`, `provider_order` is `backend_order`, the status bar's
+  `lines` is `lines_within`, `tag_width` is `tag_columns`, `exe_dir_of` is
+  `exe_location`, `HELP_KEYS` became the per-screen `HelpSection` rows, help navigation
+  moved from `ChatScreen::handle_key` to `HelpState::handle_key`, the clipboard write is
+  `copy_text`, the settings' key lookup is `secret_field_key`); **15 items compiled only
+  under `cfg(test)`** (gate tests, `MockSupervisor`, `help_tab_strip`, `mouse_press`,
+  `visual_line_count`, `Db::batch`, `Paths::with_sandbox_dir`, the demo's
+  `app_config`, `CopyReport::message`); 2 Windows-only (`read_clipboard_text`,
+  `osc11`'s `exchange`); 2 private items in a sibling module (`RestartBudget`,
+  `openai::wire`). A link to a test-only, platform-only or out-of-reach private item
+  became a plain code span; the rest point at today's item. Comments only; no behaviour
+  changed.
+- **The gate**: a `Rustdoc` step after clippy in each place clippy already runs. In
+  `lint` on Linux (the job is renamed *Lints (source language + fmt + clippy + rustdoc)*;
+  the ruleset requires only `CI gate`, checked), beside the macOS clippy step in `test`,
+  and in the Windows job (renamed *Clippy + rustdoc (the Windows-only code)*), because
+  rustdoc on Linux never sees `cfg(windows)` or `cfg(target_os = "macos")` code (65
+  and 14 sites). `RUSTDOCFLAGS` is set on the step, not the job, so rust-cache's key,
+  which hashes `RUST*` variables, is unchanged. Measured on the droplet after clippy:
+  7.4 s cold `target/doc`, 8.2 s after a touch. The dependencies' check-mode metadata
+  is shared with clippy, so nothing else is compiled.
+- **Not done**: `rustdoc::private_intra_doc_links` and the other allow-by-default
+  rustdoc lints (`missing_docs` and the rest). They stay off.
+- AGENTS.md (DoD and §3), CLAUDE.md's command list and the PR template name the
+  command; docs/lessons.md §1 has the trap (a link to a `cfg(test)` or one-platform item).
+- 5152 unit tests green on Linux, 323 ignored there; no test added or changed. fmt,
+  clippy, `cargo doc` with `-D warnings` and the repository gates green; `actionlint`
+  reports only the `changes` job's SC2086 info that `main` has too. No CHANGELOG
+  entry: nothing the user sees changed (AGENTS.md §4). No live run: comments and CI
+  only (AGENTS.md §3).

@@ -145,6 +145,7 @@ cargo build
 cargo test                         # unit tests (no server needed)
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps  # doc links resolve
 cargo run                          # TUI (needs a REAL terminal — see Pitfalls)
 python tools/cyrillic_scan.py      # source-language gate
 python tools/cyrillic_scan.py --self-test  # ...its test-code arms, against fixtures
