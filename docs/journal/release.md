@@ -7029,3 +7029,74 @@ self-test), `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check`,
 `claude_md_chart --check`, `wizard_rtf --check`, `site_legal_pages --check`,
 `site_llms_txt --check`, `indexnow --check`, `actions_pin_check`, and the self-tests of
 the release guard, the site gate, the web demo's placement and the AUR renderer clean.
+
+**The draft, checked before anyone else could see it** (§6 step 5).
+- The owner merged 995 (02:03:34Z) and set `v0.28.0` on the merge commit `4affefbf`,
+  which was `origin/main`.
+- **The run.** `release.yml` (run 44658148020) was green in all ten jobs in **18 min
+  29 s** (02:04:20 → 02:22:49Z). Windows took the longest at 17 min 11 s, then macOS
+  15 min 39 s, the demo for the browser 11 min 33 s, Linux 8 min 11 s and the animation
+  3 min 54 s. **Both non-gate jobs succeeded.**
+- **The draft** was not a prerelease and held sixteen assets, 0.27.0's set. All fifteen
+  files in `sha256sums.txt` match. The notes are the `[0.28.0]` section with the
+  workflow's footer below.
+- **`install.sh` is 0.27.0's byte for byte.** The six animation files changed, as they
+  should: the last frame of `mindfork-demo-dark-en.gif` (92 frames) shows `#3` and `#4`
+  at the right end of the two headers, the messages' numbers.
+- **The archives** hold 0.27.0's file names, entry for entry: Windows 48, Linux 49,
+  macOS 49.
+- **Attestations** verify for the three archives, the installer, the `.deb`, `install.sh`
+  and `mindfork-webdemo.tar`, and fail on a scratch file (exit 1).
+- **The schema step, both ways, on the released binary** (§6 step 5's rule for a release
+  that moves a schema constant). The Linux archive's `mindfork` in place of the debug
+  build, beside the published 0.27.0, on a copy of 0.27.0's own root of the rubric
+  (hashes matching those taken before the rubric's forward step):
+  - *Forward, with a fork*: the TUI in a pty, `/fork 2` in the rubric chat. All nine
+    chat files stamped 9, one with a branch of two messages. One `pre-migrate-*.zip`,
+    whose manifest says `app_version 0.28.0` and `chat 8`; `cache.db` at 3. `stats`:
+    fingerprint `bfc40363e2fe0e1c`, the debug build's, and "messages in branches: 2
+    (branches: 1)". The released binary on a copy of what it wrote starts again, exit 0.
+  - *0.27.0 on what it wrote*: refuses at start, "schema 9, supported 8", exit 1; all
+    25 stored files byte for byte as they were.
+  - *The way back*: 0.27.0 restores that `pre-migrate-*.zip` in place with no warning,
+    exit 0, fingerprint `3d180bd21ebde878`. Its TUI starts (exit 0) and leaves `cache.db`
+    at 2.
+  - *The golden fixtures as they are*: a root made by the released binary's `import`,
+    with the seven golden chat files (v1, v3–v8) unstepped. Its TUI starts (exit 0) and
+    stamps all seven 9, one `pre-migrate-*.zip`. `stats` gives fingerprint
+    `c91300357726e5e0` before and after the step; 0.27.0's `stats` notes newer data.
+- **Branches in the released binary's demo.** `mindfork demo` in a pty: the draft sent,
+  `Ctrl+R`, and the reply's header reads `‹2/2› #6`. A click on the `‹` turns it to
+  `‹1/2› #6`. Exit 0.
+- **The demo for the browser.** Its manifest says format 2, application 0.28.0, commit
+  `4affefbf`. It was served locally on a free port and opened in a headless Chromium (the
+  0.27.0 check's Playwright venv, browser and libraries, still in that session's
+  scratchpad).
+  - **Start** gave a machine ready 0.7 s after the click; its own `readyAt` was 0.57 s.
+  - `F1` drew "About · mindfork v0.28.0", read from the xterm buffer.
+  - 18 requests went out, all to the page's own origin, with no console error.
+- Not checked: the Windows and macOS binaries run (no such host here); this release's
+  packages installed. `packaging.yml` last installed packages on 989, built from that
+  pull request's commit, since its privacy RTFs are under `packaging/`.
+- **Published, and what followed** (the owner, 02:29:39Z; immutable).
+  - `crates-io.yml` (run 44661188353) published the crate in 3 min 52 s. `mindfork
+    0.28.0` was on the registry at 02:33:27Z (5 516 243 bytes), 3 min 48 s after the
+    publication; crates.io's newest version is 0.28.0.
+  - `aur.yml` (run 44661188343) built, installed and ran `mindfork-rs-bin` 0.28.0 on
+    Arch in 39 s (`installed: mindfork 0.28.0`). It stopped before the push, since
+    `AUR_SSH_PRIVATE_KEY` is not set — as with 0.27.0.
+  - The deploy (run 44661665625, `workflow_run`) started five seconds after crates.io
+    completed. Its gate found 0.28.0 published, and "Deploy to mindfork.io" succeeded
+    at 02:34:15Z, **4 min 36 s after the publication**.
+  - From outside:
+    - the post answers 200 at `/blog/mindfork-0-28-0/`, and the blog heads with
+      "mindfork 0.28.0 — branches inside a chat";
+    - the home page says `"softwareVersion": "0.28.0"`, and `/llms.txt` lists the post;
+    - `releases/latest` resolves to `v0.28.0`;
+    - `mindfork.io/demo/mindfork-demo-dark-en.gif` is the release's, byte for byte.
+  - mindfork.io/try/ loads `webdemo/v0.28.0/`, whose manifest names commit `4affefbf`.
+    In the headless Chromium it was ready 2.1 s after **Start**, `F1` said "About ·
+    mindfork v0.28.0", and 22 requests went out, all to mindfork.io, with no console
+    error.
+  - Scoop and the Homebrew tap pick a release up within four and six hours; not looked
+    at.
