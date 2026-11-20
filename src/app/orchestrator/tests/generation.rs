@@ -1705,6 +1705,17 @@ fn merge_continuation_appends_in_place_and_keeps_the_model_name() {
         Some("qwen-3.6"),
         "an outgrown partial takes the continuing model's name"
     );
+
+    // The reply ends on the round, and so does its text signature; a round
+    // that brought none leaves the seed's.
+    let mut seed = Message::assistant("Start");
+    seed.thought_signature = Some("SIG-SEED".into());
+    merge_continuation(&mut seed, Message::assistant(" more"));
+    assert_eq!(seed.thought_signature.as_deref(), Some("SIG-SEED"));
+    let mut round = Message::assistant(" end.");
+    round.thought_signature = Some("SIG-ROUND".into());
+    merge_continuation(&mut seed, round);
+    assert_eq!(seed.thought_signature.as_deref(), Some("SIG-ROUND"));
 }
 
 /// What [`interrupted_turn`] hands back: the harness, plus the first turn's

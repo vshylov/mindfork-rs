@@ -7538,19 +7538,23 @@ off.
   puts it on the reply's text part. A reply with no text gets no part made up. The
   background tool loop, the title, impersonation, the roll, Fabula and the fetch
   summary ignore the chunk.
-- **Tests**: +8 unit. Every model after 2.x takes levels and sends no budget, 2.x
+- **Tests**: +8 unit, and the `merge_continuation` test extended. Every model
+  after 2.x takes levels and sends no budget, 2.x
   keeps the budget. The two refusals are answered by whether they name a level. A
   reply's signature rides on its text part and on no part made up. The client
   hands on a trailing empty part's signature and keeps a call's on the call. A
   refusal naming no level drops it, the second turn at once from the memo. A muted
   turn on `gemini-4-neon` asks `minimal`, then `low`, with no budget. A reply's
   text signature is kept on both messages and sent back the next turn, inside the
-  turn as well. The message's field is additive. +2 `#[ignore]` smokes:
+  turn as well. The message's field is additive, and a continuation carries the
+  round's signature. +2 `#[ignore]` smokes, in `gemini/client/tests/thinking_live.rs`
+  (a file under `tests/`, which the coverage report leaves out, as CI never runs them):
   `every_thinking_setting_is_answered` (thoughts on, effort high and low, muted,
   each answered with the right number) and `a_text_replys_signature_round_trips`.
   5150 unit tests green, 330 `#[ignore]`.
 - **Smoke — GO** (2026-11-20, Gemini API, the eight smokes of
-  `gemini::client::ignored_smoke`, per model by `MINDFORK_GEMINI_MODEL`):
+  `gemini::client` — `ignored_smoke` and `thinking_live` — per model by
+  `MINDFORK_GEMINI_MODEL`):
   - `gemini-4-neon`, `gemini-4-hydrogen`, `gemini-3.8-flash`: every setting
     answered with 391, the muted turn learned `minimal → low`; a text reply
     signed (864, 444 and 804 characters) and the next turn, carrying it, answered;
