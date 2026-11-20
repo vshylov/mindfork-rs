@@ -2,8 +2,8 @@
 
 use super::render::ChatChrome;
 use super::*;
+use crate::entities::feed_landing::{FeedLanding, FeedPlace};
 use crate::entities::message::MessageRole;
-use crate::features::chat_search::FeedFocus;
 
 fn gen_id() -> Uuid {
     Uuid::new_v4()
@@ -11,11 +11,11 @@ fn gen_id() -> Uuid {
 
 /// A jump request onto `message` with nothing to highlight (the shape most of
 /// these tests care about — they assert the scroll/marker, not the highlight).
-fn focus_on(message: Uuid) -> Option<FeedFocus> {
-    Some(FeedFocus {
+fn focus_on(message: Uuid) -> FeedLanding {
+    FeedLanding::Jump {
         message,
         query: String::new(),
-    })
+    }
 }
 
 /// A status snapshot with a ready chat server (embeddings/impersonation not configured).
@@ -234,7 +234,7 @@ fn a_live_turn_continues_the_feeds_numbers() {
         ],
         "",
         FeedView::default(),
-        None,
+        FeedLanding::Tail,
         None,
     );
     s.push_user_message("второй вопрос".into());
@@ -319,7 +319,7 @@ fn activate_chat_rebuilds_feed_and_resets_gen() {
         &messages,
         "",
         FeedView::default(),
-        None,
+        FeedLanding::Tail,
         None,
     );
     assert_eq!(s.active_chat, Some(id));
@@ -380,7 +380,7 @@ fn the_counter_rides_the_feed_border_or_the_pill() {
         &messages,
         "",
         FeedView::default(),
-        None,
+        FeedLanding::Tail,
         None,
     );
     s.begin_generation(id, None);
@@ -445,7 +445,7 @@ fn activate_chat_with_focus_puts_the_feed_on_that_message() {
         focus_on(target),
         None,
     );
-    assert_eq!(s.feed_view.anchor(), Some(8));
+    assert!(s.feed_view.awaits_frame(), "the jump waits for its frame");
     assert_eq!(s.feed_view.marker(), Some(8));
     // The jump itself is applied by the next render — the row only exists there
     // (§1.1), so `follow` is still on until a frame is drawn.
@@ -463,10 +463,10 @@ fn activate_chat_with_focus_puts_the_feed_on_that_message() {
         &messages,
         "",
         FeedView::default(),
-        None,
+        FeedLanding::Tail,
         None,
     );
-    assert_eq!(s.feed_view.anchor(), None);
+    assert!(!s.feed_view.awaits_frame());
     assert_eq!(s.feed_view.marker(), None);
     term.draw(|f| s.render(f)).unwrap();
     assert!(s.feed_view.is_following());
@@ -489,10 +489,10 @@ fn activate_chat_carries_the_highlight_query_only_on_a_jump() {
         &messages,
         "",
         FeedView::default(),
-        Some(FeedFocus {
+        FeedLanding::Jump {
             message: messages[2].id,
             query: "маркер".into(),
-        }),
+        },
         None,
     );
     assert_eq!(s.feed_view.marker(), Some(2));
@@ -506,7 +506,7 @@ fn activate_chat_carries_the_highlight_query_only_on_a_jump() {
         &messages,
         "",
         FeedView::default(),
-        None,
+        FeedLanding::Tail,
         None,
     );
     assert_eq!(s.feed_view.marker(), None);
@@ -548,10 +548,9 @@ fn focus_from_another_chat_falls_back_to_the_tail() {
         focus_on(stale),
         None,
     );
-    assert_eq!(
-        s.feed_view.anchor(),
-        None,
-        "an id from another chat must not anchor anything here"
+    assert!(
+        !s.feed_view.awaits_frame(),
+        "an id from another chat must not move anything here"
     );
     assert_eq!(
         s.feed_view.marker(),
@@ -561,6 +560,533 @@ fn focus_from_another_chat_falls_back_to_the_tail() {
     assert!(
         s.feed_view.is_following(),
         "and the view falls back to the tail"
+    );
+}
+
+/// Twelve short messages, more than a 14-row window shows.
+fn replies(tag: &str) -> Vec<Message> {
+    (0..12)
+        .map(|i| Message::user(format!("{tag}-{i}")))
+        .collect()
+}
+
+/// Opens `messages` as the chat `id` with the feed where `landing` says.
+fn open_at(s: &mut ChatScreen, id: Uuid, messages: &[Message], landing: FeedLanding) {
+    s.activate_chat(
+        id,
+        "Чат".into(),
+        messages,
+        "",
+        FeedView::default(),
+        landing,
+        None,
+    );
+}
+
+/// The screen row that shows `needle`, in a 40x14 frame.
+fn row_of(s: &mut ChatScreen, needle: &str) -> Option<usize> {
+    screen_rows(s, 40, 14)
+        .iter()
+        .position(|r| r.contains(needle))
+}
+
+/// A followed reference opens the conversation it names at its first row
+/// (docs/research/feed-landing.md §3.2): it is read from its start, and the
+/// feed does not follow its tail.
+#[test]
+fn a_landing_on_top_opens_the_chat_at_its_first_row() {
+    let mut s = ChatScreen::new();
+    let messages = replies("реплика");
+    open_at(&mut s, gen_id(), &messages, FeedLanding::Top);
+    let rows = screen_rows(&mut s, 40, 14);
+    assert!(
+        rows.iter().any(|r| r.contains("реплика-0")),
+        "the first message is on the screen: {rows:?}"
+    );
+    assert!(
+        !rows.iter().any(|r| r.contains("реплика-11")),
+        "and the last is below it: {rows:?}"
+    );
+    assert!(!s.feed_view.is_following());
+    assert_eq!(s.feed_view.marker(), None, "nothing is marked");
+}
+
+/// The way back (research §3.5): the place read before another conversation
+/// was opened brings the same frame back, where an ordinary opening would
+/// show the tail and lose the reference that was followed.
+#[test]
+fn a_place_read_before_leaving_brings_the_frame_back() {
+    let mut s = ChatScreen::new();
+    let (here, there) = (gen_id(), gen_id());
+    let messages = replies("здесь");
+    open_at(&mut s, here, &messages, FeedLanding::Tail);
+    screen_rows(&mut s, 40, 14);
+    assert_eq!(
+        s.feed_place(),
+        s.feed_place(),
+        "reading a place moves nothing"
+    );
+    s.feed_view.scroll_up(11);
+    let left = screen_rows(&mut s, 40, 14);
+    assert!(
+        !left.iter().any(|r| r.contains("здесь-11")),
+        "precondition: the tail is off the screen: {left:?}"
+    );
+    let place = s.feed_place().expect("a message is on the first row");
+
+    open_at(&mut s, there, &replies("там"), FeedLanding::Top);
+    screen_rows(&mut s, 40, 14);
+    open_at(&mut s, here, &messages, FeedLanding::Place(place));
+    assert_eq!(screen_rows(&mut s, 40, 14), left);
+    assert!(!s.feed_view.is_following());
+
+    // A place whose message the chat no longer shows is the tail.
+    let gone = FeedPlace {
+        message: Uuid::new_v4(),
+        row: 2,
+    };
+    open_at(&mut s, here, &messages, FeedLanding::Place(gone));
+    screen_rows(&mut s, 40, 14);
+    assert!(s.feed_view.is_following());
+}
+
+/// A variant switch rebuilds the open chat with another message in a bubble's
+/// place (research §3.3). The bubble is on the screen, so the frame does not
+/// move: the row that showed the old variant shows the new one — where an
+/// activation used to send the feed to its last row.
+#[test]
+fn a_reveal_of_a_bubble_on_the_screen_does_not_move_the_feed() {
+    let mut s = ChatScreen::new();
+    let id = gen_id();
+    let mut messages = replies("реплика");
+    open_at(&mut s, id, &messages, FeedLanding::Tail);
+    screen_rows(&mut s, 40, 14);
+    s.feed_view.scroll_up(11);
+    // The lowest bubble on the screen that has another above it. The trailing
+    // space keeps the label numbered 1 from matching the one numbered 11.
+    let shown: Vec<usize> = (0..12)
+        .filter(|i| row_of(&mut s, &format!("реплика-{i} ")).is_some())
+        .collect();
+    assert!(shown.len() >= 2, "precondition: two bubbles on the screen");
+    let k = *shown.last().unwrap();
+    let at = row_of(&mut s, &format!("реплика-{k} ")).unwrap();
+    let neighbour = format!("реплика-{} ", k - 1);
+    let above = row_of(&mut s, &neighbour).unwrap();
+    assert!(k < 11, "precondition: scrolled away from the tail");
+
+    // The line from that message on is another variant's, and longer.
+    messages.truncate(k);
+    let variant = Message::user("вариант-2");
+    let first = variant.id;
+    messages.push(variant);
+    messages.extend(replies("дальше"));
+    open_at(
+        &mut s,
+        id,
+        &messages,
+        FeedLanding::Reveal { message: first },
+    );
+
+    assert_eq!(
+        row_of(&mut s, "вариант-2"),
+        Some(at),
+        "on the row it replaced"
+    );
+    assert_eq!(
+        row_of(&mut s, &neighbour),
+        Some(above),
+        "what is above stands"
+    );
+    assert!(!s.feed_view.is_following());
+    assert_eq!(s.feed_view.marker(), None, "the mark on the header says it");
+}
+
+/// The same switch typed from the tail (`/branch N K`): the bubble is far
+/// above the view, so it is brought to the view's first row.
+#[test]
+fn a_reveal_of_a_bubble_off_the_screen_brings_it_to_the_first_row() {
+    let mut s = ChatScreen::new();
+    let id = gen_id();
+    let mut messages = replies("реплика");
+    open_at(&mut s, id, &messages, FeedLanding::Tail);
+    assert_eq!(
+        row_of(&mut s, "реплика-2"),
+        None,
+        "precondition: off the screen"
+    );
+
+    messages.truncate(2);
+    let variant = Message::user("вариант-2");
+    let first = variant.id;
+    messages.push(variant);
+    messages.extend(replies("дальше"));
+    open_at(
+        &mut s,
+        id,
+        &messages,
+        FeedLanding::Reveal { message: first },
+    );
+
+    let rows = screen_rows(&mut s, 40, 14);
+    assert_eq!(
+        s.feed_place(),
+        Some(FeedPlace {
+            message: first,
+            row: 0
+        }),
+        "{rows:?}"
+    );
+    assert!(rows.iter().any(|r| r.contains("вариант-2")), "{rows:?}");
+}
+
+/// A landing is asked for by an activation and applied by the next frame, and
+/// a note often arrives between the two: a switch says which variant is on
+/// the line, a search hit in a parked branch names the branch. The feed was
+/// following its tail when the activation came, and a note scrolls a
+/// following feed to its end — which used to drop the landing before any
+/// frame had drawn it. Asking for a landing ends the following.
+#[test]
+fn a_note_after_the_activation_does_not_cancel_the_landing() {
+    let id = gen_id();
+    let messages = replies("реплика");
+    let target = messages[3].id;
+    let place = FeedPlace {
+        message: target,
+        row: 0,
+    };
+    for landing in [
+        focus_on(target),
+        FeedLanding::Reveal { message: target },
+        FeedLanding::Place(place),
+        FeedLanding::Top,
+    ] {
+        let mut s = ChatScreen::new();
+        open_at(&mut s, id, &messages, FeedLanding::Tail);
+        screen_rows(&mut s, 40, 14);
+        assert!(s.feed_view.is_following(), "precondition: at the tail");
+
+        open_at(&mut s, id, &messages, landing.clone());
+        s.push_note("заметка");
+        let rows = screen_rows(&mut s, 40, 14);
+        assert!(
+            !s.feed_view.is_following(),
+            "{landing:?}: the note sent the feed to its tail"
+        );
+        let wanted = if landing == FeedLanding::Top {
+            "реплика-0 "
+        } else {
+            "реплика-3 "
+        };
+        assert!(
+            rows.iter().any(|r| r.contains(wanted)),
+            "{landing:?}: {rows:?}"
+        );
+    }
+}
+
+/// The feed's rows of a 40x14 frame, less the border column the scrollbar's
+/// thumb is drawn on: a feed that grew has a shorter thumb.
+fn feed_body(s: &mut ChatScreen) -> Vec<String> {
+    screen_rows(s, 40, 14)
+        .iter()
+        .map(|r| r.chars().take(39).collect())
+        .collect()
+}
+
+/// What arrives in the open chat by itself — a background run's result, a
+/// follow-up, rows from the messenger — is delivered by a rebuild of the
+/// feed (docs/research/feed-landing.md §2.2, §3.6). A reader elsewhere in the
+/// conversation keeps the rows they are reading, where the rebuild used to
+/// send them to the last row; and a note above those rows, which a rebuild
+/// drops, does not shift them.
+#[test]
+fn a_refresh_leaves_a_reader_on_the_rows_they_are_reading() {
+    let mut s = ChatScreen::new();
+    let id = gen_id();
+    let mut messages = replies("реплика");
+    open_at(&mut s, id, &messages, FeedLanding::Tail);
+    screen_rows(&mut s, 40, 14);
+    s.feed_view.scroll_up(14);
+    let reading = feed_body(&mut s);
+    assert!(!s.feed_view.is_following(), "precondition: scrolled away");
+
+    messages.push(Message::assistant("пришло само"));
+    open_at(&mut s, id, &messages, FeedLanding::Hold);
+    assert_eq!(feed_body(&mut s), reading, "the rows did not move");
+    assert!(!s.feed_view.is_following());
+    assert!(
+        s.feed.iter().any(|m| m.text == "пришло само"),
+        "and the feed holds what arrived"
+    );
+
+    // The same with a note standing above the view when the rows arrive: the
+    // rebuild drops it, and the rows under the reader stay where they are.
+    let mut s = ChatScreen::new();
+    let mut messages = replies("реплика");
+    open_at(&mut s, id, &messages[..2], FeedLanding::Tail);
+    s.push_note("заметка");
+    for m in &messages[2..] {
+        s.echo_user_message(m.text.clone(), Some(m.id));
+    }
+    screen_rows(&mut s, 40, 14);
+    s.feed_view.scroll_up(6);
+    let reading = feed_body(&mut s);
+    assert!(
+        !reading.iter().any(|r| r.contains("заметка")),
+        "precondition: the note is above the view: {reading:?}"
+    );
+    messages.push(Message::assistant("пришло само"));
+    open_at(&mut s, id, &messages, FeedLanding::Hold);
+    assert_eq!(
+        feed_body(&mut s),
+        reading,
+        "the note took no row of the view"
+    );
+}
+
+/// A feed that follows its tail still does after a refresh, and shows what
+/// arrived.
+#[test]
+fn a_refresh_of_a_feed_at_its_tail_shows_what_arrived() {
+    let mut s = ChatScreen::new();
+    let id = gen_id();
+    let mut messages = replies("реплика");
+    open_at(&mut s, id, &messages, FeedLanding::Tail);
+    screen_rows(&mut s, 40, 14);
+
+    messages.push(Message::assistant("пришло само"));
+    open_at(&mut s, id, &messages, FeedLanding::Hold);
+    let rows = screen_rows(&mut s, 40, 14);
+    assert!(s.feed_view.is_following());
+    assert!(rows.iter().any(|r| r.contains("пришло само")), "{rows:?}");
+}
+
+/// A refresh touches nothing of the person's: the in-feed search stays open
+/// on its query, a jump's mark stays on its message, and the input box keeps
+/// its text, its cursor and its undo history — whatever draft the activation
+/// carries (research §3.6). An activation of the same chat used to close the
+/// search, drop the mark and reload the box.
+#[test]
+fn a_refresh_keeps_the_search_the_mark_and_the_input_box() {
+    let mut s = ChatScreen::new();
+    let id = gen_id();
+    let mut messages = replies("реплика");
+    let marked = messages[4].id;
+    open_at(&mut s, id, &messages, focus_on(marked));
+    screen_rows(&mut s, 40, 14);
+    assert_eq!(s.feed_view.marker(), Some(4));
+
+    // A message being typed, the cursor in its middle.
+    for c in "черновик".chars() {
+        s.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+    }
+    s.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+    s.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+    let cursor = s.input.cursor();
+    // The search opened over it.
+    s.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
+    for c in "реплика".chars() {
+        s.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+    }
+    screen_rows(&mut s, 40, 14);
+    let matches = s.feed_view.match_position().map(|(_, of)| of);
+    assert_eq!(matches, Some(12), "precondition: a match in every message");
+
+    messages.push(Message::assistant("реплика сама"));
+    s.activate_chat(
+        id,
+        "Чат".into(),
+        &messages,
+        "черн",
+        FeedView::default(),
+        FeedLanding::Hold,
+        None,
+    );
+    screen_rows(&mut s, 40, 14);
+
+    assert!(s.search.is_some(), "the search field is still open");
+    assert_eq!(
+        s.feed_view.match_position().map(|(_, of)| of),
+        Some(13),
+        "and counts what arrived"
+    );
+    assert_eq!(s.feed_view.marker(), Some(4), "the mark is on its message");
+    assert_eq!(s.input.text(), "черновик", "not the stored draft");
+    assert_eq!(s.input.cursor(), cursor, "the cursor where it was");
+    assert!(s.input.undo(), "the undo history is the box's own");
+}
+
+/// The input box is loaded from a chat's draft **when the chat changes**, and
+/// by no activation of the chat that is already open — a regeneration, a
+/// variant switch, a take-back all rebuild the feed under a box the person
+/// may be typing in.
+#[test]
+fn the_input_box_is_loaded_only_when_the_chat_changes() {
+    let mut s = ChatScreen::new();
+    let (here, there) = (gen_id(), gen_id());
+    let messages = replies("реплика");
+    let open = |s: &mut ChatScreen, id: Uuid, draft: &str, landing: FeedLanding| {
+        s.activate_chat(
+            id,
+            "Чат".into(),
+            &messages,
+            draft,
+            FeedView::default(),
+            landing,
+            None,
+        );
+    };
+    open(&mut s, here, "первый", FeedLanding::Tail);
+    assert_eq!(
+        s.input.text(),
+        "первый",
+        "a chat that opens brings its draft"
+    );
+
+    s.handle_key(KeyEvent::new(KeyCode::Char('!'), KeyModifiers::NONE));
+    s.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE));
+    let cursor = s.input.cursor();
+    for landing in [
+        FeedLanding::Tail,
+        FeedLanding::Top,
+        FeedLanding::Reveal {
+            message: messages[3].id,
+        },
+        FeedLanding::Hold,
+    ] {
+        open(&mut s, here, "устарело", landing.clone());
+        assert_eq!(s.input.text(), "первый!", "{landing:?}");
+        assert_eq!(s.input.cursor(), cursor, "{landing:?}");
+    }
+
+    open(&mut s, there, "второй", FeedLanding::Tail);
+    assert_eq!(s.input.text(), "второй", "another chat's draft is loaded");
+    // A hold for a chat that was not the open one has nothing to hold.
+    open(&mut s, here, "снова первый", FeedLanding::Hold);
+    assert_eq!(s.input.text(), "снова первый");
+    assert!(s.feed_view.is_following(), "and it opens at its tail");
+}
+
+/// A turn the app started on a notice scrolls into view only for a feed that
+/// was following its tail; a turn the person asked for always does
+/// (research §3.6).
+#[test]
+fn a_woken_turn_does_not_take_a_reader_to_the_tail() {
+    let mut s = ChatScreen::new();
+    open_at(&mut s, gen_id(), &replies("реплика"), FeedLanding::Tail);
+    screen_rows(&mut s, 40, 14);
+    s.feed_view.scroll_up(12);
+    screen_rows(&mut s, 40, 14);
+
+    s.begin_woken_generation(gen_id(), None);
+    assert!(
+        !s.feed_view.is_following(),
+        "a reader stays where they read"
+    );
+    assert!(s.generating, "the turn is running all the same");
+
+    s.begin_generation(gen_id(), None);
+    assert!(s.feed_view.is_following(), "a turn asked for is shown");
+
+    s.begin_woken_generation(gen_id(), None);
+    assert!(
+        s.feed_view.is_following(),
+        "and a feed at its tail follows it"
+    );
+}
+
+/// `Ctrl+T` reshapes every block, and a reader scrolled into the middle of a
+/// conversation stays on the message they were reading
+/// (docs/research/feed-landing.md, fork F2) — where the feed used to keep its
+/// row number, and so showed whatever message that row became.
+#[test]
+fn ctrl_t_keeps_a_reader_on_the_message_they_were_reading() {
+    let mut s = ChatScreen::new();
+    let messages: Vec<Message> = (0..10)
+        .map(|i| {
+            let mut m = Message::assistant(format!("ответ-{i}"));
+            m.thoughts = Some("мысль ".repeat(40));
+            m
+        })
+        .collect();
+    open_at(&mut s, gen_id(), &messages, FeedLanding::Tail);
+    screen_rows(&mut s, 40, 14);
+    s.feed_view.scroll_up(9);
+    screen_rows(&mut s, 40, 14);
+    let reading = s.feed_place().expect("a message is on the first row");
+
+    for _ in 0..2 {
+        s.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL));
+        screen_rows(&mut s, 40, 14);
+        assert_eq!(s.feed_place().map(|p| p.message), Some(reading.message));
+    }
+    // A window made narrower, then wider again: the same.
+    for width in [28, 60] {
+        screen_rows(&mut s, width, 14);
+        assert_eq!(s.feed_place().map(|p| p.message), Some(reading.message));
+    }
+}
+
+/// A search hit opens the chat with the **match** on the screen (research
+/// fork F3): in a message taller than the window it used to open on the
+/// message's first row, the word below the fold.
+#[test]
+fn a_search_hit_opens_with_its_match_on_the_screen() {
+    let mut s = ChatScreen::new();
+    let mut messages = replies("реплика");
+    let long = Message::assistant(format!(
+        "{} жемчуг {}",
+        "вода ".repeat(150),
+        "вода ".repeat(30)
+    ));
+    let hit = long.id;
+    messages[6] = long;
+    open_at(
+        &mut s,
+        gen_id(),
+        &messages,
+        FeedLanding::Jump {
+            message: hit,
+            query: "жемчуг".into(),
+        },
+    );
+    let rows = screen_rows(&mut s, 40, 14);
+    assert!(
+        rows.iter().any(|r| r.contains("жемчуг")),
+        "the match is on the screen: {rows:?}"
+    );
+    let place = s.feed_place().unwrap();
+    assert_eq!(place.message, hit);
+    assert!(place.row > 0, "not the message's first row");
+    assert_eq!(s.feed_view.marker(), Some(6), "and the message is marked");
+}
+
+/// The view's first row held for a reveal is the **open chat's**: a reveal
+/// that arrives with another chat's activation has nothing to hold, and the
+/// bubble goes to the first row.
+#[test]
+fn a_reveal_holds_nothing_of_another_chats_view() {
+    let mut s = ChatScreen::new();
+    open_at(&mut s, gen_id(), &replies("первый"), FeedLanding::Tail);
+    screen_rows(&mut s, 40, 14);
+    s.feed_view.scroll_up(11);
+    screen_rows(&mut s, 40, 14);
+
+    let second = replies("второй");
+    let first = second[9].id;
+    open_at(
+        &mut s,
+        gen_id(),
+        &second,
+        FeedLanding::Reveal { message: first },
+    );
+    screen_rows(&mut s, 40, 14);
+    assert_eq!(
+        s.feed_place(),
+        Some(FeedPlace {
+            message: first,
+            row: 0
+        })
     );
 }
 
@@ -626,7 +1152,7 @@ fn feed_scroll_requests_clear_only_with_vs16_emoji() {
         &[Message::assistant("обычный текст")],
         "",
         FeedView::default(),
-        None,
+        FeedLanding::Tail,
         None,
     );
     clean.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE));
@@ -644,7 +1170,7 @@ fn feed_scroll_requests_clear_only_with_vs16_emoji() {
         &[Message::assistant("## 🗂️ Хэш")],
         "",
         FeedView::default(),
-        None,
+        FeedLanding::Tail,
         None,
     );
     emoji.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE));
@@ -788,7 +1314,7 @@ fn activate_chat_loads_draft_without_marking_dirty() {
         &[],
         "недописанный текст",
         FeedView::default(),
-        None,
+        FeedLanding::Tail,
         None,
     );
     assert_eq!(s.input.text(), "недописанный текст");
@@ -801,7 +1327,7 @@ fn activate_chat_loads_draft_without_marking_dirty() {
         &[],
         "",
         FeedView::default(),
-        None,
+        FeedLanding::Tail,
         None,
     );
     assert!(s.input.is_empty());
@@ -1743,7 +2269,7 @@ fn rename_chat_updates_title_bar_of_active_chat() {
         &[],
         "",
         FeedView::default(),
-        None,
+        FeedLanding::Tail,
         None,
     );
     s.rename_chat(id, "Новое".into());
@@ -1762,7 +2288,15 @@ fn f5_copies_active_chat_in_main_window() {
         None
     );
     let id = gen_id();
-    s.activate_chat(id, "Чат".into(), &[], "", FeedView::default(), None, None);
+    s.activate_chat(
+        id,
+        "Чат".into(),
+        &[],
+        "",
+        FeedView::default(),
+        FeedLanding::Tail,
+        None,
+    );
     assert_eq!(
         s.handle_key(KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE)),
         Some(ChatIntent::CopyChat {
@@ -1894,7 +2428,7 @@ fn a_click_on_a_pill_folds_that_block_and_reports_the_view() {
         &[Message::user("вопрос"), answer],
         "",
         FeedView::default(),
-        None,
+        FeedLanding::Tail,
         None,
     );
     let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(70, 20)).unwrap();
@@ -1975,7 +2509,15 @@ fn landed_answer(calls: usize) -> Message {
 fn streamed_turn(chat: Uuid) -> ChatScreen {
     let mut s = ChatScreen::new();
     s.set_server_status(ready_statuses());
-    s.activate_chat(chat, "Чат".into(), &[], "", FeedView::default(), None, None);
+    s.activate_chat(
+        chat,
+        "Чат".into(),
+        &[],
+        "",
+        FeedView::default(),
+        FeedLanding::Tail,
+        None,
+    );
     s.push_user_message("вопрос".into());
     let turn = gen_id();
     s.begin_generation(turn, None);
@@ -2099,7 +2641,7 @@ fn activating_a_chat_applies_its_stored_collapse_state() {
         &[],
         "",
         expanded.clone(),
-        None,
+        FeedLanding::Tail,
         None,
     );
     assert_eq!(s.feed_view.view(), expanded);
@@ -2110,7 +2652,7 @@ fn activating_a_chat_applies_its_stored_collapse_state() {
         &[],
         "",
         FeedView::default(),
-        None,
+        FeedLanding::Tail,
         None,
     );
     assert_eq!(s.feed_view.view(), FeedView::default());
@@ -2548,7 +3090,7 @@ fn every_feed_mutator_marks_content_change() {
         &[Message::assistant("привет 😀")],
         "",
         FeedView::default(),
-        None,
+        FeedLanding::Tail,
         None,
     );
     assert!(s.take_full_redraw(), "activate_chat");
@@ -3515,7 +4057,7 @@ fn activating_a_chat_closes_the_search() {
         &[],
         "",
         FeedView::default(),
-        None,
+        FeedLanding::Tail,
         None,
     );
     assert!(
@@ -3580,7 +4122,7 @@ fn activation_carries_the_compaction_boundary() {
         &messages,
         "",
         FeedView::default(),
-        None,
+        FeedLanding::Tail,
         Some((boundary, "ранее обсудили X".into())),
     );
     let rows = screen_rows(&mut s, 60, 24);
@@ -3596,7 +4138,7 @@ fn activation_carries_the_compaction_boundary() {
         &messages,
         "",
         FeedView::default(),
-        None,
+        FeedLanding::Tail,
         None,
     );
     let rows = screen_rows(&mut s, 60, 24);
@@ -3621,7 +4163,7 @@ fn a_live_compaction_reaches_the_feed() {
         &messages,
         "",
         FeedView::default(),
-        None,
+        FeedLanding::Tail,
         None,
     );
     assert!(
@@ -3803,7 +4345,7 @@ fn a_running_transcript_grows_by_rounds_and_keeps_the_chip_but_not_the_stream() 
         &[Message::user("задание")],
         "",
         FeedView::default(),
-        None,
+        FeedLanding::Tail,
         None,
     );
     s.set_live_turn(Some(Box::new(crate::entities::live_turn::LiveTurn {
@@ -3888,7 +4430,7 @@ fn a_dialogue_line_streams_on_its_speakers_side() {
         &[Message::assistant("Your espresso!")],
         "",
         FeedView::default(),
-        None,
+        FeedLanding::Tail,
         None,
     );
     // Opened mid-line: participant b is speaking — the seeded partial is a
@@ -3951,7 +4493,7 @@ fn reset_transcript_replaces_the_feed_in_place() {
         ],
         "",
         FeedView::default(),
-        None,
+        FeedLanding::Tail,
         None,
     );
     let replaced = vec![
@@ -4021,7 +4563,7 @@ fn returning_to_the_running_chat_resumes_its_generation() {
         &[Message::user("вопрос")],
         "",
         FeedView::default(),
-        None,
+        FeedLanding::Tail,
         None,
     );
     s.set_live_turn(Some(Box::new(crate::entities::live_turn::LiveTurn {
@@ -4259,7 +4801,7 @@ fn screen_citing(here: Uuid, others: &[Uuid], cited: &[Uuid]) -> ChatScreen {
         &[Message::assistant(format!("см. {text}"))],
         "",
         FeedView::default(),
-        None,
+        FeedLanding::Tail,
         None,
     );
     // After activation, as it arrives in practice: the orchestrator emits the
@@ -4355,7 +4897,7 @@ fn another_profiles_conversation_is_not_a_reference() {
         ))],
         "",
         FeedView::default(),
-        None,
+        FeedLanding::Tail,
         None,
     );
     s.set_chat_list(vec![
@@ -4384,7 +4926,7 @@ fn switching_chats_closes_the_picker() {
         &[Message::user("привет")],
         "",
         FeedView::default(),
-        None,
+        FeedLanding::Tail,
         None,
     );
     assert!(s.chat_links.is_none());
@@ -4557,7 +5099,7 @@ impl Cmd {
             &[Message::user("привет")],
             "",
             FeedView::default(),
-            None,
+            FeedLanding::Tail,
             None,
         );
         s.set_profile_list(vec![
@@ -5311,7 +5853,7 @@ mod read_only_transcript {
             &[Message::user("Оцени X."), Message::assistant("X слаб.")],
             "",
             FeedView::default(),
-            None,
+            FeedLanding::Tail,
             None,
         );
         c.chat = child;
@@ -5495,7 +6037,7 @@ mod background_transcript {
             &[Message::user("Оцени X.")],
             "",
             FeedView::default(),
-            None,
+            FeedLanding::Tail,
             None,
         );
         c.s.set_live_turn(Some(Box::new(LiveTurn {
@@ -5660,7 +6202,7 @@ mod stage3_commands {
             &[],
             "",
             FeedView::default(),
-            None,
+            FeedLanding::Tail,
             None,
         );
         c.chat = chat;
@@ -6096,7 +6638,7 @@ mod subagents_command {
             &[],
             "",
             FeedView::default(),
-            None,
+            FeedLanding::Tail,
             None,
         );
         c.chat = child;
@@ -6148,7 +6690,7 @@ fn continuation_streams_into_the_resumed_bubble() {
         &messages,
         "",
         FeedView::default(),
-        None,
+        FeedLanding::Tail,
         None,
     );
     let g = gen_id();
@@ -6178,7 +6720,7 @@ fn continuation_reopens_the_bubble_past_a_trailing_note() {
         &messages,
         "",
         FeedView::default(),
-        None,
+        FeedLanding::Tail,
         None,
     );
     s.push_note("ответ оборван");
@@ -6277,7 +6819,7 @@ fn a_rebuild_mid_continuation_appends_the_partial_into_the_seed_bubble() {
         &messages,
         "",
         FeedView::default(),
-        None,
+        FeedLanding::Tail,
         None,
     );
     s.set_live_turn(Some(Box::new(crate::entities::live_turn::LiveTurn {
@@ -6850,7 +7392,7 @@ fn the_bare_search_row_tags_its_counter() {
         ],
         "",
         FeedView::default(),
-        None,
+        FeedLanding::Tail,
         None,
     );
     s.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
@@ -6981,7 +7523,7 @@ fn selection_screen(draft: &str) -> (ChatScreen, ratatui::Terminal<ratatui::back
         ],
         draft,
         FeedView::default(),
-        None,
+        FeedLanding::Tail,
         None,
     );
     let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(60, 16)).unwrap();
@@ -7273,7 +7815,7 @@ fn a_drag_held_past_the_feed_scrolls_it_on_the_tick() {
         &messages,
         "",
         FeedView::default(),
-        None,
+        FeedLanding::Tail,
         None,
     );
     let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(60, 16)).unwrap();
@@ -7340,7 +7882,7 @@ fn a_key_ends_a_drag_but_keeps_its_selection() {
         &messages,
         "",
         FeedView::default(),
-        None,
+        FeedLanding::Tail,
         None,
     );
     let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(60, 16)).unwrap();
@@ -7375,7 +7917,7 @@ fn a_click_beside_a_long_selections_rows_ends_it() {
         )],
         "",
         FeedView::default(),
-        None,
+        FeedLanding::Tail,
         None,
     );
     let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(30, 16)).unwrap();
@@ -7419,7 +7961,7 @@ fn switching_chats_drops_the_feeds_selection() {
         ],
         "",
         FeedView::default(),
-        None,
+        FeedLanding::Tail,
         None,
     );
     assert!(!s.feed_view.has_selection());
@@ -7529,7 +8071,7 @@ mod branch_commands {
             &messages,
             "",
             FeedView::default(),
-            None,
+            FeedLanding::Tail,
             None,
         );
         (c, ids)
@@ -7770,7 +8312,7 @@ mod branch_commands {
             &[Message::user("Оцени X."), Message::assistant("X слаб.")],
             "",
             FeedView::default(),
-            None,
+            FeedLanding::Tail,
             None,
         );
         for line in ["/fork 1", "/branch"] {

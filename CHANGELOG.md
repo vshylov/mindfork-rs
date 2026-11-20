@@ -30,7 +30,8 @@ split by subsystem.
   is before its number, `‹2/3› #11`. `/branch N K` switches message N to variant K,
   `/branch` alone lists every branch, and with the mouse a click on `‹` or `›` goes to
   the neighbouring variant. Coming back to a branch restores the conversation as you
-  left it.
+  left it. The conversation stays where you are looking: the message you switch does
+  not move while it is on the screen, so the variants can be clicked through.
 - **A click on a message's number writes it into `/fork` or `/branch`** when one of
   them is in the box, and nothing runs until `Enter`.
 - The assistant reads the conversation in front of you: a branch you left is not in
@@ -67,6 +68,15 @@ split by subsystem.
 
 ### Changed
 
+- **A `chat://` reference opens the conversation at its beginning**, where it opened at
+  its end. **`Esc` returns to the place you followed it from** — the reference is on
+  the screen where you left it, not somewhere above the last message.
+- **A finished sub-agent transcript opens at its beginning**: the persona and the
+  instruction first. A running one still opens at its end and follows it.
+- A greeting swapped with `/greeting` is shown from its first line.
+- **A search result opens with its match on the screen.** In a message longer than the
+  window the conversation used to open at the message's first line, with the word you
+  searched for somewhere below.
 - **`Ctrl+R` keeps the reply it replaces.** A regenerated reply is a new variant of
   the same message — `‹2/2›` on its header — and `‹` brings the previous one back;
   `/branch` lists them all. Before, the old reply went into an archive in the chat's
@@ -79,6 +89,21 @@ split by subsystem.
 - **Self-reflection reads the same signals from the branches**: a reply regenerated and
   an exchange taken back still tell it that a reply did not land. A reply you went back
   to is no longer counted as one.
+
+### Fixed
+
+- **What arrives in the open conversation by itself no longer takes your place.** A
+  background run's result, a follow-up, a message from the messenger, and the reply
+  the assistant starts on any of them used to scroll the conversation to its end
+  wherever you were reading, close the search in it and the open list, and reset the
+  input box: the cursor jumped to the end and `Ctrl+Z` forgot what you had typed. Now
+  the conversation moves only if you are at its end, and the rest is left alone.
+- Switching a variant, regenerating a reply or taking an exchange back no longer
+  resets the cursor and the undo history of the text you are typing.
+- **Resizing the window no longer loses your place.** Scrolled into the middle of a
+  conversation, a resize — or `Ctrl+T`, `Ctrl+O`, a theme — used to leave you on some
+  other message, because the lines above were wrapped anew. The line at the top of the
+  window now stays there, through any number of resizes.
 
 ### Data
 

@@ -302,7 +302,7 @@ impl Orchestrator {
     /// (research §4.4). A chat the user is not looking at is marked
     /// **unread** instead (spec §11.2): the list says a result is waiting
     /// there, and opening the chat clears the mark
-    /// ([`Orchestrator::activate_focused`]).
+    /// ([`Orchestrator::activate_at`]).
     fn deliver_notification(&mut self, chat_id: Uuid, message: Message) {
         let open = self.active_id == Some(chat_id);
         let Some(chat) = self.chat_mut(chat_id) else {
@@ -314,7 +314,7 @@ impl Orchestrator {
         }
         self.mark_dirty(chat_id);
         if open {
-            self.activate(chat_id);
+            self.refresh(chat_id);
         }
         self.emit_chat_list();
         self.maybe_wake(chat_id);

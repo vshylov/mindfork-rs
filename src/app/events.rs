@@ -5,13 +5,13 @@ use uuid::Uuid;
 
 use crate::entities::attachment::AttachmentInfo;
 use crate::entities::chat::{ChatSummary, FeedView};
+pub use crate::entities::feed_landing::{FeedLanding, FeedPlace};
 pub use crate::entities::live_turn::{LivePartial, LiveTool, LiveTurn};
 use crate::entities::message::{Message, MessageRole};
 use crate::entities::message_image::ImageInfo;
 use crate::entities::profile::{CharacterNames, Profile, ProfileSummary};
 pub use crate::entities::subagent::{ChildView, RunProgressKind, SubagentProgress};
 pub use crate::entities::task::{AppTask, BackgroundKind, TASK_LANDED_CAP, TaskList, TaskRun};
-pub use crate::features::chat_search::FeedFocus;
 use crate::features::chat_search_sort::SortMode;
 pub use crate::features::file_command::FileProgress;
 pub use crate::features::image_command::ImageProgress;
@@ -124,6 +124,13 @@ pub enum AppCommand {
         /// highlight.
         query: String,
     },
+    /// Make a chat active with the feed **where the screen asks**
+    /// (docs/research/feed-landing.md §3.2): the first row for a followed
+    /// `chat://` reference, the place it was followed from on the way back.
+    /// Same activation as `SwitchChat`, which is this with the tail. Sent for
+    /// the open chat, it moves the feed — unless the landing is the tail,
+    /// which is a plain switch and so a no-op.
+    OpenChat { chat: Uuid, landing: FeedLanding },
     /// Make a chat active and put the feed on its **first message matching
     /// `query`** (`Enter` in the chat list's content mode). The orchestrator
     /// resolves the message: it owns both the index and the chat, so only it
@@ -460,6 +467,7 @@ impl AppCommand {
             | AppCommand::CancelImpersonation
             | AppCommand::NewChat { .. }
             | AppCommand::SwitchChat(_)
+            | AppCommand::OpenChat { .. }
             | AppCommand::OpenChatAt { .. }
             | AppCommand::OpenChatAtFirstMatch { .. }
             | AppCommand::RenameChat { .. }
@@ -616,11 +624,13 @@ pub enum AppEvent {
         /// ("thoughts"/tool calls) — the counterpart of `draft` for the view
         /// (spec §11.3).
         feed_view: FeedView,
-        /// Put the feed on this message instead of the tail, and highlight the
-        /// query inside it (a jump from a search hit, `AppCommand::OpenChatAt`).
-        /// `None` — every other activation, which must not highlight anything.
-        /// See docs/history/chat-search-stage2.md §3 and §4a S3(b).
-        focus: Option<FeedFocus>,
+        /// Where the feed stands once it is rebuilt
+        /// (docs/research/feed-landing.md §3.2): the tail for an ordinary
+        /// opening; a message with the query highlighted inside it for a search
+        /// hit (`AppCommand::OpenChatAt`); the first row, a message shown
+        /// without moving the view, or a place read earlier for the routes that
+        /// ask for one. Only a jump highlights anything.
+        landing: FeedLanding,
         /// The rolling summary and the id of the first message still sent
         /// verbatim, when this chat has been compacted **and** the feature is on
         /// — what the feed needs to draw the boundary (spec §6.7). `None` when
@@ -722,6 +732,13 @@ pub enum AppEvent {
         /// bubble for streaming instead of pushing a fresh one, and appends
         /// with no separator — the seam is the model's own.
         continuation: bool,
+        /// The app started the turn on a notice — a background run's result,
+        /// a follow-up come due — and nobody pressed anything
+        /// (`GenSpawn::woken`). Its bubble scrolls into view only if the feed
+        /// was following its tail: a reader elsewhere in the conversation is
+        /// not sent to its end by a turn they did not ask for
+        /// (docs/research/feed-landing.md §3.6).
+        woken: bool,
     },
     /// A delta of the reply's main text.
     Chunk { generation_id: Uuid, text: String },

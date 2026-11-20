@@ -156,7 +156,10 @@ A message that has other variants shows which one it is before its number:
 `/branch N K` switches message N to variant K, `/branch` alone lists every
 branch of the chat, and with the mouse a click on `‹` or `›` goes to the
 neighbouring variant. Coming back to a branch restores the conversation as you
-left it. A click on a number writes it into `/fork` or `/branch` when one of
+left it. The conversation stays where you are looking: a message whose variant
+you switch does not move while it is on the screen, so you can click `‹` and `›`
+back and forth to compare, and a message switched from elsewhere is brought to
+the top. A click on a number writes it into `/fork` or `/branch` when one of
 them is in the box.
 
 `Ctrl+R` and `Ctrl+E` make branches too. A regenerated reply does not replace
@@ -657,7 +660,8 @@ derail the answer; the assistant is told and carries on.
 every run across every chat — running with the round and tool it is in, or landed
 with how it ended — with the follow-ups a companion has planned and the app's own
 quiet work below. `Enter` opens a run's transcript, `P` its chat, `F6` stops a
-running one; on a follow-up, `Enter` opens its conversation and `Del` twice
+running one. A finished transcript opens at its beginning — the persona, then
+the instruction — and a running one at its end, following it. On a follow-up, `Enter` opens its conversation and `Del` twice
 cancels it.
 
 When a background run finishes, the assistant reports it in the chat if that chat
@@ -938,10 +942,18 @@ things on different screens. The highlights:
 | `Ctrl+K` | clear the input (`Ctrl+Z` brings it back) |
 | `Ctrl+Z` / `Ctrl+Y` | undo / redo in the input box |
 | `Ctrl+B` | emoji picker |
-| `Ctrl+L` | follow a `chat://` reference the assistant wrote |
+| `Ctrl+L` | follow a `chat://` reference the assistant wrote: the conversation opens at its beginning, and `Esc` returns to the place you followed it from |
 | `Ctrl+←/→`, `Ctrl+Backspace/Delete` | move by words, delete a word — `Alt` (Option on a Mac) does the same |
 | `Home` / `End` | a ladder: first the on-screen row, then the whole line |
 | `PageUp` / `PageDown` / wheel | scroll the feed |
+
+> **Where you are reading stays yours.** What arrives in the open conversation by
+> itself — a background run's result, a follow-up, a message from your phone, the reply
+> the assistant writes to one of these — does not move the conversation unless you are
+> at its end, and leaves the search, a selection and the text you are typing as they
+> are. Resizing the window, or folding thoughts and tool calls with `Ctrl+T` and
+> `Ctrl+O`, keeps the line you were on at the top. A search result opens with the word
+> you searched for on the screen, wherever in a long message it is.
 
 > **The mouse.** The wheel scrolls the conversation, a click follows a `chat://`
 > address, and a drag selects text — the app's own selection: a double click takes a

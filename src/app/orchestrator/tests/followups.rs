@@ -180,6 +180,68 @@ async fn a_due_follow_up_is_delivered_once_and_wakes_the_open_conversation() {
     assert_eq!(backend.requests().len(), 1, "one wake, once");
 }
 
+/// What the screen is told from the start-up to the end of the first turn:
+/// the landing of every activation, and whether each turn was a woken one.
+async fn told_until_finished(
+    evt_rx: &mut UnboundedReceiver<AppEvent>,
+) -> (Vec<FeedLanding>, Vec<bool>) {
+    let (mut landings, mut woken) = (Vec::new(), Vec::new());
+    loop {
+        match wait_for(evt_rx, |_| true).await.expect("the turn ends") {
+            AppEvent::ChatActivated { landing, .. } => landings.push(landing),
+            AppEvent::GenerationStarted { woken: w, .. } => woken.push(w),
+            AppEvent::Finished { .. } => return (landings, woken),
+            _ => {}
+        }
+    }
+}
+
+/// A follow-up that comes due in the open conversation is delivered by a
+/// rebuild of its feed, and the person opened nothing: after the start-up's
+/// own activation every one is a **hold**, and the turn it wakes says nobody
+/// asked for it (docs/research/feed-landing.md §3.6). These used to be the
+/// tail and an ordinary turn, which sent a reader to the feed's last row
+/// twice. A reply that chooses silence is taken out of the feed the same way.
+#[tokio::test]
+async fn a_follow_up_in_the_open_conversation_holds_the_readers_place() {
+    for (reply, what) in [
+        ("Hey — how did the interview go?", "a reply"),
+        ("<silent>", "silence"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let w = seed(dir.path(), true, |_| {});
+        plant(dir.path(), &w, w.interview, -1);
+        let backend = Replying::new(reply);
+        let (cmd_tx, mut evt_rx, handle) =
+            spawn_orch_at(dir.path(), Some(backend.clone()), no_auto_cfg());
+        let (mut landings, woken) = told_until_finished(&mut evt_rx).await;
+        // What the landing of the turn rebuilds, if anything.
+        pause().await;
+        while let Ok(e) = evt_rx.try_recv() {
+            if let AppEvent::ChatActivated { landing, .. } = e {
+                landings.push(landing);
+            }
+        }
+
+        assert_eq!(landings[0], FeedLanding::Tail, "{what}: the start-up opens");
+        assert!(
+            landings.len() > 1 && landings[1..].iter().all(|l| *l == FeedLanding::Hold),
+            "{what}: {landings:?}"
+        );
+        assert_eq!(woken, [true], "{what}: nobody asked for the turn");
+
+        // The turn the person types next is one they asked for.
+        if reply != "<silent>" {
+            cmd_tx
+                .send(AppCommand::SendMessage("Fine!".into()))
+                .unwrap();
+            let (landings, woken) = told_until_finished(&mut evt_rx).await;
+            assert_eq!((landings, woken), (Vec::new(), vec![false]));
+        }
+        quit(cmd_tx, handle).await;
+    }
+}
+
 /// Nobody is waiting for a woken turn, so it is not offered `image_generate`
 /// even with the picture slot on; the turn the person types next is
 /// (docs/history/image-generation.md §6.6, F7).

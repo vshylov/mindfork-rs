@@ -930,7 +930,7 @@ fn character_names_event_reaches_the_feed() {
         &[Message::user("hi")],
         "",
         FeedView::default(),
-        None,
+        FeedLanding::Tail,
         None,
     );
     let mut term = Terminal::new(TestBackend::new(60, 12)).unwrap();
@@ -977,7 +977,7 @@ fn a_transcript_opens_with_its_persona_and_the_next_chat_does_not_inherit_it() {
             messages: vec![Message::user("the task")],
             draft: String::new(),
             feed_view: FeedView::default(),
-            focus: None,
+            landing: FeedLanding::Tail,
             compaction: None,
             child: Some(ChildView {
                 parent,
@@ -1051,7 +1051,7 @@ fn chat_activated(id: uuid::Uuid) -> AppEvent {
         messages: Vec::new(),
         draft: String::new(),
         feed_view: FeedView::default(),
-        focus: None,
+        landing: FeedLanding::Tail,
         compaction: None,
         child: None,
         live_turn: None,
@@ -1494,8 +1494,11 @@ fn esc_after_following_a_reference_returns_to_the_previous_chat() {
     let (origin, target) = h.follow_a_reference();
 
     assert!(
-        matches!(h.next_command(), Some(AppCommand::SwitchChat(id)) if id == target),
-        "the reference is followed by an ordinary switch"
+        matches!(
+            h.next_command(),
+            Some(AppCommand::OpenChat { chat, landing: FeedLanding::Top }) if chat == target
+        ),
+        "the conversation a reference names is opened at its first row"
     );
     assert!(
         h.back.is_some(),
@@ -1509,7 +1512,11 @@ fn esc_after_following_a_reference_returns_to_the_previous_chat() {
 
     h.dispatch(ChatIntent::OpenChatList);
     assert!(
-        matches!(h.next_command(), Some(AppCommand::SwitchChat(id)) if id == origin),
+        matches!(
+            h.next_command(),
+            // No frame was drawn here, so there was no row to keep: the tail.
+            Some(AppCommand::OpenChat { chat, landing: FeedLanding::Tail }) if chat == origin
+        ),
         "back to where the reference was followed from"
     );
     assert!(
@@ -1522,6 +1529,121 @@ fn esc_after_following_a_reference_returns_to_the_previous_chat() {
     // The next `Esc` opens the chat list, exactly as it always did.
     h.dispatch(ChatIntent::OpenChatList);
     assert!(matches!(h.active, ActiveScreen::ChatList(_)));
+}
+
+/// The way back keeps **where** in the conversation the reference was
+/// followed (docs/research/feed-landing.md §3.5): the row the feed was on is
+/// read when the reference is followed, sent back with `Esc`, and the frame
+/// the person left is the frame they return to — the reference under their
+/// eyes, where the feed used to come back at its last row.
+#[test]
+fn the_way_back_from_a_reference_is_the_row_it_was_followed_from() {
+    let mut h = Harness::new();
+    let (origin, target) = (uuid::Uuid::new_v4(), uuid::Uuid::new_v4());
+    use crate::entities::message::Message;
+    let messages: Vec<Message> = (0..40)
+        .map(|i| Message::user(format!("реплика-{i}")))
+        .collect();
+    let open = |landing: FeedLanding| AppEvent::ChatActivated {
+        id: origin,
+        title: "чат".into(),
+        messages: messages.clone(),
+        draft: String::new(),
+        feed_view: FeedView::default(),
+        landing,
+        compaction: None,
+        child: None,
+        live_turn: None,
+    };
+    // The chat screen's frame, as text.
+    let frame = |h: &mut Harness| {
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        term.draw(|f| h.screen.render(f)).unwrap();
+        format!("{:?}", term.backend().buffer())
+    };
+    h.apply(open(FeedLanding::Tail));
+    let tail = frame(&mut h);
+    h.feed(Event::Key(KeyEvent::new(
+        KeyCode::PageUp,
+        KeyModifiers::NONE,
+    )));
+    let left = frame(&mut h);
+    assert_ne!(left, tail, "precondition: the feed is scrolled away");
+    h.drain_commands();
+
+    h.dispatch(ChatIntent::OpenChatLink(target));
+    let Some(Back::Link {
+        place: Some(place), ..
+    }) = &h.back
+    else {
+        panic!("the stash keeps the row the feed was on");
+    };
+    let place = *place;
+    h.drain_commands();
+    h.apply(chat_activated(target));
+
+    h.dispatch(ChatIntent::OpenChatList);
+    let landing = match h.next_command() {
+        Some(AppCommand::OpenChat { chat, landing }) if chat == origin => landing,
+        other => panic!("back to the chat the reference was followed from: {other:?}"),
+    };
+    assert_eq!(landing, FeedLanding::Place(place));
+    h.apply(open(landing));
+    assert_eq!(frame(&mut h), left, "the frame that was left");
+}
+
+/// A turn the app started on a notice reaches the screen as one nobody asked
+/// for (`AppEvent::GenerationStarted::woken`): a reader elsewhere in the
+/// conversation keeps their rows, where every turn's start used to send the
+/// feed to its last row. A turn that was asked for still does
+/// (docs/research/feed-landing.md §3.6).
+#[test]
+fn a_woken_turns_start_leaves_a_reader_where_they_are() {
+    use crate::entities::message::Message;
+    let mut h = Harness::new();
+    let chat = uuid::Uuid::new_v4();
+    let messages: Vec<Message> = (0..40)
+        .map(|i| Message::user(format!("реплика-{i}")))
+        .collect();
+    h.apply(AppEvent::ChatActivated {
+        id: chat,
+        title: "чат".into(),
+        messages,
+        draft: String::new(),
+        feed_view: FeedView::default(),
+        landing: FeedLanding::Tail,
+        compaction: None,
+        child: None,
+        live_turn: None,
+    });
+    // The feed's rows, less the border column the scrollbar is drawn on.
+    let rows = |h: &mut Harness| -> Vec<String> {
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        term.draw(|f| h.screen.render(f)).unwrap();
+        let buf = term.backend().buffer().clone();
+        (1..18)
+            .map(|y| (0..79).map(|x| buf[(x, y)].symbol()).collect())
+            .collect()
+    };
+    let tail = rows(&mut h);
+    h.feed(Event::Key(KeyEvent::new(
+        KeyCode::PageUp,
+        KeyModifiers::NONE,
+    )));
+    let reading = rows(&mut h);
+    assert_ne!(reading, tail, "precondition: scrolled away from the tail");
+
+    let started = |woken: bool| AppEvent::GenerationStarted {
+        generation_id: uuid::Uuid::new_v4(),
+        model: None,
+        continuation: false,
+        woken,
+    };
+    h.apply(started(true));
+    assert_eq!(rows(&mut h), reading, "a woken turn moved nothing");
+
+    h.apply(started(false));
+    assert_ne!(rows(&mut h), reading, "a turn asked for is shown");
 }
 
 /// Leaving by an ordinary route drops the way back — the same funnel and the
@@ -1554,7 +1676,7 @@ fn following_a_reference_replaces_a_stashed_result_screen() {
     let target = uuid::Uuid::new_v4();
     h.dispatch(ChatIntent::OpenChatLink(target));
     match &h.back {
-        Some(Back::Link { origin, chat }) => {
+        Some(Back::Link { origin, chat, .. }) => {
             assert_eq!(*origin, from_hit, "back to the chat the hit opened");
             assert_eq!(*chat, target);
         }
@@ -3521,7 +3643,7 @@ fn a_landed_turn_makes_the_reply_just_written_foldable() {
             messages: vec![question],
             draft: String::new(),
             feed_view: FeedView::default(),
-            focus: None,
+            landing: FeedLanding::Tail,
             compaction: None,
             child: None,
             live_turn: None,
@@ -3532,6 +3654,7 @@ fn a_landed_turn_makes_the_reply_just_written_foldable() {
             generation_id: turn,
             model: None,
             continuation: false,
+            woken: false,
         },
         AppEvent::ToolCall {
             generation_id: turn,

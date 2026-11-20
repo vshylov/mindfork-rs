@@ -581,7 +581,7 @@ impl Orchestrator {
         self.mark_dirty(chat);
         self.emit_chat_list();
         if self.active_id == Some(chat) {
-            self.activate(chat);
+            self.refresh(chat);
         }
     }
 

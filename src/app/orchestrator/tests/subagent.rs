@@ -997,7 +997,7 @@ fn the_parents_round_in_progress_is_mirrored_for_a_return() {
 
     // A return to the chat carries the round so far.
     orch.active_id = None;
-    orch.activate_focused(chat_id, None);
+    orch.activate(chat_id);
     let live = loop {
         match rx.try_recv().unwrap() {
             AppEvent::ChatActivated { live_turn, .. } => break live_turn.unwrap(),
@@ -1103,11 +1103,18 @@ fn the_childs_stream_is_kept_and_forwarded_to_the_open_transcript() {
         ("нача", "думаю")
     );
 
-    // Opening the transcript seeds the round so far under the stream id.
-    orch.activate_focused(run_id, None);
+    // Opening the transcript seeds the round so far under the stream id —
+    // at its tail: a running transcript is watched as it grows
+    // (docs/research/feed-landing.md §3.2).
+    orch.activate(run_id);
     let activated = loop {
         match rx.try_recv().unwrap() {
-            AppEvent::ChatActivated { live_turn, .. } => break live_turn.unwrap(),
+            AppEvent::ChatActivated {
+                live_turn, landing, ..
+            } => {
+                assert_eq!(landing, FeedLanding::Tail);
+                break live_turn.unwrap();
+            }
             _ => continue,
         }
     };

@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (61)
+## Entries (64)
 
 - Post-M9: mouse-wheel feed scrolling (done)
 - Post-M9: own markdown renderer (tables + LaTeX + theme) (done)
@@ -73,6 +73,9 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the status bar's height is the bar at rest's — a chip that comes and goes costs a hint (done)
 - Post-M9: a reply written in this session folds too (done)
 - Post-M9: a message's number at the right end of its row (done)
+- Post-M9: where the feed stands after an activation — a variant switch, a reference, the way back (done)
+- Post-M9: what arrives in the open chat by itself touches nothing of the person's (done)
+- Post-M9: a rewrap keeps the line on the view's first row, and a search hit lands on its match (done)
 
 ### Post-M9: mouse-wheel feed scrolling (done)
 - **The mouse wheel scrolls the feed** on par with `PageUp/PageDown`. `ratatui::init()`
@@ -3790,3 +3793,261 @@ moved.
 
 **The owner's look** (Windows Terminal over SSH, the Russian interface, a real chat with
 the model's name on the header): the numbers read well as they are.
+
+### Post-M9: where the feed stands after an activation — a variant switch, a reference, the way back (done)
+
+**Stage 1 of [docs/research/feed-landing.md](../research/feed-landing.md)**
+(`feat/feed-landing`). The owner reported three cases of the feed going to its last
+row while the person looked elsewhere: a variant switch, a followed `chat://`
+reference, and the way back from one.
+
+**The cause** was one for all three. Every opening and every rebuild ends in
+`ChatScreen::activate_chat`, which could be given a message to stand on — only a search
+hit sent one — or called `scroll_to_bottom()`. None of the three was a decision: the
+orchestrator held the variant's first message and did not pass it, a reference was "an
+ordinary switch", and the way back's stash kept the chat's id with a comment that no
+screen state could be lost.
+
+**The value.** `entities::feed_landing::FeedLanding` replaces the optional `FeedFocus`
+on `AppEvent::ChatActivated`: `Tail`, `Top`, `Jump { message, query }` (what `FeedFocus`
+was), `Reveal { message }`, `Place(FeedPlace)`. `Orchestrator::activate_at` is the
+funnel; `activate` is that with the tail. A landing the feed cannot honour is the tail.
+
+| Route | Landing |
+|---|---|
+| the list, `Ctrl+N`, a clone, startup; `/fork`, `Ctrl+E`, `Ctrl+R` | `Tail` |
+| a search hit | `Jump` |
+| a variant switch | `Reveal` of the variant's first message |
+| a followed reference (`AppCommand::OpenChat`) | `Top` |
+| `Esc` back from it (`AppCommand::OpenChat`) | `Place`, read when it was followed |
+| a transcript that is not running, asked for at the tail (the owner's D2) | `Top` |
+| `/greeting` | `Top` |
+
+**The widget** (`MessageFeed`). `pending_focus: Option<usize>` became `pending:
+Option<Pending>` — a row of a block, or a reveal — still turned into a scroll row inside
+`render` and nowhere else.
+- `scroll_to_top`.
+- `place(messages)`: the view's first row in the frame last drawn (`DrawnRows`), as the
+  first message id of its bubble and the row inside its block. A note, a transcript's
+  persona and the reply being written are not places; the next bubble with an id stands
+  in at its row 0.
+- `restore_place`: that row again, clamped to the block, the view tied to the message
+  from there (`anchor`), nothing marked. S6's objection to a row inside a block was to
+  storing one across a rewrap; this applies it once.
+- `reveal_message(messages, id, held)`: the view put back on `held`, and left there when
+  that shows the bubble's first row; the bubble's first row on the view's first
+  otherwise.
+
+**The screen** reads its place **before** it replaces the feed when the chat is the one
+already open, and hands it to the reveal. `ChatScreen::feed_place` is what the runtime
+reads for the stash: `Back::Link` gained `place`.
+
+**What the pty run found.** The first build passed its tests and changed nothing in
+the app. The orchestrator sends a note right behind a switch's activation, both events
+are applied before a frame, and a note scrolls a feed that follows its tail to its end
+— which dropped the pending reveal. The screen's tests applied one event and drew.
+`MessageFeed::land` now ends the following as it takes a request. The same sequence was
+already wrong on `main` for a search hit in a parked branch (a jump, then the note
+naming the branch): opened from a feed at its tail, it landed at the tail. Recorded in
+docs/lessons.md §2.
+
+**The feed does not scroll past its end**, so two cases keep a move: a variant shorter
+than the one it replaces, at the feed's last rows, moves the header down once (and it
+stays from then on); a header in the last screenful cannot be the view's first row.
+Recorded in the research, §3.3; not built around.
+
+**Tests** (19 new):
+- **The widget:** the first row, and a feed that fits following again; a place brings
+  back the same frame, a row inside a block included; a place at the tail follows
+  again; a row past the block's end is its last row; a note is not a place; a reveal
+  leaves a header on the screen where it is, brings one above or below the view to the
+  first row, and does so when the held row is gone.
+- **The screen:** `Top`, `Place` and `Reveal` each by the frame they draw; a reveal
+  holds nothing of another chat's view; a note between the activation and the frame
+  cancels no landing — `Jump`, `Reveal`, `Place`, `Top`.
+- **The orchestrator:** a switch reveals its variant, a fork and a take-back show the
+  tail, a refused switch rebuilds nothing; `OpenChat` carries its landing, re-emits for
+  the open chat unless it is the tail; a finished transcript opens at `Top`, a running
+  one at `Tail`, a hit inside one is still a jump; a swapped greeting at `Top`.
+- **The runtime:** the stash keeps the row, `Esc` sends it back, and the frame that was
+  left is the frame returned to.
+- **A control run:** every landing but a jump sent to the tail, as before the change —
+  the six screen and runtime tests fail.
+
+**5123 green**, clippy and fmt clean. Pure UI: no live run against a model is due.
+
+**The pty run** (`mindfork demo`, SGR clicks and the wheel, the screen read with pyte,
+100×40), 16 checks of 16:
+- a reply regenerated, then `‹` and `›` clicked three times: after the first click (a
+  shorter variant, at the tail) the header stays on its row;
+- scrolled away from the tail, a click on either arrow leaves the header on its row
+  and the rows above it as they were;
+- `/branch 6 2` typed with the header off the screen brings it onto the screen;
+- a reference followed from a feed scrolled away from its tail, then `Esc`: the feed's
+  rows are the rows that were left; the bar says `Esc back`, then `Esc chats`;
+- a reference to a long conversation opens it with `#1` on the feed's first row;
+- in a 14-row window the demo's finished transcript opens on its `SYSTEM` bubble.
+
+**Not built here:** what arrives in the open chat by itself still rebuilds the feed
+through an ordinary activation — the tail, the input box reloaded (research §2.2). That
+is stage 2.
+
+**The owner's look** (Windows Terminal over SSH, the Russian interface, real chats,
+2026-11-19): a variant switched by its arrows, a reference followed and `Esc` back, a
+finished transcript opened — everything works as it should. F1 stands as built: the
+feed does not move when the switched message's header is on the screen.
+
+### Post-M9: what arrives in the open chat by itself touches nothing of the person's (done)
+
+**Stage 2 of [docs/research/feed-landing.md](../research/feed-landing.md)**
+(`feat/feed-refresh`, stacked on stage 1). Found while the owner's three cases were
+looked into, and decided into the track (D1).
+
+**The defect.** `activate` was the only way to show the open chat's new rows, so six
+places that are not the person opening anything called it: a background run's result
+(`deliver_notification`), a follow-up come due (`deliver_due_followups`), rows from
+the messenger (`push_bridged`), a messenger's turn landed (`land_seat_reply`), and a
+woken reply that chose silence (`handle_done`, twice). Each got what an opening gets:
+the feed's last row wherever the person was reading, the in-feed search closed, the
+selection and a jump's mark dropped, the open list closed, and the input box reloaded
+from the stored draft — the cursor at the end, the undo history empty. The turn the
+assistant then starts on the notice scrolled to the bottom once more, "because you
+pressed send".
+
+**A refresh.** `FeedLanding::Hold`, sent by `Orchestrator::refresh` from those six
+places. `ChatScreen::activate_chat` answers a hold for the chat already open by
+rebuilding the feed and returning:
+- **the view**: a feed at its tail still follows it; one that is not gets back the
+  place read before the rebuild (`restore_place`), so a note above the view that the
+  rebuild dropped takes no row of it;
+- **a jump's mark**: found again by message id (`MessageFeed::marked`/`remark`);
+- **the in-feed search, the selection, the open lists, the token counter**: not
+  touched. The search's matches are derived every frame, so its count takes in what
+  arrived; the widget drops a selection only where its blocks were rebuilt;
+- a landing no frame has drawn yet is left to its frame.
+
+A hold for a chat that is not the open one is the tail.
+
+**The input box** is loaded from `draft` only when the chat **changes** — for every
+landing, not the hold alone. A variant switch, a regeneration and a take-back rebuild
+the feed under a box the person may be typing in, and the stored draft is that box's
+own text a tick older.
+
+**A woken turn.** `AppEvent::GenerationStarted` gained `woken`.
+`begin_woken_generation` opens the same bubble and scrolls to it only if the feed was
+following. A regenerated woken reply is still shown: the rebuild before it asks for
+the tail.
+
+**Tests** (9 new):
+- **The screen:** a refresh leaves a reader's rows where they are, with and without a
+  note above the view; a feed at its tail shows what arrived; the search (its count
+  one higher), the mark, the box's text, cursor and undo survive a refresh that
+  carries another draft; the box is loaded by no activation of the open chat and by
+  every change of chat; a woken turn's start does not end a reader's place and a
+  turn asked for does.
+- **The orchestrator:** a follow-up due in the open conversation — after the
+  start-up's activation every one is a hold, for a reply and for silence, and the
+  turn is woken, the next typed one is not; a background run's result the same;
+  `refresh` itself.
+- **The runtime:** the woken start through `apply_event`, the frame unchanged.
+- **A control run:** the refresh, the box's rule and the woken scroll each undone —
+  four screen tests fail.
+
+The bridge's two sites (`push_bridged`, `land_seat_reply`) are the same call as the
+tested four and have no test of their own: reaching them takes a live bot.
+
+**5132 green**, clippy and fmt clean. Pure UI: no live run against a model is due.
+
+**The pty run** (`mindfork demo`, 100×40): six letters typed, the cursor moved two
+back, an arrow of the variants mark clicked — the next letter lands where the cursor
+was, and `Ctrl+Z` takes it out. Stage 1's 16 checks still pass. Nothing in the demo
+delivers rows by itself, so the refresh is covered by the tests above.
+
+**The owner's look** (Windows Terminal over SSH, `gpt-6.1-sol`, 2026-11-19): reading
+the middle of a conversation with text typed in the box while the assistant ran a
+dialogue of two characters and wrote its reply. The feed did not go to its last row
+while the dialogue was being generated, nor when the reply was complete. A background
+run's result and a follow-up landing under a reader were not among what was looked at.
+
+### Post-M9: a rewrap keeps the line on the view's first row, and a search hit lands on its match (done)
+
+**Stage 3 of [docs/research/feed-landing.md](../research/feed-landing.md)**
+(`feat/feed-rewrap`, stacked on stage 2), the two forks the owner decided after looking
+at stages 1 and 2. **The track is complete.**
+
+**F2 — a rewrap keeps what is on the screen.** The feed's scroll is a row number, and a
+resize, a theme, `Ctrl+T`, `Ctrl+O`, a setting or a new compaction boundary gives every
+block other rows. The view was kept through that for a search hit alone, by an index
+the jump left behind (`anchor`) and the first manual scroll released: a reader who had
+scrolled anywhere was shown some other message. Now `render` puts the view back on what
+the frame last drawn had on its first row, for anyone not at the tail. `anchor` is gone.
+
+**What names that row — three tries, two of them failed by the pty run** (research
+§3.8):
+1. **A share of the block's rows.** A row off at a step. A window dragged by its edge
+   is rewrapped at every width, so the error walks: back from 44 columns to 100 the
+   view stood a row above where it left.
+2. **The number of the logical line** the row is a piece of. Exact — until a table
+   above it is laid out in other rows at another width, which the demo's second
+   message has.
+3. **What the line says**: a hash of its glyphs, whitespace apart
+   (`feed_selection::ink`), with which of the block's lines that say the same it is and
+   the row's place among the line's pieces (`TopLine`). A wrap breaks a line at
+   whitespace and moves no glyph. A blank row is named by the next line under it that
+   says something; the separator by its distance from the block's end. The share is the
+   fallback for a line that cannot be told any more.
+
+**The cost.** Reading every row of a 913-row block is 2.5 ms beside its 10 ms build
+(release, a 40K-character reply). The lines are made per block on first use
+(`CachedBlock::said`, a `OnceCell`) and a frame records its top line only when the feed
+is not following its tail, so a reply streaming at the tail pays nothing. A row with no
+tail is read without measuring it.
+
+**F3 — a search hit lands on its match** (`Pending::Hit`). A jump with a query asks for
+the block; the frame that highlights the query knows the match rows. The first match on
+the screenful that starts with the message: the message from its start, as before.
+Below it: the match a third of the view down. Not drawn at all: the message's start.
+
+**Tests** (12 new):
+- **The widget:** a resize keeps the message a reader scrolled to, there and back;
+  thoughts unfolded above the view move the view down with its message; a rewrap moves
+  neither the tail nor a feed opened at its start after another conversation's frame;
+  the share of a block (`rewrapped_row`); a row found again by what its line says —
+  at another width, with a fold opened above, among lines that say the same, and not
+  found where it says something else; a block's lines say the same at two widths;
+  **a window dragged through 38 widths three times keeps one line on its first row at
+  every one of them**; a hit deep in a long message lands a third of the view down; a
+  hit near the start, a query that matches nothing and no query show the message from
+  its start.
+- **`feed_selection`:** what a row says is its glyphs — the rail, the tail, padding and
+  the break's whitespace are not part of it, and both ways of reading a row agree.
+- **The screen:** `Ctrl+T` twice and two resizes keep a reader's message; a search hit
+  opens with its match on the screen.
+- **Control runs:** with the keeping and the hit landing off, four widget tests fail.
+  The drag test's first form passed with the line mapping off — one-line messages, where
+  the share happens to be exact — and was rewritten around a paragraph over short
+  lines; in that form it fails at the first step (58 columns) without the mapping.
+
+**5144 green**, clippy and fmt clean. Pure UI: no live run against a model is due.
+
+**The pty run** (`mindfork demo`, the window resized through the pty, 18 checks of 18):
+- `/search cache rule`, `Enter` on the hit: the chat opens with the match on the screen,
+  where the message's first row is 28 rows above it;
+- scrolled into the middle, the window taken to 60, 44 and back to 100 columns: the
+  first row is the same line at each, and the row it was at 100;
+- **48 widths in a row, there and back twice**: the first row is still the row it was;
+- `Ctrl+T` twice and `Ctrl+O` twice: the next message below is the same one each time,
+  and the first row is the row it was.
+Stage 1's 16 checks still pass.
+
+**The owner's look** (Windows Terminal over SSH, 2026-11-20):
+- **A window dragged by its edge**, scrolled into the middle of a long chat: the
+  feature works. The first row twitched a little during the drag — and so did the
+  panel's top border, which is why the owner took it for the terminal's own behaviour.
+  It is: the border's row does not depend on the scroll, so nothing in the feed's
+  mapping can move it. Between a resize and the app's repaint the terminal shows the
+  old frame rewrapped by itself. Checked after the look by a pty run one column at a
+  time, 99 → 50 → 100: in each of the 100 frames the app drew, the feed's first row was
+  the same line, and back at 100 columns it was the row it had been.
+- **`Ctrl+T` and `Ctrl+O`** in the middle of a chat: works perfectly.
+- **A search hit** deep in a long reply: works perfectly.

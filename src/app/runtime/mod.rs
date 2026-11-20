@@ -34,7 +34,9 @@ use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use uuid::Uuid;
 
-use crate::app::events::{AppCommand, AppEvent, BackgroundKind, ClipboardImage, TaskList};
+use crate::app::events::{
+    AppCommand, AppEvent, BackgroundKind, ClipboardImage, FeedLanding, FeedPlace, TaskList,
+};
 use crate::features::spellcheck::{SpellChecker, dict};
 use crate::screens::changes::{ChangesIntent, ChangesScreen};
 use crate::screens::chat::{ChatIntent, ChatScreen};
@@ -221,10 +223,18 @@ enum Back {
         screen: Box<SearchScreen>,
         chat: Uuid,
     },
-    /// Back to the conversation a `chat://` reference was followed from. Only
-    /// the id is kept: a chat is reopened from storage in full, so there is no
-    /// screen state a re-activation would lose.
-    Link { origin: Uuid, chat: Uuid },
+    /// Back to the conversation a `chat://` reference was followed from, and
+    /// to **where in it** the person was: a chat is reopened from storage in
+    /// full, so its id brings everything back but the view, which is the
+    /// screen's — and without it the reference that was followed is usually
+    /// out of sight (docs/research/feed-landing.md §3.5). `place` is `None`
+    /// where the screen had no row to name (no frame drawn, a feed with no
+    /// stored message under its first row); the way back is then the tail.
+    Link {
+        origin: Uuid,
+        chat: Uuid,
+        place: Option<FeedPlace>,
+    },
     /// Back to the tasks screen a run was opened from — the screen itself,
     /// like the search half, so the selection survives; its rows are
     /// re-requested on the way back, since they may have moved meanwhile.

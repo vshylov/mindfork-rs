@@ -133,7 +133,7 @@ impl Orchestrator {
         }
         if let Some(open) = self.active_id.filter(|id| touched.contains(id)) {
             // The open feed shows the row at once, then the companion is woken on it.
-            self.activate(open);
+            self.refresh(open);
             self.maybe_wake_followup(open);
         }
     }

@@ -4,9 +4,9 @@
 use super::*;
 
 // Imported here rather than through `super`: `screens` may not depend on `app`
-// (FSD), so the jump descriptor comes from `features`, where both layers can
-// see it — the `RagProgress` precedent.
-use crate::features::chat_search::FeedFocus;
+// (FSD), so the landing comes from `entities`, where both layers can see it —
+// the `LiveTurn` precedent.
+use crate::entities::feed_landing::{FeedLanding, FeedPlace};
 
 impl ChatScreen {
     /// Marks that the feed content changed (streaming, a new message, a note,
@@ -46,10 +46,11 @@ impl ChatScreen {
         }
     }
 
-    /// Rebuilds the feed for a chat. `focus` — a domain message to put the view
-    /// on together with the query to highlight inside it
-    /// (`AppCommand::OpenChatAt`); `None` — the usual "show the tail", with
-    /// nothing highlighted. `feed_view` — the chat's stored collapse state
+    /// Rebuilds the feed for a chat. `landing` — where the view stands once it
+    /// is rebuilt ([`FeedLanding`], docs/research/feed-landing.md §3.2): the
+    /// tail for an ordinary opening, the first row, a message to jump to with
+    /// the query to highlight inside it, a message to show without moving the
+    /// view, or a place read earlier. `feed_view` — the chat's stored collapse state
     /// ("thoughts"/tool calls, spec §11.3). `compaction` — the history-compaction
     /// boundary `(the id of the first message still sent verbatim, the rolling
     /// summary)`, or `None` when nothing is folded (spec §6.7).
@@ -61,9 +62,23 @@ impl ChatScreen {
         messages: &[Message],
         draft: &str,
         feed_view: FeedView,
-        focus: Option<FeedFocus>,
+        landing: FeedLanding,
         compaction: Option<(Uuid, String)>,
     ) {
+        // Where the view's first row is, read while the feed it was drawn from
+        // is still here: a rebuild of the open chat can put the view back on it
+        // (research §3.3). Another chat's rows are not this one's.
+        let same_chat = self.active_chat == Some(id);
+        let held = same_chat.then(|| self.feed_place()).flatten();
+        // A refresh: the chat that is open got rows by itself, and the feed is
+        // rebuilt to show them. The person opened nothing, so what is theirs
+        // stays — the view, the in-feed search, the selection, a jump's mark,
+        // an open list, the input box (research §3.6). Everything below that
+        // belongs to *arriving in* a chat is skipped for it.
+        let refresh = same_chat && landing == FeedLanding::Hold;
+        // A jump's mark is a feed index, and a rebuild drops the feed's notes:
+        // the message it is on is read here and found again below.
+        let marked = refresh.then(|| self.feed_view.marked(&self.feed)).flatten();
         // Switching chats resets the generation state: "orphaned" chunks of the
         // previous generation must not land in the new chat's feed.
         self.active_chat = Some(id);
@@ -82,12 +97,15 @@ impl ChatScreen {
         };
         // The token counter belongs to the previous chat — clear it so it doesn't linger
         // in the status line after switching (the status bar hides the counter when
-        // `tokens == 0 && context == None`).
-        self.gen_tokens = 0;
-        self.gen_context = None;
-        self.gen_context_exact = false;
-        self.gen_reasoning = 0;
-        self.gen_cached = None;
+        // `tokens == 0 && context == None`). A refresh is the same chat's, and
+        // the figure is still its last turn's.
+        if !refresh {
+            self.gen_tokens = 0;
+            self.gen_context = None;
+            self.gen_context_exact = false;
+            self.gen_reasoning = 0;
+            self.gen_cached = None;
+        }
         // The collapse state belongs to the chat, so it is applied **before**
         // the feed is built: the block cache is keyed on it (spec §11.3). So is
         // the compaction boundary — both are per-chat rendering inputs.
@@ -97,14 +115,18 @@ impl ChatScreen {
         // new chat may have changed — a third per-chat rendering input, applied
         // before the feed is built for the same reason (spec §11.3).
         self.refresh_known_chats();
-        // The reference picker lists the *previous* chat's links.
-        self.chat_links = None;
-        // So does a list of its messages or its branches.
-        self.branch_popup = None;
-        // A selection points into the previous chat's rows — and a block of
-        // the new one that happens to match by fingerprint would keep it.
-        self.feed_view.clear_selection();
-        self.mouse_press = None;
+        if !refresh {
+            // The reference picker lists the *previous* chat's links.
+            self.chat_links = None;
+            // So does a list of its messages or its branches.
+            self.branch_popup = None;
+            // A selection points into the previous chat's rows — and a block of
+            // the new one that happens to match by fingerprint would keep it.
+            // (Under a refresh the widget keeps a selection whose blocks it
+            // did not rebuild, and drops one whose blocks moved.)
+            self.feed_view.clear_selection();
+            self.mouse_press = None;
+        }
         // Stitch agentic-loop rounds into one "Assistant:" block with inline tool blocks.
         self.feed = FeedMessage::from_messages(messages);
         // A sub-agent transcript opens with its persona (spec §11.3) — the one
@@ -117,6 +139,20 @@ impl ChatScreen {
         // here on the flag only accumulates based on the last block).
         self.feed_has_risky = self.feed.iter().any(feed_msg_has_risky_glyph);
         self.mark_feed_changed();
+        if refresh {
+            self.feed_view.remark(&self.feed, marked);
+            // A feed that follows its tail still does, and shows what arrived.
+            // One that does not keeps the rows it shows: the place read before
+            // the rebuild, since the notes that left took their rows with them.
+            // A landing no frame has drawn yet is still owed, and is left.
+            if !self.feed_view.is_following()
+                && !self.feed_view.awaits_frame()
+                && let Some(place) = held
+            {
+                self.feed_view.restore_place(&self.feed, place);
+            }
+            return;
+        }
         // The anchor and the marker index a feed that no longer exists — drop
         // both, so neither can survive into the wrong chat. (The marker outlives
         // a manual scroll on purpose, so a chat switch is the one place that has
@@ -128,23 +164,52 @@ impl ChatScreen {
         self.search_last.clear();
         self.feed_view.clear_search();
         self.feed_view.clear_focus();
-        // A jump asked for by the user wins over the tail; anything else — the
-        // usual bottom. An id this chat doesn't contain isn't found, so it falls
-        // through to the tail (and `clear_focus` above already dropped the
-        // previous highlight). See docs/history/chat-search-stage2.md §4.
-        match &focus {
-            Some(f)
-                if self
-                    .feed_view
-                    .focus_message(&self.feed, f.message, Some(&f.query)) => {}
-            _ => self.feed_view.scroll_to_bottom(),
+        // Where the route that asked for this activation wants the view
+        // (research §3.2). A message this feed doesn't show isn't found, so its
+        // landing falls through to the tail (and `clear_focus` above already
+        // dropped the previous highlight). See docs/history/chat-search-stage2.md §4.
+        let landed = match landing {
+            FeedLanding::Tail => false,
+            FeedLanding::Top => {
+                self.feed_view.scroll_to_top();
+                true
+            }
+            FeedLanding::Jump { message, query } => {
+                self.feed_view
+                    .focus_message(&self.feed, message, Some(&query))
+            }
+            FeedLanding::Reveal { message } => {
+                self.feed_view.reveal_message(&self.feed, message, held)
+            }
+            FeedLanding::Place(place) => self.feed_view.restore_place(&self.feed, place),
+            // Another chat's: there is nothing of this one's to hold.
+            FeedLanding::Hold => false,
+        };
+        if !landed {
+            self.feed_view.scroll_to_bottom();
         }
-        // Load the chat's saved draft into the input box (empty for a new chat).
+        // Load the chat's saved draft into the input box (empty for a new chat)
+        // — **when the chat changes**. The box is where the open chat's draft is
+        // written, and the stored copy is that text sent a tick earlier: loading
+        // it back on a rebuild of the same chat adds nothing, and takes the
+        // cursor to the end, empties the undo history and can overwrite a
+        // keystroke that has not been sent yet (research §2.2, §3.6).
         // Do NOT mark `draft_dirty` — otherwise we'd immediately send it back via the same
         // `SetDraft`; trigger the spellcheck recheck directly instead.
-        self.input.set_text(draft);
-        self.spell_dirty = true;
-        self.last_edit = None;
+        if !same_chat {
+            self.input.set_text(draft);
+            self.spell_dirty = true;
+            self.last_edit = None;
+        }
+    }
+
+    /// The view's first row as a place that can be found again after the feed
+    /// is rebuilt, or after another conversation was open in between
+    /// (research §3.4) — what the way back from a followed reference keeps.
+    /// `None` before the first frame and where no stored message is at or
+    /// below that row.
+    pub fn feed_place(&self) -> Option<FeedPlace> {
+        self.feed_view.place(&self.feed)
     }
 
     /// Updates the history-compaction boundary after a live compaction
@@ -217,6 +282,23 @@ impl ChatScreen {
     /// shown in the streaming bubble's header when `interface.show_model_name`
     /// is on. See spec §11.3.
     pub fn begin_generation(&mut self, generation_id: Uuid, model: Option<String>) {
+        self.open_reply_bubble(generation_id, model);
+        // User-initiated (you pressed send/regenerate): show the new reply (§4).
+        self.feed_view.scroll_to_bottom();
+    }
+
+    /// A turn the app started on a notice (`AppEvent::GenerationStarted::woken`)
+    /// — a background run's result, a follow-up come due. Nobody pressed
+    /// anything, so its bubble arrives on its own: it scrolls into view only
+    /// if the feed was following its tail (docs/research/feed-landing.md §3.6).
+    pub fn begin_woken_generation(&mut self, generation_id: Uuid, model: Option<String>) {
+        self.open_reply_bubble(generation_id, model);
+        self.feed_view.scroll_to_bottom_if_following();
+    }
+
+    /// The bubble a new turn streams into; whether the view goes to it is the
+    /// caller's — who asked for the turn decides.
+    fn open_reply_bubble(&mut self, generation_id: Uuid, model: Option<String>) {
         self.begin_turn(generation_id, model);
         self.drop_standing_branch_note();
         self.feed.push(FeedMessage {
@@ -230,8 +312,6 @@ impl ChatScreen {
             voice: None,
         });
         self.mark_feed_changed();
-        // User-initiated (you pressed send/regenerate): show the new reply (§4).
-        self.feed_view.scroll_to_bottom();
     }
 
     /// `/continue` (spec §6.4): the turn resumes the last assistant reply, so

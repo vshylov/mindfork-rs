@@ -538,6 +538,43 @@ recognizing on sight: a render test that names a long-standing item as missing i
 usually reporting a layout change.
 — *the code workspace — stage 3*.
 
+**A state applied by the next frame is tested with the events that arrive before that
+frame.** The feed's landing — "stand on this message" — is asked for by an activation
+and becomes a scroll row inside `render`. The orchestrator sends a note right behind
+two of those activations, both events are applied before a frame is drawn, and a note
+scrolls a feed that follows its tail to its end, which dropped the pending request.
+Every screen test applied one event and drew, so the first build passed its tests and
+did nothing in the app; the same sequence had already shipped to `main` for a search hit
+in a parked branch. The pty run found it in its first check. Where the orchestrator
+sends two events for one action, the screen's test applies both before it draws — and a
+request that waits for a frame says, at the place that takes it, what it does to the
+state the events in between read.
+— *where the feed stands after an activation — a variant switch, a reference, the way
+back*.
+
+**A funnel that is the only way to do a second thing gives it every side effect of the
+first.** `activate` opens a chat: the last row, the search closed, the lists closed,
+the input box loaded from the draft. It was also the only way to *rebuild* the open
+chat's feed, so six deliveries — a background run's result, a follow-up, rows from the
+messenger — called it, and each sent a reader to the bottom and reset the cursor in
+the box they were typing in. Nobody wrote that behaviour; the funnel had no other
+door. When a funnel's callers start saying "the same, because the feed must be
+rebuilt", the rebuild wants a name of its own before it has six callers.
+— *what arrives in the open chat by itself touches nothing of the person's*.
+
+**An estimate that is applied to its own result is a walk, and one step does not show
+it.** Keeping the view through a rewrap was first "the same share of the way through
+the block": a row off at most, and every test — one resize, a message still on the
+screen — passed. A window dragged by its edge is a resize at every width it passes, each
+starting from the row the last one left, so a row off a step is tens of rows over a
+drag. The fix was to stop estimating: name the row by something the operation does not
+change (what its line says) and find it again. When a function's output is its own next
+input, test it composed with itself many times, and prefer an invariant to a formula.
+The same run gave a second, smaller one: the first form of that test **passed with the
+fix switched off**, because its fixture (one-line messages) made the estimate exact —
+a control run is what said the test proved nothing.
+— *a rewrap keeps the line on the view's first row, and a search hit lands on its match*.
+
 **Instrument traps to know by name.** ratatui's `Buffer` `Debug` prints row content
 **without escaping quotes**, so an assertion containing `"` against
 `format!("{:?}", buffer)` can never match — a render test written that way passed while

@@ -422,8 +422,12 @@ async fn open_chat_at_activates_the_chat_carrying_the_focus() {
     let activated = |e: &AppEvent| matches!(e, AppEvent::ChatActivated { .. });
     let a = wait_for(&mut evt_rx, activated).await.unwrap();
     let first_id = match a {
-        AppEvent::ChatActivated { id, focus, .. } => {
-            assert_eq!(focus, None, "bootstrap activation carries no focus");
+        AppEvent::ChatActivated { id, landing, .. } => {
+            assert_eq!(
+                landing,
+                FeedLanding::Tail,
+                "bootstrap activation carries no focus"
+            );
             id
         }
         _ => unreachable!(),
@@ -449,8 +453,12 @@ async fn open_chat_at_activates_the_chat_carrying_the_focus() {
     .await
     .unwrap();
     let second_id = match a {
-        AppEvent::ChatActivated { id, focus, .. } => {
-            assert_eq!(focus, None, "creating a chat carries no focus");
+        AppEvent::ChatActivated { id, landing, .. } => {
+            assert_eq!(
+                landing,
+                FeedLanding::Tail,
+                "creating a chat carries no focus"
+            );
             id
         }
         _ => unreachable!(),
@@ -466,9 +474,13 @@ async fn open_chat_at_activates_the_chat_carrying_the_focus() {
     .unwrap();
     let msg_id = match a {
         AppEvent::ChatActivated {
-            messages, focus, ..
+            messages, landing, ..
         } => {
-            assert_eq!(focus, None, "a plain switch carries no focus");
+            assert_eq!(
+                landing,
+                FeedLanding::Tail,
+                "a plain switch carries no focus"
+            );
             messages.first().expect("the chat has messages").id
         }
         _ => unreachable!(),
@@ -486,9 +498,9 @@ async fn open_chat_at_activates_the_chat_carrying_the_focus() {
     // focused bubble (fork S3(b)).
     let jumped = |e: AppEvent, what: &str| {
         match e {
-            AppEvent::ChatActivated { id, focus, .. } => {
+            AppEvent::ChatActivated { id, landing, .. } => {
                 assert_eq!(id, first_id, "{what}");
-                let focus = focus.expect(what);
+                let focus = jump_of(landing).expect(what);
                 assert_eq!(focus.message, msg_id, "{what}");
                 assert_eq!(focus.query, "привет", "the query must ride along: {what}");
             }
@@ -953,3 +965,112 @@ fn exporting_an_empty_chat_is_refused() {
 // parallel. What it does with the name — `export_filename`, and the slug inside
 // it — is covered in `features::chat_export`; what is left is `PathBuf::from` of
 // that name, which is the current directory by definition.
+
+/// The landing of the next activation in the queue, with the chat it is for.
+fn next_landing(rx: &mut UnboundedReceiver<AppEvent>) -> Option<(Uuid, FeedLanding)> {
+    std::iter::from_fn(|| rx.try_recv().ok()).find_map(|e| match e {
+        AppEvent::ChatActivated { id, landing, .. } => Some((id, landing)),
+        _ => None,
+    })
+}
+
+/// `AppCommand::OpenChat` is a switch that says where the feed stands
+/// (docs/research/feed-landing.md §3.2): the first row for a followed
+/// reference, a place on the way back. Sent for the open chat it still moves
+/// the feed — unless it asks for the tail, which is the plain switch, and a
+/// plain switch to the open chat is nothing.
+#[test]
+fn open_chat_carries_its_landing_to_the_activation() {
+    let (_d, mut orch, mut rx, first) = bare_with_chat(vec![Message::user("раз")]);
+    let profile = orch.profiles[0].clone();
+    let mut other = Chat::from_profile(&profile, "Другой");
+    other.push_message(Message::user("два"));
+    let second = other.id;
+    let message = other.messages[0].id;
+    orch.chats.push(other);
+    orch.active_id = Some(first);
+
+    orch.handle_open_chat(second, FeedLanding::Top);
+    assert_eq!(next_landing(&mut rx), Some((second, FeedLanding::Top)));
+    assert_eq!(orch.active_id, Some(second));
+
+    let place = FeedLanding::Place(crate::app::events::FeedPlace { message, row: 3 });
+    orch.handle_open_chat(first, FeedLanding::Tail);
+    assert_eq!(next_landing(&mut rx), Some((first, FeedLanding::Tail)));
+    orch.handle_open_chat(second, place.clone());
+    assert_eq!(next_landing(&mut rx), Some((second, place.clone())));
+
+    // The open chat: a landing that names somewhere is re-emitted, the tail
+    // is not.
+    orch.handle_open_chat(second, place.clone());
+    assert_eq!(next_landing(&mut rx), Some((second, place)));
+    orch.handle_open_chat(second, FeedLanding::Tail);
+    assert_eq!(next_landing(&mut rx), None);
+}
+
+/// A transcript that is not running is read, not watched: it opens on its
+/// first row — the persona, then the instruction — where it used to open on
+/// its last (research §3.2, the owner's D2). A route that asks for somewhere
+/// is given it, and the chat that holds the transcript opens at its tail as
+/// every chat does.
+#[test]
+fn a_finished_transcript_opens_at_its_first_row() {
+    let (carrier, run) = carrier_with_run("Разведка", &["задание", "отчёт"]);
+    let (_d, mut orch, mut rx, chat) = bare_with_chat(vec![Message::user("вопрос"), carrier]);
+    let report = orch
+        .chats
+        .iter()
+        .flat_map(|c| c.children())
+        .find(|r| r.id == run)
+        .map(|r| r.messages.last().unwrap().id)
+        .expect("the run is on the chat's record");
+
+    orch.handle_switch(run);
+    assert_eq!(next_landing(&mut rx), Some((run, FeedLanding::Top)));
+
+    orch.handle_switch(chat);
+    assert_eq!(next_landing(&mut rx), Some((chat, FeedLanding::Tail)));
+
+    orch.handle_open_chat_at(run, report, "отчёт".into());
+    assert_eq!(
+        next_landing(&mut rx),
+        Some((
+            run,
+            FeedLanding::Jump {
+                message: report,
+                query: "отчёт".into()
+            }
+        )),
+        "a search hit inside a transcript is still a jump"
+    );
+}
+
+/// A swapped greeting is the whole chat, and it is read from its first line
+/// (research §3.2).
+#[test]
+fn a_swapped_greeting_is_shown_from_its_first_row() {
+    let (_d, mut orch, mut rx) = bare_orch_rx();
+    let mut profile = Profile::new("P", "sys");
+    profile.greeting = Some("Здравствуйте!".into());
+    profile.alternate_greetings = vec!["Привет!".into()];
+    let chat = Chat::from_profile(&profile, "Новый чат");
+    let id = chat.id;
+    orch.profiles.push(profile);
+    orch.chats.push(chat);
+    orch.active_id = Some(id);
+
+    orch.handle_swap_greeting(None);
+    assert_eq!(orch.chats[0].messages[0].text, "Привет!");
+    assert_eq!(next_landing(&mut rx), Some((id, FeedLanding::Top)));
+}
+
+/// A refresh is the activation of a delivery (docs/research/feed-landing.md
+/// §3.6): the open chat's feed rebuilt with a **hold**, which the screen
+/// answers by touching nothing of the person's.
+#[test]
+fn a_refresh_rebuilds_the_feed_with_a_hold() {
+    let (_d, mut orch, mut rx, chat) = bare_with_chat(vec![Message::user("раз")]);
+    orch.active_id = Some(chat);
+    orch.refresh(chat);
+    assert_eq!(next_landing(&mut rx), Some((chat, FeedLanding::Hold)));
+}

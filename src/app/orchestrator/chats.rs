@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use chrono::Utc;
 use uuid::Uuid;
 
-use crate::app::events::{AppEvent, FeedFocus};
+use crate::app::events::{AppEvent, FeedLanding};
 use crate::entities::chat::FeedView;
 use crate::features::export_command::ExportFormat;
 use crate::features::profile_command::ChatSystemEdit;
@@ -185,7 +185,9 @@ impl Orchestrator {
         chat.modified_at = Utc::now();
         self.greeting_shown.insert(active, target);
         self.mark_dirty(active);
-        self.activate(active);
+        // The chat is the greeting alone, and a greeting is read from its
+        // first line (docs/research/feed-landing.md §3.2).
+        self.activate_at(active, FeedLanding::Top);
         let _ = self.evt_tx.send(AppEvent::Notice(loc.tf(
             "ui.greeting.swapped",
             &[
@@ -244,11 +246,19 @@ impl Orchestrator {
     }
 
     pub(super) fn handle_switch(&mut self, id: Uuid) {
-        self.switch_to(id, None);
+        self.switch_to(id, FeedLanding::Tail);
+    }
+
+    /// Opens a chat with the feed **where the screen asked**
+    /// ([`AppCommand::OpenChat`], docs/research/feed-landing.md §3.2): the
+    /// first row for a followed `chat://` reference, the place it was
+    /// followed from on the way back.
+    pub(super) fn handle_open_chat(&mut self, chat: Uuid, landing: FeedLanding) {
+        self.switch_to(chat, landing);
     }
 
     /// Opens a chat **on a specific message** (a jump from a search hit). Same
-    /// path as a plain switch — the focus rides along to the feed through
+    /// path as a plain switch — the landing rides along to the feed through
     /// `ChatActivated`, carrying the query so the feed can highlight it inside
     /// that message. See docs/history/chat-search-stage2.md §3 and §4a S3(b).
     pub(super) fn handle_open_chat_at(&mut self, chat: Uuid, message: Uuid, query: String) {
@@ -257,7 +267,7 @@ impl Orchestrator {
         if self.open_at_parked(chat, message) {
             return;
         }
-        self.switch_to(chat, Some(FeedFocus { message, query }));
+        self.switch_to(chat, FeedLanding::Jump { message, query });
     }
 
     /// Opens `chat` for a hit whose message is in one of its **parked
@@ -270,16 +280,16 @@ impl Orchestrator {
     /// A search is a look, and a look changes nothing in the chat. Which
     /// variant the conversation continues from stays what the person set.
     fn open_at_parked(&mut self, chat_id: Uuid, message: Uuid) -> bool {
-        let Some((focus, note)) = self.parked_note(chat_id, message) else {
+        let Some((landing, note)) = self.parked_note(chat_id, message) else {
             return false;
         };
-        match focus {
-            Some(_) => self.switch_to(chat_id, focus),
+        match landing {
+            Some(landing) => self.switch_to(chat_id, landing),
             // Nothing on the line to stand on (a detached tail). A jump is
             // still answered, the open chat included: the screen that asked
             // is waiting for this activation.
-            None if self.active_id == Some(chat_id) => self.activate_focused(chat_id, None),
-            None => self.switch_to(chat_id, None),
+            None if self.active_id == Some(chat_id) => self.activate(chat_id),
+            None => self.switch_to(chat_id, FeedLanding::Tail),
         }
         let _ = self.evt_tx.send(AppEvent::Notice(note));
         true
@@ -288,7 +298,7 @@ impl Orchestrator {
     /// Where the feed goes for a parked `message` of `chat_id`, and the note
     /// that says which branch holds it — in the interface's language, by the
     /// address `/branch` lists the branch under.
-    fn parked_note(&self, chat_id: Uuid, message: Uuid) -> Option<(Option<FeedFocus>, String)> {
+    fn parked_note(&self, chat_id: Uuid, message: Uuid) -> Option<(Option<FeedLanding>, String)> {
         let chat = self.chats.iter().find(|c| c.id == chat_id)?;
         let place = chat.parked_place(message)?;
         let view = chat.branch_view();
@@ -311,11 +321,11 @@ impl Orchestrator {
         };
         // No query rides along: the message looked at is the line's own
         // variant of the place, and the match is not in it.
-        let focus = place.leaves_at.map(|message| FeedFocus {
+        let landing = place.leaves_at.map(|message| FeedLanding::Jump {
             message,
             query: String::new(),
         });
-        Some((focus, note))
+        Some((landing, note))
     }
 
     /// Opens a chat on its **first message matching `query`** (`Enter` in the
@@ -323,32 +333,32 @@ impl Orchestrator {
     /// the chat, so it happens here rather than in the widget; when nothing
     /// resolves the chat opens at its tail — a plain switch, not an error.
     pub(super) fn handle_open_chat_at_first_match(&mut self, chat: Uuid, query: &str) {
-        let focus = self
-            .first_match_in_chat(chat, query)
-            .map(|message| FeedFocus {
-                message,
-                query: query.to_string(),
-            });
+        let hit = self.first_match_in_chat(chat, query);
         // Nothing on the line, and the list kept this chat for a match in a
         // parked branch: open where that branch leaves the line, and say so.
-        if focus.is_none()
+        if hit.is_none()
             && let Some(parked) = self.first_parked_match(chat, query)
             && self.open_at_parked(chat, parked)
         {
             return;
         }
-        self.switch_to(chat, focus);
+        let landing = hit.map_or(FeedLanding::Tail, |message| FeedLanding::Jump {
+            message,
+            query: query.to_string(),
+        });
+        self.switch_to(chat, landing);
     }
 
-    /// The shared switch path. `focus` — a message to put the feed on, plus the
-    /// query to highlight inside it. `id` may name a sub-agent transcript, which
-    /// opens read-only (spec §11.2).
-    fn switch_to(&mut self, id: Uuid, focus: Option<FeedFocus>) {
+    /// The shared switch path. `landing` — where the feed stands once the
+    /// chat is open ([`FeedLanding`]). `id` may name a sub-agent transcript,
+    /// which opens read-only (spec §11.2).
+    fn switch_to(&mut self, id: Uuid, landing: FeedLanding) {
         if self.active_id == Some(id) {
-            // A plain switch to the open chat is a no-op, but a jump still has
-            // to move the feed — re-emit so the focus reaches it.
-            if focus.is_some() {
-                self.activate_focused(id, focus);
+            // A plain switch to the open chat is a no-op, but a landing that
+            // names somewhere still has to move the feed — re-emit so it
+            // reaches it.
+            if landing != FeedLanding::Tail {
+                self.activate_at(id, landing);
             }
             return;
         }
@@ -368,7 +378,7 @@ impl Orchestrator {
         }
         self.unpark_if_cancelled();
         if self.view(id).is_some() {
-            self.activate_focused(id, focus);
+            self.activate_at(id, landing);
             // A follow-up delivered while this conversation was not open is
             // answered now that the person is here (spec §9.3.6, F5 (i)).
             self.maybe_wake_followup(id);

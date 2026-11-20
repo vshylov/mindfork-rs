@@ -129,6 +129,47 @@ fn roles(chat: &Chat) -> Vec<MessageRole> {
     chat.messages.iter().map(|m| m.role).collect()
 }
 
+/// A background run's result reaches the open chat as a **hold**, and the
+/// turn it wakes says nobody asked for it (docs/research/feed-landing.md
+/// §3.6): the person opened nothing, so the feed is rebuilt under them without
+/// moving, where an ordinary activation sent a reader to its last row.
+#[tokio::test]
+async fn a_runs_result_in_the_open_chat_holds_the_readers_place() {
+    let backend = KeyedRecorder::new(
+        vec![
+            (
+                "",
+                vec![start("c1"), hang("started it"), text("the review is in")],
+            ),
+            ("be harsh", vec![text("harsh view")]),
+        ],
+        10,
+    );
+    let (_dir, cmd_tx, mut rx, handle, chat_id) = begin(backend.clone(), cfg(2)).await;
+    next(&mut rx, runs_out(1)).await;
+    next(&mut rx, runs_out(0)).await;
+    // The parent is still hanging on its second round: end it, and read what
+    // the screen is told until the wake turn on the notification has ended.
+    cmd_tx.send(AppCommand::Cancel).unwrap();
+    let (mut landings, mut woken, mut ended) = (Vec::new(), Vec::new(), 0);
+    while ended < 2 {
+        match next(&mut rx, |_| true).await {
+            AppEvent::ChatActivated { id, landing, .. } if id == chat_id => landings.push(landing),
+            AppEvent::GenerationStarted { woken: w, .. } => woken.push(w),
+            AppEvent::Finished { .. } => ended += 1,
+            _ => {}
+        }
+    }
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    assert!(
+        !landings.is_empty() && landings.iter().all(|l| *l == FeedLanding::Hold),
+        "{landings:?}"
+    );
+    assert_eq!(woken, [true], "the wake turn is nobody's request");
+}
+
 /// A run that ends **while the parent's turn is still streaming**: its result
 /// is held, appended after the turn's rows once they land, and the assistant
 /// is woken on it — a turn with no new user message whose request ends in

@@ -91,7 +91,7 @@ pub(super) fn apply_event(
             messages,
             draft,
             feed_view,
-            focus,
+            landing,
             compaction,
             child,
             live_turn,
@@ -106,7 +106,7 @@ pub(super) fn apply_event(
             // previous chat's view — a transcript opening without its persona,
             // and the chat opened next inheriting one that is not its own.
             screen.set_child_view(child);
-            screen.activate_chat(id, title, &messages, &draft, feed_view, focus, compaction);
+            screen.activate_chat(id, title, &messages, &draft, feed_view, landing, compaction);
             screen.set_live_turn(live_turn);
         }
         AppEvent::TranscriptGrew { id, messages } => screen.grow_transcript(id, &messages),
@@ -134,7 +134,8 @@ pub(super) fn apply_event(
             generation_id,
             model,
             continuation,
-        } => apply_generation_started(screen, generation_id, model, continuation),
+            woken,
+        } => apply_generation_started(screen, generation_id, model, continuation, woken),
         AppEvent::Chunk {
             generation_id,
             text,
@@ -335,9 +336,12 @@ fn apply_generation_started(
     generation_id: Uuid,
     model: Option<String>,
     continuation: bool,
+    woken: bool,
 ) {
     if continuation {
         screen.begin_continuation(generation_id, model);
+    } else if woken {
+        screen.begin_woken_generation(generation_id, model);
     } else {
         screen.begin_generation(generation_id, model);
     }
@@ -893,7 +897,9 @@ pub(super) fn dispatch(
         },
         // Following a `chat://` reference is an ordinary activation: an address
         // names a conversation, not a message, so there is nothing to focus on
-        // (spec §11.3). It **stashes the way back**, though — the user drilled
+        // and it is read from its first row (spec §11.3,
+        // docs/research/feed-landing.md §3.2). It **stashes the way back**,
+        // though, with the row the feed is on — the user drilled
         // down from the conversation they were reading, exactly as they do from
         // a search hit, and `Esc` should retrace that step rather than drop them
         // into the chat list (docs/research/chat-uri-links.md fork F6).
@@ -904,9 +910,16 @@ pub(super) fn dispatch(
         // search hit simply discarded the hits.
         ChatIntent::OpenChatLink(id) => {
             if let Some(origin) = screen.active_chat().filter(|from| *from != id) {
-                *back = Some(Back::Link { origin, chat: id });
+                *back = Some(Back::Link {
+                    origin,
+                    chat: id,
+                    place: screen.feed_place(),
+                });
             }
-            AppCommand::SwitchChat(id)
+            AppCommand::OpenChat {
+                chat: id,
+                landing: FeedLanding::Top,
+            }
         }
         ChatIntent::RagAdd { path, recursive } => AppCommand::RagAdd { path, recursive },
         ChatIntent::RagDelete { path } => AppCommand::RagDelete { path },
@@ -966,12 +979,15 @@ pub(super) fn dispatch(
         ChatIntent::OpenChatList if back.is_some() => {
             match back.take() {
                 Some(Back::Search { screen, .. }) => *active = ActiveScreen::Search(screen),
-                // Back to the conversation the reference was followed from — an
-                // ordinary switch, so it goes through the orchestrator like any
-                // other. The stash is already taken, so the activation that
-                // follows finds nothing to clear.
-                Some(Back::Link { origin, .. }) => {
-                    let _ = cmd_tx.send(AppCommand::SwitchChat(origin));
+                // Back to the conversation the reference was followed from,
+                // on the row it was followed from — a switch, so it goes
+                // through the orchestrator like any other. The stash is already
+                // taken, so the activation that follows finds nothing to clear.
+                Some(Back::Link { origin, place, .. }) => {
+                    let _ = cmd_tx.send(AppCommand::OpenChat {
+                        chat: origin,
+                        landing: place.map_or(FeedLanding::Tail, FeedLanding::Place),
+                    });
                 }
                 // Back to the task list, whole — and asked afresh, since
                 // runs may have landed or started while the chat was open.

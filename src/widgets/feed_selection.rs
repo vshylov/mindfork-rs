@@ -186,6 +186,42 @@ pub fn painted(line: &Line<'_>, fact: RowFact, from: u16, to: u16) -> Option<Ran
     Some(first.col..last.end())
 }
 
+/// Feeds `into` what a row **says**: the glyphs of its content that are not
+/// whitespace, in order — the rail, a prefix, the tail and every space left
+/// out. A line says the same at any width: a wrap breaks it at whitespace,
+/// pads a piece or trims one, and moves no glyph. Returns how many glyphs went
+/// in; 0 is a row that says nothing — a blank one, the separator under a
+/// message.
+///
+/// Made for every row of a block a reader's view starts in, so the common row
+/// — no tail — is read without measuring it: once past the lead, a glyph's
+/// column no longer matters.
+pub fn ink(line: &Line<'_>, fact: RowFact, into: &mut impl std::hash::Hasher) -> usize {
+    let mut said = 0;
+    if fact.tail > 0 {
+        // The tail is counted back from the row's end: measure the row.
+        let (text, glyphs) = glyphs(line);
+        for g in content(&glyphs, fact).filter(|g| g.class != CharClass::Space) {
+            into.write(text[g.bytes.clone()].as_bytes());
+            said += 1;
+        }
+        return said;
+    }
+    let mut col: u16 = 0;
+    for span in &line.spans {
+        for g in span.content.graphemes(true) {
+            if col < fact.lead {
+                let chars: Vec<char> = g.chars().collect();
+                col = col.saturating_add(wrap::display_width(&chars) as u16);
+            } else if g.chars().next().map(CharClass::of) != Some(CharClass::Space) {
+                into.write(g.as_bytes());
+                said += 1;
+            }
+        }
+    }
+    said
+}
+
 /// The columns of a row's text: from past its lead to the end of its last
 /// glyph that is not whitespace, the tail left out. `None` for a row with nothing on it — a blank
 /// row, the separator under a message. A double or a triple click selects only
@@ -588,6 +624,37 @@ mod tests {
         assert_eq!(word_bounds(&r, pt(0, 0, 18)), (pt(0, 0, 2), pt(0, 0, 10)));
         // The same row with no tail named reads to its end — the control.
         assert_eq!(content_cols(&header(), RAILED), Some(2..20));
+    }
+
+    /// What a row says is its glyphs: the rail, the tail and the whitespace a
+    /// wrap left, padded or trimmed are not part of it, so a line says the
+    /// same however it was broken. Both ways of reading a row agree.
+    #[test]
+    fn a_rows_ink_is_its_glyphs_and_nothing_a_wrap_changes() {
+        use std::hash::Hasher;
+        let said = |line: Line<'static>, fact: RowFact| {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            let glyphs = ink(&line, fact, &mut h);
+            (glyphs, h.finish())
+        };
+        let plain = said(railed("two words"), RAILED);
+        assert_eq!(plain.0, 8, "the glyphs, the space apart");
+        assert_eq!(said(railed("two  words      "), RAILED), plain, "padded");
+        assert_eq!(said(railed("twowords"), RAILED), plain, "broken elsewhere");
+        assert_ne!(said(railed("two worms"), RAILED), plain);
+        // The rail is chrome: the same text with no rail says the same.
+        assert_eq!(said(Line::from("two words"), BARE), plain);
+
+        // A row with a tail is measured; what it says is the same glyphs.
+        let numbered = RowFact { tail: 9, ..RAILED };
+        assert_eq!(
+            said(railed("ASSISTANT      #12"), numbered),
+            said(railed("ASSISTANT"), RAILED),
+            "the number is not what the header says"
+        );
+        // A blank row and a row of padding say nothing.
+        assert_eq!(said(railed(""), RAILED).0, 0);
+        assert_eq!(said(railed("      "), RAILED).0, 0);
     }
 
     #[test]

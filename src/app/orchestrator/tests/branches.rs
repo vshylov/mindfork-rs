@@ -215,6 +215,49 @@ fn a_switch_restores_the_tail_and_says_where_the_line_is() {
     assert_eq!(line(&orch, chat).len(), 6);
 }
 
+/// The landing an activation carries.
+fn landing(events: &[AppEvent]) -> FeedLanding {
+    events
+        .iter()
+        .find_map(|e| match e {
+            AppEvent::ChatActivated { landing, .. } => Some(landing.clone()),
+            _ => None,
+        })
+        .expect("the feed is rebuilt")
+}
+
+/// Where the rebuilt feed stands after the line moved
+/// (docs/research/feed-landing.md §3.2). A switch shows the variant's first
+/// message — the person reads on from there, and the feed used to be sent to
+/// its last row. A fork and a take-back cut the line, and the cut is its new
+/// end: the tail.
+#[test]
+fn a_switch_reveals_its_variant_and_a_cut_shows_the_tail() {
+    let (_d, mut orch, mut rx, _chat, ids) = forkable();
+
+    orch.handle_fork_at(ids[3]);
+    assert_eq!(landing(&drain(&mut rx)), FeedLanding::Tail, "a fork");
+
+    // Back to the tail the fork parked: `q3` is the first message of it.
+    orch.handle_switch_branch(ids[4]);
+    assert_eq!(
+        landing(&drain(&mut rx)),
+        FeedLanding::Reveal { message: ids[4] },
+        "a switch names the variant's first message"
+    );
+
+    orch.handle_delete_last();
+    assert_eq!(landing(&drain(&mut rx)), FeedLanding::Tail, "a take-back");
+
+    // A switch that is refused rebuilds nothing.
+    orch.handle_switch_branch(Uuid::new_v4());
+    assert!(
+        !drain(&mut rx)
+            .iter()
+            .any(|e| matches!(e, AppEvent::ChatActivated { .. }))
+    );
+}
+
 /// Where a take-back is ignored, a fork and a switch are: while a reply is
 /// being generated, and on a sub-agent transcript, which is read-only.
 #[test]

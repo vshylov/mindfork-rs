@@ -9,7 +9,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::app::events::{AppEvent, ToolDecision};
+use crate::app::events::{AppEvent, FeedLanding, ToolDecision};
 use crate::entities::chat::DeletedCause;
 use crate::entities::chat_branch::ParkCause;
 use crate::entities::message::{
@@ -499,7 +499,7 @@ impl Orchestrator {
         }
         // The feed is rebuilt without the old reply, and a background run or
         // a follow-up planned in it ends with it (research forks F8, F5).
-        self.after_line_moved(active_id);
+        self.after_line_moved(active_id, FeedLanding::Tail);
         // A reply to a notice is redone as the turn it was: nobody typed it, so it
         // may again choose silence (spec §9.3.6) or be re-asked when empty.
         let woken = self
@@ -694,7 +694,7 @@ impl Orchestrator {
             chat.park_tail(idx, ParkCause::Takeback, now);
             chat.modified_at = now;
         }
-        self.after_line_moved(active_id);
+        self.after_line_moved(active_id, FeedLanding::Tail);
         let _ = self.evt_tx.send(AppEvent::RestoreInput(user_text));
     }
 
@@ -1190,6 +1190,7 @@ impl Orchestrator {
             generation_id: id,
             model: model_name.clone(),
             continuation: continuation.is_some(),
+            woken,
         };
         // The confirmation channel for this turn (fork F8). The sender is kept
         // next to the turn id so a reply arriving for an older turn — the user
@@ -1395,7 +1396,7 @@ impl Orchestrator {
         if silent {
             self.mark_dirty(res.chat_id);
             if self.active_id == Some(res.chat_id) {
-                self.activate(res.chat_id);
+                self.refresh(res.chat_id);
             }
         }
         if res.messages.is_empty() && res.effects.is_empty() && res.deleted.is_empty() {
@@ -1558,7 +1559,7 @@ impl Orchestrator {
         self.maybe_auto_consolidate(res.chat_id);
         self.maybe_auto_self_consolidate(res.chat_id);
         if silent && self.active_id == Some(res.chat_id) {
-            self.activate(res.chat_id);
+            self.refresh(res.chat_id);
         }
         if let Some(text) = woken_reply {
             self.notify_unasked(res.chat_id, super::notify::Unasked::Reply(&text));
@@ -1607,7 +1608,7 @@ impl Orchestrator {
             return;
         };
         if self.active_id == Some(chat_id) {
-            self.activate(chat_id);
+            self.refresh(chat_id);
         }
         self.answer_seat(seat, reply);
     }

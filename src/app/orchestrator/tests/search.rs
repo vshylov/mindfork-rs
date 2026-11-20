@@ -498,9 +498,9 @@ async fn open_chat_at_first_match_activates_with_the_focus() {
         .await
         .unwrap();
     match ev {
-        AppEvent::ChatActivated { id, focus, .. } => {
+        AppEvent::ChatActivated { id, landing, .. } => {
             assert_eq!(id, chat_id, "the chat must open");
-            let focus = focus.expect("on the message that matched");
+            let focus = jump_of(landing).expect("on the message that matched");
             assert_eq!(focus.message, user_msg);
             // The query travels too, so the feed can highlight it inside that
             // message rather than only marking the bubble (fork S3(b)).
@@ -530,7 +530,7 @@ async fn open_chat_at_first_match_activates_with_the_focus() {
         .unwrap();
     assert!(matches!(
         ev,
-        AppEvent::ChatActivated { id, focus: None, .. } if id == chat_id
+        AppEvent::ChatActivated { id, landing: FeedLanding::Tail, .. } if id == chat_id
     ));
 
     cmd_tx.send(AppCommand::Quit).unwrap();
@@ -672,14 +672,12 @@ fn list_filter(
 
 /// What an open sent down: the activation's chat and focus, and the notice
 /// that followed it, if one did.
-fn opened(
-    rx: &mut UnboundedReceiver<AppEvent>,
-) -> (Uuid, Option<crate::app::events::FeedFocus>, Option<String>) {
+fn opened(rx: &mut UnboundedReceiver<AppEvent>) -> (Uuid, Option<Jump>, Option<String>) {
     let mut activated = None;
     let mut notice = None;
     while let Ok(event) = rx.try_recv() {
         match event {
-            AppEvent::ChatActivated { id, focus, .. } => activated = Some((id, focus)),
+            AppEvent::ChatActivated { id, landing, .. } => activated = Some((id, jump_of(landing))),
             AppEvent::Notice(text) => notice = Some(text),
             _ => {}
         }

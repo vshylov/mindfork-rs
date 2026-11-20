@@ -83,7 +83,7 @@ use tokio::time::Instant;
 use uuid::Uuid;
 
 use crate::app::events::{
-    AppCommand, AppEvent, BackgroundKind, FeedFocus, ServerStatus, ToolDecision,
+    AppCommand, AppEvent, BackgroundKind, FeedLanding, ServerStatus, ToolDecision,
 };
 use crate::app::gen_state::GenState;
 use crate::app::supervisor::ServerSupervisor;
@@ -1082,6 +1082,7 @@ impl Orchestrator {
             AppCommand::SwitchBranch { first } => self.handle_switch_branch(first),
             AppCommand::NewChat { profile_id } => self.handle_new_chat(profile_id),
             AppCommand::SwitchChat(id) => self.handle_switch(id),
+            AppCommand::OpenChat { chat, landing } => self.handle_open_chat(chat, landing),
             AppCommand::CancelFollowup(id) => self.handle_cancel_followup(id),
             AppCommand::TerminalFocus(focused) => self.handle_terminal_focus(focused),
             AppCommand::OpenChatAt {
@@ -1900,16 +1901,28 @@ impl Orchestrator {
         }
     }
 
-    /// Makes a chat active and sends its messages to the UI.
+    /// Makes a chat active and sends its messages to the UI, the feed at its
+    /// tail — an ordinary opening.
     fn activate(&mut self, id: Uuid) {
-        self.activate_focused(id, None);
+        self.activate_at(id, FeedLanding::Tail);
     }
 
-    /// [`Self::activate`] with an optional message to put the feed on and query
-    /// to highlight in it (a jump from a search hit,
-    /// [`AppCommand::OpenChatAt`]). The single activation funnel — everything
-    /// else goes through `activate` and passes `None`.
-    fn activate_focused(&mut self, id: Uuid, focus: Option<FeedFocus>) {
+    /// Rebuilds the open chat's feed because the chat **got rows by itself**
+    /// — a background run's result, a follow-up, rows from the messenger, a
+    /// reply that chose silence. The person opened nothing, so nothing of
+    /// theirs is touched: [`FeedLanding::Hold`] (docs/research/feed-landing.md
+    /// §3.6). An activation used to deliver these, and sent a reader to the
+    /// feed's last row with the input box reloaded under their cursor.
+    fn refresh(&mut self, id: Uuid) {
+        self.activate_at(id, FeedLanding::Hold);
+    }
+
+    /// [`Self::activate`] with where the feed stands once it is rebuilt
+    /// (docs/research/feed-landing.md §3.2): a search hit's message
+    /// ([`AppCommand::OpenChatAt`]), a reference's first row, the message
+    /// whose variant was switched, a place to go back to. The single
+    /// activation funnel — an ordinary opening goes through `activate`.
+    fn activate_at(&mut self, id: Uuid, landing: FeedLanding) {
         // Opening a chat is reading it: the unread mark a background run's
         // result left on it goes (spec §11.2), on disk and on the list.
         if let Some(chat) = self.chats.iter_mut().find(|c| c.id == id && c.unread) {
@@ -2001,7 +2014,7 @@ impl Orchestrator {
                     messages,
                     draft: chat.draft.clone(),
                     feed_view: chat.feed_view.clone(),
-                    focus,
+                    landing,
                     compaction: chat
                         .compaction_view(self.config.compaction.enabled)
                         .map(|(summary, upto)| (chat.messages[upto].id, summary.to_string())),
@@ -2019,7 +2032,14 @@ impl Orchestrator {
                 messages: run.messages.clone(),
                 draft: String::new(),
                 feed_view: parent.feed_view.clone(),
-                focus,
+                // A transcript that is not running is read, not watched: it
+                // opens on its first row — the persona, then the instruction —
+                // unless the route asked for somewhere (research §3.2, the
+                // owner's D2). A running one keeps its tail.
+                landing: match landing {
+                    FeedLanding::Tail if live_turn.is_none() => FeedLanding::Top,
+                    other => other,
+                },
                 compaction: None,
                 child: Some(crate::app::events::ChildView {
                     parent: parent.id,

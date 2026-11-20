@@ -3963,13 +3963,61 @@ this?"*; this screen answers *"where exactly, and take me there."*
   one turn two ways.
 - Contextual message actions: copy thoughts/message/the whole chat; **edit in place** (both user and assistant — a direct requirement); regenerate; delete last.
 - **Scrolling**: `PageUp`/`PageDown` (by `PAGE_SCROLL` lines) and the **mouse wheel** (by `WHEEL_ROWS` lines, `shared::mouse`), with automatic "tail-following" when scrolled to the bottom. Terminal mouse capture is decided by a **setting**, `interface.mouse` (Settings → Interface → Behavior, *Mouse*; [docs/research/mouse-always-captured.md](docs/research/mouse-always-captured.md)): `app`, the default, captures it — the wheel scrolls, the app selects text itself (below) — and the terminal's own selection stays available with its modifier: `Shift` in most terminals, `Option` in iTerm2, `Fn` in Terminal.app (Windows Terminal's two catches: `Shift`+right click pastes, and its copy of a `Shift` selection joins the lines — `Ctrl+Shift+C` keeps them). `terminal` leaves the mouse with the terminal and its native selection — for a terminal with no modifier around capture (VS Code on macOS by default), a screen reader, or a terminal whose reports misbehave. **The legacy terminal mode keeps the mouse with the terminal** whatever the setting says: conhost has no modifier around capture. There is no switch for the session any more: `Ctrl+W`, its status-bar light (`mouse: select`/`mouse: scroll`) and `/mouse` were removed with the default's flip (§5.7 of the research) — the key a browser tab closes the tab on, and a light that only explained a mode the app no longer has; `mindfork keys` keeps its own `Ctrl+W`, the diagnostic's switch. Capture **follows the frame in front**: on wherever the app holds the mouse — every screen and the help dialog answer it since stage 3 (below) — and off on the "window too small" notice, which answers nothing. What is asked for is **button and drag reports in SGR** (`?1000h ?1002h ?1006h`, `shared::mouse::EnableMouseReports`) — not crossterm's `EnableMouseCapture`, which adds every movement (`?1003h`) and the rxvt encoding; on Windows the console is asked through its input mode, and the movement it reports regardless is dropped by the input reader. The wheel and selection share one terminal mouse-reporting mechanism, so "wheel only" can't be enabled separately.
+- **Where the feed stands once a chat is activated** — said by the route that
+  asked, as a landing sent with the activation (`FeedLanding`,
+  [docs/research/feed-landing.md](docs/research/feed-landing.md)). An activation
+  used to have two outcomes — a search hit's message, or the last row — so a
+  variant switch, a followed reference and the way back from one all sent the
+  reader to the bottom.
+  - **The tail**, following it: a chat picked in the list, a new one, a clone,
+    the last chat at startup — and a rebuild after the line's tail was cut
+    (`Ctrl+E`, `Ctrl+R`, `/fork`), where the cut is the new end.
+  - **The first row**: the conversation a `chat://` reference names (below), a
+    subagent transcript that is not running (below), a swapped greeting
+    (`/greeting`).
+  - **A message, marked**: a search hit (*Jumping to a message*, below).
+  - **A message, shown**: the first message of a variant that was just switched
+    to (`/branch N K`, an arrow of the mark, the branches list). **The feed does
+    not move when that message's header is on the screen** — the arrows that
+    were clicked stay under the pointer, so the variants can be clicked through
+    — and the header is brought to the view's first row when it is not. The feed
+    does not scroll past its end: a variant shorter than the one it replaces, at
+    the feed's last rows, moves the header down once, and from there it stays.
+    Nothing is marked; the mark on the header says which variant is on the line.
+  - **A place**: the row the reader was on, for the way back from a followed
+    reference (below).
+  - **A hold**: nothing of the person's is touched. The chat that is open got
+    rows by itself — a background run's result, a follow-up come due, rows from
+    the messenger, a woken reply that chose silence — and its feed is rebuilt to
+    show them (`Orchestrator::refresh`). A feed that follows its tail still
+    does; one that does not keeps the rows it shows, by the place read before
+    the rebuild. The in-feed search stays open on its query, a selection and a
+    jump's mark stay, an open list stays, the token counter keeps the last
+    turn's figures, and the input box is not touched. These deliveries used to
+    be ordinary activations: a reader was sent to the last row, the search was
+    closed, and the box was reloaded under the cursor.
+  - **The input box is loaded from a chat's draft when the chat changes**, and
+    by no activation of the chat that is already open — a hold, a variant
+    switch, a regeneration, a take-back. The box is where that draft is
+    written; the stored copy is its own text a tick older, and loading it back
+    moved the cursor to the end, emptied the undo history and could overwrite
+    a keystroke not sent yet.
+
+  A landing ends the feed's following its tail **when it is asked for**, not in
+  the frame that applies it: the note that often comes right behind an
+  activation (which variant is on the line, which parked branch a hit is in)
+  would otherwise scroll a following feed to its end and drop the landing.
 - **Who may scroll to the tail** — split by *who asked*. **User-initiated** actions go
-  to the bottom unconditionally: activating a chat (unless a jump was requested),
-  sending a message, starting a generation. You did it; you want to see the result.
+  to the bottom unconditionally: activating a chat by an ordinary route (a
+  landing above says otherwise for the rest), sending a message, starting a
+  generation. You did it; you want to see the result.
   **Content arriving on its own** — a tool card, a service note, the next round's
-  bubble after a follow-up or rewrite — only scrolls **if the view was already
-  following the tail**: a reader who has scrolled away (or jumped to a message) must
-  not be yanked back. Scrolling to the last line resumes following.
+  bubble after a follow-up or rewrite, what a hold delivers (above), and **a turn
+  the app started on a notice** (`AppEvent::GenerationStarted::woken`: nobody
+  pressed anything, so its bubble is not a reason to move) — only scrolls **if the
+  view was already following the tail**: a reader who has scrolled away (or jumped
+  to a message) must not be yanked back. Scrolling to the last line resumes
+  following.
 - **Jumping to a message** (`AppCommand::OpenChatAt` from the search screen, §11.2.1):
   the chat is activated and the feed is positioned on that message, whose rail is
   drawn in the accent color — "this is where you landed" — and **the searched query is
@@ -3977,18 +4025,36 @@ this?"*; this screen answers *"where exactly, and take me there."*
   uses; approximate, and only that message — see [§11.2.1](#1121-the-message-level-search-screen)).
   The **mark survives
   scrolling** (that is the point: you read around the hit and can still see it) and is
-  dropped only when the chat changes or another jump replaces it; the **view position**
-  is released as soon as you scroll manually. The highlight moves as one with the mark
+  dropped only when the chat changes or another jump replaces it; the view is yours
+  as soon as you scroll. The highlight moves as one with the mark
   (both set by the jump, both dropped with it), so a query left over from a previous
-  jump cannot light up the wrong message. The position is anchored to the *message*
-  (a feed index), not to a row number, so a rewrap — a resize, a theme change, `Ctrl+T`
-  — returns the view to the message rather than to a stale row. A message the feed
+  jump cannot light up the wrong message. **The view lands with the match on the
+  screen**: on the message's first row when the first highlighted match is on that
+  screenful, and otherwise with that match a third of the view down — in a message
+  taller than the window the word that was searched for used to be below the fold. A
+  match that is not drawn (folded away, or text the renderer transformed) leaves the
+  message's first row. A message the feed
   doesn't show (a `Tool`/`System` one) is a no-op and the chat simply opens at the tail.
+- **A rewrap keeps what is on the screen.** A resize, a theme, `Ctrl+T`, `Ctrl+O`, a
+  new compaction boundary give every block other rows, and the feed's scroll is a row
+  number. A feed at its tail stays at its tail. Anywhere else the view is put back on
+  **the line that was on its first row**, found by what that line says: another width
+  breaks a line into other pieces and leaves its text the text it was, so the line is
+  found again exactly, whatever was laid out anew above it, and a window dragged by
+  its edge through every width comes back to the row it left. A line that cannot be
+  told any more — a table's row at a width that lays the table out differently, a
+  diagram redrawn — falls back to the same share of the way through its block. This
+  used to hold for a jump alone, and only until the first manual scroll: a reader who
+  had scrolled anywhere was shown some other message by a resize or a fold
+  ([docs/research/feed-landing.md](docs/research/feed-landing.md) §3.8).
 - **A subagent transcript opened from the list is read-only** ([§9.3.2](#932-call_subagent),
   docs/research/subagent-chats.md §3.8). It looks like a chat with a system
   message: the persona the parent composed is drawn **first, as a system bubble**
   (headed by the profile's system name, else `SYSTEM`; muted rail) — the one
-  thing a reader of a transcript wants first, and a chat never shows; the
+  thing a reader of a transcript wants first, and a chat never shows. **A
+  transcript that is not running opens on that first row** — it is read, not
+  watched — while a running one opens at its tail and follows it; a search hit
+  inside either still opens on the hit. The
   instruction's header is the **parent persona** (the profile's assistant name,
   else the assistant label — it wrote the instruction), the replies' header the
   subagent's `name`, else `SUBAGENT`; both resolved at activation, so a profile
@@ -4026,9 +4092,15 @@ this?"*; this screen answers *"where exactly, and take me there."*
   key is the route that always works: the *Mouse* setting can leave the mouse
   with the terminal, where no click reaches the app (capture was off by default
   when this was built, which is why the key came first). Following an address
-  is an ordinary chat switch — an address names a conversation, not a message —
-  and **`Esc` retraces it**, back to the conversation the reference was followed
-  from. That is the same one-deep, consumed-on-use back-stack the search screen
+  is a chat switch — an address names a conversation, not a message — and the
+  conversation **opens at its first row**: it is there to be read, from its
+  start. **`Esc` retraces it**, back to the conversation the reference was
+  followed from **and to the row the feed was on** (`Back::Link::place`, read
+  from the frame last drawn: the message on the view's first row and the row
+  inside it) — the reference that was followed is where it was left, and the
+  feed follows its tail again only if it was at its last row. What the feed
+  does not keep across any chat switch is its notes: they are not messages of
+  the chat. That is the same one-deep, consumed-on-use back-stack the search screen
   uses (§11.2.1), and it is dropped by either of two things: **leaving** for a
   different chat by an ordinary route (picking one in the list, `Ctrl+N`, a
   clone), or **arriving** — working in the chat you drilled into. Sending a
@@ -4099,8 +4171,8 @@ Design record: [docs/history/in-feed-search.md](docs/history/in-feed-search.md).
   not the start of its message: the largest real message is 38,782 characters, so
   message-granular stepping would leave the viewport unmoved. That row is
   **re-derived every render, never stored** — which is what lets it survive a
-  rewrap, and why [§11.2.1](#1121-the-message-level-search-screen)'s anchor can
-  stay message-granular without contradiction.
+  rewrap. A jump from [§11.2.1](#1121-the-message-level-search-screen) lands on
+  its match by the same rule: the row is found by the frame that highlights it.
 - Matching runs over **what is drawn**, which is what lets the counter equal the
   highlights. Two honest consequences: it also finds words inside "thoughts" and
   tool cards, which the full-text index deliberately does not cover, so
