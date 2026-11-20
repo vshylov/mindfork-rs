@@ -14,6 +14,25 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Gemini 4 and Gemma 4 are asked to think in the terms they take.** In the Gemini
+  mode every model newer than Gemini 3 was sent the thinking budget of Gemini 2.5: the
+  four Gemini 4 models took it as an old setting, so a muted turn such as the title
+  still thought at length, and Gemma 4 refused it, so every turn with thoughts on
+  ended in an error. Every model after 2.5 is now asked in thinking levels, and a
+  level a model does not have is asked again as one it does.
+- **Gemini gets its earlier replies back with their reasoning signatures.** Gemini
+  signs a reply's reasoning, and Google recommends sending the signature back with
+  the conversation, because the reasoning can suffer without it. A reply without tool
+  calls lost its signature. It is now kept in the chat and sent with every later turn.
+
+### Data
+
+- **One field is new**: `thought_signature` on an assistant message of a chat, the
+  signature of a Gemini reply. An older version reads the chat as before and leaves
+  the field out the next time it saves the file.
+
 ## [0.28.0] — 2026-11-20
 
 **Branches: go back to any message and keep what followed.** `/fork N` continues a

@@ -102,12 +102,13 @@ impl EffortWire for GeminiClient {
     }
 
     /// A refused level becomes the one above it — `minimal`, which a muted turn
-    /// asks for, becomes `low`.
+    /// asks for, becomes `low` — where the refusal names it, and no level at all
+    /// where it does not ([`wire::instead_of_refused`]).
     fn answer(&self, wish: &'static str, refused: &EngineError) -> Option<Option<&'static str>> {
         if !wire::refuses_thinking_level(refused) {
             return None;
         }
-        wire::level_above(wish).map(Some)
+        wire::instead_of_refused(wish, &refused.message)
     }
 }
 
@@ -243,7 +244,17 @@ impl EngineBackend for GeminiClient {
                                                 thought_signature: part.thought_signature.clone(),
                                             });
                                             tool_index += 1;
-                                        } else if let Some(text) = &part.text {
+                                            continue;
+                                        }
+                                        // A reply without calls carries its signature on
+                                        // the last part — in a stream, often an empty text
+                                        // part (`{"text":"","thoughtSignature":…}`, measured
+                                        // 2026-11-20 on Gemini 4), which the empty-text
+                                        // check below would drop with it.
+                                        if let Some(sig) = &part.thought_signature {
+                                            yield ChatChunk::TextSignature(sig.clone());
+                                        }
+                                        if let Some(text) = &part.text {
                                             if text.is_empty() {
                                                 continue;
                                             }
@@ -529,6 +540,132 @@ mod tests {
         assert_eq!(stub.join().unwrap().len(), 1);
         assert_eq!(client.learned("high"), None);
     }
+
+    /// Gemma 4's answer to `low` and `medium` (2026-11-20): no level named.
+    const LEVEL_REFUSED_UNNAMED: &str = r#"{"error":{"code":400,"message":"Thinking level is not supported for this model.","status":"INVALID_ARGUMENT"}}"#;
+
+    /// A refusal that names no level is answered by asking with none — the
+    /// model's own depth, thoughts still on — not with a further guess, and the
+    /// next turn at that effort asks so at once.
+    #[tokio::test]
+    async fn a_refusal_naming_no_level_drops_the_level() {
+        let (url, stub) = sse_stub::serve_in_turn(&[
+            (sse_stub::BAD_REQUEST, sse_stub::JSON, LEVEL_REFUSED_UNNAMED),
+            REPLY,
+            REPLY,
+        ]);
+        let client = GeminiClient::new(url, "k", "gemma-4-31b-it");
+        let mut req = sse_stub::hello();
+        req.sampling.thinking = Some(true);
+        req.sampling.reasoning_effort = Some(crate::entities::sampling::ReasoningEffort::Low);
+        for _ in 0..2 {
+            let chunks = collect(
+                client
+                    .chat_stream(req.clone(), CancellationToken::new())
+                    .await
+                    .expect("the turn survives the refusal"),
+            )
+            .await;
+            assert!(
+                chunks.contains(&ChatChunk::Text("Indexes".into())),
+                "{chunks:?}"
+            );
+        }
+        let bodies = stub.join().unwrap();
+        assert_eq!(
+            levels_sent(&bodies),
+            [
+                serde_json::json!("low"),
+                serde_json::Value::Null,
+                serde_json::Value::Null
+            ]
+        );
+        let last: serde_json::Value = serde_json::from_str(&bodies[2]).unwrap();
+        assert_eq!(
+            last["generationConfig"]["thinkingConfig"]["includeThoughts"], true,
+            "the thoughts stay on: {last}"
+        );
+        assert_eq!(client.learned("low"), Some(None));
+    }
+
+    /// The defect this guards: every Gemini 4 model fell to the 2.5 branch and
+    /// a muted turn was sent `thinkingBudget: 0`, which `gemini-4-neon` takes and
+    /// thinks through anyway (181 thought tokens, 2026-11-20). It is a model of
+    /// levels: `minimal`, refused, then `low`.
+    #[tokio::test]
+    async fn a_muted_turn_on_gemini_4_asks_for_levels() {
+        let (url, stub) = sse_stub::serve_in_turn(&[
+            (sse_stub::BAD_REQUEST, sse_stub::JSON, wire::LEVEL_REFUSED),
+            REPLY,
+        ]);
+        let client = GeminiClient::new(url, "k", "gemini-4-neon");
+        collect(
+            client
+                .chat_stream(sse_stub::muted(), CancellationToken::new())
+                .await
+                .expect("the muted turn survives the refusal"),
+        )
+        .await;
+        let bodies = stub.join().unwrap();
+        assert_eq!(levels_sent(&bodies), ["minimal", "low"]);
+        for b in &bodies {
+            assert!(!b.contains("thinkingBudget"), "{b}");
+        }
+    }
+
+    /// A reply without calls carries its signature on a trailing empty text part
+    /// (the stream of `gemini-4-neon`, 2026-11-20): the signature is handed on,
+    /// the empty text is not, and a call's signature stays on the call.
+    #[tokio::test]
+    async fn a_replys_signature_on_a_trailing_empty_part_is_handed_on() {
+        let base = serve(&[
+            r#"{"candidates":[{"content":{"parts":[{"text":"Weighing it","thought":true}],"role":"model"}}]}"#,
+            r#"{"candidates":[{"content":{"parts":[{"text":"391"}],"role":"model"}}]}"#,
+            r#"{"candidates":[{"content":{"parts":[{"text":"","thoughtSignature":"SIG-TEXT"}],"role":"model"},"finishReason":"STOP"}]}"#,
+        ]);
+        let client = GeminiClient::new(base, "k", "gemini-4-neon");
+        let chunks = collect(
+            client
+                .chat_stream(sse_stub::hello(), Default::default())
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(
+            chunks,
+            [
+                ChatChunk::Thoughts("Weighing it".into()),
+                ChatChunk::Text("391".into()),
+                ChatChunk::TextSignature("SIG-TEXT".into()),
+                ChatChunk::Finished(FinishReason::Stop),
+            ]
+        );
+
+        let base = serve(&[
+            r#"{"candidates":[{"content":{"parts":[{"functionCall":{"name":"calc","args":{}},"thoughtSignature":"SIG-CALL"}],"role":"model"},"finishReason":"STOP"}]}"#,
+        ]);
+        let client = GeminiClient::new(base, "k", "gemini-4-neon");
+        let chunks = collect(
+            client
+                .chat_stream(sse_stub::hello(), Default::default())
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert!(
+            !chunks
+                .iter()
+                .any(|c| matches!(c, ChatChunk::TextSignature(_))),
+            "{chunks:?}"
+        );
+        assert!(
+            chunks.iter().any(|c| matches!(
+                c,
+                ChatChunk::ToolCall(d) if d.thought_signature.as_deref() == Some("SIG-CALL")
+            )),
+            "{chunks:?}"
+        );
+    }
 }
 
 /// A manual smoke against the real Gemini API. Marked `#[ignore]` — not in CI.
@@ -640,7 +777,12 @@ mod ignored_smoke {
                             id: "take_screenshot-0".into(),
                             name: "take_screenshot".into(),
                             arguments: "{}".into(),
-                            thought_signature: None,
+                            // The call is made up here, not the model's: from Gemini 3
+                            // on, an unsigned one is a `400` ("Function call is missing
+                            // a thought_signature"), and this is the value Google
+                            // documents for a call injected into the history (measured
+                            // 2026-11-20 on `gemini-4-neon`; 2.5 ignores it).
+                            thought_signature: Some("skip_thought_signature_validator".into()),
                         }],
                     ),
                     tool,
@@ -935,6 +1077,147 @@ mod ignored_smoke {
         assert!(
             !text.is_empty(),
             "expected a final answer after tool result"
+        );
+    }
+
+    /// One streamed turn: the reply's text, thoughts, text signature and end.
+    async fn turn(
+        client: &GeminiClient,
+        messages: Vec<ApiMessage>,
+        sampling: SamplingConfig,
+    ) -> (String, String, Option<String>, Option<FinishReason>) {
+        let req = ChatRequest {
+            continue_final: false,
+            output_schema: None,
+            system: None,
+            messages,
+            sampling: SamplingConfig {
+                max_tokens: Some(4096),
+                ..sampling
+            },
+            tools: vec![],
+        };
+        let mut stream = client
+            .chat_stream(req, Default::default())
+            .await
+            .unwrap_or_else(|e| panic!("the request was refused: {e:#}"));
+        let (mut text, mut thoughts, mut signature, mut finish) =
+            (String::new(), String::new(), None, None);
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                ChatChunk::Text(t) => text.push_str(&t),
+                ChatChunk::Thoughts(t) => thoughts.push_str(&t),
+                ChatChunk::TextSignature(s) => signature = Some(s),
+                ChatChunk::Finished(r) => {
+                    finish = Some(r);
+                    break;
+                }
+                ChatChunk::Error { message, .. } => panic!("engine error: {message}"),
+                _ => {}
+            }
+        }
+        (text, thoughts, signature, finish)
+    }
+
+    /// Every thinking setting the app sends reaches the model and is answered:
+    /// thoughts on at the model's own depth, a chosen effort high and low, and a
+    /// muted turn. The defect it guards: Gemini 4 and Gemma 4 were sent 2.5's
+    /// `thinkingBudget` — taken by Gemini 4 as a legacy knob, refused by Gemma 4
+    /// with a `400` on every turn with thoughts on. Run per model with
+    /// `MINDFORK_GEMINI_MODEL`; prints what each setting was answered with.
+    #[tokio::test]
+    #[ignore = "requires MINDFORK_GEMINI_KEY (live Gemini API)"]
+    async fn every_thinking_setting_is_answered() {
+        let Some(client) = client_from_env() else {
+            eprintln!("skip: MINDFORK_GEMINI_KEY not set");
+            return;
+        };
+        let ask = || vec![ApiMessage::user("What is 17 * 23? Answer with the number.")];
+        let settings = [
+            ("thoughts on", Some(true), None, None),
+            ("effort high", Some(true), Some(ReasoningEffort::High), None),
+            ("effort low", Some(true), Some(ReasoningEffort::Low), None),
+            ("muted", None, None, Some(0)),
+        ];
+        for (label, thinking, effort, budget) in settings {
+            let sampling = SamplingConfig {
+                thinking,
+                reasoning_effort: effort,
+                reasoning_budget: budget,
+                ..Default::default()
+            };
+            let (text, thoughts, _, finish) = turn(&client, ask(), sampling).await;
+            eprintln!(
+                "{} {label}: {finish:?}, text {:?}, thoughts {} chars",
+                client.model,
+                text.trim(),
+                thoughts.len()
+            );
+            assert!(text.contains("391"), "{label}: {text:?}");
+        }
+        for wish in ["minimal", "low", "medium"] {
+            if let Some(instead) = client.learned(wish) {
+                eprintln!("{} learned: {wish} -> {instead:?}", client.model);
+            }
+        }
+    }
+
+    /// A text reply's signature arrives and is taken back: a model of levels
+    /// (3.x and later) signs a reply that thought, and the next turn, carrying
+    /// the signature on the reply's text, is answered — no `400` "Corrupted
+    /// thought signature", which a forged one gets. 2.5 signs no text reply.
+    #[tokio::test]
+    #[ignore = "requires MINDFORK_GEMINI_KEY (live Gemini API)"]
+    async fn a_text_replys_signature_round_trips() {
+        let Some(client) = client_from_env() else {
+            eprintln!("skip: MINDFORK_GEMINI_KEY not set");
+            return;
+        };
+        let thinking = || SamplingConfig {
+            thinking: Some(true),
+            ..Default::default()
+        };
+        let first = ApiMessage::user("Pick a random fruit and name it in one word.");
+        let (text, _, signature, finish) = turn(&client, vec![first.clone()], thinking()).await;
+        eprintln!(
+            "{}: {finish:?}, reply {:?}, signature {}",
+            client.model,
+            text.trim(),
+            signature.as_ref().map_or(0, String::len)
+        );
+        if !wire::takes_thinking_level(&client.model) {
+            assert!(signature.is_none(), "2.5 signs no text reply");
+            return;
+        }
+        // Google documents the signature for Gemini 3 and 4; Gemma 4 signs its
+        // calls and not its text (measured 2026-11-20), so it is not required there.
+        let Some(signature) = signature else {
+            assert!(
+                !client.model.starts_with("gemini-"),
+                "a Gemini of levels signs a reply that thought"
+            );
+            eprintln!("{}: no text signature to send back", client.model);
+            return;
+        };
+        let history = vec![
+            first,
+            ApiMessage::assistant(text.clone()).with_thought_signature(Some(signature)),
+            ApiMessage::user("Which fruit did you pick? Repeat the word."),
+        ];
+        let (again, _, _, finish) = turn(&client, history, thinking()).await;
+        eprintln!(
+            "{} second turn: {finish:?}, {:?}",
+            client.model,
+            again.trim()
+        );
+        assert!(
+            matches!(finish, Some(FinishReason::Stop | FinishReason::Length)),
+            "{finish:?}"
+        );
+        let picked = text.trim().trim_end_matches('.').to_lowercase();
+        assert!(
+            again.to_lowercase().contains(&picked),
+            "{again:?} vs {text:?}"
         );
     }
 }

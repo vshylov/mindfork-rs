@@ -157,6 +157,15 @@ pub struct ApiMessage {
     /// [`ThinkingBlock`]); other backends ignore it. Empty by default; one block on
     /// Anthropic, one **per reasoning item** on Responses.
     pub thinking: Vec<ThinkingBlock>,
+    /// The thought signature on an assistant reply's **text** (Gemini 3 and later put
+    /// one on the last part of a reply without calls — in a stream, often an empty
+    /// text part). Resent on the reply's text part; not enforced, recommended by
+    /// Google ("performance may degrade" without it). Arrives as
+    /// [`ChatChunk::TextSignature`] and is kept on the domain message, unlike
+    /// [`thinking`](Self::thinking): it serves every later turn, not only the
+    /// current one. A call's signature rides on the call ([`ApiToolCall`]).
+    /// Other backends ignore it.
+    pub thought_signature: Option<String>,
 }
 
 impl ApiMessage {
@@ -168,6 +177,7 @@ impl ApiMessage {
             tool_calls: Vec::new(),
             thinking: Vec::new(),
             images: Vec::new(),
+            thought_signature: None,
         }
     }
 
@@ -179,6 +189,7 @@ impl ApiMessage {
             tool_calls: Vec::new(),
             thinking: Vec::new(),
             images: Vec::new(),
+            thought_signature: None,
         }
     }
 
@@ -191,6 +202,7 @@ impl ApiMessage {
             tool_calls,
             thinking: Vec::new(),
             images: Vec::new(),
+            thought_signature: None,
         }
     }
 
@@ -198,6 +210,13 @@ impl ApiMessage {
     /// OpenAI Responses, see [`ThinkingBlock`].
     pub fn with_thinking_blocks(mut self, thinking: Vec<ThinkingBlock>) -> Self {
         self.thinking = thinking;
+        self
+    }
+
+    /// Attaches the reply's text signature (builder-style). See
+    /// [`thought_signature`](Self::thought_signature).
+    pub fn with_thought_signature(mut self, signature: Option<String>) -> Self {
+        self.thought_signature = signature;
         self
     }
 
@@ -215,6 +234,7 @@ impl ApiMessage {
             tool_calls: Vec::new(),
             thinking: Vec::new(),
             images: Vec::new(),
+            thought_signature: None,
         }
     }
 }
@@ -466,6 +486,11 @@ pub enum ChatChunk {
     /// Needed to resend the thinking block on an assistant turn with a tool call
     /// (see [`ThinkingBlock`]). Backends without extended thinking don't emit it.
     ThoughtsSignature(ThinkingRef),
+    /// The thought signature on the reply's text (Gemini `thoughtSignature` on a
+    /// part that is not a call) — kept on the message and resent with its text on
+    /// every later turn ([`ApiMessage::thought_signature`]). Only the Gemini client
+    /// emits it; carries no content, so a consumer may ignore it.
+    TextSignature(String),
     /// A tool-call delta (the server parses `<tool_call>` itself).
     ToolCall(ToolCallDelta),
     /// The token counter (`usage`) — usually a separate chunk before finishing.

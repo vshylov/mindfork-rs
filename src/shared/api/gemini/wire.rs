@@ -8,11 +8,14 @@
 //! - a tool call — a `{functionCall:{name, args}}` part (`args` is an OBJECT, not a string;
 //!   a call has no `id`, `functionCall`↔`functionResponse` matching is positional);
 //! - the token limit — `generationConfig.maxOutputTokens` (includes thought tokens!);
-//! - reasoning — `generationConfig.thinkingConfig` (`thinkingLevel` for Gemini 3.x /
-//!   `thinkingBudget` for 2.5 + `includeThoughts` for a visible "thoughts" summary).
+//! - reasoning — `generationConfig.thinkingConfig` (`thinkingLevel` for Gemini 3.x and
+//!   later / `thinkingBudget` for 2.5 + `includeThoughts` for a visible "thoughts" summary).
 //!
 //! Thought signatures (`thoughtSignature`) — a neighbor of the `functionCall` part; resent
 //! on a history replay (otherwise Gemini 3 gives `400`), from [`ApiToolCall::thought_signature`](crate::shared::api::contract::ApiToolCall).
+//! A text reply's signature (the stream's last, often empty, text part) is resent on the
+//! reply's text part, from [`ApiMessage::thought_signature`](crate::shared::api::contract::ApiMessage):
+//! not enforced, recommended by Google for the reasoning's quality.
 //! Event-based SSE (`?alt=sse`): `data: {…}` lines with a partial `GenerateContentResponse`.
 
 use serde::{Deserialize, Serialize};
@@ -63,7 +66,7 @@ pub struct GenConfig {
     pub response_json_schema: Option<Box<serde_json::value::RawValue>>,
 }
 
-/// Gemini 3.x's thinking levels, lowest first.
+/// The thinking levels (Gemini 3.x and later), lowest first.
 const LEVELS: [&str; 4] = ["minimal", "low", "medium", "high"];
 
 impl GenConfig {
@@ -117,6 +120,32 @@ pub fn level_above(level: &str) -> Option<&'static str> {
     LEVELS.get(at + 1).copied()
 }
 
+/// What to ask in place of the level `wish` the model refused with `message`:
+/// `Some(Some(level))` — that level; `Some(None)` — no level at all, the model
+/// reasons at its own depth; `None` — nothing left to try.
+///
+/// Two refusals, told apart by whether they name a level (measured 2026-11-20):
+///
+/// - *"Thinking level MINIMAL is not supported for this model. Please retry with
+///   other thinking level."* — a level named: the model has levels and starts
+///   higher, so the [`level_above`] is asked (every Gemini 4 model, the newest
+///   3.x Flash).
+/// - *"Thinking level is not supported for this model."* — none named. Gemma 4
+///   says it of `low` and `medium` while it takes `minimal` and `high`, and 2.5
+///   says it of every level: a level picked by a further guess could be the next
+///   refusal, so the level goes and the thoughts stay on.
+pub fn instead_of_refused(wish: &str, message: &str) -> Option<Option<&'static str>> {
+    let message = message.to_lowercase();
+    let names_a_level = LEVELS
+        .iter()
+        .any(|l| message.contains(&format!("thinking level {l}")));
+    if names_a_level {
+        level_above(wish).map(Some)
+    } else {
+        Some(None)
+    }
+}
+
 /// Whether a failed request was refused for the thinking level it carried. A
 /// `400` only: anything else is not a statement about the request as written.
 pub fn refuses_thinking_level(err: &EngineError) -> bool {
@@ -134,7 +163,7 @@ pub fn says_level_refused(message: &str) -> bool {
 }
 
 /// Builds the `generateContent` request body from the domain [`ChatRequest`]. `model` is only
-/// needed to pick the thinking-config format (`thinkingLevel` for Gemini 3.x vs
+/// needed to pick the thinking-config format (`thinkingLevel` for Gemini 3.x and later vs
 /// `thinkingBudget` for 2.5) — it isn't written into the body (the model is in the client's URL).
 pub fn build_request(req: &ChatRequest, model: &str) -> GenRequest {
     let system_instruction = req
@@ -228,10 +257,10 @@ fn thinking_config(req: &ChatRequest, model: &str) -> Option<Value> {
     let mut tc = Map::new();
     tc.insert("includeThoughts".into(), json!(include));
 
-    if is_gemini_3(model) {
+    if takes_thinking_level(model) {
         // effort isn't set (level None) with thinking on — the level isn't sent (the model's default),
         // includeThoughts remains.
-        if let Some(level) = gemini3_level(s, model, force_off) {
+        if let Some(level) = thinking_level(s, model, force_off) {
             tc.insert("thinkingLevel".into(), json!(level));
         }
     } else {
@@ -243,8 +272,8 @@ fn thinking_config(req: &ChatRequest, model: &str) -> Option<Value> {
     Some(Value::Object(tc))
 }
 
-/// 3.x: thinkingLevel. Can't be fully disabled — force_off → the minimal level.
-fn gemini3_level(s: &SamplingConfig, model: &str, force_off: bool) -> Option<&'static str> {
+/// 3.x and later: thinkingLevel. Can't be fully disabled — force_off → the minimal level.
+fn thinking_level(s: &SamplingConfig, model: &str, force_off: bool) -> Option<&'static str> {
     let level = if force_off {
         Some("minimal")
     } else {
@@ -255,7 +284,7 @@ fn gemini3_level(s: &SamplingConfig, model: &str, force_off: bool) -> Option<&'s
     // `low`. Clamp "minimal → low" for Pro (mirroring `is_gemini_25_pro`, where 0→128):
     // applies both to force_off (auto-title/impersonation) and an explicit effort=Minimal.
     level.map(|l| {
-        if l == "minimal" && is_gemini_3_pro(model) {
+        if l == "minimal" && is_pro_with_levels(model) {
             "low"
         } else {
             l
@@ -274,11 +303,22 @@ fn gemini25_budget(s: &SamplingConfig, model: &str, force_off: bool) -> i64 {
     }
 }
 
-/// The Gemini 3.x generation (uses `thinkingLevel`). A rough inference from the model name.
+/// Whether the model takes `thinkingLevel` rather than 2.5's `thinkingBudget`.
+///
+/// Every model **but** the 2.x (and 1.x) generation: the 3.x line, Gemini 4
+/// (`gemini-4-hydrogen`, `-neon`, `-argon`, `-carbon`), the `gemini-*-latest`
+/// aliases and the Gemma 4 the API serves. Spelled as the exception because the
+/// rule used to be the other way round — `contains("gemini-3")` — and every new
+/// generation fell to the 2.5 branch: a Gemini 4 model was sent a budget it reads
+/// as a legacy knob, and Gemma 4 refuses a budget outright (`400` "Thinking budget
+/// is not supported for this model" on every turn with thoughts on). Measured
+/// 2026-11-20 (docs/journal/engine.md, "Gemini 4 takes thinking levels"):
+/// `gemini-2.5-flash` refuses every level, the rest take them.
+///
 /// `pub(crate)` because the video client (`shared::video::gemini`) mutes thinking
 /// the same way and must not carry a second copy of this heuristic.
-pub(crate) fn is_gemini_3(model: &str) -> bool {
-    model.contains("gemini-3")
+pub(crate) fn takes_thinking_level(model: &str) -> bool {
+    !(model.contains("gemini-2.") || model.contains("gemini-1."))
 }
 
 /// Gemini 2.5 **Pro** — can't fully disable thoughts (`thinkingBudget` minimum 128).
@@ -286,15 +326,17 @@ fn is_gemini_25_pro(model: &str) -> bool {
     model.contains("gemini-2.5-pro")
 }
 
-/// Gemini 3.x **Pro** — doesn't support `thinkingLevel:"minimal"` (minimum `low`).
-/// E.g. `gemini-3-pro-preview`, `gemini-3.1-pro-preview`.
+/// A **Pro** that takes levels — doesn't support `thinkingLevel:"minimal"`
+/// (minimum `low`). E.g. `gemini-3-pro-preview`, `gemini-3.1-pro-preview`,
+/// `gemini-pro-latest`.
 ///
 /// What is known **ahead** of a refusal, and no more than that: the name says
 /// nothing about `gemini-3.7-flash` and `gemini-3.8-flash`, which refuse
-/// `minimal` too (measured 2026-10-01). The client answers the refusal itself
+/// `minimal` too (measured 2026-10-01), nor about the four Gemini 4 models, which
+/// all do (measured 2026-11-20). The client answers the refusal itself
 /// ([`refuses_thinking_level`], [`level_above`]); this spares a Pro the round trip.
-pub(crate) fn is_gemini_3_pro(model: &str) -> bool {
-    is_gemini_3(model) && model.contains("pro")
+pub(crate) fn is_pro_with_levels(model: &str) -> bool {
+    takes_thinking_level(model) && model.contains("pro")
 }
 
 /// `reasoning_effort` → `thinkingLevel` (Gemini 3.x). `None` — the level isn't sent.
@@ -343,6 +385,14 @@ fn build_contents(req: &ChatRequest) -> Vec<Value> {
             ApiRole::User => push("user", user_parts(m)),
             ApiRole::Assistant => {
                 let mut parts = text_parts(&m.content);
+                // The reply's own signature goes back on its text — a part the API
+                // takes it on, as it does a trailing empty one (measured 2026-11-20).
+                // A reply with no text has nothing to carry it: no part is made up.
+                if let Some(sig) = &m.thought_signature
+                    && let Some(obj) = parts.first_mut().and_then(Value::as_object_mut)
+                {
+                    obj.insert("thoughtSignature".into(), json!(sig));
+                }
                 for tc in &m.tool_calls {
                     // args — a JSON string; Gemini strictly requires an OBJECT. A non-object → `{}`.
                     let args = serde_json::from_str::<Value>(&tc.arguments)
@@ -850,6 +900,98 @@ mod tests {
         let tc3pro = &j3pro["generationConfig"]["thinkingConfig"];
         assert_eq!(tc3pro["thinkingLevel"], "low");
         assert_eq!(tc3pro["includeThoughts"], false);
+    }
+
+    /// Every generation after 2.x takes levels, whatever its name holds — the rule
+    /// was `contains("gemini-3")`, and Gemini 4, the aliases and Gemma 4 fell to
+    /// the 2.5 budget (Gemma refuses one: `400` on every turn with thoughts on).
+    #[test]
+    fn every_model_after_2x_takes_thinking_levels() {
+        for model in [
+            "gemini-4-neon",
+            "gemini-4-hydrogen",
+            "gemini-4-argon",
+            "gemini-flash-latest",
+            "gemma-4-31b-it",
+            "gemini-3.8-flash",
+        ] {
+            assert!(takes_thinking_level(model), "{model}");
+            let mut r = base_req(vec![ApiMessage::user("hi")]);
+            r.sampling.thinking = Some(true);
+            r.sampling.reasoning_effort = Some(ReasoningEffort::High);
+            let json = serde_json::to_value(build_request(&r, model)).unwrap();
+            let tc = &json["generationConfig"]["thinkingConfig"];
+            assert_eq!(tc["thinkingLevel"], "high", "{model}: {tc}");
+            assert!(tc.get("thinkingBudget").is_none(), "{model}: {tc}");
+            // Thoughts on, no effort: the model's own depth — no knob at all.
+            r.sampling.reasoning_effort = None;
+            let json = serde_json::to_value(build_request(&r, model)).unwrap();
+            let tc = &json["generationConfig"]["thinkingConfig"];
+            assert_eq!(tc, &json!({ "includeThoughts": true }), "{model}");
+        }
+        for model in [
+            "gemini-2.5-flash",
+            "gemini-2.5-pro",
+            "models/gemini-2.0-flash",
+        ] {
+            assert!(!takes_thinking_level(model), "{model}");
+        }
+        // The Pro clamp follows the same rule: a Pro of levels, never a 2.5 Pro.
+        assert!(is_pro_with_levels("gemini-pro-latest"));
+        assert!(!is_pro_with_levels("gemini-2.5-pro"));
+        assert!(!is_pro_with_levels("gemini-4-neon"));
+    }
+
+    /// The two refusals: one names a level (the model starts higher), the other
+    /// names none (Gemma 4's `low`, 2.5's every level) — the level goes.
+    #[test]
+    fn a_refusal_is_answered_by_whether_it_names_a_level() {
+        let named = "Thinking level MINIMAL is not supported for this model. Please retry with other thinking level.";
+        assert_eq!(instead_of_refused("minimal", named), Some(Some("low")));
+        assert_eq!(instead_of_refused("high", named), None, "nothing above");
+        let unnamed = "Thinking level is not supported for this model.";
+        assert_eq!(instead_of_refused("low", unnamed), Some(None));
+        assert_eq!(instead_of_refused("medium", unnamed), Some(None));
+        assert!(says_level_refused(unnamed), "still a level refusal");
+    }
+
+    /// A reply's text signature goes back on its text part; a reply with no
+    /// text gets no part made up for it, and a call keeps its own signature.
+    #[test]
+    fn a_replys_text_signature_rides_on_its_text_part() {
+        let r = base_req(vec![
+            ApiMessage::user("hi"),
+            ApiMessage::assistant("391").with_thought_signature(Some("SIG-TEXT".into())),
+            ApiMessage::user("and?"),
+        ]);
+        let json = serde_json::to_value(build_request(&r, "gemini-4-neon")).unwrap();
+        assert_eq!(
+            json["contents"][1],
+            json!({ "role": "model", "parts": [{ "text": "391", "thoughtSignature": "SIG-TEXT" }] })
+        );
+
+        let r = base_req(vec![
+            ApiMessage::user("hi"),
+            ApiMessage::assistant_tool_calls(
+                "",
+                vec![ApiToolCall {
+                    id: "calc-0".into(),
+                    name: "calc".into(),
+                    arguments: "{}".into(),
+                    thought_signature: Some("SIG-CALL".into()),
+                }],
+            )
+            .with_thought_signature(Some("SIG-TEXT".into())),
+        ]);
+        let json = serde_json::to_value(build_request(&r, "gemini-4-neon")).unwrap();
+        let parts = json["contents"][1]["parts"].as_array().unwrap();
+        assert_eq!(parts.len(), 1, "no text part made up: {parts:?}");
+        assert_eq!(parts[0]["thoughtSignature"], "SIG-CALL");
+
+        // Without one, the text part is as it always was.
+        let r = base_req(vec![ApiMessage::user("hi"), ApiMessage::assistant("391")]);
+        let json = serde_json::to_value(build_request(&r, "gemini-4-neon")).unwrap();
+        assert_eq!(json["contents"][1]["parts"], json!([{ "text": "391" }]));
     }
 
     /// A muted turn's body for `model`.

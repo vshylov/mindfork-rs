@@ -22,4 +22,4 @@ pub use client::GeminiClient;
 // with. One copy, not two.
 #[cfg(test)]
 pub(crate) use wire::LEVEL_REFUSED;
-pub(crate) use wire::{is_gemini_3, is_gemini_3_pro, level_above, says_level_refused};
+pub(crate) use wire::{is_pro_with_levels, level_above, says_level_refused, takes_thinking_level};

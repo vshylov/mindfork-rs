@@ -396,7 +396,10 @@ async fn collect(stream: anyhow::Result<ChatStream>) -> Collected {
                 reply.finish = Some(reason);
                 break;
             }
-            ChatChunk::ThoughtsSignature(_) | ChatChunk::ToolCall(_) | ChatChunk::Retry { .. } => {}
+            ChatChunk::ThoughtsSignature(_)
+            | ChatChunk::TextSignature(_)
+            | ChatChunk::ToolCall(_)
+            | ChatChunk::Retry { .. } => {}
         }
     }
     reply

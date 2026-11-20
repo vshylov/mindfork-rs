@@ -2060,6 +2060,10 @@ struct RoundOutput {
     /// thinking (llama.cpp) or when there were no "thoughts"; several on Responses
     /// ([`ThinkingAccumulator`]).
     thinking: Vec<ThinkingRef>,
+    /// The thought signature on the round's text (Gemini: the last part of a
+    /// reply without calls), kept on the message and resent with its text on
+    /// later turns ([`ChatChunk::TextSignature`]). `None` on every other backend.
+    text_signature: Option<String>,
     calls: Vec<ApiToolCall>,
     reason: FinishReason,
     /// Tokens generated in the round: the exact value from the server's `usage`, else
@@ -3185,7 +3189,8 @@ impl TurnLoop<'_> {
             .collect();
         self.request.messages.push(
             ApiMessage::assistant_tool_calls(out.text.clone(), out.calls.clone())
-                .with_thinking_blocks(thinking),
+                .with_thinking_blocks(thinking)
+                .with_thought_signature(out.text_signature.clone()),
         );
         let (records, tool_msgs) = self.execute_round(&out.calls, rewrite).await;
 
@@ -3194,6 +3199,7 @@ impl TurnLoop<'_> {
         if !out.thoughts.is_empty() {
             am.thoughts = Some(out.thoughts.clone());
         }
+        am.thought_signature = out.text_signature.clone();
         am.tool_calls = records;
 
         self.file_round(am, tool_msgs, rewrite, followup);
@@ -6187,6 +6193,7 @@ async fn stream_round(
     let mut text = String::new();
     let mut thoughts = String::new();
     let mut thinking = ThinkingAccumulator::default();
+    let mut text_signature: Option<String> = None;
     let mut acc = ToolCallAccumulator::default();
     let mut reason = FinishReason::Stop;
     // Live count: the number of reply deltas (≈ tokens); each exact `usage`
@@ -6248,6 +6255,8 @@ async fn stream_round(
                     // on tool use: one entry per reasoning item on Responses (a reply
                     // may carry several), one block on Anthropic (`ThinkingAccumulator`).
                     ChatChunk::ThoughtsSignature(r) => thinking.push(r),
+                    // The last one the reply carries is the one it ends on.
+                    ChatChunk::TextSignature(s) => text_signature = Some(s),
                     ChatChunk::ToolCall(delta) => acc.push(delta),
                     ChatChunk::Usage(u) => {
                         // The exact count from the server: both the reply and the
@@ -6351,6 +6360,7 @@ async fn stream_round(
         text,
         thoughts,
         thinking: thinking.finish(),
+        text_signature,
         calls: acc.finish(),
         reason,
         tokens: share.reported(),
@@ -6642,6 +6652,7 @@ fn finalize_message(
     if !out.thoughts.is_empty() {
         m.thoughts = Some(out.thoughts.clone());
     }
+    m.thought_signature = out.text_signature.clone();
     m.metadata = Some(MessageMetadata {
         // G3(ii): the snapshot records what was *applied*, so it must not name a
         // field the endpoint drops — that is the same lie as the settings screen
@@ -6690,6 +6701,10 @@ pub(super) fn merge_continuation(seed: &mut Message, round: Message) {
         }
     }
     seed.tool_calls.extend(round.tool_calls);
+    // The reply now ends on the round, and so does its signature.
+    if round.thought_signature.is_some() {
+        seed.thought_signature = round.thought_signature;
+    }
     let kept_model = seed.metadata.as_ref().and_then(|md| md.model.clone());
     let outgrown = round.text.len() > seed_len;
     if let Some(mut md) = round.metadata {
@@ -6708,6 +6723,7 @@ fn cancelled_round() -> RoundOutput {
         text: String::new(),
         thoughts: String::new(),
         thinking: Vec::new(),
+        text_signature: None,
         calls: Vec::new(),
         reason: FinishReason::Cancelled,
         tokens: 0,
