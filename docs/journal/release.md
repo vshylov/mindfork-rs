@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (96)
+## Entries (97)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -108,6 +108,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Release 0.26.3 (prepared)
 - Release 0.26.4 (prepared)
 - Release 0.27.0 (prepared)
+- Release 0.28.0 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -6922,3 +6923,109 @@ guard's, the site gate's and the AUR renderer's self-tests clean.
     error.
   - Scoop and the Homebrew tap pick a release up within four and six hours; not looked
     at.
+
+### Release 0.28.0 (prepared)
+
+- **A release PR** per [AGENTS.md §6](../../AGENTS.md), on branch `chore/release-0.28.0`.
+  The owner asked for the next version's release on 2026-11-20, after the feed-landing
+  track closed. It contains:
+  - `Cargo.toml` `0.27.0 → 0.28.0`, one line of `Cargo.lock`, and the site's
+    `app_version`;
+  - `CHANGELOG.md`: `[Unreleased]` → `[0.28.0] — 2026-11-20`, under the lead paragraph
+    "Branches: go back to any message and keep what followed", with the **Data** section
+    rewritten from the release's measurement (below), a fresh `[Unreleased]` and the
+    comparison links;
+  - CLAUDE.md's status heading;
+  - the release's post, and `/llms.txt` regenerated from it.
+
+  **What it ships.** Since `v0.27.0`:
+  - **Branches inside a chat:** 984 research; 985 the messages' numbers; 986 `/fork`,
+    `/branch` and the variants mark, with `CHAT_SCHEMA` 8 → 9; 987 `Ctrl+R` and `Ctrl+E`
+    as branches; 988 `branch_read`; 989 `branch_search`; 990 the person's search in
+    parked branches, with `CACHE_SCHEMA` 2 → 3.
+  - **Where the feed stands:** 991 every activation's landing; 992 what arrives in the
+    open chat by itself; 993 a rewrap and a search hit.
+  - 983, the 0.27.0 journal. No dependency or action bump.
+- **A MINOR.** Two tracks of features. One schema constant moved, `CHAT_SCHEMA` 8 → 9
+  (986). `CACHE_SCHEMA` 2 → 3 (990) is the disposable index's, rebuilt both ways.
+- **The changelog reconciled.** The *Data* section's check was 986's, on 0.27.0 built
+  from its tag; it is replaced by this release's, on the published 0.27.0. Two items are
+  added: the archive's records of earlier regenerations and take-backs stay where they
+  were and do not become branches (987's journal: "anchorless"), and the new setting with
+  the index's step. Read through, no item of *Added*, *Changed* or *Fixed* is
+  contradicted by a later stage.
+- **The `Data` rubric, by measurement.**
+  - `git diff v0.27.0` over the storage paths holds three new stored things:
+    - a chat's `branches`, with `ParkCause`. It is in the stored-enum ledger at chat
+      schema 9, and all four of its values arrive with the field;
+    - the settings' `interface.search_parked_branches`, a bool;
+    - `cache.db`'s schema.
+
+    `DeletedCause` keeps its values; two of them are read and no longer written.
+  - **Measured with the published 0.27.0.** That is the Linux archive kept from the
+    0.27.0 draft check, whose sha256 `22b1d590…` matches the release's
+    `sha256sums.txt`. It ran beside a debug build of this branch, each binary pointed at
+    one root by a `defaults.json` of mode `path`, with the stored files hashed before
+    and after.
+  - **0.27.0's own root.** 0.27.0's `mindfork import` made a profile and two chats (four
+    messages and two). The seven golden chat files (v1, v3–v8) went beside them, and
+    `interface.search_parked_branches = true` into the settings.
+    - 0.27.0's TUI in a pty started, exit 0. It stepped the golden files to 8 (one
+      `pre-migrate` zip, set aside) and rewrote `settings.json` without the field.
+    - Both binaries' `stats`: 9 chats, 22 messages, fingerprint `3d180bd21ebde878`.
+  - **Forward.** This version's TUI on that root: exit 0, all nine chat files stamped 9.
+    - One `pre-migrate-*.zip`, whose manifest says `settings 7, profiles 1, chat 8,
+      db 1, story 0`.
+    - `cache.db` was rebuilt at 3; the log says "schema is 2, this build indexes 3".
+    - `stats`: the same counts and fingerprint, and "messages in branches: 0".
+  - **A fork in it.** The setting turned on again and the rubric chat opened, `/fork 2`
+    typed.
+    - The note said what followed was kept as a branch of 2 messages, back by
+      `/branch 3 1`.
+    - The file holds one branch, cause `fork`, two messages.
+    - `stats`: 20 messages on the line, 2 in one branch, fingerprint
+      `bfc40363e2fe0e1c`. The setting was still `true` after the run.
+  - **Back.** 0.27.0's TUI stops with `migrate.err.downgrade` in the root's Russian:
+    *"Data (…/chats/4b2c5e1a-….json) was created by a newer version of mindfork
+    (schema 9, supported 8)"*, exit 1. All 25 stored files are byte for byte as they were. Its `stats` exits 0
+    with the newer-version note.
+  - **The way back, in place.** 0.27.0 restores that `pre-migrate-*.zip` over the root
+    with no warning, a `pre-restore-*.zip` first. The nine chat files are at 8 with no
+    branches, fingerprint `3d180bd21ebde878`. Its TUI then starts, exit 0, and deletes
+    and rebuilds the index: the log says "schema is 3, this build indexes 2".
+  - **Into an empty root.** The same backup restores with no warning, exit 0, the same
+    fingerprint, and the TUI starts, exit 0.
+  - The copies stay in the session's scratchpad; nothing in them needs a fix.
+- **No rehearsal.** `git diff v0.27.0 -- .github packaging tools` holds only the two
+  privacy RTFs, regenerated from `PRIVACY.md` by 988 and 989. `packaging.yml` compiled
+  the installer with them on both.
+  - `release_guard.py --tag v0.28.0` accepts the tag, with the `[0.28.0]` section as its
+    notes (126 lines).
+  - Its self-tests, `site_release_gate.py`'s and `site_webdemo.py`'s are clean, and
+    `site_llms_txt.py --check` matches.
+  - Zola is not installed on the droplet, so the site's build is left to `site.yml` on
+    the pull request.
+- **`cargo-deny` went red on the PR, and not for the PR.** RustSec had published
+  RUSTSEC-2026-0543 between `main`'s last run (00:56Z, green) and this one: `chrono` is
+  unmaintained, all versions, no safe upgrade, `jiff` and `time` named as alternatives.
+  The job reads the live database, so `main` would fail the same way.
+  - Unlike `rustls` in 0.18.3 and `pulldown-cmark` in 0.23.0 there is nothing to update
+    to.
+  - It is an advisory about abandonment, not a vulnerability, which is how ttf-parser's
+    (RUSTSEC-2026-0192) came to be ignored. `deny.toml` ignores it the same way, with
+    the reason beside it.
+  - Unlike ttf-parser, chrono is a direct dependency. Every stored timestamp goes
+    through its serde, in some 130 files, and `mermaid-text` pulls it as well.
+    Replacing it is work of its own with a storage rubric, not a release PR's, so it is
+    a roadmap item ("Off `chrono`").
+  - No *Security* item in the changelog: nothing that ships changes. The red run on the
+    first commit is the control; `cargo-deny` is not installed on the droplet, so the
+    green one is the PR's next run.
+- **Tests:** 5144 unit tests green, 321 ignored on this Linux build. The release adds no
+  code; `deny.toml` and the roadmap are its only lines outside the release's own.
+
+**Gates**: unit tests green; clippy `-D warnings`, fmt, `cyrillic_scan` (and its
+self-test), `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check`,
+`claude_md_chart --check`, `wizard_rtf --check`, `site_legal_pages --check`,
+`site_llms_txt --check`, `indexnow --check`, `actions_pin_check`, and the self-tests of
+the release guard, the site gate, the web demo's placement and the AUR renderer clean.

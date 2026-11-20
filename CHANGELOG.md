@@ -14,6 +14,19 @@ split by subsystem.
 
 ## [Unreleased]
 
+## [0.28.0] — 2026-11-20
+
+**Branches: go back to any message and keep what followed.** `/fork N` continues a
+conversation from message N and keeps the rest as a branch of the same chat;
+`Ctrl+R` and `Ctrl+E` keep what they replace the same way. A message with other
+variants says so on its header, `‹2/3› #11`, and `‹`/`›` switch between them.
+Every message shows its number.
+
+The conversation also stays where you are reading. A resize, a reply arriving in the
+background, a `chat://` reference followed and `Esc` back no longer move you. The
+chats move to schema 9: going back to 0.27.0 means restoring the backup made before
+the step.
+
 ### Added
 
 - **Messages are numbered.** Every message of a conversation shows its number, `#12`,
@@ -107,17 +120,28 @@ split by subsystem.
 
 ### Data
 
-- **Chat files move to schema 9** for the branches a chat may now hold: 0.27.0 would
-  open such a chat, show its conversation, and write the file back without its
-  branches the first time it saved it. With the new version stamped it refuses the data
-  as a newer version's instead. The step changes nothing in a file but its version, and
-  the start backs every chat up first, as for every step.
-- **Checked with 0.27.0 built from its tag.** On data this version wrote — a chat with a
-  branch — it stops at start with *"Data (…) was created by a newer version of mindfork
-  (schema 9, supported 8)"*, naming the chat file, and changes nothing in it. To go
-  back, restore the backup made before the step (`backups/pre-migrate-….zip`) with
-  0.27.0: it restores it with no warning and reads the chat in it — what you wrote
-  since, branches included, is not in it.
+- **Chat files move to schema 9** for the branches a chat may now hold. Without the
+  step, 0.27.0 would open such a chat and show its conversation, then drop its branches
+  the first time it saved the file. With the version stamped it refuses the data as a
+  newer version's instead. The step changes nothing in a file but its version, and the
+  start backs every chat up first (`backups/pre-migrate-….zip`), as for every step.
+- **Replies regenerated and exchanges taken back before this version stay where they
+  were**, in the chat file's archive, which the app does not show. They do not become
+  branches.
+- **A new setting**, `interface.search_parked_branches`; a file without it reads as off.
+  **The search index** (`cache.db`) moves to its schema 3. It is derived data, rebuilt by
+  itself at the first start — and by 0.27.0 again if you go back.
+- **Going back to 0.27.0 means restoring the backup made before the step.** This was
+  checked with the published 0.27.0, on data it had written itself: two chats, beside
+  the sample chat files of every earlier schema.
+  - This version starts on it and stamps all nine chat files 9, making one
+    `pre-migrate-….zip`. `mindfork stats` prints the same counts and fingerprint as
+    before the step.
+  - After a fork, 0.27.0 stops at start with *"Data (…) was created by a newer version
+    of mindfork (schema 9, supported 8)"*, naming a chat file, and changes nothing in
+    the data.
+  - 0.27.0 restores the pre-migration backup with no warning, in place or into an empty
+    folder, and starts on it. What you wrote since, branches included, is not in it.
 
 ## [0.27.0] — 2026-11-16
 
@@ -4401,7 +4425,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.27.0...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.28.0...HEAD
+[0.28.0]: https://github.com/vshylov/mindfork-rs/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/vshylov/mindfork-rs/compare/v0.26.4...v0.27.0
 [0.26.4]: https://github.com/vshylov/mindfork-rs/compare/v0.26.3...v0.26.4
 [0.26.3]: https://github.com/vshylov/mindfork-rs/compare/v0.26.2...v0.26.3

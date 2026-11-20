@@ -665,6 +665,15 @@ effort tiers and Fabula — have all closed
   L40S chat endpoint, even for a filter that only exercises the embedders
   (~$0.10 wasted per such iteration); the probe has `--embed-only`, the runner
   has `--no-embed` but no `--no-chat`. Minor — the full gate always needs chat.
+- **Off `chrono`, which is unmaintained** — **deferred**. RustSec declared it
+  unmaintained on 2026-11-20 (RUSTSEC-2026-0543, no safe upgrade), and `deny.toml`
+  ignores the advisory with that reason, as it does ttf-parser's. It is not a small
+  swap: every stored timestamp is a `DateTime<Utc>` through chrono's serde, in some
+  130 files, and `mermaid-text` depends on it too. Moving to `jiff` or `time` means
+  showing that the timestamps in settings, chats and the database read the same both
+  ways, and what an older release makes of what the new one writes (AGENTS.md §6's
+  rubric). What would bring it forward: a vulnerability advisory against chrono, or
+  a build that breaks on it.
 - **Hot-path benchmarks** — **idea**. Feed rendering (markdown + syntect
   cache), line wrapping, brute-force memory cosine — a performance regression
   detector; there is no `benches/` yet.
