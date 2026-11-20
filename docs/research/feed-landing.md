@@ -11,7 +11,8 @@ thing the design had missed (§3.7). **Stage 2 is built** (2026-11-19,
 only when the chat changes, and a woken turn does not scroll a reader away (§3.6).
 **Stage 3 is built** (2026-11-19, `feat/feed-rewrap`): a rewrap keeps the line on the
 view's first row, and a search hit lands on its match (§3.8, §3.9). **The track is
-complete.**
+complete**, each stage looked at by the owner in Windows Terminal
+([docs/journal/ui-feed.md](../journal/ui-feed.md)).
 
 The owner reported three cases of one complaint: the feed goes to its last row when
 the person was looking somewhere else.

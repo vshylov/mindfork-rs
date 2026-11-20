@@ -4040,5 +4040,14 @@ Below it: the match a third of the view down. Not drawn at all: the message's st
   and the first row is the row it was.
 Stage 1's 16 checks still pass.
 
-**The owner's look** is due: a real window dragged by its edge in Windows Terminal, and
-a search hit in a long reply.
+**The owner's look** (Windows Terminal over SSH, 2026-11-20):
+- **A window dragged by its edge**, scrolled into the middle of a long chat: the
+  feature works. The first row twitched a little during the drag — and so did the
+  panel's top border, which is why the owner took it for the terminal's own behaviour.
+  It is: the border's row does not depend on the scroll, so nothing in the feed's
+  mapping can move it. Between a resize and the app's repaint the terminal shows the
+  old frame rewrapped by itself. Checked after the look by a pty run one column at a
+  time, 99 → 50 → 100: in each of the 100 frames the app drew, the feed's first row was
+  the same line, and back at 100 columns it was the row it had been.
+- **`Ctrl+T` and `Ctrl+O`** in the middle of a chat: works perfectly.
+- **A search hit** deep in a long reply: works perfectly.
