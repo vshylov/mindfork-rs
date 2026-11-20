@@ -1,7 +1,7 @@
 //! An HTTP client to an **OpenAI-compatible** server (llama.cpp `llama-server`, vLLM,
 //! LM Studio, …), implementing [`EngineBackend`]. Streaming via SSE
-//! (`/v1/chat/completions`), embeddings (`/v1/embeddings`). The protocol is OpenAI
-//! (originally checked against docs/xinfer-contract.md; llama.cpp speaks the same).
+//! (`/v1/chat/completions`), embeddings (`/v1/embeddings`). The protocol is OpenAI's
+//! (spec §6.2, docs/install.md §3).
 //!
 //! The same client speaks to the **OpenRouter gateway** in that gateway's own
 //! dialect ([`OpenAiClient::for_openrouter`], docs/research/openrouter-mode.md).
@@ -3757,7 +3757,7 @@ mod ignored_smoke {
 
     /// Asks the model to print the literal EOS text and then say `DONE` —
     /// generation shouldn't cut off (stopped by token-id on the server, the `stop` field
-    /// isn't sent; docs/xinfer-contract.md §5). `DONE` may arrive in the text or in
+    /// isn't sent; spec §7.2). `DONE` may arrive in the text or in
     /// "thoughts" (a reasoning model), so both streams are checked.
     async fn assert_no_self_terminate(client: &OpenAiClient, eos_text: &str) {
         let req = ChatRequest {
@@ -3784,7 +3784,7 @@ mod ignored_smoke {
     }
 
     /// Anti-self-cutoff on EOS text — for both families: Qwen (`<|im_end|>`) and
-    /// Gemma (`<end_of_turn>`). See spec §7, docs/xinfer-contract.md §5, §9.
+    /// Gemma (`<end_of_turn>`). See spec §7.
     #[tokio::test]
     #[ignore = "requires a running OpenAI-compatible server (MINDFORK_ENGINE_URL)"]
     async fn does_not_self_terminate_on_eos_text() {

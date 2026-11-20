@@ -1,9 +1,9 @@
 //! A streaming splitter for "thoughts" (CoT). Extracts `<think>…</think>` blocks
 //! from text arriving in chunks, correctly handling tags cut across a chunk
-//! boundary. See spec §6.5 and docs/xinfer-contract.md §3.3.
+//! boundary. See spec §6.5 and docs/install.md §3.
 //!
 //! Used as a fallback path when the server returns reasoning inline in
-//! `content` (external mode without `XINFER_STREAM_AS_REASONING_CONTENT`). With
+//! `content` (e.g. `llama-server` started without `--reasoning-format`). With
 //! no tags present, the whole text is treated as regular.
 
 const OPEN: &str = "<think>";
