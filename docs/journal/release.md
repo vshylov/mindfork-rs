@@ -7005,8 +7005,24 @@ guard's, the site gate's and the AUR renderer's self-tests clean.
     `site_llms_txt.py --check` matches.
   - Zola is not installed on the droplet, so the site's build is left to `site.yml` on
     the pull request.
+- **`cargo-deny` went red on the PR, and not for the PR.** RustSec had published
+  RUSTSEC-2026-0543 between `main`'s last run (00:56Z, green) and this one: `chrono` is
+  unmaintained, all versions, no safe upgrade, `jiff` and `time` named as alternatives.
+  The job reads the live database, so `main` would fail the same way.
+  - Unlike `rustls` in 0.18.3 and `pulldown-cmark` in 0.23.0 there is nothing to update
+    to.
+  - It is an advisory about abandonment, not a vulnerability, which is how ttf-parser's
+    (RUSTSEC-2026-0192) came to be ignored. `deny.toml` ignores it the same way, with
+    the reason beside it.
+  - Unlike ttf-parser, chrono is a direct dependency. Every stored timestamp goes
+    through its serde, in some 130 files, and `mermaid-text` pulls it as well.
+    Replacing it is work of its own with a storage rubric, not a release PR's, so it is
+    a roadmap item ("Off `chrono`").
+  - No *Security* item in the changelog: nothing that ships changes. The red run on the
+    first commit is the control; `cargo-deny` is not installed on the droplet, so the
+    green one is the PR's next run.
 - **Tests:** 5144 unit tests green, 321 ignored on this Linux build. The release adds no
-  code.
+  code; `deny.toml` and the roadmap are its only lines outside the release's own.
 
 **Gates**: unit tests green; clippy `-D warnings`, fmt, `cyrillic_scan` (and its
 self-test), `link_check`, `doc_index_check`, `layer_check`, `list_scroll_check`,

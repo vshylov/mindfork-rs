@@ -29,6 +29,14 @@ ignore = [
     # `/rag add`); used on the user's own local files (best effort).
     # Remove once pdf-extract/lopdf moves to a maintained font parser (skrifa).
     "RUSTSEC-2026-0192", # ttf-parser unmaintained (pdf-extract → lopdf)
+    # chrono is declared unmaintained (RUSTSEC-2026-0543, published 2026-11-20, no safe
+    # upgrade; the advisory names jiff and time as alternatives). Like ttf-parser's, an
+    # advisory about abandonment, not a vulnerability. Unlike it, chrono is our own
+    # dependency: every stored timestamp is a `DateTime<Utc>` written and read through its
+    # serde, in some 130 files, and mermaid-text pulls it too. Replacing it is work of its
+    # own, since the stored timestamps have to be shown to read the same after the change
+    # (docs/roadmap.md, "Testing, CI and quality"). Remove once that is done.
+    "RUSTSEC-2026-0543", # chrono unmaintained (ours, and mermaid-text)
 ]
 
 [licenses]
