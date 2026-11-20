@@ -17,7 +17,7 @@ use crate::shared::osc52::{self, Osc52Mode};
 
 /// Reads the system clipboard's text (lazily creating the client). `None` if the clipboard
 /// is unavailable/empty/non-text. Used only on Windows to restore
-/// emoji in a paste (see [`reconcile_paste`]).
+/// emoji in a paste (see [`super::input::reconcile_paste`]).
 #[cfg(windows)]
 pub(super) fn read_clipboard_text(slot: &mut Option<arboard::Clipboard>) -> Option<String> {
     if slot.is_none() {

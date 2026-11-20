@@ -61,6 +61,8 @@ pub(super) fn reconcile_paste(
 /// (code points > U+FFFF — surrogate pairs) are dropped from the clipboard, then both
 /// sides are normalized on line breaks/tabs (as in [`InputBox::insert_str`]). See
 /// [`reconcile_paste`].
+///
+/// [`InputBox::insert_str`]: crate::widgets::input_box::InputBox::insert_str
 #[cfg(windows)]
 pub(super) fn paste_projection_matches(clipboard: &str, reconstructed: &str) -> bool {
     fn normalize(s: &str) -> String {

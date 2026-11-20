@@ -302,12 +302,14 @@ jobs:
       # Rustdoc's own lints: a doc link (`[`Item`]`) that no longer names an
       # item — renamed, moved, out of scope, or compiled only under
       # `cfg(test)` — and stray HTML in a doc comment. Clippy and `cargo test`
-      # never look at either, so 59 had accumulated by 2026-11-20
+      # never look at either, so 61 had accumulated by 2026-11-20
       # (docs/journal/quality.md). A binary crate documents its private items,
-      # so this covers every doc comment, not just a public API. The
-      # dependencies come from the clippy step above (check-mode metadata is
-      # shared); the step itself is ~10 s. `RUSTDOCFLAGS` is set on the step,
-      # not the job: rust-cache hashes `RUST*` variables into its key.
+      # so this covers every doc comment, not just a public API. Most of the
+      # dependencies' check-mode metadata is the clippy step's; tokio and the
+      # crates above it are checked again, without `--all-targets`' dev
+      # features. Measured: 15 s here, 26 s on macOS, 18 s on Windows.
+      # `RUSTDOCFLAGS` is set on the step, not the job: rust-cache hashes
+      # `RUST*` variables into its key.
       - name: Rustdoc (doc links resolve, warnings = errors)
         env:
           RUSTDOCFLAGS: -D warnings

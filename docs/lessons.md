@@ -287,13 +287,14 @@ its application and commit.
 — *release 0.26.1, the draft*.
 
 **A doc link is checked by `cargo doc`, not by clippy or the tests.** `[`Item`]` in a
-doc comment is resolved only by rustdoc, which nothing ran until 2026-11-20: by then 59
-links and tags were broken, and a whole file of them pointed at a deleted document. Most
-were renames (`execute_call`, `provider_order`, the status bar's `lines`) and items out of
-scope; the rest were the trap worth remembering — **a link to an item that exists only
-under `cfg(test)`** (a test helper, a gate test, `MockSupervisor`) **or only on one
-platform** (`cfg(windows)`) reads fine in the source and is broken wherever that `cfg` is
-off. Name such an item in a plain code span, not a link. A private item in another
+doc comment is resolved only by rustdoc, which nothing ran until 2026-11-20: by then 61
+links and tags were broken. Most were renames (`execute_call`, `provider_order`, the
+status bar's `lines`) and items out of scope; the trap worth remembering is the rest —
+**a link to an item that exists only under `cfg(test)`** (a test helper, a gate test,
+`MockSupervisor`) **or only on one platform** reads fine in the source and is broken
+wherever that `cfg` is off. Name such an item in a plain code span, not a link. The
+reverse holds too: a doc comment *inside* `#[cfg(windows)]` code is checked only on
+Windows — two such links were found only by the Windows job. A private item in another
 module does not resolve either, even in a binary crate that documents its private items.
 `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` now runs in CI beside clippy, on Linux,
 Windows and macOS.

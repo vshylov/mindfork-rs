@@ -2215,15 +2215,23 @@ tree (AGENTS.md §3).
   `openai::wire`). A link to a test-only, platform-only or out-of-reach private item
   became a plain code span; the rest point at today's item. Comments only; no behaviour
   changed.
+- **The Windows job's first run found 2 more**, in `#[cfg(windows)]` code that rustdoc
+  on Linux never documents: `reconcile_paste` (in the sibling `input` module) and
+  `InputBox::insert_str` (out of scope), both in `app/runtime`. That red run is also
+  the control: the step fails the job on a real broken link. macOS was clean. 61 in
+  all.
 - **The gate**: a `Rustdoc` step after clippy in each place clippy already runs. In
   `lint` on Linux (the job is renamed *Lints (source language + fmt + clippy + rustdoc)*;
   the ruleset requires only `CI gate`, checked), beside the macOS clippy step in `test`,
   and in the Windows job (renamed *Clippy + rustdoc (the Windows-only code)*), because
   rustdoc on Linux never sees `cfg(windows)` or `cfg(target_os = "macos")` code (65
   and 14 sites). `RUSTDOCFLAGS` is set on the step, not the job, so rust-cache's key,
-  which hashes `RUST*` variables, is unchanged. Measured on the droplet after clippy:
-  7.4 s cold `target/doc`, 8.2 s after a touch. The dependencies' check-mode metadata
-  is shared with clippy, so nothing else is compiled.
+  which hashes `RUST*` variables, is unchanged. Measured in this pull request's CI: 15 s
+  in `lint`, 26 s on macOS, 18 s on Windows (to its failure). On the droplet after
+  clippy: 7.4 s with no `target/doc`, 8.2 s after a touch. Most of the dependencies'
+  check-mode metadata is clippy's; tokio and the crates above it are checked again,
+  because clippy's `--all-targets` unifies in dev-dependency features `cargo doc` does
+  not ask for.
 - **Not done**: `rustdoc::private_intra_doc_links` and the other allow-by-default
   rustdoc lints (`missing_docs` and the rest). They stay off.
 - AGENTS.md (DoD and §3), CLAUDE.md's command list and the PR template name the
