@@ -11,6 +11,8 @@
 //! **The list itself is deliberately kept free of VS16 clusters** (`❤️`/`✌️`): in a
 //! fixed-width grid they break the row's terminal-output layout —
 //! details and mechanics at [`EMOJIS`].
+//!
+//! [`InputBox::insert_str`]: crate::widgets::input_box::InputBox::insert_str
 
 use ratatui::Frame;
 use ratatui::crossterm::event::{
@@ -28,7 +30,7 @@ use crate::shared::ui::{MinSize, legend_width};
 /// symbols; the list is fixed (extend it by editing here). The grid's width was chosen
 /// so the popup's bottom hint fits in full.
 ///
-/// **Invariant (pinned by the gate test [`tests::emoji_list_is_width2_without_vs16`]):
+/// **Invariant (pinned by the gate test `tests::emoji_list_is_width2_without_vs16`):
 /// every emoji is exactly 2 columns and carries NO VS16 presentation selector (U+FE0F).**
 ///
 /// Why no VS16 (`❤️` = ❤ + U+FE0F, `✌️` = ✌ + U+FE0F): for such a cluster

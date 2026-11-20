@@ -920,7 +920,7 @@ enum FieldKind {
 /// A field row: identifier, label, the current value representation, and the
 /// semantic group (for the group header and toggle counter; `""` — outside a
 /// group, no header). Values are aligned on a single column across the whole
-/// section ([`section_label_col`]); the group doesn't affect the column.
+/// section ([`helpers::section_label_col`]); the group doesn't affect the column.
 struct FieldRow {
     id: FieldId,
     label: String,

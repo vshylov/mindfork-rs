@@ -7,7 +7,7 @@
 //! for the plan and the measured host matrix.
 //!
 //! The split mirrors [`crate::shared::osc52`]: everything above the
-//! [`exchange`] section is **pure** — the query is a constant, the reply is
+//! `exchange` section (the IO half) is **pure** — the query is a constant, the reply is
 //! parsed from bytes, the verdict is arithmetic — so the whole corpus of
 //! replies recorded from real terminals is testable with no terminal at all.
 //! The IO half is deliberately small and platform-split.

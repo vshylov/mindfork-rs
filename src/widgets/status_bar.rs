@@ -18,16 +18,16 @@ use crate::widgets::token_counter::TokenCounter;
 /// The one hotkey whose description is not fixed: `Esc` means "go back", and
 /// where back goes depends on how the chat was reached (see [`EscTarget`]) —
 /// except while a turn is running, when it cancels first (see
-/// [`esc_hint_key`]). Named so the substitution in [`lines`] isn't a bare
+/// [`esc_hint_key`]). Named so the substitution in [`lines_within`] isn't a bare
 /// string match.
 const ESC_KEY: &str = "Esc";
 
 /// The help hotkey — the one hint the corner block sheds last (see
 /// [`keep_order`]) and the last-resort row when nothing fits beside the pill
-/// ([`lines`]). Named like [`ESC_KEY`] so the lookup isn't a bare string match.
+/// ([`lines_within`]). Named like [`ESC_KEY`] so the lookup isn't a bare string match.
 const HELP_KEY: &str = "F1";
 
-/// Keys of the status bar's hotkeys. "Key" + a description key (localized in [`lines`]).
+/// Keys of the status bar's hotkeys. "Key" + a description key (localized in [`lines_within`]).
 /// The `Esc` entry carries its **default** description; the live one comes from
 /// [`StatusModel::esc_target`].
 const HOTKEYS: [(&str, &str); 5] = [
@@ -212,7 +212,7 @@ const TRANSCRIPT_GLYPH: char = '≡';
 
 /// Draws the status line in `area`. The hotkeys sit beside the status pill as
 /// a right-aligned corner grid at most [`HINT_ROWS_MAX`] rows deep — a crowded
-/// pill sheds hints rather than growing the bar (see [`lines`]); the caller
+/// pill sheds hints rather than growing the bar (see [`lines_within`]); the caller
 /// reserves height via [`height`], and `area` is that many rows: the bar is
 /// laid out within them, so a one-row area gets a one-row bar, not the top
 /// row of a two-row one. See spec §11.1, §11.3.

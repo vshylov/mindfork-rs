@@ -250,7 +250,7 @@ impl Orchestrator {
     }
 
     /// Opens a chat with the feed **where the screen asked**
-    /// ([`AppCommand::OpenChat`], docs/research/feed-landing.md §3.2): the
+    /// ([`crate::app::events::AppCommand::OpenChat`], docs/research/feed-landing.md §3.2): the
     /// first row for a followed `chat://` reference, the place it was
     /// followed from on the way back.
     pub(super) fn handle_open_chat(&mut self, chat: Uuid, landing: FeedLanding) {

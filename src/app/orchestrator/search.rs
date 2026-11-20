@@ -20,6 +20,8 @@
 //! Everything here is **best effort**. The index is derived data: a failure is
 //! logged and the app carries on — a search that misses a chat is a nuisance, a
 //! save that fails because of the index would be a bug.
+//!
+//! [`CacheDb::index_chat`]: crate::shared::storage::cache::CacheDb::index_chat
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -626,6 +628,10 @@ fn reconcile_file(
 /// chat, and our older snapshot must not win — so this is deliberately
 /// [`CacheDb::index_chat_if_unchanged`] and never a plain
 /// [`CacheDb::index_chat`]. Returns whether the write happened.
+///
+/// [`CacheDb::index_chat_if_unchanged`]:
+///     crate::shared::storage::cache::CacheDb::index_chat_if_unchanged
+/// [`CacheDb::index_chat`]: crate::shared::storage::cache::CacheDb::index_chat
 fn write_indexed(
     storage: &Storage,
     file: &crate::shared::storage::json::ChatFileInfo,

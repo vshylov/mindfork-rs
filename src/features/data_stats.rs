@@ -26,7 +26,7 @@
 //!
 //! **Stage 2** (docs/history/data-stats.md §5): a `DataStats` also carries what two
 //! copies are lined up by — per chat the ids of its messages, per note a key
-//! and a digest — so that [`compare`] can tell a copy that is *ahead* from one
+//! and a digest — so that [`compare()`] can tell a copy that is *ahead* from one
 //! that has *diverged*. The `--json` form is such a `DataStats` written out, and
 //! [`read_snapshot`] reads it back; [`DataStats::fingerprint`] is a digest of
 //! exactly that identity, so equal fingerprints mean an identical comparison.
@@ -339,7 +339,7 @@ fn keyed_lists(database: &DatabaseStats) -> Option<[&[KeyedRow]; 3]> {
 }
 
 impl DataStats {
-    /// A digest of everything [`compare`] looks at to call two copies
+    /// A digest of everything [`compare()`] looks at to call two copies
     /// identical: each chat's [`ChatIdentity`], each database row's key and
     /// content digest, and each story's [`StoryIdentity`]. So **equal
     /// fingerprints mean `--compare` would say "identical"** — two machines

@@ -760,7 +760,7 @@ pub fn provision(storage: &Storage) -> anyhow::Result<()> {
 }
 
 /// The model the demo's self-model history says wrote it — the one
-/// [`app_config`] runs, so the captures agree with each other.
+/// `app_config` (the captures' config) runs, so the captures agree with each other.
 const HISTORY_MODEL: &str = "gemma-4-12B-it-Q5_K_M";
 
 /// The self-model, written as the history `H` opens on `F3` shows it grown

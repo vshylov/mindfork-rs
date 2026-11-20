@@ -221,8 +221,8 @@ fn sort_langs(v: &mut [Lang]) {
 /// `None`) → [`Lang::En`] as the international default. Factored into a pure function
 /// for testability (the OS's own `get_locale` call isn't reproducible in a test).
 /// External languages (Tier 3) aren't recognized here yet — the registry isn't
-/// initialized yet at call time ([`Paths::resolve`] in the peek phase); extending
-/// this is future work (docs/roadmap.md, "Detect language from the OS locale").
+/// initialized yet at call time ([`crate::shared::paths::Paths::resolve`] in the peek
+/// phase); extending this is future work (docs/roadmap.md, "Detect language from the OS locale").
 pub fn lang_for_locale(locale: Option<&str>) -> Lang {
     let primary = locale.and_then(|l| l.split(['-', '_', '.']).next());
     match primary.map(str::to_ascii_lowercase).as_deref() {

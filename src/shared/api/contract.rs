@@ -112,9 +112,9 @@ pub struct ThinkingRef {
 /// an `image`/`source` block for Anthropic, `inline_data` for Gemini, `input_image` for
 /// Responses). See docs/research/multimodal-images.md §2.2 for the four verified shapes.
 ///
-/// `data` is an [`Arc<str>`] rather than a `String` because [`super::retry::RetryBackend`]
-/// clones the whole [`ChatRequest`] per attempt: a megabyte of base64 copied on every
-/// retry would be a real cost for no reason.
+/// `data` is an [`Arc<str>`](std::sync::Arc) rather than a `String` because
+/// [`super::retry::RetryBackend`] clones the whole [`ChatRequest`] per attempt: a
+/// megabyte of base64 copied on every retry would be a real cost for no reason.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiImage {
     /// `image/png` or `image/jpeg` — normalized at attach time.
@@ -359,7 +359,7 @@ pub struct ModelCapabilities {
 
 /// The token counter from the server response (the `usage` field). The server sends it
 /// as the stream's final chunk when `stream_options.include_usage=true` is requested
-/// (see [`openai::wire`]). Fields may be zero if the server didn't return them.
+/// (see the `openai::wire` module). Fields may be zero if the server didn't return them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct TokenUsage {
     /// Tokens in the prompt (the request's context size) — the **whole** prompt,

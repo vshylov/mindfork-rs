@@ -252,13 +252,13 @@ pub struct Paths {
     root: PathBuf,
     default_language: Lang,
     /// The executable's directory — on unix the real path, the symlink target
-    /// (`/usr/bin/…` → `/usr/lib/<pkg>/…`; [`exe_dir_of`]). Needed to find read-only resources placed next to
-    /// the binary (dictionaries, installers.md §4.2) when the data root isn't
-    /// portable (`system`/`path`). `None` in tests (`with_root`).
+    /// (`/usr/bin/…` → `/usr/lib/<pkg>/…`; [`exe_location`]). Needed to find read-only
+    /// resources placed next to the binary (dictionaries, installers.md §4.2) when the
+    /// data root isn't portable (`system`/`path`). `None` in tests (`with_root`).
     exe_dir: Option<PathBuf>,
     /// A sandbox directory other than `<root>/sandbox`: a live test pointing a temporary
     /// data root at a provisioned sandbox (docs/history/sandbox-file-exchange.md §11 S13). Only
-    /// [`Paths::with_sandbox_dir`], a test helper, sets it.
+    /// `Paths::with_sandbox_dir`, a test helper, sets it.
     sandbox_override: Option<PathBuf>,
     /// How the data root was chosen — kept for [`Paths::locations`], which
     /// names it beside the root. [`DataLocation::Portable`] under `with_root`.
@@ -518,7 +518,7 @@ impl Paths {
     /// binary** (`<exe_dir>/data/dictionaries`) — a source of read-only
     /// resources placed by the installer/package when the data root isn't
     /// portable (`system`/`path`) and it has no dictionaries. In portable mode
-    /// coincides with [`dictionaries_dir`] (the fallback adds nothing — dupes
+    /// coincides with [`Self::dictionaries_dir`] (the fallback adds nothing — dupes
     /// are filtered by name). `None` when the binary's directory is unknown
     /// (tests). See installers.md §4.2 / P1.
     pub fn bundled_dictionaries_dir(&self) -> Option<PathBuf> {

@@ -140,7 +140,7 @@ fn base64_decoded_len(b64: &str) -> usize {
 }
 
 /// Resolves `#N` (1-based), a name or a path against a staged list — the one resolution
-/// [`crate::features::file_command::resolve_target`] uses too, since the user sees the
+/// ([`super::attachment::resolve_handle`]) the chat's files use too, since the user sees the
 /// same `#N` handles in both listings and a name two items share is refused in both
 /// (docs/research/remove-by-shared-name.md).
 pub fn resolve_target(items: &[MessageImage], target: &str) -> super::attachment::Resolved {

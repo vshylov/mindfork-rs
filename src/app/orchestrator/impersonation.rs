@@ -204,7 +204,7 @@ impl Orchestrator {
 /// The block is injected with `tools = false`: impersonation has **no** tools,
 /// so the model is told to work from the summary rather than pointed at
 /// `history_read`/`history_search` it cannot call — the same rule a regular turn
-/// follows (sub-decision S12, see [`inject_compaction`]).
+/// follows (sub-decision S12, see [`super::request::inject_compaction`]).
 pub(super) fn build_impersonation_request(
     chat: &Chat,
     compaction: Option<(&str, usize)>,

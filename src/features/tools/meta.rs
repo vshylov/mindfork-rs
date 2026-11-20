@@ -122,7 +122,7 @@ pub struct ToolInfo {
     pub label: &'static str,
     pub gate: Option<ToolGate>,
     pub enabled_by_default: bool,
-    /// May run alongside its neighbours in a round ([`Tool::concurrent`]).
+    /// May run alongside its neighbours in a round ([`super::Tool::concurrent`]).
     pub concurrent: bool,
     /// Full tool description for the settings bottom panel. Only filled in for
     /// dynamic MCP tools (server-supplied text — showing the full description in

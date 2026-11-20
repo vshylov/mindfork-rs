@@ -78,7 +78,7 @@ const RERANK_EMBED_CHARS: usize = 800;
 /// [`Provider::family`]).
 const DDG: &str = "ddg";
 /// How long a family that answered with a block is moved to the back of the
-/// order (see [`WebSearch::provider_order`]).
+/// order (see [`WebSearch::backend_order`]).
 ///
 /// A judgement call, not a measurement: what *was* measured (2026-08-25, from a
 /// residential IP, docs/research/web-search-keyed-providers.md §1.1) is that a
@@ -275,7 +275,7 @@ pub struct WebSearch {
     /// which is what makes that case byte-identical to the keyless tool.
     api: Vec<ApiBackend>,
     /// When each provider family was last seen blocking us, for
-    /// [`WebSearch::provider_order`]. The tool outlives the turn — the registry
+    /// [`WebSearch::backend_order`]. The tool outlives the turn — the registry
     /// is built once and rebuilt only on a settings/MCP change
     /// (`orchestrator::build_registry`) — so this memory spans the whole
     /// agentic loop, which is exactly the span that wastes round trips today.

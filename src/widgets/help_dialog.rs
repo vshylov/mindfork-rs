@@ -84,7 +84,7 @@ impl HelpTab {
 pub const DEFAULT_HELP_TAB: HelpTab = HelpTab::Hotkeys;
 
 /// The screen the help dialog was opened from — the "Shortcuts" tab marks that
-/// screen's section "you are here" ([`HELP_SECTIONS`]) and, opened anywhere but
+/// screen's section "you are here" (the runtime's `HELP_SECTIONS`) and, opened anywhere but
 /// the chat, scrolls to it (docs/history/help-hotkeys-context.md, forks F1/F2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HelpContext {
@@ -297,8 +297,8 @@ pub static GLOBAL: HelpSection = HelpSection {
     openers: &[],
 };
 
-/// Input-box commands for the "Commands" tab (`F1`). Same format as
-/// [`HELP_KEYS`], with the display groups likewise encoded outside the table
+/// Input-box commands for the "Commands" tab (`F1`). Same format as a
+/// [`HelpSection`]'s rows, with the display groups likewise encoded outside the table
 /// ([`COMMAND_GROUP_OPENERS`]); a command label (`/…`) is drawn in the command
 /// color. Split out of the hotkeys so they don't clutter reading them. See
 /// spec §11.7.
@@ -458,14 +458,14 @@ pub fn help_size(cols: u16, rows: u16) -> (u16, u16) {
 /// keys whole on the border, and under the tab strip and its rule four rows of
 /// the open tab. The tab strip is whole from [`HELP_MIN_WIDTH`] up; below
 /// that it shows the active tab and its neighbours, `…` where tabs are hidden
-/// ([`help_tab_strip`]).
+/// ([`help_tab_strip_with_tabs`]).
 pub fn min_size(loc: &'static Locale) -> MinSize {
     MinSize::new(legend_width(loc.t("ui.help.footer.tabs")), 8)
 }
 
 /// Draws the help/"About" dialog centered on screen (KDE/Qt-style): the logo
 /// lockup, a tab strip, and scrollable content for the active tab with a
-/// scrollbar on the right border. Navigation lives in [`ChatScreen::handle_key`];
+/// scrollbar on the right border. Navigation lives in [`HelpState::handle_key`];
 /// `scroll` is clamped here (the popup's height is only known at render time).
 /// `locations` is what the "About" tab names as the program's and the data's
 /// folders — the real ones, or the demo's made-up set. See spec §11.7.
@@ -612,9 +612,10 @@ pub fn help_tab_strip(
     help_tab_strip_with_tabs(active, palette, loc, width).0
 }
 
-/// [`help_tab_strip`], with the tab each of its spans shows — what a click
-/// on it selects (docs/research/mouse-always-captured.md F12): a tab's label
-/// its own, the `…` on a side the nearest tab hidden there, a separator none.
+/// The tab strip (`help_tab_strip`, the tests' name for it alone), with the tab
+/// each of its spans shows — what a click on it selects
+/// (docs/research/mouse-always-captured.md F12): a tab's label its own, the `…`
+/// on a side the nearest tab hidden there, a separator none.
 fn help_tab_strip_with_tabs(
     active: HelpTab,
     palette: &Palette,
@@ -1337,7 +1338,7 @@ fn leader_table(
 /// One row of a "table of contents"-style table: `left` on the left margin,
 /// `tail` starting at column `tail_col`, and the run between bridged by a
 /// dotted leader in `keycap_bg` — the backdrop the active tab sits on
-/// ([`help_tab_strip`]), a step quieter than the border, so the leaders read as
+/// ([`help_tab_strip_with_tabs`]), a step quieter than the border, so the leaders read as
 /// alignment rather than as content. Shared by the "About" and "Components"
 /// tabs: one geometry, one leader color, and neither can drift from the other.
 ///

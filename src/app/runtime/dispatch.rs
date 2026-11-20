@@ -734,8 +734,9 @@ fn apply_background_task(screen: &mut ChatScreen, kind: BackgroundKind, on: bool
 
 /// Writes the conversation to the clipboard and routes the confirmation/error
 /// into the chat-list screen's status (if it was opened for copying), or, if it's
-/// closed, as a note in the feed. Encapsulates the single call to `arboard`
-/// ([`write_clipboard`]) so `apply_event` doesn't need to know about the clipboard.
+/// closed, as a note in the feed. Encapsulates the clipboard write
+/// ([`super::clipboard::copy_text`]) so `apply_event` doesn't need to know about the
+/// clipboard.
 pub(super) fn deliver_clipboard(
     screen: &mut ChatScreen,
     active: &mut ActiveScreen,
