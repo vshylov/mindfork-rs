@@ -510,6 +510,84 @@ async fn a_replys_text_signature_is_kept_and_sent_back_next_turn() {
     );
 }
 
+/// A round after a tool call that Gemini discards as malformed (thoughts, then
+/// `MALFORMED_RESPONSE`, which the client reports as a failure) is told in the
+/// feed, keeps its thoughts on the message, and is not asked again: the turn the
+/// owner met on `gemini-4-neon` (2026-11-20) ended in silence instead — read as a
+/// stop with no text, it was re-asked muted, failed the same way, and its
+/// thoughts were gone after a restart.
+#[tokio::test]
+async fn a_malformed_round_after_a_call_is_told_and_keeps_its_thoughts() {
+    use crate::shared::api::contract::ToolCallDelta;
+    let failure = "Gemini discarded the reply it generated as malformed (MALFORMED_RESPONSE)";
+    let mut round_two = vec![ChatChunk::Thoughts("weighing it".into())];
+    round_two.extend(ChatChunk::failure(failure.into(), false));
+    let backend = Arc::new(SequenceRecorder {
+        scripts: std::sync::Mutex::new(std::collections::VecDeque::from([
+            vec![
+                ChatChunk::ToolCall(ToolCallDelta {
+                    thought_signature: Some("SIG-CALL".into()),
+                    index: 0,
+                    id: Some("c1".into()),
+                    name: Some("note_save".into()),
+                    arguments: "{\"content\":\"likes tea\"}".into(),
+                }),
+                ChatChunk::Finished(FinishReason::ToolCalls),
+            ],
+            round_two,
+        ])),
+        requests: std::sync::Mutex::new(Vec::new()),
+    });
+    let (dir, cmd_tx, mut evt_rx, handle) =
+        spawn_orch(Some(backend.clone() as Arc<dyn EngineBackend>));
+    let root = dir.path().to_path_buf();
+    let chat_id = match wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatActivated { .. }))
+        .await
+        .unwrap()
+    {
+        AppEvent::ChatActivated { id, .. } => id,
+        _ => unreachable!(),
+    };
+    cmd_tx
+        .send(AppCommand::SendMessage("remember tea".into()))
+        .unwrap();
+    let mut errors = Vec::new();
+    while let Some(ev) = evt_rx.recv().await {
+        match ev {
+            AppEvent::Error(note) => errors.push(note),
+            AppEvent::Finished { .. } => break,
+            _ => {}
+        }
+    }
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::ChatList(_)))
+        .await
+        .unwrap();
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].contains("MALFORMED_RESPONSE"), "{errors:?}");
+    assert_eq!(
+        backend.requests.lock().unwrap().len(),
+        2,
+        "the failed round is not asked again"
+    );
+    let chat = Storage::open(Paths::with_root(&root))
+        .unwrap()
+        .json()
+        .load_chat(chat_id)
+        .unwrap()
+        .unwrap();
+    let last = chat.messages.last().unwrap();
+    assert_eq!(last.role, MessageRole::Assistant);
+    assert_eq!(last.thoughts.as_deref(), Some("weighing it"));
+    assert!(last.text.is_empty(), "no text of ours: {:?}", last.text);
+    assert_eq!(
+        last.metadata.as_ref().and_then(|m| m.finish),
+        Some(crate::entities::message::MessageFinish::Error)
+    );
+}
+
 #[tokio::test]
 async fn regenerate_replaces_last_assistant_message() {
     // Two different replies in turn: the original turn gives the first, regeneration gives the second.

@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (115)
+## Entries (116)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -127,6 +127,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the guide counts five clouds, and says how each answers about images (done)
 - Post-M9: the token counter on a wire that reports usage on every chunk (done)
 - Post-M9: Gemini 4 takes thinking levels, and a text reply's signature is kept (done)
+- Post-M9: a reply Gemini discards as malformed (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -7593,3 +7594,77 @@ off.
   - **Not released yet**: the fix waits in `CHANGELOG.md`'s `[Unreleased]`, with
     two Fixed items and the Data item for `thought_signature`; `v0.28.0` is still
     the newest release.
+
+### Post-M9: a reply Gemini discards as malformed (done)
+
+- **Why** (branch `fix/gemini-malformed-response`). The day PR 997 shipped, the
+  owner went back to the chat whose reply had leaked its reasoning into its text
+  (the entry above) and reported it worse. One turn showed more than 200 lines of
+  thoughts, then stopped with no answer. After a restart only 115 lines were left.
+  The log showed what happened: a first round with thoughts and a `get_llm_history`
+  call, then a second round of 8248 characters of thoughts and no text, read as
+  "an empty answer after a tool round". The muted re-ask (the empty-round entry)
+  came back empty too, and the turn ended with nothing on screen. The re-asked
+  round replaced the first try, so that try's thoughts were never stored, and the
+  restart showed only round one's.
+- **The investigation.** A copy of the binary on a copy of the data root, with
+  `engine.gemini.url` pointed at a recording pass-through proxy and the bridge,
+  follow-ups and notifications off in the copied profile, was driven by
+  `console_probe`'s `Session`. That captured the app's exact body (41 contents, 46
+  tools, `thinkingConfig: {includeThoughts: true}`). Round two was then built
+  exactly from the chat file: the call, its stored thought signature and the
+  tool's result. It was replayed against `gemini-4-neon`:
+
+  | round two, as replayed | answered |
+  |---|---|
+  | as the app sends it | 0 of 4 |
+  | with `thinkingBudget: -1`, the body before PR 997 | 1 of 4 |
+  | the call's signature made neutral (`skip_thought_signature_validator`) | 0 of 2 |
+  | the earlier leaked reply's reasoning cut out of its text | 2 of 2 |
+  | both of the above | 2 of 2 |
+  | only the leading `thought` line removed | 3 of 3 |
+
+  Every failure was the same shape: 3500–4600 thought tokens, then an empty text
+  part with the signature and `finishReason: MALFORMED_RESPONSE`, a reason the
+  client did not know. So the cause is the model's own earlier leak, sent back in
+  the history, and not PR 997: the old budget fails as the new body does. The
+  client's part was reading the reason as `STOP`, which made the failure an empty
+  turn with no word of why.
+- **The owner's decision** (2026-11-21): the feed note only. The leading `thought`
+  line is not stripped, from new replies or from the history, because an ordinary
+  reply may begin with that word. The owner removes it from that chat's file by
+  hand.
+- **The fix.** `is_malformed_response` (`gemini/client.rs`): `MALFORMED_RESPONSE`
+  with no call in the round is yielded as `ChatChunk::failure`, not stop, with
+  "Gemini discarded the reply it generated as malformed (MALFORMED_RESPONSE)" as
+  the `{err}` of the feed's cut-short note (`ui.err.generation_interrupted`, in
+  the interface's language). Three effects follow from the existing error channel:
+  - the round's thoughts are stored on the message, with `finish: error`;
+  - the empty-round re-ask, which wants `Stop`, does not fire;
+  - nothing of ours goes into the reply text, unlike the `is_block_reason` note
+    that `MALFORMED_FUNCTION_CALL` and `OTHER` keep (content-filter-finish.md,
+    C3).
+
+  Not transient: the thoughts have streamed by then, so the retry decorator would
+  not resend anyway, and on this history a resend fails 9 times in 10. Calls made
+  before the reason still win, as they do over a filter.
+- **Tests**: +3 unit:
+  - the client: thoughts, then the empty signed part and `MALFORMED_RESPONSE`,
+    give `Thoughts`, `TextSignature`, `Error` (not transient) and
+    `Finished(Error)`, no text;
+  - the client: a call before the reason still ends as `ToolCalls`;
+  - the turn: a malformed round after a tool round gives one feed error naming the
+    reason, two requests and not three, and the round's thoughts stored with
+    `finish: error`.
+
+  5153 unit tests green, 330 `#[ignore]`.
+- **Live — GO** (2026-11-21, Gemini API, `gemini-4-neon`, the copy and the proxy
+  above). The proxy answered round one with the owner's own round: its thoughts,
+  the `get_llm_history` call and its stored signature. It passed round two to
+  Gemini unchanged. Gemini answered round two `MALFORMED_RESPONSE`. The feed showed
+  the call's card and then the note: "⚠ The reply was cut short — the engine failed
+  mid-answer: Gemini discarded the reply it generated as malformed
+  (MALFORMED_RESPONSE)… press Ctrl+R" (in Russian, the copy's interface language).
+  Two requests reached the proxy, with no muted third. The chat file holds round
+  two's 10 544 characters of thoughts with `finish: error`, so a restart shows
+  what the turn did.

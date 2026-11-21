@@ -2020,7 +2020,10 @@ Details:
   `supported_sampling_fields(Gemini)` = `temperature`/`top_p`/`top_k`/`max_tokens`/
   `seed`/`frequency_penalty`/`presence_penalty`+`thinking`/`reasoning_effort`.
   Blocks (`promptFeedback.blockReason`, a `finishReason` like `SAFETY`/
-  `RECITATION`) surface as a note in the feed, instead of a silently empty `Stop`.
+  `RECITATION`) surface as a note in the feed, instead of a silently empty `Stop`;
+  `MALFORMED_RESPONSE` (a reply Gemini discarded, no text after the thoughts) is
+  yielded as `ChatChunk::failure`, so the feed's cut-short note tells it and the
+  empty-round re-ask does not fire (spec §6.4).
 - **Reasoning re-send on tool use** (a shared mechanism for Anthropic and OpenAI
   Responses). Both providers require the reasoning to be sent back along with the
   tool call in the same turn (otherwise `400`/quality drop):
