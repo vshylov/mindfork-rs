@@ -7182,3 +7182,66 @@ the release guard, the site gate, the web demo's placement and the AUR renderer 
 `site_legal_pages --check`, `site_llms_txt --check`, `indexnow --check`,
 `actions_pin_check`, and the self-tests of the release guard, the site gate, the web
 demo's placement and the AUR renderer clean.
+
+**The draft, checked before anyone else could see it** (§6 step 5).
+- The owner merged 1002 (14:52:39Z) and set `v0.28.1` on the merge commit `e79ce9bc`,
+  which was `origin/main`.
+- **The run.** `release.yml` (run 44916222319) was green in all nine jobs in **19 min
+  24 s** (14:53:02 → 15:12:26Z). Windows took the longest at 18 min 6 s, then macOS
+  17 min 29 s, the demo for the browser 10 min 54 s, Linux 9 min 22 s and the animation
+  5 min 49 s. **Both non-gate jobs succeeded.**
+- **The draft** was not a prerelease and held sixteen assets, 0.28.0's set. All fifteen
+  files in `sha256sums.txt` match. The notes are the `[0.28.1]` section with the
+  workflow's footer below.
+- **`install.sh` and the six animation files are 0.28.0's byte for byte** (`cmp`
+  against the 0.28.0 draft's files): the fixes are in the Gemini mode, which the reel
+  does not show.
+- **The archives** hold 0.28.0's file names, entry for entry: Windows 48, Linux 49,
+  macOS 49. `PRIVACY.md` is still effective 2026-11-19.
+- **Attestations** verify for the three archives, the installer, the `.deb`, `install.sh`
+  and `mindfork-webdemo.tar`, and fail on a scratch file (exit 1).
+- **The Linux binary on a copy of the rubric's data** (the root after the release PR's
+  last step), driven in a pty as in the rubric. Beside it ran the published 0.28.0 on a
+  second copy, as the control.
+  - `mindfork --version` says 0.28.1. `stats` gives the root's fingerprint,
+    `cd11a190efb59124`, as before.
+  - A turn on `gemini-4-hydrogen` was answered, and the reply is stored with a
+    signature of 2408 characters. Exit 0.
+  - **The release's main fix.** With the model set to `gemma-4-31b-it` and thoughts
+    on, the released binary's turn was answered with 12 lines of thoughts. Exit 0. The
+    published 0.28.0's same turn on the other copy ended in its feed with Gemini's
+    `400 INVALID_ARGUMENT`, *"Thinking budget is not supported for this model"*.
+- **The demo for the browser.** Its manifest says format 2, application 0.28.1, commit
+  `e79ce9bc`. It was served locally on port 8790, free by `ss -ltn`, and opened in a
+  headless Chromium. That used the 0.27.0 check's Playwright venv, browser and
+  libraries, still in that session's scratchpad.
+  - **Start** gave a machine ready 0.6 s after the click; its own `readyAt` was 0.49 s.
+  - `F1` drew "About · mindfork v0.28.1", read from the xterm buffer.
+  - 18 requests went out, all to the page's own origin, with no console error. The
+    server was stopped after the check.
+- Not checked: the Windows and macOS binaries run (no such host here); this release's
+  packages installed. `packaging.yml` installed packages on 1002, built from that pull
+  request's commit.
+- **Published, and what followed** (the owner, 18:07:10Z; immutable).
+  - `crates-io.yml` (run 44933751379) published the crate in 3 min 58 s. `mindfork
+    0.28.1` was on the registry at 18:11:08Z (5 525 551 bytes), 3 min 58 s after the
+    publication; crates.io's newest version is 0.28.1.
+  - `aur.yml` (run 44933751313) built, installed and ran `mindfork-rs-bin` 0.28.1 on
+    Arch in 32 s (`installed: mindfork 0.28.1`). It stopped before the push, since
+    `AUR_SSH_PRIVATE_KEY` is not set — as with 0.28.0.
+  - The deploy (run 44934123323, `workflow_run`) started four seconds after crates.io
+    completed. Its gate found 0.28.1 published, and "Deploy to mindfork.io" succeeded
+    at 18:11:55Z, **4 min 45 s after the publication**.
+  - From outside:
+    - the post answers 200 at `/blog/mindfork-0-28-1/`, and the blog heads with
+      "mindfork 0.28.1 — Gemini 4 and Gemma 4 think as they are asked to";
+    - the home and install pages say `"softwareVersion": "0.28.1"`, and `/llms.txt`
+      and the sitemap list the post;
+    - `releases/latest` resolves to `v0.28.1`;
+    - `mindfork.io/demo/mindfork-demo-dark-en.gif` is the release's, byte for byte.
+  - mindfork.io/try/ loads `webdemo/v0.28.1/`, whose manifest names commit `e79ce9bc`.
+    In the headless Chromium it was ready 1.7 s after **Start**, `F1` said "About ·
+    mindfork v0.28.1", and 22 requests went out, all to mindfork.io, with no console
+    error.
+  - Scoop and the Homebrew tap pick a release up within four and six hours; not looked
+    at.
