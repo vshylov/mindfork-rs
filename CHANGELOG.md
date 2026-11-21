@@ -26,6 +26,11 @@ split by subsystem.
   signs a reply's reasoning, and Google recommends sending the signature back with
   the conversation, because the reasoning can suffer without it. A reply without tool
   calls lost its signature. It is now kept in the chat and sent with every later turn.
+- **A reply Gemini throws away as malformed is told, not a silent empty turn.** Gemini
+  can think a reply through and then discard it as malformed (`MALFORMED_RESPONSE`),
+  sending no text. The turn ended with nothing on screen and no reason given, and its
+  thoughts were gone after a restart. Now the feed says what happened and that
+  `Ctrl+R` generates it again, and the thoughts stay in the chat.
 
 ### Data
 

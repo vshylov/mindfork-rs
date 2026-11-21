@@ -3152,6 +3152,18 @@ that have nothing to do with the question; a tool that also answers it turns the
 assertion into a guess about the model's taste.
 — *branches told to the tools, and a reader*.
 
+**A model's own earlier failure stays in the history and fails the next turns —
+replay the round before suspecting the change that came just before it.** A Gemini
+reply had leaked its reasoning into its text, starting with the word `thought`. The
+turns after it failed the day a client fix shipped, and the fix looked guilty. The
+failing round could be replayed exactly: the chat file stores the call, its thought
+signature and the tool's result, and a recording proxy in front of a copy of the
+app gave the rest of the body. Ten replays split it in minutes. The old knob failed
+as the new one did, and that one word in an old reply decided it (dirty 1 in 10,
+the word removed 3 in 3). A failure that follows a change in time is a hypothesis,
+and a replay is cheaper than a revert.
+— *a reply Gemini discards as malformed* ([journal/engine.md](journal/engine.md)).
+
 ## 10. CI and infrastructure
 
 **A pinned download wants a second place to come from; the hash makes any place

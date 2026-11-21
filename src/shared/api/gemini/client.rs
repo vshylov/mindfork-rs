@@ -152,6 +152,26 @@ fn block_note(reason: &str) -> String {
     format!("\n⚠ Gemini did not produce a response (reason: {reason}).")
 }
 
+/// A finish reason saying Gemini discarded the reply its model generated as
+/// malformed. It comes after the thoughts and with no text: measured on
+/// `gemini-4-neon` (2026-11-21), 9 replays in 10 of one round after a tool call,
+/// each 3500–4600 thought tokens and then nothing, in a chat whose history held
+/// an earlier reply that had leaked its reasoning into the text
+/// (docs/journal/engine.md, "a reply Gemini discards as malformed"). Not a
+/// filter, and not one of the [`is_block_reason`]s, whose note goes into the
+/// reply text: this one is reported through the stream's error channel, so the
+/// note is the feed's, in the interface's language, and nothing of ours is
+/// stored as the model's words.
+fn is_malformed_response(reason: &str) -> bool {
+    reason == "MALFORMED_RESPONSE"
+}
+
+/// The error a malformed reply is reported with — the `{err}` of the feed's
+/// note about a reply cut short.
+fn malformed_text(reason: &str) -> String {
+    format!("Gemini discarded the reply it generated as malformed ({reason})")
+}
+
 #[async_trait::async_trait]
 impl EngineBackend for GeminiClient {
     async fn chat_stream(&self, req: ChatRequest, cancel: CancellationToken) -> Result<ChatStream> {
@@ -275,6 +295,15 @@ impl EngineBackend for GeminiClient {
                                     // go unexplained. A filter reason ends as `Filtered` below.
                                     if is_filter_reason(&reason) {
                                         tracing::warn!(reason = %reason, "gemini stopped the reply with a filter reason");
+                                    }
+                                    // A reply Gemini threw away as malformed ends as a
+                                    // failure — the feed's note, the thoughts kept — and
+                                    // not as a stop: it arrives with no text, and read as
+                                    // a stop it was an empty turn with no word of why.
+                                    if is_malformed_response(&reason) && !saw_tool_call {
+                                        tracing::warn!(reason = %reason, "gemini discarded the reply as malformed");
+                                        for chunk in ChatChunk::failure(malformed_text(&reason), false) { yield chunk; }
+                                        break;
                                     }
                                     if is_block_reason(&reason) && !saw_tool_call {
                                         tracing::warn!(reason = %reason, "gemini stopped with a block reason");
@@ -442,6 +471,69 @@ mod tests {
         assert_eq!(
             chunks.last(),
             Some(&ChatChunk::Finished(FinishReason::Stop))
+        );
+    }
+
+    /// A reply Gemini discarded as malformed — its thoughts, then an empty part
+    /// with the signature and `MALFORMED_RESPONSE`, the shape `gemini-4-neon`
+    /// sent on 2026-11-21 — ends as a failure, not a stop: the thoughts are kept,
+    /// no text of ours is made the model's, and the error names the reason.
+    #[tokio::test]
+    async fn a_malformed_response_ends_as_a_failure_with_its_thoughts() {
+        assert!(!is_filter_reason("MALFORMED_RESPONSE"));
+        assert!(
+            !is_block_reason("MALFORMED_RESPONSE"),
+            "no note in the text"
+        );
+        let base = serve(&[
+            r#"{"candidates":[{"content":{"parts":[{"text":"Weighing the bug report","thought":true}],"role":"model"}}]}"#,
+            r#"{"candidates":[{"content":{"parts":[{"text":"","thoughtSignature":"SIG"}],"role":"model"},"finishReason":"MALFORMED_RESPONSE"}]}"#,
+        ]);
+        let client = GeminiClient::new(base, "k", "gemini-4-neon");
+        let chunks = collect(
+            client
+                .chat_stream(sse_stub::hello(), Default::default())
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(
+            chunks,
+            [
+                ChatChunk::Thoughts("Weighing the bug report".into()),
+                ChatChunk::TextSignature("SIG".into()),
+                ChatChunk::Error {
+                    message: malformed_text("MALFORMED_RESPONSE"),
+                    transient: false,
+                },
+                ChatChunk::Finished(FinishReason::Error),
+            ]
+        );
+        assert!(malformed_text("MALFORMED_RESPONSE").contains("MALFORMED_RESPONSE"));
+    }
+
+    /// Calls the model made before the reason still win, as they do over a
+    /// filter: the round ran them, and the reason changes nothing they asked for.
+    #[tokio::test]
+    async fn a_malformed_response_after_a_call_keeps_the_call() {
+        let base = serve(&[
+            r#"{"candidates":[{"content":{"parts":[{"functionCall":{"name":"calc","args":{}},"thoughtSignature":"SIG"}],"role":"model"},"finishReason":"MALFORMED_RESPONSE"}]}"#,
+        ]);
+        let client = GeminiClient::new(base, "k", "gemini-4-neon");
+        let chunks = collect(
+            client
+                .chat_stream(sse_stub::hello(), Default::default())
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert!(
+            !chunks.iter().any(|c| matches!(c, ChatChunk::Error { .. })),
+            "{chunks:?}"
+        );
+        assert_eq!(
+            chunks.last(),
+            Some(&ChatChunk::Finished(FinishReason::ToolCalls))
         );
     }
 
