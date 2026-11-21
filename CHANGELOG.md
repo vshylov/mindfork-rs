@@ -14,6 +14,16 @@ split by subsystem.
 
 ## [Unreleased]
 
+## [0.28.1] — 2026-11-21
+
+**Gemini 4 and Gemma 4 think as they are asked to, and a reply Gemini throws away is
+told.** The Gemini mode asked every model after Gemini 3 in the terms of Gemini 2.5:
+Gemma 4 refused them, so every turn with thoughts on ended in an error, and Gemini 4
+went on thinking at length where a turn asked it not to. Gemini's earlier replies now
+go back to it with their reasoning signatures, and a reply it discards as malformed
+leaves a note in the feed instead of an empty turn. One field is added to a chat file;
+nothing is migrated, and going back to 0.28.0 needs no backup restored.
+
 ### Fixed
 
 - **Gemini 4 and Gemma 4 are asked to think in the terms they take.** In the Gemini
@@ -34,9 +44,15 @@ split by subsystem.
 
 ### Data
 
-- **One field is new**: `thought_signature` on an assistant message of a chat, the
-  signature of a Gemini reply. An older version reads the chat as before and leaves
-  the field out the next time it saves the file.
+- **One field is new, and nothing is migrated**: `thought_signature` on an assistant
+  message of a chat, the signature of a Gemini reply. The settings stay at schema 7 and
+  the chats at 9.
+- **Going back to 0.28.0 needs no backup restored.** This was checked with the
+  published 0.28.0 on a chat this version had written with Gemini, a signed reply in
+  it. 0.28.0 opens it with every message and changes nothing in the data. A reply from
+  0.28.0 saves the chat without the signature, every earlier message otherwise as it
+  was. This version then answers in that chat as before. `mindfork stats` prints the
+  same counts and fingerprint from both versions.
 
 ## [0.28.0] — 2026-11-20
 
@@ -4449,7 +4465,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.28.0...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.28.1...HEAD
+[0.28.1]: https://github.com/vshylov/mindfork-rs/compare/v0.28.0...v0.28.1
 [0.28.0]: https://github.com/vshylov/mindfork-rs/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/vshylov/mindfork-rs/compare/v0.26.4...v0.27.0
 [0.26.4]: https://github.com/vshylov/mindfork-rs/compare/v0.26.3...v0.26.4
