@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (97)
+## Entries (98)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -109,6 +109,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Release 0.26.4 (prepared)
 - Release 0.27.0 (prepared)
 - Release 0.28.0 (prepared)
+- Release 0.28.1 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -7100,3 +7101,84 @@ the release guard, the site gate, the web demo's placement and the AUR renderer 
     error.
   - Scoop and the Homebrew tap pick a release up within four and six hours; not looked
     at.
+
+### Release 0.28.1 (prepared)
+
+- **A release PR** per [AGENTS.md §6](../../AGENTS.md), on branch `chore/release-0.28.1`.
+  The owner asked for the next version's release on 2026-11-21, after 1001 had merged.
+  It contains:
+  - `Cargo.toml` `0.28.0 → 0.28.1`, one line of `Cargo.lock`, and the site's
+    `app_version`;
+  - `CHANGELOG.md`: `[Unreleased]` → `[0.28.1] — 2026-11-21`, under the lead paragraph
+    "Gemini 4 and Gemma 4 think as they are asked to, and a reply Gemini throws away is
+    told", with the **Data** section rewritten from the release's measurement (below), a
+    fresh `[Unreleased]` and the comparison links;
+  - CLAUDE.md's status heading;
+  - the release's post, and `/llms.txt` regenerated from it.
+
+  **What it ships.** Since `v0.28.0`:
+  - 997: thinking levels for every Gemini model after 2.x, and a text reply's signature
+    kept as `Message::thought_signature` ([engine.md](engine.md), "Gemini 4 takes
+    thinking levels");
+  - 1001: a reply Gemini discards as `MALFORMED_RESPONSE` is told in the feed, its
+    thoughts stored (merged 2026-11-21 00:46:53Z, `3fda6049`; [engine.md](engine.md), "a
+    reply Gemini discards as malformed");
+  - 1000: rustdoc warnings fail the lints on Linux, Windows and macOS, and the 59 broken
+    doc links are fixed ([quality.md](quality.md));
+  - 996, 998 and 999: documentation. No dependency or action bump.
+- **A PATCH.** Three items under *Fixed* and one under *Data*; no setting, key, tool or
+  command is added. No schema constant moved: settings 7, profiles 1, chats 9,
+  database 1, `cache.db` 3.
+- **The `Data` rubric, by measurement.**
+  - `git diff v0.28.0` over the storage paths (`src/shared/storage`,
+    `src/shared/config.rs`, `src/entities`, `data_migration.rs`, `backup.rs`) holds one
+    stored thing: `Message::thought_signature`, an additive `Option<String>` that is not
+    written when empty (ADR 0006 F12). The other two files there change doc comments
+    only (1000). No stored enum gains a value: the `finish: error` 1001 writes is one of
+    `MessageFinish`'s four since 0.9.9.
+  - **Measured with the published 0.28.0.** That is the Linux archive kept from the
+    0.28.0 draft check, whose sha256 `944a04b3…` matches the release's
+    `sha256sums.txt`. It ran beside a debug build of this branch, each binary pointed at
+    one root by a `defaults.json` of mode `path`, with the stored files hashed between
+    the steps.
+  - **The root.** 0.28.0's `mindfork import` made a profile and two chats (four messages
+    and two). `settings.json` was then set to the Gemini mode, `gemini-4-hydrogen`, the
+    key named by `api_key_env`, thoughts on. `MINDFORK_LLAMA_BIN`, set in this machine's
+    environment, has to be kept from both binaries: it puts the engine back in the
+    managed mode at start. The first try showed "chat: not configured" that way, and
+    the root was made again.
+  - **This version writes the field.** Its TUI in a pty asked one question in the
+    rubric chat, and `gemini-4-hydrogen` answered. The chat file holds the reply with a
+    `thought_signature` of 1368 characters. Exit 0. Both binaries' `stats` print 2
+    chats, 8 messages, fingerprint `3ede7af8768ff146`, and are equal apart from the
+    version.
+  - **0.28.0 reads it.** Its TUI opened the chat with all six messages, twice, exit 0,
+    and changed none of the stored files.
+  - **0.28.0 saves it.** A question asked in 0.28.0's TUI was answered; its client asks
+    Gemini 4 for a budget, which the model takes. The file it wrote holds 8 messages at
+    schema 9 and no `thought_signature`. Its first six messages are the earlier file's,
+    field for field, apart from the signature.
+  - **This version goes on.** Its TUI answered a third question in that file. The new
+    reply's signature is 2120 characters, and the two replies before it have none. Both
+    `stats`: 12 messages, fingerprint `cd11a190efb59124`. No step made a
+    `pre-migrate` backup.
+  - The copies stay in the session's scratchpad; nothing in them needs a fix.
+- **No rehearsal.** `git diff v0.28.0 -- packaging tools` is empty. Under `.github`
+  only `ci.yml` (1000's rustdoc step) and the pull-request template changed, no file of
+  the release pipeline.
+  - `release_guard.py --tag v0.28.1` accepts the tag, with the `[0.28.1]` section as its
+    notes (37 lines).
+  - Its self-tests, `site_release_gate.py`'s, `site_webdemo.py`'s and
+    `aur_package.py`'s are clean, and `site_llms_txt.py --check` matches.
+  - Zola is not installed on the droplet, so the site's build is left to `site.yml` on
+    the pull request.
+- **Tests:** 5155 unit tests green, 323 ignored on this Linux build; the source holds
+  330 `#[ignore]`. CLAUDE.md said 5153 after 1001 and now says 5155. The release adds no
+  code.
+
+**Gates**: unit tests green; clippy `-D warnings`, fmt, rustdoc `-D warnings`,
+`cyrillic_scan` (and its self-test), `link_check`, `doc_index_check`, `layer_check`,
+`list_scroll_check`, `claude_md_chart --check`, `wizard_rtf --check`,
+`site_legal_pages --check`, `site_llms_txt --check`, `indexnow --check`,
+`actions_pin_check`, and the self-tests of the release guard, the site gate, the web
+demo's placement and the AUR renderer clean.
