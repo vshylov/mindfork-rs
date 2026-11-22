@@ -141,3 +141,37 @@ pub(crate) async fn whole_request_bytes(sock: &mut tokio::net::TcpStream) -> Vec
 pub(crate) fn body_of(request: &str) -> &str {
     request.split_once("\r\n\r\n").map_or("", |(_, body)| body)
 }
+
+/// How long a stub waits for the client under test to connect.
+pub(crate) fn stub_deadline() -> std::time::Instant {
+    std::time::Instant::now() + std::time::Duration::from_secs(10)
+}
+
+/// One connection accepted on a **non-blocking** listener before `deadline`, handed
+/// back blocking; `None` once the deadline passes. A stub's thread must end on its own
+/// when the client never makes the request it was set up for, so the test joining it
+/// fails on what it saw instead of hanging (docs/lessons.md §2) — measured four times
+/// now: a mutant that skipped `/props` held a mutation run for half an hour, and one
+/// that sent no request at all hung the supervisor's two body tests. The bound has to
+/// live in the thread: a timeout around the join cannot help, because the test's
+/// runtime waits at shutdown for a blocking task still running.
+pub(crate) fn accept_before(
+    listener: &std::net::TcpListener,
+    deadline: std::time::Instant,
+) -> Option<std::net::TcpStream> {
+    loop {
+        match listener.accept() {
+            Ok((sock, _)) => {
+                sock.set_nonblocking(false).unwrap();
+                return Some(sock);
+            }
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            Err(_) => return None,
+        }
+    }
+}

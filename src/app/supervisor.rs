@@ -1385,6 +1385,7 @@ mod tests {
     use super::*;
     use crate::shared::api::EmbedRole;
     use crate::shared::config::ManagedEmbedSettings;
+    use crate::shared::http_stub::{accept_before, stub_deadline};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use tokio::sync::mpsc::unbounded_channel;
 
@@ -1719,7 +1720,12 @@ mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let seen = std::thread::spawn(move || {
-            let (mut sock, _) = listener.accept().unwrap();
+            // Bounded ([`accept_before`]): a client that never connects ends the
+            // thread with nothing seen instead of hanging the test that joins it.
+            listener.set_nonblocking(true).unwrap();
+            let Some(mut sock) = accept_before(&listener, stub_deadline()) else {
+                return String::new();
+            };
             // Read to the end of the headers rather than one bounded chunk: a key can
             // come from a variable of any length (`PATH` alone is past 2 KiB here), and
             // a truncated buffer would silently cut the value under comparison.
@@ -1846,8 +1852,13 @@ mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let seen = std::thread::spawn(move || {
+            // One deadline for the whole exchange ([`accept_before`]): with no
+            // `POST` the thread ends on an empty body, and the test joining it
+            // fails on that instead of hanging.
+            listener.set_nonblocking(true).unwrap();
+            let deadline = stub_deadline();
             loop {
-                let Ok((mut sock, _)) = listener.accept() else {
+                let Some(mut sock) = accept_before(&listener, deadline) else {
                     return String::new();
                 };
                 let Some((head, body)) = read_request(&mut sock) else {
@@ -1916,6 +1927,11 @@ mod tests {
     async fn a_blank_model_field_sends_no_model_key() {
         for blank in [None, Some("")] {
             let body = external_chat_body(blank).await;
+            // An absence proves nothing about a request that was never made.
+            assert!(
+                body.contains(r#""messages""#),
+                "blank={blank:?}: the request must have been made: {body}"
+            );
             assert!(
                 !body.contains(r#""model""#),
                 "blank={blank:?} must send no model key: {body}"

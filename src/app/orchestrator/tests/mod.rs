@@ -230,17 +230,47 @@ fn spawn_orch_at_tools(
     (cmd_tx, evt_rx, handle)
 }
 
+/// How long [`wait_for`] waits for its event before it fails the test.
+///
+/// A minute, where [`generation::wait_for_bounded`] takes five seconds: this bound
+/// is under every wait of the suite at once, on every runner, and a wait that is
+/// merely slow must not fail. On a paused clock it costs nothing either way — the
+/// timer fires the moment the runtime is idle.
+const WAIT_BOUND: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// Drains events until the first one matching the predicate (or the channel closes).
+///
+/// Bounded by [`WAIT_BOUND`]. It used to wait for as long as the channel stayed
+/// open, so a regression that stops an event from being sent hung its test instead
+/// of failing it, and in CI a hang reads as broken infrastructure (docs/lessons.md
+/// §2, recorded six times, each fixed in the one test it bit). Measured with
+/// cargo-mutants (docs/research/cargo-mutants.md §10.2): 25 of the 27 mutants that
+/// ended in a timeout were this helper, waiting under a handler that did nothing.
 async fn wait_for<F: Fn(&AppEvent) -> bool>(
     rx: &mut UnboundedReceiver<AppEvent>,
     pred: F,
 ) -> Option<AppEvent> {
-    while let Some(ev) = rx.recv().await {
-        if pred(&ev) {
-            return Some(ev);
+    let drain = async {
+        while let Some(ev) = rx.recv().await {
+            if pred(&ev) {
+                return Some(ev);
+            }
         }
-    }
-    None
+        None
+    };
+    tokio::time::timeout(WAIT_BOUND, drain)
+        .await
+        .unwrap_or_else(|_| panic!("no matching event within {WAIT_BOUND:?}"))
+}
+
+/// The bound itself: with no event coming and the channel still open, the wait
+/// fails the test. The outer timeout is what keeps *this* test from hanging if the
+/// bound is ever removed — it then ends without the panic expected, and fails.
+#[tokio::test(start_paused = true)]
+#[should_panic(expected = "no matching event within")]
+async fn a_wait_for_an_event_that_never_comes_fails_instead_of_hanging() {
+    let (_tx, mut rx) = unbounded_channel::<AppEvent>();
+    let _ = tokio::time::timeout(WAIT_BOUND * 2, wait_for(&mut rx, |_| true)).await;
 }
 
 /// Assembles a "bare" orchestrator for unit-testing pure methods (no loop),
