@@ -3164,6 +3164,19 @@ the word removed 3 in 3). A failure that follows a change in time is a hypothesi
 and a replay is cheaper than a revert.
 — *a reply Gemini discards as malformed* ([journal/engine.md](journal/engine.md)).
 
+**Two models compared on the owner's own profile are compared on a prompt that
+moves, and one turn is one sample.** "Neon used no tool in this chat, and Hydrogen
+did on the next turn" looked like the model. The request was rebuilt through a
+recording proxy and confirmed against the log by `countTokens`, to the token. On that
+body, Neon called a tool on turn 3 in 18 runs of 18, though the real run had not.
+Turn 4 drew a call from both models in 4 runs of 4. Between the two turns, an
+observation of the self-model had been rewritten in another chat to say that Neon
+had missed the memory here. The pick by the chat's opening put it into this chat's
+prompt, and it sent Hydrogen into the earlier chats. Before blaming a model for a
+turn, look for notes and observations written between the turns compared. Prove the
+rebuilt body by its token count, and replay it several times on each model.
+— *Neon left its tools alone and Hydrogen did not* ([journal/engine.md](journal/engine.md)).
+
 ## 10. CI and infrastructure
 
 **A pinned download wants a second place to come from; the hash makes any place

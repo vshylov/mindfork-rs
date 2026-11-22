@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (116)
+## Entries (117)
 
 - Post-M9: managed — preflight model-file check (done)
 - Post-M9: `--no-mmap` flag + field hints in settings (done)
@@ -128,6 +128,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the token counter on a wire that reports usage on every chunk (done)
 - Post-M9: Gemini 4 takes thinking levels, and a text reply's signature is kept (done)
 - Post-M9: a reply Gemini discards as malformed (done)
+- Post-M9: Neon left its tools alone and Hydrogen did not, replayed with no defect found (done)
 
 ### Post-M9: managed — preflight model-file check (done)
 - **Symptom**: in managed mode, with a missing/inaccessible GGUF, the app would hang for
@@ -7668,3 +7669,107 @@ off.
   Two requests reached the proxy, with no muted third. The chat file holds round
   two's 10 544 characters of thoughts with `finish: error`, so a restart shows
   what the turn did.
+
+### Post-M9: Neon left its tools alone and Hydrogen did not, replayed with no defect found (done)
+
+- **Why.** On 2026-11-22 the owner started a chat on `gemini-4-neon` with a
+  question about two philosophers. Three replies came back with no tool call and
+  nothing in them from the owner's memory. Back on `gemini-4-hydrogen`, the next
+  turn called four tools at once (three `note_recall`, one `chat_search`), then
+  three more (two `chat_read`, one `note_recall`). Its reply drew on an earlier
+  conversation. The owner asked whether this was the model or a defect of the app.
+- **The same tools went out on every turn.** A turn's set is the profile's list
+  cut by the global switches (`effective_tool_ids`, spec §9.4). Nothing in it reads
+  the model's name. The Gemini wire uses the name for the thinking config alone
+  (`wire::build_request`), and it sends no `toolConfig`, so the API's `AUTO`
+  applies. The profile file was last written on 2026-11-13.
+- **The bodies were captured as in the entry above**, with one change: the
+  proxy did not pass the request on. It answered every request with a canned
+  one-word reply, so no model was called. The rest was as before:
+  - a copy of the binary on a copy of the data root;
+  - `engine.gemini.url` pointed at a recording proxy;
+  - the bridge and notifications off in the copied profile;
+  - the chat cut to the turn's prefix, with the next message in its draft;
+  - `Enter` pressed by `console_probe`'s `Session`.
+
+  Every turn's body held 48 `functionDeclarations`,
+  `thinkingConfig: {includeThoughts: true}` and `maxOutputTokens` 64 000. The
+  system prompt, tools and config were byte-equal on turns 1 and 4. So turns 2
+  and 3 were cut from turn 4's contents. Each body matched the owner's log to the
+  token. The count is Gemini's `countTokens`, or the replay's `promptTokenCount`
+  where the model's own thought signatures count too:
+
+  | turn | model | the log's `prompt` | the rebuilt body | without the tools |
+  |---|---|---|---|---|
+  | 1 | neon | 12 730 | 12 730 | 2 296 |
+  | 2 | neon | 17 034 | 17 034 | — |
+  | 3 | neon | 19 034 | 19 034 | — |
+  | 4 | hydrogen | 16 125 | 16 125 | 5 691 |
+
+  So Neon's turns carried about 10.4K tokens of tool declarations, and its
+  thoughts show it read them. On turn 1 it "decided against immediately
+  cross-referencing past conversations". On turns 2 and 3 it weighed saving a note
+  and did not.
+- **One observation changed between turn 3 and turn 4.** The self-model was last
+  written on 2026-11-13. Between 15:52 and 16:08 UTC, the only memory of the
+  profile that changed was one observation, revised at 15:56 in another chat. In
+  that chat the owner had told the model that Neon used no tool here.
+  - Before, the observation said Neon's own manner was still to be tried in a new
+    chat.
+  - After, it said that in the conversation on these two philosophers Neon had
+    called no tool and answered impersonally. It had missed the direct link to the
+    memory and to the earlier chats.
+
+  Observations are picked by the chat's opening
+  ([prompt-caching.md](../research/prompt-caching.md) §2.2), and this chat opens
+  on the same two names. So the revised text was in the system prompt of
+  Hydrogen's turn. Turn 4 counts 16 125 tokens with the 15:56 text and 16 055 with
+  the earlier one. Turn 1's 12 730 is the count with the earlier text, so the rebuilt
+  bodies of turns 1–3 hold what Neon had. Hydrogen's second thought on turn 4 was
+  that it was "revisiting past observations".
+- **The replays.** Each body was sent to both models through `generateContent`,
+  with the observation in its earlier text ("before") or its 15:56 text ("after").
+  A run counts when its first round calls a tool:
+
+  | turn, observation | neon | hydrogen |
+  |---|---|---|
+  | 1, before | 1 of 12 | 4 of 12 |
+  | 2, before | 0 of 4 | 0 of 4 |
+  | 3, before | 18 of 18, 6 of them streamed | 4 of 4 |
+  | 4, before | 4 of 4 | 4 of 4 |
+  | 4, after | 4 of 4 | 4 of 4, `chat_search` in 2 |
+
+  The six streamed runs used `streamGenerateContent?alt=sse`, the endpoint the app
+  calls.
+- **What it was: three things, none of them the app's.**
+  - *Turn 1.* Both models mostly answer an opening question straight away.
+    Hydrogen recalls first a little more often, 4 of 12 against 1 of 12, which is
+    within noise at these sizes. Neon's thoughts cite an older observation in the
+    prompt, which both models read: rich memory of the person should stay in the
+    background, not turn a reply into a caricature of the person's profile.
+  - *Turn 3.* The owner's run was the exception. The rebuilt body, the same to
+    the token, made Neon call `note_recall` 18 times of 18, through the streaming
+    endpoint as well.
+  - *Turn 4.* Neon would have recalled too (4 of 4), because the turn's message
+    asks for it. The switch of model did not cause the calls. What the switch
+    came with was the revised observation. With it, Hydrogen added `chat_search`
+    (2 runs of 4, none of 4 without it). The real turn took the same path: it
+    found the chat where the owner had described Neon's silence, then read the
+    earlier conversation that chat pointed to. That is what made its reply
+    personal. The owner's complaint, written down by the model as an observation,
+    became the next model's instruction.
+- **Thought signatures, seen on the way.** A model re-reads its own signatures.
+  Turn 4's body counts 21 986 prompt tokens on Neon and 16 055 on Hydrogen, whose
+  count leaves Neon's signatures out. That is about 5.9K tokens of Neon's earlier
+  reasoning. This works as designed (PR 997), and the replays show it did not keep
+  Neon from its tools on turns 3 and 4.
+- **No change.** No defect was found and no code changed; the unit tests are
+  5155 as before. The recipe is the one to repeat for "is model X worse at Y" on
+  the owner's data:
+  - capture the body through the proxy;
+  - confirm it against the logged `prompt` by `countTokens`;
+  - look for notes and observations changed between the turns compared;
+  - replay the same body several times on each model, because one turn is one
+    sample.
+
+  The investigation cost about 70 requests to the Gemini API.
