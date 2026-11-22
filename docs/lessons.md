@@ -362,10 +362,18 @@ was handed the third script — an error — and a bare `wait_for` for its landi
 until the run's own limit. A scripted engine is read by **every** request the app
 makes, not only the turn's: start such a test from `no_auto_cfg`, and bound the waits
 so the next surprise is a failure with a name.
+**A seventh, and the last of this kind**: six recordings each bounded the one wait
+that had bitten, and the helper under all of them stayed as it was — 519 calls of the
+orchestrator tests' `wait_for` against 4 of its bounded variant. A mechanical pass
+(cargo-mutants over two pull requests' diffs) found it in an afternoon: 25 of the 27
+mutants that ended in a timeout were that helper, waiting under a handler that did
+nothing. **Bound the helper, not the call**: `wait_for` itself fails after a minute
+now, and a thread stub accepts through `shared::http_stub::accept_before`. A trap
+recorded for the third time is a defect in the shared code, not in the next test.
 — *engine failures stop being silent*, *a tool's images reach the model through a
 gateway*, *whether a gateway's model takes images comes from its catalogue*, *a chat
 whose history carries images, on an engine that takes none*, *`Ctrl+R` and `Ctrl+E`
-keep what they cut as a branch*.
+keep what they cut as a branch*, *the tests' shared waits are bounded*.
 
 **A paused clock fast-forwards an idle runtime, and real I/O is idle.** A test paused
 tokio's clock to make ten minutes of a monitor's polling free, against a real TCP stub.
