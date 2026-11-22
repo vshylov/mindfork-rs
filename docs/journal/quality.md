@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (47)
+## Entries (48)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -59,6 +59,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: cargo-mutants — researched, probed, and not adopted as a job in CI (done)
 - Post-M9: the tests' shared waits are bounded (done)
 - Post-M9: five behaviours no test held, found by a sample of mutants (done)
+- Post-M9: nineteen survivors of one pull request's replay (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -2362,5 +2363,62 @@ production line changed but a test-only accessor.
   (`tld_hint`'s `"es"`), an equivalent clamp and Windows-only code; the 22 survivors of
   PR 993's replay (§10.3) have not been looked at.
 - **5165 unit tests green** (+9), 323 `#[ignore]` on Linux; fmt, clippy and `cargo
+  doc` with `-D warnings` clean. Tests only — no CHANGELOG entry (AGENTS.md §4) and no
+  live run (AGENTS.md §3).
+
+### Post-M9: nineteen survivors of one pull request's replay (done)
+
+The replay of PR 993 on hosted runners
+([docs/research/cargo-mutants.md](../research/cargo-mutants.md) §10) left 22 mutants
+that no test caught; the previous entries left them unread. Read now, at the owner's
+request.
+
+- **They were still alive.** All 22 brought back by hand on `main`, one at a time
+  against the whole suite, in a disposable worktree: 22 missed.
+- **Three are equivalent.** `TopLine::of`'s search for the next line that says
+  something, begun at `i` instead of `i + 1` — line `i` is known to say nothing;
+  `MessageFeed::place`'s `skip(block)` for `skip(block + 1)` — block `block` is known
+  to have no message; `ink`'s `fact.tail > 0` made always true — the measured path for
+  every row, which the fast path exists only to avoid.
+- **The other nineteen were ten behaviours no test held**, in the feed's landing
+  (`widgets/message_feed.rs`) and in what the orchestrator rebuilds:
+  - *a block's lines* (`said`, 5 mutants) — how many rows a line was broken into, and
+    that a row saying nothing has no key, were read nowhere: keys were compared across
+    widths, the rest seen through views it happened not to move.
+    `a_blocks_lines_are_its_rows_and_what_they_say`, on rows made by hand and on real
+    ones at two widths;
+  - *a blank row's distance* (`TopLine::of`, 2) — to the next line and to the block's
+    end; with one blank row the distance is 1 and `/` reads as `-`.
+    `a_blank_row_is_found_by_its_distance_whatever_it_is`;
+  - *the share of a block through a rewrap* (`DrawnRows::rows_of`, 3) — used when the
+    view was scrolled and no frame drew it before the rewrap; with 0 or 1 for the
+    block's rows the view went to the block's first row.
+    `a_scroll_not_yet_drawn_is_kept_through_a_rewrap_by_its_share`;
+  - *a reveal* (1) from a view a few rows down with the bubble below it, and at the
+    feed's first row with the bubble on the screen —
+    `reveal_from_a_scrolled_view_and_at_the_feeds_first_row`;
+  - *a search hit deep in the feed's first message* (1) — every hit tested was in a
+    later block. `a_hit_deep_in_the_feeds_first_message_lands_on_the_match_too`;
+  - *a jump's mark through a refresh* (`MessageFeed::remark`, 3) — no test called it:
+    the mark on its message at a new index with its match lit, gone with its highlight
+    when the message is, an in-feed search left lit.
+    `a_refresh_puts_the_jumps_mark_back_on_its_message`;
+  - *a silent woken turn in the open chat* (`handle_done`, 2) — the feed is rebuilt
+    after the turn without the notice and the marker, and, where the turn used a tool
+    first, again after its rows land. The existing test counted holds, and the one that
+    delivered the notice was enough.
+    `silence_is_taken_out_of_the_open_feed_once_the_turn_has_landed`,
+    `a_silent_turn_that_used_a_tool_leaves_its_round_in_the_open_feed`;
+  - *a turn from the phone* (`land_seat_reply`, 1) — rebuilds the open feed when it
+    lands there, and touches none when it lands elsewhere; the mutant activated the
+    other chat, taking the screen. `a_phones_turn_rebuilds_the_open_feed_and_no_other`;
+  - *a hit in a detached tail of another chat* (`open_at_parked`, 1) is a switch — the
+    turn running in the chat that is left is cancelled; asserted in the existing
+    `a_hit_in_a_nested_or_a_detached_tail_says_how_it_is_reached`.
+- **Mutation check**: the 22 brought back again, against the ten tests — 19 caught,
+  each by the test written for it, and the 3 equivalent ones missed, as read.
+- No production line changed. Lessons §2 has what the nineteen had in common: a
+  fixture standing on a 0 or a 1.
+- **5174 unit tests green** (+9), 323 `#[ignore]` on Linux; fmt, clippy and `cargo
   doc` with `-D warnings` clean. Tests only — no CHANGELOG entry (AGENTS.md §4) and no
   live run (AGENTS.md §3).

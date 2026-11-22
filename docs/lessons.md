@@ -315,6 +315,19 @@ confuse it with), or to stop claiming the property in the comment.
 — *self-model injection — per-section budgets*, *MCP servers — secrets for the `env`
 map and JSON import*, *engine failures stop being silent*.
 
+**Put the thing under test second, and more than one of it: a value of 0 or 1 makes
+several operators one.** Nineteen mutants lived in the feed's landing code and in the
+orchestrator's refresh because each fixture stood on a degenerate value. One blank row between two lines is a distance of
+1, where `a - b` and `a / b` agree. A block that is never the feed's first is held by
+`first + rows` and by `first * rows` alike — and one that is always a block's first
+line has `last.row == 0`, where `row - last.row` is `row + last.row`. A view held at
+row 0, or scrolled to the far end, never stood a few rows down. And a count of events
+(*more than one landing, every one a hold*) was met by the hold that delivered the
+notice, so the rebuild after the turn was never required. Give the fixture two blank
+rows, a second line in two pieces, the first block **and** a later one, a view at row
+4 — and assert the event that matters by what it carries, not by how many there were.
+— *nineteen survivors of one pull request's replay*.
+
 **A fixture ordered the opposite way to production hides an ordering bug behind a
 green test.** The self-model screen reversed the list it was handed, under a comment
 claiming "newest on top"; the snapshot already arrived newest-first, so the screen

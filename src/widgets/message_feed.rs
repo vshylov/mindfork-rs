@@ -6510,6 +6510,234 @@ mod tests {
         }
     }
 
+    /// ...and so it does in the feed's **first** message, whose rows begin at
+    /// row 0 — the one block where a range reckoned wrongly from its first
+    /// row is empty (docs/research/cargo-mutants.md §10.3).
+    #[test]
+    fn a_hit_deep_in_the_feeds_first_message_lands_on_the_match_too() {
+        let messages = with_a_deep_match(0, "жемчуг");
+        let id = messages[0].message_ids[0];
+        let mut feed = MessageFeed::new();
+        assert!(feed.focus_message(&messages, id, Some("жемчуг")));
+        let rows = visible(&mut feed, &messages, 40, 12);
+        let at = rows
+            .iter()
+            .position(|r| r.contains("жемчуг"))
+            .unwrap_or_else(|| panic!("the match is on the screen: {rows:?}"));
+        assert_eq!(at, 1 + 10 / 3, "{rows:?}");
+        assert!(feed.place(&messages).unwrap().row > 0);
+    }
+
+    /// The two cases of a reveal the others did not reach
+    /// (docs/research/cargo-mutants.md §10.3): a view scrolled a few rows
+    /// down and a bubble **below** it — its first row becomes the view's
+    /// first; and a view at the feed's first row with the bubble on the screen
+    /// — it stays where it is.
+    #[test]
+    fn reveal_from_a_scrolled_view_and_at_the_feeds_first_row() {
+        let messages = numbered(12);
+        let mut feed = MessageFeed::new();
+        feed.scroll_to_top();
+        visible(&mut feed, &messages, 40, 10);
+        feed.scroll_down(4);
+        visible(&mut feed, &messages, 40, 10);
+        assert_eq!(feed.scroll_row(), 4, "precondition: a few rows down");
+        let held = feed.place(&messages);
+        let id = messages[8].message_ids[0];
+        assert!(feed.reveal_message(&messages, id, held));
+        let rows = visible(&mut feed, &messages, 40, 10);
+        assert_eq!(
+            feed.place(&messages),
+            Some(FeedPlace {
+                message: id,
+                row: 0
+            }),
+            "{rows:?}"
+        );
+
+        let mut feed = MessageFeed::new();
+        feed.scroll_to_top();
+        visible(&mut feed, &messages, 40, 10);
+        let held = feed.place(&messages);
+        assert!(feed.reveal_message(&messages, messages[1].message_ids[0], held));
+        let rows = visible(&mut feed, &messages, 40, 10);
+        assert!(
+            rows.iter().any(|r| r.contains("сообщение-1")),
+            "precondition: the bubble is on the first screenful: {rows:?}"
+        );
+        assert_eq!(feed.scroll_row(), 0, "and the view did not move");
+    }
+
+    /// A logical line is its rows — the first, and how many a wrap broke it
+    /// into — and what they say; a row that says nothing has no key. Read off
+    /// rows made by hand, where every figure is known: the pieces of a line
+    /// that is not its block's first, the last line's, and a last line that
+    /// says something. Until now the keys were compared across widths and the
+    /// rest was seen only through views it happened not to move
+    /// (docs/research/cargo-mutants.md §10.3).
+    #[test]
+    fn a_blocks_lines_are_its_rows_and_what_they_say() {
+        let hard = RowFact::default();
+        let soft = RowFact {
+            soft: true,
+            ..RowFact::default()
+        };
+        let rows = |texts: &[&'static str]| -> Vec<Line<'static>> {
+            texts.iter().map(|t| Line::from(*t)).collect()
+        };
+        let lines = rows(&["alpha ", "beta", "", "gamma ", "delta"]);
+        let got = said(&lines, &[hard, soft, hard, hard, soft]);
+        assert_eq!(
+            got.iter().map(|l| (l.row, l.pieces)).collect::<Vec<_>>(),
+            [(0, 2), (2, 1), (3, 2)]
+        );
+        assert!(got[0].key.is_some() && got[2].key.is_some(), "{got:?}");
+        assert_eq!(got[1].key, None, "a blank row says nothing");
+        assert_ne!(got[0].key, got[2].key);
+        // The same line in one piece says the same.
+        let whole = said(&rows(&["alpha beta"]), &[hard]);
+        assert_eq!((whole[0].row, whole[0].pieces), (0, 1));
+        assert_eq!(whole[0].key, got[0].key);
+
+        // And on real rows, at two widths: the lines tile the block's rows.
+        let messages = numbered_long(1);
+        let palette = Palette::default();
+        let mut feed = MessageFeed::new();
+        for width in [60, 24] {
+            let _ = feed.build_lines(&messages, &palette, width, ru());
+            let block = &feed.cache[0];
+            let lines = block.said();
+            for pair in lines.windows(2) {
+                assert_eq!(
+                    pair[0].row + pair[0].pieces,
+                    pair[1].row,
+                    "{width}: {lines:?}"
+                );
+            }
+            let last = lines.last().unwrap();
+            assert_eq!(last.row + last.pieces, block.lines.len(), "{width}");
+        }
+    }
+
+    /// A blank row is told by its distance — to the next line that says
+    /// something, or to the block's end — whatever the distance is: the first
+    /// of three blank rows, the first of two under the last line. With one
+    /// blank row between two lines the distance is 1, and a wrong reckoning of
+    /// it reads the same (docs/research/cargo-mutants.md §10.3).
+    #[test]
+    fn a_blank_row_is_found_by_its_distance_whatever_it_is() {
+        // A header, three blank rows, a line in two pieces, two blank rows.
+        let was = [(1, 7), (1, 0), (1, 0), (1, 0), (2, 13), (1, 0), (1, 0)];
+        let (_, rows) = lines_of(&was);
+        for row in 0..rows {
+            assert_eq!(found(&was, row, &was), Some(row), "row {row}");
+        }
+        // The line in five pieces: the rows over it stand over it as they did,
+        // and the two under it are as far from the end.
+        let narrow = [(1, 7), (1, 0), (1, 0), (1, 0), (5, 13), (1, 0), (1, 0)];
+        for row in 1..=3 {
+            assert_eq!(found(&was, row, &narrow), Some(row), "row {row}");
+        }
+        assert_eq!(found(&was, 6, &narrow), Some(9));
+        assert_eq!(found(&was, 7, &narrow), Some(10));
+        // A line more above them: one row lower.
+        let more = [
+            (1, 7),
+            (1, 21),
+            (1, 0),
+            (1, 0),
+            (1, 0),
+            (2, 13),
+            (1, 0),
+            (1, 0),
+        ];
+        assert_eq!(found(&was, 1, &more), Some(2));
+    }
+
+    /// A scroll no frame has drawn is kept through a rewrap too, by its share
+    /// of the block: the frame recorded the line of the row **it** drew first,
+    /// and the view is on another row now. The share needs how many rows the
+    /// block had, and nothing read that (docs/research/cargo-mutants.md
+    /// §10.3): with 0 or 1 for it, every such view went to its block's first
+    /// row.
+    #[test]
+    fn a_scroll_not_yet_drawn_is_kept_through_a_rewrap_by_its_share() {
+        let mut messages = numbered(6);
+        messages[2] = msg(FeedRole::Assistant, &"слово ".repeat(150), "");
+        let id = messages[2].message_ids[0];
+        let mut feed = MessageFeed::new();
+        assert!(feed.focus_message(&messages, id, None));
+        visible(&mut feed, &messages, 60, 10);
+        let (start, wide) = feed.block_rows(2).unwrap();
+        assert_eq!(
+            feed.scroll_row(),
+            start,
+            "precondition: the block's first row"
+        );
+        // Seven rows down, and no frame between this and the rewrap.
+        feed.scroll_down(7);
+        visible(&mut feed, &messages, 30, 10);
+        let (_, narrow) = feed.block_rows(2).unwrap();
+        assert!(wide > 8 && narrow > wide, "{wide} rows, then {narrow}");
+        let place = feed.place(&messages).unwrap();
+        assert_eq!(place.message, id);
+        assert_eq!(place.row, rewrapped_row(7, wide, narrow));
+        assert!(place.row > 7, "further into a block that grew");
+    }
+
+    /// A refresh rebuilds the open chat's feed in place, and a jump's mark is
+    /// a feed index: it is read as a message before ([`MessageFeed::marked`])
+    /// and put back after ([`MessageFeed::remark`]) — on the same message at
+    /// its new index, the match in it still lit; gone, with the jump's
+    /// highlight, when the message is gone; and an in-feed search, which marks
+    /// nothing, keeps its highlight. No test called `remark`
+    /// (docs/research/cargo-mutants.md §10.3).
+    #[test]
+    fn a_refresh_puts_the_jumps_mark_back_on_its_message() {
+        let palette = Palette::default();
+        let mut messages = numbered(4);
+        messages.insert(0, FeedMessage::note("заметка"));
+        let id = messages[3].message_ids[0];
+        let mut feed = MessageFeed::new();
+        assert!(feed.focus_message(&messages, id, Some("сообщение")));
+        assert_eq!(feed.marker(), Some(3));
+        let marked = feed.marked(&messages);
+        assert_eq!(marked, Some(id));
+
+        // The feed rebuilt without its note: the message is one index up.
+        let rebuilt = messages[1..].to_vec();
+        feed.remark(&rebuilt, marked);
+        assert_eq!(feed.marker(), Some(2));
+        let lines = feed.build_lines(&rebuilt, &palette, 60, ru());
+        assert_eq!(
+            accented(&lines, &palette),
+            ["сообщение"],
+            "the match in the marked message, and only it"
+        );
+
+        // The message gone: no mark, and the jump's highlight with it.
+        let without: Vec<FeedMessage> = rebuilt
+            .iter()
+            .filter(|m| m.message_ids[0] != id)
+            .cloned()
+            .collect();
+        feed.remark(&without, marked);
+        assert_eq!(feed.marker(), None);
+        assert!(feed.highlight.is_none());
+        let lines = feed.build_lines(&without, &palette, 60, ru());
+        assert!(accented(&lines, &palette).is_empty());
+
+        // An in-feed search marks nothing and lights the whole feed: a refresh
+        // leaves it lit.
+        let mut feed = MessageFeed::new();
+        feed.set_search(Some("сообщение"));
+        let marked = feed.marked(&rebuilt);
+        assert_eq!(marked, None);
+        feed.remark(&rebuilt, marked);
+        let lines = feed.build_lines(&rebuilt, &palette, 60, ru());
+        assert_eq!(accented(&lines, &palette).len(), 4);
+    }
+
     /// The marked message is marked by its rail (fork S3 — mark the whole
     /// message, no in-content highlighting); others keep their role color.
     #[test]

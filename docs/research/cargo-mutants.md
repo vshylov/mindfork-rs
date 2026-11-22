@@ -369,5 +369,9 @@ nothing to CI's time; neither is proposed here.
 
 **Stage 1 of §8 stands whatever F1 is** — the unbounded waits and the five gaps are
 defects in the tests the probes happened to find. The 22 survivors of PR 993's replay,
-18 of them arithmetic in `widgets/message_feed.rs` and `feed_selection.rs`, have not
-been read.
+18 of them arithmetic in `widgets/message_feed.rs` and `feed_selection.rs`, were
+read the same day (`fix/feed-landing-gaps`): all 22 still survived on `main`; 3 are
+equivalent, and the other 19 were ten behaviours of the feed's landing and of the
+orchestrator's refresh that no test held — nine tests and an assertion in a tenth,
+after which the 19 are caught
+([docs/journal/quality.md](../journal/quality.md)).

@@ -609,6 +609,79 @@ async fn the_bridged_chat_open_at_the_terminal_shows_the_turn_and_esc_stops_it()
     b.quit().await;
 }
 
+/// A turn from the phone that lands in the chat the terminal has **open**
+/// rebuilds its feed from what landed, with a hold — the person at the
+/// terminal opened nothing. Landing in a chat that is not open, it touches no
+/// feed at all: the chat on the screen stays the chat on the screen
+/// (docs/research/cargo-mutants.md §10.3).
+#[tokio::test]
+async fn a_phones_turn_rebuilds_the_open_feed_and_no_other() {
+    let fake = TelegramFake::start("mara_bot", TOKEN).await;
+    let backend = Held::new("Good evening, Ann.", None);
+    let Some(mut b) = start(&fake, backend.clone(), true, |_, _, _| {}).await else {
+        return;
+    };
+    let desk = b.desk;
+    // Every activation waiting in the queue: the chat, where the feed
+    // stands, how many rows it was rebuilt from.
+    let activations = |rx: &mut UnboundedReceiver<AppEvent>| -> Vec<(Uuid, FeedLanding, usize)> {
+        std::iter::from_fn(|| rx.try_recv().ok())
+            .filter_map(|e| match e {
+                AppEvent::ChatActivated {
+                    id,
+                    landing,
+                    messages,
+                    ..
+                } => Some((id, landing, messages.len())),
+                _ => None,
+            })
+            .collect()
+    };
+
+    // The desk is open: the first message makes the bridged chat, and its
+    // turn lands there.
+    fake.say(ANN, "ann", "Good evening");
+    let listed = event(
+        &mut b.rx,
+        |e| matches!(e, AppEvent::ChatList(list) if list.iter().any(|c| c.id != desk)),
+    )
+    .await;
+    let AppEvent::ChatList(list) = listed else {
+        unreachable!()
+    };
+    let chat = list.iter().find(|c| c.id != desk).unwrap().id;
+    assert_eq!(fake.wait_texts(ANN, 1, 20).await.len(), 1);
+    assert_eq!(
+        activations(&mut b.rx),
+        [],
+        "a turn in a chat that is not open moves nothing on the screen"
+    );
+
+    // The person opens the bridged chat; the next turn from the phone lands
+    // under their eyes.
+    b.tx.send(AppCommand::SwitchChat(chat)).unwrap();
+    event(
+        &mut b.rx,
+        |e| matches!(e, AppEvent::ChatActivated { id, .. } if *id == chat),
+    )
+    .await;
+    fake.say(ANN, "ann", "And again");
+    assert_eq!(fake.wait_texts(ANN, 2, 20).await.len(), 2);
+    let after = activations(&mut b.rx);
+    assert!(
+        after
+            .iter()
+            .all(|(id, landing, _)| *id == chat && *landing == FeedLanding::Hold),
+        "{after:?}"
+    );
+    assert_eq!(
+        after.last().map(|a| a.2),
+        Some(4),
+        "rebuilt from the two exchanges once the second has landed: {after:?}"
+    );
+    b.quit().await;
+}
+
 /// A `w`×`h` PNG, every pixel the same.
 fn png(w: u32, h: u32) -> Vec<u8> {
     let img = image::RgbImage::from_pixel(w, h, image::Rgb([200, 40, 40]));
