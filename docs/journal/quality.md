@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (46)
+## Entries (47)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -58,6 +58,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: rustdoc lints are a gate (done)
 - Post-M9: cargo-mutants — researched, probed, and not adopted as a job in CI (done)
 - Post-M9: the tests' shared waits are bounded (done)
+- Post-M9: five behaviours no test held, found by a sample of mutants (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -2321,3 +2322,45 @@ one wait that had bitten.
 - **5156 unit tests green** (+1), 323 `#[ignore]` on Linux; fmt, clippy and `cargo
   doc` with `-D warnings` clean. Test code only — no CHANGELOG entry (AGENTS.md §4) and
   no live run (AGENTS.md §3).
+
+### Post-M9: five behaviours no test held, found by a sample of mutants (done)
+
+Stage 1 of [docs/research/cargo-mutants.md](../research/cargo-mutants.md) §8, its
+second half. Of the 47 viable mutants a round-robin sample ran across the tree, 8
+survived, and 5 of them were behaviours with no test (§5.2). Each has one now; no
+production line changed but a test-only accessor.
+
+- **A deleted chat's background run is cancelled, and only its** —
+  `deleting_a_chat_ends_the_run_it_has_out`, `deleting_another_chat_leaves_the_run_out`
+  (`orchestrator/tests/background.rs`). The mutant cancelled every *other* chat's runs;
+  coverage had the loop's body uncovered.
+- **The reader's list names the search only on a turn that has it** —
+  `the_readers_list_names_the_search_only_where_the_turn_has_it`
+  (`tests/branches.rs`), both arms in one test. The mutant read "the turn offers
+  `branch_search`" from any other tool, so a model handed the reader alone was sent to
+  a tool it did not have. The line was covered.
+- **The director's conversation brief** (`conversation_brief`, `generation.rs`) had no
+  test of its own: four in `brief_tests` — the turns in their order under their roles,
+  the tail beginning where the 4000-byte budget ends, one turn longer than the budget
+  kept whole and alone, the summary first and no brief for an empty chat.
+- **Every built-in tool's parameters are an object schema**, in every language —
+  `every_tools_parameters_are_an_object_schema` (`features/tools/mod.rs`), over the
+  whole catalogue rather than `get_self_model` alone, whose `null` was the mutant. A
+  covered line whose value nothing looked at.
+- **The local-servers list takes the mouse as the other pickers do** —
+  `a_double_click_in_the_local_servers_list_picks_its_row` (`screens/chat/tests.rs`):
+  a double click beside the rows picks nothing, a click on a row selects, its double
+  picks. `LocalServerPickerState::cell_of` is added for it, `#[cfg(test)]`, as the link
+  picker has.
+- **Mutation check**, six mutants by hand, the tree restored from the text and
+  fingerprinted each time: the five survivors of §5.2 brought back, each now red — two
+  tests for the runs, one for the search, three of the brief's four, the schema's, the
+  click's. The sixth, the brief's second `break` removed, **survives and is
+  equivalent**: once the budget is passed with a line kept, the first check ends the
+  loop at the next line anyway; the second saves formatting that line and nothing else.
+- **Not read**: the other three survivors of the sample were a table row
+  (`tld_hint`'s `"es"`), an equivalent clamp and Windows-only code; the 22 survivors of
+  PR 993's replay (§10.3) have not been looked at.
+- **5165 unit tests green** (+9), 323 `#[ignore]` on Linux; fmt, clippy and `cargo
+  doc` with `-D warnings` clean. Tests only — no CHANGELOG entry (AGENTS.md §4) and no
+  live run (AGENTS.md §3).

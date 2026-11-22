@@ -7476,6 +7476,64 @@ fn the_local_servers_list_picks_closes_and_lets_quit_through() {
     );
 }
 
+/// The list takes the mouse as the other pickers do
+/// (docs/research/mouse-always-captured.md F12): a click on a row selects it and
+/// picks nothing, its double picks it as `Enter` does, and a double click beside
+/// the rows picks nothing. Found untested by a mutant that made any double click,
+/// and any click on a row, a pick (docs/research/cargo-mutants.md §5.2).
+#[test]
+fn a_double_click_in_the_local_servers_list_picks_its_row() {
+    use crate::shared::api::ServerKind;
+    use crate::shared::api::local_servers::LocalOffer;
+    use ratatui::crossterm::event::MouseButton;
+    use std::time::{Duration, Instant};
+    let offer = |server, url: &str, model: &str| LocalOffer {
+        server,
+        url: url.into(),
+        model: model.into(),
+        loaded: false,
+        embedder: None,
+    };
+    let offers = || {
+        vec![
+            offer(ServerKind::LmStudio, "http://127.0.0.1:1234/v1", "gemma-4"),
+            offer(
+                ServerKind::Ollama,
+                "http://127.0.0.1:11434/v1",
+                "gemma4:e4b",
+            ),
+        ]
+    };
+    let mut s = ChatScreen::new();
+    s.offer_local_servers(offers());
+    draw(&mut s);
+    let (c, r) = s
+        .local_servers
+        .as_ref()
+        .unwrap()
+        .cell_of(1)
+        .expect("the list's second row");
+    let press = |x, y| mouse_at(MouseEventKind::Down(MouseButton::Left), x, y);
+    let t0 = Instant::now();
+    let soon = Duration::from_millis(100);
+
+    assert_eq!(s.handle_mouse_at(press(0, 0), t0), None);
+    assert_eq!(s.handle_mouse_at(press(0, 0), t0 + soon), None);
+    assert!(
+        s.local_servers.is_some(),
+        "a double click beside the rows picks nothing"
+    );
+
+    let t1 = t0 + Duration::from_secs(2);
+    assert_eq!(s.handle_mouse_at(press(c, r), t1), None);
+    assert!(s.local_servers.is_some(), "one click selects");
+    assert_eq!(
+        s.handle_mouse_at(press(c, r), t1 + soon),
+        Some(ChatIntent::UseLocalServer(offers()[1].clone()))
+    );
+    assert!(s.local_servers.is_none(), "a pick closes the list");
+}
+
 /// `/greeting [N]` (spec §10): bare — the next greeting; a number — that one;
 /// anything else, and a screen with no chat, answered in the feed.
 mod greeting_command {

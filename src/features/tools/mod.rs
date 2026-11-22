@@ -2091,4 +2091,35 @@ mod tests {
             .is_empty()
         );
     }
+
+    /// Every built-in tool's parameters are a JSON Schema **object** with its
+    /// `properties`, in every language — what each provider's wire requires of a
+    /// function's parameters, a tool that takes no argument included
+    /// (`{"type":"object","properties":{}}`). Found unasserted by a mutant that
+    /// returned `null` for `get_self_model` (docs/research/cargo-mutants.md §5.2):
+    /// the line was covered, and nothing looked at its value.
+    #[test]
+    fn every_tools_parameters_are_an_object_schema() {
+        use crate::shared::i18n::{Lang, locale};
+        let reg = standard_registry(&ToolConfig::default());
+        let ids: Vec<ToolId> = tool_catalog().into_iter().map(|i| i.id).collect();
+        assert!(ids.len() > 20, "the catalogue: {} tools", ids.len());
+        for &lang in Lang::ALL {
+            let schemas = reg.schemas_for(&ids, locale(lang));
+            assert_eq!(schemas.len(), ids.len(), "{lang:?}: a tool has no schema");
+            for s in schemas {
+                assert_eq!(
+                    s.parameters["type"], "object",
+                    "{lang:?}, {}: {}",
+                    s.name, s.parameters
+                );
+                assert!(
+                    s.parameters["properties"].is_object(),
+                    "{lang:?}, {}: {}",
+                    s.name,
+                    s.parameters
+                );
+            }
+        }
+    }
 }

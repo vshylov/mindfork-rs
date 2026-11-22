@@ -987,6 +987,35 @@ async fn a_turn_that_offers_the_reader_reads_the_parked_tails() {
     assert!(!told.to_lowercase().contains("branch"), "{told}");
 }
 
+/// The reader's list points at the search only on a turn that has the search:
+/// handed the reader alone, the model is not sent to a tool it was not given.
+/// Found untested by a mutant that read "the turn offers the search" from any
+/// other tool on the turn (docs/research/cargo-mutants.md §5.2).
+#[tokio::test]
+async fn the_readers_list_names_the_search_only_where_the_turn_has_it() {
+    use super::subagent::{call, text};
+    use crate::features::tools::branches::{BRANCH_READ_ID, BRANCH_SEARCH_ID};
+    let hint = crate::shared::i18n::locale(crate::shared::i18n::Lang::En)
+        .t("tool.branch_read.list.hint_search");
+    for (tools, named) in [
+        (&[BRANCH_READ_ID][..], false),
+        (&[BRANCH_READ_ID, BRANCH_SEARCH_ID][..], true),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let (boat, _dock) = seed_branch_tools(dir.path(), tools);
+        let (_backend, chat) = reader_turn(
+            dir.path(),
+            boat,
+            vec![call("list", "branch_read", "{}"), text("done")],
+        )
+        .await;
+        let list = &results(&chat)["list"];
+        assert!(list.contains("Branch \"2/1\""), "{tools:?}: {list}");
+        assert_eq!(list.contains(hint), named, "{tools:?}: {list}");
+        assert_eq!(list.contains("branch_search"), named, "{tools:?}: {list}");
+    }
+}
+
 /// A turn that does not offer the reader is handed nothing: a call to it is
 /// refused, a read of another chat's line says nothing of its branches, and
 /// no request of the turn holds a parked word.
