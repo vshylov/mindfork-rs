@@ -386,8 +386,10 @@ recorded for the third time is a defect in the shared code, not in the next test
 **And a loop is a wait.** `while !rows[1].contains(…) { feed.scroll_down(1); … }` ends
 only when the feed moves; with `scroll_down` or `render` doing nothing it ran for
 ever, where every assertion around it would have failed in a millisecond. A test's
-loop that waits for the code under test to make progress counts its steps and
-fails past a number no honest run reaches. Which stubs need a deadline is the same
+loop that waits for the code under test to make progress is a `for` over more steps
+than an honest run takes, with a `break` and the assertion after it — not a counter
+and a bail-out inside, which are lines a green run never executes and the quality
+gate counts as uncovered new code. Which stubs need a deadline is the same
 question asked of a socket: only the ones a test **waits for** — a thread it joins,
 a task it awaits; of twenty bare `accept()`s that was two.
 — *engine failures stop being silent*, *a tool's images reach the model through a

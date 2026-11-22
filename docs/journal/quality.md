@@ -2436,7 +2436,8 @@ ran for ever under two mutants
   (`shared/api/openai/client.rs`) joins its thread, and
   `a_push_is_a_post_of_the_text_with_the_title_and_the_token` (`shared/notify.rs`)
   awaits its task. The first accepts through `accept_before` now, the second inside
-  a ten-second `timeout`; each ends with nothing seen, and the test fails on that.
+  a ten-second `timeout`; a deadline that passes fails the thread or the task with
+  `expect`, and the test that joins or awaits it fails with it.
   Of the other eighteen: six were bounded already (the two gateway stubs,
   `sse_stub::serve_in_turn`, the speech pipeline's two, and the follow-ups' push,
   whose task is awaited inside a timeout), and twelve are a detached thread or a
@@ -2448,7 +2449,7 @@ ran for ever under two mutants
   tests still running named: only
   `a_window_dragged_through_many_widths_keeps_the_line_on_its_first_row`, whose
   `while !rows[1].contains(…)` scrolls a row at a time until a line reaches the top.
-  It counts its steps now and fails past 200.
+  It is a `for` of 200 steps now, with its assertion after the loop.
 - **Every loop of that kind in the tests**, found by reading each `while`/`loop` in
   test code for one that ends only when the code under test moves: the feed's other
   (`a_place_brings_back_the_rows_that_were_on_the_screen`, on `scroll_up`), three in
@@ -2461,6 +2462,12 @@ ran for ever under two mutants
   moving, a batch reading nothing. Every run **ended, red** — in 1 to 11 seconds, the
   ten being the two stubs' deadline — with no test still running. Before, the first
   two ran past a 300-second cap.
+- **The quality gate, on the first push**: 73.3 % coverage of new lines against 80 —
+  the bail-out branches (`else { return String::new() }` after a deadline, the
+  steps inside a loop a green run does not enter) are lines no green run executes.
+  Rewritten so that none is a branch of its own: `expect` on the deadline, a `for`
+  with a `break` and the assertion after it. The seven mutants were run again on
+  that: the same seven red runs.
 - Lessons §2: a loop is a wait, and which stub needs a deadline.
 - **5174 unit tests green**, 323 `#[ignore]` on Linux — none added, the change is in
   how the existing ones fail; fmt, clippy and `cargo doc` with `-D warnings` clean.
