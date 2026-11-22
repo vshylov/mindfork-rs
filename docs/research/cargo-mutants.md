@@ -1,9 +1,13 @@
 # Research: cargo-mutants beside the hand-run mutation check
 
-**Status:** research (2026-11-22). **The owner's decisions, 2026-11-22** (§7): F2–F5
-as recommended; **F1 — whether to adopt it at all — waits for a measurement** of what
-it adds to CI on hosted runners: a large increase, and above all a risk of timeouts,
-means it is not adopted. The tool was installed and run on this repository with the
+**Status:** research, closed (2026-11-22). **The owner's decisions, 2026-11-22** (§7):
+F2–F5 as recommended; F1 — whether to adopt it at all — on a measurement of what it
+adds to CI on hosted runners: a large increase, and above all a risk of timeouts,
+means it is not adopted. **The measurement is in (§10), and by that condition
+cargo-mutants is not adopted as a job in CI**: a pull request of the median size
+ended its checks three times later than it does today, one of the 90th percentile
+did not end in 100 minutes, and one mutant in eight ended in a timeout. What the
+probes found in the tests is fixed on its own (§8, stage 1). The tool was installed and run on this repository with the
 owner's go-ahead (2026-11-21); the numbers below are measured unless a line says
 otherwise.
 
@@ -30,10 +34,11 @@ project and whether it should be. This document measures both.
   mutants are; and a hand-run mutant costs a quarter of its time.
 - **Recommendation:** adopt it as a second, mechanical pass over a pull request's
   diff, in CI, sharded, **not a gate** — after a pilot on three pull requests (§8).
-- **What decides it** (the owner, 2026-11-22): the time it adds to CI. A pull
-  request's checks end in 8.3 minutes at the median today; by the droplet's numbers
-  eight shards would end in 10 minutes plus their start-up at the median and in 40 at
-  the 90th percentile. That is measured on hosted runners before anything is adopted.
+- **What decided it** (the owner, 2026-11-22): the time it adds to CI. A pull
+  request's checks end in 8.3 minutes at the median today. Measured on hosted runners
+  (§10), eight shards end in 25–30 minutes on a pull request of the median size and
+  did not end in 100 on one of the 90th percentile; 27 of 228 viable mutants ended in
+  a timeout. **Not adopted as a job in CI.**
 
 ## 2. What the project does today
 
@@ -216,9 +221,10 @@ without it"; the tool asks "is there a line I wrote no test for".
 ## 7. Forks
 
 **The owner's decisions, 2026-11-22: F2 (c), F3 (b), F4 (a), F5 — each as
-recommended. F1 is not decided:** it waits for the time the job adds to CI, measured
-on hosted runners (§8, stage 2). If CI grows by much, it is not adopted — the more so
-if there is a risk of timeouts.
+recommended. F1 on a condition:** the time the job adds to CI, measured on hosted
+runners (§8, stage 2). If CI grows by much, it is not adopted — the more so if there
+is a risk of timeouts. **The measurement (§10) met the condition for a no: F1 is (a)
+for a job in CI**, and F2–F5, which describe that job, have nothing left to apply to.
 
 **F1. Whether to adopt it.**
 (a) No — the hand-run check stays alone.
@@ -264,6 +270,7 @@ between versions, and a tree clean under one is not clean under the next.
    the 8.3 minutes CI takes today; how many mutants end in a timeout; whether any job
    comes near its own limit. **No-go** if the checks of an ordinary pull request end
    much later than they do now, or if timeouts are more than an occasional mutant.
+   **Done 2026-11-22: no-go (§10).** Stages 3 and 4 fall away with it.
 3. **A pilot**, on a go — `.cargo/mutants.toml` and a workflow of its own, started by
    hand (`workflow_dispatch`) on the next three pull requests that change `src/`.
    **Go** if at least half of the survivors are real gaps.
@@ -272,14 +279,90 @@ between versions, and a tree clean under one is not clean under the next.
 
 ## 9. Not measured
 
-- **`cargo-nextest` as the test tool.** It stops at the first failing test, and the
-  suite is 70 % of a caught mutant's time, so it is the largest lever left. Not
-  installed here.
 - **A `[profile.mutants]` with `debug = "none"`**, which the tool's documentation
   recommends for the build half.
-- **Hosted runners** — every time above is the droplet's.
 - **The default copy mode** — both runs were `--in-place`.
 - **The seven mutants of the sample the interrupted run did not reach.**
 - **`cargo-schemata`** (0.5.0, on crates.io since 2026-11-09, 419 downloads): it
   claims to build every mutant once and switch them at run time, which is this
   project's own recipe automated. Too young to rely on; worth a look in a few months.
+
+## 10. What it adds to CI — measured on hosted runners (2026-11-22)
+
+The owner's condition for F1. A workflow on a spike branch (`spike/mutants-ci-probe`,
+not merged) replayed two merged pull requests on `ubuntu-latest`: the merge commit
+checked out, its own diff, and for each of eight shards
+
+```
+cargo mutants --in-diff pr.diff --shard k/8 --sharding round-robin \
+  --in-place --baseline=skip --timeout 240
+```
+
+with the dependencies restored from a cache, as a pull request's job has them. Runs
+[45027661046](https://github.com/vshylov/mindfork-rs/actions/runs/45027661046) and
+[45038456895](https://github.com/vshylov/mindfork-rs/actions/runs/45038456895).
+
+### 10.1 The time
+
+| Replayed | CI today | The last of eight shards ends | A mutant, mean |
+|---|---|---|---|
+| PR 997, 51 mutants — the median | 8.3 min | **29.6 min** | 173 s |
+| the same, `cargo-nextest` as the test tool | | 32.5 min | 181 s |
+| the same, incremental compilation on | | **24.9 min** | 123 s |
+| PR 993, 201 mutants — the 90th percentile | 11.2 min | **over 100 min** | 191 s |
+
+- **The 90th percentile ran into the job's limit.** Seven shards took 68–91 minutes;
+  the eighth was cancelled at the 100 the probe allowed it, one mutant short.
+- **A runner is slower than the droplet at both halves**: a caught mutant's test run
+  is 107 s against 75, and the unmutated suite took 169 s.
+- **rust-cache turns incremental compilation off** (`CARGO_INCREMENTAL=0`), so in the
+  first run every mutant rebuilt the whole crate — 99 s. Turned back on, a mutant's
+  build is 43 s. The third row is the job at its measured best.
+- **`cargo-nextest` does not help.** It stops at the first failure, but it starts a
+  process for each of 5 155 tests: the unmutated suite took 265 s against 169, a caught
+  mutant 130 s against 107.
+- **A shard spends two to two and a half minutes before its first mutant**, and the
+  shards end far apart — 13 to 30 minutes in the first run — because the timeouts
+  fall where they fall.
+
+To end with today's CI at the measured best, a pull request of the median size would
+need about 18 shards and one of the 90th percentile about 70 — computed, for an even
+split with no timeout — against the 20 jobs the account runs at once.
+
+### 10.2 The timeouts
+
+| Replayed | Viable | Timeout |
+|---|---|---|
+| PR 997 | 36 | 5 |
+| PR 993 | 192 | 22 |
+
+One viable mutant in eight, each costing the whole 240 seconds. Twenty-five of the 27
+are an orchestrator handler replaced by `()` or a constant — `spawn_title`,
+`handle_regenerate`, `switch_to`, `handle_command` — and what hangs is the tests'
+shared `wait_for` (`app/orchestrator/tests/mod.rs`), which drains the event channel
+until it closes: 519 call sites, against 4 of its bounded variant. The other two
+(`MessageFeed::render`, `scroll_down`) loop in the widget's own tests.
+
+A bound in that helper was tried on the droplet (60 seconds, free on a paused clock):
+the 789 orchestrator tests stay green, and the four tests that hung for ever under
+`apply_title → false` (§5.3) fail in a minute, by name. It does not make a mutant
+that stops the whole loop cheap — under `handle_command → false` hundreds of tests
+each wait their bound out.
+
+### 10.3 What the condition makes of it
+
+**A no.** The checks of an ordinary pull request would end three times later than
+they do now at the job's measured best; a large one's did not end in 100 minutes in
+the probe, a job reaching its limit there (about three quarters of that with
+incremental builds — computed, not run); and one mutant in eight is a timeout.
+cargo-mutants is not adopted as a job on pull requests.
+
+What the measurement does not touch, and nobody has asked for: the tool run by hand
+on the droplet over one module (`cargo mutants -f <file>`, 108 s a mutant, §5.1) when
+a module is worth it, and a scheduled run that no pull request waits for. Both add
+nothing to CI's time; neither is proposed here.
+
+**Stage 1 of §8 stands whatever F1 is** — the unbounded waits and the five gaps are
+defects in the tests the probes happened to find. The 22 survivors of PR 993's replay,
+18 of them arithmetic in `widgets/message_feed.rs` and `feed_selection.rs`, have not
+been read.
