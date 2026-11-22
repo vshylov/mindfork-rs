@@ -1391,12 +1391,10 @@ mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let seen = std::thread::spawn(move || {
-            // Bounded ([`accept_before`]): a probe that never connects ends the
-            // thread with nothing seen, and the join below fails on that.
+            // Bounded ([`accept_before`]): a probe that never connects fails
+            // this thread, and the join below with it, instead of blocking both.
             listener.set_nonblocking(true).unwrap();
-            let Some(mut sock) = accept_before(&listener, stub_deadline()) else {
-                return String::new();
-            };
+            let mut sock = accept_before(&listener, stub_deadline()).expect("no probe connected");
             let mut buf = [0u8; 2048];
             let n = sock.read(&mut buf).unwrap();
             // Drain the request before answering: writing first turns the close

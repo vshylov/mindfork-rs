@@ -21,14 +21,16 @@ fn key(code: KeyCode) -> KeyEvent {
 /// Presses `Down` until the cursor is on `field`. Bounded: a loop that ends
 /// only when the cursor moves hangs when it does not.
 fn down_to(s: &mut SettingsScreen, field: FieldId) {
+    let at = |s: &SettingsScreen| s.fields().get(s.field_idx).map(|f| f.id);
     for _ in 0..200 {
-        if s.fields().get(s.field_idx).map(|f| f.id) == Some(field) {
-            return;
+        if at(s) == Some(field) {
+            break;
         }
         s.handle_key(key(KeyCode::Down));
     }
-    panic!("{field:?} was not reached by Down");
+    assert_eq!(at(s), Some(field), "not reached by Down");
 }
+
 fn ctrl(c: char) -> KeyEvent {
     KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
 }
