@@ -1,8 +1,11 @@
 # Research: cargo-mutants beside the hand-run mutation check
 
-**Status:** research (2026-11-22). Nothing is decided: forks F1–F5 (§7) wait for the
-owner. The tool was installed and run on this repository with the owner's go-ahead
-(2026-11-21); the numbers below are measured unless a line says otherwise.
+**Status:** research (2026-11-22). **The owner's decisions, 2026-11-22** (§7): F2–F5
+as recommended; **F1 — whether to adopt it at all — waits for a measurement** of what
+it adds to CI on hosted runners: a large increase, and above all a risk of timeouts,
+means it is not adopted. The tool was installed and run on this repository with the
+owner's go-ahead (2026-11-21); the numbers below are measured unless a line says
+otherwise.
 
 The owner asked whether [cargo-mutants](https://mutants.rs/) can be applied to this
 project and whether it should be. This document measures both.
@@ -27,6 +30,10 @@ project and whether it should be. This document measures both.
   mutants are; and a hand-run mutant costs a quarter of its time.
 - **Recommendation:** adopt it as a second, mechanical pass over a pull request's
   diff, in CI, sharded, **not a gate** — after a pilot on three pull requests (§8).
+- **What decides it** (the owner, 2026-11-22): the time it adds to CI. A pull
+  request's checks end in 8.3 minutes at the median today; by the droplet's numbers
+  eight shards would end in 10 minutes plus their start-up at the median and in 40 at
+  the 90th percentile. That is measured on hosted runners before anything is adopted.
 
 ## 2. What the project does today
 
@@ -119,6 +126,12 @@ commits:
 Each shard builds the crate itself before its first mutant; with the dependency
 cache CI already keeps, that is a few minutes a shard. **Not measured on a runner.**
 
+What it is added to: the `CI` workflow on a pull request from a code branch ends in
+**8.3 minutes at the median, 11.2 at the 90th percentile, 12.1 at the most** (the
+last 40 green runs on `feat/`, `fix/` and `refactor/` branches). A mutants job beside
+it is the longest check of any pull request above the median, and by a wide margin
+from the 75th percentile on.
+
 ### 4.3 What a run cannot judge
 
 - **Code compiled out on Linux** — 172 mutants (0.8 %) sit in Windows- or macOS-only
@@ -202,6 +215,11 @@ without it"; the tool asks "is there a line I wrote no test for".
 
 ## 7. Forks
 
+**The owner's decisions, 2026-11-22: F2 (c), F3 (b), F4 (a), F5 — each as
+recommended. F1 is not decided:** it waits for the time the job adds to CI, measured
+on hosted runners (§8, stage 2). If CI grows by much, it is not adopted — the more so
+if there is a risk of timeouts.
+
 **F1. Whether to adopt it.**
 (a) No — the hand-run check stays alone.
 (b) **Yes, as a second pass beside it** — recommended. §5.2 found five untested
@@ -239,11 +257,17 @@ between versions, and a tree clean under one is not clean under the next.
 
 1. **What the probe found** — the seven waits of §5.3 bounded, a test for each of the
    five gaps of §5.2. Tests only; independent of every fork.
-2. **A pilot** — `.cargo/mutants.toml` and a workflow of its own, started by hand
-   (`workflow_dispatch`) on a pull request's diff, eight shards. Run on the next
-   three pull requests that change `src/`. **Go** if at least half of the survivors
-   are real gaps and the 75th-percentile run ends within 30 minutes.
-3. **On every pull request that changes `src/**`**, not a gate; the rule in
+2. **What it adds to CI, measured on hosted runners** — the owner's condition for
+   F1. Merged pull requests of the median and of the 90th-percentile size are
+   replayed on a spike branch (`--in-diff`, eight shards, with and without
+   `cargo-nextest`), and three things are read off: when the last shard ends, beside
+   the 8.3 minutes CI takes today; how many mutants end in a timeout; whether any job
+   comes near its own limit. **No-go** if the checks of an ordinary pull request end
+   much later than they do now, or if timeouts are more than an occasional mutant.
+3. **A pilot**, on a go — `.cargo/mutants.toml` and a workflow of its own, started by
+   hand (`workflow_dispatch`) on the next three pull requests that change `src/`.
+   **Go** if at least half of the survivors are real gaps.
+4. **On every pull request that changes `src/**`**, not a gate; the rule in
    AGENTS.md §3, a line in lessons §2.
 
 ## 9. Not measured
