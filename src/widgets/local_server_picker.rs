@@ -54,6 +54,12 @@ impl LocalServerPickerState {
         self.scroll.on_mouse(mouse, &mut self.selected)
     }
 
+    /// The first screen cell row `item` was drawn on, for tests that click it.
+    #[cfg(test)]
+    pub fn cell_of(&self, item: usize) -> Option<(u16, u16)> {
+        self.scroll.cell_of(item)
+    }
+
     /// Handles a key press, returning the action to execute.
     pub fn on_key(&mut self, key: KeyEvent) -> LocalServerAction {
         if key.kind != KeyEventKind::Press {

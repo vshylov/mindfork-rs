@@ -6750,3 +6750,94 @@ mod session_tests {
         assert!(round.text.is_empty() && round.calls.is_empty());
     }
 }
+
+#[cfg(test)]
+mod brief_tests {
+    use super::*;
+
+    fn en() -> &'static crate::shared::i18n::Locale {
+        crate::shared::i18n::locale(crate::shared::i18n::Lang::En)
+    }
+
+    /// The lines of a brief under its header.
+    fn lines(brief: &str) -> Vec<&str> {
+        brief.lines().skip(1).filter(|l| !l.is_empty()).collect()
+    }
+
+    /// Every recent turn is in the brief, oldest first, each under its role;
+    /// what is neither the person's nor the assistant's, and a blank turn, are
+    /// left out. Found untested by a mutant that ended the tail after one line
+    /// (docs/research/cargo-mutants.md §5.2).
+    #[test]
+    fn the_brief_holds_the_recent_turns_in_their_order() {
+        let messages = [
+            ApiMessage::user("first"),
+            ApiMessage::assistant("second"),
+            ApiMessage::tool("call-1", "a tool's result"),
+            ApiMessage::assistant("   "),
+            ApiMessage::user("third"),
+        ];
+        let brief = conversation_brief(None, &messages, en());
+        assert_eq!(
+            lines(&brief),
+            ["User: first", "Assistant: second", "User: third"],
+            "{brief}"
+        );
+        assert!(
+            brief.starts_with(en().t("prompt.dialogue.brief")),
+            "{brief}"
+        );
+    }
+
+    /// The tail is the most recent turns that fit the budget of 4000 bytes: an
+    /// older turn that would pass it is where the brief begins.
+    #[test]
+    fn the_brief_begins_where_its_budget_ends() {
+        let turn = |c: char| c.to_string().repeat(1500);
+        let messages = [
+            ApiMessage::user(turn('a')),
+            ApiMessage::assistant(turn('b')),
+            ApiMessage::user(turn('c')),
+        ];
+        let brief = conversation_brief(None, &messages, en());
+        let kept = lines(&brief);
+        assert_eq!(
+            kept.len(),
+            2,
+            "two turns fit 4000 bytes, the third does not"
+        );
+        assert!(kept[0].starts_with("Assistant: bbb") && kept[1].starts_with("User: ccc"));
+    }
+
+    /// One turn longer than the whole budget is still told, whole, and nothing
+    /// older rides along with it.
+    #[test]
+    fn a_turn_longer_than_the_budget_is_the_whole_brief() {
+        let messages = [
+            ApiMessage::user("older"),
+            ApiMessage::assistant("z".repeat(5000)),
+        ];
+        let brief = conversation_brief(None, &messages, en());
+        let kept = lines(&brief);
+        assert_eq!(kept.len(), 1, "{}", kept.len());
+        assert_eq!(kept[0].len(), "Assistant: ".len() + 5000);
+    }
+
+    /// The rolling summary comes first, the tail after it; with neither there is
+    /// no brief at all, not a header over nothing.
+    #[test]
+    fn the_summary_leads_and_an_empty_chat_has_no_brief() {
+        let brief = conversation_brief(
+            Some("  the story so far  "),
+            &[ApiMessage::user("hi")],
+            en(),
+        );
+        let body: Vec<&str> = brief.lines().skip(1).collect();
+        assert_eq!(body, ["the story so far", "", "User: hi"], "{brief}");
+        assert_eq!(conversation_brief(Some("  "), &[], en()), "");
+        assert_eq!(
+            conversation_brief(None, &[ApiMessage::assistant("")], en()),
+            ""
+        );
+    }
+}

@@ -727,6 +727,53 @@ async fn taking_back_the_exchange_ends_its_run_on_the_parked_branch() {
     assert_eq!(run.outcome, Some(RunOutcome::Cancelled));
 }
 
+/// Deleting a chat ends the run it has out in the background: the result would
+/// have no chat to land in. Found untested by a mutant that cancelled every
+/// *other* chat's runs instead (docs/research/cargo-mutants.md §5.2).
+#[tokio::test]
+async fn deleting_a_chat_ends_the_run_it_has_out() {
+    let backend = KeyedRecorder::new(
+        vec![
+            ("", vec![start("c1"), text("started it")]),
+            ("be harsh", vec![hang("thinking")]),
+        ],
+        10,
+    );
+    let (_dir, cmd_tx, mut rx, handle, chat_id) = begin(backend.clone(), cfg(2)).await;
+    running_run(&mut rx).await;
+    next(&mut rx, finished).await;
+    cmd_tx.send(AppCommand::DeleteChat(chat_id)).unwrap();
+    // Bounded shorter than the shared wait: without the cancellation the run
+    // hangs on its scripted reply for ever, and five seconds say so.
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        next(&mut rx, runs_out(0)),
+    )
+    .await
+    .expect("the deleted chat's run is cancelled");
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+}
+
+/// ...and only that chat's: deleting another chat leaves the run out.
+#[tokio::test]
+async fn deleting_another_chat_leaves_the_run_out() {
+    let backend = KeyedRecorder::new(
+        vec![
+            ("", vec![start("c1"), text("started it")]),
+            ("be harsh", vec![hang("thinking")]),
+        ],
+        10,
+    );
+    let (_dir, cmd_tx, mut rx, handle, chat_id) = begin(backend.clone(), cfg(2)).await;
+    running_run(&mut rx).await;
+    let other = look_away(&cmd_tx, &mut rx, chat_id).await;
+    cmd_tx.send(AppCommand::DeleteChat(other)).unwrap();
+    nothing_like(&mut rx, runs_out(0)).await;
+    cmd_tx.send(AppCommand::Quit).unwrap();
+    handle.await.unwrap();
+}
+
 /// The tool is offered to the model only with the setting on; the catalog
 /// and the profile know it either way (the `web_search` shape).
 #[test]

@@ -265,7 +265,9 @@ between versions, and a tree clean under one is not clean under the next.
    five gaps of §5.2. Tests only; independent of every fork.
    **The waits: done 2026-11-22** (`fix/bounded-test-waits`) — in the shared helper
    and the shared accept rather than in the seven tests
-   ([docs/journal/quality.md](../journal/quality.md)). The five gaps are still open.
+   ([docs/journal/quality.md](../journal/quality.md)). **The five gaps: done the same
+   day** (`fix/mutants-found-gaps`) — nine tests, each red against the mutant that had
+   survived.
 2. **What it adds to CI, measured on hosted runners** — the owner's condition for
    F1. Merged pull requests of the median and of the 90th-percentile size are
    replayed on a spike branch (`--in-diff`, eight shards, with and without
