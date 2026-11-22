@@ -3515,3 +3515,13 @@ under-counts" about a page it never had — a red that pointed at the code under
 such a page from a fixture (the same bytes, frozen), and where a real fetch is the
 subject, assert that it loaded before asserting anything that follows from it.
 — *the gpt-oss gate on main, 2026-10-10*.
+
+**rust-cache turns incremental compilation off — a job that builds one crate many times
+has to turn it back on.** The action exports `CARGO_INCREMENTAL=0` for the whole job,
+which is right for a job that builds once and wrong for one that edits a line and
+builds again: in a probe of cargo-mutants every mutant rebuilt the crate from nothing,
+99 s where the droplet's incremental build takes 31; with the variable set back to `1`
+on the step it was 43. And size such a job from a run on the runner, not from the
+droplet: the same suite's run took 107 s there against 75 here, so a plan that fitted
+in ten minutes on paper took thirty.
+— *cargo-mutants — researched, probed, and not adopted as a job in CI*.

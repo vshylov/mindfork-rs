@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (44)
+## Entries (45)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -56,6 +56,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: SonarQube follow-up — B0's session and its two origins (done)
 - Post-M9: SonarQube follow-up — two of the five resolved findings, closed in code (done)
 - Post-M9: rustdoc lints are a gate (done)
+- Post-M9: cargo-mutants — researched, probed, and not adopted as a job in CI (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -2241,3 +2242,41 @@ tree (AGENTS.md §3).
   reports only the `changes` job's SC2086 info that `main` has too. No CHANGELOG
   entry: nothing the user sees changed (AGENTS.md §4). No live run: comments and CI
   only (AGENTS.md §3).
+
+### Post-M9: cargo-mutants — researched, probed, and not adopted as a job in CI (done)
+
+The owner asked whether cargo-mutants can and should be applied here. Mutation
+testing is already routine by hand (lessons §2: every mutant behind `crate::mutant(N)`,
+one build); the question was what a mechanical pass adds and what it costs. The full
+account is [docs/research/cargo-mutants.md](../research/cargo-mutants.md).
+
+- **Measured on the tree** (cargo-mutants 27.1.0, the droplet): 22 434 mutants; one
+  costs an incremental build and the whole suite, 108 s — 28 machine-days for the
+  tree. Of the last 100 merged pull requests 56 produce none; the other 44 have a
+  median of 46, 179 at the 90th percentile.
+- **A probe of 76 mutants.** `shared/api/effort.rs`, which the hand-run check had
+  covered: 23 mutants, none survived. A round-robin sample across the tree: 8 of 47
+  viable mutants survived, 5 of them behaviours no test holds, 2 of the 5 on lines
+  coverage reports as covered. Three timeouts named seven tests that wait without a
+  bound.
+- **It does not replace the hand-run check**: no operator for a deleted call or a
+  changed constant, which is what most hand-written mutants are, and four times the
+  cost of one.
+- **The owner's decision (2026-11-22)**: as recommended — in CI on a pull request's
+  diff, sharded, a report and not a gate — **on a condition**: what it adds to CI,
+  measured; a large increase, the more so with a risk of timeouts, means no.
+- **Measured on hosted runners** (a spike branch, two merged pull requests replayed
+  as eight shards): the checks of a median pull request end in 29.6 minutes, 24.9
+  with incremental compilation turned back on, against 8.3 today; one of the 90th
+  percentile did not end in 100, a shard cancelled at the job's limit. 27 of 228
+  viable mutants ended in a timeout. `cargo-nextest` is slower here, not faster: a
+  process for each of 5 155 tests. **No-go: not adopted as a job in CI.**
+- **What the probes found is fixed on its own**: the orchestrator tests' shared
+  `wait_for` has no bound (519 call sites, 4 of the bounded variant) — 25 of the 27
+  timeouts; five untested behaviours. A pull request of its own.
+- **Rejected on the way**: the whole tree as a gate (28 machine-days); a run on the
+  droplet before each pull request (83 minutes at the median, and the machine's
+  memory); a gate rather than a report (equivalent mutants and Windows-only code
+  would fail correct changes).
+- Documentation and a spike branch only: no code changed, **5155 unit tests green,
+  323 `#[ignore]`** on Linux as before; no live run is needed.
