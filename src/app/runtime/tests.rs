@@ -38,7 +38,10 @@ impl Wire {
     fn batches(mut self) -> Vec<(Duration, Vec<Event>)> {
         let mut out = Vec::new();
         while !self.events.is_empty() {
+            let left = self.events.len();
             let batch = read_batch_from(&mut self).unwrap();
+            // A batch that took nothing would be read again for ever.
+            assert!(self.events.len() < left, "a batch takes an event");
             out.push((self.clock, batch));
         }
         out

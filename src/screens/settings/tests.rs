@@ -17,6 +17,20 @@ fn screen() -> SettingsScreen {
 fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
 }
+
+/// Presses `Down` until the cursor is on `field`. Bounded: a loop that ends
+/// only when the cursor moves hangs when it does not.
+fn down_to(s: &mut SettingsScreen, field: FieldId) {
+    let at = |s: &SettingsScreen| s.fields().get(s.field_idx).map(|f| f.id);
+    for _ in 0..200 {
+        if at(s) == Some(field) {
+            break;
+        }
+        s.handle_key(key(KeyCode::Down));
+    }
+    assert_eq!(at(s), Some(field), "not reached by Down");
+}
+
 fn ctrl(c: char) -> KeyEvent {
     KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
 }
@@ -2752,9 +2766,7 @@ fn managed_mode_shows_flash_attn_and_spec_type() {
 fn cycling_spec_type_to_draft_reveals_draft_fields() {
     let mut s = screen();
     s.handle_key(key(KeyCode::Enter)); // focus on the fields (XMode)
-    while s.fields().get(s.field_idx).map(|f| f.id) != Some(FieldId::XSpecType) {
-        s.handle_key(key(KeyCode::Down));
-    }
+    down_to(&mut s, FieldId::XSpecType);
     // none → draft-simple → draft-eagle3 → draft-mtp (three steps right).
     s.handle_key(key(KeyCode::Right));
     s.handle_key(key(KeyCode::Right));
@@ -2769,9 +2781,7 @@ fn cycling_spec_type_to_draft_reveals_draft_fields() {
 fn cycling_flash_attn_changes_value_and_saves() {
     let mut s = screen();
     s.handle_key(key(KeyCode::Enter)); // focus on the fields (XMode)
-    while s.fields().get(s.field_idx).map(|f| f.id) != Some(FieldId::XFlashAttn) {
-        s.handle_key(key(KeyCode::Down));
-    }
+    down_to(&mut s, FieldId::XFlashAttn);
     assert_eq!(s.config.engine.managed.flash_attn, FlashAttn::Auto);
     let intent = s.handle_key(key(KeyCode::Right));
     assert_eq!(s.config.engine.managed.flash_attn, FlashAttn::On);
@@ -2785,9 +2795,7 @@ fn render_with_focused_description_does_not_panic() {
     let mut s = screen();
     s.handle_key(key(KeyCode::Enter)); // focus on the fields (XMode)
     // Step down to the --no-mmap toggle (has a description hint below).
-    while s.fields().get(s.field_idx).map(|f| f.id) != Some(FieldId::XNoMmap) {
-        s.handle_key(key(KeyCode::Down));
-    }
+    down_to(&mut s, FieldId::XNoMmap);
     for (w, h) in [(80u16, 24u16), (40, 12)] {
         let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
         term.draw(|f| s.render(f)).unwrap();

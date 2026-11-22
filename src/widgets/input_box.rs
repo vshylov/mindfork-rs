@@ -3392,6 +3392,7 @@ mod tests {
                 return out;
             }
             out.push(ib.cursor().1);
+            assert!(out.len() < 1000, "the cursor never stopped: {out:?}");
         }
     }
 

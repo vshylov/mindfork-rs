@@ -307,7 +307,13 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
-            let (mut sock, _) = listener.accept().await.unwrap();
+            // Bounded: a push that is never made fails this task, and the test
+            // that awaits it, instead of leaving both waiting (docs/lessons.md §2).
+            let wait = std::time::Duration::from_secs(10);
+            let (mut sock, _) = tokio::time::timeout(wait, listener.accept())
+                .await
+                .expect("no push was made")
+                .unwrap();
             let mut buf = vec![0u8; 4096];
             let mut got = Vec::new();
             loop {

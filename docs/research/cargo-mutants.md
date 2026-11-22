@@ -268,6 +268,9 @@ between versions, and a tree clean under one is not clean under the next.
    ([docs/journal/quality.md](../journal/quality.md)). **The five gaps: done the same
    day** (`fix/mutants-found-gaps`) — nine tests, each red against the mutant that had
    survived.
+   **What the first half left: done too** (`fix/bounded-stubs-and-loops`) — the two
+   stubs a test waits for, of twenty bare `accept()`s, and the open-ended loops of the
+   tests, the feed's among them.
 2. **What it adds to CI, measured on hosted runners** — the owner's condition for
    F1. Merged pull requests of the median and of the 90th-percentile size are
    replayed on a spike branch (`--in-diff`, eight shards, with and without
