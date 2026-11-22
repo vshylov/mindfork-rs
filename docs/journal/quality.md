@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (45)
+## Entries (46)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -57,6 +57,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: SonarQube follow-up — two of the five resolved findings, closed in code (done)
 - Post-M9: rustdoc lints are a gate (done)
 - Post-M9: cargo-mutants — researched, probed, and not adopted as a job in CI (done)
+- Post-M9: the tests' shared waits are bounded (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -2280,3 +2281,43 @@ account is [docs/research/cargo-mutants.md](../research/cargo-mutants.md).
   would fail correct changes).
 - Documentation and a spike branch only: no code changed, **5155 unit tests green,
   323 `#[ignore]`** on Linux as before; no live run is needed.
+
+### Post-M9: the tests' shared waits are bounded (done)
+
+Stage 1 of [docs/research/cargo-mutants.md](../research/cargo-mutants.md) §8, its
+first half: what the probes found in the tests themselves. A mutant that stops an
+event from being sent, or a request from being made, did not fail the tests waiting
+for it — it hung them. Lessons §2 had recorded that six times, each time bounding the
+one wait that had bitten.
+
+- **The orchestrator tests' `wait_for`** (`app/orchestrator/tests/mod.rs`) drained the
+  event channel until it closed: 519 call sites, against 4 of `wait_for_bounded`. It
+  now fails after `WAIT_BOUND`, 60 seconds, with *no matching event within 60s*. One
+  change instead of 519: the 789 orchestrator tests pass with it unchanged, and on a
+  paused clock the bound is free. A minute rather than `wait_for_bounded`'s five
+  seconds, because this one is under every wait of the suite on every runner, and a
+  slow wait must not fail.
+- **The supervisor's two thread stubs** (`auth_probe_stub`, `chat_body_stub`) accepted
+  with no deadline, and the tests join them. They accept through `accept_before`,
+  which the OpenAI client's stubs already had; it and `stub_deadline` moved to
+  `shared/http_stub.rs` for both.
+- **A vacuous absence, found by its own fix**: bounded, `chat_body_stub` returns an
+  empty body when no request comes, and `a_blank_model_field_sends_no_model_key` —
+  which asserts that the body holds no `model` key — passed on it. It requires the
+  request first (`"messages"` in the body).
+- **A test of the bound**, `a_wait_for_an_event_that_never_comes_fails_instead_of_hanging`:
+  `should_panic` on a paused clock, inside an outer timeout of twice the bound, so
+  that without the bound it ends with no panic and fails rather than hangs.
+- **Mutation check**, five mutants by hand, the tree restored from the text and
+  fingerprinted each time. No request sent (`send_asking_again → Ok(None)`): the two
+  supervisor tests, which hung, fail in 10 s — the absence test on its new assertion.
+  The reflection's guard inverted: its test fails at the bound. `apply_title → false`:
+  four tests, which hung, fail at the bound. `handle_regenerate` doing nothing: three
+  tests fail by name, the run ends in 96 s. The bound removed: its own test is red,
+  in no time.
+- **Not done**: the other stubs with a bare `accept()` (15 files have one, not every
+  one a thread a test joins; no mutant has reached them yet) and the two loops in `widgets/message_feed.rs`'s tests
+  that §10.2 names; the five untested behaviours of §5.2 are the stage's second half.
+- **5156 unit tests green** (+1), 323 `#[ignore]` on Linux; fmt, clippy and `cargo
+  doc` with `-D warnings` clean. Test code only — no CHANGELOG entry (AGENTS.md §4) and
+  no live run (AGENTS.md §3).
