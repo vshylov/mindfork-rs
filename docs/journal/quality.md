@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (48)
+## Entries (49)
 
 - Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - Post-M9: SonarQube Cloud analysis in CI (done)
@@ -60,6 +60,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the tests' shared waits are bounded (done)
 - Post-M9: five behaviours no test held, found by a sample of mutants (done)
 - Post-M9: nineteen survivors of one pull request's replay (done)
+- Post-M9: the stubs a test waits for, and the loops that wait (done)
 
 ### Post-M9: broken documentation links, and a gate that stops them recurring (done)
 - **28 relative links in the docs pointed at nothing**, and had for a while.
@@ -2422,3 +2423,45 @@ request.
 - **5174 unit tests green** (+9), 323 `#[ignore]` on Linux; fmt, clippy and `cargo
   doc` with `-D warnings` clean. Tests only — no CHANGELOG entry (AGENTS.md §4) and no
   live run (AGENTS.md §3).
+
+### Post-M9: the stubs a test waits for, and the loops that wait (done)
+
+What *the tests' shared waits are bounded* left undone, at the owner's request: the
+other stubs with a bare `accept()`, and the tests of `widgets/message_feed.rs` that
+ran for ever under two mutants
+([docs/research/cargo-mutants.md](../research/cargo-mutants.md) §10.2).
+
+- **Twenty bare `accept()`s, read one by one.** A stub hangs a test only when the test
+  **waits for it**. Two did: `probe_sends_the_authorization_header_when_a_key_is_set`
+  (`shared/api/openai/client.rs`) joins its thread, and
+  `a_push_is_a_post_of_the_text_with_the_title_and_the_token` (`shared/notify.rs`)
+  awaits its task. The first accepts through `accept_before` now, the second inside
+  a ten-second `timeout`; each ends with nothing seen, and the test fails on that.
+  Of the other eighteen: six were bounded already (the two gateway stubs,
+  `sse_stub::serve_in_turn`, the speech pipeline's two, and the follow-ups' push,
+  whose task is awaited inside a timeout), and twelve are a detached thread or a
+  spawned task nobody joins — `sse_stub::serve`, the client's two SSE servers, the
+  counting stubs, the image stub (its handle is taken as `_h` everywhere),
+  `http_stub::Stub`, the Telegram fake. Those are left as they are.
+- **The loop was one test, under both mutants.** With `MessageFeed::scroll_down` or
+  `MessageFeed::render` doing nothing, the whole suite was run with a cap and the
+  tests still running named: only
+  `a_window_dragged_through_many_widths_keeps_the_line_on_its_first_row`, whose
+  `while !rows[1].contains(…)` scrolls a row at a time until a line reaches the top.
+  It counts its steps now and fails past 200.
+- **Every loop of that kind in the tests**, found by reading each `while`/`loop` in
+  test code for one that ends only when the code under test moves: the feed's other
+  (`a_place_brings_back_the_rows_that_were_on_the_screen`, on `scroll_up`), three in
+  the settings' tests that pressed `Down` until a field was reached — one bounded
+  `down_to` for the three — the runtime tests' `Wire::batches`, the input box's
+  `stops` and the self-model screen's walk to its last row.
+- **Mutation check**, seven mutants by hand in a disposable worktree, each against the
+  tests that depend on it and under a cap: `scroll_down`, `render` and `scroll_up`
+  doing nothing, `probe` and `ntfy_send` sending nothing, the settings' `Down` not
+  moving, a batch reading nothing. Every run **ended, red** — in 1 to 11 seconds, the
+  ten being the two stubs' deadline — with no test still running. Before, the first
+  two ran past a 300-second cap.
+- Lessons §2: a loop is a wait, and which stub needs a deadline.
+- **5174 unit tests green**, 323 `#[ignore]` on Linux — none added, the change is in
+  how the existing ones fail; fmt, clippy and `cargo doc` with `-D warnings` clean.
+  Test code only — no CHANGELOG entry (AGENTS.md §4) and no live run (AGENTS.md §3).

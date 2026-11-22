@@ -5791,10 +5791,14 @@ mod tests {
             .expect("a message is on the first row");
         // Inside a block, not on its first row: the half of a place a jump
         // never needed.
+        let mut steps = 0;
         while place.row == 0 {
             feed.scroll_up(1);
             before = visible(&mut feed, &messages, 30, 10);
             place = feed.place(&messages).unwrap();
+            // A loop that ends only when the feed moves hangs when it does not.
+            steps += 1;
+            assert!(steps < 100, "no row inside a block was reached: {place:?}");
         }
         assert!(!feed.is_following(), "precondition: scrolled away");
 
@@ -6435,10 +6439,19 @@ mod tests {
         // Put the view on the short line in the middle of the block.
         assert!(feed.focus_message(&messages, id, None));
         let mut rows = visible(&mut feed, &messages, 62, 10);
+        let mut steps = 0;
         while !rows[1].contains("вторая строка") {
             feed.scroll_down(1);
             rows = visible(&mut feed, &messages, 62, 10);
             assert!(!feed.is_following(), "the line is in the feed: {rows:?}");
+            // A loop that ends only when the feed moves hangs when it does
+            // not: with `scroll_down` or `render` doing nothing this test ran
+            // for ever (docs/research/cargo-mutants.md §10.2).
+            steps += 1;
+            assert!(
+                steps < 200,
+                "the line never came to the first row: {rows:?}"
+            );
         }
         let (left, row) = (rows, feed.scroll_row());
 

@@ -383,10 +383,18 @@ mutants that ended in a timeout were that helper, waiting under a handler that d
 nothing. **Bound the helper, not the call**: `wait_for` itself fails after a minute
 now, and a thread stub accepts through `shared::http_stub::accept_before`. A trap
 recorded for the third time is a defect in the shared code, not in the next test.
+**And a loop is a wait.** `while !rows[1].contains(…) { feed.scroll_down(1); … }` ends
+only when the feed moves; with `scroll_down` or `render` doing nothing it ran for
+ever, where every assertion around it would have failed in a millisecond. A test's
+loop that waits for the code under test to make progress counts its steps and
+fails past a number no honest run reaches. Which stubs need a deadline is the same
+question asked of a socket: only the ones a test **waits for** — a thread it joins,
+a task it awaits; of twenty bare `accept()`s that was two.
 — *engine failures stop being silent*, *a tool's images reach the model through a
 gateway*, *whether a gateway's model takes images comes from its catalogue*, *a chat
 whose history carries images, on an engine that takes none*, *`Ctrl+R` and `Ctrl+E`
-keep what they cut as a branch*, *the tests' shared waits are bounded*.
+keep what they cut as a branch*, *the tests' shared waits are bounded*, *the stubs a
+test waits for, and the loops that wait*.
 
 **A paused clock fast-forwards an idle runtime, and real I/O is idle.** A test paused
 tokio's clock to make ten minutes of a monitor's polling free, against a real TCP stub.

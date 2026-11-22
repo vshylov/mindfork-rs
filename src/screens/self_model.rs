@@ -1576,6 +1576,7 @@ mod tests {
             if s.selected == before {
                 break; // reached the end
             }
+            assert!(seen.len() < 1000, "the cursor never reached the end");
         }
         assert!(
             !seen.iter().any(|a| matches!(a, RowAction::Decoration)),
