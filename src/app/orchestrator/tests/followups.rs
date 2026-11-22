@@ -296,6 +296,99 @@ async fn silence_leaves_no_trace() {
     assert_eq!(backend.requests().len(), 1, "silence is not asked again");
 }
 
+/// The open conversation's activations of the kind a delivery makes — a hold —
+/// that are waiting in the queue: what each rebuilt the feed from.
+fn holds(evt_rx: &mut UnboundedReceiver<AppEvent>, chat: Uuid) -> Vec<Vec<Message>> {
+    drain(evt_rx)
+        .into_iter()
+        .filter_map(|e| match e {
+            AppEvent::ChatActivated {
+                id,
+                landing: FeedLanding::Hold,
+                messages,
+                ..
+            } if id == chat => Some(messages),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The feed streamed the `<silent>` marker under the notice it answered. When
+/// the turn has landed the open conversation is rebuilt without either: a hold
+/// **after** the turn's end, from the two rows the conversation had. The
+/// landings were only counted before, and the hold that delivered the notice
+/// was enough for the count (docs/research/cargo-mutants.md §10.3).
+#[tokio::test]
+async fn silence_is_taken_out_of_the_open_feed_once_the_turn_has_landed() {
+    let dir = tempfile::tempdir().unwrap();
+    let w = seed(dir.path(), true, |_| {});
+    plant(dir.path(), &w, w.interview, -1);
+    let backend = Replying::new("<silent>");
+    let (cmd_tx, mut evt_rx, handle) =
+        spawn_orch_at(dir.path(), Some(backend.clone()), no_auto_cfg());
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+        .await
+        .unwrap();
+    pause().await;
+
+    let rebuilt = holds(&mut evt_rx, w.interview);
+    let last = rebuilt
+        .last()
+        .expect("the feed is rebuilt after the turn's end");
+    let texts: Vec<&str> = last.iter().map(|m| m.text.as_str()).collect();
+    assert_eq!(
+        texts,
+        [
+            "Tomorrow at 10 is the interview, I'm nervous",
+            "You'll do great."
+        ]
+    );
+    quit(cmd_tx, handle).await;
+}
+
+/// A woken turn that used a tool and then chose silence: the reply is dropped
+/// and the round stays. The open feed is rebuilt once before the turn's rows
+/// land and again after them — the last hold carries the round, and no
+/// `<silent>` (docs/research/cargo-mutants.md §10.3).
+#[tokio::test]
+async fn a_silent_turn_that_used_a_tool_leaves_its_round_in_the_open_feed() {
+    use super::subagent::{ScriptRecorder, call, text};
+    let dir = tempfile::tempdir().unwrap();
+    let w = seed(dir.path(), true, |_| {});
+    plant(dir.path(), &w, w.interview, -1);
+    let backend = ScriptRecorder::new(vec![
+        call("c1", "calculate", r#"{"expression":"2+2"}"#),
+        text("<silent>"),
+    ]);
+    let (cmd_tx, mut evt_rx, handle) = spawn_orch_at(
+        dir.path(),
+        Some(backend.clone() as Arc<dyn EngineBackend>),
+        no_auto_cfg(),
+    );
+    wait_for(&mut evt_rx, |e| matches!(e, AppEvent::Finished { .. }))
+        .await
+        .unwrap();
+    pause().await;
+
+    let rebuilt = holds(&mut evt_rx, w.interview);
+    let last = rebuilt
+        .last()
+        .expect("the feed is rebuilt after the turn's end");
+    assert!(
+        last.iter()
+            .any(|m| m.tool_calls.iter().any(|c| c.name == "calculate")),
+        "the round the turn did land: {:?}",
+        last.iter().map(|m| &m.text).collect::<Vec<_>>()
+    );
+    assert!(!last.iter().any(|m| m.text.contains("<silent>")));
+    quit(cmd_tx, handle).await;
+    assert_eq!(
+        backend.requests().len(),
+        2,
+        "the tool's round, then the reply"
+    );
+}
+
 #[tokio::test]
 async fn a_conversation_not_in_view_is_marked_unread_and_nobody_is_woken() {
     let dir = tempfile::tempdir().unwrap();

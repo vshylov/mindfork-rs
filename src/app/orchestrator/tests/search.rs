@@ -901,14 +901,23 @@ fn a_hit_in_a_nested_or_a_detached_tail_says_how_it_is_reached() {
     let notice = notice.unwrap();
     assert!(notice.starts_with("The match is in branch 0/1"), "{notice}");
     assert!(notice.contains("cannot be brought back"), "{notice}");
-    // And from another chat.
+    // And from another chat — a switch like any other: the turn running in
+    // the chat that is left is cancelled on the way out
+    // (docs/research/cargo-mutants.md §10.3).
     let (other, _) = indexed_chat(&mut orch, "Другой", &["ничего"]);
     orch.handle_switch(other);
     while rx.try_recv().is_ok() {}
+    let turn = tokio_util::sync::CancellationToken::new();
+    assert!(orch.gen_state.begin(Uuid::new_v4(), turn.clone()));
     orch.handle_open_chat_at(boat.chat, lost, "потерянный".into());
     let (id, focus, notice) = opened(&mut rx);
     assert_eq!((id, focus), (boat.chat, None));
     assert!(notice.is_some());
+    assert_eq!(orch.active_id, Some(boat.chat));
+    assert!(
+        turn.is_cancelled(),
+        "a hit that opens another chat leaves this one as a switch does"
+    );
 }
 
 /// `Enter` in the chat list on a chat the filter kept for a match in a
