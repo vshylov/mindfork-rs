@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (98)
+## Entries (99)
 
 - Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - Post-M9: release engineering — stage 2 (version 0.9.0 + CHANGELOG + showing the version) (done)
@@ -110,6 +110,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Release 0.27.0 (prepared)
 - Release 0.28.0 (prepared)
 - Release 0.28.1 (prepared)
+- Release 0.28.2 (prepared)
 
 ### Post-M9: release engineering — stage 1 (CI pipeline + toolchain pin + license) (done)
 - **The first stage of the "release engineering" track** (design plan
@@ -7245,3 +7246,78 @@ demo's placement and the AUR renderer clean.
     error.
   - Scoop and the Homebrew tap pick a release up within four and six hours; not looked
     at.
+
+### Release 0.28.2 (prepared)
+
+- **A release PR** per [AGENTS.md §6](../../AGENTS.md), on branch `chore/release-0.28.2`.
+  The owner asked for the next version's release on 2026-11-25, after 1013 had merged.
+  It contains:
+  - `Cargo.toml` `0.28.1 → 0.28.2`, one line of `Cargo.lock`, and the site's
+    `app_version`;
+  - `CHANGELOG.md`: `[Unreleased]` → `[0.28.2] — 2026-11-25`, under the lead paragraph
+    "A backup keeps every file's time to the second", with a **Data** section written
+    from the release's measurement (below), a fresh `[Unreleased]` and the comparison
+    links;
+  - CLAUDE.md's status heading;
+  - the release's post, and `/llms.txt` regenerated from it.
+
+  **What it ships.** Since `v0.28.1`:
+  - 1013: `zip` 9.1.3 → 9.8.2, whose raw copy keeps the `UT` field
+    (zip-rs/zip2#1285), and the big entry's hand-written headers write it too
+    ([storage.md](storage.md), "`zip` 9.1.3 → 9.8.2");
+  - 1011: `url` 2.5.9, past RUSTSEC-2026-0592, with the cargo-deny action's bump
+    ([ci.md](ci.md));
+  - 1012: the `taiki-e/install-action` pin, 2.90.3 → 2.90.6;
+  - 1006, 1007, 1009 and 1010: tests only — bounded waits, and behaviours found
+    unasserted by a sample of mutants ([quality.md](quality.md));
+  - 1003, 1004, 1005 and 1008: documentation.
+- **A PATCH.** One item under *Fixed*, one under *Security*, one under *Data*; no
+  setting, key, tool or command is added. No schema constant moved: settings 7,
+  profiles 1, chats 9, database 1, `cache.db` 3. Outside the tests, `git diff v0.28.1 --
+  src` changes the backup's dates (`dates.rs`, `chunked.rs`, `parallel.rs`) and the
+  About dialog's `zip` credit, nothing else.
+- **The `Data` rubric, by measurement.**
+  - `git diff v0.28.1` over the storage paths (`src/shared/storage`,
+    `src/shared/config.rs`, `src/entities`, `data_migration.rs`) is empty. No stored
+    enum gains a value. What this version writes differently is a backup: each entry's
+    two headers carry `UT`, nine bytes more.
+  - **Measured with 0.28.1 built from its tag** (`e79ce9bc`, a worktree with a target
+    directory of its own, 2 min 6 s). The session had no copy of the published archive.
+    Three roots, each binary pointed at its own by a `defaults.json` of mode `path`;
+    `MINDFORK_LLAMA_BIN`, `MINDFORK_MODEL` and `MINDFORK_ENGINE_URL` kept from both.
+  - **The root**: a copy of the dev data root without `backups/` and `logs/` — 324 MB,
+    `data.db` 194 MB, so the big entry's chunked path ran. Its files were hashed before
+    and after the steps and did not change.
+  - **This version writes, 0.28.1 reads.** 0.28.2 made an encrypted backup (628
+    entries). `mindfork stats <archive> --json` by both binaries is equal apart from the
+    version and the time, fingerprint `145c3acb61ea86fe` — the live root's. 0.28.1
+    restored it with `TZ=America/New_York` into an empty root: 626 files identical, and
+    627 of 627 dated as their sources to the second — 0.28.1 already reads `UT` first.
+    The other two: `data.db` is the archive's compacted copy, and `cache.db` is never
+    backed up. `stats` on the restored root: the same fingerprint.
+  - **0.28.1 writes, this version reads.** 0.28.1's backup of the same root, restored by
+    0.28.2: the same fingerprint, every file identical but `data.db` — one byte against
+    0.28.1's restore, offset 43, the low byte of SQLite's schema cookie — and the dates
+    as before: 283 to the second and 344 not, each of the five shown a second early —
+    the DOS field's even second.
+  - No step made a `pre-migrate` backup. The roots, the archives and the 0.28.1 build
+    were deleted: they held the dev root's chats.
+- **No rehearsal.** `git diff v0.28.1 -- packaging tools` is empty. Under `.github`,
+  `release.yml`, `packaging.yml`, `ci.yml`, `web-demo.yml` and `audit.yml` changed only
+  by pinned actions' patch bumps (1011, 1012). `web-demo.yml` and `packaging.yml` ran
+  the new `install-action` on 1012, which installs `cargo-about` as `release.yml` does.
+  - `release_guard.py --tag v0.28.2` accepts the tag, with the `[0.28.2]` section as its
+    notes (31 lines).
+  - Its self-tests, `site_release_gate.py`'s, `site_webdemo.py`'s and
+    `aur_package.py`'s are clean, and `site_llms_txt.py --check` matches.
+  - Zola is not installed on the droplet, so the site's build is left to `site.yml` on
+    the pull request.
+- **Tests:** 5177 unit tests green, 323 ignored on this Linux build. The release adds no
+  code.
+
+**Gates**: unit tests green; clippy `-D warnings`, fmt, rustdoc `-D warnings`,
+`cyrillic_scan` (and its self-test), `link_check`, `doc_index_check`, `layer_check`,
+`list_scroll_check`, `claude_md_chart --check`, `wizard_rtf --check`,
+`site_legal_pages --check`, `site_llms_txt --check`, `indexnow --check`,
+`actions_pin_check`, and the self-tests of the release guard, the site gate, the web
+demo's placement and the AUR renderer clean.
