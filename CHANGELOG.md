@@ -14,6 +14,14 @@ split by subsystem.
 
 ## [Unreleased]
 
+## [0.28.2] — 2026-11-25
+
+**A backup keeps every file's time to the second.** A restore dated each file from the
+zip's old DOS field, local time in two-second steps, so a backup restored in another
+time zone moved every file by the difference. Every entry of a backup now also carries
+the exact time in UTC. The URL parser is updated past a security advisory that did not
+reach the app. Nothing is migrated, and going back to 0.28.1 needs no backup restored.
+
 ### Fixed
 
 - **A backup keeps every file's time to the second.** A restore gave each file the
@@ -21,6 +29,17 @@ split by subsystem.
   an even second — so a backup restored in another time zone moved every file by the
   difference. The exact UTC time is now kept in every entry, the big ones included
   (`zip` 9.8.2). Backups made by 0.25.0–0.28.1 restore as they did.
+
+### Data
+
+- **A backup's entries carry one more field, and nothing is migrated**: the extended
+  timestamp (`UT`), the file's time in UTC, in each entry's local and central header.
+  The settings stay at schema 7 and the chats at 9.
+- **Going back to 0.28.1 needs no backup restored.** This was checked with 0.28.1,
+  built from its tag, on a copy of a 324 MB data folder. 0.28.1 reads an encrypted
+  backup made by this version with the same counts and fingerprint, and restores it with
+  every file's time to the second, in another time zone too. This version restores a
+  backup made by 0.28.1 as before, from the DOS date.
 
 ### Security
 
@@ -4480,7 +4499,8 @@ history is in the [docs/journal/](docs/journal/) log).
   (notes/RAG/self-model, sqlite-vec, per-profile isolation). Schema format is
   v1; schema versioning and migrations are formalized in later releases.
 
-[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.28.1...HEAD
+[Unreleased]: https://github.com/vshylov/mindfork-rs/compare/v0.28.2...HEAD
+[0.28.2]: https://github.com/vshylov/mindfork-rs/compare/v0.28.1...v0.28.2
 [0.28.1]: https://github.com/vshylov/mindfork-rs/compare/v0.28.0...v0.28.1
 [0.28.0]: https://github.com/vshylov/mindfork-rs/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/vshylov/mindfork-rs/compare/v0.26.4...v0.27.0
