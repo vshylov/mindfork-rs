@@ -10,7 +10,7 @@ They record what was done, why, what was measured and what was rejected — the 
 behind the code, not its current shape. For the current shape read the reference documents
 named above; for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (31)
+## Entries (32)
 
 - Post-M9: cutting GitHub Actions minutes (done)
 - Post-M9: skipping the test job for docs-only pull requests (done)
@@ -44,6 +44,7 @@ named above; for the traps that recur across areas read [lessons.md](../lessons.
 - Post-M9: the Windows-only code is linted (done)
 - Post-M9: the test job's ceilings, re-measured (done)
 - Post-M9: why the Windows tests were slow (done)
+- Post-M9: cargo-deny 0.22, and an advisory against `url` (done)
 
 ### Post-M9: cutting GitHub Actions minutes (done)
 - **Trigger**: the `v0.9.4` release run was refused by GitHub with *"The job was
@@ -2036,4 +2037,39 @@ rounds.
 Linux, 314 on Windows); the three new tests were red on the old code. clippy
 `-D warnings`, fmt, `actionlint` (its one SC2086 info is on `main` too),
 `actions_pin_check`, `cyrillic_scan`, `layer_check`, `link_check` and `doc_index_check`
+clean.
+
+### Post-M9: cargo-deny 0.22, and an advisory against `url` (done)
+
+Dependabot's #1011 moves `EmbarkStudios/cargo-deny-action` from 2.1.1 to 2.1.3, which
+brings cargo-deny 0.22.0. Its `cargo-deny` job was red, and not because of the bump.
+
+- **The red was RustSec's, and `main` had it first.** RUSTSEC-2026-0592: `url` 2.5.8 and
+  earlier answer `Url::origin()` on a `blob:` URL by calling itself on the inner URL,
+  one stack frame per prefix, so a URL with ten thousand of them overflows a thread's
+  stack and aborts the process. `main`'s weekly run (45124202332, 06:27Z on 2026-11-23)
+  failed on it seven minutes before the pull request's (45124978104); the run of
+  2026-11-16 was green. `cargo update -p url --precise 2.5.9` moves `url` and
+  `form_urlencoded` (1.2.2 → 1.2.3, which 2.5.9 asks for) and nothing else.
+- **Not reachable from mindfork.** The inverse tree holds two crates, `reqwest` 0.13.5
+  and `tower-http` 0.6.11; neither calls `.origin()` anywhere in its source, and neither
+  does `src/`. The update ships all the same, so the changelog has a *Security* item
+  saying so, as `pulldown-cmark`'s RUSTSEC-2026-0414 did.
+- **0.22.0 narrows `advisories.unmaintained` from `all` to `workspace`** (cargo-deny
+  PR#924). The pull request's run shows it: three `advisory-not-detected` warnings, one
+  for each transitive ignore (`yaml-rust`, `bincode`, `ttf-parser`), which `main`'s run
+  on the old action does not have; `chrono`'s ignore, a direct dependency, still
+  matched. Under the new default a crate abandoned deeper in the graph would pass in
+  silence, where `deny.toml` promises the audit "turns red on NEW ones". `deny.toml`
+  now spells out `unmaintained = "all"`, so the ignores match again and the next change
+  of default cannot move the policy.
+- **Rejected: dropping the three ignores instead.** It silences the warnings by
+  accepting the narrower scope, which is a policy change the bump would have made, not
+  the owner.
+- **Verified on the pull request's own run.** cargo-deny is not installed on the
+  droplet, so the green `cargo-deny` job on the fix commit is the check, with no
+  `advisory-not-detected` left; the red run on Dependabot's commit is the control.
+
+**Gates**: 5174 unit tests green on the new lock, 323 ignored; clippy `-D warnings`, fmt, `actionlint`,
+`actions_pin_check.py`, `doc_index_check.py`, `link_check.py` and `cyrillic_scan.py`
 clean.
