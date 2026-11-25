@@ -14,6 +14,13 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Security
+
+- **The URL parser the network requests use is updated** (`url` 2.5.9), past
+  RUSTSEC-2026-0592: asking a deeply nested `blob:` URL for its origin could overflow
+  the stack and end the program. Neither mindfork nor the HTTP client it uses ever
+  asks a URL for its origin, so it was not affected.
+
 ## [0.28.1] — 2026-11-21
 
 **Gemini 4 and Gemma 4 think as they are asked to, and a reply Gemini throws away is
