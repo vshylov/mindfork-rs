@@ -7321,3 +7321,67 @@ demo's placement and the AUR renderer clean.
 `site_legal_pages --check`, `site_llms_txt --check`, `indexnow --check`,
 `actions_pin_check`, and the self-tests of the release guard, the site gate, the web
 demo's placement and the AUR renderer clean.
+
+**The draft, checked before anyone else could see it** (§6 step 5).
+- The owner merged 1014 (22:59:17Z) and set `v0.28.2` on the merge commit `8104cf68`,
+  which was `origin/main`.
+- **The run.** `release.yml` (run 45717951283) was green in all nine jobs in **17 min
+  56 s** (23:00:46 → 23:18:42Z). macOS took the longest at 16 min 35 s, then Windows
+  14 min 23 s, the demo for the browser 12 min 20 s, Linux 10 min 2 s and the animation
+  5 min 28 s. **Both non-gate jobs succeeded.**
+- **The draft** was not a prerelease and held sixteen assets, 0.28.1's set. All fifteen
+  files in `sha256sums.txt` match. The notes are the `[0.28.2]` section with the
+  workflow's footer below.
+- **`install.sh` and the six animation files are 0.28.1's byte for byte** (`cmp`
+  against the published 0.28.1's files, downloaded and checked against its
+  `sha256sums.txt`): the fix is in the backup, which the reel does not show.
+- **The archives** hold 0.28.1's file names, entry for entry: Windows 48, Linux 49,
+  macOS 49. `THIRD-PARTY-NOTICES.md` names `zip` 9.8.2; `PRIVACY.md` is still effective
+  2026-11-19.
+- **Attestations** verify for the three archives, the installer, the `.deb`, `install.sh`
+  and `mindfork-webdemo.tar`, and fail on a scratch file (exit 1).
+- **The released Linux binary on a copy of the dev root** (324 MB, as in the rubric), its
+  own `defaults.json` per root. `mindfork --version` says 0.28.2; `stats` gives the
+  root's fingerprint, `145c3acb61ea86fe`.
+  - **The release's fix.** Its encrypted backup holds 628 entries, every one with `UT`
+    in its local and its central header (Python's `zipfile`). The same binary restored
+    it under `TZ=America/New_York` into an empty root: 627 of 627 files dated as their
+    sources to the second, and the same fingerprint. The copies were deleted.
+- **The demo for the browser.** Its manifest says format 2, application 0.28.2, commit
+  `8104cf68`, and its 33 files match their hashes. It was served locally on port 8790,
+  free by `ss -ltn`, and `curl` read that manifest back before the browser opened it.
+  - The earlier sessions' browser toolchain was gone. Installing Playwright was refused
+    in auto mode until the owner allowed it in the chat; then a scratch venv
+    (Playwright 1.65.2), `chromium-headless-shell` and its missing libraries by
+    `apt-get download`, as the 0.27.0 check did.
+  - **Start** gave a machine ready 0.6 s after the click. `F1` drew "About · mindfork
+    v0.28.2", read from the xterm buffer.
+  - 18 requests went out, all to the page's own origin — one of them a `blob:` URL the
+    page makes, which the first version of the check script counted as foreign — and
+    no console error. The server was stopped after the check.
+- Not checked: the Windows and macOS binaries run (no such host here); this release's
+  packages installed. `packaging.yml` installed packages on 1014, built from that pull
+  request's commit.
+- **Published, and what followed** (the owner, 23:42:51Z; immutable).
+  - `crates-io.yml` (run 45723456276) published the crate in 3 min 19 s. `mindfork
+    0.28.2` was on the registry at 23:46:07Z (5 535 961 bytes), 3 min 16 s after the
+    publication; crates.io's newest version is 0.28.2.
+  - `aur.yml` (run 45723456247) built, installed and ran `mindfork-rs-bin` 0.28.2 on
+    Arch in 33 s (`installed: mindfork 0.28.2`). It stopped before the push, since
+    `AUR_SSH_PRIVATE_KEY` is not set — as with 0.28.1.
+  - The deploy (run 45723876608, `workflow_run`) started six seconds after crates.io
+    completed. Its gate found 0.28.2 published, and "Deploy to mindfork.io" succeeded
+    at 23:47:03Z, **4 min 12 s after the publication**.
+  - From outside:
+    - the post answers 200 at `/blog/mindfork-0-28-2/`, and the blog heads with
+      "mindfork 0.28.2 — a backup keeps every file's time to the second";
+    - the home and install pages say `"softwareVersion": "0.28.2"`, and `/llms.txt`
+      and the sitemap list the post;
+    - `releases/latest` resolves to `v0.28.2`;
+    - `mindfork.io/demo/mindfork-demo-dark-en.gif` is the release's, byte for byte.
+  - mindfork.io/try/ loads `webdemo/v0.28.2/`, whose manifest names commit `8104cf68`.
+    In the headless Chromium it was ready 2.0 s after **Start**, `F1` said "About ·
+    mindfork v0.28.2", and 22 requests went out, all to mindfork.io, with no console
+    error.
+  - Scoop and the Homebrew tap pick a release up within four and six hours; not looked
+    at.
