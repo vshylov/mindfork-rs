@@ -32,6 +32,7 @@ use sha1::Sha1;
 use zeroize::Zeroizing;
 
 use super::ScratchFile;
+use super::dates::HeaderDate;
 
 /// The chunk a big entry is cut into: 1 MiB cost +0.16 % of size on the
 /// research's database, against one stream (§3).
@@ -169,7 +170,7 @@ pub(super) struct Assembly {
     body: u64,
     ae2: Option<Ae2>,
     encrypted: bool,
-    dos: (u16, u16),
+    date: HeaderDate,
 }
 
 /// The local header's fixed fields, up to the name: 30 bytes.
@@ -181,13 +182,13 @@ impl Assembly {
     pub(super) fn new(
         name: &str,
         chunks: usize,
-        dos: (u16, u16),
+        date: HeaderDate,
         password: Option<&str>,
         scratch: ScratchFile,
     ) -> io::Result<Self> {
         let mut out = BufWriter::new(File::create(scratch.path())?);
         let encrypted = password.is_some();
-        out.write_all(&local_header(name, encrypted, dos, 0, 0, 0))?;
+        out.write_all(&local_header(name, encrypted, date, 0, 0, 0))?;
         let mut body = 0;
         let ae2 = match password {
             Some(pw) => {
@@ -210,7 +211,7 @@ impl Assembly {
             body,
             ae2,
             encrypted,
-            dos,
+            date,
         })
     }
 
@@ -262,7 +263,7 @@ impl Assembly {
         file.write_all(&local_header(
             &self.name,
             encrypted,
-            self.dos,
+            self.date,
             crc,
             compressed,
             uncompressed,
@@ -271,7 +272,7 @@ impl Assembly {
         let central = central_header(
             &self.name,
             encrypted,
-            self.dos,
+            self.date,
             crc,
             compressed,
             uncompressed,
@@ -287,10 +288,23 @@ impl Assembly {
 /// The 0x9901 field: AE-2, AES-256, the actual method deflate.
 const AES_FIELD: [u8; 11] = [0x01, 0x99, 7, 0, 2, 0, b'A', b'E', 3, 8, 0];
 
+/// The extra fields both headers carry, in order: the AES one with a password,
+/// then the `UT` one when the date is known — the same bytes in either header.
+fn extra_fields(encrypted: bool, date: HeaderDate) -> Vec<u8> {
+    let mut extra = Vec::with_capacity(AES_FIELD.len() + 9);
+    if encrypted {
+        extra.extend_from_slice(&AES_FIELD);
+    }
+    if let Some(field) = date.extended {
+        extra.extend_from_slice(&field);
+    }
+    extra
+}
+
 /// The fields a local and a central header share, from "version needed" on.
 fn common(
     encrypted: bool,
-    dos: (u16, u16),
+    date: HeaderDate,
     crc: u32,
     compressed: u32,
     uncompressed: u32,
@@ -305,13 +319,13 @@ fn common(
     h.extend_from_slice(&version.to_le_bytes());
     h.extend_from_slice(&flags.to_le_bytes());
     h.extend_from_slice(&method.to_le_bytes());
-    h.extend_from_slice(&dos.0.to_le_bytes());
-    h.extend_from_slice(&dos.1.to_le_bytes());
+    h.extend_from_slice(&date.dos.0.to_le_bytes());
+    h.extend_from_slice(&date.dos.1.to_le_bytes());
     h.extend_from_slice(&crc.to_le_bytes());
     h.extend_from_slice(&compressed.to_le_bytes());
     h.extend_from_slice(&uncompressed.to_le_bytes());
     h.extend_from_slice(&(name.len() as u16).to_le_bytes());
-    let extra: u16 = if encrypted { AES_FIELD.len() as u16 } else { 0 };
+    let extra = extra_fields(encrypted, date).len() as u16;
     h.extend_from_slice(&extra.to_le_bytes());
     h
 }
@@ -319,20 +333,19 @@ fn common(
 fn local_header(
     name: &str,
     encrypted: bool,
-    dos: (u16, u16),
+    date: HeaderDate,
     crc: u32,
     compressed: u32,
     uncompressed: u32,
 ) -> Vec<u8> {
     let mut h = 0x0403_4b50u32.to_le_bytes().to_vec();
-    h.extend(common(encrypted, dos, crc, compressed, uncompressed, name));
+    h.extend(common(encrypted, date, crc, compressed, uncompressed, name));
     h.extend_from_slice(name.as_bytes());
-    if encrypted {
-        h.extend_from_slice(&AES_FIELD);
-    }
+    let extra = extra_fields(encrypted, date);
+    h.extend_from_slice(&extra);
     debug_assert_eq!(
         h.len() as u64,
-        LOCAL_HEADER + name.len() as u64 + if encrypted { 11 } else { 0 }
+        LOCAL_HEADER + name.len() as u64 + extra.len() as u64
     );
     h
 }
@@ -340,7 +353,7 @@ fn local_header(
 fn central_header(
     name: &str,
     encrypted: bool,
-    dos: (u16, u16),
+    date: HeaderDate,
     crc: u32,
     compressed: u32,
     uncompressed: u32,
@@ -348,16 +361,14 @@ fn central_header(
     let mut h = 0x0201_4b50u32.to_le_bytes().to_vec();
     // Made by: Unix, spec 6.3 — the attributes below are a Unix mode.
     h.extend_from_slice(&0x033fu16.to_le_bytes());
-    h.extend(common(encrypted, dos, crc, compressed, uncompressed, name));
+    h.extend(common(encrypted, date, crc, compressed, uncompressed, name));
     h.extend_from_slice(&0u16.to_le_bytes()); // comment length
     h.extend_from_slice(&0u16.to_le_bytes()); // disk number
     h.extend_from_slice(&0u16.to_le_bytes()); // internal attributes
     h.extend_from_slice(&(0o100_644u32 << 16).to_le_bytes()); // -rw-r--r--
     h.extend_from_slice(&0u32.to_le_bytes()); // the local header's offset
     h.extend_from_slice(name.as_bytes());
-    if encrypted {
-        h.extend_from_slice(&AES_FIELD);
-    }
+    h.extend(extra_fields(encrypted, date));
     h
 }
 
@@ -382,6 +393,7 @@ fn end_of_directory(central_len: usize, central_at: u64) -> io::Result<Vec<u8>> 
 
 #[cfg(test)]
 mod tests {
+    use super::super::dates::{entry_mtime, header_date};
     use super::*;
     use std::io::Read;
 
@@ -429,12 +441,27 @@ mod tests {
         Ok(out)
     }
 
+    /// A DOS date alone: 2025-11-09, midnight.
+    const DOS_ONLY: HeaderDate = HeaderDate {
+        dos: (0, 0x5b69),
+        extended: None,
+    };
+
     fn assemble(dir: &std::path::Path, data: &[u8], password: Option<&str>) -> ScratchFile {
+        assemble_dated(dir, data, password, DOS_ONLY)
+    }
+
+    fn assemble_dated(
+        dir: &std::path::Path,
+        data: &[u8],
+        password: Option<&str>,
+        date: HeaderDate,
+    ) -> ScratchFile {
         let order = [2, 0, 3, 1, 4];
         let mut assembly = Assembly::new(
             "data.db",
             order.len(),
-            (0, 0x5b69),
+            date,
             password,
             ScratchFile(dir.join("one.zip")),
         )
@@ -481,6 +508,46 @@ mod tests {
         assert_eq!(entry.name().unwrap(), "data.db");
         assert_eq!(entry.last_modified().unwrap().datepart(), 0x5b69);
         assert!(!entry.encrypted());
+    }
+
+    /// An assembled entry carries the `UT` field when its date is known — to the
+    /// second, an odd one included —, plain and encrypted, and keeps it through
+    /// the raw copy that appends it to the archive.
+    #[test]
+    fn an_assembled_entry_carries_its_exact_date() {
+        use std::time::{Duration, UNIX_EPOCH};
+        let mtime = UNIX_EPOCH + Duration::from_secs(1_715_000_001);
+        let date = header_date(Some(mtime));
+        let data = sample(200_000);
+        for password in [None, Some("correct horse")] {
+            let dir = tempfile::tempdir().unwrap();
+            let scratch = assemble_dated(dir.path(), &data, password, date);
+            assert_eq!(read_back(&scratch, password).unwrap(), data);
+            let mut one = zip::ZipArchive::new(File::open(scratch.path()).unwrap()).unwrap();
+            let entry = one.by_index_raw(0).unwrap();
+            assert_eq!(entry.encrypted(), password.is_some());
+            assert_eq!(entry_mtime(&entry), Some(mtime));
+            drop(entry);
+
+            let mut copy = zip::ZipWriter::new(io::Cursor::new(Vec::new()));
+            copy.raw_copy_file(one.by_index_raw(0).unwrap()).unwrap();
+            let copy = copy.finish().unwrap().into_inner();
+            let mut copy = zip::ZipArchive::new(io::Cursor::new(copy)).unwrap();
+            let entry = copy.by_index_raw(0).unwrap();
+            assert_eq!(
+                entry_mtime(&entry),
+                Some(mtime),
+                "{password:?}: the raw copy kept it"
+            );
+            drop(entry);
+            let mut entry = match password {
+                Some(pw) => copy.by_index_decrypt(0, pw.as_bytes()).unwrap(),
+                None => copy.by_index(0).unwrap(),
+            };
+            let mut back = Vec::new();
+            entry.read_to_end(&mut back).unwrap();
+            assert_eq!(back, data, "{password:?}: the copy reads back");
+        }
     }
 
     /// With a password the entry is WinZip AE-2: it reads back with it — the HMAC

@@ -14,17 +14,19 @@
 //! date**, so a file from an older archive is dated when it is restored, as it
 //! always was.
 //!
-//! **A backup's entries reach the archive with the DOS date alone.** The pool
-//! appends each entry with `raw_copy_file`, and `zip` (9.1 through 9.5, measured)
-//! drops an extended timestamp from a raw copy: `ExtraField::write` serializes no
-//! `UT` field, so the copy's options never get it. What survives is the DOS
-//! date — local time, rounded down to an even second — and that is what a restore
-//! gives back; restored in another time zone, a file is off by the difference.
-//! The manifest and a companion export are written directly and carry both. When
-//! `zip` keeps the field, a backup's entries carry it with no change here:
-//! `a_raw_copy_drops_the_extended_timestamp` pins today's behaviour and fails
-//! then. Reported upstream, with the cause and a fix:
-//! <https://github.com/zip-rs/zip2/issues/1285>.
+//! **A backup's entries reach the archive through a raw copy, and keep both.**
+//! The pool appends each entry with `raw_copy_file`. Up to `zip` 9.5 that copy
+//! dropped the `UT` field (`ExtraField::write` serialized none), so a backup's
+//! entries carried the DOS date alone — local time, rounded down to an even
+//! second — and a file restored in another time zone was off by the difference.
+//! Reported upstream, <https://github.com/zip-rs/zip2/issues/1285>, and fixed in
+//! 9.6.0–9.7.1; `zip` is required at 9.8.2 since, and
+//! `a_raw_copy_keeps_the_extended_timestamp` holds it. A copy keeps the
+//! modification time alone, which is all this module writes.
+//!
+//! The big entry's headers are written by hand (`chunked`), so they take the field
+//! from [`header_date`]: both forms of it are the same nine bytes when only the
+//! modification time is set.
 
 use std::io::Read;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -58,8 +60,7 @@ pub(crate) fn dated<'k>(
     };
     let mut options = options.into_full_options();
     if let Some(seconds) = unix_seconds(mtime) {
-        let mut field = vec![MODIFIED];
-        field.extend_from_slice(&seconds.to_le_bytes());
+        let field = extended_timestamp_data(seconds).to_vec();
         if let Err(e) = options.add_extra_field(EXTENDED_TIMESTAMP, field, false) {
             // The field is well-formed by construction; were it refused, the
             // DOS date still dates the entry.
@@ -100,12 +101,40 @@ pub(crate) fn entry_mtime<R: Read>(entry: &ZipFile<'_, R>) -> Option<SystemTime>
     Some(local.into())
 }
 
-/// `mtime` as the (time, date) fields of a header written by hand — the big
-/// entry's (`chunked`): the DOS date-time in local time, or the format's default
-/// when it is not known or out of range.
-pub(crate) fn dos_fields(mtime: Option<SystemTime>) -> (u16, u16) {
+/// The date a header written by hand carries — the big entry's (`chunked`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct HeaderDate {
+    /// The DOS (time, date) fields: local time, or the format's default when the
+    /// date is not known or out of range.
+    pub(crate) dos: (u16, u16),
+    /// The `UT` extra field whole — its id, its size, the flag and the seconds.
+    /// It holds the modification time alone, so the local header's form and the
+    /// central one's are the same bytes. `None` when the date is not known or out
+    /// of the field's range.
+    pub(crate) extended: Option<[u8; 9]>,
+}
+
+/// `mtime` as the date fields of a header written by hand.
+pub(crate) fn header_date(mtime: Option<SystemTime>) -> HeaderDate {
     let dos = mtime.and_then(dos_time).unwrap_or_default();
-    (dos.timepart(), dos.datepart())
+    let extended = mtime.and_then(unix_seconds).map(|seconds| {
+        let mut field = [0u8; 9];
+        field[..2].copy_from_slice(&EXTENDED_TIMESTAMP.to_le_bytes());
+        field[2..4].copy_from_slice(&5u16.to_le_bytes());
+        field[4..].copy_from_slice(&extended_timestamp_data(seconds));
+        field
+    });
+    HeaderDate {
+        dos: (dos.timepart(), dos.datepart()),
+        extended,
+    }
+}
+
+/// The `UT` field's data for a modification time alone: the flag, the seconds.
+fn extended_timestamp_data(seconds: u32) -> [u8; 5] {
+    let mut data = [MODIFIED, 0, 0, 0, 0];
+    data[1..].copy_from_slice(&seconds.to_le_bytes());
+    data
 }
 
 /// `mtime` as a DOS date-time in local time; `None` outside 1980–2107.
@@ -205,34 +234,78 @@ mod tests {
     }
 
     /// What `zip` does to an entry the backup pool appends with `raw_copy_file`:
-    /// the `UT` field is dropped, the DOS date kept — an odd second comes back as
-    /// the even one below it. **When this fails**, `zip` keeps the field through a
-    /// raw copy and a backup's entries carry the exact time: update the module doc
-    /// and spec §12.3, and turn this into a test that the time survives. The
-    /// upstream report to watch: <https://github.com/zip-rs/zip2/issues/1285>.
+    /// the `UT` field is kept, so an odd second comes back as itself — before
+    /// 9.6 the field was dropped and the DOS date gave back the even second below
+    /// (<https://github.com/zip-rs/zip2/issues/1285>). Plain and encrypted.
     #[test]
-    fn a_raw_copy_drops_the_extended_timestamp() {
-        let mtime = at(1_715_000_001); // an odd second
+    fn a_raw_copy_keeps_the_extended_timestamp() {
+        for password in [None, Some("pw")] {
+            let mtime = at(1_715_000_001); // an odd second
+            let mut options = dated(SimpleFileOptions::default(), Some(mtime));
+            if let Some(pw) = password {
+                options = options.with_aes_encryption(zip::AesMode::Aes256, pw);
+            }
+            let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+            zip.start_file("a.json", options).unwrap();
+            zip.write_all(b"{}").unwrap();
+            let one = zip.finish().unwrap().into_inner();
+            let mut one = ZipArchive::new(Cursor::new(one)).unwrap();
+
+            let mut copy = ZipWriter::new(Cursor::new(Vec::new()));
+            copy.raw_copy_file(one.by_index_raw(0).unwrap()).unwrap();
+            let copy = copy.finish().unwrap().into_inner();
+            let mut copy = ZipArchive::new(Cursor::new(copy)).unwrap();
+            let entry = copy.by_index_raw(0).unwrap();
+            let fields = entry
+                .extra_data_fields()
+                .filter(|f| matches!(f, ExtraField::ExtendedTimestamp(_)))
+                .count();
+            assert_eq!(fields, 1, "{password:?}: one UT field, not none or two");
+            assert_eq!(entry_mtime(&entry), Some(mtime), "{password:?}");
+        }
+    }
+
+    /// The field a header written by hand carries is the one `dated` has `zip`
+    /// write: `zip` reads the time back from it, in a local and a central header
+    /// alike; the DOS fields are `dated`'s too. No date — neither field.
+    #[test]
+    fn a_header_date_is_the_field_zip_writes() {
+        let mtime = at(1_715_000_001);
+        let date = header_date(Some(mtime));
+        let field = date.extended.expect("a date the field holds");
+        assert_eq!(&field[..4], &[0x55, 0x54, 5, 0]);
+        assert_eq!(field[4..], extended_timestamp_data(1_715_000_001));
+        let dos = dos_time(mtime).unwrap();
+        assert_eq!(date.dos, (dos.timepart(), dos.datepart()));
+
         let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
         zip.start_file("a.json", dated(SimpleFileOptions::default(), Some(mtime)))
             .unwrap();
         zip.write_all(b"{}").unwrap();
-        let one = zip.finish().unwrap().into_inner();
-        let mut one = ZipArchive::new(Cursor::new(one)).unwrap();
-        assert_eq!(entry_mtime(&one.by_index_raw(0).unwrap()), Some(mtime));
+        let bytes = zip.finish().unwrap().into_inner();
+        let found = bytes.windows(field.len()).filter(|w| *w == field).count();
+        assert_eq!(found, 2, "zip writes the same bytes, local and central");
 
-        let mut copy = ZipWriter::new(Cursor::new(Vec::new()));
-        copy.raw_copy_file(one.by_index_raw(0).unwrap()).unwrap();
-        let copy = copy.finish().unwrap().into_inner();
-        let mut copy = ZipArchive::new(Cursor::new(copy)).unwrap();
-        let entry = copy.by_index_raw(0).unwrap();
-        assert!(
-            !entry
-                .extra_data_fields()
-                .any(|f| matches!(f, ExtraField::ExtendedTimestamp(_))),
-            "zip now keeps the extended timestamp through a raw copy — see the doc above"
+        assert_eq!(
+            header_date(None),
+            HeaderDate {
+                dos: (0, 0x21),
+                extended: None
+            }
         );
-        assert_eq!(entry_mtime(&entry), Some(at(1_715_000_000)));
+        assert_eq!(header_date(Some(at(2_600_000_000))).extended, None);
+    }
+
+    /// A backup written by 0.25.0–0.28.1, whose entries lost the field in the raw
+    /// copy, still restores its dates from the DOS field: an odd second as the
+    /// even one below it.
+    #[test]
+    fn an_entry_without_the_field_reads_the_dos_date() {
+        let dos = dos_time(at(1_715_000_001)).unwrap(); // an odd second
+        let options = SimpleFileOptions::default()
+            .last_modified_time(dos)
+            .into_full_options();
+        assert_eq!(round_trip(options), Some(at(1_715_000_000)));
     }
 
     /// Past 2038 the `UT` field cannot hold the time and is left out; the DOS date

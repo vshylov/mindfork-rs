@@ -10,7 +10,7 @@ why, what was measured and what was rejected — the reasoning behind the code, 
 its current shape. For the current shape read the reference documents named above;
 for the traps that recur across areas read [lessons.md](../lessons.md).
 
-## Entries (40)
+## Entries (41)
 
 - Post-M9: persisting the input-box draft in the chat file (done)
 - Post-M9: persisting deleted exchanges in the chat file (`Ctrl+E`/`Ctrl+R`) (done)
@@ -52,6 +52,7 @@ for the traps that recur across areas read [lessons.md](../lessons.md).
 - Post-M9: the fold's stored keys read entry by entry; `MouseMode` in the ledger (done)
 - Post-M9: branches inside a chat — the line, the parked tails, `/fork` and `/branch` (done)
 - Post-M9: `Ctrl+R` and `Ctrl+E` keep what they cut as a branch (done)
+- Post-M9: `zip` 9.1.3 → 9.8.2 — a backup keeps every file's time to the second (done)
 
 ### Post-M9: persisting the input-box draft in the chat file (done)
 - **Unsaved input-box text is stored on the chat and restored on
@@ -2352,3 +2353,60 @@ the regenerated reply under it as `#4 ‹2/2›`; a new message from there — `
 **Not in this stage:** a read of a line that says the chat has branches, and a tool
 that reads them (stage 4); removing a branch — every `Ctrl+R` and `Ctrl+E` now adds a
 row to `/branch`, and nothing takes one away.
+
+### Post-M9: `zip` 9.1.3 → 9.8.2 — a backup keeps every file's time to the second (done)
+
+- **What arrived.** [zip-rs/zip2#1285](https://github.com/zip-rs/zip2/issues/1285), the
+  report of 2026-11-09 (the dates entry above), was closed on 2026-11-14. Three upstream
+  pull requests fixed it: #1293 (`ExtraField::write` serializes `UT` and NTFS, 9.6.0),
+  #1296 (typed builders, `with_extended_timestamp`, 9.6.0) and #1291 (`raw_copy_options`
+  re-adds the modification time through that builder, 9.7.1); 9.7.2 keeps the access and
+  creation times out of the central header. A raw copy now keeps the modification time
+  alone, which is all `dates.rs` writes. The lock held 9.1.3, so nothing had reached the
+  app; Dependabot's monthly cargo group would have brought it on 2026-12-01 and turned the
+  pin test red, as it was written to.
+- **The bump.** `cargo update -p zip --precise 9.8.2`; `Cargo.toml` asks for 9.8.2 —
+  the version the dates now depend on, and the one that also stops a raw copy writing
+  two zip64 fields (#1349). Two tests failed, both the pin's: `a_raw_copy_drops_the_
+  extended_timestamp` and the backup's own odd second. No API change reached the code.
+- **The rest of the gap: the big entry.** An entry of 16 MiB and up is assembled with
+  hand-written headers (`chunked`) and wrote the DOS date alone, so after the bump it
+  would have been the one entry without `UT`. `dates::header_date` replaces `dos_fields`:
+  the DOS fields and the whole nine-byte `UT` field, which with only the modification
+  flag set is the same in a local and a central header; `chunked::extra_fields` writes it
+  after the AES field in both.
+- **What a green build does not say** (the 2.4.2 → 8.6.0 entry's check):
+  `cargo tree -e normal,build -f '{p} [{f}]'` against `main` for Linux, Windows and
+  macOS — zip's features are the same, the flate2 backend did not move. New: the
+  `zeroize_derive` proc-macro (`zeroize` gains `derive`; Apache-2.0 OR MIT); zip moves to
+  `hashbrown` 0.16.1 and, on Windows, `windows-sys` 0.60.2, both already in the tree. MSRV
+  1.89, under ours.
+- **Live, on the 402 MB dev root** (a debug build, `mindfork backup`, plain and AES): 628
+  entries, every one with `UT` in its local and its central header — `data.db`, 194 MB,
+  through the chunked path, beside `0x9901` in the AES archive — and every file's whole
+  second equal to its source's (Python's `zipfile`). Info-ZIP's `zipinfo -v` reads the
+  field, `unzip -t` passes. The AES archive restored with `TZ=America/New_York` into a
+  root of its own: 627 of 627 files dated as their sources to the second.
+- **Do archives cross the versions?** A scratch probe on `zip` 9.1.3 — what 0.28.1
+  reads with — opened both archives: 628 of 628 entries, CRC and HMAC checked, `UT` read
+  on every one. The other way, 0.25.0–0.28.1's archives carry the DOS date alone and
+  restore it as they did (`an_entry_without_the_field_reads_the_dos_date`). The archives
+  and the restored root were deleted: they held the dev root's chats.
+- **Also corrected**: spec §12.3 said `data.db` always carries the restore's time; since
+  the restore stopped compacting a database with nothing to free (the big-database
+  entry above), one this app packed keeps its date — the restore above shows it.
+- **Tests** (+3, and the pin turned round): `a_raw_copy_keeps_the_extended_timestamp`
+  (plain and AES, exactly one `UT` field); `a_header_date_is_the_field_zip_writes` (the hand-written field is the
+  bytes `zip` writes, local and central); `an_entry_without_the_field_reads_the_dos_date`
+  (an older backup); `an_assembled_entry_carries_its_exact_date` (plain and AE-2, through
+  the raw copy); the backup test now asks for the odd second exactly, in memory, spilled
+  and chunked, and for a chunked file's date after a restore. The About dialog's credit
+  is 9.8.2.
+- **Docs**: CHANGELOG *Fixed*; spec §12.3; architecture §3 (`dates.rs`);
+  backup-big-entry.md §4, a dated note.
+
+No live engine run: no engine path (AGENTS.md §3); the backup and restore above are the
+live check.
+
+**Gates**: 5177 unit tests green on Linux, 323 `#[ignore]`; clippy `-D warnings`, fmt, `cargo doc`
+`-D warnings`, `cyrillic_scan`, `link_check`, `doc_index_check`, `layer_check` clean.
