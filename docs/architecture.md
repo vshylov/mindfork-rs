@@ -844,7 +844,8 @@ src/
 │  │                        by a sync flush, assembled in order into a one-entry zip
 │  │                        by the writer — WinZip AE-2 applied here with a password
 │  │  └─ dates.rs           the dates entries carry: written as the file's mtime (DOS
-│  │                        date + `UT` field; a raw copy keeps the DOS date only),
+│  │                        date + `UT` field, kept by a raw copy since zip 9.6; the
+│  │                        big entry's hand-written headers take `header_date`),
 │  │                        read back on restore, the 1980 default read as none
 │  ├─ data_stats.rs         `mindfork stats` (spec §12.4): a read-only summary of the live
 │  │                        data or of a backup archive — a tolerant projection of the chat

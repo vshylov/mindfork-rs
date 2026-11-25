@@ -295,9 +295,9 @@ pub(super) fn write_archive(
     let assemblies = bigs
         .iter()
         .map(|big| {
-            let dos = super::dates::dos_fields(big.mtime);
+            let date = super::dates::header_date(big.mtime);
             let file = scratch.next();
-            Assembly::new(big.name, big.chunks, dos, password, file)
+            Assembly::new(big.name, big.chunks, date, password, file)
                 .map(Some)
                 .with_context(|| loc.tf("backup.ctx.write_entry", &[("name", big.name)]))
         })

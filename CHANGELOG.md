@@ -14,6 +14,14 @@ split by subsystem.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A backup keeps every file's time to the second.** A restore gave each file the
+  date its archive entry kept in the zip's old DOS field — local time, rounded down to
+  an even second — so a backup restored in another time zone moved every file by the
+  difference. The exact UTC time is now kept in every entry, the big ones included
+  (`zip` 9.8.2). Backups made by 0.25.0–0.28.1 restore as they did.
+
 ### Security
 
 - **The URL parser the network requests use is updated** (`url` 2.5.9), past

@@ -3369,21 +3369,25 @@ mod tests {
             .collect()
     }
 
-    /// An entry carries its file's date — held in memory or spilled, encrypted
-    /// or not — the compacted database carries the newest of the database's
-    /// files, the manifest the time it was written; and a restore gives every
-    /// file its date back, a stored file's after its origin mark. The date is the
-    /// DOS one (`dates`: `zip` drops the exact one from a raw copy), so an odd
-    /// second comes back as the even one below it.
+    /// An entry carries its file's date to the second — held in memory, spilled
+    /// or assembled from chunks, encrypted — the compacted database carries the
+    /// newest of the database's files, the manifest the time it was written; and
+    /// a restore gives every file its date back, a stored file's after its origin
+    /// mark. An odd second comes back as itself: the `UT` field survives the raw
+    /// copy (`dates`), where the DOS date alone would give the even one below.
     #[test]
     fn an_archive_carries_its_files_dates_and_a_restore_gives_them_back() {
         let dir = tempfile::tempdir().unwrap();
         seed_many(dir.path());
-        let odd = SystemTime::UNIX_EPOCH + Duration::from_secs(1_715_000_001);
-        let chat = SystemTime::UNIX_EPOCH + Duration::from_secs(1_715_000_000);
+        let chat = SystemTime::UNIX_EPOCH + Duration::from_secs(1_715_000_001);
         let picture = SystemTime::UNIX_EPOCH + Duration::from_secs(1_600_000_000);
         let database = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
-        set_date(&dir.path().join("chats").join("c07.json"), odd);
+        let large = SystemTime::UNIX_EPOCH + Duration::from_secs(1_650_000_003);
+        let big = dir.path().join("files").join("c1").join("big.bin");
+        let bytes: Vec<u8> = (0..64_000u32).map(|i| (i % 251) as u8).collect();
+        fs::write(&big, bytes).unwrap();
+        set_date(&big, large);
+        set_date(&dir.path().join("chats").join("c07.json"), chat);
         set_date(
             &dir.path().join("files").join("c1").join("chart.png"),
             picture,
@@ -3398,21 +3402,27 @@ mod tests {
         let entries = gather_entries(&paths, None, ru()).unwrap();
         let out = tempfile::tempdir().unwrap();
         let started = SystemTime::now() - Duration::from_secs(2);
-        for (name, spill_over) in [("memory.zip", u64::MAX), ("spilled.zip", 0)] {
+        let whole = |spill_over| ZipSpec {
+            level: 6,
+            password: Some(PW),
+            threads: 4,
+            spill_over,
+            memory_cap: u64::MAX,
+            chunked_from: chunked::CHUNKED_FROM,
+            chunk: chunked::CHUNK,
+        };
+        let specs = [
+            ("memory.zip", whole(u64::MAX)),
+            ("spilled.zip", whole(0)),
+            ("chunked.zip", chunky(Some(PW), u64::MAX)),
+        ];
+        for (name, spec) in specs {
             let archive = out.path().join(name);
-            let spec = ZipSpec {
-                level: 6,
-                password: Some(PW),
-                threads: 4,
-                spill_over,
-                memory_cap: u64::MAX,
-                chunked_from: chunked::CHUNKED_FROM,
-                chunk: chunked::CHUNK,
-            };
             parallel::write_archive(&paths, &archive, &entries, &spec, ru(), &mut |_| {}).unwrap();
             let dates = entry_dates(&archive);
             assert_eq!(dates["chats/c07.json"], Some(chat), "{name}");
             assert_eq!(dates["files/c1/chart.png"], Some(picture), "{name}");
+            assert_eq!(dates["files/c1/big.bin"], Some(large), "{name}");
             assert_eq!(dates["data.db"], Some(database), "{name}");
             let manifest = dates[MANIFEST_NAME].expect("the manifest is dated");
             assert!(manifest >= started, "{name}: {manifest:?}");
@@ -3428,10 +3438,20 @@ mod tests {
                 threads: 4,
             };
             restore_backup(&restored, &archive, packing, None, Some(PW), ru(), |_| {}).unwrap();
-            assert_eq!(date_of(&dst.path().join("chats").join("c07.json")), chat);
+            assert_eq!(
+                date_of(&dst.path().join("chats").join("c07.json")),
+                chat,
+                "{name}"
+            );
             assert_eq!(
                 date_of(&dst.path().join("files").join("c1").join("chart.png")),
-                picture
+                picture,
+                "{name}"
+            );
+            assert_eq!(
+                date_of(&dst.path().join("files").join("c1").join("big.bin")),
+                large,
+                "{name}"
             );
         }
     }

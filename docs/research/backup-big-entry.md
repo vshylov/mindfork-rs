@@ -167,6 +167,10 @@ it is the independent `zip` crate. The tests would be:
 The `UT` timestamp is dropped by `raw_copy_file` here as everywhere (`dates.rs`),
 so this entry carries the DOS date like the rest.
 
+*Since 2026-11-25:* `zip` 9.8.2 keeps `UT` through a raw copy (zip-rs/zip2#1285),
+and the hand-written headers carry it too (`dates::header_date`), so this entry is
+dated to the second like the rest.
+
 ## 5. The database's compaction
 
 `VACUUM INTO` the scratch file was the other half of the chain.
